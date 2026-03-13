@@ -215,15 +215,16 @@ export function useChatStreamHandlers({
   // Get selected device ID for executor-based tasks
   const { selectedDeviceId } = useDevices()
 
-  // Determine if we're on the devices page - only devices page should send device_id
-  // This prevents coding tasks from accidentally inheriting a device_id from a previous device task
+  // Determine if we're in device mode - devices page or chat page with device selected
+  // This prevents coding tasks from accidentally inheriting a device_id
   const isDevicesPage = pathname?.startsWith('/devices')
+  const isDeviceMode = isDevicesPage || taskType === 'task'
 
   // Determine effective device_id to send:
-  // - Only send device_id if we're on the devices page AND team is not Chat Shell
-  // - This ensures coding tasks (on /code or /chat pages) don't get routed to devices
+  // - Send device_id when in device mode (devices page or chat page with device selected) AND team is not Chat Shell
+  // - This ensures coding tasks don't get routed to devices
   const effectiveDeviceId =
-    isDevicesPage && !isChatShell(selectedTeam) ? selectedDeviceId || undefined : undefined
+    isDeviceMode && !isChatShell(selectedTeam) ? selectedDeviceId || undefined : undefined
 
   // Local state
   const [pendingTaskId, setPendingTaskId] = useState<number | null>(null)

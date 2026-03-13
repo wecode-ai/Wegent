@@ -12,6 +12,12 @@ from wecode.service.mcp_providers.providers.weibo import WeiboMCPProvider
 
 MCPProviderRegistry.register_plugin(WeiboMCPProvider())
 
+# Register Weibo Skill Market Provider
+from app.services.skill_market.provider import skill_market_registry
+from wecode.service.skill_market import weibo_skill_market_provider
+
+skill_market_registry.register(weibo_skill_market_provider)
+
 import wecode.api.agents_endpoint_patch  # noqa: F401  patch app.api.endpoints.agents to enforce admin-only endpoints
 import wecode.api.executors_endpoint_patch  # noqa: F401  patch /tasks/dispatch endpoint to replace API key placeholders (pull mode, backup)
 import wecode.api.gitlab_provider_patch  # noqa: F401  ensures GitLabProvider is monkey-patched at import time
