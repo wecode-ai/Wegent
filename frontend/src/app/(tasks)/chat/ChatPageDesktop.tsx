@@ -28,6 +28,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { useSearchShortcut } from '@/features/tasks/hooks/useSearchShortcut'
 import { ChatArea } from '@/features/tasks/components/chat'
 import { CreateGroupChatDialog } from '@/features/tasks/components/group-chat'
+import { RemoteWorkspaceEntry } from '@/features/tasks/components/remote-workspace'
 
 /**
  * Desktop-specific implementation of Chat Page
@@ -46,8 +47,13 @@ export function ChatPageDesktop() {
   const { teams, isTeamsLoading, refreshTeams } = teamService.useTeams()
 
   // Task context for refreshing task list
-  const { refreshTasks, selectedTaskDetail, setSelectedTask, refreshSelectedTaskDetail } =
-    useTaskContext()
+  const {
+    refreshTasks,
+    selectedTask,
+    selectedTaskDetail,
+    setSelectedTask,
+    refreshSelectedTaskDetail,
+  } = useTaskContext()
 
   // Device context - when a device is selected, switch to 'task' mode
   const { selectedDeviceId, devices } = useDevices()
@@ -204,6 +210,12 @@ export function ChatPageDesktop() {
               <UserGroupIcon className="h-3.5 w-3.5" />
               <span className="hidden sm:inline">{t('groupChat.create.button')}</span>
             </Button>
+          )}
+          {(selectedTask?.id || selectedTaskDetail?.id) && (
+            <RemoteWorkspaceEntry
+              taskId={selectedTask?.id || selectedTaskDetail?.id}
+              taskStatus={selectedTaskDetail?.status}
+            />
           )}
           {shareButton}
           <GithubStarButton />
