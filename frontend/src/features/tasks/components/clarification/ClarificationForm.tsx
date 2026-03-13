@@ -5,7 +5,7 @@
 'use client'
 
 import { useState, useEffect, useMemo, useContext } from 'react'
-import { Send, Code, FileText } from 'lucide-react'
+import { Send, Code, FileText, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import type { ClarificationData, ClarificationAnswer } from '@/types/api'
@@ -68,8 +68,16 @@ export default function ClarificationForm({
         const bId = typeof b.id === 'string' ? parseInt(b.id, 10) : b.id
         return aId - bId
       })
-      .map(msg => ({ type: msg.type }))
+      .map(msg => ({ type: msg.type, status: msg.status }))
   }, [messagesMap])
+
+  // Check if the current message (containing the clarification form) is still streaming
+  // This prevents users from submitting answers before the AI finishes outputting the questions
+  const isCurrentMessageStreaming = useMemo(() => {
+    if (messages.length === 0 || currentMessageIndex < 0) return false
+    const currentMessage = messages[currentMessageIndex]
+    return currentMessage?.status === 'streaming'
+  }, [messages, currentMessageIndex])
   // Check if this clarification has been answered
   // Check if there's a user message after this clarification's message index
   const isSubmitted = useMemo(() => {
@@ -356,15 +364,23 @@ export default function ClarificationForm({
             </div>
           </div>
 
-          {!isSubmitted && !(isTaskStreaming && isTaskStreaming(taskId)) && (
+          {!isSubmitted && (
             <div className="flex justify-end pt-2">
               <Button
                 variant="secondary"
                 onClick={handleSubmit}
                 size="lg"
+                disabled={
+                  isCurrentMessageStreaming || Boolean(isTaskStreaming && isTaskStreaming(taskId))
+                }
                 data-testid="clarification-submit"
               >
-                <Send className="w-4 h-4 mr-2" />
+                {isCurrentMessageStreaming ||
+                Boolean(isTaskStreaming && isTaskStreaming(taskId)) ? (
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                ) : (
+                  <Send className="w-4 h-4 mr-2" />
+                )}
                 {t('chat:clarification.submit_answers') || 'Submit Answers'}
               </Button>
             </div>

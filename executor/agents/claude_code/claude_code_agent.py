@@ -131,10 +131,11 @@ class ClaudeCodeAgent(Agent):
         self.new_session = task_data.new_session
 
         # Extract bot_id from task_data for session key
-        bot_id = None
+        # Store bot_id as instance variable for session file management
+        self._bot_id = None
         bots = task_data.bot
         if bots and len(bots) > 0:
-            bot_id = bots[0].get("id")
+            self._bot_id = bots[0].get("id")
 
         # Initialize task state manager and resource manager
         self.task_state_manager = TaskStateManager()
@@ -142,7 +143,7 @@ class ClaudeCodeAgent(Agent):
 
         # Resolve session ID using SessionManager (pass task_state_manager for interruption support)
         self._internal_session_key, self.session_id = resolve_session_id(
-            self.task_id, bot_id, self.new_session, self.task_state_manager
+            self.task_id, self._bot_id, self.new_session, self.task_state_manager
         )
 
         self.prompt = task_data.prompt or ""
@@ -625,48 +626,10 @@ class ClaudeCodeAgent(Agent):
             # Update current progress
             self._update_progress(progress)
 
-            # Check if a client connection already exists for the corresponding task_id
-            cached_client = SessionManager.get_client(self.session_id)
-            if cached_client:
-                # Verify the cached client is still valid
-                # Check if client process is still running
-                try:
-                    if hasattr(cached_client, "_process") and cached_client._process:
-                        if cached_client._process.poll() is not None:
-                            # Process has terminated, remove from cache
-                            logger.warning(
-                                f"Cached client process terminated for session_id: {self.session_id}, creating new client"
-                            )
-                            SessionManager.remove_client(self.session_id)
-                            # Proceed to create new client
-                        else:
-                            # Process is still running, reuse client
-                            logger.info(
-                                f"Reusing existing Claude client for session_id: {self.session_id}"
-                            )
-                            self.add_thinking_step(
-                                title="Reuse Existing Client",
-                                report_immediately=False,
-                                use_i18n_keys=False,
-                                details={"session_id": self.session_id},
-                            )
-                            self.client = cached_client
-                    else:
-                        # No process info available, assume client is valid
-                        logger.info(
-                            f"Reusing existing Claude client for session_id: {self.session_id}"
-                        )
-                        self.client = cached_client
-                except Exception as e:
-                    logger.warning(
-                        f"Error checking client validity: {e}, creating new client"
-                    )
-                    # Remove potentially invalid client from cache
-                    SessionManager.remove_client(self.session_id)
-
-            # Create new client if not reusing
-            if self.client is None:
-                await self._create_and_connect_client()
+            # Always create a new client for each subtask execution
+            # Since each subtask creates a new Agent instance and destroys it after completion,
+            # there's no need to check for cached clients
+            await self._create_and_connect_client()
 
             # Check cancellation again before proceeding
             if self.task_state_manager.is_cancelled(self.task_id):
@@ -725,27 +688,16 @@ class ClaudeCodeAgent(Agent):
                 logger.info(f"Task {self.task_id} cancelled before sending query")
                 return TaskStatus.CANCELLED
 
-            # If new_session is True, create a new client with subtask_id as session_id
-            # This is needed because different bots may have different skills, MCP servers, etc.
-            # We keep the old client in cache for potential jump-back to previous bot
+            # If new_session is True, update session_id to subtask_id
+            # This is used for pipeline stage changes where each bot needs independent session
+            # Note: Client was already created above, no need to create again
             if self.new_session:
                 new_session_id = str(self.subtask_id)
                 old_session_id = self.session_id
                 self.session_id = new_session_id
-                # Update the session_id_map cache for current bot
-                SessionManager.set_session_id(
-                    self._internal_session_key, new_session_id
-                )
-                # Note: We do NOT close the old client here, because:
-                # 1. Different bots have different skills/MCP servers, so we need separate clients
-                # 2. Pipeline tasks may jump back to previous bots, which need their own clients
-                # 3. The old client's session_id key is different from new one (task_id:bot_id format)
-                # Create new client with current bot's configuration
                 logger.info(
-                    f"new_session=True, creating new client with subtask_id {new_session_id} as session_id "
-                    f"(old: {old_session_id}, internal_key: {self._internal_session_key})"
+                    f"new_session=True, updated session_id from {old_session_id} to {new_session_id}"
                 )
-                await self._create_and_connect_client()
 
             # Use session_id to send messages, ensuring messages are in the same session
             # Use the current updated prompt for each execution, even with the same session ID
@@ -835,13 +787,30 @@ class ClaudeCodeAgent(Agent):
             )
 
         # Check if there's a saved session ID to resume
-        # Skip if resume option is already set (e.g., from retry logic)
+        # Skip resume in these cases:
+        # 1. resume option is already set (e.g., from retry logic)
+        # 2. new_session=True (pipeline stage change requires fresh session without history)
         saved_session_id = None
-        if "resume" not in self.options:
-            saved_session_id = SessionManager.load_saved_session_id(self.task_id)
+        if self.new_session:
+            # Pipeline stage change: delete session file and skip resume to create fresh session
+            # Each bot in pipeline needs independent conversation without previous bot's history
+            # Deleting the session file enables stage rollback - user can go back to previous stage
+            # and the bot will start fresh without the old session history
+            SessionManager.delete_saved_session_id(self.task_id, self._bot_id)
+            logger.info(
+                f"Deleted session file and skipping resume for task {self.task_id} "
+                f"(bot_id={self._bot_id}) because new_session=True "
+                f"(pipeline stage change requires fresh session, enables rollback)"
+            )
+        elif "resume" not in self.options:
+            # Load session ID for this specific bot (pipeline mode: each bot has its own session file)
+            saved_session_id = SessionManager.load_saved_session_id(
+                self.task_id, self._bot_id
+            )
             if saved_session_id:
                 logger.info(
-                    f"Resuming Claude session for task {self.task_id}: {saved_session_id}"
+                    f"Resuming Claude session for task {self.task_id} "
+                    f"(bot_id={self._bot_id}): {saved_session_id}"
                 )
                 self.options["resume"] = saved_session_id
 
@@ -901,11 +870,12 @@ class ClaudeCodeAgent(Agent):
             # Check if this is a resume failure (session expired or invalid)
             if saved_session_id and "resume" in self.options:
                 logger.warning(
-                    f"Failed to resume session {saved_session_id} for task {self.task_id}: {e}. "
+                    f"Failed to resume session {saved_session_id} for task {self.task_id} "
+                    f"(bot_id={self._bot_id}): {e}. "
                     f"Deleting invalid session file and retrying with fresh session."
                 )
-                # Delete the invalid session ID file
-                SessionManager.delete_saved_session_id(self.task_id)
+                # Delete the invalid session ID file for this specific bot
+                SessionManager.delete_saved_session_id(self.task_id, self._bot_id)
 
                 # Remove resume option and retry
                 del self.options["resume"]
@@ -926,16 +896,9 @@ class ClaudeCodeAgent(Agent):
                 # Not a resume failure, re-raise the exception
                 raise
 
-        # Store client connection for reuse
-        SessionManager.set_client(self.session_id, self.client)
-
-        # Update session_id_map for tracking (for both initial and new sessions)
-        # This ensures cleanup_task_clients can find all clients by task_id
-        if hasattr(self, "_internal_session_key"):
-            SessionManager.set_session_id(self._internal_session_key, self.session_id)
-            logger.info(
-                f"Updated session_id_map: {self._internal_session_key} -> {self.session_id}"
-            )
+        # Note: No longer caching client in SessionManager since each subtask
+        # creates a new Agent instance and destroys it after completion.
+        # Client is stored as self.client for use within this execution only.
 
         # Trigger callback to notify that client is created (e.g., for heartbeat update)
         if self.on_client_created_callback:
@@ -972,10 +935,8 @@ class ClaudeCodeAgent(Agent):
             # Terminate the client process
             await SessionManager._terminate_client_process(self.client, self.session_id)
 
-            # Remove from client cache but keep session_id mapping
-            SessionManager.remove_client(self.session_id)
-
             # Clear local client reference
+            # Note: No longer using in-memory cache since each subtask creates new Agent instance
             self.client = None
 
             logger.info(
@@ -990,10 +951,11 @@ class ClaudeCodeAgent(Agent):
         """
         Auto-close the CC process after message completion (local mode only).
 
-        Terminates the CC process and removes all in-memory tracking, but
-        preserves the on-disk session ID file so the next message can resume.
-        This frees the device slot immediately instead of keeping the process
-        alive between messages.
+        Terminates the CC process but preserves the on-disk session ID file
+        so the next message can resume. This frees the device slot immediately
+        instead of keeping the process alive between messages.
+
+        Note: No longer using in-memory cache since each subtask creates new Agent instance.
         """
         if config.EXECUTOR_MODE != "local":
             return
@@ -1011,12 +973,8 @@ class ClaudeCodeAgent(Agent):
             # Terminate the CC process
             await SessionManager._terminate_client_process(self.client, self.session_id)
 
-            # Remove all in-memory tracking (client cache + session_id_map)
-            # but preserve the on-disk .claude_session_id file for resume
-            internal_key = getattr(self, "_internal_session_key", None)
-            SessionManager.cleanup_session_tracking(self.session_id, internal_key)
-
             # Clear local client reference
+            # Note: No longer using in-memory cache since each subtask creates new Agent instance
             self.client = None
 
             # Trigger heartbeat callback to immediately update slot usage
