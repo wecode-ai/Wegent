@@ -6,10 +6,10 @@
 Skill adapter service for managing Skills using kinds table
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import HTTPException
-from sqlalchemy import and_
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -327,6 +327,79 @@ class SkillKindsService:
         skills = query.offset(skip).limit(limit).all()
 
         return SkillList(items=[self._kind_to_skill(skill) for skill in skills])
+
+    def list_skills_batch(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        namespaces: List[str],
+    ) -> List[Skill]:
+        """
+        Batch list Skills for a user across multiple namespaces.
+
+        This method uses a single IN query instead of multiple queries,
+        significantly improving performance when querying many namespaces.
+
+        Args:
+            db: Database session
+            user_id: User ID
+            namespaces: List of namespaces to query
+
+        Returns:
+            List of Skill objects from all specified namespaces
+        """
+        if not namespaces:
+            return []
+
+        skills = (
+            db.query(Kind)
+            .filter(
+                Kind.user_id == user_id,
+                Kind.kind == "Skill",
+                Kind.namespace.in_(namespaces),
+                Kind.is_active == True,
+            )
+            .order_by(Kind.created_at.desc())
+            .all()
+        )
+
+        return [self._kind_to_skill(skill) for skill in skills]
+
+    def list_skills_in_namespaces_batch(
+        self,
+        db: Session,
+        *,
+        namespaces: List[str],
+    ) -> List[Skill]:
+        """
+        Batch list all Skills in multiple namespaces (for group skills).
+
+        This method uses a single IN query instead of multiple queries,
+        significantly improving performance when querying many namespaces.
+
+        Args:
+            db: Database session
+            namespaces: List of namespaces to search in
+
+        Returns:
+            List of Skill objects from all specified namespaces
+        """
+        if not namespaces:
+            return []
+
+        skills = (
+            db.query(Kind)
+            .filter(
+                Kind.kind == "Skill",
+                Kind.namespace.in_(namespaces),
+                Kind.is_active == True,
+            )
+            .order_by(Kind.created_at.desc())
+            .all()
+        )
+
+        return [self._kind_to_skill(skill) for skill in skills]
 
     def update_skill(
         self,
