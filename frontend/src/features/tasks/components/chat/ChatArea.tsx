@@ -25,6 +25,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { useRouter } from 'next/navigation'
 import { useTaskContext } from '../../contexts/taskContext'
 import { useTaskStateMachine } from '../../hooks/useTaskStateMachine'
+import { useHasMessages } from '../../hooks/useHasMessages'
 import { Button } from '@/components/ui/button'
 import { useScrollManagement } from '../hooks/useScrollManagement'
 import { useFloatingInput } from '../hooks/useFloatingInput'
@@ -100,7 +101,8 @@ function ChatAreaContent({
   const { quote, clearQuote, formatQuoteForMessage } = useQuote()
 
   // Task context
-  const { selectedTaskDetail, setSelectedTask, accessDenied } = useTaskContext()
+  const { selectedTask, selectedTaskDetail, setSelectedTask, accessDenied, clearAccessDenied } =
+    useTaskContext()
 
   // Use useTaskStateMachine hook for reactive state updates (SINGLE SOURCE OF TRUTH per AGENTS.md)
   const { state: taskState } = useTaskStateMachine(selectedTaskDetail?.id)
@@ -502,37 +504,13 @@ function ChatAreaContent({
     teams: [...filteredTeams, ...teams],
   })
 
-  // Determine if there are messages to display (full computation)
-  // Note: Now using taskState.messages from state machine instead of selectedTaskDetail.subtasks
-  const hasMessages = useMemo(() => {
-    const hasSelectedTask = selectedTaskDetail && selectedTaskDetail.id
-    const hasNewTaskStream =
-      !selectedTaskDetail?.id && streamHandlers.pendingTaskId && streamHandlers.isStreaming
-    const hasLocalPending = streamHandlers.localPendingMessage !== null
-    // Use taskState from state machine (single source of truth)
-    const hasUnifiedMessages = taskState?.messages && taskState.messages.size > 0
-
-    // If we have a selected task with messages in state machine, show messages
-    if (hasSelectedTask && hasUnifiedMessages) {
-      return true
-    }
-
-    return Boolean(
-      hasSelectedTask ||
-      streamHandlers.hasPendingUserMessage ||
-      streamHandlers.isStreaming ||
-      hasNewTaskStream ||
-      hasLocalPending ||
-      hasUnifiedMessages
-    )
-  }, [
+  // Determine if there are messages to display
+  const hasMessages = useHasMessages({
+    selectedTask,
     selectedTaskDetail,
-    streamHandlers.hasPendingUserMessage,
-    streamHandlers.isStreaming,
-    streamHandlers.pendingTaskId,
-    streamHandlers.localPendingMessage,
-    taskState?.messages,
-  ])
+    taskState,
+    streamHandlers,
+  })
 
   // Note: Team selection is now handled by useTeamSelection hook in TeamSelector component
   // Model selection is handled by useModelSelection hook in ModelSelector component

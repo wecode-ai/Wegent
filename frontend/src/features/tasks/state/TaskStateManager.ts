@@ -24,6 +24,7 @@ class TaskStateManagerImpl {
   private machines: Map<number, TaskStateMachine> = new Map()
   private deps: TaskStateMachineDeps | null = null
   private globalListeners: Set<(taskId: number, state: TaskStateData) => void> = new Set()
+  private initListeners: Set<() => void> = new Set()
 
   /**
    * Initialize the manager with dependencies from SocketContext
@@ -31,12 +32,31 @@ class TaskStateManagerImpl {
    */
   initialize(deps: TaskStateMachineDeps): void {
     this.deps = deps
+    // Notify init listeners so useSyncExternalStore picks up the change
+    this.initListeners.forEach(listener => listener())
   }
 
   /**
    * Check if manager is initialized
    */
   isInitialized(): boolean {
+    return this.deps !== null
+  }
+
+  /**
+   * Subscribe to initialization state changes (for useSyncExternalStore)
+   */
+  subscribeInit(listener: () => void): () => void {
+    this.initListeners.add(listener)
+    return () => {
+      this.initListeners.delete(listener)
+    }
+  }
+
+  /**
+   * Get initialization state snapshot (for useSyncExternalStore)
+   */
+  getInitialized(): boolean {
     return this.deps !== null
   }
 
