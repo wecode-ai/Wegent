@@ -195,12 +195,12 @@ class TaskQueryMixin:
         # Step 1: Get candidate task IDs with expanded limit to accommodate filtering
         # We fetch more IDs than needed because some will be filtered out
         candidate_limit = limit + 200  # Fetch extra to accommodate filtering
-        task_ids, _ = get_accessible_task_ids_and_total(
+        task_ids, total = get_accessible_task_ids_and_total(
             db, user_id=user_id, skip=skip, limit=candidate_limit, extra_limit=0
         )
 
         if not task_ids:
-            return [], 0
+            return [], total
 
         # Step 2: Load task data for the IDs
         tasks = load_tasks_by_ids(db, task_ids)
@@ -223,16 +223,13 @@ class TaskQueryMixin:
 
             filtered_tasks.append(task)
 
-        # Step 4: Compute total from filtered results
-        total = len(filtered_tasks)
-
         # Step 5: Apply pagination (skip + limit) to filtered tasks
         # Restore order from original task_ids
         id_to_task = {t.id: t for t in filtered_tasks}
         ordered_filtered_tasks = restore_task_order(
             task_ids, id_to_task, limit=len(task_ids)
         )
-        paginated_tasks = ordered_filtered_tasks[skip : skip + limit]
+        paginated_tasks = ordered_filtered_tasks[:limit]
 
         if not paginated_tasks:
             return [], total
@@ -260,11 +257,11 @@ class TaskQueryMixin:
         # Step 1: Get candidate task IDs with expanded limit to accommodate filtering
         # We fetch more IDs than needed because some will be filtered out
         candidate_limit = limit + 200  # Fetch extra to accommodate filtering
-        task_ids, _ = get_accessible_task_ids_and_total(
+        task_ids, total = get_accessible_task_ids_and_total(
             db, user_id=user_id, skip=skip, limit=candidate_limit, extra_limit=0
         )
         if not task_ids:
-            return [], 0
+            return [], total
 
         # Step 2: Load task data for the IDs
         tasks = load_tasks_by_ids(db, task_ids)
@@ -272,12 +269,9 @@ class TaskQueryMixin:
         # Step 3: Filter tasks for display (DELETE, background, non-interacted subscriptions)
         id_to_task = filter_tasks_for_display(tasks)
 
-        # Step 4: Compute total from filtered results
-        total = len(id_to_task)
-
-        # Step 5: Restore order and apply pagination (skip + limit)
+        # Step 4: Restore order and apply pagination (skip + limit)
         filtered_tasks = restore_task_order(task_ids, id_to_task, limit=len(task_ids))
-        paginated_tasks = filtered_tasks[skip : skip + limit]
+        paginated_tasks = filtered_tasks[:limit]
         if not paginated_tasks:
             return [], total
 
