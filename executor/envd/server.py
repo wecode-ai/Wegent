@@ -249,20 +249,10 @@ def register_envd_routes(app: FastAPI):
 
 async def _handle_unary(request: Request, handler, req_class, resp_class):
     """Handle unary (request-response) RPC"""
-    rpc_method = request.url.path
-    is_filesystem_rpc = rpc_method.startswith("/filesystem.Filesystem/")
     try:
         content_type = request.headers.get("content-type", "")
         content_encoding = request.headers.get("content-encoding", "identity")
         body = await request.body()
-        if is_filesystem_rpc:
-            logger.info(
-                "[envd] unary request method=%s content_type=%s content_encoding=%s body_size=%s",
-                rpc_method,
-                content_type,
-                content_encoding,
-                len(body),
-            )
 
         # Handle compression
         if content_encoding == "gzip":
@@ -283,13 +273,6 @@ async def _handle_unary(request: Request, handler, req_class, resp_class):
 
         # Call handler
         response = await handler(req_obj)
-        if is_filesystem_rpc:
-            entry_count = len(getattr(response, "entries", []))
-            logger.info(
-                "[envd] unary response method=%s status=200 entry_count=%s",
-                rpc_method,
-                entry_count,
-            )
 
         # Return response
         if (
@@ -315,12 +298,7 @@ async def _handle_unary(request: Request, handler, req_class, resp_class):
 
     except ParseError as e:
         # Handle protobuf parsing errors (invalid enum values, etc.)
-        logger.warning(
-            "[envd] parse error in unary RPC method=%s content_type=%s error=%s",
-            rpc_method,
-            request.headers.get("content-type", ""),
-            e,
-        )
+        logger.warning(f"Parse error in unary RPC: {e}")
         return Response(
             content=json.dumps(
                 {"code": "invalid_argument", "message": f"Invalid request: {str(e)}"}
@@ -345,13 +323,6 @@ async def _handle_unary(request: Request, handler, req_class, resp_class):
         elif e.code == "internal":
             status_code = 500
 
-        logger.warning(
-            "[envd] connect error in unary RPC method=%s status=%s code=%s message=%s",
-            rpc_method,
-            status_code,
-            e.code,
-            e.message,
-        )
         return Response(
             content=json.dumps({"code": e.code, "message": e.message}),
             status_code=status_code,
@@ -359,9 +330,7 @@ async def _handle_unary(request: Request, handler, req_class, resp_class):
             headers={"Connect-Protocol-Version": "1"},
         )
     except Exception as e:
-        logger.exception(
-            "[envd] unexpected unary RPC error method=%s error=%s", rpc_method, e
-        )
+        logger.exception(f"Error handling unary RPC: {e}")
         return Response(
             content=json.dumps({"code": "internal", "message": str(e)}),
             status_code=500,

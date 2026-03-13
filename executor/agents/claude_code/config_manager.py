@@ -273,39 +273,6 @@ def _convert_mcp_servers_list_to_dict(mcp_servers: Any) -> Dict[str, Any]:
     return {}
 
 
-def _normalize_workspace_root_cwd(cwd: Any, task_id: int) -> Any:
-    """Normalize legacy workspace-root cwd to task workspace path.
-
-    Historically some requests passed cwd as plain workspace root
-    (e.g. /workspace or /workspace/). Claude Code should run inside the
-    task directory, so this converts workspace root cwd to
-    {workspace_root}/{task_id}.
-
-    Args:
-        cwd: Working directory value from bot config.
-        task_id: Current task ID.
-
-    Returns:
-        Normalized cwd if legacy root form detected, else original value.
-    """
-    if not isinstance(cwd, str) or not cwd:
-        return cwd
-
-    from executor.config import config
-
-    workspace_root = config.get_workspace_root()
-    if not workspace_root:
-        return cwd
-
-    normalized_cwd = os.path.normpath(cwd)
-    normalized_workspace_root = os.path.normpath(workspace_root)
-
-    if normalized_cwd == normalized_workspace_root:
-        return os.path.join(normalized_workspace_root, str(task_id))
-
-    return cwd
-
-
 def extract_claude_options(task_data: ExecutionRequest) -> Dict[str, Any]:
     """Extract Claude Code options from task data.
 
@@ -359,9 +326,6 @@ def extract_claude_options(task_data: ExecutionRequest) -> Dict[str, Any]:
     if bot_config:
         # Create a shallow copy of bot_config to avoid modifying the original
         bot_config = bot_config.copy()
-        bot_config["cwd"] = _normalize_workspace_root_cwd(
-            bot_config.get("cwd"), task_data.task_id
-        )
 
         # Extract Ghost-level MCP servers configuration
         logger.info("[MCP] Extracting Ghost-level MCP servers from bot_config...")

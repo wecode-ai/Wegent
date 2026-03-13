@@ -14,7 +14,7 @@ import os
 import shutil
 import stat
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -295,9 +295,7 @@ class FilesystemServiceHandler:
 
             # Get modified time
             modified_time = Timestamp()
-            modified_time.FromDatetime(
-                datetime.fromtimestamp(stat_info.st_mtime, tz=timezone.utc)
-            )
+            modified_time.FromDatetime(datetime.fromtimestamp(stat_info.st_mtime))
 
             entry = filesystem_pb2.EntryInfo(
                 name=path_obj.name,
