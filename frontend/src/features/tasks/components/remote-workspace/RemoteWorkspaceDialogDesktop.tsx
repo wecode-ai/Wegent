@@ -9,6 +9,13 @@ import Image from 'next/image'
 import { type RemoteWorkspaceTreeEntry } from '@/apis/remoteWorkspace'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 
 import { TFunction } from 'i18next'
@@ -47,20 +54,29 @@ type RemoteWorkspaceDialogDesktopProps = {
   textError: string | null
   searchKeyword: string
   sortOption: SortOption
+  pathInputValue: string
+  pathInputError: string | null
+  isPathEditing: boolean
   canGoParent: boolean
   canDownloadPreview: boolean
+  isPreviewDialogOpen: boolean
   onGoRoot: () => void
   onGoParent: () => void
   onRefresh: () => void
-  onBreadcrumbClick: (path: string) => void
   onToggleDirectoryExpand: (path: string) => void
   onSelectDirectory: (path: string) => void
   onRetryDirectoryLoad: (path: string) => void
   onSearchChange: (value: string) => void
   onSortChange: (value: SortOption) => void
+  onPathEditStart: () => void
+  onPathInputChange: (value: string) => void
+  onPathSubmit: () => void
+  onPathEditCancel: () => void
   onToggleAllEntries: (checked: boolean) => void
   onToggleEntrySelection: (entry: RemoteWorkspaceTreeEntry, checked: boolean) => void
+  onSelectEntry: (entry: RemoteWorkspaceTreeEntry) => void
   onOpenEntry: (entry: RemoteWorkspaceTreeEntry) => void
+  onPreviewDialogOpenChange: (open: boolean) => void
 }
 
 function resolveTypeLabel(
@@ -106,20 +122,29 @@ export function RemoteWorkspaceDialogDesktop({
   textError,
   searchKeyword,
   sortOption,
+  pathInputValue,
+  pathInputError,
+  isPathEditing,
   canGoParent,
   canDownloadPreview,
+  isPreviewDialogOpen,
   onGoRoot,
   onGoParent,
   onRefresh,
-  onBreadcrumbClick,
   onToggleDirectoryExpand,
   onSelectDirectory,
   onRetryDirectoryLoad,
   onSearchChange,
   onSortChange,
+  onPathEditStart,
+  onPathInputChange,
+  onPathSubmit,
+  onPathEditCancel,
   onToggleAllEntries,
   onToggleEntrySelection,
+  onSelectEntry,
   onOpenEntry,
+  onPreviewDialogOpenChange,
 }: RemoteWorkspaceDialogDesktopProps) {
   const allEntriesSelected =
     visibleEntries.length > 0 && visibleEntries.every(entry => selectedPaths.has(entry.path))
@@ -172,6 +197,15 @@ export function RemoteWorkspaceDialogDesktop({
           <Button type="button" variant="outline" size="sm" onClick={onRefresh}>
             {t('remote_workspace.actions.refresh')}
           </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => onPreviewDialogOpenChange(true)}
+            disabled={!previewEntry}
+          >
+            {t('remote_workspace.actions.preview', 'Preview')}
+          </Button>
           {canDownloadPreview ? (
             <Button asChild type="button" variant="outline" size="sm">
               <a href={downloadUrl} download={previewEntry?.name}>
@@ -185,27 +219,56 @@ export function RemoteWorkspaceDialogDesktop({
           )}
         </div>
 
-        <div className="mt-2 flex h-8 flex-wrap items-center gap-2 overflow-hidden text-sm text-text-muted">
-          {breadcrumbs.map((segment, index) => {
-            const isLast = index === breadcrumbs.length - 1
-            return (
+        {isPathEditing ? (
+          <div className="mt-3 space-y-2">
+            <div className="flex items-center gap-2">
+              <label htmlFor="workspace-path" className="shrink-0 text-xs text-text-muted">
+                {t('remote_workspace.status.path')}
+              </label>
+              <Input
+                id="workspace-path"
+                value={pathInputValue}
+                autoFocus
+                onChange={event => onPathInputChange(event.target.value)}
+                onKeyDown={event => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault()
+                    onPathSubmit()
+                    return
+                  }
+                  if (event.key === 'Escape') {
+                    event.preventDefault()
+                    onPathEditCancel()
+                  }
+                }}
+                className="h-9"
+              />
+              <Button type="button" variant="outline" size="sm" onClick={onPathSubmit}>
+                {t('remote_workspace.actions.go', 'Go')}
+              </Button>
+              <Button type="button" variant="outline" size="sm" onClick={onPathEditCancel}>
+                {t('remote_workspace.actions.cancel', 'Cancel')}
+              </Button>
+            </div>
+            {pathInputError && <p className="pl-9 text-xs text-error">{pathInputError}</p>}
+          </div>
+        ) : (
+          <button
+            type="button"
+            aria-label={t('remote_workspace.path.edit', 'Edit path')}
+            className="mt-3 flex h-9 w-full items-center gap-2 overflow-hidden rounded-md border border-border bg-surface px-3 text-left text-sm text-text-muted hover:bg-base"
+            onClick={onPathEditStart}
+          >
+            {breadcrumbs.map((segment, index) => (
               <div className="flex items-center gap-2" key={segment.path}>
-                {isLast ? (
-                  <span className="text-text-primary">{segment.label}</span>
-                ) : (
-                  <button
-                    type="button"
-                    className="rounded px-1 hover:bg-surface hover:text-text-primary"
-                    onClick={() => onBreadcrumbClick(segment.path)}
-                  >
-                    {segment.label}
-                  </button>
-                )}
-                {!isLast && <span>/</span>}
+                <span className={index === breadcrumbs.length - 1 ? 'text-text-primary' : ''}>
+                  {segment.label}
+                </span>
+                {index < breadcrumbs.length - 1 && <span>/</span>}
               </div>
-            )
-          })}
-        </div>
+            ))}
+          </button>
+        )}
       </section>
 
       <section className="grid min-h-0 flex-1 overflow-hidden grid-cols-[220px_minmax(0,1fr)_300px] xl:grid-cols-[240px_minmax(0,1fr)_340px]">
@@ -280,7 +343,13 @@ export function RemoteWorkspaceDialogDesktop({
                     return (
                       <tr
                         key={entry.path}
-                        className={isSelected ? 'bg-primary/10' : 'hover:bg-surface'}
+                        className={
+                          isSelected
+                            ? 'bg-primary/10 cursor-pointer'
+                            : 'hover:bg-surface cursor-pointer'
+                        }
+                        onClick={() => onSelectEntry(entry)}
+                        onDoubleClick={() => onOpenEntry(entry)}
                       >
                         <td className="px-3 py-2 align-middle">
                           <Checkbox
@@ -288,17 +357,15 @@ export function RemoteWorkspaceDialogDesktop({
                             onCheckedChange={checked =>
                               onToggleEntrySelection(entry, Boolean(checked))
                             }
+                            onClick={event => event.stopPropagation()}
+                            onDoubleClick={event => event.stopPropagation()}
                             aria-label={`select-${entry.name}`}
                           />
                         </td>
                         <td className="px-3 py-2 align-middle">
-                          <button
-                            type="button"
-                            className="max-w-[280px] truncate rounded px-1 py-1 text-left text-text-primary hover:bg-base"
-                            onClick={() => onOpenEntry(entry)}
-                          >
+                          <span className="block max-w-[280px] truncate rounded px-1 py-1 text-left text-text-primary">
                             {entry.name}
-                          </button>
+                          </span>
                         </td>
                         <td className="px-3 py-2 align-middle text-text-muted">
                           {resolveTypeLabel(entry, t)}
@@ -359,52 +426,9 @@ export function RemoteWorkspaceDialogDesktop({
               </div>
 
               {!detailEntry.is_directory && (
-                <div className="min-h-[220px] overflow-auto rounded-md border border-border bg-surface p-3">
-                  {previewKind === 'image' && inlineUrl && (
-                    <div className="flex h-full items-center justify-center">
-                      <Image
-                        src={inlineUrl}
-                        alt={detailEntry.name}
-                        width={1200}
-                        height={900}
-                        unoptimized
-                        className="max-h-[280px] max-w-full object-contain"
-                      />
-                    </div>
-                  )}
-
-                  {previewKind === 'pdf' && inlineUrl && (
-                    <iframe
-                      title={detailEntry.name}
-                      src={inlineUrl}
-                      className="h-[320px] w-full rounded-md border border-border"
-                    />
-                  )}
-
-                  {previewKind === 'text' && (
-                    <>
-                      {isTextLoading && (
-                        <p className="text-sm text-text-muted">
-                          {t('remote_workspace.preview.loading')}
-                        </p>
-                      )}
-                      {!isTextLoading && textError && (
-                        <p className="text-sm text-error">{textError}</p>
-                      )}
-                      {!isTextLoading && !textError && (
-                        <pre className="whitespace-pre-wrap break-words text-xs text-text-primary">
-                          {textContent}
-                        </pre>
-                      )}
-                    </>
-                  )}
-
-                  {previewKind === 'unsupported' && (
-                    <p className="text-sm text-text-muted">
-                      {t('remote_workspace.preview.unsupported')}
-                    </p>
-                  )}
-                </div>
+                <p className="text-xs text-text-muted">
+                  {t('remote_workspace.preview.hint', 'Double-click the file name to open preview')}
+                </p>
               )}
             </div>
           )}
@@ -414,9 +438,6 @@ export function RemoteWorkspaceDialogDesktop({
       <footer className="h-8 shrink-0 border-t border-border px-4 py-1.5 text-xs text-text-muted">
         <div className="flex flex-wrap items-center gap-4">
           <span>
-            {t('remote_workspace.status.path')}: {currentPath}
-          </span>
-          <span>
             {selectedCount} {t('remote_workspace.status.selected')}
           </span>
           <span>
@@ -424,6 +445,71 @@ export function RemoteWorkspaceDialogDesktop({
           </span>
         </div>
       </footer>
+
+      <Dialog
+        open={isPreviewDialogOpen && Boolean(previewEntry)}
+        onOpenChange={onPreviewDialogOpenChange}
+      >
+        <DialogContent className="!flex !h-[85vh] !w-[92vw] !max-w-[1200px] !flex-col gap-0 overflow-hidden p-0">
+          <DialogHeader className="shrink-0 border-b border-border px-6 py-4">
+            <DialogTitle>{t('remote_workspace.preview.title', 'Preview')}</DialogTitle>
+            <DialogDescription className="sr-only">
+              {previewEntry?.path || t('remote_workspace.preview.title', 'Preview')}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-surface p-4">
+            {previewEntry && (
+              <p className="mb-3 truncate text-xs text-text-muted">{previewEntry.path}</p>
+            )}
+
+            <div className="min-h-0 flex-1 overflow-auto rounded-md border border-border bg-base p-3">
+              {previewKind === 'image' && inlineUrl && previewEntry && (
+                <div className="flex h-full items-center justify-center">
+                  <Image
+                    src={inlineUrl}
+                    alt={previewEntry.name}
+                    width={1600}
+                    height={1200}
+                    unoptimized
+                    className="max-h-full max-w-full object-contain"
+                  />
+                </div>
+              )}
+
+              {previewKind === 'pdf' && inlineUrl && previewEntry && (
+                <iframe
+                  title={previewEntry.name}
+                  src={inlineUrl}
+                  className="h-full min-h-[520px] w-full rounded-md border border-border"
+                />
+              )}
+
+              {previewKind === 'text' && (
+                <>
+                  {isTextLoading && (
+                    <p className="text-sm text-text-muted">
+                      {t('remote_workspace.preview.loading')}
+                    </p>
+                  )}
+                  {!isTextLoading && textError && <p className="text-sm text-error">{textError}</p>}
+                  {!isTextLoading && !textError && (
+                    <pre className="whitespace-pre-wrap break-words text-xs text-text-primary">
+                      {textContent}
+                    </pre>
+                  )}
+                </>
+              )}
+
+              {previewKind === 'unsupported' && (
+                <p className="text-sm text-text-muted">
+                  {t('remote_workspace.preview.unsupported')}
+                </p>
+              )}
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

@@ -23,6 +23,7 @@ import { type RemoteWorkspaceDirectoryCache } from './RemoteWorkspaceDirectoryTr
 import {
   buildBreadcrumbSegments,
   getParentPath,
+  normalizeWorkspacePathInput,
   resolvePreviewKind,
   sortTreeEntries,
   type SortOption,
@@ -57,6 +58,10 @@ export function RemoteWorkspaceDialog({
   const [selectedPaths, setSelectedPaths] = useState<string[]>([])
   const [searchKeyword, setSearchKeyword] = useState('')
   const [sortOption, setSortOption] = useState<SortOption>('name_asc')
+  const [isPathEditing, setIsPathEditing] = useState(false)
+  const [pathInputValue, setPathInputValue] = useState(rootPath)
+  const [pathInputError, setPathInputError] = useState<string | null>(null)
+  const [isPreviewDialogOpen, setIsPreviewDialogOpen] = useState(false)
 
   const [textContent, setTextContent] = useState('')
   const [isTextLoading, setIsTextLoading] = useState(false)
@@ -106,6 +111,7 @@ export function RemoteWorkspaceDialog({
         }
         if (options.clearSelection) {
           setSelectedPaths([])
+          setIsPreviewDialogOpen(false)
         }
       } catch {
         const fallbackError = t(
@@ -136,7 +142,11 @@ export function RemoteWorkspaceDialog({
     setExpandedDirectoryPaths(new Set([rootPath]))
     setSearchKeyword('')
     setSortOption('name_asc')
+    setIsPathEditing(false)
+    setPathInputValue(rootPath)
+    setPathInputError(null)
     setSelectedPaths([])
+    setIsPreviewDialogOpen(false)
     setTextContent('')
     setTextError(null)
     void loadDirectory(rootPath, {
@@ -211,7 +221,8 @@ export function RemoteWorkspaceDialog({
   }, [previewEntry, taskId])
 
   useEffect(() => {
-    if (!open || previewKind !== 'text' || !inlineUrl) {
+    const shouldLoadTextPreview = isMobile || isPreviewDialogOpen
+    if (!open || !shouldLoadTextPreview || previewKind !== 'text' || !inlineUrl) {
       setTextContent('')
       setTextError(null)
       setIsTextLoading(false)
@@ -248,13 +259,24 @@ export function RemoteWorkspaceDialog({
     return () => {
       isCancelled = true
     }
-  }, [inlineUrl, open, previewKind, t])
+  }, [inlineUrl, isMobile, isPreviewDialogOpen, open, previewKind, t])
+
+  useEffect(() => {
+    if (!previewEntry && isPreviewDialogOpen) {
+      setIsPreviewDialogOpen(false)
+    }
+  }, [isPreviewDialogOpen, previewEntry])
 
   const canGoParent = Boolean(getParentPath(rootPath, currentPath))
   const breadcrumbs = useMemo(
     () => buildBreadcrumbSegments(rootPath, currentPath),
     [currentPath, rootPath]
   )
+
+  useEffect(() => {
+    setPathInputValue(currentPath)
+    setPathInputError(null)
+  }, [currentPath])
 
   const navigateToDirectory = useCallback(
     (targetPath: string) => {
@@ -263,6 +285,9 @@ export function RemoteWorkspaceDialog({
       if (cachedState?.loaded && !cachedState.isLoading) {
         setCurrentPath(targetPath)
         setSelectedPaths([])
+        setIsPreviewDialogOpen(false)
+        setIsPathEditing(false)
+        setPathInputError(null)
         return
       }
 
@@ -275,7 +300,7 @@ export function RemoteWorkspaceDialog({
     [directoryCache, expandPathToDirectory, loadDirectory, t]
   )
 
-  const handleOpenEntry = useCallback(
+  const handleOpenEntryMobile = useCallback(
     (entry: RemoteWorkspaceTreeEntry) => {
       if (entry.is_directory) {
         navigateToDirectory(entry.path)
@@ -286,6 +311,52 @@ export function RemoteWorkspaceDialog({
     },
     [navigateToDirectory]
   )
+
+  const handleSelectEntry = useCallback((entry: RemoteWorkspaceTreeEntry) => {
+    setSelectedPaths([entry.path])
+  }, [])
+
+  const handleOpenEntryDesktop = useCallback(
+    (entry: RemoteWorkspaceTreeEntry) => {
+      if (entry.is_directory) {
+        navigateToDirectory(entry.path)
+        return
+      }
+
+      setSelectedPaths([entry.path])
+      setIsPreviewDialogOpen(true)
+    },
+    [navigateToDirectory]
+  )
+
+  const handlePathSubmit = useCallback(() => {
+    const normalizedPath = normalizeWorkspacePathInput(rootPath, currentPath, pathInputValue)
+    if (!normalizedPath) {
+      setPathInputError(t('remote_workspace.path.invalid', 'Path is outside workspace'))
+      return
+    }
+
+    setPathInputError(null)
+    setIsPathEditing(false)
+
+    if (normalizedPath === currentPath) {
+      return
+    }
+
+    navigateToDirectory(normalizedPath)
+  }, [currentPath, navigateToDirectory, pathInputValue, rootPath, t])
+
+  const handleStartPathEdit = useCallback(() => {
+    setIsPathEditing(true)
+    setPathInputValue(currentPath)
+    setPathInputError(null)
+  }, [currentPath])
+
+  const handleCancelPathEdit = useCallback(() => {
+    setIsPathEditing(false)
+    setPathInputValue(currentPath)
+    setPathInputError(null)
+  }, [currentPath])
 
   const handleToggleEntrySelection = useCallback(
     (entry: RemoteWorkspaceTreeEntry, checked: boolean) => {
@@ -414,7 +485,7 @@ export function RemoteWorkspaceDialog({
             onSearchChange={setSearchKeyword}
             onSortChange={setSortOption}
             onToggleEntrySelection={handleToggleEntrySelection}
-            onOpenEntry={handleOpenEntry}
+            onOpenEntry={handleOpenEntryMobile}
           />
         ) : (
           <RemoteWorkspaceDialogDesktop
@@ -438,8 +509,12 @@ export function RemoteWorkspaceDialog({
             textError={textError}
             searchKeyword={searchKeyword}
             sortOption={sortOption}
+            pathInputValue={pathInputValue}
+            pathInputError={pathInputError}
+            isPathEditing={isPathEditing}
             canGoParent={canGoParent}
             canDownloadPreview={canDownloadPreview}
+            isPreviewDialogOpen={isPreviewDialogOpen}
             onGoRoot={() => navigateToDirectory(rootPath)}
             onGoParent={handleGoParent}
             onRefresh={() =>
@@ -452,15 +527,20 @@ export function RemoteWorkspaceDialog({
                 ),
               })
             }
-            onBreadcrumbClick={navigateToDirectory}
             onToggleDirectoryExpand={handleToggleDirectoryExpand}
             onSelectDirectory={navigateToDirectory}
             onRetryDirectoryLoad={handleRetryDirectoryLoad}
             onSearchChange={setSearchKeyword}
             onSortChange={setSortOption}
+            onPathEditStart={handleStartPathEdit}
+            onPathInputChange={setPathInputValue}
+            onPathSubmit={handlePathSubmit}
+            onPathEditCancel={handleCancelPathEdit}
             onToggleAllEntries={handleToggleAllEntries}
             onToggleEntrySelection={handleToggleEntrySelection}
-            onOpenEntry={handleOpenEntry}
+            onSelectEntry={handleSelectEntry}
+            onOpenEntry={handleOpenEntryDesktop}
+            onPreviewDialogOpenChange={setIsPreviewDialogOpen}
           />
         )}
       </DialogContent>

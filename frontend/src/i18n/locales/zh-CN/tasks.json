@@ -30,7 +30,10 @@
       }
     },
     "actions": {
+      "cancel": "取消",
       "download": "下载",
+      "go": "前往",
+      "preview": "预览",
       "refresh": "刷新"
     },
     "columns": {
@@ -44,6 +47,10 @@
       "path": "路径",
       "selected": "已选中",
       "items": "项"
+    },
+    "path": {
+      "edit": "编辑路径",
+      "invalid": "路径超出工作区范围"
     },
     "types": {
       "folder": "目录",
@@ -81,6 +88,8 @@
       "retry": "重试"
     },
     "preview": {
+      "title": "预览",
+      "hint": "双击文件名可打开预览",
       "empty": "请选择要预览的文件",
       "loading": "正在加载预览...",
       "load_failed": "预览加载失败",

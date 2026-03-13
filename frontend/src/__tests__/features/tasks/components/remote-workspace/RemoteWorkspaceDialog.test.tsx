@@ -30,6 +30,9 @@ const translations: Record<string, string> = {
   'remote_workspace.sort.options.size_desc': 'Size (Large first)',
   'remote_workspace.sort.options.modified_desc': 'Recently modified',
   'remote_workspace.actions.download': 'Download',
+  'remote_workspace.actions.go': 'Go',
+  'remote_workspace.actions.cancel': 'Cancel',
+  'remote_workspace.actions.preview': 'Preview',
   'remote_workspace.actions.refresh': 'Refresh',
   'remote_workspace.columns.select_all': 'Select all files',
   'remote_workspace.columns.name': 'Name',
@@ -39,6 +42,8 @@ const translations: Record<string, string> = {
   'remote_workspace.status.path': 'Path',
   'remote_workspace.status.selected': 'selected',
   'remote_workspace.status.items': 'items',
+  'remote_workspace.path.edit': 'Edit path',
+  'remote_workspace.path.invalid': 'Path is outside workspace',
   'remote_workspace.detail.title': 'Details',
   'remote_workspace.detail.no_file_selected': 'Select one file to view details',
   'remote_workspace.detail.multiple_selected': 'Multiple items selected',
@@ -55,6 +60,7 @@ const translations: Record<string, string> = {
   'remote_workspace.tree.load_children_failed': 'Failed to load child directories',
   'remote_workspace.tree.retry': 'Retry',
   'remote_workspace.preview.empty': 'Select a file to preview',
+  'remote_workspace.preview.title': 'Preview',
   'remote_workspace.preview.loading': 'Loading preview...',
   'remote_workspace.preview.load_failed': 'Failed to load preview',
   'remote_workspace.preview.unsupported':
@@ -111,7 +117,7 @@ describe('RemoteWorkspaceDialog', () => {
     })
   }
 
-  test('renders cloud-drive table layout and file detail actions', async () => {
+  test('single click selects file and shows metadata', async () => {
     mockRootEntries()
     ;(remoteWorkspaceApis.getFileUrl as jest.Mock).mockReturnValue(
       '/api/tasks/1/remote-workspace/file'
@@ -130,18 +136,14 @@ describe('RemoteWorkspaceDialog', () => {
     expect(screen.getByText('Modified')).toBeInTheDocument()
     expect(screen.getByText('Type')).toBeInTheDocument()
 
-    const fileNode = await screen.findByRole('button', { name: /diagram\.png/i })
+    const fileNode = await screen.findByText(/diagram\.png/i)
     const user = userEvent.setup({ pointerEventsCheck: 0 })
     await user.click(fileNode)
 
-    expect(remoteWorkspaceApis.getFileUrl).toHaveBeenCalledWith(
-      1,
-      '/workspace/diagram.png',
-      'inline'
-    )
     expect(screen.getByText('Details')).toBeInTheDocument()
     expect(screen.getByText(/\/workspace\/diagram\.png/i)).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Download' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Preview' })).not.toBeInTheDocument()
   })
 
   test('renders directory tree panel on desktop', async () => {
@@ -220,8 +222,8 @@ describe('RemoteWorkspaceDialog', () => {
     const user = userEvent.setup({ pointerEventsCheck: 0 })
     await user.type(screen.getByPlaceholderText('Search files'), 'diagram')
 
-    expect(screen.getByRole('button', { name: /diagram\.png/i })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /notes\.txt/i })).not.toBeInTheDocument()
+    expect(screen.getByText(/diagram\.png/i)).toBeInTheDocument()
+    expect(screen.queryByText(/notes\.txt/i)).not.toBeInTheDocument()
   })
 
   test('supports sorting by name descending', async () => {
@@ -240,15 +242,13 @@ describe('RemoteWorkspaceDialog', () => {
     await user.selectOptions(screen.getByLabelText('Sort'), 'name_desc')
 
     const fileTable = screen.getByRole('table')
-    const rows = within(fileTable).getAllByRole('button', {
-      name: /(diagram\.png|notes\.txt|src)/i,
-    })
+    const rows = within(fileTable).getAllByText(/^(diagram\.png|notes\.txt|src)$/i)
     expect(rows[0]).toHaveTextContent('src')
     expect(rows[1]).toHaveTextContent('notes.txt')
     expect(rows[2]).toHaveTextContent('diagram.png')
   })
 
-  test('navigates directory from row click', async () => {
+  test('single click does not navigate directory and double click navigates', async () => {
     ;(remoteWorkspaceApis.getTree as jest.Mock)
       .mockResolvedValueOnce({
         path: '/workspace',
@@ -286,13 +286,116 @@ describe('RemoteWorkspaceDialog', () => {
 
     const user = userEvent.setup({ pointerEventsCheck: 0 })
     const fileTable = await screen.findByRole('table')
-    await user.click(await within(fileTable).findByRole('button', { name: /^src$/i }))
+    const directoryNode = await within(fileTable).findByText(/^src$/i)
+    await user.click(directoryNode)
+
+    expect(remoteWorkspaceApis.getTree).toHaveBeenCalledTimes(1)
+
+    await user.dblClick(directoryNode)
 
     await waitFor(() => {
       expect(remoteWorkspaceApis.getTree).toHaveBeenCalledWith(1, '/workspace/src')
     })
-    expect(screen.getByText(/\/workspace\/src/i)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /index\.ts/i })).toBeInTheDocument()
+    expect(screen.getByText(/index\.ts/i)).toBeInTheDocument()
+  })
+
+  test('double click file opens preview dialog', async () => {
+    mockRootEntries()
+    ;(remoteWorkspaceApis.getFileUrl as jest.Mock).mockReturnValue(
+      '/api/tasks/1/remote-workspace/file'
+    )
+
+    render(<RemoteWorkspaceDialog open taskId={1} onOpenChange={jest.fn()} />)
+
+    await waitFor(() => {
+      expect(remoteWorkspaceApis.getTree).toHaveBeenCalledWith(1, '/workspace')
+    })
+
+    const user = userEvent.setup({ pointerEventsCheck: 0 })
+    const fileNode = await screen.findByText(/diagram\.png/i)
+    await user.click(fileNode)
+    await user.dblClick(fileNode)
+
+    const previewDialog = screen.getByRole('dialog', { name: 'Preview' })
+    expect(previewDialog).toBeInTheDocument()
+    expect(within(previewDialog).getAllByText(/\/workspace\/diagram\.png/i).length).toBeGreaterThan(
+      0
+    )
+  })
+
+  test('supports editing address bar and navigating on Enter', async () => {
+    ;(remoteWorkspaceApis.getTree as jest.Mock)
+      .mockResolvedValueOnce({
+        path: '/workspace',
+        entries: [],
+      })
+      .mockResolvedValueOnce({
+        path: '/workspace/src',
+        entries: [
+          {
+            name: 'index.ts',
+            path: '/workspace/src/index.ts',
+            is_directory: false,
+            size: 200,
+            modified_at: null,
+          },
+        ],
+      })
+
+    render(<RemoteWorkspaceDialog open taskId={1} onOpenChange={jest.fn()} />)
+
+    await waitFor(() => {
+      expect(remoteWorkspaceApis.getTree).toHaveBeenCalledWith(1, '/workspace')
+    })
+
+    const user = userEvent.setup({ pointerEventsCheck: 0 })
+    await user.click(screen.getByRole('button', { name: 'Edit path' }))
+    const pathInput = screen.getByRole('textbox', { name: 'Path' })
+    await user.clear(pathInput)
+    await user.type(pathInput, '/workspace/src{enter}')
+
+    await waitFor(() => {
+      expect(remoteWorkspaceApis.getTree).toHaveBeenCalledWith(1, '/workspace/src')
+    })
+    expect(screen.getByText(/index\.ts/i)).toBeInTheDocument()
+  })
+
+  test('exits path edit mode and restores breadcrumb when pressing Escape', async () => {
+    mockRootEntries()
+    render(<RemoteWorkspaceDialog open taskId={1} onOpenChange={jest.fn()} />)
+
+    await waitFor(() => {
+      expect(remoteWorkspaceApis.getTree).toHaveBeenCalledWith(1, '/workspace')
+    })
+
+    const user = userEvent.setup({ pointerEventsCheck: 0 })
+    await user.click(screen.getByRole('button', { name: 'Edit path' }))
+    expect(screen.getByRole('textbox', { name: 'Path' })).toBeInTheDocument()
+
+    await user.keyboard('{Escape}')
+
+    expect(screen.queryByRole('textbox', { name: 'Path' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Edit path' })).toBeInTheDocument()
+  })
+
+  test('shows error and stays in edit mode when path is outside workspace', async () => {
+    mockRootEntries()
+    render(<RemoteWorkspaceDialog open taskId={1} onOpenChange={jest.fn()} />)
+
+    await waitFor(() => {
+      expect(remoteWorkspaceApis.getTree).toHaveBeenCalledWith(1, '/workspace')
+    })
+
+    const user = userEvent.setup({ pointerEventsCheck: 0 })
+    await user.click(screen.getByRole('button', { name: 'Edit path' }))
+
+    const pathInput = screen.getByRole('textbox', { name: 'Path' })
+    await user.clear(pathInput)
+    await user.type(pathInput, '/outside{enter}')
+
+    expect(remoteWorkspaceApis.getTree).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('textbox', { name: 'Path' })).toBeInTheDocument()
+    expect(screen.getByText('Path is outside workspace')).toBeInTheDocument()
   })
 
   test('tracks multi-selection count from row checkboxes', async () => {
@@ -307,7 +410,7 @@ describe('RemoteWorkspaceDialog', () => {
       expect(remoteWorkspaceApis.getTree).toHaveBeenCalled()
     })
 
-    await screen.findByRole('button', { name: /diagram\.png/i })
+    await screen.findByText(/diagram\.png/i)
 
     const user = userEvent.setup({ pointerEventsCheck: 0 })
     await user.click(screen.getByRole('checkbox', { name: 'select-diagram.png' }))

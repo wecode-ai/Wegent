@@ -30,7 +30,10 @@
       }
     },
     "actions": {
+      "cancel": "Cancel",
       "download": "Download",
+      "go": "Go",
+      "preview": "Preview",
       "refresh": "Refresh"
     },
     "columns": {
@@ -44,6 +47,10 @@
       "path": "Path",
       "selected": "selected",
       "items": "items"
+    },
+    "path": {
+      "edit": "Edit path",
+      "invalid": "Path is outside workspace"
     },
     "types": {
       "folder": "Folder",
@@ -81,6 +88,8 @@
       "retry": "Retry"
     },
     "preview": {
+      "title": "Preview",
+      "hint": "Double-click the file name to open preview",
       "empty": "Select a file to preview",
       "loading": "Loading preview...",
       "load_failed": "Failed to load preview",

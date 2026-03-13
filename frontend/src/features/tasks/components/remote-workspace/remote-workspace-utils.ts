@@ -177,3 +177,38 @@ export function buildBreadcrumbSegments(
 
   return segments
 }
+
+export function normalizeWorkspacePathInput(
+  rootPath: string,
+  currentPath: string,
+  rawInput: string
+): string | null {
+  const trimmedInput = rawInput.trim()
+  if (!trimmedInput) {
+    return null
+  }
+
+  const basePath = trimmedInput.startsWith('/') ? trimmedInput : `${currentPath}/${trimmedInput}`
+  const segments = basePath.split('/')
+  const normalizedSegments: string[] = []
+
+  for (const segment of segments) {
+    if (!segment || segment === '.') {
+      continue
+    }
+    if (segment === '..') {
+      normalizedSegments.pop()
+      continue
+    }
+    normalizedSegments.push(segment)
+  }
+
+  const normalizedPath = `/${normalizedSegments.join('/')}`
+  const normalizedRoot = rootPath.replace(/\/+$/, '') || '/'
+
+  if (normalizedPath === normalizedRoot || normalizedPath.startsWith(`${normalizedRoot}/`)) {
+    return normalizedPath
+  }
+
+  return null
+}
