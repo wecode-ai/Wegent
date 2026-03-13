@@ -50,7 +50,19 @@
     "connecting": "Connecting...",
     "disconnected": "Disconnected",
     "reconnecting": "Reconnecting... (attempt {{count}})",
-    "reconnected": "Reconnected"
+    "reconnected": "Reconnected",
+    "connection_error_title": "Connection Failed",
+    "connection_error_config": "Configuration Error: Please check if WebSocket connection address is correct",
+    "connection_error_timeout": "Connection Timeout: Please check your network connection or if backend service is running",
+    "connection_error_refused": "Connection Refused: Please confirm backend service is started",
+    "connection_error_generic": "Connection Failed: Please check your network connection or refresh the page",
+    "troubleshoot_title": "Troubleshooting",
+    "troubleshoot_check_backend": "1. Check if backend is running: Visit {{healthUrl}}",
+    "troubleshoot_check_socket_url": "2. Check WebSocket connection address configuration ({{socketUrl}})",
+    "troubleshoot_check_network": "3. Check network connection: Confirm firewall is not blocking WebSocket",
+    "troubleshoot_restart_services": "4. Restart services",
+    "show_details": "Show Details",
+    "hide_details": "Hide Details"
   },
   "messages": {
     "assistant": "AI Assistant",

@@ -70,6 +70,8 @@ interface SocketContextType {
   connectionError: Error | null
   /** Reconnect attempt count */
   reconnectAttempts: number
+  /** WebSocket connection URL */
+  socketUrl: string
   /** Connect to Socket.IO server */
   connect: (token: string) => void
   /** Disconnect from server */
@@ -184,6 +186,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
   const [isConnected, setIsConnected] = useState(false)
   const [connectionError, setConnectionError] = useState<Error | null>(null)
   const [reconnectAttempts, setReconnectAttempts] = useState(0)
+  const [socketUrl, setSocketUrl] = useState('')
 
   // Track current joined tasks
   const joinedTasksRef = useRef<Set<number>>(new Set())
@@ -364,6 +367,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       // This allows RUNTIME_SOCKET_DIRECT_URL to be changed without rebuilding
       fetchRuntimeConfig().then(config => {
         const socketUrl = config.socketDirectUrl || getSocketUrl()
+        setSocketUrl(socketUrl)
         createSocketConnection(token, socketUrl)
       })
     },
@@ -850,6 +854,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         isConnected,
         connectionError,
         reconnectAttempts,
+        socketUrl,
         connect,
         disconnect,
         joinTask,
