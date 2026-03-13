@@ -192,24 +192,52 @@ class TaskQueryMixin:
         DELETE status tasks are filtered in application layer.
         Includes tasks owned by user AND tasks user is a member of (group chats).
         """
-        # Step 1: Get paginated task IDs and total count
-        task_ids, total = get_accessible_task_ids_and_total(
-            db, user_id=user_id, skip=skip, limit=limit, extra_limit=50
+        # Step 1: Get candidate task IDs with expanded limit to accommodate filtering
+        # We fetch more IDs than needed because some will be filtered out
+        candidate_limit = limit + 200  # Fetch extra to accommodate filtering
+        task_ids, _ = get_accessible_task_ids_and_total(
+            db, user_id=user_id, skip=skip, limit=candidate_limit, extra_limit=0
         )
 
         if not task_ids:
-            return [], total
+            return [], 0
 
         # Step 2: Load task data for the IDs
         tasks = load_tasks_by_ids(db, task_ids)
 
-        # Step 3: Filter and paginate
-        paginated_tasks = _filter_and_paginate_tasks(tasks, task_ids, skip, limit)
+        # Step 3: Filter tasks and get filtered ID list
+        filtered_tasks = []
+        for task in tasks:
+            try:
+                task_crd = Task.model_validate(task.json)
+            except ValidationError:
+                continue
+
+            status = task_crd.status.status if task_crd.status else "PENDING"
+            if status == "DELETE":
+                continue
+            if is_background_task(task_crd):
+                continue
+            if is_non_interacted_subscription_task(task_crd):
+                continue
+
+            filtered_tasks.append(task)
+
+        # Step 4: Compute total from filtered results
+        total = len(filtered_tasks)
+
+        # Step 5: Apply pagination (skip + limit) to filtered tasks
+        # Restore order from original task_ids
+        id_to_task = {t.id: t for t in filtered_tasks}
+        ordered_filtered_tasks = restore_task_order(
+            task_ids, id_to_task, limit=len(task_ids)
+        )
+        paginated_tasks = ordered_filtered_tasks[skip : skip + limit]
 
         if not paginated_tasks:
             return [], total
 
-        # Step 4: Build result with related data
+        # Step 6: Build result with related data
         related_data_batch = get_tasks_related_data_batch(db, paginated_tasks, user_id)
         result = []
         for task in paginated_tasks:
@@ -229,19 +257,31 @@ class TaskQueryMixin:
 
         Includes tasks owned by user and tasks where user is an approved member.
         """
-        task_ids, total = get_accessible_task_ids_and_total(
-            db, user_id=user_id, skip=skip, limit=limit, extra_limit=50
+        # Step 1: Get candidate task IDs with expanded limit to accommodate filtering
+        # We fetch more IDs than needed because some will be filtered out
+        candidate_limit = limit + 200  # Fetch extra to accommodate filtering
+        task_ids, _ = get_accessible_task_ids_and_total(
+            db, user_id=user_id, skip=skip, limit=candidate_limit, extra_limit=0
         )
         if not task_ids:
-            return [], total
+            return [], 0
 
+        # Step 2: Load task data for the IDs
         tasks = load_tasks_by_ids(db, task_ids)
+
+        # Step 3: Filter tasks for display (DELETE, background, non-interacted subscriptions)
         id_to_task = filter_tasks_for_display(tasks)
-        filtered_tasks = restore_task_order(task_ids, id_to_task, limit)
-        if not filtered_tasks:
+
+        # Step 4: Compute total from filtered results
+        total = len(id_to_task)
+
+        # Step 5: Restore order and apply pagination (skip + limit)
+        filtered_tasks = restore_task_order(task_ids, id_to_task, limit=len(task_ids))
+        paginated_tasks = filtered_tasks[skip : skip + limit]
+        if not paginated_tasks:
             return [], total
 
-        result = build_lite_task_list(db, filtered_tasks, user_id)
+        result = build_lite_task_list(db, paginated_tasks, user_id)
         return result, total
 
     def get_user_group_tasks_lite(

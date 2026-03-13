@@ -444,6 +444,12 @@ def _migrate_kb_bindings() -> None:
 
             # Extract linked_group for namespace_id resolution
             spec = task_json.get("spec", {})
+            # Ensure spec is a dict before accessing keys
+            if not isinstance(spec, dict):
+                logger.warning(
+                    f"Skipping task {task_id}: spec is not a dict, got {type(spec).__name__}"
+                )
+                continue
             linked_group_name = spec.get("linked_group")
             linked_group_id = 0
 
