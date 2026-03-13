@@ -19,7 +19,13 @@ export default {
     extend: {
       fontFamily: {
         sans: [
+          '"Google Sans Flex"',
+          '"Google Sans"',
+          '"Noto Sans SC"',
+          '"Inter"',
           '"PingFang SC"',
+          '"Noto Sans CJK SC"',
+          '"Microsoft YaHei"',
           '-apple-system',
           'BlinkMacSystemFont',
           '"Segoe UI"',

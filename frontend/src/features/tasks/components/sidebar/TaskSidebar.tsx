@@ -307,12 +307,14 @@ export default function TaskSidebar({
             <Button
               variant="ghost"
               onClick={handleNewAgentClick}
-              className="w-full justify-between px-3 h-9 text-sm text-text-primary hover:bg-hover rounded-md group"
+              className="w-full justify-between px-3 h-9 text-sm font-medium text-text-primary hover:bg-hover rounded-md group"
               size="sm"
             >
               <span className="flex items-center">
                 <Plus className="h-4 w-4 flex-shrink-0" />
-                <span className="ml-1.5">{t('common:tasks.new_conversation')}</span>
+                <span className="sidebar-nav-label ml-1.5">
+                  {t('common:tasks.new_conversation')}
+                </span>
               </span>
               <span className="text-text-muted opacity-0 group-hover:opacity-100 transition-opacity">
                 ›
@@ -329,7 +331,7 @@ export default function TaskSidebar({
                 <Button
                   variant="ghost"
                   onClick={() => handleNavigationClick(btn.path, btn.isActive)}
-                  className={`w-full justify-start px-3 h-9 text-sm rounded-md transition-colors ${
+                  className={`w-full justify-start px-3 h-9 text-sm font-medium rounded-md transition-colors ${
                     btn.isActive
                       ? 'bg-primary/10 text-primary font-medium'
                       : 'text-text-primary hover:bg-hover'
@@ -340,7 +342,7 @@ export default function TaskSidebar({
                     <btn.icon
                       className={`h-4 w-4 flex-shrink-0 ${btn.isActive ? 'text-primary' : ''}`}
                     />
-                    <span className="ml-1.5">{btn.label}</span>
+                    <span className="sidebar-nav-label ml-1.5">{btn.label}</span>
                   </span>
                 </Button>
                 {/* Show "New Task" button on hover when in code mode */}
@@ -541,7 +543,7 @@ export default function TaskSidebar({
     <>
       {/* Desktop Sidebar - Hidden on mobile, width controlled by parent ResizableSidebar */}
       <div
-        className="hidden lg:flex lg:flex-col lg:bg-surface w-full h-full"
+        className="task-sidebar-typography hidden lg:flex lg:flex-col lg:bg-surface w-full h-full"
         data-tour="task-sidebar"
       >
         {sidebarContent}
@@ -555,7 +557,7 @@ export default function TaskSidebar({
         hideTitle={true}
         data-tour="task-sidebar"
       >
-        {sidebarContent}
+        <div className="task-sidebar-typography h-full flex flex-col">{sidebarContent}</div>
       </MobileSidebar>
 
       {/* History Manage Dialog */}

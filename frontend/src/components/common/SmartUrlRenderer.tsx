@@ -269,7 +269,11 @@ export function SmartTextLine({
 }: SmartTextLineProps) {
   // If empty line, return non-breaking space to preserve line height
   if (!text) {
-    return <div className={`text-sm break-all min-h-[1.25em] ${className}`}>{'\u00A0'}</div>
+    return (
+      <div className={`smart-text-line text-sm break-all min-h-[1.25em] ${className}`}>
+        {'\u00A0'}
+      </div>
+    )
   }
 
   // Detect URLs in the text
@@ -277,7 +281,9 @@ export function SmartTextLine({
 
   // If no URLs found, render as plain text
   if (detectedUrls.length === 0) {
-    return <div className={`text-sm break-all min-h-[1.25em] ${className}`}>{text}</div>
+    return (
+      <div className={`smart-text-line text-sm break-all min-h-[1.25em] ${className}`}>{text}</div>
+    )
   }
 
   // Build segments: alternating between plain text and URL components
@@ -330,5 +336,9 @@ export function SmartTextLine({
     }
   }
 
-  return <div className={`text-sm break-all min-h-[1.25em] ${className}`}>{segments}</div>
+  return (
+    <div className={`smart-text-line text-sm break-all min-h-[1.25em] ${className}`}>
+      {segments}
+    </div>
+  )
 }

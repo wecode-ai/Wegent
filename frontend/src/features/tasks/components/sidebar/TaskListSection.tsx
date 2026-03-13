@@ -646,7 +646,7 @@ export default function TaskListSection({
                           }}
                         />
                       ) : (
-                        <span className="flex-1 min-w-0 text-sm text-text-primary leading-tight truncate">
+                        <span className="sidebar-conversation-title flex-1 min-w-0 text-sm font-medium text-text-primary leading-5 truncate">
                           {localTitles[task.id] ?? task.title}
                         </span>
                       )}

@@ -146,7 +146,7 @@ export function ChatPageDesktop() {
   }
 
   return (
-    <div className="flex smart-h-screen bg-base text-text-primary box-border">
+    <div className="chat-typography flex smart-h-screen bg-base text-text-primary box-border">
       {/* Collapsed sidebar floating buttons */}
       {isCollapsed && (
         <CollapsedSidebarButtons onExpand={handleToggleCollapsed} onNewTask={handleNewTask} />

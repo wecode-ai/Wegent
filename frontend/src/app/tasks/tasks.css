@@ -33,3 +33,42 @@
 .animate-slide {
   animation: slide-horizontal 1.5s ease-in-out infinite;
 }
+
+.chat-typography .wmde-markdown,
+.chat-typography .markdown-content,
+.chat-typography .enhanced-markdown,
+.chat-typography .smart-text-line,
+.chat-typography .chat-message-prompt {
+  font-family:
+    'Google Sans Flex', 'Google Sans', 'Noto Sans SC', 'Inter', 'PingFang SC', 'Noto Sans CJK SC',
+    'Microsoft YaHei', 'Helvetica Neue', sans-serif;
+  font-size: 16px;
+  font-weight: 400;
+  line-height: 28px;
+  letter-spacing: normal;
+}
+
+.chat-typography .smart-text-line {
+  min-height: 28px;
+}
+
+.chat-typography .task-sidebar-typography,
+.chat-typography .task-sidebar-typography :not(.font-mono):not(code):not(pre) {
+  font-family:
+    'Google Sans Flex', 'Google Sans', 'Noto Sans SC', 'Inter', 'PingFang SC', 'Noto Sans CJK SC',
+    'Microsoft YaHei', 'Helvetica Neue', sans-serif !important;
+}
+
+.chat-typography .task-sidebar-typography .sidebar-conversation-title,
+.chat-typography .task-sidebar-typography .sidebar-nav-label {
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 500;
+  letter-spacing: normal;
+}
+
+.chat-typography .task-sidebar-typography .text-text-primary,
+.chat-typography .task-sidebar-typography .sidebar-conversation-title,
+.chat-typography .task-sidebar-typography .sidebar-nav-label {
+  color: rgb(68 71 70) !important;
+}
