@@ -273,8 +273,6 @@ def _convert_mcp_servers_list_to_dict(mcp_servers: Any) -> Dict[str, Any]:
     return {}
 
 
-
-
 def extract_claude_options(task_data: ExecutionRequest) -> Dict[str, Any]:
     """Extract Claude Code options from task data.
 
