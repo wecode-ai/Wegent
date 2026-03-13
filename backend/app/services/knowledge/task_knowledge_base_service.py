@@ -587,12 +587,67 @@ class TaskKnowledgeBaseService:
             db.add(binding)
             db.flush()
             nested.commit()
-        except IntegrityError:
-            # Binding already exists, rollback only the nested transaction
+        except IntegrityError as e:
+            # Rollback the nested transaction first
             nested.rollback()
-            logger.info(
-                f"[_create_kb_binding] Binding already exists for task {task.id} and KB {kb_id}"
-            )
+
+            # Check if this is a unique constraint violation (duplicate binding)
+            # Only treat unique_violation as no-op; re-raise other integrity errors
+            if self._is_unique_violation_error(e):
+                logger.info(
+                    f"[_create_kb_binding] Binding already exists for task {task.id} and KB {kb_id}"
+                )
+            else:
+                # Re-raise for other constraint violations (FK violations, etc.)
+                # so the outer transaction can roll back and surface the real error
+                raise
+
+    def _is_unique_violation_error(self, error: Exception) -> bool:
+        """Check if an IntegrityError is a unique constraint violation.
+
+        This method checks for unique constraint violations across different
+        database backends (PostgreSQL, MySQL, SQLite).
+
+        Args:
+            error: The IntegrityError exception to check
+
+        Returns:
+            True if the error is a unique constraint violation, False otherwise
+        """
+        # Get the original DBAPI error if available
+        orig = getattr(error, "orig", None)
+        if orig is None:
+            return False
+
+        # Check for PostgreSQL unique_violation (SQLSTATE 23505)
+        if hasattr(orig, "pgcode") and orig.pgcode == "23505":
+            return True
+
+        # Check for MySQL duplicate entry error (error code 1062)
+        if hasattr(orig, "args") and len(orig.args) >= 1:
+            # MySQL error code is typically in args[0]
+            error_code = orig.args[0]
+            if error_code == 1062:
+                return True
+
+        # Check for SQLite unique constraint violation
+        # SQLite error code 2067 = SQLITE_CONSTRAINT_UNIQUE
+        # or check error message for "UNIQUE constraint failed"
+        if hasattr(orig, "sqlite_errorcode") and orig.sqlite_errorcode == 2067:
+            return True
+
+        # Fallback: check error message for unique constraint indicators
+        error_str = str(error).lower()
+        unique_indicators = [
+            "unique constraint",
+            "unique violation",
+            "duplicate entry",
+            "already exists",
+        ]
+        if any(indicator in error_str for indicator in unique_indicators):
+            return True
+
+        return False
 
     def get_bound_knowledge_bases(
         self, db: Session, task_id: int, user_id: int
