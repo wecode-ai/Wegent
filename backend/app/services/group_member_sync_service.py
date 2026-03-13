@@ -55,7 +55,7 @@ class GroupMemberSyncService:
         # Get namespace ID
         namespace = (
             db.query(Namespace)
-            .filter(Namespace.name == group_name, Namespace.is_active == True)
+            .filter(Namespace.name == group_name, Namespace.is_active.is_(True))
             .first()
         )
 
@@ -81,8 +81,8 @@ class GroupMemberSyncService:
             .filter(
                 TaskKnowledgeBaseBinding.linked_group_id == namespace.id,
                 TaskResource.kind == "Task",
-                TaskResource.is_active == True,
-                TaskResource.is_group_chat == True,
+                TaskResource.is_active.is_(True),
+                TaskResource.is_group_chat.is_(True),
             )
             .distinct()
             .all()
@@ -205,7 +205,7 @@ class GroupMemberSyncService:
         # Get namespace ID
         namespace = (
             db.query(Namespace)
-            .filter(Namespace.name == group_name, Namespace.is_active == True)
+            .filter(Namespace.name == group_name, Namespace.is_active.is_(True))
             .first()
         )
 
@@ -224,8 +224,8 @@ class GroupMemberSyncService:
             .filter(
                 TaskKnowledgeBaseBinding.linked_group_id == namespace.id,
                 TaskResource.kind == "Task",
-                TaskResource.is_active == True,
-                TaskResource.is_group_chat == True,
+                TaskResource.is_active.is_(True),
+                TaskResource.is_group_chat.is_(True),
             )
             .distinct()
             .all()
@@ -307,7 +307,7 @@ class GroupMemberSyncService:
         # Get namespace ID
         namespace = (
             db.query(Namespace)
-            .filter(Namespace.name == group_name, Namespace.is_active == True)
+            .filter(Namespace.name == group_name, Namespace.is_active.is_(True))
             .first()
         )
 
@@ -326,8 +326,8 @@ class GroupMemberSyncService:
             .filter(
                 TaskKnowledgeBaseBinding.linked_group_id == namespace.id,
                 TaskResource.kind == "Task",
-                TaskResource.is_active == True,
-                TaskResource.is_group_chat == True,
+                TaskResource.is_active.is_(True),
+                TaskResource.is_group_chat.is_(True),
             )
             .distinct()
             .all()

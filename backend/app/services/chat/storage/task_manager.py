@@ -253,10 +253,20 @@ def _validate_linked_group(db: Session, user_id: int, linked_group: str) -> bool
         return False
 
     # Check if user is a member of the group
+    from app.schemas.namespace import GroupRole
+
     role = get_effective_role_in_group(db, user_id, linked_group)
     if role is None:
         logger.warning(
             f"[_validate_linked_group] User {user_id} is not a member of group '{linked_group}'"
+        )
+        return False
+
+    # Explicitly reject RestrictedObserver role
+    if role == GroupRole.RestrictedObserver.value:
+        logger.warning(
+            f"[_validate_linked_group] User {user_id} has RestrictedObserver role in group '{linked_group}', "
+            f"denying linked group chat creation/linking"
         )
         return False
 
@@ -546,18 +556,26 @@ def create_new_task(
         )
         if namespace:
             # Check if user is authorized to link to this group
+            from app.schemas.namespace import GroupRole
             from app.services.group_permission import get_effective_role_in_group
 
             role = get_effective_role_in_group(db, user.id, params.linked_group)
-            if role is not None:
+            # Explicitly reject RestrictedObserver role, only allow other valid roles
+            if role is not None and role != GroupRole.RestrictedObserver.value:
                 linked_group_id = namespace.id
                 logger.info(
                     f"[create_new_task] Found linked_group_id={linked_group_id} for linked_group='{params.linked_group}'"
                 )
             else:
-                logger.warning(
-                    f"[create_new_task] User {user.id} is not authorized to link to group '{params.linked_group}', omitting linked_group"
-                )
+                if role == GroupRole.RestrictedObserver.value:
+                    logger.warning(
+                        f"[create_new_task] User {user.id} has RestrictedObserver role in group '{params.linked_group}', "
+                        f"denying linked group chat creation"
+                    )
+                else:
+                    logger.warning(
+                        f"[create_new_task] User {user.id} is not authorized to link to group '{params.linked_group}', omitting linked_group"
+                    )
         else:
             logger.warning(
                 f"[create_new_task] Could not find namespace for linked_group='{params.linked_group}'"

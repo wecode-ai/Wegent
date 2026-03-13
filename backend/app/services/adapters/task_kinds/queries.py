@@ -100,7 +100,6 @@ def is_group_task_or_linked(task_id: int, task_json: Any) -> bool:
             return False
 
         spec = task_json.get("spec", {})
-        spec = task_json.get("spec", {})
 
         # Check is_group_chat flag
         if spec.get("is_group_chat") is True:

@@ -357,7 +357,8 @@ class ModelAggregationService:
             )
 
         result: List[UnifiedModel] = []
-        seen_names: Dict[str, ModelType] = {}  # Track names to handle duplicates
+        # Track (type, namespace, name) tuples to handle duplicates across namespaces
+        seen_keys: Dict[tuple, ModelType] = {}
 
         # Determine which namespaces to query based on scope
         namespaces_to_query = []
@@ -426,7 +427,8 @@ class ModelAggregationService:
                 ):
                     continue
 
-                if resource.name in seen_names:
+                key = (ModelType.USER, resource.namespace, resource.name)
+                if key in seen_keys:
                     continue
 
                 unified = UnifiedModel(
@@ -442,7 +444,7 @@ class ModelAggregationService:
                     is_advanced=info.get("is_advanced", False),
                 )
                 result.append(unified)
-                seen_names[resource.name] = ModelType.USER
+                seen_keys[key] = ModelType.USER
                 user_models_count += 1
 
         # 1.2 Batch query all group models in a single query (optimization)
@@ -480,7 +482,8 @@ class ModelAggregationService:
                 ):
                     continue
 
-                if resource.name in seen_names:
+                key = (ModelType.GROUP, resource.namespace, resource.name)
+                if key in seen_keys:
                     continue
 
                 unified = UnifiedModel(
@@ -496,7 +499,7 @@ class ModelAggregationService:
                     is_advanced=info.get("is_advanced", False),
                 )
                 result.append(unified)
-                seen_names[resource.name] = ModelType.GROUP
+                seen_keys[key] = ModelType.GROUP
                 user_models_count += 1
 
         logger.info(
@@ -530,8 +533,9 @@ class ModelAggregationService:
                 ):
                     continue
 
-                # Deduplicate by name - skip if already added from group
-                if resource.name in seen_names:
+                # Deduplicate by (type, namespace, name) - skip if already added from group
+                key = (ModelType.USER, resource.namespace, resource.name)
+                if key in seen_keys:
                     continue
 
                 unified = UnifiedModel(
@@ -547,7 +551,7 @@ class ModelAggregationService:
                     is_advanced=info.get("is_advanced", False),
                 )
                 result.append(unified)
-                seen_names[resource.name] = ModelType.USER
+                seen_keys[key] = ModelType.USER
         logger.info(
             f"[list_available_models] personal fallback processing took {time.time() - t_fallback:.3f}s"
         )
@@ -603,14 +607,15 @@ class ModelAggregationService:
             # If name already exists as user model, we still add public model
             # The type field will differentiate them
             model_name = model_dict.get("name", "")
-            if model_name in seen_names:
+            public_key = (ModelType.PUBLIC, "default", model_name)
+            if public_key in seen_keys:
                 logger.debug(
                     f"Model name '{model_name}' exists in both user and public models"
                 )
 
             result.append(unified)
-            if model_name not in seen_names:
-                seen_names[model_name] = ModelType.PUBLIC
+            if public_key not in seen_keys:
+                seen_keys[public_key] = ModelType.PUBLIC
         logger.info(
             f"[list_available_models] public models processing took {time.time() - t_public_process:.3f}s"
         )

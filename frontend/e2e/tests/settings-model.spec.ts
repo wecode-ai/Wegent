@@ -92,32 +92,62 @@ test.describe('Settings - Model Management', () => {
     await apiKeyInput.fill('test-api-key-for-e2e')
 
     // Fill model ID (required field) - select from dropdown or enter custom
-    // First try to select a model from the dropdown
     const modelIdDropdown = page.locator('button[role="combobox"]').first()
-    if (await modelIdDropdown.isVisible({ timeout: 2000 }).catch(() => false)) {
+    let dropdownUsed = false
+
+    try {
+      // Wait for dropdown to be visible with timeout
+      await modelIdDropdown.waitFor({ state: 'visible', timeout: 2000 })
       await modelIdDropdown.click()
-      // Wait for dropdown to open and select first option
-      await page.waitForTimeout(500)
+
+      // Wait for first option to be visible with timeout
       const firstOption = page.locator('[role="option"]').first()
-      if (await firstOption.isVisible({ timeout: 2000 }).catch(() => false)) {
-        await firstOption.click()
-      } else {
-        // If no options, close dropdown and enter custom model ID
-        await page.keyboard.press('Escape')
-        const customModelInput = page.locator('input[placeholder*="custom" i]').first()
-        if (await customModelInput.isVisible({ timeout: 2000 }).catch(() => false)) {
-          await customModelInput.fill('gpt-4o')
-        }
+      await firstOption.waitFor({ state: 'visible', timeout: 2000 })
+      await firstOption.click()
+      dropdownUsed = true
+    } catch {
+      // Dropdown not available or no options - use custom input fallback
+      // Press Escape to close dropdown if it was opened
+      await page.keyboard.press('Escape')
+    }
+
+    // If dropdown wasn't used, try custom input as fallback
+    if (!dropdownUsed) {
+      const customModelInput = page.locator('input[placeholder*="custom" i]').first()
+      try {
+        await customModelInput.waitFor({ state: 'visible', timeout: 2000 })
+        await customModelInput.fill('gpt-4o')
+      } catch {
+        // Neither dropdown nor custom input available - may be a different form structure
+        // Continue and let the submit fail if model ID is truly required
       }
     }
 
-    // Submit form
+    // Submit form and wait for response
     const submitButton = page.locator('button:has-text("Save"), button:has-text("保存")').first()
     await expect(submitButton).toBeVisible({ timeout: 5000 })
+
+    // Wait for the create model API response
+    const createResponsePromise = page.waitForResponse(
+      response =>
+        response.url().includes('/api/v1/kinds/Model') &&
+        response.request().method() === 'POST' &&
+        response.status() >= 200 &&
+        response.status() < 300
+    )
+
     await submitButton.click()
 
-    // Wait for dialog to close (success) or validation error
-    await page.waitForTimeout(2000)
+    // Wait for the API response to complete
+    await createResponsePromise
+
+    // Wait for dialog to close (success indicator)
+    const dialog = page.locator('[role="dialog"]').first()
+    await dialog.waitFor({ state: 'hidden', timeout: 10000 })
+
+    // Verify the new model appears in the list
+    const newModelCard = page.locator(`text=${modelName}`).first()
+    await expect(newModelCard).toBeVisible({ timeout: 10000 })
   })
 
   test('should show test connection button for user models', async ({ page }) => {

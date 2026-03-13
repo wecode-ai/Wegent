@@ -22,6 +22,7 @@ from app.models.resource_member import EPOCH_TIME, MemberStatus, ResourceMember
 from app.models.share_link import PermissionLevel, ResourceType
 from app.models.task import TaskResource
 from app.models.user import User
+from app.schemas.namespace import GroupRole
 from app.schemas.task_member import MemberStatus as SchemaMemberStatus
 from app.schemas.task_member import (
     TaskMemberListResponse,
@@ -278,7 +279,7 @@ class TaskMemberService:
             logger.info(
                 f"[add_member] Existing member found: id={existing.id}, status={existing.status}"
             )
-            if existing.status == MemberStatus.APPROVED:
+            if existing.status == MemberStatus.APPROVED.value:
                 logger.warning(
                     f"[add_member] User {user_id} is already a member of task {task_id}"
                 )
@@ -287,7 +288,7 @@ class TaskMemberService:
             logger.info(
                 f"[add_member] Reactivating member: id={existing.id}, old_status={existing.status}"
             )
-            existing.status = MemberStatus.APPROVED
+            existing.status = MemberStatus.APPROVED.value
             existing.invited_by_user_id = invited_by
             existing.requested_at = datetime.utcnow()
             existing.updated_at = datetime.utcnow()
@@ -313,7 +314,7 @@ class TaskMemberService:
             resource_id=task_id,
             user_id=user_id,
             permission_level=PermissionLevel.MANAGE,  # Group chat members get manage permission
-            status=MemberStatus.APPROVED,
+            status=MemberStatus.APPROVED.value,
             invited_by_user_id=invited_by,
             share_link_id=0,
             reviewed_by_user_id=0,
@@ -360,7 +361,7 @@ class TaskMemberService:
         if not member:
             raise HTTPException(status_code=404, detail="Member not found")
 
-        member.status = MemberStatus.REJECTED
+        member.status = MemberStatus.REJECTED.value
         member.reviewed_by_user_id = removed_by
         member.reviewed_at = datetime.utcnow()
         member.updated_at = datetime.utcnow()
@@ -511,7 +512,7 @@ class TaskMemberService:
 
     def get_linked_group_role(
         self, db: Session, task_id: int, user_id: int
-    ) -> Optional[str]:
+    ) -> Optional[GroupRole]:
         """Get the user's role in the linked group.
 
         Args:
@@ -550,10 +551,8 @@ class TaskMemberService:
         Returns:
             True if user is a member of the linked group (and not RestrictedObserver)
         """
-        from app.schemas.namespace import GroupRole
-
         role = self.get_linked_group_role(db, task_id, user_id)
-        # Normalize comparison: role is GroupRole enum, compare with enum
+        # role is GroupRole enum, compare with enum
         result = role is not None and role != GroupRole.RestrictedObserver
         logger.info(
             f"[is_member_via_linked_group] task_id={task_id}, user_id={user_id}, role={role}, result={result}"
