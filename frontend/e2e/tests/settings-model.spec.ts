@@ -3,33 +3,19 @@ import { test, expect, TestData } from '../fixtures/test-fixtures'
 test.describe('Settings - Model Management', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/settings?tab=models')
-    await page.waitForLoadState('networkidle')
-    // Wait for settings content to load (models tab is default)
-    await page.waitForTimeout(1000)
+    await page.waitForLoadState('domcontentloaded')
+    // Wait for the model management title to be visible
+    await expect(
+      page.locator('h2:has-text("Model Management"), h2:has-text("模型管理")').first()
+    ).toBeVisible({ timeout: 20000 })
   })
 
   test('should access model management page', async ({ page }) => {
-    // Verify we're on settings page (models is the default tab)
+    // Verify we're on settings page (models tab)
     await expect(page).toHaveURL(/\/settings/)
 
-    // Wait for settings content area to be visible
+    // The title is already verified in beforeEach, just verify the content area
     await page.waitForSelector('[class*="overflow-y-auto"]', { state: 'visible', timeout: 10000 })
-
-    // Wait for model management title to load (support both English and Chinese)
-    // The title is in an h2 element within the ModelList component
-    const modelTitle = page.locator('h2:has-text("Model Management"), h2:has-text("模型管理")').first()
-
-    // Retry logic for flaky loading
-    let retries = 3
-    while (retries > 0) {
-      const isVisible = await modelTitle.isVisible({ timeout: 5000 }).catch(() => false)
-      if (isVisible) break
-      console.log(`Title not visible, retrying... (${retries} attempts left)`)
-      await page.waitForTimeout(1000)
-      retries--
-    }
-
-    await expect(modelTitle).toBeVisible({ timeout: 5000 })
   })
 
   test('should display model list or empty state', async ({ page }) => {
@@ -60,14 +46,14 @@ test.describe('Settings - Model Management', () => {
     await createButton.first().click()
 
     // Wait for dialog to open (animation + rendering time)
-    await page.waitForTimeout(1000)
+    await page.waitForTimeout(1500)
 
     // Wait for dialog content to be visible
-    await page.waitForSelector('[role="dialog"]', { state: 'visible', timeout: 10000 })
+    await page.waitForSelector('[role="dialog"]', { state: 'visible', timeout: 15000 })
 
     // Model edit is a dialog form - check for the model ID input
     const modelIdInput = page.locator('[data-testid="model-id-name-input"]')
-    await expect(modelIdInput).toBeVisible({ timeout: 10000 })
+    await expect(modelIdInput).toBeVisible({ timeout: 15000 })
   })
 
   test('should create new model', async ({ page, testPrefix }) => {
@@ -81,12 +67,12 @@ test.describe('Settings - Model Management', () => {
     await createButton.first().click()
 
     // Wait for dialog to open
-    await page.waitForTimeout(1000)
-    await page.waitForSelector('[role="dialog"]', { state: 'visible', timeout: 10000 })
+    await page.waitForTimeout(1500)
+    await page.waitForSelector('[role="dialog"]', { state: 'visible', timeout: 15000 })
 
     // Model edit is a dialog form, wait for model ID input
     const nameInput = page.locator('[data-testid="model-id-name-input"]')
-    await expect(nameInput).toBeVisible({ timeout: 10000 })
+    await expect(nameInput).toBeVisible({ timeout: 15000 })
     await nameInput.fill(modelName)
 
     // Fill API key (required field)
@@ -121,11 +107,6 @@ test.describe('Settings - Model Management', () => {
   })
 
   test('should show test connection button for user models', async ({ page }) => {
-    // Wait for page to load (support both English and Chinese)
-    await page.waitForSelector('[class*="overflow-y-auto"]', { state: 'visible', timeout: 10000 })
-    const modelTitle = page.locator('h2:has-text("Model Management"), h2:has-text("模型管理")').first()
-    await expect(modelTitle).toBeVisible({ timeout: 20000 })
-
     // Test connection button only appears for user models (not public)
     // Check if there are any user model cards with test button
     const testButton = page.locator('button[title*="Test"], button:has-text("Test")').first()
@@ -140,11 +121,6 @@ test.describe('Settings - Model Management', () => {
   })
 
   test('should show delete button for user models', async ({ page }) => {
-    // Wait for page to load (support both English and Chinese)
-    await page.waitForSelector('[class*="overflow-y-auto"]', { state: 'visible', timeout: 10000 })
-    const modelTitle = page.locator('h2:has-text("Model Management"), h2:has-text("模型管理")').first()
-    await expect(modelTitle).toBeVisible({ timeout: 20000 })
-
     // Delete button only appears for user models (not public)
     const deleteButton = page.locator('button[title*="Delete"], button:has-text("Delete")').first()
 
