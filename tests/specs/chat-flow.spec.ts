@@ -36,34 +36,56 @@ async function setupChatPage(page: any) {
   await page.waitForTimeout(500)
 
   // Select "wegent-chat" agent from QuickAccessCards if available
-  const quickAccessCards = page.locator('[data-tour="quick-access-cards"]')
+  const quickAccessCards = page.locator('[data-testid="quick-access-cards"]')
   if (await quickAccessCards.isVisible({ timeout: 3000 }).catch(() => false)) {
-    // Get all available cards first
-    const allCards = quickAccessCards.locator('div.rounded-full.border')
-    const cardCount = await allCards.count()
-
-    if (cardCount > 0) {
-      // Try to find wegent-chat card among all cards
-      let wegentChatIndex = -1
-      for (let i = 0; i < cardCount; i++) {
-        const cardText = await allCards.nth(i).textContent().catch(() => '')
-        if (cardText?.includes('wegent-chat')) {
-          wegentChatIndex = i
-          break
-        }
+    // Try to find wegent-chat card by data-testid
+    const wegentChatCard = page.locator('[data-testid="quick-access-team-wegent-chat"]').first()
+    if (await wegentChatCard.isVisible({ timeout: 3000 }).catch(() => false)) {
+      await wegentChatCard.click()
+    } else {
+      // Fallback: click the first team card
+      const firstCard = quickAccessCards.locator('[data-testid^="quick-access-team-"]').first()
+      if (await firstCard.isVisible({ timeout: 3000 }).catch(() => false)) {
+        await firstCard.click()
       }
+    }
+    await page.waitForTimeout(1000)
+  }
 
-      // Click wegent-chat if found, otherwise click the first card
-      const cardToClick = wegentChatIndex >= 0 ? allCards.nth(wegentChatIndex) : allCards.first()
-      await cardToClick.click()
-      await page.waitForTimeout(1000)
+  // Select model 公网:GLM-5
+  console.log('Selecting model...')
+  const modelSelector = page.locator('[data-testid="model-selector"]').first()
+  await expect(modelSelector).toBeVisible({ timeout: 10000 })
+
+  // Click to open model selector
+  await modelSelector.click()
+  await page.waitForTimeout(500)
+
+  // Search for model
+  const modelSearchInput = page.locator('input[placeholder*="搜索"], input[placeholder*="Search"]').first()
+  if (await modelSearchInput.isVisible({ timeout: 3000 }).catch(() => false)) {
+    await modelSearchInput.fill('GLM-5')
+    await page.waitForTimeout(500)
+  }
+
+  // Select 公网:GLM-5 model
+  const modelOption = page.locator('[data-testid="model-option-公网-GLM-5"]').first()
+  if (await modelOption.isVisible({ timeout: 3000 }).catch(() => false)) {
+    await modelOption.click()
+  } else {
+    // Try to find by text content
+    const modelOptions = page.locator('[data-testid^="model-option-"]').filter({ hasText: /GLM-5/i })
+    if (await modelOptions.count() > 0) {
+      await modelOptions.first().click()
     }
   }
+  await page.waitForTimeout(500)
 
   // Wait for input to be enabled
   const chatInput = page.locator('[data-testid="message-input"]').first()
   await expect(chatInput).toHaveAttribute('contenteditable', 'true', { timeout: 10000 })
 
+  console.log('Chat page setup completed')
   return chatInput
 }
 
@@ -76,21 +98,18 @@ test.describe('Chat Flow', () => {
     await chatInput.fill(testMessage)
 
     // Find and click send button
-    // Send button typically has an icon or text, look for common patterns
-    const sendButton = page.locator(
-      'button[type="submit"], button:has(svg[class*="send" i]), [data-testid="send-button"]'
-    ).first()
-
+    const sendButton = page.locator('[data-testid="send-button"]').first()
+    await expect(sendButton).toBeEnabled({ timeout: 5000 })
     await sendButton.click()
 
     // Wait for AI response
-    // AI messages appear in .messages-container
-    const messagesContainer = page.locator('.messages-container').first()
+    // AI messages appear in messages-container
+    const messagesContainer = page.locator('[data-testid="messages-container"]').first()
     await expect(messagesContainer).toBeVisible({ timeout: 30000 })
 
     // Wait for AI message to appear (may take time for API response)
     const aiMessage = messagesContainer.locator('> div').filter({
-      has: page.locator('svg.lucide-bot'),
+      has: page.locator('[data-testid="ai-message-icon"]'),
     }).last()
     await expect(aiMessage).toBeVisible({ timeout: 90000 })
 
@@ -110,7 +129,7 @@ test.describe('Chat Flow', () => {
 
     // 3. Verify last message is AI message (has Bot icon)
     const lastMessage = allMessages[allMessages.length - 1]
-    const hasBotIcon = await lastMessage.locator('svg.lucide-bot').isVisible()
+    const hasBotIcon = await lastMessage.locator('[data-testid="ai-message-icon"]').isVisible()
     expect(hasBotIcon).toBe(true)
 
     // 4. Verify AI message has meaningful content
@@ -131,57 +150,26 @@ test.describe('Chat Flow', () => {
     const chatInput = await setupChatPage(page)
 
     // Step 1: Wait for controls to be fully loaded
-    await page.waitForSelector('[data-tour="input-controls"]', { state: 'visible', timeout: 10000 })
+    await page.waitForSelector('[data-testid="input-controls"]', { state: 'visible', timeout: 10000 })
     await page.waitForTimeout(1000)
 
-    // Wait for clarification toggle to appear (only for Chat Shell type teams)
-    // The toggle is a button with MessageCircleQuestion icon inside ActionButton
-    // Try to find it by looking for buttons with specific characteristics
-    await page.waitForTimeout(2000)  // Wait for all controls to render
+    // Find clarification toggle by data-testid
+    let clarificationToggle = page.locator('[data-testid="clarification-toggle"]').first()
+    const isClarificationVisible = await clarificationToggle.isVisible({ timeout: 3000 }).catch(() => false)
 
-    // Strategy: Find all buttons in input-controls, then find the one that likely is clarification toggle
-    // Clarification toggle is typically the 4th button (index 3) for Chat Shell teams
-    // Buttons order: Knowledge Base, ?, Skills, ?, ?, Model, Send
-    const allButtons = page.locator('[data-tour="input-controls"] button')
-    const buttonCount = await allButtons.count()
-    console.log(`Found ${buttonCount} buttons in input-controls`)
-
-    // Try to identify the clarification toggle by position or content
-    // For Chat Shell: buttons are [KB, Clarification, Skills, ...]
-    let clarificationToggle = null
-
-    // Try each button and check if clicking it toggles the mode
-    for (let i = 0; i < Math.min(buttonCount, 6); i++) {
-      const btn = allButtons.nth(i)
-      const html = await btn.innerHTML().catch(() => '')
-
-      // Check if this button contains MessageCircleQuestion icon (circle + question mark pattern)
-      // The icon is typically an SVG with circle and question mark paths
-      if (html.includes('circle') && html.includes('?')) {
-        clarificationToggle = btn
-        console.log(`Found potential clarification toggle at index ${i}`)
-        break
-      }
-    }
-
-    // Fallback: try the 4th button (index 3) which is typically clarification toggle
-    if (!clarificationToggle && buttonCount >= 4) {
-      clarificationToggle = allButtons.nth(3)
-      console.log('Using fallback: button at index 3')
-    }
-
-    if (!clarificationToggle) {
+    if (!isClarificationVisible) {
       console.log('⚠️ Clarification toggle not found - team may not be Chat Shell type, skipping test')
       test.skip()
       return
     }
+    console.log('✓ Found clarification toggle')
 
     await clarificationToggle.click()
     await page.waitForTimeout(500)
 
     // Verify the button is now in enabled state (has primary/border-primary class)
     const buttonClass = await clarificationToggle.getAttribute('class')
-    const isEnabled = buttonClass?.includes('border-primary') || buttonClass?.includes('bg-primary')
+    const isEnabled = buttonClass?.includes('primary')
     if (!isEnabled) {
       console.log('⚠️ Clarification mode not enabled (button style unchanged) - may not be supported, skipping test')
       test.skip()
@@ -194,13 +182,12 @@ test.describe('Chat Flow', () => {
     await chatInput.fill(vagueMessage)
 
     // Step 3: Send the message
-    const sendButton = page.locator(
-      'button[type="submit"], button:has(svg[class*="send" i]), [data-testid="send-button"]'
-    ).first()
+    const sendButton = page.locator('[data-testid="send-button"]').first()
+    await expect(sendButton).toBeEnabled({ timeout: 5000 })
     await sendButton.click()
 
     // Step 4: Wait for AI response container
-    const messagesContainer = page.locator('.messages-container').first()
+    const messagesContainer = page.locator('[data-testid="messages-container"]').first()
     await expect(messagesContainer).toBeVisible({ timeout: 30000 })
 
     console.log('⏳ Waiting for AI to generate clarification questions (this may take 15-60 seconds)...')
@@ -208,9 +195,7 @@ test.describe('Chat Flow', () => {
     // Step 5: Wait for clarification form to appear
     // Note: AI takes time to analyze and generate clarification questions
     // Wait up to 120 seconds for the form to appear
-    // Use a more robust selector - match by partial class name and text content
-    // border-primary/30 is a Tailwind class, we match the border-primary part
-    const clarificationForm = page.locator('[class*="border-primary"]:has-text("Spec Clarification"), [class*="border-primary"]:has-text("需求澄清"), [class*="bg-primary"]:has-text("Spec Clarification"), [class*="bg-primary"]:has-text("需求澄清")').first()
+    const clarificationForm = page.locator('[data-testid="clarification-form"]').first()
 
     // Poll for the form with longer timeout
     let hasClarificationForm = false
@@ -225,7 +210,7 @@ test.describe('Chat Flow', () => {
       }
       // Also check if AI already provided a direct response (streaming stopped)
       const lastAiMessage = messagesContainer.locator('> div').filter({
-        has: page.locator('svg.lucide-bot'),
+        has: page.locator('[data-testid="ai-message-icon"]'),
       }).last()
       const hasAiResponse = await lastAiMessage.isVisible({ timeout: 1000 }).catch(() => false)
       if (hasAiResponse) {
@@ -244,7 +229,7 @@ test.describe('Chat Flow', () => {
       console.log('ℹ️ No clarification questions generated - AI provided direct response')
 
       const aiMessage = messagesContainer.locator('> div').filter({
-        has: page.locator('svg.lucide-bot'),
+        has: page.locator('[data-testid="ai-message-icon"]'),
       }).last()
       await expect(aiMessage).toBeVisible({ timeout: 90000 })
 
@@ -270,7 +255,7 @@ test.describe('Chat Flow', () => {
     await page.waitForTimeout(3000)
 
     // Step 6: Verify there are questions in the form
-    const questions = clarificationForm.locator('.border-border, .border-red-500')
+    const questions = clarificationForm.locator('[data-testid^="clarification-question-"]')
     const questionCount = await questions.count()
     expect(questionCount).toBeGreaterThanOrEqual(1)
     console.log(`✓ Found ${questionCount} clarification questions`)
@@ -287,24 +272,19 @@ test.describe('Chat Flow', () => {
 
     // Step 7: Answer questions - try to select options or fill text inputs
     // For single choice questions (radio buttons)
-    const radioOptions = clarificationForm.locator('input[type="radio"]').all()
+    const radioOptions = clarificationForm.locator('[data-testid$="-radio"] [data-testid^="clarification-option-"]').all()
     const radioButtons = await radioOptions
     if (radioButtons.length > 0) {
       // Click the first option of each radio group
-      const radioGroups = new Set<string>()
-      for (const radio of radioButtons) {
-        const name = await radio.getAttribute('name')
-        if (name && !radioGroups.has(name)) {
-          radioGroups.add(name)
-          await radio.click()
-          await page.waitForTimeout(200)
-        }
+      for (const radio of radioButtons.slice(0, 1)) {
+        await radio.click()
+        await page.waitForTimeout(200)
       }
-      console.log(`✓ Answered ${radioGroups.size} single choice questions`)
+      console.log(`✓ Answered single choice questions`)
     }
 
     // For multiple choice questions (checkboxes)
-    const checkboxes = clarificationForm.locator('input[type="checkbox"]').all()
+    const checkboxes = clarificationForm.locator('[data-testid$="-checkbox"] [data-testid^="clarification-option-"]').all()
     const checkboxInputs = await checkboxes
     if (checkboxInputs.length > 0) {
       // Select recommended options (or first few)
@@ -315,16 +295,15 @@ test.describe('Chat Flow', () => {
       console.log(`✓ Selected ${Math.min(checkboxInputs.length, 2)} checkbox options`)
     }
 
-    // For text input questions
-    const textInputs = clarificationForm.locator('textarea').all()
+    // For text input questions (custom textarea)
+    const textInputs = clarificationForm.locator('[data-testid="clarification-custom-textarea"]').all()
     const textareas = await textInputs
     if (textareas.length > 0) {
-      // The last textarea is usually the "additional thoughts" field
-      for (const textarea of textareas.slice(0, -1)) {
+      for (const textarea of textareas) {
         await textarea.fill('这是一个测试回答')
         await page.waitForTimeout(200)
       }
-      console.log(`✓ Filled ${Math.max(0, textareas.length - 1)} text inputs`)
+      console.log(`✓ Filled ${textareas.length} text inputs`)
     }
 
     // Pause before submitting to let user review answers
@@ -332,7 +311,7 @@ test.describe('Chat Flow', () => {
     await page.waitForTimeout(5000)
 
     // Step 8: Submit the clarification answers
-    const submitButton = clarificationForm.locator('button:has-text("Submit"), button:has-text("提交"), button:has(svg.lucide-send)').first()
+    const submitButton = clarificationForm.locator('[data-testid="clarification-submit"]').first()
     await expect(submitButton).toBeVisible({ timeout: 5000 })
     await submitButton.click()
     console.log('✓ Submitted clarification answers')
@@ -340,7 +319,7 @@ test.describe('Chat Flow', () => {
     // Step 9: Wait for AI's final response after clarification
     console.log('⏳ Waiting for AI to generate final response...')
     const aiMessage = messagesContainer.locator('> div').filter({
-      has: page.locator('svg.lucide-bot'),
+      has: page.locator('[data-testid="ai-message-icon"]'),
     }).last()
 
     // Wait longer for streaming to complete

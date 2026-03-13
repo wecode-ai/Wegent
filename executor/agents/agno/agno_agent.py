@@ -323,12 +323,14 @@ class AgnoAgent(Agent):
             self.options, self.mode, self.session_id, self.task_data
         )
 
-    async def pre_execute(self) -> TaskStatus:
+    async def pre_execute(self) -> Tuple[TaskStatus, Optional[str]]:
         """
         Pre-execution setup for Agno Agent
 
         Returns:
-            TaskStatus: Pre-execution status
+            Tuple[TaskStatus, Optional[str]]: A tuple containing:
+                - TaskStatus: Pre-execution status
+                - Optional[str]: Error message if failed, None if successful
         """
         # Download code if git_url is provided
         try:
@@ -341,15 +343,16 @@ class AgnoAgent(Agent):
                 )
                 await self.download_code()
         except Exception as e:
-            logger.error(f"Pre-execution failed: {str(e)}")
+            error_msg = f"Pre-execution failed: {str(e)}"
+            logger.error(error_msg)
             self.add_thinking_step_by_key(
                 title_key="thinking.pre_execution_failed",
                 report_immediately=False,
                 details={"error": str(e)},
             )
-            return TaskStatus.FAILED
+            return TaskStatus.FAILED, error_msg
 
-        return TaskStatus.SUCCESS
+        return TaskStatus.SUCCESS, None
 
     def execute(self) -> TaskStatus:
         """
