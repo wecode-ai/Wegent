@@ -17,6 +17,7 @@ interface ActionButtonProps {
   variant?: 'default' | 'outline' | 'loading'
   className?: string
   asChild?: boolean
+  'data-testid'?: string
 }
 
 /**
@@ -71,6 +72,7 @@ export function ActionButton({
   label,
   variant = 'default',
   className = '',
+  'data-testid': dataTestId,
 }: ActionButtonProps) {
   // Determine if this is an icon-only button or has a label
   const hasLabel = Boolean(label)
@@ -87,6 +89,7 @@ export function ActionButton({
     // Static loading state (non-clickable)
     return (
       <div
+        data-testid={dataTestId}
         className={`relative ${baseStyles} flex items-center justify-center border border-border bg-base ${className}`}
       >
         {icon}
@@ -102,6 +105,7 @@ export function ActionButton({
 
   return (
     <Button
+      data-testid={dataTestId}
       variant={buttonVariant}
       size={hasLabel ? 'default' : 'icon'}
       onClick={onClick}

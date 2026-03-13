@@ -612,6 +612,7 @@ def _test_embedding_connection(
             "model": model_id,
             "api_key": api_key,
             "base_url": embeddings_base_url,
+            "check_embedding_ctx_length": False,
         }
 
         # Add custom headers if provided
