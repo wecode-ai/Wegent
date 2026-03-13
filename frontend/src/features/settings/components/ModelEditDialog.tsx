@@ -1138,6 +1138,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
               </Label>
               <Input
                 id="modelIdName"
+                data-testid="model-id-name-input"
                 value={modelIdName}
                 onChange={e => handleModelIdNameChange(e.target.value)}
                 placeholder="my-gpt-model"
