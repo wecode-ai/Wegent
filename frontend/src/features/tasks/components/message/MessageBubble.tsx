@@ -790,7 +790,9 @@ const MessageBubble = memo(
                     ))}
                   </div>
                 </div>
-                {remainingContent && <div className="text-sm break-all">{remainingContent}</div>}
+                {remainingContent && (
+                  <div className="chat-message-prompt text-sm break-all">{remainingContent}</div>
+                )}
               </div>
             )
           } catch (e) {
@@ -1282,7 +1284,9 @@ const MessageBubble = memo(
       const [prompt, result] = content.split('${$$}$')
       return (
         <>
-          {prompt && <div className="text-sm whitespace-pre-line mb-2">{prompt}</div>}
+          {prompt && (
+            <div className="chat-message-prompt text-sm whitespace-pre-line mb-2">{prompt}</div>
+          )}
           {result && renderMarkdownResult(result, prompt)}
         </>
       )

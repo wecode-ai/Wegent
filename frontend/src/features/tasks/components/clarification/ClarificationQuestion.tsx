@@ -107,7 +107,10 @@ export default function ClarificationQuestion({
       }
 
       return (
-        <div className="flex flex-col gap-2" data-testid={`clarification-question-${question.question_id}-checkbox`}>
+        <div
+          className="flex flex-col gap-2"
+          data-testid={`clarification-question-${question.question_id}-checkbox`}
+        >
           {question.options?.map((option, index) => (
             <div key={option.value} className="flex items-center space-x-2">
               <Checkbox

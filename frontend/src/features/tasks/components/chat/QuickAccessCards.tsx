@@ -435,7 +435,8 @@ export function QuickAccessCards({
       <div
         className="w-full max-w-[820px] mx-auto flex flex-wrap items-center justify-center gap-3 mt-6"
         data-tour="quick-access-cards"
-      data-testid="quick-access-cards">
+        data-testid="quick-access-cards"
+      >
         {teamCardsToShow.map(team => (
           <div key={team.id}>{renderTeamCard(team)}</div>
         ))}
