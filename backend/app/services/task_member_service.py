@@ -478,10 +478,13 @@ class TaskMemberService:
             )
             return None
 
+        # Trim the linked_group value to avoid whitespace issues
+        trimmed_linked_group = linked_group.strip()
+
         logger.info(
-            f"[get_linked_group] task_id={task_id}, linked_group={linked_group}, spec_keys={list(spec.keys())}"
+            f"[get_linked_group] task_id={task_id}, linked_group={trimmed_linked_group}, spec_keys={list(spec.keys())}"
         )
-        return linked_group
+        return trimmed_linked_group
 
     def is_linked_group_chat(self, db: Session, task_id: int) -> bool:
         """Check if a task is a linked group chat.

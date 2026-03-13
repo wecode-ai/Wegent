@@ -183,10 +183,9 @@ def get_task_with_access_check(
         task_json = task.json if isinstance(task.json, dict) else {}
         spec = task_json.get("spec", {})
         linked_group = spec.get("linked_group")
-        is_group_chat = spec.get("is_group_chat")
 
-        # Only honor linked_group for actual group chats
-        if is_group_chat and linked_group:
+        # Only honor linked_group for actual group chats (using indexed column)
+        if task.is_group_chat and linked_group:
             # Check if user is a member of the linked group
             from app.schemas.namespace import GroupRole
             from app.services.group_permission import get_effective_role_in_group
@@ -242,9 +241,7 @@ def _validate_linked_group(db: Session, user_id: int, linked_group: str) -> bool
     # Check if namespace exists
     namespace = (
         db.query(Namespace)
-        .filter(
-            Namespace.name == linked_group, Namespace.is_active == True
-        )  # noqa: E712
+        .filter(Namespace.name == linked_group, Namespace.is_active)
         .first()
     )
 
@@ -549,9 +546,7 @@ def create_new_task(
 
         namespace = (
             db.query(Namespace)
-            .filter(
-                Namespace.name == params.linked_group, Namespace.is_active == True
-            )  # noqa: E712
+            .filter(Namespace.name == params.linked_group, Namespace.is_active)
             .first()
         )
         if namespace:

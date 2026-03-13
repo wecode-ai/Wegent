@@ -228,25 +228,47 @@ class PublicModelService(BaseService[Kind, ModelCreate, ModelUpdate]):
         return {"created": created, "updated": updated, "skipped": skipped}
 
     def get_models(
-        self, db: Session, *, skip: int = 0, limit: int = 100, current_user: User
+        self,
+        db: Session,
+        *,
+        skip: int = 0,
+        limit: int = 100,
+        current_user: User,
+        model_category_type: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
         Get active public models from kinds table (paginated)
+
+        Args:
+            db: Database session
+            skip: Number of items to skip
+            limit: Maximum number of items to return
+            current_user: Current user
+            model_category_type: Optional filter by model category type (llm, tts, stt, embedding, rerank, video, image)
         """
-        public_models = (
-            db.query(Kind)
-            .filter(
-                Kind.user_id == 0,
-                Kind.kind == "Model",
-                Kind.namespace == "default",
-                Kind.is_active == True,  # noqa: E712
-            )
-            .order_by(Kind.created_at.desc())
-            .offset(skip)
-            .limit(limit)
-            .all()
+        query = db.query(Kind).filter(
+            Kind.user_id == 0,
+            Kind.kind == "Model",
+            Kind.namespace == "default",
+            Kind.is_active,  # noqa: E712
         )
-        return [ModelAdapter.to_model_dict(pm) for pm in public_models]
+
+        # Apply model_category_type filter at DB level if specified
+        # Note: Since model_category_type is in JSON, we filter in Python for simplicity
+        # but this could be optimized with a functional index if needed
+        public_models = (
+            query.order_by(Kind.created_at.desc()).offset(skip).limit(limit).all()
+        )
+
+        result = [ModelAdapter.to_model_dict(pm) for pm in public_models]
+
+        # Filter by model_category_type if specified
+        if model_category_type:
+            result = [
+                m for m in result if m.get("model_category_type") == model_category_type
+            ]
+
+        return result
 
     def count_active_models(self, db: Session, *, current_user: User) -> int:
         """

@@ -156,6 +156,7 @@ class TaskRequestBuilder:
         # Get model config with full resolution (decryption, placeholder replacement)
         # In group chats, use task owner's user_id for model lookup to ensure
         # group members can access the task owner's private models
+        is_group_chat = self._is_group_chat(task)
         model_config = self._get_model_config(
             bot=bot,
             user_id=user.id,
@@ -164,7 +165,9 @@ class TaskRequestBuilder:
             force_override=force_override,
             task_id=task.id,
             team_id=team.id,
-            task_user_id=task.user_id,  # Pass task owner's user_id for model lookup
+            task_user_id=(
+                task.user_id if is_group_chat else None
+            ),  # Only pass task owner's user_id for group chats
         )
 
         # Get base system prompt from Ghost
@@ -227,9 +230,6 @@ class TaskRequestBuilder:
 
         # Get collaboration model
         collaboration_model = team_crd.spec.collaborationModel or "solo"
-
-        # Determine if group chat
-        is_group_chat = self._is_group_chat(task)
 
         # Determine if user has RestrictedObserver role for all requested knowledge bases.
         # RestrictedObserver users can only use KB via RAG search, not browse documents.

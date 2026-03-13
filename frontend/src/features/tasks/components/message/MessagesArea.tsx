@@ -173,6 +173,7 @@ const StreamingMessageBubble = React.memo(
       prevProps.message.sources === nextProps.message.sources &&
       prevProps.selectedTaskDetail?.id === nextProps.selectedTaskDetail?.id &&
       prevProps.selectedTaskDetail?.task_type === nextProps.selectedTaskDetail?.task_type &&
+      prevProps.selectedTeam?.name === nextProps.selectedTeam?.name &&
       prevProps.theme === nextProps.theme &&
       prevProps.isGroupChat === nextProps.isGroupChat &&
       prevProps.isPendingConfirmation === nextProps.isPendingConfirmation

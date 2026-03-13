@@ -142,9 +142,18 @@ def _filter_and_paginate_tasks(
     for task in tasks:
         try:
             task_crd = Task.model_validate(task.json)
-        except Exception as e:
+        except ValidationError as e:
+            # Pydantic validation failure for Task.model_validate
             logger.warning(
                 f"[_filter_and_paginate_tasks] Failed to validate task {task.id}: {e}. "
+                f"task_json_type={type(task.json).__name__}, task_json_len={len(str(task.json)) if task.json else 0}",
+                exc_info=True,
+            )
+            continue
+        except (KeyError, TypeError, ValueError) as e:
+            # Malformed input data (e.g., missing keys, wrong types)
+            logger.warning(
+                f"[_filter_and_paginate_tasks] Malformed task data for task {task.id}: {e}. "
                 f"task_json_type={type(task.json).__name__}, task_json_len={len(str(task.json)) if task.json else 0}",
                 exc_info=True,
             )

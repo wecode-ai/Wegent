@@ -26,7 +26,7 @@
       "Maintainer": "Maintainer",
       "Developer": "Developer",
       "Reporter": "Reporter",
-      "RestrictedObserver": "RestrictedObserver"
+      "RestrictedObserver": "Restricted Observer"
     },
     "actions": {
       "addMember": "Add Member",

@@ -6,10 +6,10 @@
 Skill adapter service for managing Skills using kinds table
 """
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException
-from sqlalchemy import and_, or_
+from sqlalchemy import and_
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 

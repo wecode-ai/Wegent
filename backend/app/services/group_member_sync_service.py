@@ -94,14 +94,20 @@ class GroupMemberSyncService:
             )
             return 0
 
-        # Map role to permission level using enum members directly
+        # Map role to permission level (role is a string, convert to enum first)
         role_to_permission = {
             GroupRole.OWNER: PermissionLevel.MANAGE,
             GroupRole.MAINTAINER: PermissionLevel.MANAGE,
             GroupRole.DEVELOPER: PermissionLevel.EDIT,
             GroupRole.REPORTER: PermissionLevel.VIEW,
         }
-        permission_level = role_to_permission.get(role, PermissionLevel.VIEW).value
+        try:
+            role_enum = GroupRole(role) if isinstance(role, str) else role
+            permission_level = role_to_permission.get(
+                role_enum, PermissionLevel.VIEW
+            ).value
+        except (ValueError, KeyError):
+            permission_level = PermissionLevel.VIEW.value
 
         # Filter out task owners and prepare task list
         tasks_to_process = [

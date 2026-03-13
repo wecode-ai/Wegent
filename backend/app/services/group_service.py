@@ -583,8 +583,8 @@ def remove_member(
     # Transfer resources to owner
     _transfer_resources_to_owner(db, group_name, user_id, group.owner_user_id)
 
-    # Remove member (hard delete)
-    db.delete(member)
+    # Remove member using helper to sync with linked group chats
+    delete_group_member(db, group_name, user_id)
     db.commit()
 
 

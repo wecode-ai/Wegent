@@ -457,7 +457,7 @@ class ModelAggregationService:
                     Kind.namespace.in_(
                         group_namespaces
                     ),  # Batch query all groups at once
-                    Kind.is_active == True,
+                    Kind.is_active,
                 )
                 .all()
             )
@@ -563,6 +563,7 @@ class ModelAggregationService:
             skip=0,
             limit=1000,  # Get all public models
             current_user=current_user,
+            model_category_type=model_category_type,  # Pass filter to service
         )
         logger.info(
             f"[list_available_models] public_model_service.get_models took {time.time() - t_public:.3f}s, returned {len(public_models)} models"
