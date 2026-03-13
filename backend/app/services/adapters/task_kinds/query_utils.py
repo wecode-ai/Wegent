@@ -115,10 +115,8 @@ _EXPLICIT_GROUP_FOR_ACCESSIBLE_SQL = text(
 """
 )
 
-# Note: This query checks both the indexed is_group_chat column AND the legacy
-# json.spec.is_group_chat flag for backward compatibility until all writers
-# (including TaskMemberService.convert_to_group_chat) are updated to write to
-# the tasks.is_group_chat column. See TaskMemberService.convert_to_group_chat().
+# Query for owned group tasks - uses the same logic as accessible but with owner filter
+# The is_group_chat column is properly maintained by all writers, no need for JSON fallback
 _EXPLICIT_GROUP_FOR_OWNED_SQL = text(
     """
     SELECT DISTINCT k.id
@@ -127,8 +125,7 @@ _EXPLICIT_GROUP_FOR_OWNED_SQL = text(
     AND k.is_active = :is_active
     AND k.namespace != 'system'
     AND k.user_id = :user_id
-    AND (k.is_group_chat = true OR
-         COALESCE(JSON_UNQUOTE(JSON_EXTRACT(k.json, '$.spec.is_group_chat')), 'false') = 'true')
+    AND k.is_group_chat = true
 """
 )
 

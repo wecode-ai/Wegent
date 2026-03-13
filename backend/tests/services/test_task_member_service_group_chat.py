@@ -237,7 +237,7 @@ class TestSharedTaskDoesNotBecomeGroupChat:
         mock_task = Mock(spec=TaskResource)
         mock_task.id = 100
         mock_task.user_id = 1  # User A owns this task
-        mock_task.json = {"spec": {"is_group_chat": False}}  # Not a group chat
+        mock_task.is_group_chat = False  # Not a group chat (uses DB column, not JSON)
 
         with patch.object(task_member_service, "get_task", return_value=mock_task):
             # is_group_chat should return False

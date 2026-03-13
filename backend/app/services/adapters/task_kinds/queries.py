@@ -6,12 +6,10 @@
 
 import json
 import logging
-from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import HTTPException
 from pydantic import ValidationError
-from sqlalchemy import bindparam, func, text
 from sqlalchemy.orm import Session
 
 from app.models.task import TaskResource
@@ -219,31 +217,23 @@ class TaskQueryMixin:
         self, db: Session, *, user_id: int, skip: int = 0, limit: int = 100
     ) -> Tuple[List[Dict[str, Any]], int]:
         """
-        Get user's Task list with pagination (lightweight version for list display).
+        Get user's Task list with pagination (lightweight list response).
 
-        Only returns essential fields without JOIN queries for better performance.
-        Includes tasks owned by user AND tasks user is a member of (group chats).
+        Includes tasks owned by user and tasks where user is an approved member.
         """
-        # Step 1: Get paginated task IDs and total count
         task_ids, total = get_accessible_task_ids_and_total(
             db, user_id=user_id, skip=skip, limit=limit, extra_limit=50
         )
-
         if not task_ids:
             return [], total
 
-        # Step 2: Load task data for the IDs
         tasks = load_tasks_by_ids(db, task_ids)
-
-        # Step 3: Filter and paginate
-        paginated_tasks = _filter_and_paginate_tasks(tasks, task_ids, skip, limit)
-
-        if not paginated_tasks:
+        id_to_task = filter_tasks_for_display(tasks)
+        filtered_tasks = restore_task_order(task_ids, id_to_task, limit)
+        if not filtered_tasks:
             return [], total
 
-        # Build lightweight result
-        result = build_lite_task_list(db, paginated_tasks, user_id)
-
+        result = build_lite_task_list(db, filtered_tasks, user_id)
         return result, total
 
     def get_user_group_tasks_lite(
@@ -253,25 +243,16 @@ class TaskQueryMixin:
         Get user's group chat task list with pagination (lightweight version).
 
         Returns only group chat tasks sorted by updated_at descending.
-        Includes:
-        1. Tasks with is_group_chat=true (using indexed column)
-        2. Tasks with ResourceMember records (regular group chats)
-
-        Performance optimized: Uses query_utils helpers for efficient batch operations.
         """
-        # Get all accessible group task IDs using existing helper
         all_group_task_ids = get_group_task_ids_for_accessible_user(db, user_id=user_id)
         if not all_group_task_ids:
             return [], 0
 
         group_task_ids = list(all_group_task_ids)
-
-        # Count non-deleted tasks for accurate total
         total = count_non_deleted_tasks_by_ids(db, group_task_ids)
         if total == 0:
             return [], 0
 
-        # Load paginated tasks with ordering and DELETE exclusion
         paginated_tasks = load_tasks_by_ids_ordered(
             db,
             group_task_ids,
@@ -281,8 +262,6 @@ class TaskQueryMixin:
             limit=limit,
             exclude_deleted=True,
         )
-
-        # Build lightweight result
         result = build_lite_task_list(db, paginated_tasks, user_id)
         return result, total
 
@@ -293,77 +272,61 @@ class TaskQueryMixin:
         user_id: int,
         skip: int = 0,
         limit: int = 50,
-        types: Optional[List[str]] = None,
+        types: List[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """
         Get user's personal (non-group-chat) task list with pagination.
 
         Args:
-            types: List of task types to include. Options: 'online', 'offline', 'subscription'.
-                   Default is ['online', 'offline'] if None.
-
-        Performance optimized: Uses query_utils helpers for efficient batch operations.
+            types: include task types. supports: online, offline, subscription, flow.
+                   Defaults to online and offline.
         """
         if types is None:
             types = ["online", "offline"]
 
-        # Get all owned task IDs using existing helper
-        # Use a high limit to get all tasks for filtering, but not unlimited to prevent memory issues
-        # The filtering (type, DELETE status) is applied after loading tasks
-        owned_task_ids, _ = get_owned_task_ids_and_total(
-            db, user_id=user_id, skip=0, limit=50000, extra_limit=0
+        all_group_task_ids = get_group_task_ids_for_owned_tasks(db, user_id=user_id)
+        task_ids, total_owned = get_owned_task_ids_and_total(
+            db, user_id=user_id, skip=skip, limit=limit, extra_limit=200
         )
-        if not owned_task_ids:
-            return [], 0
+        adjusted_total = max(total_owned - len(all_group_task_ids), 0)
 
-        # Get group task IDs to exclude
-        group_task_ids = get_group_task_ids_for_owned_tasks(db, user_id=user_id)
+        if not task_ids:
+            return [], adjusted_total
 
-        # Filter out group tasks
-        personal_task_ids = [tid for tid in owned_task_ids if tid not in group_task_ids]
-        if not personal_task_ids:
-            return [], 0
+        tasks = load_tasks_by_ids(db, task_ids)
+        valid_tasks = self._filter_personal_tasks(tasks, all_group_task_ids, types)
+        id_to_task = {task.id: task for task in valid_tasks}
+        ordered_tasks = restore_task_order(task_ids, id_to_task, limit)
 
-        # Load tasks for filtering by status and type
-        tasks = load_tasks_by_ids_ordered(
-            db,
-            personal_task_ids,
-            order_field="created_at",
-            descending=True,
-            skip=0,
-            limit=None,
-            exclude_deleted=False,  # We'll filter manually to apply type filters
-        )
+        result = build_lite_task_list(db, ordered_tasks, user_id)
+        return result, max(adjusted_total, len(ordered_tasks))
 
-        # Apply type filters
+    def _filter_personal_tasks(
+        self,
+        tasks: List[TaskResource],
+        all_group_task_ids: set,
+        types: List[str],
+    ) -> List[TaskResource]:
+        """Filter personal tasks based on type criteria."""
+        valid_tasks = []
         include_online = "online" in types
         include_offline = "offline" in types
         include_subscription = "subscription" in types or "flow" in types
 
-        filtered_tasks = []
         for task in tasks:
-            try:
-                task_crd = Task.model_validate(task.json)
-            except Exception as e:
-                logger.warning(
-                    f"[get_user_personal_tasks_lite] Failed to validate task {task.id}: {e}. "
-                    f"task_json_type={type(task.json).__name__}, task_json_len={len(str(task.json)) if task.json else 0}",
-                    exc_info=True,
-                )
+            if task.id in all_group_task_ids:
                 continue
 
-            # Skip DELETE status
+            task_crd = Task.model_validate(task.json)
             status = task_crd.status.status if task_crd.status else "PENDING"
             if status == "DELETE":
                 continue
 
-            # Determine task type from labels
             labels = task_crd.metadata.labels or {}
             is_subscription = labels.get("type") == "subscription"
             task_type_label = labels.get("taskType", "chat")
             is_code = task_type_label == "code"
 
-            # Apply type filter
             if is_subscription:
                 if not include_subscription:
                     continue
@@ -374,88 +337,25 @@ class TaskQueryMixin:
                 if not include_online:
                     continue
 
-            filtered_tasks.append(task)
+            valid_tasks.append(task)
 
-        # Calculate total and apply pagination
-        total = len(filtered_tasks)
-        paginated_tasks = filtered_tasks[skip : skip + limit]
-
-        if not paginated_tasks:
-            return [], total
-
-        # Build lightweight result
-        result = build_lite_task_list(db, paginated_tasks, user_id)
-        return result, total
+        return valid_tasks
 
     def get_user_tasks_by_title_with_pagination(
         self, db: Session, *, user_id: int, title: str, skip: int = 0, limit: int = 100
     ) -> Tuple[List[Dict[str, Any]], int]:
-        """
-        Fuzzy search tasks by title for current user (pagination).
-
-        Excludes DELETE status tasks.
-        """
-        # Get all user's tasks first (before pagination)
-        all_ids_sql = text(
-            """
-            SELECT id, json FROM tasks
-            WHERE user_id = :user_id
-            AND kind = 'Task'
-            AND is_active = true
-            AND namespace != 'system'
-            ORDER BY created_at DESC
-        """
+        """Fuzzy search tasks by title for current user (pagination)."""
+        task_ids, _ = get_owned_task_ids_and_total(
+            db, user_id=user_id, skip=skip, limit=limit, extra_limit=100
         )
-        all_tasks_result = db.execute(all_ids_sql, {"user_id": user_id}).fetchall()
+        if not task_ids:
+            return [], 0
 
-        # Filter by title and other criteria
+        tasks = load_tasks_by_ids(db, task_ids)
         title_lower = title.lower()
-        filtered_task_ids = []
-        for row in all_tasks_result:
-            task_id, task_json = row
-            try:
-                # Handle both string (from raw SQL) and dict (from ORM)
-                if isinstance(task_json, str):
-                    task_json = json.loads(task_json)
-                task_crd = Task.model_validate(task_json)
-            except Exception as e:
-                logger.warning(
-                    f"[get_user_tasks_by_title_with_pagination] Failed to validate task {task_id}: {e}. "
-                    f"task_json_type={type(task_json).__name__}, task_json_len={len(str(task_json)) if task_json else 0}",
-                    exc_info=True,
-                )
-                continue
-
-            status = task_crd.status.status if task_crd.status else "PENDING"
-            if status == "DELETE":
-                continue
-
-            task_title = task_crd.spec.title or ""
-            if title_lower not in task_title.lower():
-                continue
-
-            # Filter out non-interacted Subscription tasks
-            if is_non_interacted_subscription_task(task_crd):
-                continue
-
-            filtered_task_ids.append(task_id)
-
-        # Calculate total from filtered results
-        total = len(filtered_task_ids)
-
-        # Apply pagination to the filtered ID list
-        paginated_ids = filtered_task_ids[skip : skip + limit]
-
-        if not paginated_ids:
-            return [], total
-
-        # Load full task data for paginated IDs
-        tasks = db.query(TaskResource).filter(TaskResource.id.in_(paginated_ids)).all()
-
-        # Maintain order
-        id_to_task = {t.id: t for t in tasks}
-        filtered_tasks = [id_to_task[tid] for tid in paginated_ids if tid in id_to_task]
-
+        id_to_task = filter_tasks_with_title_match(tasks, title_lower)
+        filtered_tasks = restore_task_order(task_ids, id_to_task, limit)
+        total = len(id_to_task)
         if not filtered_tasks:
             return [], total
 

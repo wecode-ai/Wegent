@@ -13,6 +13,7 @@ It also handles model type differentiation to avoid naming conflicts.
 """
 
 import logging
+import time
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
@@ -339,11 +340,20 @@ class ModelAggregationService:
         """
         from app.services.group_permission import get_user_groups
 
+        total_start = time.time()
+        logger.info(
+            f"[list_available_models] START user_id={current_user.id}, scope={scope}, model_category_type={model_category_type}"
+        )
+
         support_model: List[str] = []
         actual_shell_type: str = shell_type or ""
         if shell_type:
+            t_shell = time.time()
             support_model, actual_shell_type = self._get_shell_support_model(
                 db, shell_type, current_user
+            )
+            logger.info(
+                f"[list_available_models] _get_shell_support_model took {time.time() - t_shell:.3f}s"
             )
 
         result: List[UnifiedModel] = []
@@ -355,6 +365,7 @@ class ModelAggregationService:
             False  # Whether to include personal models as fallback
         )
 
+        t_namespaces = time.time()
         if scope == "personal":
             # Personal models only
             namespaces_to_query = ["default"]
@@ -374,37 +385,32 @@ class ModelAggregationService:
             namespaces_to_query = ["default"] + get_user_groups(db, current_user.id)
         else:
             raise ValueError(f"Invalid scope: {scope}")
+        logger.info(
+            f"[list_available_models] namespace determination took {time.time() - t_namespaces:.3f}s, namespaces={namespaces_to_query}"
+        )
 
         # 1. Get user models from specified namespaces
         # Note: Only include non-custom models (isCustomConfig != True)
         # Custom models are user-specific configurations that should not appear in unified list
-        for namespace in namespaces_to_query:
-            if namespace == "default":
-                # Query personal models
-                user_model_resources = kind_service.list_resources(
-                    user_id=current_user.id, kind="Model", namespace="default"
-                )
-                resource_type = ModelType.USER  # Personal models
-            else:
-                # Query group models (namespace = group_name, user_id can be any member)
-                group_model_resources = (
-                    db.query(Kind)
-                    .filter(
-                        Kind.kind == "Model",
-                        Kind.namespace == namespace,
-                        Kind.is_active == True,
-                    )
-                    .all()
-                )
-                user_model_resources = group_model_resources
-                resource_type = ModelType.GROUP  # Group models
+        t_user_models = time.time()
+        user_models_count = 0
+
+        # Separate default namespace from group namespaces for optimized querying
+        group_namespaces = [ns for ns in namespaces_to_query if ns != "default"]
+        has_default = "default" in namespaces_to_query
+
+        # 1.1 Query personal models (default namespace) if needed
+        if has_default:
+            t_query = time.time()
+            user_model_resources = kind_service.list_resources(
+                user_id=current_user.id, kind="Model", namespace="default"
+            )
+            logger.info(
+                f"[list_available_models] kind_service.list_resources for default took {time.time() - t_query:.3f}s, returned {len(user_model_resources)} models"
+            )
 
             for resource in user_model_resources:
-                # Format the resource to get the full CRD data
                 model_data = kind_service._format_resource("Model", resource)
-
-                # Skip custom config models - they should not appear in unified list
-                # Custom models are user-specific configurations (isCustomConfig=True)
                 if self._is_custom_model(model_data):
                     continue
                 info = self._extract_model_info_from_crd(model_data)
@@ -414,20 +420,18 @@ class ModelAggregationService:
                 ):
                     continue
 
-                # Filter by model category type if specified
                 if (
                     model_category_type
                     and info.get("model_category_type", "llm") != model_category_type
                 ):
                     continue
 
-                # Deduplicate by name
                 if resource.name in seen_names:
                     continue
 
                 unified = UnifiedModel(
                     name=resource.name,
-                    model_type=resource_type,  # Use determined type (USER or GROUP)
+                    model_type=ModelType.USER,
                     display_name=info["display_name"],
                     provider=info["provider"],
                     model_id=info["model_id"],
@@ -438,10 +442,69 @@ class ModelAggregationService:
                     is_advanced=info.get("is_advanced", False),
                 )
                 result.append(unified)
-                seen_names[resource.name] = resource_type
+                seen_names[resource.name] = ModelType.USER
+                user_models_count += 1
 
+        # 1.2 Batch query all group models in a single query (optimization)
+        if group_namespaces:
+            t_query = time.time()
+            group_models = (
+                db.query(Kind)
+                .filter(
+                    Kind.kind == "Model",
+                    Kind.namespace.in_(
+                        group_namespaces
+                    ),  # Batch query all groups at once
+                    Kind.is_active == True,
+                )
+                .all()
+            )
+            logger.info(
+                f"[list_available_models] batch db.query for {len(group_namespaces)} groups took {time.time() - t_query:.3f}s, returned {len(group_models)} models"
+            )
+
+            for resource in group_models:
+                model_data = kind_service._format_resource("Model", resource)
+                if self._is_custom_model(model_data):
+                    continue
+                info = self._extract_model_info_from_crd(model_data)
+
+                if shell_type and not self._is_model_compatible_with_shell(
+                    info["provider"], actual_shell_type, support_model
+                ):
+                    continue
+
+                if (
+                    model_category_type
+                    and info.get("model_category_type", "llm") != model_category_type
+                ):
+                    continue
+
+                if resource.name in seen_names:
+                    continue
+
+                unified = UnifiedModel(
+                    name=resource.name,
+                    model_type=ModelType.GROUP,
+                    display_name=info["display_name"],
+                    provider=info["provider"],
+                    model_id=info["model_id"],
+                    config=info["config"],
+                    is_active=resource.is_active,
+                    namespace=resource.namespace,
+                    model_category_type=info.get("model_category_type", "llm"),
+                    is_advanced=info.get("is_advanced", False),
+                )
+                result.append(unified)
+                seen_names[resource.name] = ModelType.GROUP
+                user_models_count += 1
+
+        logger.info(
+            f"[list_available_models] user models processing took {time.time() - t_user_models:.3f}s, added {user_models_count} models"
+        )
         # 1.5. Include personal models as fallback for group scope
         # This allows users to use their personal models when creating group knowledge bases
+        t_fallback = time.time()
         if include_personal_fallback:
             personal_model_resources = kind_service.list_resources(
                 user_id=current_user.id, kind="Model", namespace="default"
@@ -485,15 +548,23 @@ class ModelAggregationService:
                 )
                 result.append(unified)
                 seen_names[resource.name] = ModelType.USER
+        logger.info(
+            f"[list_available_models] personal fallback processing took {time.time() - t_fallback:.3f}s"
+        )
 
         # 2. Get public models via public_model_service (type='public')
+        t_public = time.time()
         public_models = public_model_service.get_models(
             db=db,
             skip=0,
             limit=1000,  # Get all public models
             current_user=current_user,
         )
+        logger.info(
+            f"[list_available_models] public_model_service.get_models took {time.time() - t_public:.3f}s, returned {len(public_models)} models"
+        )
 
+        t_public_process = time.time()
         for model_dict in public_models:
             config = model_dict.get("config", {})
             provider = model_dict.get("provider")
@@ -540,14 +611,29 @@ class ModelAggregationService:
             result.append(unified)
             if model_name not in seen_names:
                 seen_names[model_name] = ModelType.PUBLIC
+        logger.info(
+            f"[list_available_models] public models processing took {time.time() - t_public_process:.3f}s"
+        )
 
         # Sort by name
+        t_sort = time.time()
         result.sort(key=lambda x: x.name)
+        logger.info(f"[list_available_models] sorting took {time.time() - t_sort:.3f}s")
 
         # Convert to dict - each dict will have 'type' field
-        if include_config:
-            return [m.to_full_dict() for m in result]
-        return [m.to_dict() for m in result]
+        t_convert = time.time()
+        final_result = (
+            [m.to_full_dict() for m in result]
+            if include_config
+            else [m.to_dict() for m in result]
+        )
+        logger.info(
+            f"[list_available_models] dict conversion took {time.time() - t_convert:.3f}s"
+        )
+        logger.info(
+            f"[list_available_models] TOTAL took {time.time() - total_start:.3f}s, returning {len(final_result)} models"
+        )
+        return final_result
 
     def get_model_by_name_and_type(
         self, db: Session, current_user: User, name: str, model_type: ModelType

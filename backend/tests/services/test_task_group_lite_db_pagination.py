@@ -231,7 +231,7 @@ def test_get_user_personal_tasks_lite_basic():
             return_value={33},  # Task 33 is a group task
         ) as mock_group:
             with patch(
-                "app.services.adapters.task_kinds.queries.load_tasks_by_ids_ordered",
+                "app.services.adapters.task_kinds.queries.load_tasks_by_ids",
                 return_value=[mock_task1, mock_task2],
             ) as mock_load:
                 with patch(
@@ -243,9 +243,7 @@ def test_get_user_personal_tasks_lite_basic():
                     )
 
     # Verify helpers were called
-    mock_owned.assert_called_once_with(
-        db, user_id=7, skip=0, limit=10000, extra_limit=0
-    )
+    mock_owned.assert_called_once_with(db, user_id=7, skip=0, limit=25, extra_limit=200)
     mock_group.assert_called_once_with(db, user_id=7)
     mock_load.assert_called_once()
     mock_build.assert_called_once()
@@ -283,19 +281,15 @@ def test_get_user_personal_tasks_lite_type_filter():
 
     with patch(
         "app.services.adapters.task_kinds.queries.get_owned_task_ids_and_total",
-        return_value=([11, 22, 33], 3),
+        return_value=([22], 1),  # Only 1 owned task (the offline one)
     ):
         with patch(
             "app.services.adapters.task_kinds.queries.get_group_task_ids_for_owned_tasks",
             return_value=set(),
         ):
             with patch(
-                "app.services.adapters.task_kinds.queries.load_tasks_by_ids_ordered",
-                return_value=[
-                    mock_task_online,
-                    mock_task_offline,
-                    mock_task_subscription,
-                ],
+                "app.services.adapters.task_kinds.queries.load_tasks_by_ids",
+                return_value=[mock_task_offline],
             ):
                 with patch(
                     "app.services.adapters.task_kinds.queries.build_lite_task_list",
@@ -339,7 +333,7 @@ def test_get_user_personal_tasks_lite_excludes_group_tasks():
             return_value={22},  # Task 22 is a group task
         ):
             with patch(
-                "app.services.adapters.task_kinds.queries.load_tasks_by_ids_ordered",
+                "app.services.adapters.task_kinds.queries.load_tasks_by_ids",
                 return_value=[mock_task_personal],  # Only personal task returned
             ):
                 with patch(
@@ -365,9 +359,13 @@ def test_get_user_personal_tasks_lite_empty_result():
         "app.services.adapters.task_kinds.queries.get_owned_task_ids_and_total",
         return_value=([], 0),
     ) as mock_owned:
-        items, total = task_service.get_user_personal_tasks_lite(
-            db, user_id=7, skip=0, limit=25
-        )
+        with patch(
+            "app.services.adapters.task_kinds.queries.get_group_task_ids_for_owned_tasks",
+            return_value=set(),
+        ):
+            items, total = task_service.get_user_personal_tasks_lite(
+                db, user_id=7, skip=0, limit=25
+            )
 
     mock_owned.assert_called_once()
     assert total == 0
@@ -388,9 +386,13 @@ def test_get_user_personal_tasks_lite_all_group_tasks():
             "app.services.adapters.task_kinds.queries.get_group_task_ids_for_owned_tasks",
             return_value={11, 22},  # All tasks are group tasks
         ):
-            items, total = task_service.get_user_personal_tasks_lite(
-                db, user_id=7, skip=0, limit=25
-            )
+            with patch(
+                "app.services.adapters.task_kinds.queries.load_tasks_by_ids",
+                return_value=[],  # No tasks after filtering
+            ):
+                items, total = task_service.get_user_personal_tasks_lite(
+                    db, user_id=7, skip=0, limit=25
+                )
 
     # No personal tasks to return
     assert total == 0
