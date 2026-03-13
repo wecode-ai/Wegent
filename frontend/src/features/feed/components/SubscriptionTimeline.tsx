@@ -9,7 +9,6 @@
  * Displays background executions as posts similar to social media feeds.
  */
 import { useMemo, useState } from 'react'
-import { useRouter } from 'next/navigation'
 import {
   AlertCircle,
   Bot,
@@ -48,11 +47,11 @@ import { useTheme } from '@/features/theme/ThemeProvider'
 import { useSubscriptionContext } from '../contexts/subscriptionContext'
 import type { BackgroundExecution, BackgroundExecutionStatus } from '@/types/subscription'
 import { parseUTCDate } from '@/lib/utils'
-import { paths } from '@/config/paths'
 import { SubscriptionConversationDialog } from './SubscriptionConversationDialog'
 
 interface SubscriptionTimelineProps {
   onCreateSubscription?: () => void
+  onGoToMine?: () => void
 }
 
 const statusConfig: Record<
@@ -96,10 +95,12 @@ const statusConfig: Record<
   },
 }
 
-export function SubscriptionTimeline({ onCreateSubscription }: SubscriptionTimelineProps) {
+export function SubscriptionTimeline({
+  onCreateSubscription,
+  onGoToMine,
+}: SubscriptionTimelineProps) {
   const { t } = useTranslation('feed')
   const { theme } = useTheme()
-  const router = useRouter()
   const {
     executions,
     executionsLoading,
@@ -537,11 +538,11 @@ export function SubscriptionTimeline({ onCreateSubscription }: SubscriptionTimel
               <p className="text-xs text-text-muted">
                 {t('feed.empty_settings_hint')}{' '}
                 <button
-                  onClick={() => router.push(paths.feedSubscriptions.getHref())}
+                  onClick={() => onGoToMine?.()}
                   className="text-primary hover:underline inline-flex items-center gap-0.5"
                 >
                   <Settings className="h-3 w-3" />
-                  {t('feed.manage')}
+                  {t('tabs.mine')}
                 </button>
               </p>
             </div>
