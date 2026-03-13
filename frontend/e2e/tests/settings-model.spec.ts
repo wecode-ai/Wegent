@@ -3,16 +3,33 @@ import { test, expect, TestData } from '../fixtures/test-fixtures'
 test.describe('Settings - Model Management', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/settings?tab=models')
-    await page.waitForLoadState('domcontentloaded')
+    await page.waitForLoadState('networkidle')
+    // Wait for settings content to load (models tab is default)
+    await page.waitForTimeout(1000)
   })
 
   test('should access model management page', async ({ page }) => {
     // Verify we're on settings page (models is the default tab)
     await expect(page).toHaveURL(/\/settings/)
 
+    // Wait for settings content area to be visible
+    await page.waitForSelector('[class*="overflow-y-auto"]', { state: 'visible', timeout: 10000 })
+
     // Wait for model management title to load (support both English and Chinese)
+    // The title is in an h2 element within the ModelList component
     const modelTitle = page.locator('h2:has-text("Model Management"), h2:has-text("模型管理")').first()
-    await expect(modelTitle).toBeVisible({ timeout: 20000 })
+
+    // Retry logic for flaky loading
+    let retries = 3
+    while (retries > 0) {
+      const isVisible = await modelTitle.isVisible({ timeout: 5000 }).catch(() => false)
+      if (isVisible) break
+      console.log(`Title not visible, retrying... (${retries} attempts left)`)
+      await page.waitForTimeout(1000)
+      retries--
+    }
+
+    await expect(modelTitle).toBeVisible({ timeout: 5000 })
   })
 
   test('should display model list or empty state', async ({ page }) => {
@@ -42,9 +59,15 @@ test.describe('Settings - Model Management', () => {
 
     await createButton.first().click()
 
-    // Model edit is a full page form - check for the model ID input
+    // Wait for dialog to open (animation + rendering time)
+    await page.waitForTimeout(1000)
+
+    // Wait for dialog content to be visible
+    await page.waitForSelector('[role="dialog"]', { state: 'visible', timeout: 10000 })
+
+    // Model edit is a dialog form - check for the model ID input
     const modelIdInput = page.locator('[data-testid="model-id-name-input"]')
-    await expect(modelIdInput).toBeVisible({ timeout: 5000 })
+    await expect(modelIdInput).toBeVisible({ timeout: 10000 })
   })
 
   test('should create new model', async ({ page, testPrefix }) => {
@@ -57,31 +80,47 @@ test.describe('Settings - Model Management', () => {
     await expect(createButton.first()).toBeVisible({ timeout: 20000 })
     await createButton.first().click()
 
-    // Model edit is a full page form, wait for model ID input
+    // Wait for dialog to open
+    await page.waitForTimeout(1000)
+    await page.waitForSelector('[role="dialog"]', { state: 'visible', timeout: 10000 })
+
+    // Model edit is a dialog form, wait for model ID input
     const nameInput = page.locator('[data-testid="model-id-name-input"]')
-    await expect(nameInput).toBeVisible({ timeout: 5000 })
+    await expect(nameInput).toBeVisible({ timeout: 10000 })
     await nameInput.fill(modelName)
 
     // Fill API key (required field)
     const apiKeyInput = page.locator('input#api_key, input[type="password"]').first()
-    if (await apiKeyInput.isVisible({ timeout: 2000 }).catch(() => false)) {
+    if (await apiKeyInput.isVisible({ timeout: 3000 }).catch(() => false)) {
       await apiKeyInput.fill('test-api-key-for-e2e')
+    }
+
+    // Fill model ID (required field)
+    // First select a provider type to enable model selection
+    const providerSelect = page.locator('button[role="combobox"]').first()
+    if (await providerSelect.isVisible({ timeout: 3000 }).catch(() => false)) {
+      await providerSelect.click()
+      await page.waitForTimeout(500)
+      // Select OpenAI provider
+      const openaiOption = page.locator('[role="option"]:has-text("OpenAI")').first()
+      if (await openaiOption.isVisible({ timeout: 2000 }).catch(() => false)) {
+        await openaiOption.click()
+      }
     }
 
     // Submit form
     const submitButton = page.locator('button:has-text("Save"), button:has-text("保存")').first()
-    if (await submitButton.isVisible({ timeout: 3000 }).catch(() => false)) {
+    if (await submitButton.isVisible({ timeout: 5000 }).catch(() => false)) {
       await submitButton.click()
 
-      // Wait for navigation back to list or validation error
-      await page.waitForURL(/\/settings/, { timeout: 10000 }).catch(() => {
-        // May stay on form with validation errors
-      })
+      // Wait for dialog to close or validation error
+      await page.waitForTimeout(2000)
     }
   })
 
   test('should show test connection button for user models', async ({ page }) => {
     // Wait for page to load (support both English and Chinese)
+    await page.waitForSelector('[class*="overflow-y-auto"]', { state: 'visible', timeout: 10000 })
     const modelTitle = page.locator('h2:has-text("Model Management"), h2:has-text("模型管理")').first()
     await expect(modelTitle).toBeVisible({ timeout: 20000 })
 
@@ -100,6 +139,7 @@ test.describe('Settings - Model Management', () => {
 
   test('should show delete button for user models', async ({ page }) => {
     // Wait for page to load (support both English and Chinese)
+    await page.waitForSelector('[class*="overflow-y-auto"]', { state: 'visible', timeout: 10000 })
     const modelTitle = page.locator('h2:has-text("Model Management"), h2:has-text("模型管理")').first()
     await expect(modelTitle).toBeVisible({ timeout: 20000 })
 

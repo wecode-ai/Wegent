@@ -334,6 +334,8 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
         .first()
       if (await teamSelectorButton.isVisible({ timeout: 2000 }).catch(() => false)) {
         console.log('Found TeamSelectorButton, clicking...')
+        // Dismiss tour before clicking to avoid driver-overlay blocking
+        await dismissOnboardingTour(page)
         await teamSelectorButton.click()
         await page.waitForTimeout(500)
 
@@ -351,6 +353,8 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
       const teamSelector = page.locator('[data-tour="team-selector"]')
       if (await teamSelector.isVisible({ timeout: 3000 }).catch(() => false)) {
         console.log('Found team selector with data-tour attribute')
+        // Dismiss tour before clicking to avoid driver-overlay blocking
+        await dismissOnboardingTour(page)
         await teamSelector.click()
         await page.waitForTimeout(1000)
 
@@ -367,6 +371,8 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
       // Strategy 4: Direct click on team card if visible anywhere on page
       const teamCard = page.locator(`text="${TEST_TEAM_NAME}"`).first()
       if (await teamCard.isVisible({ timeout: 3000 }).catch(() => false)) {
+        // Dismiss tour before clicking to avoid driver-overlay blocking
+        await dismissOnboardingTour(page)
         await teamCard.click()
         await page.waitForTimeout(1000)
         console.log(`Selected team from direct card: ${TEST_TEAM_NAME}`)
