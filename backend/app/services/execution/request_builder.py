@@ -215,8 +215,13 @@ class TaskRequestBuilder:
             if shell_type == "ClaudeCode":
                 self._prepare_mcp_for_claude_code(bot_config[0], resolved_skills)
 
-        # Build MCP servers configuration
-        mcp_servers = self._build_mcp_servers(bot, team)
+        # Generate auth token first (needed for MCP server authentication)
+        auth_token = self._generate_auth_token(task, subtask, user)
+
+        # Build MCP servers configuration (with auto-injection for subscription tasks)
+        mcp_servers = self._build_mcp_servers(
+            bot, team, is_subscription=is_subscription, auth_token=auth_token
+        )
 
         # Get collaboration model
         collaboration_model = team_crd.spec.collaborationModel or "solo"
@@ -263,7 +268,7 @@ class TaskRequestBuilder:
             history_limit=history_limit,
             new_session=new_session,
             collaboration_model=collaboration_model,
-            auth_token=self._generate_auth_token(task, subtask, user),
+            auth_token=auth_token,
             backend_url=settings.BACKEND_INTERNAL_URL,
             attachments=attachments or [],
             is_subscription=is_subscription,
@@ -771,6 +776,9 @@ class TaskRequestBuilder:
                 user_preload_skills,
             )
 
+            # Get team namespace for fallback skill lookup
+            team_namespace = team.namespace if team.namespace else "default"
+
             for add_skill in user_preload_skills:
                 # Handle both dict and Pydantic model (SkillRef)
                 if isinstance(add_skill, BaseModel):
@@ -798,9 +806,13 @@ class TaskRequestBuilder:
                     )
                     continue
 
-                # Find and add new skill
+                # Find and add new skill (with team_namespace fallback)
                 skill = self._find_skill_by_ref(
-                    skill_name, skill_namespace, is_public, user_id
+                    skill_name,
+                    skill_namespace,
+                    is_public,
+                    user_id,
+                    team_namespace=team_namespace,
                 )
                 if skill:
                     skill_data = self._build_skill_data(skill)
@@ -814,10 +826,11 @@ class TaskRequestBuilder:
                     )
                 else:
                     logger.warning(
-                        "[_get_bot_skills] User-selected skill not found: name=%s, namespace=%s, is_public=%s",
+                        "[_get_bot_skills] User-selected skill not found: name=%s, namespace=%s, is_public=%s, team_namespace=%s",
                         skill_name,
                         skill_namespace,
                         is_public,
+                        team_namespace,
                     )
 
         logger.info(
@@ -892,7 +905,12 @@ class TaskRequestBuilder:
         )
 
     def _find_skill_by_ref(
-        self, skill_name: str, namespace: str, is_public: bool, user_id: int
+        self,
+        skill_name: str,
+        namespace: str,
+        is_public: bool,
+        user_id: int,
+        team_namespace: str | None = None,
     ) -> Kind | None:
         """Find skill by name, namespace, and public flag.
 
@@ -902,13 +920,15 @@ class TaskRequestBuilder:
         Search order for non-public skills:
         1. Current user's skill in specified namespace (personal)
         2. ANY user's skill in specified namespace (group-level, for group namespaces)
-        3. Current user's skill in default namespace (fallback)
+        3. ANY user's skill in team namespace (if different from specified namespace)
+        4. Current user's skill in default namespace (fallback)
 
         Args:
             skill_name: Skill name
             namespace: Skill namespace
             is_public: Whether the skill is public (user_id=0)
             user_id: User ID for skill lookup
+            team_namespace: Optional team namespace to search (for group-level skills)
 
         Returns:
             Skill Kind object or None if not found
@@ -957,7 +977,33 @@ class TaskRequestBuilder:
                 if skill:
                     return skill
 
-            # 3. Fallback to current user's skill in default namespace
+            # 3. Team namespace skill (if different from specified namespace)
+            # This handles the case where preload_skills only contains name
+            # without namespace, but the skill exists in the team's namespace
+            if (
+                team_namespace
+                and team_namespace != "default"
+                and team_namespace != namespace
+            ):
+                skill = (
+                    self.db.query(Kind)
+                    .filter(
+                        Kind.kind == "Skill",
+                        Kind.name == skill_name,
+                        Kind.namespace == team_namespace,
+                        Kind.is_active == True,  # noqa: E712
+                    )
+                    .first()
+                )
+                if skill:
+                    logger.info(
+                        "[_find_skill_by_ref] Found skill '%s' in team namespace '%s'",
+                        skill_name,
+                        team_namespace,
+                    )
+                    return skill
+
+            # 4. Fallback to current user's skill in default namespace
             if namespace != "default":
                 return (
                     self.db.query(Kind)
@@ -1206,12 +1252,15 @@ class TaskRequestBuilder:
             )
             return []
 
-    def _build_mcp_servers(self, bot: Kind, team: Kind) -> list[dict]:
+    def _build_mcp_servers(
+        self, bot: Kind, team: Kind, is_subscription: bool = False, auth_token: str = ""
+    ) -> list[dict]:
         """Build MCP servers configuration.
 
-        Merges MCP servers from two sources:
+        Merges MCP servers from multiple sources:
         1. System-level MCP servers (from CHAT_MCP_SERVERS setting)
         2. Bot-level MCP servers (from Ghost CRD mcpServers config)
+        3. Auto-injected System MCP (for subscription tasks)
 
         Bot-level servers take precedence over system-level servers
         when there are name conflicts.
@@ -1225,12 +1274,23 @@ class TaskRequestBuilder:
         Args:
             bot: Bot Kind object
             team: Team Kind object
+            is_subscription: Whether this is a subscription task
+            auth_token: Authentication token for MCP server
 
         Returns:
             List of MCP server configuration dictionaries
         """
         # Load system-level MCP servers first
         system_mcp_servers = self._load_system_mcp_servers()
+
+        # Auto-inject System MCP for subscription tasks (provides silent_exit tool)
+        if is_subscription and auth_token:
+            system_mcp_config = self._get_auto_injected_system_mcp(auth_token)
+            if system_mcp_config:
+                system_mcp_servers.extend(system_mcp_config)
+                logger.info(
+                    "[TaskRequestBuilder] Auto-injected System MCP for subscription task"
+                )
 
         # Load bot-level MCP servers from Ghost CRD
         bot_mcp_servers = []
@@ -1404,9 +1464,10 @@ class TaskRequestBuilder:
     def _check_mcp_server_reachable(server: dict) -> bool:
         """Check if an MCP server URL is reachable with a short timeout.
 
-        Sends a HEAD request. Any HTTP response (including 4xx/5xx) means
-        the server is reachable. Only connection failures are treated as
-        unreachable.
+        Sends a GET request (not HEAD, as some servers like SSE endpoints
+        don't support HEAD method and will timeout). Any HTTP response
+        (including 4xx/5xx) means the server is reachable. Only connection
+        failures are treated as unreachable.
 
         Args:
             server: Server config dict with 'url' and optional 'headers'
@@ -1419,7 +1480,9 @@ class TaskRequestBuilder:
             return False
 
         try:
-            req = urllib.request.Request(url, method="HEAD")
+            # Use GET instead of HEAD because some servers (especially SSE endpoints)
+            # don't support HEAD method and will timeout
+            req = urllib.request.Request(url, method="GET")
             # Add headers, skipping unresolved placeholders
             headers = server.get("headers", server.get("auth", {}))
             if isinstance(headers, dict):
@@ -1429,9 +1492,14 @@ class TaskRequestBuilder:
             urllib.request.urlopen(req, timeout=5)
             return True
         except urllib.error.HTTPError:
-            # Any HTTP response means the server is reachable
+            # Any HTTP response (including 4xx/5xx) means the server is reachable
             return True
-        except Exception:
+        except Exception as e:
+            logger.warning(
+                "[MCP-CHECK] Failed to check server reachability: url=%s, error=%s",
+                url,
+                str(e),
+            )
             return False
 
     def _filter_reachable_mcp_servers(self, mcp_servers: list) -> list:
@@ -1470,6 +1538,46 @@ class TaskRequestBuilder:
             )
 
         return reachable
+
+    def _get_auto_injected_system_mcp(self, auth_token: str) -> list[dict]:
+        """Get auto-injected System MCP configuration for subscription tasks.
+
+        The System MCP provides the silent_exit tool which allows AI to silently
+        terminate execution when results don't require user attention.
+
+        Args:
+            auth_token: Authentication token for MCP server
+
+        Returns:
+            List of MCP server configurations in list format:
+            [{"name": "wegent-system", "url": "...", "type": "...", "auth": {...}}]
+        """
+        from app.mcp_server.server import get_mcp_system_config
+
+        backend_url = settings.BACKEND_INTERNAL_URL.rstrip("/")
+
+        # get_mcp_system_config returns dict format: {"wegent-system": {...}}
+        # Convert to list format for _build_mcp_servers compatibility
+        system_config = get_mcp_system_config(backend_url, auth_token)
+
+        result = []
+        for server_name, server_config in system_config.items():
+            server_entry = {
+                "name": server_name,
+                "url": server_config.get("url", ""),
+                "type": server_config.get("type", "streamable-http"),
+            }
+            # Convert "headers" to "auth" for chat_shell compatibility
+            if "headers" in server_config:
+                server_entry["auth"] = server_config["headers"]
+            result.append(server_entry)
+
+        logger.debug(
+            "[TaskRequestBuilder] Generated System MCP config: %s",
+            [s["name"] for s in result],
+        )
+
+        return result
 
     # =========================================================================
     # Helper Methods
@@ -1567,7 +1675,7 @@ class TaskRequestBuilder:
                     TaskResource.kind == "Workspace",
                     TaskResource.name == workspace_ref.name,
                     TaskResource.namespace == workspace_ref.namespace,
-                    TaskResource.is_active.is_(True),
+                    TaskResource.is_active == TaskResource.STATE_ACTIVE,
                 )
                 .first()
             )

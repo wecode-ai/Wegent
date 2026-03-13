@@ -8,6 +8,7 @@
 
 import asyncio
 import os
+import threading
 from collections import OrderedDict
 from typing import Any, Dict, Optional, Tuple
 
@@ -27,6 +28,8 @@ class Agent:
     """
     Base Agent class that all specific agents should inherit from
     """
+
+    PROGRESS_CALLBACK_TIMEOUT_SECONDS = 10.0
 
     def get_name(self) -> str:
         """
@@ -66,6 +69,8 @@ class Agent:
 
         # Emitter is required and must be provided by caller
         self.emitter: ResponsesAPIEmitter = emitter
+        self._progress_task_lock = threading.Lock()
+        self._inflight_progress_task: Optional[asyncio.Task] = None
 
     def get_emitter(self) -> ResponsesAPIEmitter:
         """
@@ -198,19 +203,65 @@ class Agent:
                 else:
                     await self.get_emitter().in_progress()
 
-            # Run async in sync context
+            async def _send_progress_with_timeout():
+                await asyncio.wait_for(
+                    _send_progress(),
+                    timeout=self.PROGRESS_CALLBACK_TIMEOUT_SECONDS,
+                )
+
+            # In async context, schedule callback without blocking the event loop.
             try:
                 loop = asyncio.get_running_loop()
             except RuntimeError:
-                loop = asyncio.get_event_loop()
-                loop.run_until_complete(_send_progress())
+                asyncio.run(_send_progress_with_timeout())
                 return
 
-            import concurrent.futures
+            with self._progress_task_lock:
+                inflight_task = self._inflight_progress_task
+                if (
+                    not is_failed
+                    and inflight_task is not None
+                    and not inflight_task.done()
+                ):
+                    logger.info(
+                        f"Cancelling previous in-progress callback before sending newer progress: "
+                        f"task_id={self.task_id}, progress={progress}, status={status}"
+                    )
+                    inflight_task.cancel()
 
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                future = executor.submit(asyncio.run, _send_progress())
-                future.result()
+            task = loop.create_task(_send_progress_with_timeout())
+            with self._progress_task_lock:
+                self._inflight_progress_task = task
+
+            def _log_task_error(done_task: asyncio.Task) -> None:
+                with self._progress_task_lock:
+                    if self._inflight_progress_task is done_task:
+                        self._inflight_progress_task = None
+
+                try:
+                    done_task.result()
+                except asyncio.CancelledError:
+                    logger.warning(
+                        f"[CALLBACK_CANCELLED] task_id={self.task_id}, progress={progress}, "
+                        f"status={status}"
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        f"[CALLBACK_TIMEOUT] task_id={self.task_id}, progress={progress}, "
+                        f"status={status}, timeout={self.PROGRESS_CALLBACK_TIMEOUT_SECONDS}s"
+                    )
+                except Exception as task_error:
+                    logger.critical(
+                        f"[CALLBACK_FAIL] task_id={self.task_id}, progress={progress}, "
+                        f"status={status}, error={type(task_error).__name__}: {str(task_error)}"
+                    )
+
+            task.add_done_callback(_log_task_error)
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"[CALLBACK_TIMEOUT] task_id={self.task_id}, progress={progress}, "
+                f"status={status}, timeout={self.PROGRESS_CALLBACK_TIMEOUT_SECONDS}s"
+            )
         except Exception as e:
             logger.critical(
                 f"[CALLBACK_FAIL] task_id={self.task_id}, progress={progress}, "

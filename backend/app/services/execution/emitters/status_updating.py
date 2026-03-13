@@ -249,6 +249,8 @@ class StatusUpdatingEmitter(ResultEmitter):
             result: Optional result data from the event
         """
         from app.core.events import TaskCompletedEvent, get_event_bus
+        from app.db.session import SessionLocal
+        from app.models.subtask import Subtask
         from app.services.chat.storage import session_manager
         from app.services.chat.storage.db import db_handler
 
@@ -259,13 +261,36 @@ class StatusUpdatingEmitter(ResultEmitter):
             )
             blocks = await session_manager.finalize_and_get_blocks(self._subtask_id)
 
-            # Build result dict
+            # Get existing subtask.result from database to preserve silent_exit flag
+            # set by MCP tools (e.g., silent_exit tool)
+            existing_result = {}
+            db = SessionLocal()
+            try:
+                subtask = (
+                    db.query(Subtask).filter(Subtask.id == self._subtask_id).first()
+                )
+                if subtask and subtask.result:
+                    existing_result = subtask.result
+            finally:
+                db.close()
+
+            # Build result dict, merging existing result (preserves silent_exit flag)
             final_result = result
             if final_result is None:
                 final_result = {"value": accumulated_content}
             elif isinstance(final_result, dict) and "value" not in final_result:
                 # If result exists but has no value, add accumulated content
                 final_result = {**final_result, "value": accumulated_content}
+
+            # Merge existing result fields (like silent_exit) into final_result
+            if existing_result and isinstance(final_result, dict):
+                for key, value in existing_result.items():
+                    if key not in final_result:
+                        final_result[key] = value
+                        logger.debug(
+                            f"[StatusUpdatingEmitter] Preserved existing result field "
+                            f"'{key}' for subtask {self._subtask_id}"
+                        )
 
             # Add collected blocks to result if we have any and result doesn't have blocks
             # This ensures mixed content (tool-text-tool-text) is preserved for database reload
@@ -441,7 +466,9 @@ class StatusUpdatingEmitter(ResultEmitter):
                     .filter(
                         TaskResource.id == self._task_id,
                         TaskResource.kind == "Task",
-                        TaskResource.is_active == True,
+                        TaskResource.is_active.in_(
+                            [TaskResource.STATE_ACTIVE, TaskResource.STATE_SUBSCRIPTION]
+                        ),
                     )
                     .first()
                 )

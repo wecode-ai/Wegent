@@ -5,9 +5,9 @@
 'use client'
 
 import { memo, useState, useMemo } from 'react'
-import { ChevronDown, ChevronRight, Loader2, CheckCircle2, AlertCircle } from 'lucide-react'
+import { ChevronDown, ChevronRight, Loader2, Pencil, FileText, AlertCircle } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { ToolBlockProps, ToolStatus, ToolRendererProps } from '../types'
+import type { ToolBlockProps, ToolRendererProps } from '../types'
 import { GenericToolRenderer } from './tools/GenericToolRenderer'
 import { BashToolRenderer } from './tools/BashToolRenderer'
 import { ReadToolRenderer } from './tools/ReadToolRenderer'
@@ -120,35 +120,85 @@ function truncateText(text: string, maxLength: number): string {
 }
 
 /**
+ * Get tool icon component based on tool name
+ */
+function getToolIcon(toolName: string) {
+  switch (toolName) {
+    case 'Edit':
+    case 'Write':
+      return Pencil
+    case 'Read':
+    case 'Grep':
+    case 'Glob':
+    case 'TodoWrite':
+    default:
+      return FileText
+  }
+}
+
+/**
+ * Extended props for ToolBlock with count and merged tools support
+ */
+interface ToolBlockWithCountProps extends ToolBlockProps {
+  /** Number of consecutive same tools (for merged display) */
+  count?: number
+  /** All merged tools (for expanded view when count > 1) */
+  mergedTools?: ToolRendererProps['tool'][]
+}
+
+/**
  * ToolBlock Component
  *
- * Displays a single tool execution as a collapsible block.
- * Routes to specialized renderers based on tool name.
+ * Displays a single tool execution as a compact inline block.
+ * Features a minimal design with icon and text in a rounded pill shape.
+ * Supports optional expansion to show detailed tool input/output.
+ * When count > 1, displays as "Tool Name x count" format and shows all merged tools when expanded.
  */
 export const ToolBlock = memo(function ToolBlock({
   tool,
   defaultExpanded = false,
-}: ToolBlockProps) {
+  count = 1,
+  mergedTools = [],
+}: ToolBlockWithCountProps) {
   const { t } = useTranslation('chat')
   const [isExpanded, setIsExpanded] = useState(defaultExpanded)
 
-  // Get status icon component
-  const StatusIcon = getStatusIcon(tool.status)
-  const statusColor = getStatusColor(tool.status)
+  // Get tool icon component
+  const ToolIcon = getToolIcon(tool.toolName)
 
-  // Get tool display name
+  // Check if any tool is running (for spinner animation)
+  // For merged tools, check if any of them is still running
+  const isRunning = useMemo(() => {
+    const checkRunning = (status: string | undefined) =>
+      status === 'invoking' || status === 'streaming' || status === 'pending'
+
+    if (count > 1 && mergedTools.length > 0) {
+      return mergedTools.some(item => checkRunning(item.status))
+    }
+    return checkRunning(tool.status)
+  }, [tool.status, count, mergedTools])
+
+  // Check if any tool has error status
+  const hasError = useMemo(() => {
+    if (count > 1 && mergedTools.length > 0) {
+      return mergedTools.some(item => item.status === 'error')
+    }
+    return tool.status === 'error'
+  }, [tool.status, count, mergedTools])
+
+  // Count completed tools for merged display
+  const completedCount = useMemo(() => {
+    if (count > 1 && mergedTools.length > 0) {
+      return mergedTools.filter(item => item.status === 'done').length
+    }
+    return tool.status === 'done' ? 1 : 0
+  }, [tool.status, count, mergedTools])
+
+  // Get tool display name and input preview
   const toolDisplayName = getToolDisplayName(tool, t)
-
-  // Get tool input preview for header display
   const inputPreview = useMemo(() => getToolInputPreview(tool), [tool])
 
-  // Get specialized renderer
-  const ToolRenderer = getToolRenderer(tool.toolName)
-
-  // Check if this is an upload tool with downloadable attachment
-  const isDownloadable = tool.toolName === 'Upload' && tool.status === 'done'
-
-  // Check if both input and output are empty
+  // Check if expandable (has content to show)
   const hasInput =
     tool.toolUse?.details?.input &&
     (typeof tool.toolUse.details.input === 'string'
@@ -158,91 +208,123 @@ export const ToolBlock = memo(function ToolBlock({
   const hasContent = hasInput || hasOutput
   const isExpandable = hasContent
 
+  // Build display text: tool name + input preview (or count if merged)
+  // When count > 1, show "Tool Name x count" format without input preview
+  const displayText =
+    count > 1
+      ? toolDisplayName
+      : inputPreview
+        ? `${toolDisplayName} ${inputPreview}`
+        : toolDisplayName
+
+  // Get all tools to display (merged tools or just the single tool)
+  const toolsToDisplay = count > 1 && mergedTools.length > 0 ? mergedTools : [tool]
+
+  // Check if any tool has content to show
+  const hasMergedContent = count > 1 && mergedTools.length > 0
+  const canExpand = isExpandable || hasMergedContent
+
   return (
-    <div className="border border-border rounded-lg bg-surface overflow-hidden mb-2">
-      {/* Header */}
+    <div className="mb-1">
+      {/* Compact inline block - pill style with border and rounded corners */}
       <div
-        className={`flex items-center justify-between px-4 py-3 ${
-          isExpandable ? 'cursor-pointer hover:bg-fill-tert' : 'cursor-default'
-        } transition-colors`}
-        onClick={() => isExpandable && setIsExpanded(!isExpanded)}
+        className={`inline-flex items-center gap-1.5 pl-1.5 pr-2.5 py-1 bg-[#f7f7f8] dark:bg-[#2a2a2a] border border-[#e5e5e5] dark:border-[#3a3a3a] rounded-xl ${
+          canExpand
+            ? 'cursor-pointer hover:bg-[#f0f0f0] dark:hover:bg-[#333] hover:border-[#ddd] dark:hover:border-[#444]'
+            : 'cursor-default'
+        } transition-all`}
+        onClick={() => canExpand && setIsExpanded(!isExpanded)}
       >
-        <div className="flex items-center gap-2 min-w-0 flex-1">
-          <StatusIcon className={`h-4 w-4 flex-shrink-0 ${statusColor}`} />
-          <span className="text-sm font-medium text-text-primary flex-shrink-0">
-            {toolDisplayName}
-          </span>
-          {/* Input preview - shown inline after tool name */}
-          {inputPreview && (
-            <code className="text-xs text-text-muted bg-fill-tert px-1.5 py-0.5 rounded font-mono truncate max-w-[300px]">
-              {inputPreview}
-            </code>
+        {/* Icon container with background and border */}
+        <div className="flex items-center justify-center w-4 h-4 bg-white dark:bg-[#3a3a3a] border border-[#e8e8e8] dark:border-[#444] rounded-md flex-shrink-0">
+          {isRunning ? (
+            <Loader2 className="w-2.5 h-2.5 text-[#888] dark:text-[#999] animate-spin" />
+          ) : (
+            <ToolIcon className="w-2.5 h-2.5 text-[#888] dark:text-[#999]" />
           )}
         </div>
-        <div className="flex items-center gap-2 flex-shrink-0">
-          {isDownloadable && (
-            <span className="text-xs text-primary bg-primary/10 px-2 py-0.5 rounded">
-              {t('thinking.downloadable') || 'Downloadable'}
+
+        {/* Tool name and preview text */}
+        <span className="text-xs text-[#666] dark:text-[#aaa] truncate max-w-[400px]">
+          {displayText}
+        </span>
+
+        {/* Count badge when merged (count > 1) with status indicator */}
+        {count > 1 && (
+          <span className="text-xs flex items-center gap-1 flex-shrink-0">
+            {/* Status indicator for merged tools - only show error icon */}
+            {hasError && <AlertCircle className="w-3 h-3 text-amber-500" />}
+            <span className="text-[#999] dark:text-[#777]">
+              {isRunning ? `${completedCount}/${count}` : `x ${count}`}
             </span>
-          )}
-          {/* Expand/collapse icon - only show if there's content to expand */}
-          {isExpandable && (
-            <>
-              {isExpanded ? (
-                <ChevronDown className="h-4 w-4 text-text-muted" />
-              ) : (
-                <ChevronRight className="h-4 w-4 text-text-muted" />
-              )}
-            </>
-          )}
-        </div>
+          </span>
+        )}
+
+        {/* Expand/collapse indicator */}
+        {canExpand && (
+          <div className="flex-shrink-0 ml-0.5">
+            {isExpanded ? (
+              <ChevronDown className="w-3 h-3 text-[#aaa] dark:text-[#666]" />
+            ) : (
+              <ChevronRight className="w-3 h-3 text-[#aaa] dark:text-[#666]" />
+            )}
+          </div>
+        )}
       </div>
 
-      {/* Content (Specialized Renderer) */}
-      {isExpanded && isExpandable && (
-        <div className="px-4 py-3 border-t border-border bg-base">
-          <ToolRenderer tool={tool} />
+      {/* Expanded content - shows all merged tools or single tool */}
+      {isExpanded && canExpand && (
+        <div className="mt-1.5 ml-6 space-y-2">
+          {toolsToDisplay.map((toolItem, idx) => {
+            const CurrentToolRenderer = getToolRenderer(toolItem.toolName)
+            const preview = getToolInputPreview(toolItem, 80)
+            // Check if tool has content to render
+            const toolHasInput =
+              toolItem.toolUse?.details?.input &&
+              (typeof toolItem.toolUse.details.input === 'string'
+                ? toolItem.toolUse.details.input.length > 0
+                : Object.keys(toolItem.toolUse.details.input).length > 0)
+            const toolHasOutput =
+              toolItem.toolResult?.details?.output || toolItem.toolResult?.details?.content
+            const toolHasContent = toolHasInput || toolHasOutput
+            const toolIsRunning =
+              toolItem.status === 'invoking' ||
+              toolItem.status === 'streaming' ||
+              toolItem.status === 'pending'
+
+            return (
+              <div
+                key={toolItem.toolUseId || idx}
+                className="p-2.5 bg-[#f7f7f8] dark:bg-[#2a2a2a] rounded-xl border border-[#e5e5e5] dark:border-[#3a3a3a]"
+              >
+                {/* Show preview header for merged tools */}
+                {count > 1 && preview && (
+                  <div className="text-xs text-[#888] dark:text-[#777] mb-2 font-mono truncate">
+                    {preview}
+                  </div>
+                )}
+                {/* Show loading state if tool is running and has no content yet */}
+                {!toolHasContent && toolIsRunning ? (
+                  <div className="flex items-center gap-2 text-xs text-[#888] dark:text-[#777]">
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    <span>{t('thinking.tool_executing') || 'Executing...'}</span>
+                  </div>
+                ) : toolHasContent ? (
+                  <CurrentToolRenderer tool={toolItem} />
+                ) : (
+                  // Tool completed but no content (edge case)
+                  <div className="text-xs text-[#888] dark:text-[#777] italic">
+                    {t('thinking.no_output') || 'No output'}
+                  </div>
+                )}
+              </div>
+            )
+          })}
         </div>
       )}
     </div>
   )
 })
-
-/**
- * Get status icon component based on tool status
- */
-function getStatusIcon(status: ToolStatus) {
-  switch (status) {
-    case 'done':
-      return CheckCircle2
-    case 'error':
-      return AlertCircle // Changed from XCircle to AlertCircle for softer warning style
-    case 'invoking':
-    case 'streaming':
-    case 'pending':
-      return Loader2
-    default:
-      return Loader2
-  }
-}
-
-/**
- * Get status color classes
- */
-function getStatusColor(status: ToolStatus): string {
-  switch (status) {
-    case 'done':
-      return 'text-primary'
-    case 'error':
-      return 'text-yellow-600' // Changed from text-red-500 to yellow for softer warning
-    case 'invoking':
-    case 'streaming':
-    case 'pending':
-      return 'text-primary animate-spin'
-    default:
-      return 'text-text-muted'
-  }
-}
 
 /**
  * Get friendly display name for tool

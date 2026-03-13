@@ -4,31 +4,28 @@
 
 'use client'
 
-import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
-import { useRouter } from 'next/navigation'
-import {
-  ChevronDownIcon,
-  Cog6ToothIcon,
-  CheckIcon,
-  MagnifyingGlassIcon,
-  SparklesIcon,
-} from '@heroicons/react/24/outline'
-import { Wand2 } from 'lucide-react'
+import { useEffect, useState, useCallback } from 'react'
+import { SparklesIcon, ChevronDownIcon } from '@heroicons/react/24/outline'
+import { Check, Search } from 'lucide-react'
 import { userApis } from '@/apis/user'
 import { QuickAccessTeam, Team } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Input } from '@/components/ui/input'
 import { Tag } from '@/components/ui/tag'
-import { Button } from '@/components/ui/button'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import { paths } from '@/config/paths'
 import { getSharedTagStyle as getSharedBadgeStyle } from '@/utils/styles'
-import { TeamIconDisplay } from '@/features/settings/components/teams/TeamIconDisplay'
 import TeamCreationWizard from '@/features/settings/components/wizard/TeamCreationWizard'
-import { useMediaQuery } from '@/hooks/useMediaQuery'
-import { MobileTeamSelector } from '@/features/tasks/components/selector'
 
-// Maximum number of quick access cards to display
-const MAX_QUICK_ACCESS_CARDS = 4
+// Container dimensions
+const CONTAINER_WIDTH = 880
+const CONTAINER_HEIGHT = 108
+
+// Card dimensions
+const CARD_WIDTH = 154
+// Maximum number of team cards to display before showing "More" button
+const MAX_TEAM_CARDS = 4
+// Small button width (compact size for more/quick create buttons)
+const SMALL_BUTTON_WIDTH = 72
 
 interface QuickAccessCardsProps {
   teams: Team[]
@@ -37,10 +34,10 @@ interface QuickAccessCardsProps {
   currentMode: 'chat' | 'code' | 'knowledge' | 'task' | 'video' | 'image'
   isLoading?: boolean
   isTeamsLoading?: boolean
-  hideSelected?: boolean // Whether to hide the selected team from the cards
+  hideSelected?: boolean
   onRefreshTeams?: () => Promise<Team[]>
-  showWizardButton?: boolean // Whether to show the wizard button (only for chat mode)
-  defaultTeam?: Team | null // The default team for current mode (will be hidden from quick access cards)
+  showWizardButton?: boolean
+  defaultTeam?: Team | null
 }
 
 export function QuickAccessCards({
@@ -49,26 +46,23 @@ export function QuickAccessCards({
   onTeamSelect,
   currentMode,
   isLoading,
-  isTeamsLoading,
-  hideSelected = false,
-  onRefreshTeams,
-  showWizardButton = false,
+  isTeamsLoading: _isTeamsLoading,
+  hideSelected: _hideSelected = false,
+  onRefreshTeams: _onRefreshTeams,
+  showWizardButton: _showWizardButton = false,
   defaultTeam,
 }: QuickAccessCardsProps) {
-  const router = useRouter()
   const { t } = useTranslation(['common', 'wizard'])
   const [quickAccessTeams, setQuickAccessTeams] = useState<QuickAccessTeam[]>([])
   const [isQuickAccessLoading, setIsQuickAccessLoading] = useState(true)
   const [clickedTeamId, setClickedTeamId] = useState<number | null>(null)
-  const [showMoreTeams, setShowMoreTeams] = useState(false)
   const [showWizard, setShowWizard] = useState(false)
-  const moreButtonRef = useRef<HTMLDivElement>(null)
-  const isMobile = useMediaQuery('(max-width: 767px)')
+  const [morePopoverOpen, setMorePopoverOpen] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const sharedBadgeStyle = getSharedBadgeStyle()
 
-  // Define the extended team type for display
   type DisplayTeam = Team & { is_system: boolean; recommended_mode?: 'chat' | 'code' | 'both' }
 
-  // Fetch quick access teams
   useEffect(() => {
     const fetchQuickAccess = async () => {
       try {
@@ -77,7 +71,6 @@ export function QuickAccessCards({
         setQuickAccessTeams(response.teams)
       } catch (error) {
         console.error('Failed to fetch quick access teams:', error)
-        // Fallback: use first few teams from the teams list
         setQuickAccessTeams([])
       } finally {
         setIsQuickAccessLoading(false)
@@ -87,15 +80,17 @@ export function QuickAccessCards({
     fetchQuickAccess()
   }, [])
 
-  // Filter teams by bind_mode based on current mode (same logic as TeamSelector)
+  // Filter teams by bind_mode based on current mode
   const filteredTeams = teams.filter(team => {
-    // If bind_mode is not set or is an empty array, the team supports all modes
-    if (!team.bind_mode || team.bind_mode.length === 0) return true
-    // Only show if current mode is in bind_mode
+    // Filter out teams with empty bind_mode array
+    if (Array.isArray(team.bind_mode) && team.bind_mode.length === 0) return false
+    // If bind_mode is not set (undefined/null), show in all modes
+    if (!team.bind_mode) return true
+    // Otherwise, only show if current mode is in bind_mode
     return team.bind_mode.includes(currentMode)
   })
 
-  // Get display teams: quick access teams matched with full team data
+  // Get all quick access teams matched with full team data
   const allDisplayTeams: DisplayTeam[] =
     quickAccessTeams.length > 0
       ? quickAccessTeams
@@ -114,82 +109,42 @@ export function QuickAccessCards({
       : // Fallback: show first teams from filtered list if no quick access configured
         filteredTeams.map(t => ({ ...t, is_system: false }) as DisplayTeam)
 
-  // Filter out selected team if hideSelected is true, and always filter out default team
-  const teamsAfterFilter = allDisplayTeams.filter(t => {
-    // Always hide default team from quick access cards
+  // Filter out default team only (keep selected team visible with selection state)
+  const displayTeams = allDisplayTeams.filter(t => {
     if (defaultTeam && t.id === defaultTeam.id) return false
-    // Hide selected team if hideSelected is true
-    if (hideSelected && selectedTeam && t.id === selectedTeam.id) return false
     return true
   })
 
-  // Limit display teams to MAX_QUICK_ACCESS_CARDS
-  const displayTeams = teamsAfterFilter.slice(0, MAX_QUICK_ACCESS_CARDS)
+  // Limit display teams to MAX_TEAM_CARDS (4 teams)
+  const teamCardsToShow = displayTeams.slice(0, MAX_TEAM_CARDS)
+  const hasMoreTeams = displayTeams.length > MAX_TEAM_CARDS
 
-  // Close dropdown when clicking outside
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (moreButtonRef.current && !moreButtonRef.current.contains(event.target as Node)) {
-        setShowMoreTeams(false)
-      }
-    }
-
-    if (showMoreTeams) {
-      document.addEventListener('mousedown', handleClickOutside)
-    }
-
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside)
-    }
-  }, [showMoreTeams])
-
-  // Handle team selection from dropdown
-  const handleTeamSelectFromDropdown = useCallback(
-    (team: Team) => {
-      onTeamSelect(team)
-      setShowMoreTeams(false)
-    },
-    [onTeamSelect]
+  // Filter teams by search query for the more popover
+  const filteredTeamsBySearch = displayTeams.filter(team =>
+    team.name.toLowerCase().includes(searchQuery.toLowerCase())
   )
 
-  // Search state for team list
-  const [searchQuery, setSearchQuery] = useState('')
-
-  // Filter teams for dropdown based on search query (excluding default team)
-  const dropdownTeams = useMemo(() => {
-    // First filter out the default team
-    const teamsWithoutDefault = filteredTeams.filter(team => {
-      if (defaultTeam && team.id === defaultTeam.id) return false
-      return true
-    })
-
-    if (!searchQuery.trim()) return teamsWithoutDefault
-    const query = searchQuery.toLowerCase()
-    return teamsWithoutDefault.filter(team => team.name.toLowerCase().includes(query))
-  }, [filteredTeams, searchQuery, defaultTeam])
-
-  // Get shared badge style
-  const sharedBadgeStyle = useMemo(() => getSharedBadgeStyle(), [])
-
-  // Reset search when dropdown closes
-  useEffect(() => {
-    if (!showMoreTeams) {
+  const handleMorePopoverOpenChange = (newOpen: boolean) => {
+    setMorePopoverOpen(newOpen)
+    if (!newOpen) {
       setSearchQuery('')
     }
-  }, [showMoreTeams])
+  }
 
-  // Handle team click - simply select the team with animation
+  const handleSelectTeamFromMore = (team: Team) => {
+    onTeamSelect(team)
+    setMorePopoverOpen(false)
+    setSearchQuery('')
+  }
+
   const handleTeamClick = useCallback(
     (team: DisplayTeam) => {
-      // Trigger click animation
       setClickedTeamId(team.id)
 
-      // Select the team after animation starts
       setTimeout(() => {
         onTeamSelect(team)
       }, 150)
 
-      // Reset the clicked state after animation completes
       setTimeout(() => {
         setClickedTeamId(null)
       }, 300)
@@ -197,148 +152,248 @@ export function QuickAccessCards({
     [onTeamSelect]
   )
 
+  const handleWizardSuccess = async (teamId: number, _teamName: string) => {
+    setShowWizard(false)
+    if (_onRefreshTeams) {
+      const refreshedTeams = await _onRefreshTeams()
+      const newTeam = refreshedTeams.find(t => t.id === teamId)
+      if (newTeam) {
+        onTeamSelect(newTeam)
+      }
+    }
+  }
+
   if (isLoading || isQuickAccessLoading) {
     return (
-      <div className="flex flex-wrap items-center justify-center gap-3 mt-6">
-        {[1, 2, 3].map(i => (
-          <div
-            key={i}
-            className="flex items-center gap-1 h-[42px] px-4 rounded-full border border-border bg-surface animate-pulse"
-          >
-            <div className="w-4 h-4 bg-muted rounded" />
-            <div className="w-16 h-3 bg-muted rounded" />
-          </div>
-        ))}
+      <div className="flex flex-col items-center mt-6 w-full">
+        <div
+          className="flex items-center justify-start gap-3 overflow-hidden rounded-lg bg-base p-3 mx-auto"
+          style={{
+            width: CONTAINER_WIDTH,
+            height: CONTAINER_HEIGHT,
+          }}
+        >
+          {[1, 2, 3, 4, 5].map(i => (
+            <div
+              key={i}
+              className="rounded-[20px] bg-base border border-border animate-pulse"
+              style={{
+                width: CARD_WIDTH,
+                height: 78,
+              }}
+            />
+          ))}
+        </div>
       </div>
     )
   }
 
-  // Only show empty state when user truly has no teams available for current mode
-  // Don't show it when teams exist but are just filtered out (e.g., default team hidden)
-  if (filteredTeams.length === 0) {
-    // Show empty state guidance card when no teams are available
+  if (teams.length === 0) {
     return (
-      <>
-        <div className="flex flex-col items-center justify-center mt-8 mb-4">
-          {/* Empty state guidance card */}
-          <div className="w-full max-w-md bg-surface border border-border rounded-2xl p-6 text-center">
-            <div className="flex justify-center mb-4">
-              <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center">
-                <SparklesIcon className="w-6 h-6 text-primary" />
-              </div>
+      <div className="flex flex-col items-center justify-center mt-8 mb-4">
+        <div className="w-full max-w-md bg-surface border border-border rounded-2xl p-6 text-center">
+          <div className="flex justify-center mb-4">
+            <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center">
+              <SparklesIcon className="w-6 h-6 text-primary" />
             </div>
-            <h3 className="text-lg font-semibold text-text-primary mb-2">
-              {t('teams.no_teams_title')}
-            </h3>
-            <p className="text-sm text-text-muted mb-6">{t('teams.no_teams_description')}</p>
-            <Button onClick={() => setShowWizard(true)} className="w-full sm:w-auto">
-              <Wand2 className="w-4 h-4 mr-2" />
-              {t('teams.create_first_team')}
-            </Button>
           </div>
+          <h3 className="text-lg font-semibold text-text-primary mb-2">
+            {t('teams.no_teams_title')}
+          </h3>
+          <p className="text-sm text-text-muted">{t('teams.no_teams_description')}</p>
         </div>
-
-        {/* Team Creation Wizard Dialog */}
-        <TeamCreationWizard
-          open={showWizard}
-          onClose={() => setShowWizard(false)}
-          onSuccess={async (teamId, _) => {
-            // Refresh teams list first to get the new team
-            if (onRefreshTeams) {
-              const refreshedTeams = await onRefreshTeams()
-              // Find and select the new team from refreshed list
-              const newTeam = refreshedTeams.find(t => t.id === teamId)
-              if (newTeam) {
-                onTeamSelect(newTeam)
-              }
-            } else {
-              // Fallback: try to find in current teams (may not work for newly created)
-              const newTeam = teams.find(t => t.id === teamId)
-              if (newTeam) {
-                onTeamSelect(newTeam)
-              }
-            }
-          }}
-        />
-      </>
+      </div>
     )
   }
 
-  // Helper function to check if a team is a personal team (not public, not group)
-  const isPersonalTeam = (team: DisplayTeam) => {
-    const isPublic = 'user_id' in team && team.user_id === 0
-    const isGroup = team.namespace && team.namespace !== 'default'
-    return !isPublic && !isGroup
+  // Don't show quick access cards if no teams are available after filtering
+  if (displayTeams.length === 0) {
+    return null
   }
 
-  // Helper function to check if a team is a group team
-  const isGroupTeam = (team: DisplayTeam) => {
-    return team.namespace && team.namespace !== 'default'
-  }
-
-  // Render a single team card with optional tooltip
   const renderTeamCard = (team: DisplayTeam) => {
     const isSelected = selectedTeam?.id === team.id
     const isClicked = clickedTeamId === team.id
+    const description = team.description || t('common:teams.no_description')
 
-    const cardContent = (
+    return (
       <div
         onClick={() => !isClicked && handleTeamClick(team)}
         className={`
-          group relative flex items-center gap-1 h-[42px] px-4
-          rounded-full border cursor-pointer transition-all duration-200
+          group relative flex flex-col justify-center
+          cursor-pointer transition-all duration-200
           ${
-            isClicked
-              ? 'clicking-card border-primary bg-primary/10 ring-2 ring-primary/50'
-              : isSelected
-                ? 'border-primary bg-primary/5'
-                : 'border-border bg-base hover:bg-hover hover:border-border-strong hover:shadow-sm'
+            isSelected
+              ? 'border-l-[3px] border-l-primary border-y border-r border-border bg-primary/5'
+              : 'border border-border bg-base'
           }
+          ${isClicked ? 'clicking-card' : ''}
           ${isClicked ? 'pointer-events-none' : ''}
+          ${!isSelected ? 'hover:shadow-[0_2px_12px_0_rgba(0,0,0,0.1)]' : ''}
         `}
+        style={{
+          width: CARD_WIDTH,
+          height: 78,
+          padding: '8px 12px',
+          borderRadius: 20,
+          flexShrink: 0,
+          flexGrow: 0,
+        }}
       >
-        <TeamIconDisplay
-          iconId={team.icon}
-          size="sm"
-          className={`flex-shrink-0 transition-colors duration-200 ${
-            isClicked || isSelected ? 'text-primary' : 'text-text-muted'
-          }`}
-        />
-        <span
-          className={`text-xs font-normal transition-colors duration-200 whitespace-nowrap ${
-            isClicked || isSelected ? 'text-primary' : 'text-text-primary'
-          }`}
-        >
-          {team.name}
-        </span>
+        <div className="mb-1 w-full">
+          <span
+            className={`block text-[15px] font-semibold leading-5 truncate ${
+              isSelected ? 'text-primary' : 'text-text-primary'
+            }`}
+          >
+            {team.name}
+          </span>
+        </div>
 
-        {/* Personal or Group badge */}
-        {isPersonalTeam(team) && (
-          <Tag variant="info" className="ml-1 text-[10px] py-0">
-            {t('settings.personal')}
-          </Tag>
-        )}
-        {isGroupTeam(team) && (
-          <Tag variant="default" className="ml-1 text-[10px] py-0">
-            {team.namespace}
-          </Tag>
-        )}
+        <p className="text-xs text-text-muted leading-[18px] line-clamp-1 w-full">{description}</p>
       </div>
     )
+  }
 
-    // Tooltip content: prioritize description, fallback to name
-    const tooltipText = team.description || team.name
+  const renderQuickCreateCard = () => {
+    if (!_showWizardButton) return null
 
-    // Always wrap with Tooltip
     return (
-      <TooltipProvider key={team.id}>
-        <Tooltip>
-          <TooltipTrigger asChild>{cardContent}</TooltipTrigger>
-          <TooltipContent side="top" className="max-w-[300px]">
-            <p>{tooltipText}</p>
-          </TooltipContent>
-        </Tooltip>
-      </TooltipProvider>
+      <div
+        onClick={() => setShowWizard(true)}
+        className="group relative flex flex-col justify-center items-center cursor-pointer transition-all duration-200 border border-dashed border-border bg-base hover:border-primary hover:bg-primary/5 hover:shadow-[0_2px_12px_0_rgba(0,0,0,0.1)]"
+        style={{
+          width: SMALL_BUTTON_WIDTH,
+          height: 78,
+          padding: '8px 12px',
+          borderRadius: 20,
+          flexShrink: 0,
+          flexGrow: 0,
+        }}
+      >
+        <SparklesIcon className="w-4 h-4 text-primary mb-1 transition-colors" />
+        <span className="text-[10px] font-medium text-text-primary group-hover:text-primary transition-colors text-center leading-tight">
+          {t('wizard:wizard_button')}
+        </span>
+      </div>
+    )
+  }
+
+  const renderMoreButton = () => {
+    if (!hasMoreTeams) return null
+
+    return (
+      <Popover open={morePopoverOpen} onOpenChange={handleMorePopoverOpenChange}>
+        <PopoverTrigger asChild>
+          <div
+            className="group relative flex flex-col justify-center items-center cursor-pointer transition-all duration-200 border border-border bg-base hover:border-border-strong hover:bg-hover hover:shadow-sm"
+            style={{
+              width: SMALL_BUTTON_WIDTH,
+              height: 78,
+              padding: '8px 12px',
+              borderRadius: 20,
+              flexShrink: 0,
+              flexGrow: 0,
+            }}
+          >
+            <ChevronDownIcon className="w-4 h-4 text-text-muted group-hover:text-text-primary mb-1 transition-colors" />
+            <span className="text-[10px] font-medium text-text-muted group-hover:text-text-primary transition-colors text-center leading-tight">
+              {t('common:teams.more')}
+            </span>
+          </div>
+        </PopoverTrigger>
+
+        <PopoverContent
+          align="start"
+          side="top"
+          className="w-[280px] p-2 max-h-[320px] overflow-hidden flex flex-col"
+        >
+          <div className="px-2 pb-2 text-sm font-medium text-text-primary">
+            {t('common:teams.select_team')}
+          </div>
+
+          {/* Search input */}
+          <div className="px-2 pb-2">
+            <div className="relative">
+              <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-text-muted" />
+              <Input
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                placeholder={t('common:teams.search_team')}
+                className="h-8 pl-7 text-sm"
+              />
+            </div>
+          </div>
+
+          {/* Teams list */}
+          <div className="flex-1 overflow-y-auto custom-scrollbar">
+            {filteredTeamsBySearch.length === 0 ? (
+              <div className="py-4 text-center text-sm text-text-muted">
+                {searchQuery ? t('common:teams.no_match') : t('common:teams.no_match')}
+              </div>
+            ) : (
+              filteredTeamsBySearch.map(team => {
+                const isSelected = selectedTeam?.id === team.id
+                const isSharedTeam = team.share_status === 2 && team.user?.user_name
+                const isGroupTeam =
+                  team.namespace && team.namespace !== 'default' && team.namespace !== 'community'
+
+                return (
+                  <div
+                    key={team.id}
+                    className={`flex items-center gap-2 px-2 py-2 rounded-md cursor-pointer transition-colors ${
+                      isSelected ? 'bg-primary/10' : 'hover:bg-hover'
+                    }`}
+                    onClick={() => handleSelectTeamFromMore(team)}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault()
+                        handleSelectTeamFromMore(team)
+                      }
+                    }}
+                  >
+                    <div
+                      className={`w-4 h-4 rounded border flex items-center justify-center flex-shrink-0 ${
+                        isSelected
+                          ? 'bg-primary border-primary text-white'
+                          : 'border-border bg-background'
+                      }`}
+                    >
+                      {isSelected && <Check className="h-3 w-3" />}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span
+                          className="text-sm text-text-primary truncate flex-1 min-w-0"
+                          title={team.name}
+                        >
+                          {team.name}
+                        </span>
+                        {isGroupTeam && (
+                          <Tag className="text-xs !m-0 flex-shrink-0" variant="info">
+                            {team.namespace}
+                          </Tag>
+                        )}
+                        {isSharedTeam && (
+                          <Tag
+                            className="text-xs !m-0 flex-shrink-0"
+                            variant="default"
+                            style={sharedBadgeStyle}
+                          >
+                            {t('common:teams.shared_by', { author: team.user?.user_name })}
+                          </Tag>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )
+              })
+            )}
+          </div>
+        </PopoverContent>
+      </Popover>
     )
   }
 
@@ -375,225 +430,25 @@ export function QuickAccessCards({
             scale-bounce 0.3s ease-out;
         }
       `}</style>
+
       <div
-        className="flex flex-wrap items-center justify-start gap-2.5 mt-6"
+        className="w-full max-w-[820px] mx-auto flex flex-wrap items-center justify-center gap-3 mt-6"
         data-tour="quick-access-cards"
       >
-        {/* Show selected team first with highlighted style (only if not the default team) */}
-        {selectedTeam && (!defaultTeam || selectedTeam.id !== defaultTeam.id) && (
-          <div className="flex items-center gap-1.5 h-[42px] px-4 rounded-full border border-primary bg-primary/5 text-primary">
-            <TeamIconDisplay
-              iconId={selectedTeam.icon}
-              size="sm"
-              className="flex-shrink-0 text-primary"
-            />
-            <span className="text-xs font-medium whitespace-nowrap">{selectedTeam.name}</span>
-          </div>
-        )}
-        {displayTeams.map(team => renderTeamCard(team))}
-
-        {/* More button - use MobileTeamSelector on mobile, dropdown on desktop */}
-        {isMobile ? (
-          // Mobile: Use iOS-style drawer selector with "更多" text
-          dropdownTeams.length > 0 && selectedTeam ? (
-            <MobileTeamSelector
-              selectedTeam={selectedTeam}
-              teams={dropdownTeams}
-              onTeamSelect={onTeamSelect}
-              disabled={isLoading || isTeamsLoading || false}
-              isLoading={isTeamsLoading}
-              triggerText={t('teams.more')}
-            />
-          ) : (
-            // Fallback: Show a button with "更多" text if no team selected but teams exist
-            filteredTeams.length > 0 && (
-              <button
-                onClick={() => {
-                  // Select first team if none selected
-                  if (!selectedTeam && filteredTeams.length > 0) {
-                    onTeamSelect(filteredTeams[0])
-                  }
-                }}
-                className="flex items-center gap-1 h-[42px] px-4 rounded-full border border-border bg-base hover:bg-hover transition-colors"
-              >
-                <span className="text-xs font-normal text-text-primary">{t('teams.more')}</span>
-                <ChevronDownIcon className="w-2.5 h-2.5 text-text-muted" />
-              </button>
-            )
-          )
-        ) : (
-          // Desktop: Original dropdown
-          <div ref={moreButtonRef} className="relative">
-            <button
-              onClick={() => setShowMoreTeams(!showMoreTeams)}
-              className={`
-                flex items-center gap-1 h-[42px] px-4
-                rounded-full border cursor-pointer transition-all duration-200
-                ${
-                  showMoreTeams
-                    ? 'border-primary bg-primary/5'
-                    : 'border-border bg-base hover:bg-hover hover:border-border-strong'
-                }
-              `}
-              title={t('teams.more_teams')}
-            >
-              <span className="text-xs font-normal text-text-primary">{t('teams.more')}</span>
-              <ChevronDownIcon
-                className={`w-2.5 h-2.5 text-text-muted transition-transform duration-200 ${showMoreTeams ? 'rotate-180' : ''}`}
-              />
-            </button>
-
-            {/* Dropdown with team list */}
-            {showMoreTeams && (
-              <div className="absolute top-full left-0 mt-2 z-50 min-w-[300px] max-w-[400px] bg-surface border border-border rounded-xl shadow-xl overflow-hidden">
-                {/* Search input */}
-                <div className="p-2 border-b border-border">
-                  <div className="relative">
-                    <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" />
-                    <input
-                      type="text"
-                      value={searchQuery}
-                      onChange={e => setSearchQuery(e.target.value)}
-                      placeholder={t('teams.search_team')}
-                      className="w-full pl-9 pr-3 py-2 text-sm bg-base border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20 placeholder:text-text-muted"
-                      autoFocus
-                    />
-                  </div>
-                </div>
-
-                {/* Team list */}
-                <div className="max-h-[240px] overflow-y-auto">
-                  {isTeamsLoading ? (
-                    <div className="py-4 text-center text-sm text-text-muted">
-                      {t('actions.loading')}
-                    </div>
-                  ) : dropdownTeams.length === 0 ? (
-                    <div className="py-4 text-center text-sm text-text-muted">
-                      {t('teams.no_match')}
-                    </div>
-                  ) : (
-                    dropdownTeams.map(team => {
-                      const isSelected = selectedTeam?.id === team.id
-                      const isSharedTeam = team.share_status === 2 && team.user?.user_name
-                      const isGroupTeamItem = team.namespace && team.namespace !== 'default'
-                      const isPublicTeam = 'user_id' in team && team.user_id === 0
-                      const isPersonalTeamItem = !isPublicTeam && !isGroupTeamItem
-
-                      return (
-                        <div
-                          key={team.id}
-                          onClick={() => handleTeamSelectFromDropdown(team)}
-                          className={`
-                            flex items-center gap-3 px-3 py-2 mx-1 my-0.5 rounded-md cursor-pointer
-                            transition-colors duration-150
-                            ${
-                              isSelected
-                                ? 'bg-primary/10 text-primary'
-                                : 'hover:bg-hover text-text-primary'
-                            }
-                          `}
-                        >
-                          <CheckIcon
-                            className={`w-4 h-4 flex-shrink-0 ${isSelected ? 'opacity-100 text-primary' : 'opacity-0'}`}
-                          />
-                          <TeamIconDisplay
-                            iconId={team.icon}
-                            size="sm"
-                            className="flex-shrink-0 text-text-muted"
-                          />
-                          <span className="flex-1 text-sm font-medium truncate" title={team.name}>
-                            {team.name}
-                          </span>
-                          {isPersonalTeamItem && (
-                            <Tag className="text-xs !m-0 flex-shrink-0" variant="info">
-                              {t('settings.personal')}
-                            </Tag>
-                          )}
-                          {isGroupTeamItem && (
-                            <Tag className="text-xs !m-0 flex-shrink-0" variant="default">
-                              {team.namespace}
-                            </Tag>
-                          )}
-                          {isSharedTeam && (
-                            <Tag
-                              className="text-xs !m-0 flex-shrink-0"
-                              variant="default"
-                              style={sharedBadgeStyle}
-                            >
-                              {team.user?.user_name}
-                            </Tag>
-                          )}
-                        </div>
-                      )
-                    })
-                  )}
-                </div>
-
-                {/* Footer with settings link */}
-                <div
-                  className="border-t border-border bg-base cursor-pointer group flex items-center space-x-2 px-3 py-2.5 text-xs text-text-secondary hover:bg-muted transition-colors duration-150"
-                  onClick={() => {
-                    setShowMoreTeams(false)
-                    router.push(paths.settings.team.getHref())
-                  }}
-                >
-                  <Cog6ToothIcon className="w-4 h-4 text-text-secondary group-hover:text-text-primary" />
-                  <span className="font-medium group-hover:text-text-primary">
-                    {t('teams.manage')}
-                  </span>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Divider */}
-        <div className="h-7 w-px bg-border mx-1" />
-
-        {/* Wizard button - quick create agent (only show in chat mode) */}
-        {showWizardButton && (
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  onClick={() => setShowWizard(true)}
-                  className="flex items-center justify-center w-8 h-8 rounded-full border border-dashed border-primary/50 bg-primary/5 hover:bg-primary/10 hover:border-primary cursor-pointer transition-all duration-200"
-                >
-                  <Wand2 className="w-4 h-4 text-primary" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="top">
-                <p>{t('wizard:wizard_button_tooltip')}</p>
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-        )}
+        {teamCardsToShow.map(team => (
+          <div key={team.id}>{renderTeamCard(team)}</div>
+        ))}
+        {renderMoreButton()}
+        {renderQuickCreateCard()}
       </div>
 
       {/* Team Creation Wizard Dialog */}
-      {showWizardButton && (
-        <TeamCreationWizard
-          open={showWizard}
-          onClose={() => setShowWizard(false)}
-          onSuccess={async (teamId, _) => {
-            // Refresh teams list first to get the new team
-            if (onRefreshTeams) {
-              const refreshedTeams = await onRefreshTeams()
-              // Find and select the new team from refreshed list
-              const newTeam = refreshedTeams.find(t => t.id === teamId)
-              if (newTeam) {
-                onTeamSelect(newTeam)
-              }
-            } else {
-              // Fallback: try to find in current teams (may not work for newly created)
-              const newTeam = teams.find(t => t.id === teamId)
-              if (newTeam) {
-                onTeamSelect(newTeam)
-              }
-            }
-          }}
-        />
-      )}
+      <TeamCreationWizard
+        open={showWizard}
+        onClose={() => setShowWizard(false)}
+        onSuccess={handleWizardSuccess}
+        scope="personal"
+      />
     </>
   )
 }

@@ -227,6 +227,7 @@
     "select_team": "选择一个智能体",
     "search_team": "搜索智能体...",
     "no_bots": "没有机器人",
+    "no_description": "暂无描述",
     "edit": "编辑智能体",
     "chat": "发送任务",
     "delete": "删除智能体",
@@ -303,6 +304,10 @@
       "join_description_prefix": "确定加入后，「",
       "join_description_suffix": "」将添加到您的智能体列表中，您可以使用该智能体创建和执行任务。"
     }
+  },
+  "teamSelector": {
+    "agent_label": "智能体",
+    "select_agent_tooltip": "选择智能体"
   },
   "team": {
     "name": "名称",
@@ -731,15 +736,15 @@
   },
   "skills": {
     "title": "技能",
-    "description": "管理 Claude Code 技能以扩展您的机器人能力",
+    "description": "管理技能以扩展您的智能体能力",
     "loading": "加载技能中...",
     "loading_failed": "加载技能失败",
     "no_skills": "暂无技能",
-    "no_skills_description": "上传 Claude Code 技能 ZIP 包以开始使用",
+    "no_skills_description": "上传技能 ZIP 包以开始使用",
     "upload_skill": "上传技能",
     "upload_first_skill": "上传您的第一个技能",
     "manage_skills": "管理技能",
-    "manage_skills_description": "上传、编辑或删除 Claude Code 技能以扩展您的机器人能力",
+    "manage_skills_description": "上传、编辑或删除技能以扩展您的智能体能力",
     "edit_skill": "更新技能",
     "delete_skill": "删除技能",
     "download_skill": "下载",
@@ -748,7 +753,7 @@
     "delete_confirm_message": "确定要删除技能 \"{{skillName}}\" 吗？此操作无法撤销。",
     "delete_note": "注意：如果此技能被任何 Ghost 引用，删除将失败。请先从所有 Ghost 中移除该技能。",
     "upload_modal_title": "上传技能",
-    "upload_modal_description": "上传包含 SKILL.md 的 Claude Code 技能 ZIP 包",
+    "upload_modal_description": "上传包含 SKILL.md 的技能 ZIP 包",
     "update_modal_title": "更新技能",
     "update_modal_description": "上传新的 ZIP 包以更新此技能",
     "skill_name": "技能名称",
@@ -1280,6 +1285,7 @@
     "no_matching_skills": "没有匹配的技能",
     "already_selected": "已选择",
     "skill_button_tooltip": "选择要在此消息中使用的技能",
+    "skill_button_label": "技能",
     "manage_skills": "管理技能"
   },
   "mcpProviders": {

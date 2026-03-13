@@ -20,6 +20,7 @@ import {
   ChevronUpIcon,
   ShieldCheckIcon,
   LanguageIcon,
+  UsersIcon,
 } from '@heroicons/react/24/outline'
 
 interface UserFloatingMenuProps {
@@ -53,6 +54,11 @@ export function UserFloatingMenu({ className = '' }: UserFloatingMenuProps) {
 
   const handleSettingsClick = () => {
     router.push(paths.settings.root.getHref())
+    setIsExpanded(false)
+  }
+
+  const handleGroupManagerClick = () => {
+    router.push(paths.settings.groupManager.getHref())
     setIsExpanded(false)
   }
 
@@ -95,15 +101,21 @@ export function UserFloatingMenu({ className = '' }: UserFloatingMenuProps) {
         onClick={handleToggleMenu}
         aria-expanded={isExpanded}
         aria-haspopup="true"
-        className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-muted transition-all duration-200 group"
+        className="w-full flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-muted transition-all duration-200 group"
       >
         <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
           <UserCircleIcon className="w-5 h-5 text-primary" />
         </div>
-        <div className="flex flex-col items-start">
-          <span className="text-sm font-medium text-text-primary leading-tight">
-            {userDisplayName}
-          </span>
+        <div className="flex flex-col items-start flex-1 min-w-0">
+          <div className="flex items-center gap-1.5">
+            <span className="text-sm font-medium text-text-primary leading-tight truncate">
+              {userDisplayName}
+            </span>
+            <Cog6ToothIcon
+              className="w-4 h-4 text-primary/70 group-hover:text-primary group-hover:rotate-45 transition-all duration-300"
+              title={t('common:navigation.settings')}
+            />
+          </div>
           {isAdmin && (
             <span className="text-xs text-primary flex items-center gap-0.5">
               <ShieldCheckIcon className="w-3 h-3" />
@@ -112,7 +124,7 @@ export function UserFloatingMenu({ className = '' }: UserFloatingMenuProps) {
           )}
         </div>
         <ChevronUpIcon
-          className={`w-3.5 h-3.5 text-text-muted transition-transform duration-200 ${
+          className={`w-3.5 h-3.5 text-text-muted transition-transform duration-200 flex-shrink-0 ${
             isExpanded ? 'rotate-180' : ''
           }`}
         />
@@ -140,6 +152,17 @@ export function UserFloatingMenu({ className = '' }: UserFloatingMenuProps) {
           >
             <Cog6ToothIcon className="w-4 h-4 text-text-muted" />
             {t('common:navigation.settings')}
+          </button>
+
+          {/* Group Manager */}
+          <button
+            type="button"
+            role="menuitem"
+            onClick={handleGroupManagerClick}
+            className="w-full flex items-center gap-3 px-3 py-2 text-sm text-text-primary hover:bg-muted transition-colors duration-150"
+          >
+            <UsersIcon className="w-4 h-4 text-text-muted" />
+            {t('common:settings.groupManager')}
           </button>
 
           {/* Docs */}

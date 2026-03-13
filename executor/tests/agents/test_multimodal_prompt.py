@@ -150,7 +150,7 @@ class TestCreateMultimodalQuery:
                 messages.append(msg)
             return messages
 
-        messages = asyncio.get_event_loop().run_until_complete(run())
+        messages = asyncio.run(run())
         assert len(messages) == 1
         assert messages[0]["type"] == "user"
         assert messages[0]["message"]["role"] == "user"
@@ -175,7 +175,7 @@ class TestCreateMultimodalQuery:
                 messages.append(msg)
             return messages
 
-        messages = asyncio.get_event_loop().run_until_complete(run())
+        messages = asyncio.run(run())
         assert messages[0]["message"]["content"] == content
 
 

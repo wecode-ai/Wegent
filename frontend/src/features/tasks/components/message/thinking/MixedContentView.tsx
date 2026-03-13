@@ -247,9 +247,45 @@ const MixedContentView = memo(function MixedContentView({
     return taskStatus === 'RUNNING'
   }, [taskStatus])
 
+  // Merge consecutive same tools into groups with count and collect all merged tools
+  const mergedItems = useMemo(() => {
+    type ToolItem = { type: 'tool'; tool: ToolPair; blockId: string }
+    type MergedToolItem = ToolItem & { count: number; mergedTools: ToolPair[] }
+    type ResultItem = (typeof mixedItems)[number] & { count?: number; mergedTools?: ToolPair[] }
+
+    const result: ResultItem[] = []
+
+    for (let i = 0; i < mixedItems.length; i++) {
+      const item = mixedItems[i]
+      if (!item) continue
+
+      if (item.type === 'tool') {
+        // Check if we can merge with the previous item
+        const lastItem = result[result.length - 1]
+        if (lastItem && lastItem.type === 'tool' && lastItem.tool.toolName === item.tool.toolName) {
+          // Merge: increment count and add to mergedTools array
+          const mergedItem = lastItem as MergedToolItem
+          mergedItem.count = (mergedItem.count || 1) + 1
+          if (!mergedItem.mergedTools) {
+            mergedItem.mergedTools = [mergedItem.tool]
+          }
+          mergedItem.mergedTools.push(item.tool)
+        } else {
+          // New tool or different tool name
+          result.push({ ...item, count: 1, mergedTools: [item.tool] })
+        }
+      } else {
+        // Non-tool items are added as-is
+        result.push(item)
+      }
+    }
+
+    return result
+  }, [mixedItems])
+
   return (
     <div className="space-y-3">
-      {mixedItems.map((item, index) => {
+      {mergedItems.map((item, index) => {
         // Null check after filter
         if (!item) {
           return null
@@ -321,7 +357,17 @@ const MixedContentView = memo(function MixedContentView({
           )
         } else if (item.type === 'tool') {
           const key = 'blockId' in item ? item.blockId : `tool-${item.tool.toolUseId}`
-          return <ToolBlock key={key} tool={item.tool} defaultExpanded={false} />
+          const count = 'count' in item ? item.count : 1
+          const mergedTools = 'mergedTools' in item ? item.mergedTools : undefined
+          return (
+            <ToolBlock
+              key={key}
+              tool={item.tool}
+              defaultExpanded={false}
+              count={count}
+              mergedTools={mergedTools}
+            />
+          )
         }
         return null
       })}

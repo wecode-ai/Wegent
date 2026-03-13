@@ -38,8 +38,9 @@ import requests
 
 from executor.config import config
 from executor.config.env_reader import get_task_api_domain
+from shared.logger import setup_logger
 
-logger = logging.getLogger(__name__)
+logger = setup_logger("api_client")
 
 
 def get_api_base_url() -> str:

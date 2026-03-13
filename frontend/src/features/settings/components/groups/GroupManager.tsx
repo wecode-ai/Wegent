@@ -5,6 +5,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -24,6 +25,7 @@ interface GroupManagerProps {
 
 export function GroupManager({ onGroupsChange }: GroupManagerProps) {
   const { t } = useTranslation()
+  const router = useRouter()
   const { user } = useUser()
   const [groups, setGroups] = useState<Group[]>([])
   const [loading, setLoading] = useState(true)
@@ -71,6 +73,11 @@ export function GroupManager({ onGroupsChange }: GroupManagerProps) {
     setShowMembersDialog(true)
   }
 
+  // Navigate to group settings page
+  const handleGroupClick = (group: Group) => {
+    router.push(`/settings?section=groups&tab=group-team&group=${encodeURIComponent(group.name)}`)
+  }
+
   const handleSuccess = () => {
     loadGroups()
     onGroupsChange?.()
@@ -116,7 +123,7 @@ export function GroupManager({ onGroupsChange }: GroupManagerProps) {
                     {t('groups:groups.name')}
                   </th>
                   <th className="px-4 py-3 text-left text-sm font-medium text-text-primary">
-                    {t('groups:groups.displayName')}
+                    {t('groups:groups.groupId')}
                   </th>
                   <th className="px-4 py-3 text-left text-sm font-medium text-text-primary">
                     {t('groups:groups.visibility')}
@@ -138,12 +145,16 @@ export function GroupManager({ onGroupsChange }: GroupManagerProps) {
               <tbody className="divide-y divide-border">
                 {groups.map(group => (
                   <tr key={group.id} className="hover:bg-surface">
-                    <td className="px-4 py-3 text-sm font-medium text-text-primary">
-                      {group.name}
+                    <td className="px-4 py-3 text-sm">
+                      <button
+                        onClick={() => handleGroupClick(group)}
+                        className="font-medium text-primary hover:text-primary/80 hover:underline transition-colors text-left"
+                        title={t('groups:groupManager.enterGroup')}
+                      >
+                        {group.display_name || group.name}
+                      </button>
                     </td>
-                    <td className="px-4 py-3 text-sm text-text-secondary">
-                      {group.display_name || '-'}
-                    </td>
+                    <td className="px-4 py-3 text-sm text-text-muted font-mono">{group.name}</td>
                     <td className="px-4 py-3 text-sm">
                       <Badge variant={group.visibility === 'public' ? 'success' : 'secondary'}>
                         {t(`groups:groups.${group.visibility}`)}

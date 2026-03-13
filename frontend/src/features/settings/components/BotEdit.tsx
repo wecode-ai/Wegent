@@ -243,13 +243,13 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
   // Documentation handlers
   const handleOpenModelDocs = useCallback(() => {
     const lang = i18n.language === 'zh-CN' ? 'zh' : 'en'
-    const docsUrl = `https://github.com/wecode-ai/wegent/blob/main/docs/${lang}/guides/user/configuring-models.md`
+    const docsUrl = `https://github.com/wecode-ai/wegent/blob/main/docs/${lang}/user-guide/configuring-models.md`
     window.open(docsUrl, '_blank')
   }, [i18n.language])
 
   const handleOpenShellDocs = useCallback(() => {
     const lang = i18n.language === 'zh-CN' ? 'zh' : 'en'
-    const docsUrl = `https://github.com/wecode-ai/wegent/blob/main/docs/${lang}/guides/user/configuring-shells.md`
+    const docsUrl = `https://github.com/wecode-ai/wegent/blob/main/docs/${lang}/user-guide/configuring-shells.md`
     window.open(docsUrl, '_blank')
   }, [i18n.language])
 
