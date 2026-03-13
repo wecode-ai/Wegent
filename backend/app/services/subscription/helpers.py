@@ -165,6 +165,8 @@ def build_subscription_crd(
         knowledgeBaseRefs=subscription_in.knowledge_base_refs,
         # Notification webhooks
         notificationWebhooks=subscription_in.notification_webhooks,
+        # Skill references
+        skillRefs=subscription_in.skill_refs,
     )
 
     status = SubscriptionStatus()

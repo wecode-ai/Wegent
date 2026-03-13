@@ -226,11 +226,7 @@ export default function SkillSearchModal({
                 className="pl-9"
               />
             </div>
-            <Button
-              variant="primary"
-              onClick={() => handleSearch(1)}
-              disabled={searching}
-            >
+            <Button variant="primary" onClick={() => handleSearch(1)} disabled={searching}>
               {searching ? (
                 <>
                   <Loader2 className="w-4 h-4 mr-2 animate-spin" />

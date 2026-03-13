@@ -312,7 +312,9 @@ export default function TaskSidebar({
             >
               <span className="flex items-center">
                 <Plus className="h-4 w-4 flex-shrink-0" />
-                <span className="ml-1.5">{t('common:tasks.new_conversation')}</span>
+                <span className="ml-1.5 text-[14px] leading-5 font-medium text-[#444746]">
+                  {t('common:tasks.new_conversation')}
+                </span>
               </span>
               <span className="text-text-muted opacity-0 group-hover:opacity-100 transition-opacity">
                 ›
@@ -340,7 +342,13 @@ export default function TaskSidebar({
                     <btn.icon
                       className={`h-4 w-4 flex-shrink-0 ${btn.isActive ? 'text-primary' : ''}`}
                     />
-                    <span className="ml-1.5">{btn.label}</span>
+                    <span
+                      className={`ml-1.5 text-[14px] leading-5 font-medium ${
+                        btn.isActive ? 'text-primary' : 'text-[#444746]'
+                      }`}
+                    >
+                      {btn.label}
+                    </span>
                   </span>
                 </Button>
                 {/* Show "New Task" button on hover when in code mode */}
@@ -556,7 +564,7 @@ export default function TaskSidebar({
         hideTitle={true}
         data-tour="task-sidebar"
       >
-        {sidebarContent}
+        <div className="h-full flex flex-col">{sidebarContent}</div>
       </MobileSidebar>
 
       {/* History Manage Dialog */}

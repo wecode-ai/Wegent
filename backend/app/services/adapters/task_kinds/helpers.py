@@ -156,20 +156,19 @@ def _create_pipeline_subtask(
 ) -> None:
     """Create subtask for pipeline collaboration model."""
     # Pipeline mode: determine which bot to create subtask for
-    # Use pipeline_stage_service to get current stage information
+    # Use pipeline_stage_service to get current stage from task.spec.currentStage
     should_stay, current_stage_index = (
-        pipeline_stage_service.should_stay_at_current_stage(
-            existing_subtasks, team_crd, db
-        )
+        pipeline_stage_service.should_stay_at_current_stage(db, task.id, team_crd)
     )
 
     # Determine which stage to create subtask for
-    if should_stay and current_stage_index is not None:
+    # current_stage_index is always valid (defaults to 0)
+    if should_stay:
         target_stage_index = current_stage_index
         logger.info(
             f"Pipeline create_subtasks: staying at stage {target_stage_index} (requireConfirmation)"
         )
-    elif existing_subtasks and current_stage_index is not None:
+    elif existing_subtasks:
         target_stage_index = current_stage_index
         logger.info(
             f"Pipeline create_subtasks: follow-up at stage {target_stage_index}"

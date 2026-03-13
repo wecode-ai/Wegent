@@ -159,7 +159,10 @@ export async function searchSkills(params: SearchSkillsParams): Promise<SearchSk
     // FastAPI wraps errors in a detail object, check for it first
     const detail = errorData.detail
     const errorMessage =
-      detail?.error || detail?.message || errorData.error || errorData.message ||
+      detail?.error ||
+      detail?.message ||
+      errorData.error ||
+      errorData.message ||
       `HTTP ${response.status}: Failed to search skills`
     throw new Error(errorMessage)
   }
@@ -199,7 +202,10 @@ export async function downloadSkill(skillKey: string): Promise<Blob> {
     // FastAPI wraps errors in a detail object, check for it first
     const detail = errorData.detail
     const errorMessage =
-      detail?.error || detail?.message || errorData.error || errorData.message ||
+      detail?.error ||
+      detail?.message ||
+      errorData.error ||
+      errorData.message ||
       `HTTP ${response.status}: Failed to download skill`
     throw new Error(errorMessage)
   }

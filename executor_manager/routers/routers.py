@@ -20,7 +20,7 @@ from typing import Any, Dict, Optional
 
 import httpx
 from fastapi import APIRouter, Body, FastAPI, HTTPException, Request, Response
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, StreamingResponse
 from pydantic import BaseModel
 
 from executor_manager.common.config import ROUTE_PREFIX
@@ -392,6 +392,270 @@ async def get_executor_load(http_request: Request):
     except Exception as e:
         logger.error(f"Error getting executor load: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.get("/executor/address")
+async def get_executor_address(executor_name: str, http_request: Request):
+    """Get executor runtime address by executor name."""
+    try:
+        client_ip = http_request.client.host if http_request.client else "unknown"
+        logger.info(
+            f"Received request to get executor address: {executor_name} from {client_ip}"
+        )
+
+        executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
+        if not hasattr(executor, "get_container_address"):
+            raise HTTPException(
+                status_code=501, detail="Executor address lookup is not supported"
+            )
+
+        result = executor.get_container_address(executor_name)
+        logger.info(
+            "Resolved executor address: executor_name=%s result=%s",
+            executor_name,
+            result,
+        )
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting executor address for '{executor_name}': {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def _to_log_preview(raw: str, limit: int = 300) -> str:
+    if not raw:
+        return ""
+    return " ".join(raw.split())[:limit]
+
+
+def _parse_json_or_none(response: httpx.Response) -> Optional[dict[str, Any]]:
+    try:
+        payload = response.json()
+    except ValueError:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _is_route_not_found_response(response: httpx.Response) -> bool:
+    if response.status_code != 404:
+        return False
+    payload = _parse_json_or_none(response)
+    detail = payload.get("detail") if payload else None
+    return isinstance(detail, str) and detail.lower() == "not found"
+
+
+def _is_connect_not_found_response(response: httpx.Response) -> bool:
+    if response.status_code != 404:
+        return False
+    payload = _parse_json_or_none(response)
+    code = payload.get("code") if payload else None
+    return isinstance(code, str) and code == "not_found"
+
+
+def _normalize_workspace_entry(entry: dict[str, Any]) -> dict[str, Any]:
+    type_value = str(entry.get("type", "")).upper()
+    if "is_directory" in entry:
+        is_directory = bool(entry.get("is_directory"))
+    else:
+        is_directory = "DIRECTORY" in type_value
+
+    try:
+        size = int(entry.get("size", 0) or 0)
+    except (TypeError, ValueError):
+        size = 0
+
+    return {
+        "name": str(entry.get("name", "")),
+        "path": str(entry.get("path", "")),
+        "is_directory": is_directory,
+        "size": size,
+        "modified_at": entry.get("modified_at") or entry.get("modified_time"),
+    }
+
+
+def _normalize_workspace_entries(payload: Any) -> list[dict[str, Any]]:
+    if isinstance(payload, list):
+        raw_entries = payload
+    elif isinstance(payload, dict):
+        entries = payload.get("entries")
+        if isinstance(entries, list):
+            raw_entries = entries
+        else:
+            items = payload.get("items")
+            raw_entries = items if isinstance(items, list) else []
+    else:
+        raw_entries = []
+
+    return [
+        _normalize_workspace_entry(entry)
+        for entry in raw_entries
+        if isinstance(entry, dict)
+    ]
+
+
+async def _resolve_workspace_runtime_base_url(
+    task_id: int,
+    executor_name: Optional[str],
+) -> str:
+    from executor_manager.services.sandbox import get_sandbox_manager
+
+    sandbox_manager = get_sandbox_manager()
+    sandbox = await sandbox_manager.get_sandbox(str(task_id))
+    if sandbox and sandbox.base_url:
+        return str(sandbox.base_url).rstrip("/")
+
+    if not executor_name:
+        raise HTTPException(
+            status_code=404,
+            detail="Executor runtime not found and sandbox is unavailable",
+        )
+
+    executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
+    if not hasattr(executor, "get_container_address"):
+        raise HTTPException(
+            status_code=501, detail="Executor address lookup is not supported"
+        )
+
+    result = executor.get_container_address(executor_name)
+    status = str(result.get("status", "")).lower()
+    base_url = result.get("base_url")
+    if status and status != "success":
+        raise HTTPException(
+            status_code=404,
+            detail=result.get("error_msg") or "Executor runtime is unavailable",
+        )
+    if not isinstance(base_url, str) or not base_url:
+        raise HTTPException(status_code=404, detail="Executor runtime has no base_url")
+
+    return base_url.rstrip("/")
+
+
+@api_router.get("/executor/workspace/tree")
+async def get_executor_workspace_tree(
+    task_id: int,
+    path: Optional[str] = None,
+    executor_name: Optional[str] = None,
+    http_request: Request = None,  # FastAPI injects Request
+):
+    normalized_path = path or f"/workspace/{task_id}"
+    client_ip = (
+        http_request.client.host if http_request and http_request.client else "unknown"
+    )
+    base_url = await _resolve_workspace_runtime_base_url(task_id, executor_name)
+    logger.info(
+        "[workspace_proxy] list request task_id=%s executor_name=%s path=%s base_url=%s from %s",
+        task_id,
+        executor_name,
+        normalized_path,
+        base_url,
+        client_ip,
+    )
+
+    legacy_url = f"{base_url}/filesystem/list-dir"
+    connect_url = f"{base_url}/filesystem.Filesystem/ListDir"
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        legacy_response = await client.get(legacy_url, params={"path": normalized_path})
+        if legacy_response.status_code < 400:
+            payload = legacy_response.json()
+            return _normalize_workspace_entries(payload)
+
+        logger.info(
+            "[workspace_proxy] legacy list failed task_id=%s status_code=%s body_preview=%s",
+            task_id,
+            legacy_response.status_code,
+            _to_log_preview(legacy_response.text),
+        )
+
+        connect_response = await client.post(
+            connect_url,
+            json={"path": normalized_path, "depth": 1},
+            headers={"Content-Type": "application/json"},
+        )
+        if connect_response.status_code < 400:
+            payload = connect_response.json()
+            return _normalize_workspace_entries(payload)
+
+        logger.warning(
+            "[workspace_proxy] connect list failed task_id=%s status_code=%s body_preview=%s",
+            task_id,
+            connect_response.status_code,
+            _to_log_preview(connect_response.text),
+        )
+
+    if _is_connect_not_found_response(connect_response):
+        raise HTTPException(status_code=404, detail="Path not found")
+    if legacy_response.status_code == 404 and not _is_route_not_found_response(
+        legacy_response
+    ):
+        raise HTTPException(status_code=404, detail="Path not found")
+    raise HTTPException(status_code=502, detail="Remote workspace list failed")
+
+
+@api_router.get("/executor/workspace/file")
+async def get_executor_workspace_file(
+    task_id: int,
+    path: str,
+    executor_name: Optional[str] = None,
+    http_request: Request = None,  # FastAPI injects Request
+):
+    client_ip = (
+        http_request.client.host if http_request and http_request.client else "unknown"
+    )
+    base_url = await _resolve_workspace_runtime_base_url(task_id, executor_name)
+    logger.info(
+        "[workspace_proxy] file request task_id=%s executor_name=%s path=%s base_url=%s from %s",
+        task_id,
+        executor_name,
+        path,
+        base_url,
+        client_ip,
+    )
+
+    legacy_url = f"{base_url}/filesystem/file"
+    rest_file_url = f"{base_url}/files"
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        legacy_response = await client.get(legacy_url, params={"path": path})
+        if legacy_response.status_code < 400:
+            return StreamingResponse(
+                iter([legacy_response.content]),
+                media_type=legacy_response.headers.get(
+                    "content-type", "application/octet-stream"
+                ),
+            )
+
+        logger.info(
+            "[workspace_proxy] legacy file failed task_id=%s status_code=%s body_preview=%s",
+            task_id,
+            legacy_response.status_code,
+            _to_log_preview(legacy_response.text),
+        )
+
+        fallback_response = await client.get(rest_file_url, params={"path": path})
+        if fallback_response.status_code < 400:
+            return StreamingResponse(
+                iter([fallback_response.content]),
+                media_type=fallback_response.headers.get(
+                    "content-type", "application/octet-stream"
+                ),
+            )
+
+        logger.warning(
+            "[workspace_proxy] fallback file failed task_id=%s status_code=%s body_preview=%s",
+            task_id,
+            fallback_response.status_code,
+            _to_log_preview(fallback_response.text),
+        )
+
+    if fallback_response.status_code == 404:
+        raise HTTPException(status_code=404, detail="File not found")
+    if legacy_response.status_code == 404 and not _is_route_not_found_response(
+        legacy_response
+    ):
+        raise HTTPException(status_code=404, detail="File not found")
+    raise HTTPException(status_code=502, detail="Remote file request failed")
 
 
 class CancelTaskRequest(BaseModel):
