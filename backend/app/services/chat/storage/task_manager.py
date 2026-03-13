@@ -18,10 +18,13 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
+from app.models.resource_member import MemberStatus, ResourceMember, ResourceRole
+from app.models.share_link import PermissionLevel, ResourceType
 from app.models.subtask import SenderType, Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.models.user import User
-from app.schemas.kind import Bot, Task, Team
+from app.schemas.kind import Task, Team
+from app.services.group_member_helper import get_group_members
 
 logger = logging.getLogger(__name__)
 
@@ -237,7 +240,9 @@ def _validate_linked_group(db: Session, user_id: int, linked_group: str) -> bool
     # Check if namespace exists
     namespace = (
         db.query(Namespace)
-        .filter(Namespace.name == linked_group, Namespace.is_active == True)
+        .filter(
+            Namespace.name == linked_group, Namespace.is_active == True
+        )  # noqa: E712
         .first()
     )
 
@@ -254,6 +259,99 @@ def _validate_linked_group(db: Session, user_id: int, linked_group: str) -> bool
         return False
 
     return True
+
+
+def _copy_group_members_to_task(
+    db: Session,
+    task_id: int,
+    linked_group: str,
+    task_owner_id: int,
+) -> None:
+    """Copy group members to task when creating a linked group chat.
+
+    This function copies all approved members from the linked group to the task's
+    resource_members table. This avoids performance issues with JOIN queries on
+    large datasets.
+
+    Args:
+        db: Database session
+        task_id: Task ID
+        linked_group: Linked group name
+        task_owner_id: Task owner user ID (will be excluded from copying)
+    """
+    from app.schemas.namespace import GroupRole
+
+    # Get all approved members from the linked group (excluding RestrictedObserver)
+    group_members = get_group_members(db, linked_group)
+
+    if not group_members:
+        logger.info(
+            f"[_copy_group_members_to_task] No members found in group '{linked_group}'"
+        )
+        return
+
+    # Filter out RestrictedObserver and task owner
+    members_to_copy = [
+        gm
+        for gm in group_members
+        if gm.role != GroupRole.RestrictedObserver.value and gm.user_id != task_owner_id
+    ]
+
+    if not members_to_copy:
+        logger.info(f"[_copy_group_members_to_task] No members to copy after filtering")
+        return
+
+    # Copy members to task
+    copied_count = 0
+    for gm in members_to_copy:
+        # Map group role to permission level
+        role_to_permission = {
+            ResourceRole.OWNER.value: PermissionLevel.MANAGE.value,
+            ResourceRole.MAINTAINER.value: PermissionLevel.MANAGE.value,
+            ResourceRole.DEVELOPER.value: PermissionLevel.EDIT.value,
+            ResourceRole.REPORTER.value: PermissionLevel.VIEW.value,
+        }
+        permission_level = role_to_permission.get(gm.role, PermissionLevel.VIEW.value)
+
+        # Check if member already exists (should not happen for new task)
+        existing = (
+            db.query(ResourceMember)
+            .filter(
+                ResourceMember.resource_type == ResourceType.TASK.value,
+                ResourceMember.resource_id == task_id,
+                ResourceMember.user_id == gm.user_id,
+            )
+            .first()
+        )
+
+        if existing:
+            logger.debug(
+                f"[_copy_group_members_to_task] Member {gm.user_id} already exists in task {task_id}"
+            )
+            continue
+
+        # Create new task member
+        task_member = ResourceMember(
+            resource_type=ResourceType.TASK.value,
+            resource_id=task_id,
+            user_id=gm.user_id,
+            role=gm.role,
+            permission_level=permission_level,
+            status=MemberStatus.APPROVED.value,
+            invited_by_user_id=task_owner_id,  # Task owner is the inviter
+            share_link_id=0,
+            reviewed_by_user_id=0,
+            reviewed_at=datetime(1970, 1, 1, 0, 0, 0),
+            copied_resource_id=0,
+            requested_at=datetime.now(),
+        )
+        db.add(task_member)
+        copied_count += 1
+
+    logger.info(
+        f"[_copy_group_members_to_task] Copied {copied_count} members from group '{linked_group}' "
+        f"to task {task_id}"
+    )
 
 
 def create_new_task(
@@ -338,7 +436,7 @@ def create_new_task(
             .filter(
                 Kind.id == params.knowledge_base_id,
                 Kind.kind == "KnowledgeBase",
-                Kind.is_active == True,
+                Kind.is_active == True,  # noqa: E712
             )
             .first()
         )
@@ -439,7 +537,9 @@ def create_new_task(
 
         namespace = (
             db.query(Namespace)
-            .filter(Namespace.name == params.linked_group, Namespace.is_active == True)
+            .filter(
+                Namespace.name == params.linked_group, Namespace.is_active == True
+            )  # noqa: E712
             .first()
         )
         if namespace:
@@ -512,6 +612,15 @@ def create_new_task(
         f"linked_group={task_json.get('spec', {}).get('linked_group', 'NOT_SET')}, "
         f"linked_group_id={linked_group_id}"
     )
+
+    # Copy group members to task if this is a linked group chat
+    if params.is_group_chat and params.linked_group and linked_group_id > 0:
+        _copy_group_members_to_task(
+            db=db,
+            task_id=new_task_id,
+            linked_group=params.linked_group,
+            task_owner_id=user.id,
+        )
 
     return task
 

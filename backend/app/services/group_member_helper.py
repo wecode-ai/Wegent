@@ -28,6 +28,13 @@ EPOCH_TIME = datetime(1970, 1, 1, 0, 0, 0)
 NAMESPACE_RESOURCE_TYPE = "Namespace"
 
 
+def _get_sync_service():
+    """Lazy import to avoid circular dependencies."""
+    from app.services.group_member_sync_service import group_member_sync_service
+
+    return group_member_sync_service
+
+
 def get_namespace_id_by_name(db: Session, group_name: str) -> Optional[int]:
     """Get namespace ID by name."""
     namespace = (
@@ -263,12 +270,24 @@ def create_group_member(
     db.add(member)
     db.flush()
 
+    # Sync to linked group chats
+    try:
+        sync_service = _get_sync_service()
+        sync_service.sync_member_added(db, group_name, user_id, role)
+    except Exception as e:
+        # Log but don't fail the group member creation
+        import logging
+
+        logging.getLogger(__name__).warning(
+            f"[create_group_member] Failed to sync member to linked chats: {e}"
+        )
+
     return member
 
 
 def delete_group_member(db: Session, group_name: str, user_id: int) -> bool:
     """
-    Delete a group membership.
+    Delete a group membership and sync to linked group chats.
 
     Args:
         db: Database session
@@ -282,8 +301,73 @@ def delete_group_member(db: Session, group_name: str, user_id: int) -> bool:
     if member:
         db.delete(member)
         db.flush()
+
+        # Sync to linked group chats
+        try:
+            sync_service = _get_sync_service()
+            sync_service.sync_member_removed(db, group_name, user_id)
+        except Exception as e:
+            # Log but don't fail the group member deletion
+            import logging
+
+            logging.getLogger(__name__).warning(
+                f"[delete_group_member] Failed to sync member removal to linked chats: {e}"
+            )
+
         return True
     return False
+
+
+def update_group_member_role(
+    db: Session,
+    group_name: str,
+    user_id: int,
+    new_role: str,
+) -> bool:
+    """
+    Update a group member's role and sync to linked group chats.
+
+    Args:
+        db: Database session
+        group_name: Group name
+        user_id: User ID
+        new_role: New role to assign
+
+    Returns:
+        True if updated, False if not found
+    """
+    member = get_group_member(db, group_name, user_id)
+    if not member:
+        return False
+
+    # Map role to permission level
+    role_to_permission = {
+        GroupRole.Owner.value: "manage",
+        GroupRole.Maintainer.value: "manage",
+        GroupRole.Developer.value: "edit",
+        GroupRole.Reporter.value: "view",
+        GroupRole.RestrictedObserver.value: "use",
+    }
+    permission_level = role_to_permission.get(new_role, "view")
+
+    member.role = new_role
+    member.permission_level = permission_level
+    member.updated_at = datetime.now()
+    db.flush()
+
+    # Sync to linked group chats
+    try:
+        sync_service = _get_sync_service()
+        sync_service.sync_member_role_updated(db, group_name, user_id, new_role)
+    except Exception as e:
+        # Log but don't fail the group member update
+        import logging
+
+        logging.getLogger(__name__).warning(
+            f"[update_group_member_role] Failed to sync role update to linked chats: {e}"
+        )
+
+    return True
 
 
 def count_group_members_by_role(db: Session, group_name: str, role: str) -> int:

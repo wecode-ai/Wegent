@@ -1642,12 +1642,16 @@ class KnowledgeService:
 
             # Query 3: Get KB IDs where user accesses group chats via linked namespace
             # This handles users who are members of the linked group but not direct task members
+            # Join through task_knowledge_base_bindings to get linked_group_id
             linked_ns_kb_ids = (
                 db.query(TaskKnowledgeBaseBinding.knowledge_base_id)
                 .join(TaskResource, TaskResource.id == TaskKnowledgeBaseBinding.task_id)
                 .join(
                     ResourceMember,
-                    (ResourceMember.resource_id == TaskResource.linked_group_id)
+                    (
+                        ResourceMember.resource_id
+                        == TaskKnowledgeBaseBinding.linked_group_id
+                    )
                     & (ResourceMember.resource_type == NAMESPACE_RESOURCE_TYPE)
                     & (ResourceMember.user_id == user_id)
                     & (ResourceMember.status == MemberStatus.APPROVED.value),

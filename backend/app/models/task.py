@@ -91,14 +91,6 @@ class TaskResource(Base):
         index=True,
         comment="Project ID for task grouping",
     )
-    linked_group_id = Column(
-        Integer,
-        nullable=False,
-        default=0,
-        server_default="0",
-        index=True,
-        comment="Linked namespace ID for group chats (0 = not linked)",
-    )
     is_group_chat = Column(
         Boolean,
         nullable=False,

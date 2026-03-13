@@ -454,17 +454,17 @@ class KnowledgeShareService(UnifiedShareService):
             return ResourceRole.REPORTER.value
 
         # Check for namespace-derived membership (linked-group chats)
-        # Join TaskKnowledgeBaseBinding -> TaskResource to get namespace_id,
-        # then query NamespaceMember for membership
+        # Join TaskKnowledgeBaseBinding to get linked_group_id,
+        # then query ResourceMember for namespace membership
         # Enforce is_group_chat check to ensure only real linked-group chats grant access
         namespace_member_result = (
             db.query(ResourceMember.role)
             .join(
-                TaskResource,
-                ResourceMember.resource_id == TaskResource.linked_group_id,
+                TaskKnowledgeBaseBinding,
+                ResourceMember.resource_id == TaskKnowledgeBaseBinding.linked_group_id,
             )
             .join(
-                TaskKnowledgeBaseBinding,
+                TaskResource,
                 TaskKnowledgeBaseBinding.task_id == TaskResource.id,
             )
             .filter(

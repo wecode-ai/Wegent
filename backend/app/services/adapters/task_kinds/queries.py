@@ -256,170 +256,34 @@ class TaskQueryMixin:
         Includes:
         1. Tasks with is_group_chat=true (using indexed column)
         2. Tasks with ResourceMember records (regular group chats)
-        3. Tasks with linked_group where user is a member of the linked group (namespace)
 
-        Performance optimized: Uses is_group_chat column with index instead of JSON parsing.
+        Performance optimized: Uses query_utils helpers for efficient batch operations.
         """
-        from app.schemas.namespace import GroupRole
-
-        # Step 1: Get all task IDs with is_group_chat=true (no limit/skip)
-        group_chat_tasks_sql = text(
-            """
-            SELECT id, updated_at
-            FROM tasks
-            WHERE user_id = :user_id
-            AND kind = 'Task'
-            AND is_active = true
-            AND namespace != 'system'
-            AND is_group_chat = true
-            ORDER BY updated_at DESC
-        """
-        )
-        group_chat_tasks_result = db.execute(
-            group_chat_tasks_sql, {"user_id": user_id}
-        ).fetchall()
-        group_task_ids = {row[0] for row in group_chat_tasks_result}
-        group_task_updated_at = {row[0]: row[1] for row in group_chat_tasks_result}
-
-        # Step 2: Get tasks with linked_group where user is a member of the linked namespace
-        # Exclude RestrictedObserver role - they should not have task access via linked group
-        user_namespace_ids_sql = text(
-            """
-            SELECT DISTINCT rm.resource_id, rm.role
-            FROM resource_members rm
-            WHERE rm.resource_type = 'Namespace'
-            AND rm.user_id = :user_id
-            AND rm.status = 'approved'
-        """
-        )
-        user_namespace_ids_result = db.execute(
-            user_namespace_ids_sql, {"user_id": user_id}
-        ).fetchall()
-        # Filter out RestrictedObserver role
-        user_namespace_ids = {
-            row[0]
-            for row in user_namespace_ids_result
-            if row[1] != GroupRole.RestrictedObserver.value
-        }
-
-        linked_group_ids = set()
-        linked_group_updated_at = {}
-        if user_namespace_ids:
-            # Query tasks using linked_group_id column (indexed)
-            linked_group_sql = text(
-                """
-                SELECT DISTINCT k.id, k.updated_at
-                FROM tasks k
-                WHERE k.kind = 'Task'
-                AND k.is_active = true
-                AND k.namespace != 'system'
-                AND k.linked_group_id IN :namespace_ids
-            """
-            ).bindparams(
-                bindparam("namespace_ids", expanding=True),
-            )
-
-            linked_group_result = db.execute(
-                linked_group_sql,
-                {
-                    "namespace_ids": list(user_namespace_ids),
-                },
-            ).fetchall()
-            linked_group_ids = {row[0] for row in linked_group_result}
-            linked_group_updated_at = {row[0]: row[1] for row in linked_group_result}
-
-        # Step 3: Get all tasks where user is a member via resource_members (no limit)
-        # Note: copied_resource_id = 0 filters out share-copy records
-        member_task_ids_sql = text(
-            """
-            SELECT DISTINCT tm.resource_id, k.updated_at
-            FROM resource_members tm
-            INNER JOIN tasks k ON k.id = tm.resource_id AND tm.resource_type = 'Task'
-            WHERE tm.status = 'approved'
-            AND k.kind = 'Task'
-            AND k.is_active = true
-            AND k.namespace != 'system'
-            AND tm.user_id = :user_id
-            AND tm.copied_resource_id = 0
-        """
-        )
-        member_task_ids_result = db.execute(
-            member_task_ids_sql, {"user_id": user_id}
-        ).fetchall()
-        member_task_ids = {row[0] for row in member_task_ids_result}
-        member_task_updated_at = {row[0]: row[1] for row in member_task_ids_result}
-
-        # Step 4: Combine all task IDs (union/deduplication)
-        all_group_task_ids = group_task_ids | linked_group_ids | member_task_ids
-
+        # Get all accessible group task IDs using existing helper
+        all_group_task_ids = get_group_task_ids_for_accessible_user(db, user_id=user_id)
         if not all_group_task_ids:
             return [], 0
 
-        # Step 5: Load TaskResource rows for all IDs to filter out DELETE tasks
-        all_tasks = (
-            db.query(TaskResource).filter(TaskResource.id.in_(all_group_task_ids)).all()
-        )
+        group_task_ids = list(all_group_task_ids)
 
-        # Filter out tasks with status == "DELETE" and build non-deleted ID set
-        non_deleted_ids = []
-        non_deleted_updated_at = {}
-        for t in all_tasks:
-            try:
-                task_crd = Task.model_validate(t.json)
-            except Exception as e:
-                logger.warning(
-                    f"[get_user_group_tasks_lite] Failed to validate task {t.id}: {e}. "
-                    f"task_json={t.json}",
-                    exc_info=True,
-                )
-                continue
-            status = task_crd.status.status if task_crd.status else "PENDING"
-            if status != "DELETE":
-                non_deleted_ids.append(t.id)
-                # Get updated_at from the appropriate source
-                if t.id in group_task_updated_at:
-                    non_deleted_updated_at[t.id] = group_task_updated_at[t.id]
-                elif t.id in linked_group_updated_at:
-                    non_deleted_updated_at[t.id] = linked_group_updated_at[t.id]
-                elif t.id in member_task_updated_at:
-                    non_deleted_updated_at[t.id] = member_task_updated_at[t.id]
-                else:
-                    non_deleted_updated_at[t.id] = t.updated_at
-
-        # Step 6: Compute total from filtered non-deleted set
-        total = len(non_deleted_ids)
-
-        logger.info(
-            f"[get_user_group_tasks_lite] user_id={user_id}, "
-            f"is_group_chat={len(group_task_ids)}, "
-            f"linked_group={len(linked_group_ids)}, "
-            f"member_tasks={len(member_task_ids)}, "
-            f"total={total}"
-        )
-
-        if not non_deleted_ids:
+        # Count non-deleted tasks for accurate total
+        total = count_non_deleted_tasks_by_ids(db, group_task_ids)
+        if total == 0:
             return [], 0
 
-        # Step 7: Sort by updated_at descending and apply pagination
-        sorted_task_ids = sorted(
-            non_deleted_ids,
-            key=lambda tid: non_deleted_updated_at.get(tid, None) or datetime.min,
-            reverse=True,
+        # Load paginated tasks with ordering and DELETE exclusion
+        paginated_tasks = load_tasks_by_ids_ordered(
+            db,
+            group_task_ids,
+            order_field="updated_at",
+            descending=True,
+            skip=skip,
+            limit=limit,
+            exclude_deleted=True,
         )
 
-        # Apply skip/limit to get paginated IDs
-        paginated_ids = sorted_task_ids[skip : skip + limit]
-
-        if not paginated_ids:
-            return [], total
-
-        # Step 8: Load full task data for paginated IDs (or reuse already-loaded rows)
-        id_to_task = {t.id: t for t in all_tasks}
-        ordered_tasks = [id_to_task[tid] for tid in paginated_ids if tid in id_to_task]
-
         # Build lightweight result
-        result = build_lite_task_list(db, ordered_tasks, user_id)
-
+        result = build_lite_task_list(db, paginated_tasks, user_id)
         return result, total
 
     def get_user_personal_tasks_lite(
@@ -438,102 +302,55 @@ class TaskQueryMixin:
             types: List of task types to include. Options: 'online', 'offline', 'subscription'.
                    Default is ['online', 'offline'] if None.
 
-        Performance optimized: Uses application-layer filtering instead of JSON_EXTRACT.
+        Performance optimized: Uses query_utils helpers for efficient batch operations.
         """
         if types is None:
             types = ["online", "offline"]
 
-        # Get all task IDs that are group chats (have members) using resource_members
-        # Note: copied_resource_id = 0 filters out share-copy records (where copied_resource_id > 0)
-        # Share-copy records are created when users import shared tasks, not for group chat membership
-        member_task_ids_sql = text(
-            """
-            SELECT DISTINCT tm.resource_id
-            FROM resource_members tm
-            INNER JOIN tasks k ON k.id = tm.resource_id AND tm.resource_type = 'Task'
-            WHERE tm.status = 'approved'
-            AND k.kind = 'Task'
-            AND k.is_active = true
-            AND k.namespace != 'system'
-            AND tm.copied_resource_id = 0
-            AND tm.user_id = :user_id
-        """
+        # Get all owned task IDs using existing helper
+        owned_task_ids, _ = get_owned_task_ids_and_total(
+            db, user_id=user_id, skip=0, limit=10000, extra_limit=0
         )
-        member_task_ids_result = db.execute(
-            member_task_ids_sql, {"user_id": user_id}
-        ).fetchall()
-        member_task_ids = {row[0] for row in member_task_ids_result}
+        if not owned_task_ids:
+            return [], 0
 
-        # Also get task IDs where is_group_chat is explicitly set to true
-        # Using application-layer filtering to avoid JSON_EXTRACT in SQL
-        explicit_group_sql = text(
-            """
-            SELECT DISTINCT k.id, k.json
-            FROM tasks k
-            WHERE k.kind = 'Task'
-            AND k.is_active = true
-            AND k.namespace != 'system'
-            AND k.user_id = :user_id
-        """
+        # Get group task IDs to exclude
+        group_task_ids = get_group_task_ids_for_owned_tasks(db, user_id=user_id)
+
+        # Filter out group tasks
+        personal_task_ids = [tid for tid in owned_task_ids if tid not in group_task_ids]
+        if not personal_task_ids:
+            return [], 0
+
+        # Load tasks for filtering by status and type
+        tasks = load_tasks_by_ids_ordered(
+            db,
+            personal_task_ids,
+            order_field="created_at",
+            descending=True,
+            skip=0,
+            limit=None,
+            exclude_deleted=False,  # We'll filter manually to apply type filters
         )
-        explicit_group_result = db.execute(
-            explicit_group_sql, {"user_id": user_id}
-        ).fetchall()
 
-        # Filter tasks that are group tasks (is_group_chat=true or has linked_group)
-        # Using the unified helper to ensure consistent definition of "group task"
-        explicit_group_ids = set()
-        for row in explicit_group_result:
-            task_id, task_json = row
-            if task_id in member_task_ids:
-                continue  # Already counted
-            if is_group_task_or_linked(task_id, task_json):
-                explicit_group_ids.add(task_id)
-
-        # Combine all group task IDs to exclude
-        all_group_task_ids = member_task_ids | explicit_group_ids
-
-        # Get all user's owned tasks first (before pagination)
-        all_tasks_sql = text(
-            """
-            SELECT k.id, k.json
-            FROM tasks k
-            WHERE k.kind = 'Task'
-            AND k.is_active = true
-            AND k.namespace != 'system'
-            AND k.user_id = :user_id
-            ORDER BY k.created_at DESC
-        """
-        )
-        all_tasks_result = db.execute(all_tasks_sql, {"user_id": user_id}).fetchall()
-
-        # Filter tasks: exclude group tasks, deleted tasks, and apply type filters
+        # Apply type filters
         include_online = "online" in types
         include_offline = "offline" in types
         include_subscription = "subscription" in types or "flow" in types
 
-        filtered_task_ids = []
-        for row in all_tasks_result:
-            task_id, task_json = row
-
-            # Skip group chat tasks
-            if task_id in all_group_task_ids:
-                continue
-
-            # Parse task to check status and type
+        filtered_tasks = []
+        for task in tasks:
             try:
-                # Handle both string (from raw SQL) and dict (from ORM)
-                if isinstance(task_json, str):
-                    task_json = json.loads(task_json)
-                task_crd = Task.model_validate(task_json)
+                task_crd = Task.model_validate(task.json)
             except Exception as e:
                 logger.warning(
-                    f"[get_user_personal_tasks_lite] Failed to validate task {task_id}: {e}. "
-                    f"task_json={task_json}",
+                    f"[get_user_personal_tasks_lite] Failed to validate task {task.id}: {e}. "
+                    f"task_json={task.json}",
                     exc_info=True,
                 )
                 continue
 
+            # Skip DELETE status
             status = task_crd.status.status if task_crd.status else "PENDING"
             if status == "DELETE":
                 continue
@@ -555,27 +372,17 @@ class TaskQueryMixin:
                 if not include_online:
                     continue
 
-            filtered_task_ids.append(task_id)
+            filtered_tasks.append(task)
 
-        # Calculate total from filtered results
-        total = len(filtered_task_ids)
+        # Calculate total and apply pagination
+        total = len(filtered_tasks)
+        paginated_tasks = filtered_tasks[skip : skip + limit]
 
-        # Apply pagination to the filtered ID list
-        paginated_ids = filtered_task_ids[skip : skip + limit]
-
-        if not paginated_ids:
+        if not paginated_tasks:
             return [], total
 
-        # Load full task data for paginated IDs
-        tasks = db.query(TaskResource).filter(TaskResource.id.in_(paginated_ids)).all()
-
-        # Maintain order
-        id_to_task = {t.id: t for t in tasks}
-        ordered_tasks = [id_to_task[tid] for tid in paginated_ids if tid in id_to_task]
-
         # Build lightweight result
-        result = build_lite_task_list(db, ordered_tasks, user_id)
-
+        result = build_lite_task_list(db, paginated_tasks, user_id)
         return result, total
 
     def get_user_tasks_by_title_with_pagination(

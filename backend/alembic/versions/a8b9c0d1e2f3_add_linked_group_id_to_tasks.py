@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Add linked_group_id to tasks table and task_knowledge_base_bindings table
+"""Add is_group_chat to tasks table and task_knowledge_base_bindings table
 
 Revision ID: a8b9c0d1e2f3
 Revises: c9900f078622
@@ -10,20 +10,17 @@ Create Date: 2026-03-10 14:00:00.000000
 
 This migration includes performance optimizations:
 
-1. linked_group_id column on tasks table:
-   - Stores the namespace_id of the linked group for group chats
-   - Eliminates the need for slow JSON_EXTRACT queries on linked_group
-
-2. is_group_chat column on tasks table:
+1. is_group_chat column on tasks table:
    - Boolean flag to quickly identify group chat tasks
    - Enables efficient indexed queries for group chat list loading
    - Performance improvement: O(n) JSON scan -> O(log n) index lookup
 
-3. task_knowledge_base_bindings table:
-   - Stores Task-KnowledgeBase relationships
+2. task_knowledge_base_bindings table:
+   - Stores Task-KnowledgeBase-Group relationships
    - Enables efficient indexed queries instead of JSON parsing
+   - linked_group_id in this table associates group chats with namespaces
 
-4. Composite indexes for optimized queries
+3. Composite indexes for optimized queries
 """
 
 import json
@@ -46,17 +43,14 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    """Add linked_group_id column and task_knowledge_base_bindings table."""
-    # Part 1: Add linked_group_id column to tasks table
-    _upgrade_linked_group_id()
-
-    # Part 2: Add is_group_chat column to tasks table
+    """Add is_group_chat column and task_knowledge_base_bindings table."""
+    # Part 1: Add is_group_chat column to tasks table
     _upgrade_is_group_chat()
 
-    # Part 3: Create task_knowledge_base_bindings table
+    # Part 2: Create task_knowledge_base_bindings table with linked_group_id
     _upgrade_task_kb_bindings()
 
-    # Part 4: Create composite indexes for KB binding query optimization
+    # Part 3: Create composite indexes for KB binding query optimization
     _upgrade_tasks_composite_index()
     _upgrade_resource_members_composite_index()
 
@@ -175,136 +169,18 @@ def _upgrade_is_group_chat() -> None:
                 )
 
 
-def _upgrade_linked_group_id() -> None:
-    """Add linked_group_id column and index to tasks table.
-
-    This column stores the namespace_id of the linked group for group chats,
-    eliminating the need for slow JSON_EXTRACT queries.
-    """
-    # Add linked_group_id column with NOT NULL constraint and default value 0
-    # linked_group_id = 0 means no linked group (not created from a group)
-    op.add_column(
-        "tasks",
-        sa.Column(
-            "linked_group_id",
-            sa.Integer(),
-            nullable=False,
-            server_default=sa.text("0"),
-            comment="Linked namespace ID for group chats (0 = not linked)",
-        ),
-    )
-
-    # Create index for fast lookups
-    op.create_index(
-        "ix_tasks_linked_group_id",
-        "tasks",
-        ["linked_group_id"],
-        unique=False,
-    )
-
-    # Create composite index for common query pattern: find tasks by user with linked group
-    op.create_index(
-        "ix_tasks_user_id_linked_group_id",
-        "tasks",
-        ["user_id", "linked_group_id"],
-        unique=False,
-    )
-
-    # Migrate existing data: extract linked_group from JSON and populate linked_group_id
-    conn = op.get_bind()
-
-    # Get all tasks that have linked_group in their JSON AND is_group_chat is true
-    if conn.dialect.name == "mysql":
-        # MySQL: use JSON_EXTRACT to find tasks with linked_group and is_group_chat=true
-        result = conn.execute(
-            sa.text(
-                """
-                SELECT id, JSON_UNQUOTE(JSON_EXTRACT(json, '$.spec.linked_group')) as linked_group
-                FROM tasks
-                WHERE JSON_EXTRACT(json, '$.spec.linked_group') IS NOT NULL
-                AND JSON_UNQUOTE(JSON_EXTRACT(json, '$.spec.is_group_chat')) = 'true'
-                AND kind = 'Task'
-            """
-            )
-        ).fetchall()
-    else:
-        # SQLite: load all tasks and filter in Python
-        result = conn.execute(
-            sa.text(
-                """
-                SELECT id, json
-                FROM tasks
-                WHERE kind = 'Task'
-            """
-            )
-        ).fetchall()
-
-        # Filter tasks with linked_group and is_group_chat=true in Python for SQLite
-        filtered_result = []
-        for row in result:
-            task_id = row[0]
-            try:
-                task_json = json.loads(row[1]) if isinstance(row[1], str) else row[1]
-                linked_group = task_json.get("spec", {}).get("linked_group")
-                is_group_chat = task_json.get("spec", {}).get("is_group_chat")
-                # Only include tasks with both linked_group and is_group_chat=true
-                # Ensure linked_group is a non-empty string
-                if (
-                    isinstance(linked_group, str)
-                    and linked_group.strip()
-                    and is_group_chat is True
-                ):
-                    filtered_result.append((task_id, linked_group))
-            except (json.JSONDecodeError, TypeError, AttributeError) as e:
-                # Log warning with task ID for malformed JSON
-                logger.warning(f"Failed to parse JSON for task id={task_id}: {e}")
-        result = filtered_result
-
-    # For each task with linked_group, find the namespace_id and update
-    for row in result:
-        task_id = row[0]
-        linked_group_name = row[1]
-
-        if not linked_group_name:
-            continue
-
-        # Find namespace_id by name
-        # Use dialect-compatible boolean: SQLite uses 1, MySQL/PostgreSQL support true
-        if conn.dialect.name == "mysql":
-            namespace_result = conn.execute(
-                sa.text(
-                    "SELECT id FROM namespace WHERE name = :name AND is_active = true"
-                ),
-                {"name": linked_group_name},
-            ).fetchone()
-        else:
-            namespace_result = conn.execute(
-                sa.text(
-                    "SELECT id FROM namespace WHERE name = :name AND is_active = 1"
-                ),
-                {"name": linked_group_name},
-            ).fetchone()
-
-        if namespace_result:
-            namespace_id = namespace_result[0]
-            # Update the task with the linked_group_id
-            conn.execute(
-                sa.text(
-                    "UPDATE tasks SET linked_group_id = :namespace_id WHERE id = :task_id"
-                ),
-                {"namespace_id": namespace_id, "task_id": task_id},
-            )
-
-
 def _upgrade_task_kb_bindings() -> None:
-    """Create task_knowledge_base_bindings table and migrate existing data."""
+    """Create task_knowledge_base_bindings table with linked_group_id and migrate existing data."""
 
-    # 1. Create the table
+    # 1. Create the table with linked_group_id
     op.create_table(
         "task_knowledge_base_bindings",
         sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
         sa.Column("task_id", sa.Integer(), nullable=False),
         sa.Column("knowledge_base_id", sa.Integer(), nullable=False),
+        sa.Column(
+            "linked_group_id", sa.Integer(), nullable=False, server_default=sa.text("0")
+        ),
         sa.Column("bound_by", sa.String(255), nullable=False),
         sa.Column("bound_at", sa.DateTime(), nullable=False),
         sa.Column(
@@ -329,9 +205,19 @@ def _upgrade_task_kb_bindings() -> None:
     )
 
     # 2. Create indexes
-    op.create_index("idx_tkb_task_id", "task_knowledge_base_bindings", ["task_id"])
+    # Note: idx_tkb_task_id and idx_tkb_kb_id are covered by the UNIQUE constraint uk_task_kb
+    # which includes (task_id, knowledge_base_id), so separate indexes are not needed
+    # op.create_index("idx_tkb_task_id", "task_knowledge_base_bindings", ["task_id"])
+    # op.create_index(
+    #     "idx_tkb_kb_id", "task_knowledge_base_bindings", ["knowledge_base_id"]
+    # )
+
+    # Composite index for group member sync queries
+    # Optimizes: SELECT task_id FROM task_knowledge_base_bindings WHERE linked_group_id = ?
     op.create_index(
-        "idx_tkb_kb_id", "task_knowledge_base_bindings", ["knowledge_base_id"]
+        "idx_tkb_linked_group_task",
+        "task_knowledge_base_bindings",
+        ["linked_group_id", "task_id"],
     )
 
     # 3. Create unique constraint to prevent duplicate bindings
@@ -436,6 +322,33 @@ def _resolve_kb_by_name(
         return None
 
 
+def _resolve_namespace_by_name(conn, group_name: str) -> Optional[int]:
+    """Resolve namespace ID by group name.
+
+    Args:
+        conn: Database connection
+        group_name: Group/namespace name
+
+    Returns:
+        Namespace ID if found, None otherwise
+    """
+    if not group_name:
+        return None
+
+    if conn.dialect.name == "mysql":
+        result = conn.execute(
+            sa.text("SELECT id FROM namespace WHERE name = :name AND is_active = true"),
+            {"name": group_name},
+        ).fetchone()
+    else:
+        result = conn.execute(
+            sa.text("SELECT id FROM namespace WHERE name = :name AND is_active = 1"),
+            {"name": group_name},
+        ).fetchone()
+
+    return result[0] if result else None
+
+
 def _migrate_kb_bindings() -> None:
     """Migrate existing knowledgeBaseRefs from JSON to the bindings table.
 
@@ -443,7 +356,8 @@ def _migrate_kb_bindings() -> None:
     1. Queries all Tasks with knowledgeBaseRefs in their JSON
     2. Extracts KB bindings with valid IDs
     3. For legacy refs without ID, resolves KB by name
-    4. Batch inserts into the new table
+    4. Extracts linked_group from task JSON and resolves to namespace_id
+    5. Batch inserts into the new table
     """
     conn = op.get_bind()
     batch_size = 1000
@@ -512,8 +426,17 @@ def _migrate_kb_bindings() -> None:
                 )
                 continue
 
-            # Extract knowledgeBaseRefs
+            # Extract linked_group for namespace_id resolution
             spec = task_json.get("spec", {})
+            linked_group_name = spec.get("linked_group")
+            linked_group_id = 0
+
+            if isinstance(linked_group_name, str) and linked_group_name.strip():
+                linked_group_id = (
+                    _resolve_namespace_by_name(conn, linked_group_name) or 0
+                )
+
+            # Extract knowledgeBaseRefs
             kb_refs = spec.get("knowledgeBaseRefs", []) or []
 
             # Ensure kb_refs is a list
@@ -620,6 +543,7 @@ def _migrate_kb_bindings() -> None:
                     {
                         "task_id": task_id,
                         "knowledge_base_id": kb_id,
+                        "linked_group_id": linked_group_id,
                         "bound_by": bound_by,
                         "bound_at": bound_at,
                     }
@@ -635,8 +559,8 @@ def _migrate_kb_bindings() -> None:
                         sa.text(
                             """
                             INSERT IGNORE INTO task_knowledge_base_bindings
-                            (task_id, knowledge_base_id, bound_by, bound_at)
-                            VALUES (:task_id, :knowledge_base_id, :bound_by, :bound_at)
+                            (task_id, knowledge_base_id, linked_group_id, bound_by, bound_at)
+                            VALUES (:task_id, :knowledge_base_id, :linked_group_id, :bound_by, :bound_at)
                         """
                         ),
                         binding,
@@ -649,8 +573,8 @@ def _migrate_kb_bindings() -> None:
                         sa.text(
                             """
                             INSERT OR IGNORE INTO task_knowledge_base_bindings
-                            (task_id, knowledge_base_id, bound_by, bound_at)
-                            VALUES (:task_id, :knowledge_base_id, :bound_by, :bound_at)
+                            (task_id, knowledge_base_id, linked_group_id, bound_by, bound_at)
+                            VALUES (:task_id, :knowledge_base_id, :linked_group_id, :bound_by, :bound_at)
                         """
                         ),
                         binding,
@@ -665,7 +589,7 @@ def _migrate_kb_bindings() -> None:
 
 
 def downgrade() -> None:
-    """Remove linked_group_id column, indexes, and task_knowledge_base_bindings table."""
+    """Remove is_group_chat column, indexes, and task_knowledge_base_bindings table."""
     # Part 1: Drop composite indexes for KB binding queries
     op.drop_index(
         "idx_resource_members_user_type_status", table_name="resource_members"
@@ -675,16 +599,12 @@ def downgrade() -> None:
     # Part 2: Drop task_knowledge_base_bindings table
     # Note: op.drop_constraint is not needed as constraints are dropped with the table
     # and it's not supported on SQLite
-    op.drop_index("idx_tkb_kb_id", table_name="task_knowledge_base_bindings")
-    op.drop_index("idx_tkb_task_id", table_name="task_knowledge_base_bindings")
+    op.drop_index(
+        "idx_tkb_linked_group_task", table_name="task_knowledge_base_bindings"
+    )
     op.drop_table("task_knowledge_base_bindings")
 
     # Part 3: Drop is_group_chat column and indexes
     op.drop_index("ix_tasks_user_is_group_chat_updated", table_name="tasks")
     op.drop_index("ix_tasks_is_group_chat", table_name="tasks")
     op.drop_column("tasks", "is_group_chat")
-
-    # Part 4: Drop linked_group_id column and indexes
-    op.drop_index("ix_tasks_user_id_linked_group_id", table_name="tasks")
-    op.drop_index("ix_tasks_linked_group_id", table_name="tasks")
-    op.drop_column("tasks", "linked_group_id")

@@ -146,6 +146,9 @@ class TaskKnowledgeBaseService:
         queries instead of scanning JSON data. It joins with TaskResource to ensure
         only active group chat tasks are considered.
 
+        For linked group chats, members are already copied to resource_members table,
+        so we only need to check resource_members for Task type.
+
         Args:
             db: Database session
             kb_id: Knowledge base Kind.id
@@ -166,7 +169,7 @@ class TaskKnowledgeBaseService:
         # Check if there's any binding where:
         # 1. The KB matches the given kb_id
         # 2. The task is an active "Task" kind AND is_group_chat=true (group chat)
-        # 3. The user is either the task owner OR an approved member OR a linked-group member
+        # 3. The user is either the task owner OR an approved member
         # Subquery: active group chat tasks owned by user
         owned_task_subquery = select(TaskResource.id).where(
             TaskResource.user_id == user_id,
@@ -176,6 +179,7 @@ class TaskKnowledgeBaseService:
         )
 
         # Subquery: tasks where user is approved member (join with TaskResource for active check)
+        # For linked group chats, members are already copied to resource_members table
         # Only consider group chat tasks (is_group_chat=true)
         member_task_subquery = (
             select(ResourceMember.resource_id)
@@ -184,25 +188,6 @@ class TaskKnowledgeBaseService:
                 ResourceMember.user_id == user_id,
                 ResourceMember.resource_type == ResourceType.TASK.value,
                 ResourceMember.status == MemberStatus.APPROVED.value,
-                TaskResource.is_active == True,
-                TaskResource.kind == "Task",
-                TaskResource.is_group_chat == True,
-            )
-        )
-
-        # Subquery: tasks where user is a member via linked namespace (linked-group chats)
-        # Join ResourceMember (namespace) -> TaskResource (linked_group_id)
-        # Only consider group chat tasks (is_group_chat=true)
-        linked_ns_task_subquery = (
-            select(TaskResource.id)
-            .join(
-                ResourceMember,
-                (ResourceMember.resource_id == TaskResource.linked_group_id)
-                & (ResourceMember.resource_type == "Namespace")
-                & (ResourceMember.user_id == user_id)
-                & (ResourceMember.status == MemberStatus.APPROVED.value),
-            )
-            .where(
                 TaskResource.is_active == True,
                 TaskResource.kind == "Task",
                 TaskResource.is_group_chat == True,
@@ -221,7 +206,6 @@ class TaskKnowledgeBaseService:
                 or_(
                     TaskKnowledgeBaseBinding.task_id.in_(owned_task_subquery),
                     TaskKnowledgeBaseBinding.task_id.in_(member_task_subquery),
-                    TaskKnowledgeBaseBinding.task_id.in_(linked_ns_task_subquery),
                 ),
             )
             .exists()
@@ -754,9 +738,27 @@ class TaskKnowledgeBaseService:
 
         from app.models.task_kb_binding import TaskKnowledgeBaseBinding
 
+        # Get linked_group_id from task
+        linked_group_id = 0
+        task_json = task.json if isinstance(task.json, dict) else {}
+        spec = task_json.get("spec", {})
+        linked_group = spec.get("linked_group")
+        if isinstance(linked_group, str) and linked_group.strip():
+            # Resolve namespace_id by name
+            from app.models.namespace import Namespace
+
+            namespace = (
+                db.query(Namespace)
+                .filter(Namespace.name == linked_group, Namespace.is_active == True)
+                .first()
+            )
+            if namespace:
+                linked_group_id = namespace.id
+
         binding = TaskKnowledgeBaseBinding(
             task_id=task_id,
             knowledge_base_id=kb.id,
+            linked_group_id=linked_group_id,
             bound_by=user_name,
             bound_at=datetime.utcnow(),
         )
@@ -1014,9 +1016,27 @@ class TaskKnowledgeBaseService:
 
             from app.models.task_kb_binding import TaskKnowledgeBaseBinding
 
+            # Get linked_group_id from task
+            linked_group_id = 0
+            task_json = task.json if isinstance(task.json, dict) else {}
+            spec = task_json.get("spec", {})
+            linked_group = spec.get("linked_group")
+            if isinstance(linked_group, str) and linked_group.strip():
+                # Resolve namespace_id by name
+                from app.models.namespace import Namespace
+
+                namespace = (
+                    db.query(Namespace)
+                    .filter(Namespace.name == linked_group, Namespace.is_active == True)
+                    .first()
+                )
+                if namespace:
+                    linked_group_id = namespace.id
+
             binding = TaskKnowledgeBaseBinding(
                 task_id=task.id,
                 knowledge_base_id=kb.id,
+                linked_group_id=linked_group_id,
                 bound_by=user_name,
                 bound_at=bound_at,
             )

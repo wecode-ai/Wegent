@@ -50,6 +50,13 @@ class TaskKnowledgeBaseBinding(Base):
         nullable=False,
         comment="Knowledge base ID, references kinds.id",
     )
+    linked_group_id = Column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default="0",
+        comment="Linked namespace ID for group chats (0 = not linked)",
+    )
     bound_by = Column(
         String(255),
         nullable=False,
@@ -68,11 +75,15 @@ class TaskKnowledgeBaseBinding(Base):
     )
 
     __table_args__ = (
-        # Index for querying by task_id (get all KBs for a task)
-        Index("idx_tkb_task_id", "task_id"),
-        # Index for querying by knowledge_base_id (check if KB is bound to any task)
-        Index("idx_tkb_kb_id", "knowledge_base_id"),
-        # Unique constraint to prevent duplicate bindings
+        # Note: idx_tkb_task_id and idx_tkb_kb_id are covered by the UNIQUE constraint uk_task_kb
+        # which includes (task_id, knowledge_base_id), so separate indexes are not needed
+        # Index("idx_tkb_task_id", "task_id"),
+        # Index("idx_tkb_kb_id", "knowledge_base_id"),
+        # Composite index for group member sync queries
+        # Optimizes: SELECT task_id FROM task_knowledge_base_bindings WHERE linked_group_id = ?
+        # Combined with JOIN on tasks table for efficient group chat member synchronization
+        Index("idx_tkb_linked_group_task", "linked_group_id", "task_id"),
+        # Unique constraint to prevent duplicate bindings (also serves as index for task_id and knowledge_base_id lookups)
         UniqueConstraint("task_id", "knowledge_base_id", name="uk_task_kb"),
         {
             "mysql_engine": "InnoDB",
