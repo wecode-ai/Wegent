@@ -10,8 +10,9 @@ test.describe('Settings - Model Management', () => {
     // Verify we're on settings page (models is the default tab)
     await expect(page).toHaveURL(/\/settings/)
 
-    // Wait for model management title to load
-    await expect(page.locator('h2:has-text("Model")')).toBeVisible({ timeout: 20000 })
+    // Wait for model management title to load (support both English and Chinese)
+    const modelTitle = page.locator('h2:has-text("Model"), h2:has-text("模型")').first()
+    await expect(modelTitle).toBeVisible({ timeout: 20000 })
   })
 
   test('should display model list or empty state', async ({ page }) => {
@@ -80,8 +81,9 @@ test.describe('Settings - Model Management', () => {
   })
 
   test('should show test connection button for user models', async ({ page }) => {
-    // Wait for page to load
-    await expect(page.locator('h2:has-text("Model")')).toBeVisible({ timeout: 20000 })
+    // Wait for page to load (support both English and Chinese)
+    const modelTitle = page.locator('h2:has-text("Model"), h2:has-text("模型")').first()
+    await expect(modelTitle).toBeVisible({ timeout: 20000 })
 
     // Test connection button only appears for user models (not public)
     // Check if there are any user model cards with test button
@@ -97,8 +99,9 @@ test.describe('Settings - Model Management', () => {
   })
 
   test('should show delete button for user models', async ({ page }) => {
-    // Wait for page to load
-    await expect(page.locator('h2:has-text("Model")')).toBeVisible({ timeout: 20000 })
+    // Wait for page to load (support both English and Chinese)
+    const modelTitle = page.locator('h2:has-text("Model"), h2:has-text("模型")').first()
+    await expect(modelTitle).toBeVisible({ timeout: 20000 })
 
     // Delete button only appears for user models (not public)
     const deleteButton = page.locator('button[title*="Delete"], button:has-text("Delete")').first()
