@@ -320,6 +320,21 @@
     "webhook_secret_placeholder": "Signing secret (optional)",
     "webhook_hint": "Push results to configured webhook URLs after execution completes"
   },
+  "follow_dropdown": {
+    "select_level": "Select notification level",
+    "level_silent": "Silent",
+    "level_silent_desc": "Execute but hide from timeline",
+    "level_default": "Default",
+    "level_default_desc": "Show in Feed timeline",
+    "level_notify": "Notify",
+    "level_notify_desc": "Send notification via Messager channels",
+    "notify_disabled_hint": "Please bind a Messager channel by sending a message first",
+    "select_channels": "Select notification channels",
+    "select_channels_hint": "Select at least one bound channel",
+    "channel_not_bound": "Not bound",
+    "back": "Back",
+    "confirm_follow": "Confirm Follow"
+  },
   "developer_notification_settings": {
     "title": "Developer Notification Settings",
     "description": "Configure how you want to be notified when \"{{name}}\" executes (as the subscription owner)",

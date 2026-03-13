@@ -440,6 +440,12 @@ export interface FollowSubscriptionRequest {
   notification_channel_ids?: number[]
 }
 
+// Accept invitation request with notification settings
+export interface AcceptInvitationRequest {
+  notification_level?: NotificationLevel
+  notification_channel_ids?: number[]
+}
+
 // Update follow settings request
 export interface UpdateFollowSettingsRequest {
   notification_level: NotificationLevel
