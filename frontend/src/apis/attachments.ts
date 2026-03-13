@@ -8,6 +8,7 @@
 
 import { getToken } from './user'
 import type { TruncationInfo } from '@/types/api'
+import { shouldUseChunkedUpload, uploadFileChunked } from './chunkedUpload'
 
 // API base URL - use relative path for browser compatibility
 const API_BASE_URL = ''
@@ -345,6 +346,9 @@ export function getAttachmentPreviewUrl(attachmentId: number, shareToken?: strin
 /**
  * Upload a file attachment
  *
+ * Automatically uses chunked upload for large files (>10MB) to avoid
+ * gateway timeouts. For smaller files, uses regular upload.
+ *
  * @param file - File to upload
  * @param onProgress - Optional progress callback (0-100)
  * @returns Attachment response
@@ -360,6 +364,14 @@ export async function uploadAttachment(
     throw new Error(`文件大小超过 ${MAX_FILE_SIZE / (1024 * 1024)} MB 限制`)
   }
 
+  // Use chunked upload for large files
+  if (shouldUseChunkedUpload(file.size)) {
+    return uploadFileChunked(file, progress => {
+      onProgress?.(progress.percent)
+    })
+  }
+
+  // Regular upload for smaller files
   const formData = new FormData()
   formData.append('file', file)
 
