@@ -345,7 +345,7 @@ class TestOpenAPIResponsesCreate:
 
         assert response.status_code == 401
 
-    @patch("app.api.endpoints.openapi_responses._create_sync_response_unified")
+    @patch("app.api.endpoints.openapi_responses._create_non_streaming_response_unified")
     def test_create_response_sync_success(
         self,
         mock_create_sync,

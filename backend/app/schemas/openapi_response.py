@@ -122,6 +122,10 @@ class ResponseCreateInput(BaseModel):
         default=None,
         description="Wegent custom tools: [{'type': 'wegent_chat_bot'}] to enable all server-side capabilities",
     )
+    background: bool = Field(
+        default=False,
+        description="If True, return immediately with 'in_progress' status and run task in background",
+    )
 
 
 class OutputTextContent(BaseModel):
