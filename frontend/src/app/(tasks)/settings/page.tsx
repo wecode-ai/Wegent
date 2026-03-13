@@ -77,8 +77,17 @@ function SettingsContent() {
     const tab = searchParams.get('tab')
     const group = searchParams.get('group')
 
-    if (tab && tab !== activeTab) {
-      setActiveTab(tab as SettingsTabId)
+    if (tab) {
+      // Map old simple tab values to new format (same as getInitialTab)
+      const tabMap: Record<string, SettingsTabId> = {
+        team: 'personal-team',
+        models: 'personal-models',
+        shells: 'personal-shells',
+      }
+      const mappedTab = (tabMap[tab] || tab) as SettingsTabId
+      if (mappedTab !== activeTab) {
+        setActiveTab(mappedTab)
+      }
     }
     if (group !== selectedGroup) {
       setSelectedGroup(group)
