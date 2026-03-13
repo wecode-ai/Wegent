@@ -376,7 +376,9 @@ export function SkillListWithScope({ scope, selectedGroup }: SkillListWithScopeP
           {/* Go to Market button - only show if skill market is available and has URL */}
           {skillMarketInfo.available && skillMarketInfo.marketUrl && (
             <Button
-              onClick={() => window.open(skillMarketInfo.marketUrl, '_blank', 'noopener,noreferrer')}
+              onClick={() =>
+                window.open(skillMarketInfo.marketUrl, '_blank', 'noopener,noreferrer')
+              }
               size="sm"
             >
               <ExternalLink className="w-4 h-4 mr-1" />
@@ -385,10 +387,7 @@ export function SkillListWithScope({ scope, selectedGroup }: SkillListWithScopeP
           )}
           {/* Search Skills button - only show if skill market is available */}
           {skillMarketInfo.available && (
-            <Button
-              onClick={() => setSearchModalOpen(true)}
-              size="sm"
-            >
+            <Button onClick={() => setSearchModalOpen(true)} size="sm">
               <Search className="w-4 h-4 mr-1" />
               {t('settings:skills.search_skills')}
             </Button>

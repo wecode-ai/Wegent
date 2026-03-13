@@ -31,3 +31,6 @@ export * from './chat'
 
 // Group chat components
 export * from './group-chat'
+
+// Remote workspace components
+export * from './remote-workspace'

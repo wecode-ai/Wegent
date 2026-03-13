@@ -74,6 +74,18 @@ function isSameOriginRequest(request: NextRequest): boolean {
   return false
 }
 
+function decodeAuthToken(rawToken: string): string {
+  if (!rawToken) {
+    return ''
+  }
+
+  try {
+    return decodeURIComponent(rawToken)
+  } catch {
+    return rawToken
+  }
+}
+
 /**
  * Proxy handler for all HTTP methods
  */
@@ -113,6 +125,14 @@ async function proxyRequest(
         headers.set(key, value)
       }
     })
+
+    if (!headers.has('Authorization')) {
+      const cookieToken = request.cookies.get('auth_token')?.value
+      const decodedToken = decodeAuthToken(cookieToken || '')
+      if (decodedToken) {
+        headers.set('Authorization', `Bearer ${decodedToken}`)
+      }
+    }
 
     // Get request body for methods that support it
     let body: BodyInit | null = null

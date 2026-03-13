@@ -409,7 +409,7 @@ const MessageBubble = memo(
         <path d="m9 11 3 3L22 4"></path>
       </svg>
     ) : (
-      <Bot className="w-4 h-4" />
+      <Bot className="w-4 h-4" data-testid="ai-message-icon" />
     )
     const headerLabel = isUserTypeMessage ? '' : msg.botName || t('messages.bot') || 'Bot'
 
@@ -790,7 +790,9 @@ const MessageBubble = memo(
                     ))}
                   </div>
                 </div>
-                {remainingContent && <div className="text-sm break-all">{remainingContent}</div>}
+                {remainingContent && (
+                  <div className="chat-message-prompt text-sm break-all">{remainingContent}</div>
+                )}
               </div>
             )
           } catch (e) {
@@ -1283,7 +1285,9 @@ const MessageBubble = memo(
       const [prompt, result] = content.split('${$$}$')
       return (
         <>
-          {prompt && <div className="text-sm whitespace-pre-line mb-2">{prompt}</div>}
+          {prompt && (
+            <div className="chat-message-prompt text-sm whitespace-pre-line mb-2">{prompt}</div>
+          )}
           {result && renderMarkdownResult(result, prompt)}
         </>
       )

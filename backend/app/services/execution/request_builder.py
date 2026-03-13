@@ -1362,6 +1362,13 @@ class TaskRequestBuilder:
                             # Convert "headers" to "auth" for chat_shell compatibility
                             if "headers" in server_config:
                                 server_entry["auth"] = server_config["headers"]
+                            # Include stdio-specific fields (command, args, env)
+                            if "command" in server_config:
+                                server_entry["command"] = server_config["command"]
+                            if "args" in server_config:
+                                server_entry["args"] = server_config["args"]
+                            if "env" in server_config:
+                                server_entry["env"] = server_config["env"]
                             bot_mcp_servers.append(server_entry)
 
         # Merge system and bot MCP servers (bot takes precedence)
@@ -1509,8 +1516,14 @@ class TaskRequestBuilder:
             server: Server config dict with 'url' and optional 'headers'
 
         Returns:
-            True if server responded, False on connection failure
+            True if server responded or is stdio type, False on connection failure
         """
+        server_type = server.get("type", "").lower()
+
+        # Skip reachability check for stdio servers (they run locally via command)
+        if server_type == "stdio":
+            return True
+
         url = server.get("url", "")
         if not url:
             return False

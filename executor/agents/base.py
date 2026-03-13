@@ -138,9 +138,11 @@ class Agent:
                 logger.info(
                     f"Agent[{self.get_name()}][{self.task_id}] handle: Starting pre_execute."
                 )
-                pre_execute_status = await self.pre_execute()
+                pre_execute_status, pre_execute_error = await self.pre_execute()
                 if pre_execute_status != TaskStatus.SUCCESS:
                     error_msg = f"Agent[{self.get_name()}][{self.task_id}] handle: pre_execute failed."
+                    if pre_execute_error:
+                        error_msg = f"{error_msg}\n{pre_execute_error}"
                     logger.error(error_msg)
                     return TaskStatus.FAILED, error_msg
                 logger.info(
@@ -268,18 +270,20 @@ class Agent:
                 f"status={status}, error={type(e).__name__}: {str(e)}"
             )
 
-    async def pre_execute(self) -> TaskStatus:
+    async def pre_execute(self) -> Tuple[TaskStatus, Optional[str]]:
         """
         Pre-execution hook for tasks such as code download, environment setup, etc.
         Subclasses can override this method to implement custom pre-execution logic.
 
         Returns:
-            TaskStatus: Execution status (COMPLETED, FAILED, etc.)
+            Tuple[TaskStatus, Optional[str]]: A tuple containing:
+                - TaskStatus: Execution status (SUCCESS, FAILED, etc.)
+                - Optional[str]: Error message if failed, None if successful
         """
         logger.info(
             f"Agent[{self.get_name()}][{self.task_id}] pre_execute: No pre-execution steps by default, passing through."
         )
-        return TaskStatus.SUCCESS
+        return TaskStatus.SUCCESS, None
 
     def execute(self) -> TaskStatus:
         """
@@ -300,7 +304,7 @@ class Agent:
         git_token = user_config.get("git_token")
         # Handle encrypted tokens
         if git_token and is_token_encrypted(git_token):
-            logger.debug(
+            logger.info(
                 f"Agent[{self.get_name()}][{self.task_id}] Decrypting git token"
             )
             git_token = decrypt_git_token(git_token)

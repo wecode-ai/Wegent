@@ -10,20 +10,30 @@
  * Supports multiple tabs for extensibility.
  */
 import { useState, useCallback, useEffect } from 'react'
-import { Compass, Eye, EyeOff, Store } from 'lucide-react'
+import { Compass, Eye, EyeOff, Plus, Store, User } from 'lucide-react'
 import { SubscriptionProvider, useSubscriptionContext } from '../contexts/subscriptionContext'
 import { SubscriptionTimeline } from './SubscriptionTimeline'
 import { SubscriptionForm } from './SubscriptionForm'
+import { SubscriptionList } from './SubscriptionList'
+import { FollowingSubscriptionList } from './FollowingSubscriptionList'
+import { RentalSubscriptionList } from './RentalSubscriptionList'
 import { DiscoverPageInline } from './DiscoverPageInline'
 import { MarketPageInline } from './MarketPageInline'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
+import type { Subscription } from '@/types/subscription'
 
 /**
  * Tab configuration for extensibility.
  * Add new tabs here as the feature grows.
  */
-export type FeedTabValue = 'all' | 'discover' | 'market'
+export type FeedTabValue = 'all' | 'discover' | 'market' | 'mine'
+
+/**
+ * Sub-tab type for "mine" tab
+ */
+type MineSubTabValue = 'my_created' | 'my_following' | 'shared_to_me' | 'my_rentals'
 
 function SubscriptionPageContent() {
   const { t } = useTranslation('feed')
@@ -31,11 +41,25 @@ function SubscriptionPageContent() {
   const [formInitialData, setFormInitialData] = useState<Record<string, unknown> | undefined>(
     undefined
   )
+  const [editingSubscription, setEditingSubscription] = useState<Subscription | null>(null)
   const [activeTab, setActiveTab] = useState<FeedTabValue>('all')
+  const [mineSubTab, setMineSubTab] = useState<MineSubTabValue>('my_created')
   const { refreshSubscriptions, refreshExecutions, showSilentExecutions, setShowSilentExecutions } =
     useSubscriptionContext()
 
   const handleCreateSubscription = useCallback(() => {
+    setEditingSubscription(null)
+    setFormInitialData(undefined)
+    setIsFormOpen(true)
+  }, [])
+
+  const handleGoToMine = useCallback(() => {
+    setActiveTab('mine')
+  }, [])
+
+  const handleEditSubscription = useCallback((subscription: Subscription) => {
+    setEditingSubscription(subscription)
+    setFormInitialData(undefined)
     setIsFormOpen(true)
   }, [])
 
@@ -44,6 +68,7 @@ function SubscriptionPageContent() {
     refreshExecutions()
     // Clear initial data after successful creation
     setFormInitialData(undefined)
+    setEditingSubscription(null)
   }, [refreshSubscriptions, refreshExecutions])
 
   const handleInvitationHandled = useCallback(() => {
@@ -146,6 +171,13 @@ function SubscriptionPageContent() {
               <Store className="h-4 w-4" />
               {t('market.tab')}
             </TabsTrigger>
+            <TabsTrigger
+              value="mine"
+              className="px-1 pb-3 pt-0 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none hover:bg-transparent flex items-center gap-1.5"
+            >
+              <User className="h-4 w-4" />
+              {t('tabs.mine')}
+            </TabsTrigger>
           </TabsList>
         </Tabs>
         {/* Silent executions toggle - only show on "all" tab */}
@@ -167,12 +199,22 @@ function SubscriptionPageContent() {
             {t('feed.silent_executions')}
           </button>
         )}
+        {/* Create button - only show on "mine" tab with "my_created" sub-tab */}
+        {activeTab === 'mine' && mineSubTab === 'my_created' && (
+          <Button onClick={handleCreateSubscription} size="sm" className="mb-1.5">
+            <Plus className="h-4 w-4 mr-1.5" />
+            {t('create_subscription')}
+          </Button>
+        )}
       </div>
 
       {/* Tab content */}
-      <div className="flex-1 overflow-hidden">
+      <div className="flex-1 overflow-hidden flex flex-col">
         {activeTab === 'all' && (
-          <SubscriptionTimeline onCreateSubscription={handleCreateSubscription} />
+          <SubscriptionTimeline
+            onCreateSubscription={handleCreateSubscription}
+            onGoToMine={handleGoToMine}
+          />
         )}
         {activeTab === 'discover' && (
           <div className="h-full">
@@ -184,11 +226,64 @@ function SubscriptionPageContent() {
             <MarketPageInline onRentalSuccess={handleRentalSuccess} />
           </div>
         )}
+        {activeTab === 'mine' && (
+          <div className="h-full flex flex-col">
+            {/* Sub-tab navigation for "mine" */}
+            <div className="border-b border-border bg-base">
+              <Tabs
+                value={mineSubTab}
+                onValueChange={value => setMineSubTab(value as MineSubTabValue)}
+                className="w-full"
+              >
+                <TabsList className="w-full justify-start bg-transparent p-0 h-auto gap-0 rounded-none">
+                  <TabsTrigger
+                    value="my_created"
+                    className="px-4 py-2.5 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none hover:bg-transparent text-sm"
+                  >
+                    {t('tabs_my_created')}
+                  </TabsTrigger>
+                  <TabsTrigger
+                    value="my_following"
+                    className="px-4 py-2.5 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none hover:bg-transparent text-sm"
+                  >
+                    {t('tabs_my_following')}
+                  </TabsTrigger>
+                  <TabsTrigger
+                    value="shared_to_me"
+                    className="px-4 py-2.5 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none hover:bg-transparent text-sm"
+                  >
+                    {t('tabs_shared_to_me')}
+                  </TabsTrigger>
+                  <TabsTrigger
+                    value="my_rentals"
+                    className="px-4 py-2.5 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none hover:bg-transparent text-sm"
+                  >
+                    {t('tabs_my_rentals')}
+                  </TabsTrigger>
+                </TabsList>
+              </Tabs>
+            </div>
+
+            {/* Sub-tab content */}
+            <div className="flex-1 overflow-hidden">
+              {mineSubTab === 'my_created' && (
+                <SubscriptionList
+                  onCreateSubscription={handleCreateSubscription}
+                  onEditSubscription={handleEditSubscription}
+                />
+              )}
+              {mineSubTab === 'my_following' && <FollowingSubscriptionList followType="direct" />}
+              {mineSubTab === 'shared_to_me' && <FollowingSubscriptionList followType="invited" />}
+              {mineSubTab === 'my_rentals' && <RentalSubscriptionList />}
+            </div>
+          </div>
+        )}
       </div>
 
       <SubscriptionForm
         open={isFormOpen}
         onOpenChange={setIsFormOpen}
+        subscription={editingSubscription}
         onSuccess={handleFormSuccess}
         initialData={formInitialData}
       />

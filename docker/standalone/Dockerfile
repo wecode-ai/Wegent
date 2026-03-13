@@ -14,6 +14,14 @@ WORKDIR /app
 COPY frontend/package.json frontend/package-lock.json ./
 COPY frontend/scripts ./scripts
 
+# Font download configuration for internal deployments
+ARG GOOGLE_SANS_CSS_URLS=""
+ARG SKIP_UI_FONT_DOWNLOAD=""
+ARG SKIP_PDF_FONT_DOWNLOAD=""
+ENV GOOGLE_SANS_CSS_URLS=${GOOGLE_SANS_CSS_URLS}
+ENV SKIP_UI_FONT_DOWNLOAD=${SKIP_UI_FONT_DOWNLOAD}
+ENV SKIP_PDF_FONT_DOWNLOAD=${SKIP_PDF_FONT_DOWNLOAD}
+
 # Install dependencies
 RUN npm ci && npm cache clean --force
 

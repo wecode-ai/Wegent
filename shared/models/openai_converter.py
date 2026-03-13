@@ -107,6 +107,13 @@ class OpenAIRequestConverter:
                 auth = server.get("auth") or server.get("headers")
                 if auth:
                     tool["server_auth"] = auth
+                # Include stdio-specific fields (command, args, env)
+                if "command" in server:
+                    tool["command"] = server["command"]
+                if "args" in server:
+                    tool["args"] = server["args"]
+                if "env" in server:
+                    tool["env"] = server["env"]
                 tools.append(tool)
 
         # Build the OpenAI format request
@@ -249,6 +256,13 @@ class OpenAIRequestConverter:
                 auth = tool.get("server_auth")
                 if auth:
                     server["auth"] = auth
+                # Include stdio-specific fields (command, args, env)
+                if "command" in tool:
+                    server["command"] = tool["command"]
+                if "args" in tool:
+                    server["args"] = tool["args"]
+                if "env" in tool:
+                    server["env"] = tool["env"]
                 mcp_servers.append(server)
 
         # Get user dict directly from metadata (passed from from_execution_request)

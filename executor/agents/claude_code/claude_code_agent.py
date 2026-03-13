@@ -9,7 +9,7 @@
 import asyncio
 import os
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 
@@ -405,12 +405,14 @@ class ClaudeCodeAgent(Agent):
         self._claude_config_dir = config_dir
         self._claude_env_config = env_config
 
-    async def pre_execute(self) -> TaskStatus:
+    async def pre_execute(self) -> Tuple[TaskStatus, Optional[str]]:
         """
         Pre-execution setup for Claude Code Agent
 
         Returns:
-            TaskStatus: Pre-execution status
+            Tuple[TaskStatus, Optional[str]]: A tuple containing:
+                - TaskStatus: Pre-execution status
+                - Optional[str]: Error message if failed, None if successful
         """
         try:
             git_url = self.task_data.git_url
@@ -455,16 +457,17 @@ class ClaudeCodeAgent(Agent):
             # Download attachments for this task
             self._download_attachments()
 
-            return TaskStatus.SUCCESS
+            return TaskStatus.SUCCESS, None
         except Exception as e:
-            logger.error(f"Pre-execution failed: {str(e)}")
+            error_msg = f"Pre-execution failed: {str(e)}"
+            logger.error(error_msg)
             self.add_thinking_step(
                 title="Pre-execution Failed",
                 report_immediately=True,
                 use_i18n_keys=False,
                 details={"error": str(e)},
             )
-            return TaskStatus.FAILED
+            return TaskStatus.FAILED, error_msg
 
     def execute(self) -> TaskStatus:
         """

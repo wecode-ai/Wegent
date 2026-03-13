@@ -165,6 +165,16 @@ class SubscriptionKnowledgeBaseRef(BaseModel):
     namespace: str = Field("default", description="Knowledge base namespace")
 
 
+class SubscriptionSkillRef(BaseModel):
+    """Reference to a Skill for subscription."""
+
+    name: str = Field(..., description="Skill name")
+    namespace: str = Field("default", description="Skill namespace")
+    is_public: bool = Field(
+        False, description="Whether this is a public skill (user_id=0)"
+    )
+
+
 class NotificationWebhookType(str, Enum):
     """Notification webhook type enumeration."""
 
@@ -271,6 +281,12 @@ class SubscriptionSpec(BaseModel):
         None,
         description="Notification webhooks to send execution results to. "
         "Supports DingTalk, Feishu, and custom webhooks.",
+    )
+    # Skill references
+    skillRefs: Optional[List[SubscriptionSkillRef]] = Field(
+        None,
+        description="Skills to bind to this subscription. "
+        "AI will have access to these skills during execution.",
     )
 
 
@@ -394,6 +410,12 @@ class SubscriptionBase(BaseModel):
         description="Notification webhooks to send execution results to. "
         "Supports DingTalk, Feishu, and custom webhooks.",
     )
+    # Skill references
+    skill_refs: Optional[List[SubscriptionSkillRef]] = Field(
+        None,
+        description="Skills to bind to this subscription. "
+        "AI will have access to these skills during execution.",
+    )
     market_whitelist_user_ids: Optional[List[int]] = Field(
         None,
         description="User IDs allowed to discover and rent this market subscription. "
@@ -438,6 +460,8 @@ class SubscriptionUpdate(BaseModel):
     knowledge_base_refs: Optional[List[SubscriptionKnowledgeBaseRef]] = None
     # Notification webhooks
     notification_webhooks: Optional[List[NotificationWebhook]] = None
+    # Skill references
+    skill_refs: Optional[List[SubscriptionSkillRef]] = None
     # Market whitelist
     market_whitelist_user_ids: Optional[List[int]] = None
 

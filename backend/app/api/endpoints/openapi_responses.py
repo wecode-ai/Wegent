@@ -133,6 +133,7 @@ async def create_response(
     For Chat Shell type teams:
     - When stream=True: Returns SSE stream with OpenAI v1/responses compatible events.
     - When stream=False (default): Blocks until LLM completes, returns completed response.
+    - When background=True: Returns immediately with status 'in_progress', task runs asynchronously.
 
     For non-Chat Shell type teams (Executor-based):
     - Returns response with status 'queued' immediately.
@@ -143,6 +144,9 @@ async def create_response(
         - model: Format "namespace#team_name" or "namespace#team_name#model_id"
         - input: The user prompt (string or list of messages)
         - stream: Whether to enable streaming output (default: False)
+        - background: Whether to run in background mode (default: False).
+          When true, the request returns immediately with status 'in_progress'
+          and the task runs asynchronously. Use GET /responses/{response_id} to poll.
         - tools: Optional Wegent tools to enable server-side capabilities:
           - {"type": "wegent_chat_bot"}: Enable all server-side capabilities
             (deep thinking with web search, server MCP tools, message enhancement)
@@ -152,10 +156,12 @@ async def create_response(
         - By default, API calls use "clean mode" without server-side enhancements
         - Bot/Ghost MCP tools are always available (configured in the bot's Ghost CRD)
         - Use wegent_chat_bot to enable full server-side capabilities
+        - background=True and stream=True are mutually exclusive; background takes precedence
 
     Returns:
-        ResponseObject with status 'completed' (Chat Shell)
+        ResponseObject with status 'completed' (Chat Shell sync mode)
         or StreamingResponse with SSE events (Chat Shell + stream=true)
+        or ResponseObject with status 'in_progress' (background=true)
         or ResponseObject with status 'queued' (non-Chat Shell)
     """
     # Extract user and api_key_name from auth context
@@ -296,8 +302,9 @@ async def create_response(
 
     # Use unified trigger architecture for all shell types
     # ExecutionRouter will automatically select communication mode based on shell_type
-    if request_body.stream:
+    if request_body.stream and not request_body.background:
         # Streaming mode: use dispatch_sse_stream
+        # Note: background=True takes precedence over stream=True
         return await _create_streaming_response_unified(
             db=db,
             user=current_user,
@@ -310,8 +317,8 @@ async def create_response(
             api_key_name=api_key_name,
         )
     else:
-        # Sync mode: use dispatch_sse_sync or return queued response
-        return await _create_sync_response_unified(
+        # Non-streaming mode: background or sync
+        return await _create_non_streaming_response_unified(
             db=db,
             user=current_user,
             team=team,
@@ -321,7 +328,286 @@ async def create_response(
             tool_settings=tool_settings,
             task_id=task_id,
             api_key_name=api_key_name,
+            background=request_body.background,
         )
+
+
+async def _create_non_streaming_response_unified(
+    db: Session,
+    user: User,
+    team,
+    model_info: Dict[str, Any],
+    request_body: ResponseCreateInput,
+    input_text: str,
+    tool_settings: Dict[str, Any],
+    task_id: Optional[int] = None,
+    api_key_name: Optional[str] = None,
+    background: bool = False,
+) -> ResponseObject:
+    """Create non-streaming response using unified trigger architecture.
+
+    Handles both sync and background modes:
+    - background=False (sync): Blocks until LLM completes, returns completed response
+    - background=True: Returns immediately with 'in_progress', task runs asynchronously
+
+    For non-SSE shell types, always returns queued response regardless of background flag.
+    """
+    import asyncio
+
+    from sqlalchemy.orm.attributes import flag_modified
+
+    from app.db.session import SessionLocal
+    from app.services.chat.storage import db_handler, session_manager
+    from app.services.chat.trigger.unified import build_execution_request
+    from app.services.execution import execution_dispatcher
+    from app.services.execution.emitters import SSEResultEmitter
+    from app.services.openapi.chat_session import setup_chat_session
+
+    # Set up chat session (creates task and subtasks)
+    setup = setup_chat_session(
+        db,
+        user,
+        team,
+        model_info,
+        input_text,
+        tool_settings,
+        task_id,
+        api_key_name,
+    )
+
+    response_id = f"resp_{setup.task_id}"
+    created_at = int(datetime.now().timestamp())
+    assistant_subtask_id = setup.assistant_subtask.id
+    task_kind_id = setup.task_id
+    enable_chat_bot = tool_settings.get("enable_chat_bot", False)
+    preload_skills = tool_settings.get("preload_skills", [])
+    user_id = user.id
+
+    # Build execution request
+    try:
+        execution_request = await build_execution_request(
+            task=setup.task,
+            assistant_subtask=setup.assistant_subtask,
+            team=team,
+            user=user,
+            message=input_text,
+            enable_tools=enable_chat_bot,
+            enable_deep_thinking=enable_chat_bot,
+            enable_web_search=enable_chat_bot and settings.WEB_SEARCH_ENABLED,
+            preload_skills=preload_skills,
+        )
+    except Exception as e:
+        logger.error(f"Failed to build execution request: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to build execution request: {str(e)}",
+        )
+
+    # Helper: close db session
+    def _close_db():
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        db.close()
+
+    # Helper: execute and collect content using SSEResultEmitter
+    async def _execute_and_collect() -> str:
+        emitter = SSEResultEmitter(
+            task_id=execution_request.task_id,
+            subtask_id=execution_request.subtask_id,
+        )
+        dispatch_task = asyncio.create_task(
+            execution_dispatcher.dispatch(execution_request, emitter=emitter)
+        )
+        accumulated_content, _ = await emitter.collect()
+        try:
+            await dispatch_task
+        except Exception:
+            pass
+        return accumulated_content
+
+    # Helper: handle successful completion
+    async def _handle_completion(accumulated_content: str):
+        result = {"value": accumulated_content}
+        await db_handler.update_subtask_status(
+            assistant_subtask_id, "COMPLETED", result=result
+        )
+        await session_manager.append_user_and_assistant_messages(
+            task_kind_id, input_text, accumulated_content
+        )
+        update_db = SessionLocal()
+        try:
+            task_resource = (
+                update_db.query(TaskResource)
+                .filter(TaskResource.id == task_kind_id)
+                .first()
+            )
+            if task_resource:
+                task_crd = Task.model_validate(task_resource.json)
+                if task_crd.status:
+                    task_crd.status.status = "COMPLETED"
+                    task_crd.status.updatedAt = datetime.now()
+                    task_crd.status.completedAt = datetime.now()
+                    task_crd.status.result = result
+                    task_resource.json = task_crd.model_dump(mode="json")
+                    task_resource.updated_at = datetime.now()
+                    flag_modified(task_resource, "json")
+                    update_db.commit()
+        finally:
+            update_db.close()
+
+    # Helper: handle failure
+    async def _handle_failure(error_message: str):
+        try:
+            await db_handler.update_subtask_status(
+                assistant_subtask_id, "FAILED", error=error_message
+            )
+        except Exception:
+            pass
+        error_db = SessionLocal()
+        try:
+            task_resource = (
+                error_db.query(TaskResource)
+                .filter(TaskResource.id == task_kind_id)
+                .first()
+            )
+            if task_resource:
+                task_crd = Task.model_validate(task_resource.json)
+                if task_crd.status:
+                    task_crd.status.status = "FAILED"
+                    task_crd.status.errorMessage = error_message
+                    task_crd.status.updatedAt = datetime.now()
+                    task_resource.json = task_crd.model_dump(mode="json")
+                    task_resource.updated_at = datetime.now()
+                    flag_modified(task_resource, "json")
+                    error_db.commit()
+        finally:
+            error_db.close()
+
+    # Helper: build output messages from subtasks
+    def _build_output(subtasks, assistant_status: str, assistant_content: str = ""):
+        output = []
+        for subtask in subtasks:
+            if subtask.role == SubtaskRole.USER:
+                output.append(
+                    OutputMessage(
+                        id=f"msg_{subtask.id}",
+                        status="completed",
+                        content=[OutputTextContent(text=subtask.prompt)],
+                        role="user",
+                    )
+                )
+            elif subtask.role == SubtaskRole.ASSISTANT:
+                content = assistant_content
+                if not content and subtask.result and isinstance(subtask.result, dict):
+                    content = subtask.result.get("value", "")
+                output.append(
+                    OutputMessage(
+                        id=f"msg_{subtask.id}",
+                        status=assistant_status,
+                        content=[OutputTextContent(text=content)],
+                        role="assistant",
+                    )
+                )
+        return output
+
+    # Helper: query subtasks
+    def _query_subtasks():
+        query_db = SessionLocal()
+        try:
+            return (
+                query_db.query(Subtask)
+                .filter(Subtask.task_id == task_kind_id, Subtask.user_id == user_id)
+                .order_by(Subtask.message_id.asc())
+                .all()
+            )
+        finally:
+            query_db.close()
+
+    # Check if SSE mode is supported
+    supports_sse = execution_dispatcher.supports_streaming(execution_request)
+
+    # Non-SSE mode: dispatch and return queued response
+    if not supports_sse:
+        _close_db()
+        asyncio.create_task(
+            execution_dispatcher.dispatch(execution_request, emitter=None)
+        )
+        logger.info(
+            f"[OPENAPI] Dispatched non-SSE task: task_id={task_kind_id}, "
+            f"subtask_id={assistant_subtask_id}"
+        )
+        subtasks = _query_subtasks()
+        return ResponseObject(
+            id=response_id,
+            created_at=created_at,
+            status="queued",
+            model=request_body.model,
+            output=_build_output(subtasks, "in_progress"),
+            previous_response_id=request_body.previous_response_id,
+        )
+
+    # SSE mode with background=True: fire-and-forget
+    if background:
+        _close_db()
+
+        async def _run_background_task():
+            try:
+                accumulated_content = await _execute_and_collect()
+                logger.info(
+                    f"[BACKGROUND] Task completed: task_id={task_kind_id}, "
+                    f"subtask_id={assistant_subtask_id}"
+                )
+                await _handle_completion(accumulated_content)
+            except Exception as e:
+                logger.exception(f"[BACKGROUND] Error in background task: {e}")
+                await _handle_failure(str(e))
+
+        asyncio.create_task(_run_background_task())
+        logger.info(
+            f"[BACKGROUND] Task started: task_id={task_kind_id}, "
+            f"subtask_id={assistant_subtask_id}"
+        )
+        subtasks = _query_subtasks()
+        return ResponseObject(
+            id=response_id,
+            created_at=created_at,
+            status="in_progress",
+            model=request_body.model,
+            output=_build_output(subtasks, "in_progress"),
+            previous_response_id=request_body.previous_response_id,
+        )
+
+    # SSE mode with background=False: sync wait for completion
+    _close_db()
+    try:
+        accumulated_content = await _execute_and_collect()
+        logger.info(f"[OPENAPI] Sync completed for subtask {assistant_subtask_id}")
+        await _handle_completion(accumulated_content)
+    except Exception as e:
+        logger.exception(f"Error in sync chat response: {e}")
+        await _handle_failure(str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"LLM request failed: {str(e)}",
+        )
+
+    return ResponseObject(
+        id=response_id,
+        created_at=created_at,
+        status="completed",
+        model=request_body.model,
+        output=[
+            OutputMessage(
+                id=f"msg_{assistant_subtask_id}",
+                status="completed",
+                role="assistant",
+                content=[OutputTextContent(text=accumulated_content)],
+            )
+        ],
+        previous_response_id=request_body.previous_response_id,
+    )
 
 
 async def _create_streaming_response_unified(
@@ -535,244 +821,6 @@ async def _create_streaming_response_unified(
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
         },
-    )
-
-
-async def _create_sync_response_unified(
-    db: Session,
-    user: User,
-    team,
-    model_info: Dict[str, Any],
-    request_body: ResponseCreateInput,
-    input_text: str,
-    tool_settings: Dict[str, Any],
-    task_id: Optional[int] = None,
-    api_key_name: Optional[str] = None,
-):
-    """Create sync response using unified trigger architecture.
-
-    Uses build_execution_request + dispatch_sse_sync for SSE mode.
-    For non-SSE modes, creates task and returns queued response.
-    """
-    from sqlalchemy.orm.attributes import flag_modified
-
-    from app.db.session import SessionLocal
-    from app.services.chat.storage import db_handler, session_manager
-    from app.services.chat.trigger.unified import build_execution_request
-    from app.services.execution import execution_dispatcher
-    from app.services.openapi.chat_session import setup_chat_session
-
-    # Set up chat session (creates task and subtasks)
-    setup = setup_chat_session(
-        db,
-        user,
-        team,
-        model_info,
-        input_text,
-        tool_settings,
-        task_id,
-        api_key_name,
-    )
-
-    response_id = f"resp_{setup.task_id}"
-    created_at = int(datetime.now().timestamp())
-    assistant_subtask_id = setup.assistant_subtask.id
-    task_kind_id = setup.task_id
-    enable_chat_bot = tool_settings.get("enable_chat_bot", False)
-    preload_skills = tool_settings.get("preload_skills", [])
-
-    # Extract data needed before closing db
-    user_id = user.id
-    user_name = user.user_name
-
-    # Build execution request using unified builder
-    try:
-        execution_request = await build_execution_request(
-            task=setup.task,
-            assistant_subtask=setup.assistant_subtask,
-            team=team,
-            user=user,
-            message=input_text,
-            enable_tools=enable_chat_bot,
-            enable_deep_thinking=enable_chat_bot,
-            enable_web_search=enable_chat_bot and settings.WEB_SEARCH_ENABLED,
-            preload_skills=preload_skills,
-        )
-    except Exception as e:
-        logger.error(f"Failed to build execution request: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to build execution request: {str(e)}",
-        )
-
-    # Check if streaming is supported (SSE mode)
-    if not execution_dispatcher.supports_streaming(execution_request):
-        # Non-SSE mode: dispatch task asynchronously and return queued response
-        try:
-            db.rollback()
-        except Exception:
-            pass
-        db.close()
-
-        # Dispatch task asynchronously via HTTP+Callback mode
-        # The executor_manager will execute the task and send results via callback
-        import asyncio
-
-        asyncio.create_task(
-            execution_dispatcher.dispatch(execution_request, emitter=None)
-        )
-        logger.info(
-            f"[OPENAPI] Dispatched non-SSE task: task_id={task_kind_id}, "
-            f"subtask_id={assistant_subtask_id}"
-        )
-
-        # Get subtasks for output
-        query_db = SessionLocal()
-        try:
-            subtasks = (
-                query_db.query(Subtask)
-                .filter(Subtask.task_id == task_kind_id, Subtask.user_id == user_id)
-                .order_by(Subtask.message_id.asc())
-                .all()
-            )
-
-            # Build previous_response_id for the response
-            prev_resp_id = None
-            if task_id:
-                prev_resp_id = f"resp_{task_id}"
-
-            task_dict = {
-                "id": task_kind_id,
-                "status": "PENDING",
-                "created_at": datetime.now(),
-            }
-
-            return _task_to_response_object(
-                task_dict,
-                request_body.model,
-                subtasks,
-                previous_response_id=prev_resp_id,
-            )
-        finally:
-            query_db.close()
-
-    # SSE mode: use SSEResultEmitter + dispatch + collect
-    import asyncio
-
-    from app.services.execution.emitters import SSEResultEmitter
-
-    try:
-        db.rollback()
-    except Exception:
-        pass
-    db.close()
-
-    try:
-        # Create SSEResultEmitter for collecting response
-        emitter = SSEResultEmitter(
-            task_id=execution_request.task_id,
-            subtask_id=execution_request.subtask_id,
-        )
-
-        # Start dispatch task (runs concurrently)
-        dispatch_task = asyncio.create_task(
-            execution_dispatcher.dispatch(execution_request, emitter=emitter)
-        )
-
-        # Collect all content from emitter
-        accumulated_content, _ = await emitter.collect()
-
-        # Wait for dispatch task to complete
-        try:
-            await dispatch_task
-        except Exception:
-            pass  # Error already handled via emitter
-
-        logger.info(f"[OPENAPI] Sync completed for subtask {assistant_subtask_id}")
-
-        # Update subtask to completed
-        result = {"value": accumulated_content}
-        await db_handler.update_subtask_status(
-            assistant_subtask_id, "COMPLETED", result=result
-        )
-
-        # Save chat history
-        await session_manager.append_user_and_assistant_messages(
-            task_kind_id, input_text, accumulated_content
-        )
-
-        # Update task status
-        update_db = SessionLocal()
-        try:
-            task_resource = (
-                update_db.query(TaskResource)
-                .filter(TaskResource.id == task_kind_id)
-                .first()
-            )
-            if task_resource:
-                task_crd = Task.model_validate(task_resource.json)
-                if task_crd.status:
-                    task_crd.status.status = "COMPLETED"
-                    task_crd.status.updatedAt = datetime.now()
-                    task_crd.status.completedAt = datetime.now()
-                    task_crd.status.result = result
-                    task_resource.json = task_crd.model_dump(mode="json")
-                    task_resource.updated_at = datetime.now()
-                    flag_modified(task_resource, "json")
-                    update_db.commit()
-        finally:
-            update_db.close()
-
-    except Exception as e:
-        logger.exception(f"Error in sync chat response: {e}")
-        error_message = str(e)
-        await db_handler.update_subtask_status(
-            assistant_subtask_id, "FAILED", error=error_message
-        )
-
-        # Update task status to FAILED
-        error_db = SessionLocal()
-        try:
-            task_resource = (
-                error_db.query(TaskResource)
-                .filter(TaskResource.id == task_kind_id)
-                .first()
-            )
-            if task_resource:
-                task_crd = Task.model_validate(task_resource.json)
-                if task_crd.status:
-                    task_crd.status.status = "FAILED"
-                    task_crd.status.errorMessage = error_message
-                    task_crd.status.updatedAt = datetime.now()
-                    task_resource.json = task_crd.model_dump(mode="json")
-                    task_resource.updated_at = datetime.now()
-                    flag_modified(task_resource, "json")
-                    error_db.commit()
-        finally:
-            error_db.close()
-
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"LLM request failed: {error_message}",
-        )
-
-    # Build response
-    message_id = f"msg_{assistant_subtask_id}"
-
-    return ResponseObject(
-        id=response_id,
-        created_at=created_at,
-        status="completed",
-        model=request_body.model,
-        output=[
-            OutputMessage(
-                id=message_id,
-                status="completed",
-                role="assistant",
-                content=[OutputTextContent(text=accumulated_content)],
-            )
-        ],
-        previous_response_id=request_body.previous_response_id,
     )
 
 
