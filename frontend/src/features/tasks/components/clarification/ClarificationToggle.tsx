@@ -44,6 +44,7 @@ export default function ClarificationToggle({
               disabled={disabled}
               icon={<MessageCircleQuestion className="h-4 w-4" />}
               label={t('chat:clarification_toggle.label')}
+              data-testid="clarification-toggle"
               className={cn(
                 'transition-colors',
                 enabled
