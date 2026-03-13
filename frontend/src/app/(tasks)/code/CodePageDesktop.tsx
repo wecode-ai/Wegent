@@ -29,6 +29,7 @@ import { useUser } from '@/features/common/UserContext'
 import { useSearchShortcut } from '@/features/tasks/hooks/useSearchShortcut'
 import { Workbench } from '@/features/tasks/components'
 import { ChatArea } from '@/features/tasks/components/chat'
+import { RemoteWorkspaceEntry } from '@/features/tasks/components/remote-workspace'
 import { paths } from '@/config/paths'
 
 /**
@@ -52,8 +53,13 @@ export function CodePageDesktop() {
   const { teams, isTeamsLoading, refreshTeams } = teamService.useTeams()
 
   // Task context for workbench data
-  const { selectedTaskDetail, setSelectedTask, refreshTasks, refreshSelectedTaskDetail } =
-    useTaskContext()
+  const {
+    selectedTask,
+    selectedTaskDetail,
+    setSelectedTask,
+    refreshTasks,
+    refreshSelectedTaskDetail,
+  } = useTaskContext()
 
   // Chat stream context for clearAllStreams
   const { clearAllStreams } = useChatStreamContext()
@@ -231,6 +237,12 @@ export function CodePageDesktop() {
           onMembersChanged={handleMembersChanged}
           isSidebarCollapsed={isCollapsed}
         >
+          {(selectedTask?.id || selectedTaskDetail?.id) && (
+            <RemoteWorkspaceEntry
+              taskId={selectedTask?.id || selectedTaskDetail?.id}
+              taskStatus={selectedTaskDetail?.status}
+            />
+          )}
           {shareButton}
           <GreyTestButton />
           <GithubStarButton />

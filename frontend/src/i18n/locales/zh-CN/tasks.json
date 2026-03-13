@@ -5,6 +5,97 @@
   "attachment": {
     "characters": "字符"
   },
+  "remote_workspace": {
+    "button": "查看任务文件",
+    "unavailable": "远程会话不可用",
+    "reason_loading": "正在检查远程工作区状态...",
+    "reason_status_check_failed": "远程工作区状态检查失败",
+    "reason_not_connected": "远程会话尚未连接",
+    "reason_sandbox_not_running": "远程沙箱未运行",
+    "reason_booting": "远程工作区正在启动",
+    "reason_warming": "远程工作区正在预热",
+    "reason_starting": "远程工作区正在启动中",
+    "chat_shell_disabled": "普通聊天模式不支持文件管理",
+    "title": "远程工作区",
+    "root": "工作区",
+    "parent": "上级目录",
+    "search_placeholder": "搜索当前文件列表",
+    "sort": {
+      "label": "排序",
+      "options": {
+        "name_asc": "名称（A-Z）",
+        "name_desc": "名称（Z-A）",
+        "size_desc": "大小（从大到小）",
+        "modified_desc": "最近修改"
+      }
+    },
+    "actions": {
+      "cancel": "取消",
+      "download": "下载",
+      "go": "前往",
+      "preview": "预览",
+      "refresh": "刷新"
+    },
+    "columns": {
+      "select_all": "全选文件",
+      "name": "名称",
+      "size": "大小",
+      "modified": "修改时间",
+      "type": "类型"
+    },
+    "status": {
+      "path": "路径",
+      "selected": "已选中",
+      "items": "项"
+    },
+    "path": {
+      "edit": "编辑路径",
+      "invalid": "路径超出工作区范围"
+    },
+    "types": {
+      "folder": "目录",
+      "file": "文件",
+      "text": "文本",
+      "image": "图片",
+      "pdf": "PDF"
+    },
+    "detail": {
+      "title": "详情",
+      "no_file_selected": "请选择一个文件查看详情",
+      "multiple_selected": "已选中多个项目",
+      "metadata": "元数据",
+      "metadata_path": "路径",
+      "metadata_size": "大小",
+      "metadata_modified": "修改时间",
+      "metadata_type": "类型"
+    },
+    "mobile": {
+      "tabs": {
+        "files": "文件",
+        "preview": "预览"
+      }
+    },
+    "tree": {
+      "title": "目录树",
+      "expand": "展开",
+      "collapse": "收起",
+      "open_directory": "打开目录",
+      "loading": "加载中...",
+      "loading_children": "正在加载子目录...",
+      "empty": "未找到文件",
+      "load_failed": "工作区目录加载失败",
+      "load_children_failed": "子目录加载失败",
+      "retry": "重试"
+    },
+    "preview": {
+      "title": "预览",
+      "hint": "双击文件名可打开预览",
+      "empty": "请选择要预览的文件",
+      "loading": "正在加载预览...",
+      "load_failed": "预览加载失败",
+      "unsupported": "当前文件类型暂不支持预览，请下载后查看。"
+    }
+  },
   "workbench": {
     "overview": "概览",
     "files_changed": "文件变更",

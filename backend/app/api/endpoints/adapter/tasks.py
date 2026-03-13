@@ -16,6 +16,10 @@ from app.api.dependencies import get_db, with_task_telemetry
 from app.core import security
 from app.core.config import settings
 from app.models.user import User
+from app.schemas.remote_workspace import (
+    RemoteWorkspaceStatusResponse,
+    RemoteWorkspaceTreeResponse,
+)
 from app.schemas.service import (
     ServiceDeleteRequest,
     ServiceResponse,
@@ -39,6 +43,7 @@ from app.schemas.task import (
     TaskUpdate,
 )
 from app.services.adapters.task_kinds import task_kinds_service
+from app.services.remote_workspace_service import remote_workspace_service
 from app.services.shared_task import shared_task_service
 
 router = APIRouter()
@@ -192,6 +197,62 @@ def get_task(
     """Get specified task details with related entities"""
     return task_kinds_service.get_task_detail(
         db=db, task_id=task_id, user_id=current_user.id
+    )
+
+
+@router.get(
+    "/{task_id}/remote-workspace/status",
+    response_model=RemoteWorkspaceStatusResponse,
+)
+def get_remote_workspace_status(
+    task_id: int = Depends(with_task_telemetry),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Get remote workspace connection and availability status for a task."""
+    return remote_workspace_service.get_status(
+        db=db,
+        task_id=task_id,
+        user_id=current_user.id,
+    )
+
+
+@router.get(
+    "/{task_id}/remote-workspace/tree",
+    response_model=RemoteWorkspaceTreeResponse,
+)
+def get_remote_workspace_tree(
+    path: str = Query("/workspace", description="Workspace path to list"),
+    task_id: int = Depends(with_task_telemetry),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """List remote workspace tree under /workspace."""
+    return remote_workspace_service.list_tree(
+        db=db,
+        task_id=task_id,
+        user_id=current_user.id,
+        path=path,
+    )
+
+
+@router.get("/{task_id}/remote-workspace/file")
+def get_remote_workspace_file(
+    path: str = Query(..., description="Workspace file path"),
+    disposition: str = Query(
+        "inline", pattern="^(inline|attachment)$", description="File disposition"
+    ),
+    task_id: int = Depends(with_task_telemetry),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Stream remote workspace file for inline preview or attachment download."""
+    return remote_workspace_service.stream_file(
+        db=db,
+        task_id=task_id,
+        user_id=current_user.id,
+        path=path,
+        disposition=disposition,
     )
 
 

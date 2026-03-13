@@ -4,30 +4,42 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Download fonts script for PDF generation
- * - Supports mirror fallback
- * - Supports skip via env
- * - Shows progress & timeout
+ * Download fonts for:
+ * 1) PDF rendering (CJK)
+ * 2) Local web typography (Google Sans Flex / Google Sans)
+ *
+ * Features:
+ * - Mirror fallback
+ * - Skip via environment variables
+ * - Progress and timeout
  * - Atomic write with temp file
+ * - Configurable Google Sans CSS source URL(s) for internal deployments
  */
 
 const https = require('https')
 const http = require('http')
 const fs = require('fs')
 const path = require('path')
+const { execFile } = require('child_process')
 
-/* =========================
- * Environment switches
- * ========================= */
+/* Environment switches */
 if (process.env.SKIP_FONT_DOWNLOAD === '1') {
   console.log('🚫 Skip font download (SKIP_FONT_DOWNLOAD=1)')
   process.exit(0)
 }
 
-/* =========================
- * Font configuration
- * ========================= */
-const FONTS = [
+/* Paths */
+const FONTS_DIR = path.join(__dirname, '..', 'public', 'fonts')
+const PDF_FONT_DIR = FONTS_DIR
+const GOOGLE_SANS_DIR = path.join(FONTS_DIR, 'google-sans')
+const GOOGLE_SANS_CSS_OUTPUT = path.join(__dirname, '..', 'src', 'app', 'google-sans-local.css')
+const DOWNLOAD_TIMEOUT = 30_000 // 30s
+const GOOGLE_FONTS_USER_AGENT =
+  process.env.GOOGLE_FONT_USER_AGENT ||
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0 Safari/537.36'
+
+/* PDF font configuration */
+const PDF_FONTS = [
   {
     name: 'SourceHanSansSC-VF.ttf',
     description: 'Source Han Sans SC Variable (CJK support for PDF)',
@@ -42,12 +54,29 @@ const FONTS = [
   },
 ]
 
-const FONTS_DIR = path.join(__dirname, '..', 'public', 'fonts')
-const DOWNLOAD_TIMEOUT = 30_000 // 30s
+/* Google Sans configuration */
+const GOOGLE_SANS_BUNDLE_URLS = (process.env.GOOGLE_SANS_BUNDLE_URLS || '')
+  .split(',')
+  .map(url => url.trim())
+  .filter(Boolean)
 
-/* =========================
- * Utilities
- * ========================= */
+// Internal Nexus bundle URL (gz archive containing woff2 files + google-sans-local.css)
+const DEFAULT_GOOGLE_SANS_BUNDLE_URL =
+  'http://maven.intra.weibo.com/nexus/service/local/repositories/releases/content/google-fonts/google-sans/1.0/google-sans-1.0.gz'
+
+const defaultGoogleSansCssUrls = [
+  'https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&family=Google+Sans+Flex:wght@400;500;700&display=swap',
+]
+
+const configuredGoogleSansCssUrls = (process.env.GOOGLE_SANS_CSS_URLS || '')
+  .split(',')
+  .map(url => url.trim())
+  .filter(Boolean)
+
+const googleSansCssUrls = configuredGoogleSansCssUrls.length
+  ? configuredGoogleSansCssUrls
+  : defaultGoogleSansCssUrls
+
 function formatSize(bytes) {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
@@ -60,12 +89,20 @@ function isFontComplete(filePath, minSize) {
   return !minSize || size >= minSize
 }
 
-/* =========================
- * Core download logic
- * ========================= */
-function downloadFile(url, destPath, maxRedirects = 5) {
+function ensureDirectory(dirPath) {
+  if (!fs.existsSync(dirPath)) {
+    fs.mkdirSync(dirPath, { recursive: true })
+  }
+}
+
+function resolveRedirectUrl(currentUrl, location) {
+  return new URL(location, currentUrl).toString()
+}
+
+function downloadFile(url, destPath, options = {}, maxRedirects = 5) {
   const tempPath = destPath + '.downloading'
   const protocol = url.startsWith('https') ? https : http
+  const headers = options.headers || {}
 
   return new Promise((resolve, reject) => {
     if (maxRedirects <= 0) {
@@ -73,11 +110,12 @@ function downloadFile(url, destPath, maxRedirects = 5) {
       return
     }
 
-    const req = protocol.get(url, res => {
+    const req = protocol.get(url, { headers }, res => {
       // Redirect support
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        console.log(`  ↪ Redirect: ${res.headers.location}`)
-        return downloadFile(res.headers.location, destPath, maxRedirects - 1)
+        const redirectUrl = resolveRedirectUrl(url, res.headers.location)
+        console.log(`  ↪ Redirect: ${redirectUrl}`)
+        return downloadFile(redirectUrl, destPath, options, maxRedirects - 1)
           .then(resolve)
           .catch(reject)
       }
@@ -136,13 +174,53 @@ function downloadFile(url, destPath, maxRedirects = 5) {
   })
 }
 
-async function downloadWithFallback(urls, destPath) {
+function downloadText(url, options = {}, maxRedirects = 5) {
+  const protocol = url.startsWith('https') ? https : http
+  const headers = options.headers || {}
+
+  return new Promise((resolve, reject) => {
+    if (maxRedirects <= 0) {
+      reject(new Error('Too many redirects'))
+      return
+    }
+
+    const req = protocol.get(url, { headers }, res => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        const redirectUrl = resolveRedirectUrl(url, res.headers.location)
+        return downloadText(redirectUrl, options, maxRedirects - 1).then(resolve).catch(reject)
+      }
+
+      if (res.statusCode !== 200) {
+        reject(new Error(`HTTP ${res.statusCode}`))
+        return
+      }
+
+      let data = ''
+      res.setEncoding('utf8')
+      res.on('data', chunk => {
+        data += chunk
+      })
+      res.on('end', () => resolve(data))
+    })
+
+    req.setTimeout(DOWNLOAD_TIMEOUT, () => {
+      req.destroy(new Error('Download timeout'))
+    })
+
+    req.on('error', reject)
+  })
+}
+
+async function downloadWithFallback(urls, downloader, validator) {
   let lastError
   for (const url of urls) {
     try {
       console.log(`  🌐 Try: ${url}`)
-      await downloadFile(url, destPath)
-      return
+      const result = await downloader(url)
+      if (validator) {
+        await validator(result, url)
+      }
+      return { url, result }
     } catch (err) {
       console.warn(`  ⚠ Failed: ${err.message}`)
       lastError = err
@@ -151,21 +229,35 @@ async function downloadWithFallback(urls, destPath) {
   throw lastError
 }
 
-/* =========================
- * Main
- * ========================= */
-async function main() {
-  console.log('📦 Downloading fonts for PDF generation...\n')
+function normalizeFontUrl(rawUrl) {
+  return rawUrl.trim().replace(/^['"]|['"]$/g, '')
+}
 
-  if (!fs.existsSync(FONTS_DIR)) {
-    fs.mkdirSync(FONTS_DIR, { recursive: true })
-    console.log(`Created directory: ${FONTS_DIR}\n`)
+function collectFontUrlsFromCss(cssText) {
+  const regex = /url\(([^)]+)\)/g
+  const urls = []
+  for (const match of cssText.matchAll(regex)) {
+    const url = normalizeFontUrl(match[1])
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      urls.push(url)
+    }
   }
+  return Array.from(new Set(urls))
+}
 
+function toLocalFileName(fontUrl, index) {
+  const urlObj = new URL(fontUrl)
+  const baseName = path.basename(urlObj.pathname)
+  const safeBaseName = baseName.replace(/[^A-Za-z0-9._-]/g, '_')
+  const ext = path.extname(safeBaseName) || '.woff2'
+  return `${String(index).padStart(2, '0')}-${safeBaseName || `font${ext}`}`
+}
+
+async function downloadPdfFonts() {
   let hasErrors = false
 
-  for (const font of FONTS) {
-    const destPath = path.join(FONTS_DIR, font.name)
+  for (const font of PDF_FONTS) {
+    const destPath = path.join(PDF_FONT_DIR, font.name)
     const tempPath = destPath + '.downloading'
 
     if (fs.existsSync(tempPath)) {
@@ -186,13 +278,18 @@ async function main() {
     console.log(`  ${font.description}`)
 
     try {
-      await downloadWithFallback(font.urls, destPath)
+      await downloadWithFallback(
+        font.urls,
+        url => downloadFile(url, destPath),
+        () => {
+          const { size } = fs.statSync(destPath)
+          if (font.minSize && size < font.minSize) {
+            throw new Error(`File too small (${formatSize(size)})`)
+          }
+        }
+      )
 
       const { size } = fs.statSync(destPath)
-      if (font.minSize && size < font.minSize) {
-        throw new Error(`File too small (${formatSize(size)})`)
-      }
-
       console.log(`✓ Downloaded ${font.name} (${formatSize(size)})\n`)
     } catch (err) {
       if (fs.existsSync(destPath)) fs.unlinkSync(destPath)
@@ -202,10 +299,165 @@ async function main() {
     }
   }
 
-  if (hasErrors) {
-    console.log('⚠ Some fonts failed to download. Build continues.')
+  return !hasErrors
+}
+
+function tarExtract(archivePath, cwd) {
+  return new Promise((resolve, reject) => {
+    execFile('tar', ['-xzf', archivePath, '-C', cwd], (err, _stdout, stderr) => {
+      if (err) reject(new Error(stderr || err.message))
+      else resolve()
+    })
+  })
+}
+
+async function downloadGoogleSansBundleFromUrl(url) {
+  const tempGzPath = path.join(GOOGLE_SANS_DIR, '_bundle.tar.gz')
+  await downloadFile(url, tempGzPath)
+
+  // Extract into a temp directory to avoid partial state
+  const extractDir = path.join(GOOGLE_SANS_DIR, '_extract_tmp')
+  ensureDirectory(extractDir)
+
+  try {
+    await tarExtract(tempGzPath, extractDir)
+    fs.unlinkSync(tempGzPath)
+
+    // Bundle layout expected:
+    //   google-sans/*.woff2
+    //   google-sans-local.css  (URLs use relative path "google-sans/<file>.woff2")
+    const extractedFontsDir = path.join(extractDir, 'google-sans')
+    const extractedCss = path.join(extractDir, 'google-sans-local.css')
+
+    if (!fs.existsSync(extractedFontsDir)) {
+      throw new Error('google-sans/ directory not found in bundle')
+    }
+    if (!fs.existsSync(extractedCss)) {
+      throw new Error('google-sans-local.css not found in bundle')
+    }
+
+    // Move font files to GOOGLE_SANS_DIR
+    for (const file of fs.readdirSync(extractedFontsDir)) {
+      fs.renameSync(path.join(extractedFontsDir, file), path.join(GOOGLE_SANS_DIR, file))
+    }
+
+    // Rewrite relative CSS URLs to absolute public paths, then write to output
+    let cssText = fs.readFileSync(extractedCss, 'utf8')
+    cssText = cssText.replace(/url\(['"]?google-sans\/([^)'"]+)['"]?\)/g, (_, filename) => {
+      return `url('/fonts/google-sans/${filename}')`
+    })
+
+    ensureDirectory(path.dirname(GOOGLE_SANS_CSS_OUTPUT))
+    fs.writeFileSync(GOOGLE_SANS_CSS_OUTPUT, cssText, 'utf8')
+    console.log(`✓ Generated ${path.relative(process.cwd(), GOOGLE_SANS_CSS_OUTPUT)}\n`)
+  } finally {
+    // Clean up temp extraction directory
+    fs.rmSync(extractDir, { recursive: true, force: true })
+  }
+}
+
+async function downloadGoogleSansFromBundle(bundleUrls) {
+  ensureDirectory(GOOGLE_SANS_DIR)
+
+  for (const url of bundleUrls) {
+    try {
+      console.log(`  🌐 Try bundle: ${url}`)
+      await downloadGoogleSansBundleFromUrl(url)
+      return true
+    } catch (err) {
+      console.warn(`  ⚠ Bundle download failed: ${err.message}`)
+    }
+  }
+  return false
+}
+
+async function downloadGoogleSansAssets() {
+  try {
+    console.log('⬇ Downloading local Google Sans assets')
+
+    // Prefer bundle download (internal Nexus or env override) over per-file CSS approach
+    const bundleUrls = GOOGLE_SANS_BUNDLE_URLS.length
+      ? GOOGLE_SANS_BUNDLE_URLS
+      : [DEFAULT_GOOGLE_SANS_BUNDLE_URL]
+
+    const bundleSuccess = await downloadGoogleSansFromBundle(bundleUrls)
+    if (bundleSuccess) return true
+
+    // Fallback: fetch CSS from Google Fonts and download individual woff2 files
+    console.log('  ↪ Falling back to Google Fonts CSS download...')
+    console.log(`  CSS source candidates: ${googleSansCssUrls.join(', ')}`)
+
+    const { result: cssText } = await downloadWithFallback(googleSansCssUrls, url =>
+      downloadText(url, {
+        headers: {
+          'User-Agent': GOOGLE_FONTS_USER_AGENT,
+        },
+      })
+    )
+
+    const remoteFontUrls = collectFontUrlsFromCss(cssText)
+    if (remoteFontUrls.length === 0) {
+      throw new Error('No font URLs found in Google Sans CSS response')
+    }
+
+    ensureDirectory(GOOGLE_SANS_DIR)
+    const fileMap = new Map()
+
+    for (let i = 0; i < remoteFontUrls.length; i++) {
+      const remoteUrl = remoteFontUrls[i]
+      const fileName = toLocalFileName(remoteUrl, i + 1)
+      const destPath = path.join(GOOGLE_SANS_DIR, fileName)
+      fileMap.set(remoteUrl, fileName)
+
+      await downloadFile(remoteUrl, destPath, {
+        headers: {
+          'User-Agent': GOOGLE_FONTS_USER_AGENT,
+        },
+      })
+    }
+
+    const localCss = cssText.replace(/url\(([^)]+)\)/g, (match, rawUrl) => {
+      const normalized = normalizeFontUrl(rawUrl)
+      const localName = fileMap.get(normalized)
+      if (!localName) return match
+      return `url('/fonts/google-sans/${localName}')`
+    })
+
+    fs.writeFileSync(GOOGLE_SANS_CSS_OUTPUT, localCss, 'utf8')
+    console.log(`✓ Generated ${path.relative(process.cwd(), GOOGLE_SANS_CSS_OUTPUT)}\n`)
+    return true
+  } catch (err) {
+    console.error(`✗ Failed to download local Google Sans assets: ${err.message}`)
+    console.error('  Web UI will fall back to system fonts.\n')
+    return false
+  }
+}
+
+async function main() {
+  console.log('📦 Downloading font assets...\n')
+
+  ensureDirectory(FONTS_DIR)
+
+  let hasErrors = false
+
+  if (process.env.SKIP_PDF_FONT_DOWNLOAD !== '1') {
+    const pdfSuccess = await downloadPdfFonts()
+    if (!pdfSuccess) hasErrors = true
   } else {
-    console.log('✅ All fonts downloaded successfully!')
+    console.log('🚫 Skip PDF font download (SKIP_PDF_FONT_DOWNLOAD=1)\n')
+  }
+
+  if (process.env.SKIP_UI_FONT_DOWNLOAD !== '1') {
+    const uiSuccess = await downloadGoogleSansAssets()
+    if (!uiSuccess) hasErrors = true
+  } else {
+    console.log('🚫 Skip UI font download (SKIP_UI_FONT_DOWNLOAD=1)\n')
+  }
+
+  if (hasErrors) {
+    console.log('⚠ Some font assets failed to download. Build continues.')
+  } else {
+    console.log('✅ All font assets downloaded successfully!')
   }
 }
 

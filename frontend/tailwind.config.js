@@ -20,14 +20,17 @@ export default {
     extend: {
       fontFamily: {
         sans: [
-          '"PingFang SC"',
-          '-apple-system',
+          '"Google Sans Flex"', // English and Latin scripts
+          '"Google Sans"', // English and Latin scripts
+          '-apple-system', // System font (PingFang SC on macOS)
           'BlinkMacSystemFont',
           '"Segoe UI"',
           'Roboto',
           '"Helvetica Neue"',
           'Arial',
-          '"Noto Sans"',
+          '"PingFang SC"',
+          '"Hiragino Sans GB"',
+          '"Microsoft YaHei"',
           'sans-serif',
           '"Apple Color Emoji"',
           '"Segoe UI Emoji"',
