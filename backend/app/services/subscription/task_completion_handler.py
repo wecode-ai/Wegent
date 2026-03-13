@@ -91,13 +91,21 @@ class SubscriptionTaskCompletionHandler:
                 # Extract result summary from event
                 result_summary = self._extract_result_summary(event)
 
+                # Check if this is a silent exit BEFORE mapping status
+                is_silent_exit = self._is_silent_exit(event)
+
                 # Map event status to BackgroundExecutionStatus
-                status = self._map_status(event.status)
+                # Use COMPLETED_SILENT for silent exits
+                if is_silent_exit and event.status == "COMPLETED":
+                    status = BackgroundExecutionStatus.COMPLETED_SILENT
+                else:
+                    status = self._map_status(event.status)
 
                 # Update execution status
                 logger.info(
                     f"[TaskCompletionHandler] Updating execution {execution.id}: "
-                    f"status={status.value}, result_summary_length={len(result_summary or '')}"
+                    f"status={status.value}, result_summary_length={len(result_summary or '')}, "
+                    f"is_silent_exit={is_silent_exit}"
                 )
 
                 self.execution_manager.update_execution_status(
@@ -108,6 +116,14 @@ class SubscriptionTaskCompletionHandler:
                     error_message=event.error,
                     skip_notifications=True,  # We'll handle notifications separately
                 )
+
+                # Skip notifications for silent exits
+                if is_silent_exit:
+                    logger.info(
+                        f"[TaskCompletionHandler] Silent exit detected for execution "
+                        f"{execution.id}, status set to COMPLETED_SILENT, skipping notifications"
+                    )
+                    return
 
                 # Dispatch notifications for terminal states
                 if status in (
@@ -200,6 +216,23 @@ class SubscriptionTaskCompletionHandler:
         }
         return status_map.get(event_status, BackgroundExecutionStatus.FAILED)
 
+    def _is_silent_exit(self, event: TaskCompletedEvent) -> bool:
+        """Check if the task completed with a silent exit.
+
+        Silent exit is indicated by the silent_exit flag in the result dict,
+        which is set by the MCP silent_exit tool.
+
+        Args:
+            event: TaskCompletedEvent
+
+        Returns:
+            True if this is a silent exit, False otherwise
+        """
+        if not event.result or not isinstance(event.result, dict):
+            return False
+
+        return event.result.get("silent_exit", False) is True
+
     async def _dispatch_notifications(
         self,
         db: Session,
@@ -269,19 +302,13 @@ class SubscriptionTaskCompletionHandler:
             if team_display_name:
                 subscription_info = f"{subscription_info} ({team_display_name})"
 
-            # Format result summary
-            # Format result summary
-            formatted_summary = self._format_result_summary(
-                execution.prompt, result_summary, execution.status
-            )
-
             # Dispatch follower notifications (via Messager channels)
             await subscription_notification_dispatcher.dispatch_execution_notifications(
                 db,
                 subscription_id=execution.subscription_id,
                 execution_id=execution.id,
-                subscription_display_name=subscription_info,
-                result_summary=formatted_summary,
+                subscription_display_name=subscription_display_name,
+                result_summary=result_summary or "",
                 status=execution.status,
                 detail_url=None,  # Could be added if needed
             )
