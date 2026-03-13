@@ -73,6 +73,17 @@ export interface SubscriptionModelRef {
   namespace: string
 }
 
+// Notification webhook type enumeration
+export type NotificationWebhookType = 'dingtalk' | 'feishu' | 'custom'
+
+// Notification webhook configuration
+export interface NotificationWebhook {
+  type: NotificationWebhookType
+  url: string
+  secret?: string // Optional signing secret for webhook verification
+  enabled: boolean
+}
+
 // Knowledge base reference for Subscription
 export interface SubscriptionKnowledgeBaseRef {
   name: string
@@ -115,6 +126,8 @@ export interface Subscription {
   last_execution_status?: string
   // Knowledge base references
   knowledge_base_refs?: SubscriptionKnowledgeBaseRef[]
+  // Notification webhooks (dingtalk, feishu, custom)
+  notification_webhooks?: NotificationWebhook[]
   // Market whitelist (empty means visible to all market users)
   market_whitelist_user_ids?: number[]
   next_execution_time?: string
@@ -162,9 +175,12 @@ export interface SubscriptionCreateRequest {
   enabled?: boolean
   execution_target?: SubscriptionExecutionTarget
   // History preservation settings
+  // History preservation settings
   preserve_history?: boolean // Whether to preserve conversation history across executions
   // Knowledge base references
   knowledge_base_refs?: SubscriptionKnowledgeBaseRef[]
+  // Notification webhooks (dingtalk, feishu, custom)
+  notification_webhooks?: NotificationWebhook[]
   // Market whitelist (empty means visible to all market users)
   market_whitelist_user_ids?: number[]
 }
@@ -196,10 +212,11 @@ export interface SubscriptionUpdateRequest {
   preserve_history?: boolean // Whether to preserve conversation history across executions
   // Knowledge base references
   knowledge_base_refs?: SubscriptionKnowledgeBaseRef[]
+  // Notification webhooks (dingtalk, feishu, custom)
+  notification_webhooks?: NotificationWebhook[]
   // Market whitelist (empty means visible to all market users)
   market_whitelist_user_ids?: number[]
 }
-
 // Subscription list response
 export interface SubscriptionListResponse {
   total: number

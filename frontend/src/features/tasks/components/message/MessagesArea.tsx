@@ -1146,7 +1146,7 @@ function MessagesArea({
         streamingSubtaskIds.length > 0 ||
         selectedTaskDetail?.id ||
         hasMessagesFromParent) && (
-        <div className="flex-1 space-y-8 messages-container">
+        <div className="flex-1 space-y-8 messages-container" data-testid="messages-container">
           {messages.map((msg, index) => {
             const messageKey = msg.subtaskId
               ? `${msg.type}-${msg.subtaskId}`

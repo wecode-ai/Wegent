@@ -65,5 +65,8 @@ export const paths = {
     models: {
       getHref: () => '/settings?tab=models',
     },
+    groupManager: {
+      getHref: () => '/settings?tab=group-manager',
+    },
   },
 } as const

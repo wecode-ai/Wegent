@@ -53,5 +53,27 @@
     "save_changes": "Save Changes",
     "discard_changes": "Discard Changes",
     "reset_to_default": "Reset to Default"
+  },
+  "skills": {
+    "search_skills": "Search in Market",
+    "search_skills_title": "Search Skills from Market",
+    "search_skills_description": "Search and install skills from various skill markets",
+    "search_placeholder": "Search by keyword...",
+    "search_hint": "Enter keywords to search for skills",
+    "searching_skills": "Searching...",
+    "no_search_results": "No skills found",
+    "install": "Install",
+    "installing": "Installing...",
+    "downloading": "Downloading...",
+    "installed": "Installed",
+    "retry_install": "Retry",
+    "install_success": "Installation successful",
+    "install_success_message": "Skill '{{skillName}}' installed successfully",
+    "install_failed": "Installation failed",
+    "public_skill": "Public",
+    "private_skill": "Private",
+    "search_failed": "Search failed",
+    "request_permission": "Request Permission",
+    "go_to_market": "Go to Market"
   }
 }

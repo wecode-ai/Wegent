@@ -217,8 +217,13 @@ class TaskRequestBuilder:
             if shell_type == "ClaudeCode":
                 self._prepare_mcp_for_claude_code(bot_config[0], resolved_skills)
 
-        # Build MCP servers configuration
-        mcp_servers = self._build_mcp_servers(bot, team)
+        # Generate auth token first (needed for MCP server authentication)
+        auth_token = self._generate_auth_token(task, subtask, user)
+
+        # Build MCP servers configuration (with auto-injection for subscription tasks)
+        mcp_servers = self._build_mcp_servers(
+            bot, team, is_subscription=is_subscription, auth_token=auth_token
+        )
 
         # Get collaboration model
         collaboration_model = team_crd.spec.collaborationModel or "solo"
@@ -271,7 +276,7 @@ class TaskRequestBuilder:
             history_limit=history_limit,
             new_session=new_session,
             collaboration_model=collaboration_model,
-            auth_token=self._generate_auth_token(task, subtask, user),
+            auth_token=auth_token,
             backend_url=settings.BACKEND_INTERNAL_URL,
             attachments=attachments or [],
             is_subscription=is_subscription,
@@ -1288,12 +1293,15 @@ class TaskRequestBuilder:
             )
             return []
 
-    def _build_mcp_servers(self, bot: Kind, team: Kind) -> list[dict]:
+    def _build_mcp_servers(
+        self, bot: Kind, team: Kind, is_subscription: bool = False, auth_token: str = ""
+    ) -> list[dict]:
         """Build MCP servers configuration.
 
-        Merges MCP servers from two sources:
+        Merges MCP servers from multiple sources:
         1. System-level MCP servers (from CHAT_MCP_SERVERS setting)
         2. Bot-level MCP servers (from Ghost CRD mcpServers config)
+        3. Auto-injected System MCP (for subscription tasks)
 
         Bot-level servers take precedence over system-level servers
         when there are name conflicts.
@@ -1307,12 +1315,23 @@ class TaskRequestBuilder:
         Args:
             bot: Bot Kind object
             team: Team Kind object
+            is_subscription: Whether this is a subscription task
+            auth_token: Authentication token for MCP server
 
         Returns:
             List of MCP server configuration dictionaries
         """
         # Load system-level MCP servers first
         system_mcp_servers = self._load_system_mcp_servers()
+
+        # Auto-inject System MCP for subscription tasks (provides silent_exit tool)
+        if is_subscription and auth_token:
+            system_mcp_config = self._get_auto_injected_system_mcp(auth_token)
+            if system_mcp_config:
+                system_mcp_servers.extend(system_mcp_config)
+                logger.info(
+                    "[TaskRequestBuilder] Auto-injected System MCP for subscription task"
+                )
 
         # Load bot-level MCP servers from Ghost CRD
         bot_mcp_servers = []
@@ -1560,6 +1579,46 @@ class TaskRequestBuilder:
             )
 
         return reachable
+
+    def _get_auto_injected_system_mcp(self, auth_token: str) -> list[dict]:
+        """Get auto-injected System MCP configuration for subscription tasks.
+
+        The System MCP provides the silent_exit tool which allows AI to silently
+        terminate execution when results don't require user attention.
+
+        Args:
+            auth_token: Authentication token for MCP server
+
+        Returns:
+            List of MCP server configurations in list format:
+            [{"name": "wegent-system", "url": "...", "type": "...", "auth": {...}}]
+        """
+        from app.mcp_server.server import get_mcp_system_config
+
+        backend_url = settings.BACKEND_INTERNAL_URL.rstrip("/")
+
+        # get_mcp_system_config returns dict format: {"wegent-system": {...}}
+        # Convert to list format for _build_mcp_servers compatibility
+        system_config = get_mcp_system_config(backend_url, auth_token)
+
+        result = []
+        for server_name, server_config in system_config.items():
+            server_entry = {
+                "name": server_name,
+                "url": server_config.get("url", ""),
+                "type": server_config.get("type", "streamable-http"),
+            }
+            # Convert "headers" to "auth" for chat_shell compatibility
+            if "headers" in server_config:
+                server_entry["auth"] = server_config["headers"]
+            result.append(server_entry)
+
+        logger.debug(
+            "[TaskRequestBuilder] Generated System MCP config: %s",
+            [s["name"] for s in result],
+        )
+
+        return result
 
     # =========================================================================
     # Helper Methods

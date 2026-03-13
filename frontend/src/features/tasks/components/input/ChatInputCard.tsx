@@ -4,7 +4,7 @@
 
 'use client'
 
-import React, { useRef } from 'react'
+import React, { useRef, useState, useCallback } from 'react'
 import { Upload, Sparkles } from 'lucide-react'
 import ChatInput from './ChatInput'
 import InputBadgeDisplay from './InputBadgeDisplay'
@@ -192,6 +192,14 @@ export function ChatInputCard({
 }: ChatInputCardProps) {
   const { t } = useTranslation('chat')
 
+  // State for expanded input mode (2x height for easier large text editing)
+  const [isInputExpanded, setIsInputExpanded] = useState(false)
+
+  // Toggle expand/collapse state
+  const handleExpandToggle = useCallback(() => {
+    setIsInputExpanded(prev => !prev)
+  }, [])
+
   // Ref for skill button to enable fly animation from autocomplete
   const skillSelectorRef = useRef<SkillSelectorPopoverRef>(null)
 
@@ -309,6 +317,9 @@ export function ChatInputCard({
               skillButtonRef={
                 { current: getSkillButtonElement() } as React.RefObject<HTMLElement | null>
               }
+              // Expand/collapse props for input height toggle
+              isExpanded={isInputExpanded}
+              onExpandToggle={handleExpandToggle}
             />
           </div>
         )}

@@ -3,6 +3,7 @@
     "title": "Groups",
     "create": "Create Group",
     "name": "Name",
+    "groupId": "Group ID",
     "displayName": "Display Name",
     "visibility": "Visibility",
     "description": "Description",
@@ -69,7 +70,8 @@
     "noGroups": "No groups yet",
     "editGroup": "Edit group",
     "manageMembers": "Manage members",
-    "deleteGroup": "Delete group"
+    "deleteGroup": "Delete group",
+    "enterGroup": "Enter group"
   },
   "groupCreate": {
     "nameImmutable": "Immutable after creation. Use letters, numbers, dashes, and underscores only.",

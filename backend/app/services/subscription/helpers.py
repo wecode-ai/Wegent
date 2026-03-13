@@ -163,6 +163,8 @@ def build_subscription_crd(
         historyMessageCount=subscription_in.history_message_count,
         # Knowledge base references
         knowledgeBaseRefs=subscription_in.knowledge_base_refs,
+        # Notification webhooks
+        notificationWebhooks=subscription_in.notification_webhooks,
     )
 
     status = SubscriptionStatus()

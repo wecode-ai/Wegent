@@ -2,6 +2,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -64,9 +66,10 @@ class TestAgent:
 
     @pytest.mark.asyncio
     async def test_pre_execute_default(self, agent):
-        """Test default pre_execute returns SUCCESS"""
-        status = await agent.pre_execute()
+        """Test default pre_execute returns SUCCESS with no error"""
+        status, error = await agent.pre_execute()
         assert status == TaskStatus.SUCCESS
+        assert error is None
 
     def test_execute_not_implemented(self, agent):
         """Test execute raises NotImplementedError"""
@@ -91,6 +94,95 @@ class TestAgent:
 
         # Verify emitter.in_progress was called
         mock_emitter.in_progress.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_report_progress_non_blocking_in_async_context(
+        self, agent, mock_emitter
+    ):
+        """Test report_progress returns quickly when called inside an event loop."""
+
+        async def slow_in_progress():
+            await asyncio.sleep(0.2)
+            return {"status": "success"}
+
+        mock_emitter.in_progress.side_effect = slow_in_progress
+
+        start = time.perf_counter()
+        agent.report_progress(
+            progress=50,
+            status="running",
+            message="Test message",
+            result={"key": "value"},
+        )
+        elapsed = time.perf_counter() - start
+
+        # report_progress should not block the caller while callback is running.
+        assert elapsed < 0.1
+
+        await asyncio.sleep(0.25)
+        assert mock_emitter.in_progress.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_report_progress_cancels_previous_callback_when_newer_one_arrives(
+        self, agent, mock_emitter
+    ):
+        """Test in-progress callback is replaced when a newer progress update arrives."""
+
+        state = {"started": 0, "cancelled": 0, "completed": 0}
+
+        async def slow_in_progress():
+            state["started"] += 1
+            try:
+                await asyncio.sleep(0.3)
+                state["completed"] += 1
+                return {"status": "success"}
+            except asyncio.CancelledError:
+                state["cancelled"] += 1
+                raise
+
+        mock_emitter.in_progress.side_effect = slow_in_progress
+        agent.PROGRESS_CALLBACK_TIMEOUT_SECONDS = 1.0
+
+        agent.report_progress(
+            progress=10,
+            status=TaskStatus.RUNNING.value,
+            message="step-1",
+        )
+        await asyncio.sleep(0.01)
+
+        agent.report_progress(
+            progress=11,
+            status=TaskStatus.RUNNING.value,
+            message="step-2",
+        )
+        await asyncio.sleep(0.4)
+
+        assert mock_emitter.in_progress.await_count == 2
+        assert state["started"] == 2
+        assert state["cancelled"] == 1
+        assert state["completed"] == 1
+
+    @pytest.mark.asyncio
+    async def test_report_progress_timeout_clears_inflight_task(
+        self, agent, mock_emitter
+    ):
+        """Test timeout clears inflight progress task to avoid stale blocking state."""
+
+        async def hanging_in_progress():
+            await asyncio.sleep(1.0)
+            return {"status": "success"}
+
+        mock_emitter.in_progress.side_effect = hanging_in_progress
+        agent.PROGRESS_CALLBACK_TIMEOUT_SECONDS = 0.05
+
+        agent.report_progress(
+            progress=20,
+            status=TaskStatus.RUNNING.value,
+            message="step-timeout",
+        )
+
+        await asyncio.sleep(0.2)
+        assert agent._inflight_progress_task is None
 
     @pytest.mark.asyncio
     @patch("executor.agents.base.git_util.clone_repo")

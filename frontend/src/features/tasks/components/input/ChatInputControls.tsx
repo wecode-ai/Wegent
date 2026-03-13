@@ -388,6 +388,7 @@ export function ChatInputControls({
       <div
         className="flex-1 min-w-0 overflow-visible flex items-center gap-0 flex-wrap"
         data-tour="input-controls"
+        data-testid="input-controls"
       >
         {/* Generate Mode Selector - show when in video or image mode */}
         {isGenerateMode(taskType) && onGenerateModeChange && (

@@ -204,13 +204,13 @@ export function DeviceSelectorTab({
           onClick={() => handleTabSwitch('cloud')}
           disabled={disabled || isLoading}
           className={cn(
-            'flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-colors border border-border',
+            'flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-all duration-200 border rounded-t-md',
             activeTab === 'cloud'
-              ? 'bg-base text-text-primary border-border border-b-base relative z-10'
-              : 'bg-surface text-text-secondary hover:text-text-primary hover:bg-hover border-transparent'
+              ? 'bg-base text-primary border-border border-b-base relative z-10 shadow-sm'
+              : 'bg-surface/50 text-text-muted hover:text-text-secondary hover:bg-surface border-transparent'
           )}
         >
-          <Cloud className="w-3.5 h-3.5" />
+          <Cloud className={cn('w-3.5 h-3.5', activeTab === 'cloud' && 'text-primary')} />
           <span className="hidden sm:inline">{t('cloud_tab')}</span>
           <span className="sm:hidden">{t('cloud_tab').slice(0, 2)}</span>
         </button>
@@ -222,14 +222,14 @@ export function DeviceSelectorTab({
               type="button"
               disabled={disabled || isLoading}
               className={cn(
-                'flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-colors border border-border -ml-px',
+                'flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-all duration-200 border rounded-t-md -ml-px',
                 activeTab === 'device'
-                  ? 'bg-base text-text-primary border-border border-b-base relative z-10'
-                  : 'bg-surface text-text-secondary hover:text-text-primary hover:bg-hover border-transparent',
+                  ? 'bg-base text-primary border-border border-b-base relative z-10 shadow-sm'
+                  : 'bg-surface/50 text-text-muted hover:text-text-secondary hover:bg-surface border-transparent',
                 (disabled || isLoading) && 'opacity-50 cursor-not-allowed'
               )}
             >
-              <Monitor className="w-3.5 h-3.5" />
+              <Monitor className={cn('w-3.5 h-3.5', activeTab === 'device' && 'text-primary')} />
               <span className="hidden sm:inline">
                 {activeTab === 'device' && selectedDevice ? selectedDevice.name : t('device_tab')}
               </span>
