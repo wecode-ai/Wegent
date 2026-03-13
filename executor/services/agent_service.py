@@ -55,16 +55,31 @@ class AgentService:
         return session.agent if session else None
 
     def create_agent(self, task_data: ExecutionRequest) -> Optional[Agent]:
+        """Create a new agent instance for task execution.
+
+        Always creates a fresh agent with options derived from task_data.
+        This ensures each subtask execution has the correct configuration,
+        which is critical for pipeline mode where different bots have
+        different system prompts, MCP servers, and other settings.
+
+        Args:
+            task_data: Execution request containing task configuration
+
+        Returns:
+            Created agent or None if creation failed
+        """
         task_id = task_data.task_id
         subtask_id = task_data.subtask_id
 
-        logger.info(f"task_id: [{task_id}] Creating agent")
+        logger.info(f"task_id: [{task_id}] Creating new agent instance")
 
-        if existing_agent := self.get_agent(task_id):
-            logger.info(
-                f"[{_format_task_log(task_id, subtask_id)}] Reusing existing agent"
+        # Clean up any existing session before creating new one
+        # This handles edge cases where previous session wasn't properly cleaned up
+        if task_id in self._agent_sessions:
+            logger.warning(
+                f"[{_format_task_log(task_id, subtask_id)}] Found stale session, removing before creating new agent"
             )
-            return existing_agent
+            del self._agent_sessions[task_id]
 
         try:
             # Determine agent type based on task type
@@ -175,39 +190,82 @@ class AgentService:
     async def execute_task(
         self, task_data: ExecutionRequest
     ) -> Tuple[TaskStatus, Optional[str]]:
+        """Execute a task by creating a new agent instance.
+
+        Each subtask execution creates a fresh agent instance with options derived
+        from the current task_data. This ensures:
+        1. Pipeline mode: each bot gets its own configuration (system_prompt, MCP servers, etc.)
+        2. Follow-up questions: resume previous session via saved session_id file
+        3. Clean state: no stale options from previous executions
+
+        The agent session is destroyed after execution completes. Session continuity
+        is maintained via the .claude_session_id file which allows resuming the
+        Claude Code conversation on subsequent requests.
+        """
         task_id = task_data.task_id
         subtask_id = task_data.subtask_id
         try:
-            agent = self.get_agent(task_id)
-
-            # If agent exists, update prompt and emitter subtask_id
-            if agent and hasattr(agent, "update_prompt") and task_data.prompt:
-                new_prompt = task_data.prompt
-                logger.info(
-                    f"[{_format_task_log(task_id, subtask_id)}] Updating prompt for existing agent"
-                )
-                agent.update_prompt(new_prompt)
-                # Update emitter if subtask_id changed (e.g., append chat creates new subtask)
-                if subtask_id and subtask_id != agent.subtask_id:
-                    logger.info(
-                        f"[{_format_task_log(task_id, subtask_id)}] Updating emitter subtask_id: "
-                        f"{agent.subtask_id} -> {subtask_id}"
-                    )
-                    agent.update_emitter(subtask_id)
-            # If agent doesn't exist, create new agent asynchronously
-            elif not agent:
-                agent = await self.create_agent_async(task_data)
+            # Always create a new agent instance for each subtask execution
+            # This ensures fresh options from task_data (critical for pipeline mode
+            # where different bots have different configurations)
+            # Session continuity is maintained via .claude_session_id file (resume)
+            logger.info(
+                f"[{_format_task_log(task_id, subtask_id)}] Creating new agent instance for subtask execution"
+            )
+            agent = await self.create_agent_async(task_data)
 
             if not agent:
-                msg = f"[{_format_task_log(task_id, subtask_id)}] Unable to get or create agent"
+                msg = (
+                    f"[{_format_task_log(task_id, subtask_id)}] Unable to create agent"
+                )
                 logger.error(msg)
                 return TaskStatus.FAILED, msg
-            return await self.execute_agent_task(agent)
+
+            try:
+                return await self.execute_agent_task(agent)
+            finally:
+                # Always destroy agent session after subtask execution completes
+                # This ensures clean state for next execution
+                # Session continuity is maintained via .claude_session_id file
+                await self._destroy_agent_session(task_id)
         except Exception as e:
             logger.exception(
                 f"[{_format_task_log(task_id, subtask_id)}] Task execution error: {e}"
             )
             return TaskStatus.FAILED, str(e)
+
+    async def _destroy_agent_session(self, task_id: int) -> None:
+        """Destroy agent session after subtask execution.
+
+        This method removes the agent from the session cache but preserves
+        the .claude_session_id file for session resumption on follow-up requests.
+
+        Args:
+            task_id: Task ID to destroy session for
+        """
+        session = self._agent_sessions.get(task_id)
+        if not session:
+            logger.debug(
+                f"[{_format_task_log(task_id, MISSING_SUBTASK_ID)}] No session to destroy"
+            )
+            return
+
+        try:
+            # Close the agent's client connection (but preserve session_id file)
+            await self._close_agent_session(task_id, session.agent)
+            # Remove from session cache
+            del self._agent_sessions[task_id]
+            logger.info(
+                f"[{_format_task_log(task_id, MISSING_SUBTASK_ID)}] Agent session destroyed "
+                f"(session_id file preserved for resume)"
+            )
+        except Exception as e:
+            logger.warning(
+                f"[{_format_task_log(task_id, MISSING_SUBTASK_ID)}] Error destroying agent session: {e}"
+            )
+            # Still try to remove from cache even if close failed
+            if task_id in self._agent_sessions:
+                del self._agent_sessions[task_id]
 
     async def _close_agent_session(
         self, task_id: int, agent: Agent
@@ -215,10 +273,32 @@ class AgentService:
         try:
             agent_name = agent.get_name()
             if agent_name == "ClaudeCode":
-                await ClaudeCodeAgent.close_client(str(task_id))
-                logger.info(
-                    f"[{_format_task_log(task_id, MISSING_SUBTASK_ID)}] Closed Claude client"
-                )
+                # Get session_id and client directly from agent instance
+                # Note: No longer using in-memory cache since each subtask creates new Agent instance
+                session_id = getattr(agent, "session_id", None)
+                client = getattr(agent, "client", None)
+
+                if client and session_id:
+                    from executor.agents.claude_code.session_manager import (
+                        SessionManager,
+                    )
+
+                    # Use process termination instead of disconnect() to avoid
+                    # cancel scope issues when called from different asyncio context
+                    await SessionManager._terminate_client_process(client, session_id)
+
+                    logger.info(
+                        f"[{_format_task_log(task_id, MISSING_SUBTASK_ID)}] Closed Claude client "
+                        f"(session_id={session_id})"
+                    )
+                elif not client:
+                    logger.debug(
+                        f"[{_format_task_log(task_id, MISSING_SUBTASK_ID)}] No client to close (already closed or not created)"
+                    )
+                else:
+                    logger.warning(
+                        f"[{_format_task_log(task_id, MISSING_SUBTASK_ID)}] No session_id found on agent"
+                    )
             elif agent_name == "Agno":
                 await AgnoAgent.close_client(str(task_id))
                 logger.info(

@@ -187,6 +187,9 @@ class OpenAIRequestConverter:
             "validation_params": request.validation_params,
             "sandbox_metadata": request.sandbox_metadata,
             "callback_url": request.callback_url,
+            # Pipeline mode session control
+            "new_session": request.new_session,
+            "collaboration_model": request.collaboration_model,
         }
         openai_request["metadata"] = metadata
 
@@ -333,6 +336,9 @@ class OpenAIRequestConverter:
             validation_params=metadata.get("validation_params"),
             sandbox_metadata=metadata.get("sandbox_metadata"),
             callback_url=metadata.get("callback_url"),
+            # Pipeline mode session control
+            new_session=metadata.get("new_session", False),
+            collaboration_model=metadata.get("collaboration_model", "single"),
         )
 
 

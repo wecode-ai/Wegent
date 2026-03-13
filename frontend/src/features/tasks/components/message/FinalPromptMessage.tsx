@@ -6,7 +6,7 @@
 
 import { useState } from 'react'
 import { createSmartMarkdownComponents } from '@/components/common/SmartUrlRenderer'
-import { Copy, Check, Plus, Star, RefreshCw, Edit3, X, Save } from 'lucide-react'
+import { Copy, Check, Plus, Star, RefreshCw, Edit3, X, Save, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import type { FinalPromptData, Team, GitRepoInfo, GitBranch } from '@/types/api'
 import EnhancedMarkdown from '@/components/common/EnhancedMarkdown'
@@ -31,6 +31,11 @@ interface FinalPromptMessageProps {
    */
   isPendingConfirmation?: boolean
   onStageConfirmed?: () => void
+  /**
+   * Whether the current message is still streaming.
+   * When true, action buttons should be hidden to prevent premature user interaction.
+   */
+  isMessageStreaming?: boolean
 }
 
 export default function FinalPromptMessage({
@@ -41,6 +46,7 @@ export default function FinalPromptMessage({
   taskId = null,
   isPendingConfirmation = false,
   onStageConfirmed,
+  isMessageStreaming = false,
 }: FinalPromptMessageProps) {
   const { t } = useTranslation('chat')
   const { toast } = useToast()
@@ -241,9 +247,14 @@ export default function FinalPromptMessage({
         )}
       </div>
 
-      {/* Action Buttons */}
+      {/* Action Buttons - Disabled while message is streaming to prevent premature interaction */}
       <div className="flex items-center gap-3 pt-2 flex-wrap">
-        <Button variant="ghost" onClick={handleCopy} className={copied ? 'text-green-500' : ''}>
+        <Button
+          variant="ghost"
+          onClick={handleCopy}
+          disabled={isMessageStreaming}
+          className={copied ? 'text-green-500' : ''}
+        >
           {copied ? <Check className="w-4 h-4 mr-2" /> : <Copy className="w-4 h-4 mr-2" />}
           {copied ? t('clarification.copied') : t('clarification.copy_prompt')}
         </Button>
@@ -252,19 +263,27 @@ export default function FinalPromptMessage({
           <Button
             variant="default"
             onClick={handleContinueToNextStage}
-            disabled={isConfirming || hasConfirmed}
+            disabled={isConfirming || hasConfirmed || isMessageStreaming}
             className="bg-primary hover:bg-primary/90"
           >
-            {isConfirming || hasConfirmed ? (
-              <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+            {isConfirming || hasConfirmed || isMessageStreaming ? (
+              isMessageStreaming ? (
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              ) : (
+                <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+              )
             ) : (
               <Check className="w-4 h-4 mr-2" />
             )}
             {hasConfirmed ? t('pipeline.stage_confirming') : t('pipeline.confirm_stage')}
           </Button>
         ) : (
-          <Button variant="secondary" onClick={handleCreateTask}>
-            <Plus className="w-4 h-4 mr-2" />
+          <Button variant="secondary" onClick={handleCreateTask} disabled={isMessageStreaming}>
+            {isMessageStreaming ? (
+              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+            ) : (
+              <Plus className="w-4 h-4 mr-2" />
+            )}
             {t('clarification.create_task')}
           </Button>
         )}

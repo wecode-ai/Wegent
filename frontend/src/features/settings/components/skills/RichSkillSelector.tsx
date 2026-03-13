@@ -6,7 +6,7 @@
 
 import React, { useMemo, useState, useRef, useEffect } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
-import { Sparkles, Globe, User, Users, ChevronDown } from 'lucide-react'
+import { Sparkles, Globe, User, Users, Plus } from 'lucide-react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
@@ -293,13 +293,14 @@ export function RichSkillSelector({
         <button
           ref={triggerRef}
           type="button"
-          className="flex w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+          className="flex w-full h-9 items-center justify-between rounded-md border border-border/50 bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
           disabled={disabled}
         >
-          <span className="text-text-muted">
-            {placeholder || t('skills.select_skill_to_add', 'Select skill to add')}
-          </span>
-          <ChevronDown className="h-4 w-4 opacity-50" />
+          <div className="flex items-center gap-2 text-text-muted">
+            <Sparkles className="h-4 w-4 text-amber-500" />
+            <span>{placeholder || t('skills.select_skill_to_add', 'Select skill to add')}</span>
+          </div>
+          <Plus className="h-4 w-4 opacity-50" />
         </button>
       </PopoverTrigger>
       <PopoverContent

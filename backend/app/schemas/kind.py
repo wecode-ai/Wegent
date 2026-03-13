@@ -490,6 +490,15 @@ class TaskSpec(BaseModel):
         None  # Bound knowledge bases for group chat
     )
     device_id: Optional[str] = None  # Device ID used for execution (for task history)
+    # Pipeline mode: current stage index (0-based)
+    # Updated when user confirms to proceed to next stage
+    # Used to determine which bot to use for follow-up questions
+    currentStage: Optional[int] = Field(
+        None,
+        description="Current pipeline stage index (0-based). "
+        "Only set for pipeline collaboration mode. "
+        "Updated when user confirms to proceed to next stage.",
+    )
 
 
 class TaskApp(BaseModel):

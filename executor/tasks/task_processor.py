@@ -312,7 +312,77 @@ async def process_async(request: Union[ExecutionRequest, Dict[str, Any]]) -> Tas
             )
             os._exit(exit_code)
 
-    asyncio.create_task(_run_in_background())
+    def _handle_background_task_exception(task: asyncio.Task) -> None:
+        """
+        Global exception handler for background tasks.
+
+        This is the last line of defense to ensure any uncaught exception
+        in the background task is reported to the frontend via emitter.
+        Even if the internal try-except fails (e.g., emitter.error() throws),
+        this callback will catch it and attempt to notify the user.
+        """
+        try:
+            # Check if task raised an exception
+            exc = task.exception()
+            if exc is not None:
+                error_msg = f"[FATAL] Uncaught exception in background task: {type(exc).__name__}: {str(exc)}"
+                logger.critical(error_msg)
+
+                # Attempt to send error notification to frontend
+                # Use a new event loop since we're in a callback context
+                try:
+                    # Create a fresh emitter in case the original one is corrupted
+                    fallback_emitter = _create_emitter(task_data)
+
+                    # Try to send error via the fallback emitter
+                    async def _send_fallback_error():
+                        try:
+                            await fallback_emitter.error(
+                                f"Task execution failed unexpectedly: {str(exc)}",
+                                code="fatal_error",
+                            )
+                        except Exception as send_err:
+                            logger.critical(
+                                f"[FATAL] Failed to send fallback error notification: {send_err}"
+                            )
+
+                    # Run in a new event loop to avoid issues with the current context
+                    try:
+                        loop = asyncio.get_running_loop()
+                        asyncio.create_task(_send_fallback_error())
+                    except RuntimeError:
+                        # No running loop, create a new one
+                        asyncio.run(_send_fallback_error())
+
+                except Exception as fallback_err:
+                    logger.critical(
+                        f"[FATAL] All error notification attempts failed: {fallback_err}"
+                    )
+
+                # For subscription tasks, exit with error code
+                if is_subscription:
+                    logger.critical(
+                        f"Subscription task {task_data.task_id} failed fatally, "
+                        f"exiting container with code 1"
+                    )
+                    os._exit(1)
+        except asyncio.CancelledError:
+            # Task was cancelled, not an error
+            logger.info(
+                f"Background task for task_id={task_data.task_id} was cancelled"
+            )
+        except asyncio.InvalidStateError:
+            # Task hasn't completed yet (shouldn't happen in done callback)
+            pass
+        except Exception as callback_err:
+            # Even the exception handler failed - log and exit for subscription tasks
+            logger.critical(f"[FATAL] Exception handler itself failed: {callback_err}")
+            if is_subscription:
+                os._exit(1)
+
+    # Create background task with exception handler callback
+    background_task = asyncio.create_task(_run_in_background())
+    background_task.add_done_callback(_handle_background_task_exception)
     logger.info(
         f"Task {task_data.task_id} dispatched to background, returning RUNNING immediately"
     )

@@ -174,13 +174,21 @@ async def process_response(
                             if state_manager
                             else None
                         )
+                        # Extract bot_id from bot list - in pipeline mode, bot list contains only the current bot
+                        bot_id = None
+                        if state_manager:
+                            bots = getattr(state_manager.task_data, "bot", None)
+                            if bots and len(bots) > 0:
+                                bot_id = bots[0].get("id")
                         if task_id:
                             try:
                                 from executor.agents.claude_code.session_manager import (
                                     SessionManager,
                                 )
 
-                                SessionManager.save_session_id(task_id, msg.session_id)
+                                SessionManager.save_session_id(
+                                    task_id, msg.session_id, bot_id
+                                )
                             except Exception as save_error:
                                 logger.warning(
                                     f"Failed to save session ID: {save_error}"
@@ -287,14 +295,20 @@ def _handle_system_message(msg: SystemMessage, state_manager, thinking_manager=N
         task_id = (
             getattr(state_manager.task_data, "task_id", None) if state_manager else None
         )
+        # Extract bot_id from bot list - in pipeline mode, bot list contains only the current bot
+        bot_id = None
+        if state_manager:
+            bots = getattr(state_manager.task_data, "bot", None)
+            if bots and len(bots) > 0:
+                bot_id = bots[0].get("id")
         if task_id:
             try:
                 from executor.agents.claude_code.session_manager import SessionManager
 
                 claude_session_id = msg.data["session_id"]
-                SessionManager.save_session_id(task_id, claude_session_id)
+                SessionManager.save_session_id(task_id, claude_session_id, bot_id)
                 logger.info(
-                    f"Saved Claude session_id {claude_session_id} from init message for task {task_id}"
+                    f"Saved Claude session_id {claude_session_id} from init message for task {task_id} (bot_id={bot_id})"
                 )
             except Exception as save_error:
                 logger.warning(
