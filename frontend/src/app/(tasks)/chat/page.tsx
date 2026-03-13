@@ -44,7 +44,7 @@ const ChatPageMobile = dynamic(
  * Uses dynamic imports to optimize bundle size and loading performance.
  */
 export default function ChatPage() {
-  // Team state from service - only fetch once at parent level
+  // Team state from service
   const { teams, isTeamsLoading, refreshTeams } = teamService.useTeams()
 
   // Task context
@@ -113,16 +113,7 @@ export default function ChatPage() {
         hasShareId={hasShareId}
       />
       {/* Route to mobile or desktop component based on screen size */}
-      {/* Pass teams data via props to avoid duplicate API calls */}
-      {isMobile ? (
-        <ChatPageMobile teams={teams} isTeamsLoading={isTeamsLoading} refreshTeams={refreshTeams} />
-      ) : (
-        <ChatPageDesktop
-          teams={teams}
-          isTeamsLoading={isTeamsLoading}
-          refreshTeams={refreshTeams}
-        />
-      )}
+      {isMobile ? <ChatPageMobile /> : <ChatPageDesktop />}
     </>
   )
 }

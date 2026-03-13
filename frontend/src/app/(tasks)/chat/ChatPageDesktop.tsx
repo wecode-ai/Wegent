@@ -7,6 +7,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { UserGroupIcon } from '@heroicons/react/24/outline'
+import { teamService } from '@/features/tasks/service/teamService'
 import TopNavigation from '@/features/layout/TopNavigation'
 import {
   TaskSidebar,
@@ -29,12 +30,6 @@ import { ChatArea } from '@/features/tasks/components/chat'
 import { CreateGroupChatDialog } from '@/features/tasks/components/group-chat'
 import { RemoteWorkspaceEntry } from '@/features/tasks/components/remote-workspace'
 
-interface ChatPageDesktopProps {
-  teams: Team[]
-  isTeamsLoading: boolean
-  refreshTeams: () => Promise<Team[]>
-}
-
 /**
  * Desktop-specific implementation of Chat Page
  *
@@ -45,10 +40,11 @@ interface ChatPageDesktopProps {
  *
  * @see ChatPageMobile.tsx for mobile implementation
  */
-export function ChatPageDesktop({ teams, isTeamsLoading, refreshTeams }: ChatPageDesktopProps) {
+export function ChatPageDesktop() {
   const { t } = useTranslation()
 
-  // Team state from props (passed from parent to avoid duplicate API calls)
+  // Team state from service
+  const { teams, isTeamsLoading, refreshTeams } = teamService.useTeams()
 
   // Task context for refreshing task list
   const {
