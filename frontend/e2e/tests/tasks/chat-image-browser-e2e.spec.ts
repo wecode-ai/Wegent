@@ -225,6 +225,11 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
    */
   async function dismissOnboardingTour(page: Page): Promise<void> {
     try {
+      // First, try to forcefully remove all driver.js elements from DOM
+      await page.evaluate(() => {
+        document.querySelectorAll('.driver-overlay, .driver-popover, .driver-popover-tip, [class*="driver-"]').forEach(el => el.remove())
+      })
+
       // Check for driver.js overlay (onboarding tour)
       const driverOverlay = page.locator('.driver-overlay, .driver-popover')
       if (await driverOverlay.isVisible({ timeout: 1000 }).catch(() => false)) {
@@ -249,11 +254,15 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
           console.log('Pressed Escape to dismiss overlay')
         }
 
-        // Verify overlay is gone
+        // Verify overlay is gone, if not forcefully remove it
         if (await driverOverlay.isVisible({ timeout: 500 }).catch(() => false)) {
-          console.warn('Overlay still visible, trying to click outside')
-          // Click outside the overlay to dismiss it
-          await page.mouse.click(10, 10)
+          console.warn('Overlay still visible, forcefully removing from DOM')
+          await page.evaluate(() => {
+            document.querySelectorAll('.driver-overlay, .driver-popover, .driver-popover-tip, [class*="driver-"]').forEach(el => {
+              ;(el as HTMLElement).style.display = 'none'
+              el.remove()
+            })
+          })
           await page.waitForTimeout(500)
         }
       }
@@ -418,7 +427,8 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
           // Dismiss tour before clicking
           await dismissOnboardingTour(page)
           await modelSelectorByTestId.click({ force: true })
-          await page.waitForTimeout(1000)
+          // Wait longer for dropdown to fully load and render options
+          await page.waitForTimeout(2000)
 
           // Look for our test model in the dropdown
           const modelOption = page.locator(`[role="option"]:has-text("${TEST_MODEL_NAME}"), [data-testid*="model-option"]`).first()
@@ -429,9 +439,9 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
             return true
           }
 
-          // Try to select any available model
-          const anyModelOption = page.locator('[role="option"], [data-testid^="model-option-"]').first()
-          if (await anyModelOption.isVisible({ timeout: 3000 }).catch(() => false)) {
+          // Try to select any available model (exclude the search input if present)
+          const anyModelOption = page.locator('[role="option"]').filter({ hasNot: page.locator('input') }).first()
+          if (await anyModelOption.isVisible({ timeout: 5000 }).catch(() => false)) {
             console.log('Selecting first available model...')
             await anyModelOption.click()
             await page.waitForTimeout(1000)

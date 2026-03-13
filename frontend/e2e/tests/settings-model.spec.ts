@@ -95,16 +95,18 @@ test.describe('Settings - Model Management', () => {
       await apiKeyInput.fill('test-api-key-for-e2e')
     }
 
-    // Fill model ID (required field)
-    // First select a provider type to enable model selection
-    const providerSelect = page.locator('button[role="combobox"]').first()
-    if (await providerSelect.isVisible({ timeout: 3000 }).catch(() => false)) {
-      await providerSelect.click()
+    // Fill model ID - click on the Model ID dropdown and select a model
+    // The dropdown button has text like "Select Model ID" or similar
+    const modelIdDropdown = page
+      .locator('button:has-text("Select Model"), button:has-text("选择模型")')
+      .first()
+    if (await modelIdDropdown.isVisible({ timeout: 3000 }).catch(() => false)) {
+      await modelIdDropdown.click()
       await page.waitForTimeout(500)
-      // Select OpenAI provider
-      const openaiOption = page.locator('[role="option"]:has-text("OpenAI")').first()
-      if (await openaiOption.isVisible({ timeout: 2000 }).catch(() => false)) {
-        await openaiOption.click()
+      // Select the first available model option (skip "Custom..." which is usually last)
+      const modelOption = page.locator('[role="option"]').first()
+      if (await modelOption.isVisible({ timeout: 2000 }).catch(() => false)) {
+        await modelOption.click()
       }
     }
 
