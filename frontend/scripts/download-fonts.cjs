@@ -31,7 +31,7 @@ if (process.env.SKIP_FONT_DOWNLOAD === '1') {
 const FONTS_DIR = path.join(__dirname, '..', 'public', 'fonts')
 const PDF_FONT_DIR = FONTS_DIR
 const GOOGLE_SANS_DIR = path.join(FONTS_DIR, 'google-sans')
-const GOOGLE_SANS_CSS_OUTPUT = path.join(FONTS_DIR, 'google-sans-local.css')
+const GOOGLE_SANS_CSS_OUTPUT = path.join(__dirname, '..', 'src', 'app', 'google-sans-local.css')
 const DOWNLOAD_TIMEOUT = 30_000 // 30s
 const GOOGLE_FONTS_USER_AGENT =
   process.env.GOOGLE_FONT_USER_AGENT ||
@@ -200,12 +200,15 @@ function downloadText(url, options = {}, maxRedirects = 5) {
   })
 }
 
-async function downloadWithFallback(urls, downloader) {
+async function downloadWithFallback(urls, downloader, validator) {
   let lastError
   for (const url of urls) {
     try {
       console.log(`  🌐 Try: ${url}`)
       const result = await downloader(url)
+      if (validator) {
+        await validator(result, url)
+      }
       return { url, result }
     } catch (err) {
       console.warn(`  ⚠ Failed: ${err.message}`)
@@ -264,13 +267,18 @@ async function downloadPdfFonts() {
     console.log(`  ${font.description}`)
 
     try {
-      await downloadWithFallback(font.urls, url => downloadFile(url, destPath))
+      await downloadWithFallback(
+        font.urls,
+        url => downloadFile(url, destPath),
+        () => {
+          const { size } = fs.statSync(destPath)
+          if (font.minSize && size < font.minSize) {
+            throw new Error(`File too small (${formatSize(size)})`)
+          }
+        }
+      )
 
       const { size } = fs.statSync(destPath)
-      if (font.minSize && size < font.minSize) {
-        throw new Error(`File too small (${formatSize(size)})`)
-      }
-
       console.log(`✓ Downloaded ${font.name} (${formatSize(size)})\n`)
     } catch (err) {
       if (fs.existsSync(destPath)) fs.unlinkSync(destPath)
