@@ -553,7 +553,6 @@ async def get_executor_workspace_tree(
     )
 
     legacy_url = f"{base_url}/filesystem/list-dir"
-    connect_url = f"{base_url}/filesystem.Filesystem/ListDir"
 
     async with httpx.AsyncClient(timeout=10.0) as client:
         legacy_response = await client.get(legacy_url, params={"path": normalized_path})
@@ -568,24 +567,6 @@ async def get_executor_workspace_tree(
             _to_log_preview(legacy_response.text),
         )
 
-        connect_response = await client.post(
-            connect_url,
-            json={"path": normalized_path, "depth": 1},
-            headers={"Content-Type": "application/json"},
-        )
-        if connect_response.status_code < 400:
-            payload = connect_response.json()
-            return _normalize_workspace_entries(payload)
-
-        logger.warning(
-            "[workspace_proxy] connect list failed task_id=%s status_code=%s body_preview=%s",
-            task_id,
-            connect_response.status_code,
-            _to_log_preview(connect_response.text),
-        )
-
-    if _is_connect_not_found_response(connect_response):
-        raise HTTPException(status_code=404, detail="Path not found")
     if legacy_response.status_code == 404 and not _is_route_not_found_response(
         legacy_response
     ):
@@ -614,7 +595,6 @@ async def get_executor_workspace_file(
     )
 
     legacy_url = f"{base_url}/filesystem/file"
-    rest_file_url = f"{base_url}/files"
 
     async with httpx.AsyncClient(timeout=10.0) as client:
         legacy_response = await client.get(legacy_url, params={"path": path})
@@ -633,24 +613,6 @@ async def get_executor_workspace_file(
             _to_log_preview(legacy_response.text),
         )
 
-        fallback_response = await client.get(rest_file_url, params={"path": path})
-        if fallback_response.status_code < 400:
-            return StreamingResponse(
-                iter([fallback_response.content]),
-                media_type=fallback_response.headers.get(
-                    "content-type", "application/octet-stream"
-                ),
-            )
-
-        logger.warning(
-            "[workspace_proxy] fallback file failed task_id=%s status_code=%s body_preview=%s",
-            task_id,
-            fallback_response.status_code,
-            _to_log_preview(fallback_response.text),
-        )
-
-    if fallback_response.status_code == 404:
-        raise HTTPException(status_code=404, detail="File not found")
     if legacy_response.status_code == 404 and not _is_route_not_found_response(
         legacy_response
     ):

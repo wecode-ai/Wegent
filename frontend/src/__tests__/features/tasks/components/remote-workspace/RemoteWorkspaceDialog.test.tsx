@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { remoteWorkspaceApis } from '@/apis/remoteWorkspace'
 import { RemoteWorkspaceDialog } from '@/features/tasks/components/remote-workspace/RemoteWorkspaceDialog'
@@ -47,6 +47,13 @@ const translations: Record<string, string> = {
   'remote_workspace.detail.metadata_size': 'Size',
   'remote_workspace.detail.metadata_modified': 'Modified',
   'remote_workspace.detail.metadata_type': 'Type',
+  'remote_workspace.tree.title': 'Directory Tree',
+  'remote_workspace.tree.expand': 'Expand',
+  'remote_workspace.tree.collapse': 'Collapse',
+  'remote_workspace.tree.open_directory': 'Open directory',
+  'remote_workspace.tree.loading_children': 'Loading children...',
+  'remote_workspace.tree.load_children_failed': 'Failed to load child directories',
+  'remote_workspace.tree.retry': 'Retry',
   'remote_workspace.preview.empty': 'Select a file to preview',
   'remote_workspace.preview.loading': 'Loading preview...',
   'remote_workspace.preview.load_failed': 'Failed to load preview',
@@ -71,6 +78,8 @@ jest.mock('@/hooks/useTranslation', () => ({
 describe('RemoteWorkspaceDialog', () => {
   beforeEach(() => {
     jest.clearAllMocks()
+    ;(remoteWorkspaceApis.getTree as jest.Mock).mockReset()
+    ;(remoteWorkspaceApis.getFileUrl as jest.Mock).mockReset()
   })
 
   function mockRootEntries() {
@@ -135,6 +144,67 @@ describe('RemoteWorkspaceDialog', () => {
     expect(screen.getByRole('link', { name: 'Download' })).toBeInTheDocument()
   })
 
+  test('renders directory tree panel on desktop', async () => {
+    mockRootEntries()
+    ;(remoteWorkspaceApis.getFileUrl as jest.Mock).mockReturnValue(
+      '/api/tasks/1/remote-workspace/file'
+    )
+
+    render(<RemoteWorkspaceDialog open taskId={1} onOpenChange={jest.fn()} />)
+
+    await waitFor(() => {
+      expect(remoteWorkspaceApis.getTree).toHaveBeenCalledWith(1, '/workspace')
+    })
+
+    expect(screen.getByText('Directory Tree')).toBeInTheDocument()
+  })
+
+  test('expands directory node lazily and loads child directories', async () => {
+    ;(remoteWorkspaceApis.getTree as jest.Mock)
+      .mockResolvedValueOnce({
+        path: '/workspace',
+        entries: [
+          {
+            name: 'src',
+            path: '/workspace/src',
+            is_directory: true,
+            size: 0,
+            modified_at: null,
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        path: '/workspace/src',
+        entries: [
+          {
+            name: 'components',
+            path: '/workspace/src/components',
+            is_directory: true,
+            size: 0,
+            modified_at: null,
+          },
+        ],
+      })
+    ;(remoteWorkspaceApis.getFileUrl as jest.Mock).mockReturnValue(
+      '/api/tasks/1/remote-workspace/file'
+    )
+
+    render(<RemoteWorkspaceDialog open taskId={1} onOpenChange={jest.fn()} />)
+
+    await waitFor(() => {
+      expect(remoteWorkspaceApis.getTree).toHaveBeenCalledWith(1, '/workspace')
+    })
+
+    const user = userEvent.setup({ pointerEventsCheck: 0 })
+    await user.click(screen.getByRole('button', { name: 'Expand src' }))
+
+    await waitFor(() => {
+      expect(remoteWorkspaceApis.getTree).toHaveBeenCalledWith(1, '/workspace/src')
+    })
+
+    expect(screen.getByRole('button', { name: 'Open directory components' })).toBeInTheDocument()
+  })
+
   test('filters current directory by search keyword', async () => {
     mockRootEntries()
     ;(remoteWorkspaceApis.getFileUrl as jest.Mock).mockReturnValue(
@@ -169,7 +239,10 @@ describe('RemoteWorkspaceDialog', () => {
     const user = userEvent.setup({ pointerEventsCheck: 0 })
     await user.selectOptions(screen.getByLabelText('Sort'), 'name_desc')
 
-    const rows = screen.getAllByRole('button', { name: /(diagram\.png|notes\.txt|src)/i })
+    const fileTable = screen.getByRole('table')
+    const rows = within(fileTable).getAllByRole('button', {
+      name: /(diagram\.png|notes\.txt|src)/i,
+    })
     expect(rows[0]).toHaveTextContent('src')
     expect(rows[1]).toHaveTextContent('notes.txt')
     expect(rows[2]).toHaveTextContent('diagram.png')
@@ -212,7 +285,8 @@ describe('RemoteWorkspaceDialog', () => {
     })
 
     const user = userEvent.setup({ pointerEventsCheck: 0 })
-    await user.click(await screen.findByRole('button', { name: /src/i }))
+    const fileTable = await screen.findByRole('table')
+    await user.click(await within(fileTable).findByRole('button', { name: /^src$/i }))
 
     await waitFor(() => {
       expect(remoteWorkspaceApis.getTree).toHaveBeenCalledWith(1, '/workspace/src')

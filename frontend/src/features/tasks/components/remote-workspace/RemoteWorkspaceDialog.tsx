@@ -19,6 +19,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 
 import { RemoteWorkspaceDialogDesktop } from './RemoteWorkspaceDialogDesktop'
 import { RemoteWorkspaceDialogMobile } from './RemoteWorkspaceDialogMobile'
+import { type RemoteWorkspaceDirectoryCache } from './RemoteWorkspaceDirectoryTree'
 import {
   buildBreadcrumbSegments,
   getParentPath,
@@ -34,6 +35,12 @@ type RemoteWorkspaceDialogProps = {
   rootPath?: string
 }
 
+type LoadDirectoryOptions = {
+  setAsCurrent?: boolean
+  clearSelection?: boolean
+  errorMessage?: string
+}
+
 export function RemoteWorkspaceDialog({
   open,
   taskId,
@@ -43,9 +50,10 @@ export function RemoteWorkspaceDialog({
   const { t } = useTranslation('tasks')
   const isMobile = useIsMobile()
   const [currentPath, setCurrentPath] = useState(rootPath)
-  const [entries, setEntries] = useState<RemoteWorkspaceTreeEntry[]>([])
-  const [isTreeLoading, setIsTreeLoading] = useState(false)
-  const [treeError, setTreeError] = useState<string | null>(null)
+  const [directoryCache, setDirectoryCache] = useState<RemoteWorkspaceDirectoryCache>({})
+  const [expandedDirectoryPaths, setExpandedDirectoryPaths] = useState<Set<string>>(
+    () => new Set([rootPath])
+  )
   const [selectedPaths, setSelectedPaths] = useState<string[]>([])
   const [searchKeyword, setSearchKeyword] = useState('')
   const [sortOption, setSortOption] = useState<SortOption>('name_asc')
@@ -54,23 +62,68 @@ export function RemoteWorkspaceDialog({
   const [isTextLoading, setIsTextLoading] = useState(false)
   const [textError, setTextError] = useState<string | null>(null)
 
-  const loadTree = useCallback(
-    async (targetPath: string) => {
-      setIsTreeLoading(true)
-      setTreeError(null)
+  const expandPathToDirectory = useCallback(
+    (path: string) => {
+      const segments = buildBreadcrumbSegments(rootPath, path)
+      setExpandedDirectoryPaths(previous => {
+        const next = new Set(previous)
+        for (const segment of segments) {
+          next.add(segment.path)
+        }
+        return next
+      })
+    },
+    [rootPath]
+  )
+
+  const loadDirectory = useCallback(
+    async (targetPath: string, options: LoadDirectoryOptions = {}) => {
+      setDirectoryCache(previous => ({
+        ...previous,
+        [targetPath]: {
+          entries: previous[targetPath]?.entries ?? [],
+          isLoading: true,
+          error: null,
+          loaded: previous[targetPath]?.loaded ?? false,
+        },
+      }))
 
       try {
         const response = await remoteWorkspaceApis.getTree(taskId, targetPath)
-        setCurrentPath(response.path)
-        setEntries(response.entries)
-        setSelectedPaths([])
+        setDirectoryCache(previous => ({
+          ...previous,
+          [response.path]: {
+            entries: response.entries,
+            isLoading: false,
+            error: null,
+            loaded: true,
+          },
+        }))
+
+        if (options.setAsCurrent) {
+          setCurrentPath(response.path)
+          expandPathToDirectory(response.path)
+        }
+        if (options.clearSelection) {
+          setSelectedPaths([])
+        }
       } catch {
-        setTreeError(t('remote_workspace.tree.load_failed', 'Failed to load workspace tree'))
-      } finally {
-        setIsTreeLoading(false)
+        const fallbackError = t(
+          'remote_workspace.tree.load_failed',
+          'Failed to load workspace tree'
+        )
+        setDirectoryCache(previous => ({
+          ...previous,
+          [targetPath]: {
+            entries: previous[targetPath]?.entries ?? [],
+            isLoading: false,
+            error: options.errorMessage ?? fallbackError,
+            loaded: previous[targetPath]?.loaded ?? false,
+          },
+        }))
       }
     },
-    [taskId, t]
+    [expandPathToDirectory, t, taskId]
   )
 
   useEffect(() => {
@@ -79,15 +132,24 @@ export function RemoteWorkspaceDialog({
     }
 
     setCurrentPath(rootPath)
-    setEntries([])
-    setTreeError(null)
+    setDirectoryCache({})
+    setExpandedDirectoryPaths(new Set([rootPath]))
     setSearchKeyword('')
     setSortOption('name_asc')
     setSelectedPaths([])
     setTextContent('')
     setTextError(null)
-    void loadTree(rootPath)
-  }, [open, rootPath, loadTree])
+    void loadDirectory(rootPath, {
+      setAsCurrent: true,
+      clearSelection: true,
+      errorMessage: t('remote_workspace.tree.load_failed', 'Failed to load workspace tree'),
+    })
+  }, [loadDirectory, open, rootPath, t])
+
+  const currentDirectoryState = directoryCache[currentPath]
+  const entries = useMemo(() => currentDirectoryState?.entries ?? [], [currentDirectoryState])
+  const isTreeLoading = Boolean(currentDirectoryState?.isLoading)
+  const treeError = currentDirectoryState?.error ?? null
 
   const entryMap = useMemo(() => {
     const map = new Map<string, RemoteWorkspaceTreeEntry>()
@@ -194,16 +256,35 @@ export function RemoteWorkspaceDialog({
     [currentPath, rootPath]
   )
 
+  const navigateToDirectory = useCallback(
+    (targetPath: string) => {
+      expandPathToDirectory(targetPath)
+      const cachedState = directoryCache[targetPath]
+      if (cachedState?.loaded && !cachedState.isLoading) {
+        setCurrentPath(targetPath)
+        setSelectedPaths([])
+        return
+      }
+
+      void loadDirectory(targetPath, {
+        setAsCurrent: true,
+        clearSelection: true,
+        errorMessage: t('remote_workspace.tree.load_failed', 'Failed to load workspace tree'),
+      })
+    },
+    [directoryCache, expandPathToDirectory, loadDirectory, t]
+  )
+
   const handleOpenEntry = useCallback(
     (entry: RemoteWorkspaceTreeEntry) => {
       if (entry.is_directory) {
-        void loadTree(entry.path)
+        navigateToDirectory(entry.path)
         return
       }
 
       setSelectedPaths([entry.path])
     },
-    [loadTree]
+    [navigateToDirectory]
   )
 
   const handleToggleEntrySelection = useCallback(
@@ -240,8 +321,54 @@ export function RemoteWorkspaceDialog({
       return
     }
 
-    void loadTree(parentPath)
-  }, [currentPath, loadTree, rootPath])
+    navigateToDirectory(parentPath)
+  }, [currentPath, navigateToDirectory, rootPath])
+
+  const handleToggleDirectoryExpand = useCallback(
+    (path: string) => {
+      if (path === rootPath) {
+        return
+      }
+
+      const isExpanded = expandedDirectoryPaths.has(path)
+      setExpandedDirectoryPaths(previous => {
+        const next = new Set(previous)
+        if (next.has(path)) {
+          next.delete(path)
+        } else {
+          next.add(path)
+        }
+        return next
+      })
+
+      if (isExpanded) {
+        return
+      }
+
+      const pathState = directoryCache[path]
+      if (!pathState || (!pathState.loaded && !pathState.isLoading)) {
+        void loadDirectory(path, {
+          errorMessage: t(
+            'remote_workspace.tree.load_children_failed',
+            'Failed to load child directories'
+          ),
+        })
+      }
+    },
+    [directoryCache, expandedDirectoryPaths, loadDirectory, rootPath, t]
+  )
+
+  const handleRetryDirectoryLoad = useCallback(
+    (path: string) => {
+      void loadDirectory(path, {
+        errorMessage: t(
+          'remote_workspace.tree.load_children_failed',
+          'Failed to load child directories'
+        ),
+      })
+    },
+    [loadDirectory, t]
+  )
 
   const canDownloadPreview = Boolean(previewEntry && downloadUrl)
 
@@ -272,9 +399,18 @@ export function RemoteWorkspaceDialog({
             sortOption={sortOption}
             canGoParent={canGoParent}
             canDownloadPreview={canDownloadPreview}
-            onGoRoot={() => void loadTree(rootPath)}
+            onGoRoot={() => navigateToDirectory(rootPath)}
             onGoParent={handleGoParent}
-            onRefresh={() => void loadTree(currentPath)}
+            onRefresh={() =>
+              void loadDirectory(currentPath, {
+                setAsCurrent: true,
+                clearSelection: true,
+                errorMessage: t(
+                  'remote_workspace.tree.load_failed',
+                  'Failed to load workspace tree'
+                ),
+              })
+            }
             onSearchChange={setSearchKeyword}
             onSortChange={setSortOption}
             onToggleEntrySelection={handleToggleEntrySelection}
@@ -283,8 +419,11 @@ export function RemoteWorkspaceDialog({
         ) : (
           <RemoteWorkspaceDialogDesktop
             t={t}
+            rootPath={rootPath}
             currentPath={currentPath}
             breadcrumbs={breadcrumbs}
+            directoryCache={directoryCache}
+            expandedDirectoryPaths={expandedDirectoryPaths}
             isTreeLoading={isTreeLoading}
             treeError={treeError}
             visibleEntries={visibleEntries}
@@ -301,10 +440,22 @@ export function RemoteWorkspaceDialog({
             sortOption={sortOption}
             canGoParent={canGoParent}
             canDownloadPreview={canDownloadPreview}
-            onGoRoot={() => void loadTree(rootPath)}
+            onGoRoot={() => navigateToDirectory(rootPath)}
             onGoParent={handleGoParent}
-            onRefresh={() => void loadTree(currentPath)}
-            onBreadcrumbClick={path => void loadTree(path)}
+            onRefresh={() =>
+              void loadDirectory(currentPath, {
+                setAsCurrent: true,
+                clearSelection: true,
+                errorMessage: t(
+                  'remote_workspace.tree.load_failed',
+                  'Failed to load workspace tree'
+                ),
+              })
+            }
+            onBreadcrumbClick={navigateToDirectory}
+            onToggleDirectoryExpand={handleToggleDirectoryExpand}
+            onSelectDirectory={navigateToDirectory}
+            onRetryDirectoryLoad={handleRetryDirectoryLoad}
             onSearchChange={setSearchKeyword}
             onSortChange={setSortOption}
             onToggleAllEntries={handleToggleAllEntries}

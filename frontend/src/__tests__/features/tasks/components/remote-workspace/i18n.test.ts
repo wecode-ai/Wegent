@@ -53,6 +53,18 @@ type RemoteWorkspaceTranslations = {
     load_failed?: string
     unsupported?: string
   }
+  tree?: {
+    title?: string
+    expand?: string
+    collapse?: string
+    open_directory?: string
+    loading?: string
+    loading_children?: string
+    empty?: string
+    load_failed?: string
+    load_children_failed?: string
+    retry?: string
+  }
 }
 
 function assertRemoteWorkspaceKeys(locale: RemoteWorkspaceTranslations) {
@@ -89,6 +101,16 @@ function assertRemoteWorkspaceKeys(locale: RemoteWorkspaceTranslations) {
   expect(locale.preview?.loading).toBeTruthy()
   expect(locale.preview?.load_failed).toBeTruthy()
   expect(locale.preview?.unsupported).toBeTruthy()
+  expect(locale.tree?.title).toBeTruthy()
+  expect(locale.tree?.expand).toBeTruthy()
+  expect(locale.tree?.collapse).toBeTruthy()
+  expect(locale.tree?.open_directory).toBeTruthy()
+  expect(locale.tree?.loading).toBeTruthy()
+  expect(locale.tree?.loading_children).toBeTruthy()
+  expect(locale.tree?.empty).toBeTruthy()
+  expect(locale.tree?.load_failed).toBeTruthy()
+  expect(locale.tree?.load_children_failed).toBeTruthy()
+  expect(locale.tree?.retry).toBeTruthy()
 }
 
 describe('remote workspace i18n', () => {

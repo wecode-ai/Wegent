@@ -69,9 +69,16 @@
       }
     },
     "tree": {
+      "title": "目录树",
+      "expand": "展开",
+      "collapse": "收起",
+      "open_directory": "打开目录",
       "loading": "加载中...",
+      "loading_children": "正在加载子目录...",
       "empty": "未找到文件",
-      "load_failed": "工作区目录加载失败"
+      "load_failed": "工作区目录加载失败",
+      "load_children_failed": "子目录加载失败",
+      "retry": "重试"
     },
     "preview": {
       "empty": "请选择要预览的文件",

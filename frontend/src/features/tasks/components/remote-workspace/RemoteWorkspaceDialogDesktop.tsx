@@ -21,11 +21,18 @@ import {
   type PreviewKind,
   type SortOption,
 } from './remote-workspace-utils'
+import {
+  type RemoteWorkspaceDirectoryCache,
+  RemoteWorkspaceDirectoryTree,
+} from './RemoteWorkspaceDirectoryTree'
 
 type RemoteWorkspaceDialogDesktopProps = {
   t: TFunction<'translation', undefined>
+  rootPath: string
   currentPath: string
   breadcrumbs: BreadcrumbSegment[]
+  directoryCache: RemoteWorkspaceDirectoryCache
+  expandedDirectoryPaths: Set<string>
   isTreeLoading: boolean
   treeError: string | null
   visibleEntries: RemoteWorkspaceTreeEntry[]
@@ -46,6 +53,9 @@ type RemoteWorkspaceDialogDesktopProps = {
   onGoParent: () => void
   onRefresh: () => void
   onBreadcrumbClick: (path: string) => void
+  onToggleDirectoryExpand: (path: string) => void
+  onSelectDirectory: (path: string) => void
+  onRetryDirectoryLoad: (path: string) => void
   onSearchChange: (value: string) => void
   onSortChange: (value: SortOption) => void
   onToggleAllEntries: (checked: boolean) => void
@@ -77,8 +87,11 @@ function resolveTypeLabel(
 
 export function RemoteWorkspaceDialogDesktop({
   t,
+  rootPath,
   currentPath,
   breadcrumbs,
+  directoryCache,
+  expandedDirectoryPaths,
   isTreeLoading,
   treeError,
   visibleEntries,
@@ -99,6 +112,9 @@ export function RemoteWorkspaceDialogDesktop({
   onGoParent,
   onRefresh,
   onBreadcrumbClick,
+  onToggleDirectoryExpand,
+  onSelectDirectory,
+  onRetryDirectoryLoad,
   onSearchChange,
   onSortChange,
   onToggleAllEntries,
@@ -192,7 +208,18 @@ export function RemoteWorkspaceDialogDesktop({
         </div>
       </section>
 
-      <section className="grid min-h-0 flex-1 overflow-hidden grid-cols-[minmax(0,1fr)_320px] xl:grid-cols-[minmax(0,1fr)_360px]">
+      <section className="grid min-h-0 flex-1 overflow-hidden grid-cols-[220px_minmax(0,1fr)_300px] xl:grid-cols-[240px_minmax(0,1fr)_340px]">
+        <RemoteWorkspaceDirectoryTree
+          t={t}
+          rootPath={rootPath}
+          currentPath={currentPath}
+          directoryCache={directoryCache}
+          expandedDirectoryPaths={expandedDirectoryPaths}
+          onToggleDirectoryExpand={onToggleDirectoryExpand}
+          onSelectDirectory={onSelectDirectory}
+          onRetryDirectoryLoad={onRetryDirectoryLoad}
+        />
+
         <div className="min-h-0 min-w-0 overflow-hidden border-r border-border">
           <div className="h-full min-h-0 overflow-auto">
             <table className="w-full border-collapse text-sm">

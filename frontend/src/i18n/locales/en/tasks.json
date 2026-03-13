@@ -69,9 +69,16 @@
       }
     },
     "tree": {
+      "title": "Directory Tree",
+      "expand": "Expand",
+      "collapse": "Collapse",
+      "open_directory": "Open directory",
       "loading": "Loading...",
+      "loading_children": "Loading children...",
       "empty": "No files found",
-      "load_failed": "Failed to load workspace tree"
+      "load_failed": "Failed to load workspace tree",
+      "load_children_failed": "Failed to load child directories",
+      "retry": "Retry"
     },
     "preview": {
       "empty": "Select a file to preview",
