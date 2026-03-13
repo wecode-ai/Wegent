@@ -180,38 +180,60 @@ class TaskKnowledgeBaseService:
             TaskResource.is_group_chat == True,
         )
 
-        # Subquery: tasks where user is approved member (join with TaskResource for active check)
+        # Subquery: tasks where user is approved member (without join for performance)
         # For linked group chats, members are already copied to resource_members table
         # Only consider group chat tasks (is_group_chat=true)
-        member_task_subquery = (
-            select(ResourceMember.resource_id)
-            .join(TaskResource, TaskResource.id == ResourceMember.resource_id)
-            .where(
+        # First get member task IDs, then filter by task properties in Python
+        member_task_ids = (
+            db.query(ResourceMember.resource_id)
+            .filter(
                 ResourceMember.user_id == user_id,
                 ResourceMember.resource_type == ResourceType.TASK.value,
                 ResourceMember.status == MemberStatus.APPROVED.value,
-                TaskResource.is_active == True,
-                TaskResource.kind == "Task",
-                TaskResource.is_group_chat == True,
             )
+            .all()
         )
+        member_task_id_list = [row[0] for row in member_task_ids]
+
+        # Filter member tasks by task properties without join
+        valid_member_task_ids = []
+        if member_task_id_list:
+            # Batch query tasks to check is_active, kind, is_group_chat
+            valid_tasks = (
+                db.query(TaskResource.id)
+                .filter(
+                    TaskResource.id.in_(member_task_id_list),
+                    TaskResource.is_active == True,
+                    TaskResource.kind == "Task",
+                    TaskResource.is_group_chat == True,
+                )
+                .all()
+            )
+            valid_member_task_ids = [row[0] for row in valid_tasks]
 
         # Main query: check if any binding exists with active group chat task
-        exists_query = (
-            db.query(TaskKnowledgeBaseBinding)
-            .join(TaskResource, TaskResource.id == TaskKnowledgeBaseBinding.task_id)
-            .filter(
-                TaskKnowledgeBaseBinding.knowledge_base_id == kb_id,
-                TaskResource.is_active == True,
-                TaskResource.kind == "Task",
-                TaskResource.is_group_chat == True,
-                or_(
-                    TaskKnowledgeBaseBinding.task_id.in_(owned_task_subquery),
-                    TaskKnowledgeBaseBinding.task_id.in_(member_task_subquery),
-                ),
+        # Use exists query without join for performance
+        if valid_member_task_ids:
+            exists_query = (
+                db.query(TaskKnowledgeBaseBinding)
+                .filter(
+                    TaskKnowledgeBaseBinding.knowledge_base_id == kb_id,
+                    or_(
+                        TaskKnowledgeBaseBinding.task_id.in_(owned_task_subquery),
+                        TaskKnowledgeBaseBinding.task_id.in_(valid_member_task_ids),
+                    ),
+                )
+                .exists()
             )
-            .exists()
-        )
+        else:
+            exists_query = (
+                db.query(TaskKnowledgeBaseBinding)
+                .filter(
+                    TaskKnowledgeBaseBinding.knowledge_base_id == kb_id,
+                    TaskKnowledgeBaseBinding.task_id.in_(owned_task_subquery),
+                )
+                .exists()
+            )
 
         result = db.query(exists_query).scalar()
         return bool(result)

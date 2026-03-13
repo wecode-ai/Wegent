@@ -359,14 +359,26 @@ class KnowledgeService:
         elif scope == ResourceScope.ORGANIZATION:
             # Organization knowledge bases are visible to all users
             # Query knowledge bases in namespaces with level='organization'
+            # First get organization namespace names without join
+            org_namespaces = (
+                db.query(Namespace.name)
+                .filter(
+                    Namespace.level == GroupLevel.organization.value,
+                    Namespace.is_active == True,
+                )
+                .all()
+            )
+            org_namespace_names = [n[0] for n in org_namespaces]
+
+            if not org_namespace_names:
+                return []
+
             return (
                 db.query(Kind)
-                .join(Namespace, Kind.namespace == Namespace.name)
                 .filter(
                     Kind.kind == "KnowledgeBase",
                     Kind.is_active == True,
-                    Namespace.level == GroupLevel.organization.value,
-                    Namespace.is_active == True,
+                    Kind.namespace.in_(org_namespace_names),
                 )
                 .order_by(Kind.updated_at.desc())
                 .all()
@@ -1484,26 +1496,38 @@ class KnowledgeService:
 
         # Get organization knowledge bases (accessible to all authenticated users)
         # Query knowledge bases in namespaces with level='organization'
-        org_kbs = (
-            db.query(Kind, Namespace)
-            .join(Namespace, Kind.namespace == Namespace.name)
+        # First get organization namespace names and display names without join
+        org_namespaces = (
+            db.query(Namespace.name, Namespace.display_name)
             .filter(
-                Kind.kind == "KnowledgeBase",
-                Kind.is_active == True,
                 Namespace.level == GroupLevel.organization.value,
                 Namespace.is_active == True,
             )
-            .order_by(Kind.updated_at.desc())
             .all()
         )
+        org_namespace_names = [ns.name for ns in org_namespaces]
+        org_ns_display_map = {ns.name: ns.display_name for ns in org_namespaces}
 
-        if org_kbs:
+        if org_namespace_names:
+            # Query organization KBs using IN clause (without join)
+            org_kbs = (
+                db.query(Kind)
+                .filter(
+                    Kind.kind == "KnowledgeBase",
+                    Kind.is_active == True,
+                    Kind.namespace.in_(org_namespace_names),
+                )
+                .order_by(Kind.updated_at.desc())
+                .all()
+            )
+
             # Group KBs by namespace
             org_groups: dict[str, dict] = {}
-            for kb, ns in org_kbs:
-                if ns.name not in org_groups:
-                    org_groups[ns.name] = {"namespace": ns, "kbs": []}
-                org_groups[ns.name]["kbs"].append(kb)
+            for kb in org_kbs:
+                ns_name = kb.namespace
+                if ns_name not in org_groups:
+                    org_groups[ns_name] = {"kbs": []}
+                org_groups[ns_name]["kbs"].append(kb)
 
             # Collect all org KB IDs for batch document count query
             all_org_kb_ids = [
@@ -1514,12 +1538,12 @@ class KnowledgeService:
             )
 
             for ns_name, group_data in org_groups.items():
-                ns = group_data["namespace"]
                 kbs = group_data["kbs"]
+                display_name = org_ns_display_map.get(ns_name, ns_name)
                 team_groups.append(
                     TeamKnowledgeGroup(
                         group_name=ns_name,
-                        group_display_name=ns.display_name or ns_name,
+                        group_display_name=display_name or ns_name,
                         knowledge_bases=[
                             AccessibleKnowledgeBase(
                                 id=kb.id,
@@ -1606,42 +1630,67 @@ class KnowledgeService:
         try:
             # Optimization: Split into separate queries to avoid OR condition
             # and expensive DISTINCT operation on large datasets
+            # Also avoid JOIN with tasks table for performance
 
-            # Query 1: Get KB IDs where user is the task owner
-            # Uses index: tasks(user_id, kind, is_active)
-            # Only include group chat tasks (is_group_chat == True)
-            owner_kb_ids = (
-                db.query(TaskKnowledgeBaseBinding.knowledge_base_id)
-                .join(TaskResource, TaskResource.id == TaskKnowledgeBaseBinding.task_id)
+            # Step 1: Get all task IDs owned by user that are active group chats
+            # Uses index: tasks(user_id, kind, is_active, is_group_chat)
+            owned_task_ids = (
+                db.query(TaskResource.id)
                 .filter(
-                    TaskResource.is_active == True,
-                    TaskResource.kind == "Task",
-                    TaskResource.is_group_chat == True,
                     TaskResource.user_id == user_id,
-                )
-                .all()
-            )
-
-            # Query 2: Get KB IDs where user is an approved resource member
-            # Uses index: resource_members(resource_type, resource_id, status, user_id)
-            # Only include group chat tasks (is_group_chat == True)
-            member_kb_ids = (
-                db.query(TaskKnowledgeBaseBinding.knowledge_base_id)
-                .join(TaskResource, TaskResource.id == TaskKnowledgeBaseBinding.task_id)
-                .join(
-                    ResourceMember,
-                    (ResourceMember.resource_id == TaskResource.id)
-                    & (ResourceMember.resource_type == ResourceType.TASK.value)
-                    & (ResourceMember.user_id == user_id)
-                    & (ResourceMember.status == MemberStatus.APPROVED.value),
-                )
-                .filter(
                     TaskResource.is_active == True,
                     TaskResource.kind == "Task",
                     TaskResource.is_group_chat == True,
                 )
                 .all()
             )
+            owned_task_id_list = [row[0] for row in owned_task_ids]
+
+            # Query 1: Get KB IDs where user is the task owner (without join)
+            owner_kb_ids = []
+            if owned_task_id_list:
+                owner_kb_ids = (
+                    db.query(TaskKnowledgeBaseBinding.knowledge_base_id)
+                    .filter(TaskKnowledgeBaseBinding.task_id.in_(owned_task_id_list))
+                    .all()
+                )
+
+            # Step 2: Get all task IDs where user is an approved member
+            # Uses index: resource_members(resource_type, resource_id, status, user_id)
+            member_task_ids = (
+                db.query(ResourceMember.resource_id)
+                .filter(
+                    ResourceMember.user_id == user_id,
+                    ResourceMember.resource_type == ResourceType.TASK.value,
+                    ResourceMember.status == MemberStatus.APPROVED.value,
+                )
+                .all()
+            )
+            member_task_id_list = [row[0] for row in member_task_ids]
+
+            # Filter member tasks by task properties without join
+            valid_member_task_ids = []
+            if member_task_id_list:
+                valid_tasks = (
+                    db.query(TaskResource.id)
+                    .filter(
+                        TaskResource.id.in_(member_task_id_list),
+                        TaskResource.is_active == True,
+                        TaskResource.kind == "Task",
+                        TaskResource.is_group_chat == True,
+                    )
+                    .all()
+                )
+                valid_member_task_ids = [row[0] for row in valid_tasks]
+
+            # Query 2: Get KB IDs where user is an approved resource member (without join)
+            member_kb_ids = []
+            if valid_member_task_ids:
+                member_kb_ids = (
+                    db.query(TaskKnowledgeBaseBinding.knowledge_base_id)
+                    .filter(TaskKnowledgeBaseBinding.task_id.in_(valid_member_task_ids))
+                    .all()
+                )
 
             # Note: We intentionally do NOT query via linked_group_id.
             # Knowledge base access is determined solely by task binding,
