@@ -34,11 +34,11 @@
   animation: slide-horizontal 1.5s ease-in-out infinite;
 }
 
-.chat-typography .wmde-markdown,
-.chat-typography .markdown-content,
-.chat-typography .enhanced-markdown,
-.chat-typography .smart-text-line,
-.chat-typography .chat-message-prompt {
+.wmde-markdown,
+.markdown-content,
+.enhanced-markdown,
+.smart-text-line,
+.chat-message-prompt {
   font-family:
     'Google Sans Flex', 'Google Sans', 'Noto Sans Simplified Chinese', 'Noto Sans SC', 'Inter',
     'PingFang SC', 'Noto Sans CJK SC', 'Microsoft YaHei', 'Helvetica Neue', sans-serif;
@@ -48,6 +48,6 @@
   letter-spacing: normal;
 }
 
-.chat-typography .smart-text-line {
+.smart-text-line {
   min-height: 28px;
 }

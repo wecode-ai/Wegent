@@ -134,7 +134,7 @@ export function ChatPageMobile() {
   }
 
   return (
-    <div className="chat-typography flex smart-h-screen bg-base text-text-primary box-border">
+    <div className="flex smart-h-screen bg-base text-text-primary box-border">
       {/* Mobile sidebar - use TaskSidebar's built-in MobileSidebar component */}
       <TaskSidebar
         isMobileSidebarOpen={isMobileSidebarOpen}
