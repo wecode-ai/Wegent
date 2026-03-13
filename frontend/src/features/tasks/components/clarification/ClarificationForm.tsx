@@ -267,7 +267,10 @@ export default function ClarificationForm({
   }
 
   return (
-    <div className="space-y-4 p-4 rounded-lg border border-primary/30 bg-primary/5" data-testid="clarification-form">
+    <div
+      className="space-y-4 p-4 rounded-lg border border-primary/30 bg-primary/5"
+      data-testid="clarification-form"
+    >
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">
           <span className="text-lg">💬</span>
@@ -330,7 +333,10 @@ export default function ClarificationForm({
             })}
 
             {/* Fixed additional input box */}
-            <div className="p-3 rounded bg-surface/50 border border-border" data-testid="clarification-additional-input">
+            <div
+              className="p-3 rounded bg-surface/50 border border-border"
+              data-testid="clarification-additional-input"
+            >
               <div className="space-y-3">
                 <div className="text-sm font-medium text-text-primary">
                   {t('chat:clarification.additional_thoughts') || '其他想法或补充说明'}
@@ -352,7 +358,12 @@ export default function ClarificationForm({
 
           {!isSubmitted && !(isTaskStreaming && isTaskStreaming(taskId)) && (
             <div className="flex justify-end pt-2">
-              <Button variant="secondary" onClick={handleSubmit} size="lg" data-testid="clarification-submit">
+              <Button
+                variant="secondary"
+                onClick={handleSubmit}
+                size="lg"
+                data-testid="clarification-submit"
+              >
                 <Send className="w-4 h-4 mr-2" />
                 {t('chat:clarification.submit_answers') || 'Submit Answers'}
               </Button>
