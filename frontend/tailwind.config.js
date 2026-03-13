@@ -24,7 +24,6 @@ export default {
           '"Noto Sans Simplified Chinese"',
           '"Noto Sans SC"',
           '"Inter"',
-          '"PingFang SC"',
           '"Noto Sans CJK SC"',
           '"Microsoft YaHei"',
           '-apple-system',
