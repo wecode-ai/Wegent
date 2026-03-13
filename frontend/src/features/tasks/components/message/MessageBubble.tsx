@@ -409,7 +409,7 @@ const MessageBubble = memo(
         <path d="m9 11 3 3L22 4"></path>
       </svg>
     ) : (
-      <Bot className="w-4 h-4" />
+      <Bot className="w-4 h-4" data-testid="ai-message-icon" />
     )
     const headerLabel = isUserTypeMessage ? '' : msg.botName || t('messages.bot') || 'Bot'
 

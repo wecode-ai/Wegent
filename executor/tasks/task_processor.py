@@ -268,6 +268,15 @@ async def process_async(request: Union[ExecutionRequest, Dict[str, Any]]) -> Tas
             logger.info(
                 f"Background task completed: task_id={task_data.task_id}, status={status}"
             )
+
+            # Only emit a terminal callback here when the agent returned a
+            # terminal status directly. ClaudeCode/Agno regular tasks often
+            # return RUNNING here and emit their own terminal events later.
+            if not is_subscription:
+                if status in [TaskStatus.SUCCESS, TaskStatus.COMPLETED]:
+                    await emitter.done(content=message or "Task completed")
+                elif status == TaskStatus.FAILED:
+                    await emitter.error(message or "Task execution failed")
         except Exception as e:
             error_msg = f"Unexpected error during background task execution: {str(e)}"
             logger.exception(error_msg)

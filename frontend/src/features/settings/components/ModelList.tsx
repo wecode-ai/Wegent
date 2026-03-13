@@ -352,7 +352,10 @@ const ModelList: React.FC<ModelListProps> = ({
       {/* Header */}
       <div className="flex items-start justify-between">
         <div>
-          <h2 className="text-xl font-semibold text-text-primary mb-1">
+          <h2
+            className="text-xl font-semibold text-text-primary mb-1"
+            data-testid="model-management-title"
+          >
             {t('common:models.title')}
           </h2>
           <p className="text-sm text-text-muted mb-1">{t('common:models.description')}</p>
