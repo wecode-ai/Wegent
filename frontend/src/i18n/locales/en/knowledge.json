@@ -123,7 +123,8 @@
       "namePlaceholder": "Enter document name",
       "updateFailed": "Failed to update document",
       "dropzone": "Drop files here or click to browse",
-      "supportedTypes": "PDF, Word, PPT, Excel, TXT, MD (Max {{maxSize}}MB)",
+      "supportedTypes": "PDF, Word, PPT, TXT, MD (Max {{maxSize}}MB)",
+      "supportedTypesWithExcel": "PDF, Word, PPT, Excel, CSV, TXT, MD (Max {{maxSize}}MB)",
       "uploading": "Uploading...",
       "uploadSuccess": "File uploaded successfully",
       "batch": {

@@ -36,7 +36,7 @@ import { EditDocumentDialog } from './EditDocumentDialog'
 import { RetrievalTestDialog } from './RetrievalTestDialog'
 import { ConvertKnowledgeBaseTypeDialog } from './ConvertKnowledgeBaseTypeDialog'
 import { useDocuments } from '../hooks/useDocuments'
-import { refreshKnowledgeBaseSummary } from '@/apis/knowledge'
+import { refreshKnowledgeBaseSummary, getKnowledgeConfig } from '@/apis/knowledge'
 import { toast } from '@/hooks/use-toast'
 import type { KnowledgeBase, KnowledgeDocument, SplitterConfig } from '@/types/knowledge'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -99,6 +99,8 @@ export function DocumentList({
   const [reindexingDocId, setReindexingDocId] = useState<number | null>(null)
   // Track if summary is being retried
   const [isSummaryRetrying, setIsSummaryRetrying] = useState(false)
+  // Excel upload enabled state (from backend config)
+  const [excelUploadEnabled, setExcelUploadEnabled] = useState(true)
 
   // Track component mounted state to prevent updates after unmount
   const isMountedRef = useRef(true)
@@ -107,6 +109,22 @@ export function DocumentList({
     return () => {
       isMountedRef.current = false
     }
+  }, [])
+
+  // Fetch knowledge config on mount
+  useEffect(() => {
+    const fetchConfig = async () => {
+      try {
+        const config = await getKnowledgeConfig()
+        if (isMountedRef.current) {
+          setExcelUploadEnabled(config.excel_upload_enabled)
+        }
+      } catch (err) {
+        console.error('Failed to fetch knowledge config:', err)
+        // Default to true if config fetch fails
+      }
+    }
+    fetchConfig()
   }, [])
 
   // Check if summary generation failed
@@ -784,6 +802,7 @@ export function DocumentList({
         onWebAdd={handleWebAdd}
         kbType={knowledgeBase.kb_type}
         currentDocumentCount={documents.length}
+        excelUploadEnabled={excelUploadEnabled}
       />
 
       <EditDocumentDialog
