@@ -64,9 +64,10 @@ class TestAgent:
 
     @pytest.mark.asyncio
     async def test_pre_execute_default(self, agent):
-        """Test default pre_execute returns SUCCESS"""
-        status = await agent.pre_execute()
+        """Test default pre_execute returns SUCCESS with no error"""
+        status, error = await agent.pre_execute()
         assert status == TaskStatus.SUCCESS
+        assert error is None
 
     def test_execute_not_implemented(self, agent):
         """Test execute raises NotImplementedError"""
