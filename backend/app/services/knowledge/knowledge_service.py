@@ -39,7 +39,6 @@ from app.schemas.knowledge import (
     TeamKnowledgeGroup,
 )
 from app.schemas.namespace import GroupLevel, GroupRole
-from app.services.group_member_helper import NAMESPACE_RESOURCE_TYPE
 from app.services.group_permission import (
     check_group_permission,
     get_effective_role_in_group,
@@ -1578,8 +1577,12 @@ class KnowledgeService:
     def _get_bound_kb_ids_for_user(db: Session, user_id: int) -> list[int]:
         """Get IDs of knowledge bases bound to group chats where user is a member.
 
-        This method finds all personal knowledge bases that have been bound to
+        This method finds all knowledge bases that have been bound to
         group chats where the specified user is a member.
+
+        Note: Knowledge base access is determined solely by task binding,
+        not by linked_group membership. This ensures that members can only
+        access knowledge bases explicitly bound to the group chat.
 
         Optimized for large datasets by splitting the query into two parts:
         1. Query bindings where user is the task owner
@@ -1640,29 +1643,9 @@ class KnowledgeService:
                 .all()
             )
 
-            # Query 3: Get KB IDs where user accesses group chats via linked namespace
-            # This handles users who are members of the linked group but not direct task members
-            # Join through task_knowledge_base_bindings to get linked_group_id
-            linked_ns_kb_ids = (
-                db.query(TaskKnowledgeBaseBinding.knowledge_base_id)
-                .join(TaskResource, TaskResource.id == TaskKnowledgeBaseBinding.task_id)
-                .join(
-                    ResourceMember,
-                    (
-                        ResourceMember.resource_id
-                        == TaskKnowledgeBaseBinding.linked_group_id
-                    )
-                    & (ResourceMember.resource_type == NAMESPACE_RESOURCE_TYPE)
-                    & (ResourceMember.user_id == user_id)
-                    & (ResourceMember.status == MemberStatus.APPROVED.value),
-                )
-                .filter(
-                    TaskResource.is_active == True,
-                    TaskResource.kind == "Task",
-                    TaskResource.is_group_chat == True,
-                )
-                .all()
-            )
+            # Note: We intentionally do NOT query via linked_group_id.
+            # Knowledge base access is determined solely by task binding,
+            # ensuring members can only access explicitly bound knowledge bases.
 
             # Merge results in Python using set for deduplication
             # This is much faster than SQL DISTINCT on large datasets with OR conditions
@@ -1670,8 +1653,6 @@ class KnowledgeService:
             for row in owner_kb_ids:
                 kb_id_set.add(row[0])
             for row in member_kb_ids:
-                kb_id_set.add(row[0])
-            for row in linked_ns_kb_ids:
                 kb_id_set.add(row[0])
 
             return list(kb_id_set)

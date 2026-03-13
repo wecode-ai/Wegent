@@ -146,8 +146,10 @@ class TaskKnowledgeBaseService:
         queries instead of scanning JSON data. It joins with TaskResource to ensure
         only active group chat tasks are considered.
 
-        For linked group chats, members are already copied to resource_members table,
-        so we only need to check resource_members for Task type.
+        Note: Knowledge base access is determined solely by task binding membership
+        (resource_members with resource_type='Task'), not by linked_group membership.
+        This ensures that members can only access knowledge bases explicitly bound
+        to the group chat, not all knowledge bases in the linked group.
 
         Args:
             db: Database session
