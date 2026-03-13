@@ -11,7 +11,7 @@ test.describe('Settings - Model Management', () => {
     await expect(page).toHaveURL(/\/settings/)
 
     // Wait for model management title to load (support both English and Chinese)
-    const modelTitle = page.locator('h2:has-text("Model"), h2:has-text("模型")').first()
+    const modelTitle = page.locator('h2:has-text("Model Management"), h2:has-text("模型管理")').first()
     await expect(modelTitle).toBeVisible({ timeout: 20000 })
   })
 
@@ -43,8 +43,8 @@ test.describe('Settings - Model Management', () => {
     await createButton.first().click()
 
     // Model edit is a full page form - check for the model ID input
-    const modelIdInput = page.locator('input#modelIdName, input[placeholder*="model"]')
-    await expect(modelIdInput.first()).toBeVisible({ timeout: 5000 })
+    const modelIdInput = page.locator('[data-testid="model-id-name-input"]')
+    await expect(modelIdInput).toBeVisible({ timeout: 5000 })
   })
 
   test('should create new model', async ({ page, testPrefix }) => {
@@ -58,7 +58,7 @@ test.describe('Settings - Model Management', () => {
     await createButton.first().click()
 
     // Model edit is a full page form, wait for model ID input
-    const nameInput = page.locator('input#modelIdName, input[placeholder*="model"]').first()
+    const nameInput = page.locator('[data-testid="model-id-name-input"]')
     await expect(nameInput).toBeVisible({ timeout: 5000 })
     await nameInput.fill(modelName)
 
@@ -82,7 +82,7 @@ test.describe('Settings - Model Management', () => {
 
   test('should show test connection button for user models', async ({ page }) => {
     // Wait for page to load (support both English and Chinese)
-    const modelTitle = page.locator('h2:has-text("Model"), h2:has-text("模型")').first()
+    const modelTitle = page.locator('h2:has-text("Model Management"), h2:has-text("模型管理")').first()
     await expect(modelTitle).toBeVisible({ timeout: 20000 })
 
     // Test connection button only appears for user models (not public)
@@ -100,7 +100,7 @@ test.describe('Settings - Model Management', () => {
 
   test('should show delete button for user models', async ({ page }) => {
     // Wait for page to load (support both English and Chinese)
-    const modelTitle = page.locator('h2:has-text("Model"), h2:has-text("模型")').first()
+    const modelTitle = page.locator('h2:has-text("Model Management"), h2:has-text("模型管理")').first()
     await expect(modelTitle).toBeVisible({ timeout: 20000 })
 
     // Delete button only appears for user models (not public)
