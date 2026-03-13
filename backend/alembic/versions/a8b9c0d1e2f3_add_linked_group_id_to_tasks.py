@@ -442,6 +442,14 @@ def _migrate_kb_bindings() -> None:
                 )
                 continue
 
+            # For SQLite: filter to only group-chat tasks in Python
+            if conn.dialect.name != "mysql":
+                spec_for_filter = task_json.get("spec", {})
+                if not isinstance(spec_for_filter, dict):
+                    continue
+                if spec_for_filter.get("is_group_chat") is not True:
+                    continue
+
             # Extract linked_group for namespace_id resolution
             spec = task_json.get("spec", {})
             # Ensure spec is a dict before accessing keys

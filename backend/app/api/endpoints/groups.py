@@ -125,7 +125,10 @@ def list_members(
     # First get Namespace ID by name (without join)
     namespace = db.query(Namespace).filter(Namespace.name == group_name).first()
     if not namespace:
-        return []
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f'Group "{group_name}" not found',
+        )
 
     # Query members directly by namespace ID (without join)
     members = (

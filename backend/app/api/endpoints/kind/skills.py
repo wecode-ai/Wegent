@@ -879,7 +879,17 @@ def list_unified_skills(
     Returns combined list with user/group skills first, then public skills.
     User/group skills with same name take precedence over public skills.
     """
-    from app.services.group_permission import get_user_groups
+    from app.services.group_permission import (
+        get_effective_role_in_group,
+        get_user_groups,
+    )
+
+    # Validate scope parameter
+    if scope not in ("personal", "group", "all"):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Invalid scope '{scope}'. Must be one of: personal, group, all",
+        )
 
     user_skills = []
     user_skill_names = set()
@@ -891,6 +901,13 @@ def list_unified_skills(
         group_namespaces = []
     elif scope == "group":
         if group_name:
+            # Verify caller is a member of the specified group
+            user_role = get_effective_role_in_group(db, current_user.id, group_name)
+            if user_role is None:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"You are not a member of group '{group_name}'",
+                )
             # Group scope with specific group: query ALL skills in that namespace
             personal_namespaces = []
             group_namespaces = [group_name]

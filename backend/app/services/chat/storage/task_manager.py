@@ -180,9 +180,19 @@ def get_task_with_access_check(
 
     # Additional logic for non-group members can be added here if needed
     if task:
+        # Defensive validation: ensure task.json is a dict and spec is a dict
         task_json = task.json if isinstance(task.json, dict) else {}
-        spec = task_json.get("spec", {})
-        linked_group = spec.get("linked_group")
+        spec = task_json.get("spec", {}) if isinstance(task_json, dict) else {}
+        if not isinstance(spec, dict):
+            spec = {}
+
+        # Normalize/validate linked_group: ensure it's a string
+        linked_group_raw = spec.get("linked_group")
+        linked_group = None
+        if isinstance(linked_group_raw, str) and linked_group_raw.strip():
+            linked_group = linked_group_raw.strip()
+        elif isinstance(linked_group_raw, (int, float)):
+            linked_group = str(linked_group_raw)
 
         # Only honor linked_group for actual group chats (using indexed column)
         if task.is_group_chat and linked_group:

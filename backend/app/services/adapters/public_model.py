@@ -253,20 +253,23 @@ class PublicModelService(BaseService[Kind, ModelCreate, ModelUpdate]):
             Kind.is_active,  # noqa: E712
         )
 
-        # Apply model_category_type filter at DB level if specified
-        # Note: Since model_category_type is in JSON, we filter in Python for simplicity
-        # but this could be optimized with a functional index if needed
-        public_models = (
-            query.order_by(Kind.created_at.desc()).offset(skip).limit(limit).all()
-        )
+        # Fetch all active models first, then filter by model_category_type in Python
+        # to ensure correct pagination. Since model_category_type is in JSON,
+        # we need to filter before applying pagination to avoid missing items.
+        all_public_models = query.order_by(Kind.created_at.desc()).all()
 
-        result = [ModelAdapter.to_model_dict(pm) for pm in public_models]
+        # Convert to dicts and filter by model_category_type if specified
+        all_results = [ModelAdapter.to_model_dict(pm) for pm in all_public_models]
 
-        # Filter by model_category_type if specified
         if model_category_type:
-            result = [
-                m for m in result if m.get("model_category_type") == model_category_type
+            all_results = [
+                m
+                for m in all_results
+                if m.get("model_category_type") == model_category_type
             ]
+
+        # Apply pagination after filtering
+        result = all_results[skip : skip + limit]
 
         return result
 

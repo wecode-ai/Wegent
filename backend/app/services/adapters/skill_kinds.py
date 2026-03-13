@@ -167,7 +167,7 @@ class SkillKindsService:
                 Kind.id == skill_id,
                 Kind.user_id == user_id,
                 Kind.kind == "Skill",
-                Kind.is_active == True,
+                Kind.is_active.is_(True),
             )
             .first()
         )
@@ -200,7 +200,7 @@ class SkillKindsService:
                 Kind.id == skill_id,
                 Kind.namespace == namespace,
                 Kind.kind == "Skill",
-                Kind.is_active == True,
+                Kind.is_active.is_(True),
             )
             .first()
         )
@@ -221,7 +221,7 @@ class SkillKindsService:
                 Kind.kind == "Skill",
                 Kind.name == name,
                 Kind.namespace == namespace,
-                Kind.is_active == True,
+                Kind.is_active.is_(True),
             )
             .first()
         )
@@ -254,7 +254,7 @@ class SkillKindsService:
                 Kind.kind == "Skill",
                 Kind.name == name,
                 Kind.namespace == namespace,
-                Kind.is_active == True,
+                Kind.is_active.is_(True),
             )
             .first()
         )
@@ -280,7 +280,7 @@ class SkillKindsService:
                 Kind.user_id == user_id,
                 Kind.kind == "Skill",
                 Kind.namespace == namespace,
-                Kind.is_active == True,
+                Kind.is_active.is_(True),
             )
             .order_by(Kind.created_at.desc())
         )
@@ -318,7 +318,7 @@ class SkillKindsService:
             .filter(
                 Kind.kind == "Skill",
                 Kind.namespace == namespace,
-                Kind.is_active == True,
+                Kind.is_active.is_(True),
             )
             .order_by(Kind.created_at.desc())
         )
@@ -358,7 +358,7 @@ class SkillKindsService:
                 Kind.user_id == user_id,
                 Kind.kind == "Skill",
                 Kind.namespace.in_(namespaces),
-                Kind.is_active == True,
+                Kind.is_active.is_(True),
             )
             .order_by(Kind.created_at.desc())
             .all()
@@ -393,7 +393,7 @@ class SkillKindsService:
             .filter(
                 Kind.kind == "Skill",
                 Kind.namespace.in_(namespaces),
-                Kind.is_active == True,
+                Kind.is_active.is_(True),
             )
             .order_by(Kind.created_at.desc())
             .all()
@@ -434,7 +434,7 @@ class SkillKindsService:
                 Kind.id == skill_id,
                 Kind.user_id == user_id,
                 Kind.kind == "Skill",
-                Kind.is_active == True,
+                Kind.is_active.is_(True),
             )
             .first()
         )
@@ -517,7 +517,7 @@ class SkillKindsService:
                 Kind.id == skill_id,
                 Kind.user_id == user_id,
                 Kind.kind == "Skill",
-                Kind.is_active == True,
+                Kind.is_active.is_(True),
             )
             .first()
         )
@@ -531,7 +531,7 @@ class SkillKindsService:
         ghosts = (
             db.query(Kind)
             .filter(
-                Kind.user_id == user_id, Kind.kind == "Ghost", Kind.is_active == True
+                Kind.user_id == user_id, Kind.kind == "Ghost", Kind.is_active.is_(True)
             )
             .all()
         )
@@ -587,7 +587,7 @@ class SkillKindsService:
                 Kind.id == skill_id,
                 Kind.user_id == user_id,
                 Kind.kind == "Skill",
-                Kind.is_active == True,
+                Kind.is_active.is_(True),
             )
             .first()
         )
@@ -601,7 +601,7 @@ class SkillKindsService:
         ghosts = (
             db.query(Kind)
             .filter(
-                Kind.user_id == user_id, Kind.kind == "Ghost", Kind.is_active == True
+                Kind.user_id == user_id, Kind.kind == "Ghost", Kind.is_active.is_(True)
             )
             .all()
         )
@@ -650,7 +650,7 @@ class SkillKindsService:
                 Kind.id == skill_id,
                 Kind.user_id == user_id,
                 Kind.kind == "Skill",
-                Kind.is_active == True,
+                Kind.is_active.is_(True),
             )
             .first()
         )
@@ -664,7 +664,7 @@ class SkillKindsService:
                 Kind.id == ghost_id,
                 Kind.user_id == user_id,
                 Kind.kind == "Ghost",
-                Kind.is_active == True,
+                Kind.is_active.is_(True),
             )
             .first()
         )
@@ -714,7 +714,7 @@ class SkillKindsService:
                 Kind.id == skill_id,
                 Kind.user_id == user_id,
                 Kind.kind == "Skill",
-                Kind.is_active == True,
+                Kind.is_active.is_(True),
             )
             .first()
         )
@@ -756,7 +756,7 @@ class SkillKindsService:
                 Kind.id == skill_id,
                 Kind.namespace == namespace,
                 Kind.kind == "Skill",
-                Kind.is_active == True,
+                Kind.is_active.is_(True),
             )
             .first()
         )
