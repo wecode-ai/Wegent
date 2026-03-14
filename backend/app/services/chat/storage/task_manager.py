@@ -384,6 +384,9 @@ def create_new_task(
         existing_placeholder.json = task_json
         existing_placeholder.is_active = True
         existing_placeholder.updated_at = datetime.now()
+        existing_placeholder.is_group_chat = (
+            params.is_group_chat
+        )  # Sync to physical column
         task = existing_placeholder
     else:
         # No placeholder exists, create a new Task record
@@ -395,6 +398,7 @@ def create_new_task(
             namespace="default",
             json=task_json,
             is_active=True,
+            is_group_chat=params.is_group_chat,  # Sync to physical column
         )
         db.add(task)
 
