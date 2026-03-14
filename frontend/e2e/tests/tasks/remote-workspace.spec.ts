@@ -107,7 +107,7 @@ test.describe('Remote Workspace', () => {
     expect(statusResponse.status).toBe(200)
     expect(statusResponse.data?.connected).toBe(true)
     expect(statusResponse.data?.available).toBe(false)
-    expect(statusResponse.data?.root_path).toBe('/workspace')
+    expect(statusResponse.data?.root_path).toBe(`/workspace/${taskId}`)
 
     await page.goto(`/code?taskId=${taskId}`)
     await page.waitForLoadState('domcontentloaded')

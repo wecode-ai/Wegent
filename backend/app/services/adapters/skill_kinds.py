@@ -167,7 +167,7 @@ class SkillKindsService:
                 Kind.id == skill_id,
                 Kind.user_id == user_id,
                 Kind.kind == "Skill",
-                Kind.is_active == True,
+                Kind.is_active.is_(True),
             )
             .first()
         )
@@ -200,7 +200,7 @@ class SkillKindsService:
                 Kind.id == skill_id,
                 Kind.namespace == namespace,
                 Kind.kind == "Skill",
-                Kind.is_active == True,
+                Kind.is_active.is_(True),
             )
             .first()
         )
@@ -221,7 +221,7 @@ class SkillKindsService:
                 Kind.kind == "Skill",
                 Kind.name == name,
                 Kind.namespace == namespace,
-                Kind.is_active == True,
+                Kind.is_active.is_(True),
             )
             .first()
         )
@@ -254,7 +254,7 @@ class SkillKindsService:
                 Kind.kind == "Skill",
                 Kind.name == name,
                 Kind.namespace == namespace,
-                Kind.is_active == True,
+                Kind.is_active.is_(True),
             )
             .first()
         )
@@ -280,7 +280,7 @@ class SkillKindsService:
                 Kind.user_id == user_id,
                 Kind.kind == "Skill",
                 Kind.namespace == namespace,
-                Kind.is_active == True,
+                Kind.is_active.is_(True),
             )
             .order_by(Kind.created_at.desc())
         )
@@ -318,7 +318,7 @@ class SkillKindsService:
             .filter(
                 Kind.kind == "Skill",
                 Kind.namespace == namespace,
-                Kind.is_active == True,
+                Kind.is_active.is_(True),
             )
             .order_by(Kind.created_at.desc())
         )
@@ -327,6 +327,79 @@ class SkillKindsService:
         skills = query.offset(skip).limit(limit).all()
 
         return SkillList(items=[self._kind_to_skill(skill) for skill in skills])
+
+    def list_skills_batch(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        namespaces: List[str],
+    ) -> List[Skill]:
+        """
+        Batch list Skills for a user across multiple namespaces.
+
+        This method uses a single IN query instead of multiple queries,
+        significantly improving performance when querying many namespaces.
+
+        Args:
+            db: Database session
+            user_id: User ID
+            namespaces: List of namespaces to query
+
+        Returns:
+            List of Skill objects from all specified namespaces
+        """
+        if not namespaces:
+            return []
+
+        skills = (
+            db.query(Kind)
+            .filter(
+                Kind.user_id == user_id,
+                Kind.kind == "Skill",
+                Kind.namespace.in_(namespaces),
+                Kind.is_active.is_(True),
+            )
+            .order_by(Kind.created_at.desc())
+            .all()
+        )
+
+        return [self._kind_to_skill(skill) for skill in skills]
+
+    def list_skills_in_namespaces_batch(
+        self,
+        db: Session,
+        *,
+        namespaces: List[str],
+    ) -> List[Skill]:
+        """
+        Batch list all Skills in multiple namespaces (for group skills).
+
+        This method uses a single IN query instead of multiple queries,
+        significantly improving performance when querying many namespaces.
+
+        Args:
+            db: Database session
+            namespaces: List of namespaces to search in
+
+        Returns:
+            List of Skill objects from all specified namespaces
+        """
+        if not namespaces:
+            return []
+
+        skills = (
+            db.query(Kind)
+            .filter(
+                Kind.kind == "Skill",
+                Kind.namespace.in_(namespaces),
+                Kind.is_active.is_(True),
+            )
+            .order_by(Kind.created_at.desc())
+            .all()
+        )
+
+        return [self._kind_to_skill(skill) for skill in skills]
 
     def update_skill(
         self,
@@ -361,7 +434,7 @@ class SkillKindsService:
                 Kind.id == skill_id,
                 Kind.user_id == user_id,
                 Kind.kind == "Skill",
-                Kind.is_active == True,
+                Kind.is_active.is_(True),
             )
             .first()
         )
@@ -444,7 +517,7 @@ class SkillKindsService:
                 Kind.id == skill_id,
                 Kind.user_id == user_id,
                 Kind.kind == "Skill",
-                Kind.is_active == True,
+                Kind.is_active.is_(True),
             )
             .first()
         )
@@ -458,7 +531,7 @@ class SkillKindsService:
         ghosts = (
             db.query(Kind)
             .filter(
-                Kind.user_id == user_id, Kind.kind == "Ghost", Kind.is_active == True
+                Kind.user_id == user_id, Kind.kind == "Ghost", Kind.is_active.is_(True)
             )
             .all()
         )
@@ -514,7 +587,7 @@ class SkillKindsService:
                 Kind.id == skill_id,
                 Kind.user_id == user_id,
                 Kind.kind == "Skill",
-                Kind.is_active == True,
+                Kind.is_active.is_(True),
             )
             .first()
         )
@@ -528,7 +601,7 @@ class SkillKindsService:
         ghosts = (
             db.query(Kind)
             .filter(
-                Kind.user_id == user_id, Kind.kind == "Ghost", Kind.is_active == True
+                Kind.user_id == user_id, Kind.kind == "Ghost", Kind.is_active.is_(True)
             )
             .all()
         )
@@ -577,7 +650,7 @@ class SkillKindsService:
                 Kind.id == skill_id,
                 Kind.user_id == user_id,
                 Kind.kind == "Skill",
-                Kind.is_active == True,
+                Kind.is_active.is_(True),
             )
             .first()
         )
@@ -591,7 +664,7 @@ class SkillKindsService:
                 Kind.id == ghost_id,
                 Kind.user_id == user_id,
                 Kind.kind == "Ghost",
-                Kind.is_active == True,
+                Kind.is_active.is_(True),
             )
             .first()
         )
@@ -641,7 +714,7 @@ class SkillKindsService:
                 Kind.id == skill_id,
                 Kind.user_id == user_id,
                 Kind.kind == "Skill",
-                Kind.is_active == True,
+                Kind.is_active.is_(True),
             )
             .first()
         )
@@ -683,7 +756,7 @@ class SkillKindsService:
                 Kind.id == skill_id,
                 Kind.namespace == namespace,
                 Kind.kind == "Skill",
-                Kind.is_active == True,
+                Kind.is_active.is_(True),
             )
             .first()
         )

@@ -116,6 +116,7 @@ def create_group(
             GroupRole.Maintainer: 1,
             GroupRole.Developer: 2,
             GroupRole.Reporter: 3,
+            GroupRole.RestrictedObserver: 4,
         }
 
         if (
@@ -551,6 +552,7 @@ def remove_member(
         GroupRole.Maintainer: 1,
         GroupRole.Developer: 2,
         GroupRole.Reporter: 3,
+        GroupRole.RestrictedObserver: 4,
     }
 
     # Allow self-removal
@@ -581,8 +583,8 @@ def remove_member(
     # Transfer resources to owner
     _transfer_resources_to_owner(db, group_name, user_id, group.owner_user_id)
 
-    # Remove member (hard delete)
-    db.delete(member)
+    # Remove member using helper to sync with linked group chats
+    delete_group_member(db, group_name, user_id)
     db.commit()
 
 
@@ -655,6 +657,7 @@ def update_member_role(
         GroupRole.Maintainer.value: "manage",
         GroupRole.Developer.value: "edit",
         GroupRole.Reporter.value: "view",
+        GroupRole.RestrictedObserver.value: "use",
     }
     member.permission_level = role_to_permission.get(new_role.value, "view")
 

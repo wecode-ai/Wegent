@@ -171,7 +171,7 @@ def add_group_chat_info_to_task(
         .filter(
             ResourceMember.resource_type == ResourceType.TASK,
             ResourceMember.resource_id == task_id,
-            ResourceMember.status == MemberStatus.APPROVED,
+            ResourceMember.status == MemberStatus.APPROVED.value,
         )
         .all()
     )

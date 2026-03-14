@@ -18,10 +18,13 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
+from app.models.resource_member import MemberStatus, ResourceMember, ResourceRole
+from app.models.share_link import PermissionLevel, ResourceType
 from app.models.subtask import SenderType, Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.models.user import User
-from app.schemas.kind import Bot, Task, Team
+from app.schemas.kind import Task, Team
+from app.services.group_member_helper import get_group_members
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +52,9 @@ class TaskCreationParams:
         None  # Model type: 'public', 'user', 'group'
     )
     is_group_chat: bool = False
+    linked_group: Optional[str] = (
+        None  # Linked group name for group chat (members derived from group)
+    )
     git_url: Optional[str] = None
     git_repo: Optional[str] = None
     git_repo_id: Optional[int] = None
@@ -116,7 +122,7 @@ def get_task_with_access_check(
     db: Session, task_id: int, user_id: int
 ) -> tuple[Optional[TaskResource], int]:
     """
-    Get task with access check, supporting both ownership and group membership.
+    Get task with access check, supporting ownership, group membership, and linked group membership.
 
     Args:
         db: Database session
@@ -150,28 +156,62 @@ def get_task_with_access_check(
     member = (
         db.query(ResourceMember)
         .filter(
-            ResourceMember.resource_type == ResourceType.TASK,
+            ResourceMember.resource_type == ResourceType.TASK.value,
             ResourceMember.resource_id == task_id,
             ResourceMember.user_id == user_id,
-            ResourceMember.status == MemberStatus.APPROVED,
+            ResourceMember.status == MemberStatus.APPROVED.value,
         )
         .first()
     )
 
+    task = (
+        db.query(TaskResource)
+        .filter(
+            TaskResource.id == task_id,
+            TaskResource.kind == "Task",
+            TaskResource.is_active,
+        )
+        .first()
+    )
+
+    # Check if user is a member via linked group
+    # First get the task to check if it has a linked_group
     if member:
         # User is a group member, get task without user_id check
-        task = (
-            db.query(TaskResource)
-            .filter(
-                TaskResource.id == task_id,
-                TaskResource.kind == "Task",
-                TaskResource.is_active,
-            )
-            .first()
-        )
         if task:
             # For group members, use task owner's user_id for subtasks
             return task, task.user_id
+
+    # Additional logic for non-group members can be added here if needed
+    if task:
+        # Defensive validation: ensure task.json is a dict and spec is a dict
+        task_json = task.json if isinstance(task.json, dict) else {}
+        spec = task_json.get("spec", {}) if isinstance(task_json, dict) else {}
+        if not isinstance(spec, dict):
+            spec = {}
+
+        # Normalize/validate linked_group: ensure it's a string
+        linked_group_raw = spec.get("linked_group")
+        linked_group = None
+        if isinstance(linked_group_raw, str) and linked_group_raw.strip():
+            linked_group = linked_group_raw.strip()
+        elif isinstance(linked_group_raw, (int, float)):
+            linked_group = str(linked_group_raw)
+
+        # Only honor linked_group for actual group chats (using indexed column)
+        if task.is_group_chat and linked_group:
+            # Check if user is a member of the linked group
+            from app.schemas.namespace import GroupRole
+            from app.services.group_permission import get_effective_role_in_group
+
+            role = get_effective_role_in_group(db, user_id, linked_group)
+            # RestrictedObserver should not have access to linked group chats
+            if role is not None and role != GroupRole.RestrictedObserver.value:
+                # User is a member of the linked group with appropriate role
+                logger.info(
+                    f"[get_task_with_access_check] User {user_id} has access via linked group '{linked_group}' with role '{role}'"
+                )
+                return task, task.user_id
 
     # Task not found or access denied - log error and return None
     logger.error(
@@ -196,6 +236,145 @@ def check_task_status(db: Session, task: TaskResource) -> None:
     task_crd = Task.model_validate(task.json)
     if task_crd.status and task_crd.status.status == "RUNNING":
         raise HTTPException(status_code=400, detail="Task is still running")
+
+
+def _validate_linked_group(db: Session, user_id: int, linked_group: str) -> bool:
+    """Validate that the linked group exists and user is authorized to link to it.
+
+    Args:
+        db: Database session
+        user_id: User ID attempting to link
+        linked_group: Group/namespace name to link to
+
+    Returns:
+        True if group exists and user is authorized, False otherwise
+    """
+    from app.models.namespace import Namespace
+    from app.services.group_permission import get_effective_role_in_group
+
+    # Check if namespace exists
+    namespace = (
+        db.query(Namespace)
+        .filter(Namespace.name == linked_group, Namespace.is_active)
+        .first()
+    )
+
+    if not namespace:
+        logger.warning(f"[_validate_linked_group] Namespace '{linked_group}' not found")
+        return False
+
+    # Check if user is a member of the group
+    from app.schemas.namespace import GroupRole
+
+    role = get_effective_role_in_group(db, user_id, linked_group)
+    if role is None:
+        logger.warning(
+            f"[_validate_linked_group] User {user_id} is not a member of group '{linked_group}'"
+        )
+        return False
+
+    # Explicitly reject RestrictedObserver role
+    if role == GroupRole.RestrictedObserver.value:
+        logger.warning(
+            f"[_validate_linked_group] User {user_id} has RestrictedObserver role in group '{linked_group}', "
+            f"denying linked group chat creation/linking"
+        )
+        return False
+
+    return True
+
+
+def _copy_group_members_to_task(
+    db: Session,
+    task_id: int,
+    linked_group: str,
+    task_owner_id: int,
+) -> None:
+    """Copy group members to task when creating a linked group chat.
+
+    This function copies all approved members from the linked group to the task's
+    resource_members table. This avoids performance issues with JOIN queries on
+    large datasets.
+
+    Args:
+        db: Database session
+        task_id: Task ID
+        linked_group: Linked group name
+        task_owner_id: Task owner user ID (will be excluded from copying)
+    """
+    from app.schemas.namespace import GroupRole
+
+    # Get all approved members from the linked group (excluding RestrictedObserver)
+    group_members = get_group_members(db, linked_group)
+
+    if not group_members:
+        logger.info(
+            f"[_copy_group_members_to_task] No members found in group '{linked_group}'"
+        )
+        return
+
+    # Filter out RestrictedObserver and task owner
+    members_to_copy = [
+        gm
+        for gm in group_members
+        if gm.role != GroupRole.RestrictedObserver.value and gm.user_id != task_owner_id
+    ]
+
+    if not members_to_copy:
+        logger.info(f"[_copy_group_members_to_task] No members to copy after filtering")
+        return
+
+    # Copy members to task
+    copied_count = 0
+    for gm in members_to_copy:
+        # Map group role to permission level
+        role_to_permission = {
+            ResourceRole.OWNER.value: PermissionLevel.MANAGE.value,
+            ResourceRole.MAINTAINER.value: PermissionLevel.MANAGE.value,
+            ResourceRole.DEVELOPER.value: PermissionLevel.EDIT.value,
+            ResourceRole.REPORTER.value: PermissionLevel.VIEW.value,
+        }
+        permission_level = role_to_permission.get(gm.role, PermissionLevel.VIEW.value)
+
+        # Check if member already exists (should not happen for new task)
+        existing = (
+            db.query(ResourceMember)
+            .filter(
+                ResourceMember.resource_type == ResourceType.TASK.value,
+                ResourceMember.resource_id == task_id,
+                ResourceMember.user_id == gm.user_id,
+            )
+            .first()
+        )
+
+        if existing:
+            logger.debug(
+                f"[_copy_group_members_to_task] Member {gm.user_id} already exists in task {task_id}"
+            )
+            continue
+
+        # Create new task member
+        task_member = ResourceMember(
+            resource_type=ResourceType.TASK.value,
+            resource_id=task_id,
+            user_id=gm.user_id,
+            role=gm.role,
+            permission_level=permission_level,
+            status=MemberStatus.APPROVED.value,
+            invited_by_user_id=task_owner_id,  # Task owner is the inviter
+            share_link_id=0,
+            reviewed_by_user_id=0,
+            reviewed_at=datetime(1970, 1, 1, 0, 0, 0),
+            copied_resource_id=0,
+            requested_at=datetime.now(),
+        )
+        db.add(task_member)
+        copied_count += 1
+
+    logger.info(
+        f"[_copy_group_members_to_task] Copied {copied_count} members from group '{linked_group}' "
+        f"to task {task_id}"
+    )
 
 
 def create_new_task(
@@ -268,7 +447,7 @@ def create_new_task(
         task_type = "code" if params.git_url else "chat"
 
     logger.info(
-        f"[create_new_task] Creating task_json with is_group_chat={params.is_group_chat}"
+        f"[create_new_task] Creating task_json with is_group_chat={params.is_group_chat}, linked_group={params.linked_group}"
     )
 
     # Build knowledgeBaseRefs if knowledge_base_id is provided
@@ -280,7 +459,7 @@ def create_new_task(
             .filter(
                 Kind.id == params.knowledge_base_id,
                 Kind.kind == "KnowledgeBase",
-                Kind.is_active == True,
+                Kind.is_active == True,  # noqa: E712
             )
             .first()
         )
@@ -310,6 +489,14 @@ def create_new_task(
             },
             "workspaceRef": {"name": workspace_name, "namespace": "default"},
             "is_group_chat": params.is_group_chat,
+            # Only store linked_group for actual group chats after validation
+            **(
+                {"linked_group": params.linked_group}
+                if params.is_group_chat
+                and params.linked_group
+                and _validate_linked_group(db, user.id, params.linked_group)
+                else {}
+            ),
             **({"device_id": params.device_id} if params.device_id else {}),
             **(
                 {"knowledgeBaseRefs": knowledge_base_refs}
@@ -364,6 +551,45 @@ def create_new_task(
         "apiVersion": "agent.wecode.io/v1",
     }
 
+    # Lookup linked_group_id if linked_group is provided for group chats
+    # This avoids slow JSON_EXTRACT queries by using indexed column
+    # Only set linked_group_id if the namespace exists and user is authorized
+    linked_group_id = 0
+    if params.is_group_chat and params.linked_group:
+        from app.models.namespace import Namespace
+
+        namespace = (
+            db.query(Namespace)
+            .filter(Namespace.name == params.linked_group, Namespace.is_active)
+            .first()
+        )
+        if namespace:
+            # Check if user is authorized to link to this group
+            from app.schemas.namespace import GroupRole
+            from app.services.group_permission import get_effective_role_in_group
+
+            role = get_effective_role_in_group(db, user.id, params.linked_group)
+            # Explicitly reject RestrictedObserver role, only allow other valid roles
+            if role is not None and role != GroupRole.RestrictedObserver.value:
+                linked_group_id = namespace.id
+                logger.info(
+                    f"[create_new_task] Found linked_group_id={linked_group_id} for linked_group='{params.linked_group}'"
+                )
+            else:
+                if role == GroupRole.RestrictedObserver.value:
+                    logger.warning(
+                        f"[create_new_task] User {user.id} has RestrictedObserver role in group '{params.linked_group}', "
+                        f"denying linked group chat creation"
+                    )
+                else:
+                    logger.warning(
+                        f"[create_new_task] User {user.id} is not authorized to link to group '{params.linked_group}', omitting linked_group"
+                    )
+        else:
+            logger.warning(
+                f"[create_new_task] Could not find namespace for linked_group='{params.linked_group}'"
+            )
+
     # Check if a Placeholder record exists for this task_id
     # If so, update it instead of inserting to avoid SQLite UNIQUE constraint issues
     existing_placeholder = (
@@ -375,6 +601,9 @@ def create_new_task(
         .first()
     )
 
+    # Determine is_group_chat from params
+    is_group_chat = params.is_group_chat
+
     if existing_placeholder:
         # Update the existing Placeholder record to become a Task
         existing_placeholder.user_id = user.id
@@ -383,6 +612,12 @@ def create_new_task(
         existing_placeholder.namespace = "default"
         existing_placeholder.json = task_json
         existing_placeholder.is_active = True
+        existing_placeholder.linked_group_id = (
+            linked_group_id  # Set linked_group_id for fast queries
+        )
+        existing_placeholder.is_group_chat = (
+            is_group_chat  # Set is_group_chat for fast queries
+        )
         existing_placeholder.updated_at = datetime.now()
         task = existing_placeholder
     else:
@@ -395,13 +630,26 @@ def create_new_task(
             namespace="default",
             json=task_json,
             is_active=True,
+            linked_group_id=linked_group_id,  # Set linked_group_id for fast queries
+            is_group_chat=is_group_chat,  # Set is_group_chat for fast queries
         )
         db.add(task)
 
     logger.info(
         f"[create_new_task] Created task {new_task_id} with task_json.spec.is_group_chat="
-        f"{task_json.get('spec', {}).get('is_group_chat', 'NOT_SET')}"
+        f"{task_json.get('spec', {}).get('is_group_chat', 'NOT_SET')}, "
+        f"linked_group={task_json.get('spec', {}).get('linked_group', 'NOT_SET')}, "
+        f"linked_group_id={linked_group_id}"
     )
+
+    # Copy group members to task if this is a linked group chat
+    if params.is_group_chat and params.linked_group and linked_group_id > 0:
+        _copy_group_members_to_task(
+            db=db,
+            task_id=new_task_id,
+            linked_group=params.linked_group,
+            task_owner_id=user.id,
+        )
 
     return task
 

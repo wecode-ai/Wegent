@@ -39,6 +39,8 @@ interface MobileModelSelectorProps {
   teamId?: number | null
   taskId?: number | null
   taskModelId?: string | null
+  /** Whether this is a group chat - if true, each user uses their own model preference */
+  isGroupChat?: boolean
 }
 
 /**
@@ -56,6 +58,7 @@ export default function MobileModelSelector({
   teamId,
   taskId,
   taskModelId,
+  isGroupChat = false,
 }: MobileModelSelectorProps) {
   const { t } = useTranslation()
   const router = useRouter()
@@ -66,6 +69,7 @@ export default function MobileModelSelector({
     taskModelId,
     selectedTeam,
     disabled,
+    isGroupChat,
   })
 
   // Sync external state with hook state

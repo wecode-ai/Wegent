@@ -258,7 +258,6 @@ export function KnowledgeBaseChatPageDesktop({
   const handleBack = () => {
     router.back()
   }
-
   // Check if user can manage this knowledge base
   const canManageKb = useMemo(() => {
     if (!knowledgeBase || !user) return false
@@ -275,6 +274,30 @@ export function KnowledgeBaseChatPageDesktop({
     const groupRole = groupRoleMap.get(knowledgeBase.namespace)
     return groupRole === 'Owner' || groupRole === 'Maintainer' || groupRole === 'Developer'
   }, [knowledgeBase, user, groupRoleMap])
+
+  // Check if user can view documents (not RestrictedObserver role)
+  // RestrictedObserver role can only use KB via chat, cannot view document list
+  const canViewDocuments = useMemo(() => {
+    if (!knowledgeBase || !user) return false
+    // Personal knowledge base - owner can always view
+    if (knowledgeBase.namespace === 'default') {
+      // Owner can view
+      if (knowledgeBase.user_id === user.id) return true
+      // Check explicit permission from myPermission
+      // RestrictedObserver permission level is 'use', which cannot view documents
+      if (myPermission?.permission_level === 'use') return false
+      // Other permission levels (view, edit, manage) can view
+      return myPermission?.has_access === true
+    }
+    // Organization knowledge base - all authenticated users can view
+    if (knowledgeBase.namespace === 'organization') {
+      return true
+    }
+    // Group knowledge base - check group role
+    // RestrictedObserver role cannot view documents
+    const groupRole = groupRoleMap.get(knowledgeBase.namespace)
+    return groupRole !== 'RestrictedObserver' && groupRole !== undefined
+  }, [knowledgeBase, user, groupRoleMap, myPermission])
 
   // Check if user can manage permissions (is creator or has manage permission)
   const canManagePermissions = useMemo(() => {
@@ -393,19 +416,21 @@ export function KnowledgeBaseChatPageDesktop({
             />
           </div>
 
-          {/* Right panel - Document management */}
-          <DocumentPanel
-            knowledgeBase={knowledgeBase}
-            canManage={canManageKb}
-            canManagePermissions={canManagePermissions}
-            onDocumentSelectionChange={setSelectedDocumentIds}
-            onNewChat={() => setShowCreateKbDialog(true)}
-            onTypeConverted={() => {
-              // Notify parent page.tsx to refresh and re-route based on new kb_type
-              onKbTypeChanged?.()
-            }}
-            onCollapsedChange={setIsDocumentPanelCollapsed}
-          />
+          {/* Right panel - Document management (hidden for RestrictedObserver role) */}
+          {canViewDocuments && (
+            <DocumentPanel
+              knowledgeBase={knowledgeBase}
+              canManage={canManageKb}
+              canManagePermissions={canManagePermissions}
+              onDocumentSelectionChange={setSelectedDocumentIds}
+              onNewChat={() => setShowCreateKbDialog(true)}
+              onTypeConverted={() => {
+                // Notify parent page.tsx to refresh and re-route based on new kb_type
+                onKbTypeChanged?.()
+              }}
+              onCollapsedChange={setIsDocumentPanelCollapsed}
+            />
+          )}
         </div>
       </div>
 

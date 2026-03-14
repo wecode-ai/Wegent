@@ -157,6 +157,10 @@ class ChatSendPayload(BaseModel):
     is_group_chat: bool = Field(
         False, description="Whether this is a group chat (for new tasks)"
     )
+    linked_group: Optional[str] = Field(
+        None,
+        description="Linked group name for group chat. When set, members are derived from the group.",
+    )
     contexts: Optional[List[ContextItem]] = Field(
         None, description="Context items (knowledge bases, etc.)"
     )
@@ -236,6 +240,10 @@ class TaskJoinPayload(BaseModel):
     after_message_id: Optional[int] = Field(
         None,
         description="If provided, only return messages after this message_id (for incremental sync on reconnect)",
+    )
+    limit: Optional[int] = Field(
+        default=100,
+        description="Maximum number of subtasks to return (default: 100, max: 500)",
     )
 
 
@@ -585,6 +593,9 @@ class TaskJoinAck(BaseModel):
     streaming: Optional[Dict[str, Any]] = None
     subtasks: Optional[List[Dict[str, Any]]] = Field(
         None, description="Subtasks data for immediate message sync"
+    )
+    has_more: Optional[bool] = Field(
+        None, description="Whether there are more subtasks available"
     )
     error: Optional[str] = None
 

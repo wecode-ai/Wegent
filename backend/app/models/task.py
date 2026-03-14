@@ -91,6 +91,14 @@ class TaskResource(Base):
         index=True,
         comment="Project ID for task grouping",
     )
+    is_group_chat = Column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="0",
+        index=True,
+        comment="Whether this task is a group chat (0 = false, 1 = true)",
+    )
 
     __table_args__ = (
         UniqueConstraint(

@@ -183,10 +183,10 @@ class SharedTeamService:
         existing = (
             db.query(ResourceMember)
             .filter(
-                ResourceMember.resource_type == ResourceType.TEAM,
+                ResourceMember.resource_type == ResourceType.TEAM.value,
                 ResourceMember.resource_id == team_id,
                 ResourceMember.user_id == user_id,
-                ResourceMember.status == MemberStatus.APPROVED,
+                ResourceMember.status == MemberStatus.APPROVED.value,
             )
             .first()
         )
@@ -200,7 +200,7 @@ class SharedTeamService:
         rejected = (
             db.query(ResourceMember)
             .filter(
-                ResourceMember.resource_type == ResourceType.TEAM,
+                ResourceMember.resource_type == ResourceType.TEAM.value,
                 ResourceMember.resource_id == team_id,
                 ResourceMember.user_id == user_id,
             )
@@ -228,11 +228,11 @@ class SharedTeamService:
 
         # Create new relationship
         resource_member = ResourceMember(
-            resource_type=ResourceType.TEAM,
+            resource_type=ResourceType.TEAM.value,
             resource_id=team_id,
             user_id=user_id,
-            permission_level=PermissionLevel.MANAGE,
-            status=MemberStatus.APPROVED,
+            permission_level=PermissionLevel.MANAGE.value,
+            status=MemberStatus.APPROVED.value,
             invited_by_user_id=original_user_id,
             share_link_id=0,
             reviewed_by_user_id=0,
@@ -260,9 +260,9 @@ class SharedTeamService:
         resource_members = (
             db.query(ResourceMember)
             .filter(
-                ResourceMember.resource_type == ResourceType.TEAM,
+                ResourceMember.resource_type == ResourceType.TEAM.value,
                 ResourceMember.user_id == user_id,
-                ResourceMember.status == MemberStatus.APPROVED,
+                ResourceMember.status == MemberStatus.APPROVED.value,
             )
             .all()
         )
@@ -285,9 +285,9 @@ class SharedTeamService:
         resource_members = (
             db.query(ResourceMember)
             .filter(
-                ResourceMember.resource_type == ResourceType.TEAM,
+                ResourceMember.resource_type == ResourceType.TEAM.value,
                 ResourceMember.resource_id == team_id,
-                ResourceMember.status == MemberStatus.APPROVED,
+                ResourceMember.status == MemberStatus.APPROVED.value,
             )
             .all()
         )
@@ -310,10 +310,10 @@ class SharedTeamService:
         resource_member = (
             db.query(ResourceMember)
             .filter(
-                ResourceMember.resource_type == ResourceType.TEAM,
+                ResourceMember.resource_type == ResourceType.TEAM.value,
                 ResourceMember.resource_id == team_id,
                 ResourceMember.user_id == user_id,
-                ResourceMember.status == MemberStatus.APPROVED,
+                ResourceMember.status == MemberStatus.APPROVED.value,
             )
             .first()
         )
@@ -332,7 +332,7 @@ class SharedTeamService:
     def cleanup_shared_teams_on_team_delete(self, db: Session, team_id: int) -> None:
         """Clean up shared team relationships when team is deleted"""
         db.query(ResourceMember).filter(
-            ResourceMember.resource_type == ResourceType.TEAM,
+            ResourceMember.resource_type == ResourceType.TEAM.value,
             ResourceMember.resource_id == team_id,
         ).delete()
 

@@ -25,7 +25,11 @@ from app.models.knowledge import KnowledgeDocument
 from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
 from app.services.context import context_service
 from shared.models.knowledge import ChatContextsResult, KnowledgeBaseToolsResult
-from shared.prompts import KB_PROMPT_RELAXED, KB_PROMPT_STRICT
+from shared.prompts import (
+    KB_PROMPT_RELAXED,
+    KB_PROMPT_RESTRICTED_OBSERVER,
+    KB_PROMPT_STRICT,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1127,6 +1131,16 @@ def _prepare_kb_tools_from_contexts(
         f"{len(knowledge_base_ids)} knowledge bases: {knowledge_base_ids}"
     )
 
+    # Check if user has RestrictedObserver role for any of the knowledge bases.
+    # If the user is RestrictedObserver for ANY KB, use RestrictedObserver mode (restricted).
+    from app.services.share import knowledge_share_service
+
+    is_restricted_observer_only = (
+        knowledge_share_service.is_user_restricted_observer_for_any_kb(
+            db, user_id, knowledge_base_ids
+        )
+    )
+
     # Import KnowledgeBaseTool
     from chat_shell.tools.builtin import KnowledgeBaseTool
 
@@ -1143,10 +1157,16 @@ def _prepare_kb_tools_from_contexts(
     # Build KB meta prompt for dynamic_context injection.
     # This is based on the resolved KB IDs of the CURRENT request (no DB scanning by task).
     kb_meta_prompt = _build_kb_meta_prompt(db, knowledge_base_ids)
-
-    # Choose prompt template based on whether KB is user-selected or inherited from task.
-    # Keep KB prompt templates fully static (no kb_meta_list placeholder).
-    if is_user_selected_kb:
+    # Choose prompt template based on user role and whether KB is user-selected or inherited.
+    # RestrictedObserver users get a restricted prompt that prevents raw content leaking.
+    if is_restricted_observer_only:
+        # RestrictedObserver mode: User can only use KB via RAG, no exploration tools
+        kb_instruction = KB_PROMPT_RESTRICTED_OBSERVER
+        logger.info(
+            "[_prepare_kb_tools_from_contexts] Using RESTRICTED_OBSERVER mode prompt "
+            "(user has RestrictedObserver role, kb_ls/kb_head disabled)"
+        )
+    elif is_user_selected_kb:
         # Strict mode: User explicitly selected KB for this message
         kb_instruction = KB_PROMPT_STRICT
         logger.info(
