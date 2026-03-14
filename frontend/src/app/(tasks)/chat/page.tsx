@@ -7,7 +7,7 @@
 import { Suspense, useEffect } from 'react'
 import dynamic from 'next/dynamic'
 import { useSearchParams, useRouter } from 'next/navigation'
-import { teamService } from '@/features/tasks/service/teamService'
+import { useTeamContext } from '@/contexts/TeamContext'
 import OnboardingTour from '@/features/onboarding/OnboardingTour'
 import { TaskParamSync, DeviceTaskSync, DeviceParamSync } from '@/features/tasks/components/params'
 import { TeamShareHandler, TaskShareHandler } from '@/features/tasks/components/share'
@@ -44,8 +44,8 @@ const ChatPageMobile = dynamic(
  * Uses dynamic imports to optimize bundle size and loading performance.
  */
 export default function ChatPage() {
-  // Team state from service
-  const { teams, isTeamsLoading, refreshTeams } = teamService.useTeams()
+  // Team state from context (centralized to avoid duplicate API calls)
+  const { teams, isTeamsLoading, refreshTeams } = useTeamContext()
 
   // Task context
   const { refreshTasks } = useTaskContext()

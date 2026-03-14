@@ -53,9 +53,17 @@ jest.mock('@/features/tasks/components/input', () => ({
 jest.mock('@/features/layout/GithubStarButton', () => ({
   GithubStarButton: () => <div>github-star</div>,
 }))
-
 jest.mock('@/features/common/UserContext', () => ({
   useUser: () => ({ user: null }),
+}))
+
+jest.mock('@/contexts/TeamContext', () => ({
+  useTeamContext: () => ({
+    teams: [],
+    isTeamsLoading: false,
+    refreshTeams: jest.fn().mockResolvedValue([]),
+    addTeam: jest.fn(),
+  }),
 }))
 
 jest.mock('@/features/tasks/contexts/taskContext', () => ({

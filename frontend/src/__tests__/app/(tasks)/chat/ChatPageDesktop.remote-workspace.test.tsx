@@ -49,6 +49,15 @@ jest.mock('@/features/common/UserContext', () => ({
   useUser: () => ({ user: null }),
 }))
 
+jest.mock('@/contexts/TeamContext', () => ({
+  useTeamContext: () => ({
+    teams: [],
+    isTeamsLoading: false,
+    refreshTeams: jest.fn().mockResolvedValue([]),
+    addTeam: jest.fn(),
+  }),
+}))
+
 jest.mock('@/contexts/DeviceContext', () => ({
   useDevices: () => ({
     selectedDeviceId: null,

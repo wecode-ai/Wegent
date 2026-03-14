@@ -68,7 +68,7 @@ class Settings(BaseSettings):
     # Supports both MySQL and SQLite:
     # - MySQL: "mysql+pymysql://user:pass@localhost/db"
     # - SQLite: "sqlite:///./data/wegent.db"
-    DATABASE_URL: str = "mysql+asyncmy://user:password@localhost/task_manager"
+    DATABASE_URL: str = "mysql+pymysql://user:password@localhost/task_manager"
 
     # Database auto-migration configuration (only in development)
     DB_AUTO_MIGRATE: bool = True
