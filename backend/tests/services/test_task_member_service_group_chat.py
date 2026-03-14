@@ -15,7 +15,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 from app.models.resource_member import MemberStatus, ResourceMember
-from app.models.share_link import PermissionLevel, ResourceType
+from app.models.share_link import ResourceType
 from app.models.task import TaskResource
 from app.services.task_member_service import TaskMemberService
 
@@ -172,6 +172,7 @@ class TestTaskMemberServiceGroupChatDetection:
         mock_member.invited_by_user_id = 1
         mock_member.requested_at = "2025-01-02"
         mock_member.copied_resource_id = 0  # Real member
+        mock_member.role = None  # Add role attribute
 
         mock_member_user = Mock()
         mock_member_user.id = 2
@@ -236,7 +237,7 @@ class TestSharedTaskDoesNotBecomeGroupChat:
         mock_task = Mock(spec=TaskResource)
         mock_task.id = 100
         mock_task.user_id = 1  # User A owns this task
-        mock_task.json = {"spec": {"is_group_chat": False}}  # Not a group chat
+        mock_task.is_group_chat = False  # Not a group chat (uses DB column, not JSON)
 
         with patch.object(task_member_service, "get_task", return_value=mock_task):
             # is_group_chat should return False

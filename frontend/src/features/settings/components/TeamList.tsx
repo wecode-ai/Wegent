@@ -49,7 +49,10 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 interface TeamListProps {
   scope?: 'personal' | 'group' | 'all'
   groupName?: string
-  groupRoleMap?: Map<string, 'Owner' | 'Maintainer' | 'Developer' | 'Reporter'>
+  groupRoleMap?: Map<
+    string,
+    'Owner' | 'Maintainer' | 'Developer' | 'Reporter' | 'RestrictedObserver'
+  >
   onEditResource?: (namespace: string) => void
 }
 

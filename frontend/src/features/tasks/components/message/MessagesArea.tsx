@@ -4,7 +4,7 @@
 
 'use client'
 
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTaskContext } from '../../contexts/taskContext'
 import type { TaskDetail, Team, GitRepoInfo, GitBranch } from '@/types/api'
 import {
@@ -78,83 +78,108 @@ interface StreamingMessageBubbleProps {
   onUseAsReference?: (item: import('./ImageGallery').ImageItem) => void
 }
 
-function StreamingMessageBubble({
-  message,
-  selectedTaskDetail,
-  selectedTeam,
-  selectedRepo,
-  selectedBranch,
-  theme,
-  t,
-  onSendMessage,
-  index,
-  isGroupChat,
-  isPendingConfirmation,
-  onContextReselect,
-  onUseAsReference,
-}: StreamingMessageBubbleProps) {
-  // Use typewriter effect for streaming content
-  const displayContent = useTypewriter(message.content || '')
+const StreamingMessageBubble = React.memo(
+  function StreamingMessageBubble({
+    message,
+    selectedTaskDetail,
+    selectedTeam,
+    selectedRepo,
+    selectedBranch,
+    theme,
+    t,
+    onSendMessage,
+    index,
+    isGroupChat,
+    isPendingConfirmation,
+    onContextReselect,
+    onUseAsReference,
+  }: StreamingMessageBubbleProps) {
+    // Use typewriter effect for streaming content
+    const displayContent = useTypewriter(message.content || '')
 
-  const hasContent = Boolean((message.content && message.content.trim()) || message.result?.blocks)
-  const isStreaming = message.status === 'streaming'
-  // Check if we have thinking data (for executor tasks like Claude Code)
-  const hasThinking = Boolean(
-    message.thinking && Array.isArray(message.thinking) && message.thinking.length > 0
-  )
+    const hasContent = Boolean(
+      (message.content && message.content.trim()) || message.result?.blocks
+    )
+    const isStreaming = message.status === 'streaming'
+    // Check if we have thinking data (for executor tasks like Claude Code)
+    const hasThinking = Boolean(
+      message.thinking && Array.isArray(message.thinking) && message.thinking.length > 0
+    )
 
-  // CRITICAL FIX: For page refresh recovery, we need to show content immediately
-  // When page refreshes during streaming:
-  // 1. cached_content is returned from backend and set to message.content
-  // 2. useTypewriter starts from empty string and gradually types out
-  // 3. If we use displayContent (empty initially), nothing is shown
-  // Solution: Use the longer of displayContent or message.content
-  // This ensures cached_content is shown immediately, then typewriter continues from there
-  const effectiveContent =
-    displayContent.length >= (message.content?.length || 0) ? displayContent : message.content || ''
+    // CRITICAL FIX: For page refresh recovery, we need to show content immediately
+    // When page refreshes during streaming:
+    // 1. cached_content is returned from backend and set to message.content
+    // 2. useTypewriter starts from empty string and gradually types out
+    // 3. If we use displayContent (empty initially), nothing is shown
+    // Solution: Use the longer of displayContent or message.content
+    // This ensures cached_content is shown immediately, then typewriter continues from there
+    const effectiveContent =
+      displayContent.length >= (message.content?.length || 0)
+        ? displayContent
+        : message.content || ''
 
-  // Create msg object with thinking data
-  // IMPORTANT: Create a new object each time to ensure memo comparison detects changes
-  const msgForBubble = {
-    type: 'ai' as const,
-    content: '${$$}$' + (message.content || ''),
-    timestamp: message.timestamp,
-    botName: message.botName || selectedTeam?.name || t('common:messages.bot') || 'Bot',
-    subtaskStatus: 'RUNNING',
-    // Use effectiveContent instead of displayContent to handle page refresh recovery
-    recoveredContent: isStreaming ? effectiveContent : hasContent ? message.content : undefined,
-    isRecovered: false,
-    isIncomplete: false,
-    subtaskId: message.subtaskId,
-    // Pass thinking data for executor tasks (Claude Code, etc.)
-    thinking: message.thinking as Message['thinking'],
-    // Pass result with shell_type for component selection
-    result: message.result,
-    // Pass sources for RAG knowledge base citations
-    sources: message.sources,
+    // Create msg object with thinking data
+    // IMPORTANT: Create a new object each time to ensure memo comparison detects changes
+    const msgForBubble = {
+      type: 'ai' as const,
+      content: '${$$}$' + (message.content || ''),
+      timestamp: message.timestamp,
+      botName: message.botName || selectedTeam?.name || t('common:messages.bot') || 'Bot',
+      subtaskStatus: 'RUNNING',
+      // Use effectiveContent instead of displayContent to handle page refresh recovery
+      recoveredContent: isStreaming ? effectiveContent : hasContent ? message.content : undefined,
+      isRecovered: false,
+      isIncomplete: false,
+      subtaskId: message.subtaskId,
+      // Pass thinking data for executor tasks (Claude Code, etc.)
+      thinking: message.thinking as Message['thinking'],
+      // Pass result with shell_type for component selection
+      result: message.result,
+      // Pass sources for RAG knowledge base citations
+      sources: message.sources,
+    }
+
+    return (
+      <MessageBubble
+        key={message.id}
+        msg={msgForBubble}
+        index={index}
+        selectedTaskDetail={selectedTaskDetail}
+        selectedTeam={selectedTeam}
+        selectedRepo={selectedRepo}
+        selectedBranch={selectedBranch}
+        theme={theme}
+        t={t}
+        isWaiting={Boolean(isStreaming && !hasContent && !hasThinking)}
+        onSendMessage={onSendMessage}
+        isGroupChat={isGroupChat}
+        isPendingConfirmation={isPendingConfirmation}
+        onContextReselect={onContextReselect}
+        onUseAsReference={onUseAsReference}
+        taskType={selectedTaskDetail?.task_type}
+      />
+    )
+  },
+  // Custom comparison function to prevent unnecessary re-renders
+  (prevProps, nextProps) => {
+    // Only re-render if message content, status, or result changes
+    return (
+      prevProps.message.content === nextProps.message.content &&
+      prevProps.message.status === nextProps.message.status &&
+      prevProps.message.subtaskId === nextProps.message.subtaskId &&
+      prevProps.message.thinking === nextProps.message.thinking &&
+      // Include result comparison for streamed result block updates
+      JSON.stringify(prevProps.message.result) === JSON.stringify(nextProps.message.result) &&
+      prevProps.message.sources === nextProps.message.sources &&
+      prevProps.selectedTaskDetail?.id === nextProps.selectedTaskDetail?.id &&
+      prevProps.selectedTaskDetail?.task_type === nextProps.selectedTaskDetail?.task_type &&
+      prevProps.selectedTeam?.name === nextProps.selectedTeam?.name &&
+      prevProps.theme === nextProps.theme &&
+      prevProps.isGroupChat === nextProps.isGroupChat &&
+      prevProps.isPendingConfirmation === nextProps.isPendingConfirmation
+    )
   }
-
-  return (
-    <MessageBubble
-      key={message.id}
-      msg={msgForBubble}
-      index={index}
-      selectedTaskDetail={selectedTaskDetail}
-      selectedTeam={selectedTeam}
-      selectedRepo={selectedRepo}
-      selectedBranch={selectedBranch}
-      theme={theme}
-      t={t}
-      isWaiting={Boolean(isStreaming && !hasContent && !hasThinking)}
-      onSendMessage={onSendMessage}
-      isGroupChat={isGroupChat}
-      isPendingConfirmation={isPendingConfirmation}
-      onContextReselect={onContextReselect}
-      onUseAsReference={onUseAsReference}
-      taskType={selectedTaskDetail?.task_type}
-    />
-  )
-}
+)
 
 interface MessagesAreaProps {
   selectedTeam?: Team | null
@@ -358,6 +383,25 @@ function MessagesArea({
       })
     }
   }, [messages])
+
+  // Use refs to track correction state to avoid unnecessary effect triggers
+  const correctionAttemptedRef = useRef(correctionAttempted)
+  const correctionLoadingRef = useRef(correctionLoading)
+  const correctionResultsRef = useRef(correctionResults)
+
+  // Keep refs updated with latest state
+  useEffect(() => {
+    correctionAttemptedRef.current = correctionAttempted
+  }, [correctionAttempted])
+
+  useEffect(() => {
+    correctionLoadingRef.current = correctionLoading
+  }, [correctionLoading])
+
+  useEffect(() => {
+    correctionResultsRef.current = correctionResults
+  }, [correctionResults])
+
   // Trigger correction when AI message completes
   useEffect(() => {
     if (!enableCorrectionMode || !correctionModelId || !selectedTaskDetail?.id) return
@@ -372,10 +416,11 @@ function MessagesArea({
       // Skip empty AI messages - nothing to correct
       if (!msg.content || !msg.content.trim()) return
       // Skip if already has result, is loading, or has been attempted (to avoid infinite retry loops)
+      // Use refs for checking to avoid effect re-runs
       if (
-        correctionResults.has(msg.subtaskId) ||
-        correctionLoading.has(msg.subtaskId) ||
-        correctionAttempted.has(msg.subtaskId)
+        correctionResultsRef.current.has(msg.subtaskId) ||
+        correctionLoadingRef.current.has(msg.subtaskId) ||
+        correctionAttemptedRef.current.has(msg.subtaskId)
       )
         return
 
@@ -416,6 +461,7 @@ function MessagesArea({
           })
         })
     })
+    // Only depend on essential values, use refs for mutable state
   }, [
     enableCorrectionMode,
     correctionModelId,
@@ -423,9 +469,6 @@ function MessagesArea({
     messages,
     selectedTaskDetail?.id,
     toast,
-    correctionAttempted, // Add this dependency so useEffect re-runs when retry button is clicked
-    correctionLoading,
-    correctionResults,
   ])
 
   // Register correction WebSocket event handlers for real-time progress updates

@@ -7,7 +7,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { UserGroupIcon } from '@heroicons/react/24/outline'
-import { teamService } from '@/features/tasks/service/teamService'
 import TopNavigation from '@/features/layout/TopNavigation'
 import { TaskSidebar, SearchDialog } from '@/features/tasks/components/sidebar'
 import { ThemeToggle } from '@/features/theme/ThemeToggle'
@@ -23,6 +22,12 @@ import { useSearchShortcut } from '@/features/tasks/hooks/useSearchShortcut'
 import { ChatArea } from '@/features/tasks/components/chat'
 import { CreateGroupChatDialog } from '@/features/tasks/components/group-chat'
 
+interface ChatPageMobileProps {
+  teams: Team[]
+  isTeamsLoading: boolean
+  refreshTeams: () => Promise<Team[]>
+}
+
 /**
  * Mobile-specific implementation of Chat Page
  *
@@ -34,11 +39,10 @@ import { CreateGroupChatDialog } from '@/features/tasks/components/group-chat'
  *
  * @see ChatPageDesktop.tsx for desktop implementation
  */
-export function ChatPageMobile() {
+export function ChatPageMobile({ teams, isTeamsLoading, refreshTeams }: ChatPageMobileProps) {
   const { t } = useTranslation()
 
-  // Team state from service
-  const { teams, isTeamsLoading, refreshTeams } = teamService.useTeams()
+  // Team state from props (passed from parent to avoid duplicate API calls)
 
   // Task context for refreshing task list
   const { refreshTasks, selectedTaskDetail, setSelectedTask, refreshSelectedTaskDetail } =

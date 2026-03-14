@@ -228,25 +228,50 @@ class PublicModelService(BaseService[Kind, ModelCreate, ModelUpdate]):
         return {"created": created, "updated": updated, "skipped": skipped}
 
     def get_models(
-        self, db: Session, *, skip: int = 0, limit: int = 100, current_user: User
+        self,
+        db: Session,
+        *,
+        skip: int = 0,
+        limit: int = 100,
+        current_user: User,
+        model_category_type: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
         Get active public models from kinds table (paginated)
+
+        Args:
+            db: Database session
+            skip: Number of items to skip
+            limit: Maximum number of items to return
+            current_user: Current user
+            model_category_type: Optional filter by model category type (llm, tts, stt, embedding, rerank, video, image)
         """
-        public_models = (
-            db.query(Kind)
-            .filter(
-                Kind.user_id == 0,
-                Kind.kind == "Model",
-                Kind.namespace == "default",
-                Kind.is_active == True,  # noqa: E712
-            )
-            .order_by(Kind.created_at.desc())
-            .offset(skip)
-            .limit(limit)
-            .all()
+        query = db.query(Kind).filter(
+            Kind.user_id == 0,
+            Kind.kind == "Model",
+            Kind.namespace == "default",
+            Kind.is_active,  # noqa: E712
         )
-        return [ModelAdapter.to_model_dict(pm) for pm in public_models]
+
+        # Fetch all active models first, then filter by model_category_type in Python
+        # to ensure correct pagination. Since model_category_type is in JSON,
+        # we need to filter before applying pagination to avoid missing items.
+        all_public_models = query.order_by(Kind.created_at.desc()).all()
+
+        # Convert to dicts and filter by model_category_type if specified
+        all_results = [ModelAdapter.to_model_dict(pm) for pm in all_public_models]
+
+        if model_category_type:
+            all_results = [
+                m
+                for m in all_results
+                if m.get("model_category_type") == model_category_type
+            ]
+
+        # Apply pagination after filtering
+        result = all_results[skip : skip + limit]
+
+        return result
 
     def count_active_models(self, db: Session, *, current_user: User) -> int:
         """

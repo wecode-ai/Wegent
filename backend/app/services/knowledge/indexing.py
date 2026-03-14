@@ -80,10 +80,9 @@ def is_organization_namespace(db: Session, namespace: str) -> bool:
     Returns:
         True if this is an organization namespace
     """
-    # Import here to avoid circular imports
-    from app.services.knowledge.knowledge_service import _is_organization_namespace
+    from app.services.knowledge.knowledge_permission import is_organization_namespace
 
-    return _is_organization_namespace(db, namespace)
+    return is_organization_namespace(db, namespace)
 
 
 def get_kb_index_info(

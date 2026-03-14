@@ -290,20 +290,26 @@ class ChatNamespace(socketio.AsyncNamespace):
 
         Supports incremental sync via after_message_id parameter:
         - If after_message_id is provided, only returns messages after that ID (for reconnect)
-        - If after_message_id is None, returns all messages (for initial join)
+        - If after_message_id is None, returns recent messages with pagination (for initial join)
 
         Args:
             sid: Socket ID
-            data: {"task_id": int, "after_message_id": int?}
+            data: {"task_id": int, "after_message_id": int?, "limit": int?}
 
         Returns:
-            {"streaming": {...}, "subtasks": [...]} or {"error": "..."}
+            {"streaming": {...}, "subtasks": [...], "has_more": bool} or {"error": "..."}
         """
         payload = data  # Already validated by decorator
 
+        # Validate and cap limit to prevent excessive data transfer
+        # Clamp value into inclusive range 1..500
+        # Explicitly normalize None before clamping so 0 is treated as 0, not 100
+        requested_limit = 100 if payload.limit is None else payload.limit
+        limit = max(1, min(requested_limit, 500))
+
         logger.info(
             f"[WS] task:join received: sid={sid}, task_id={payload.task_id}, "
-            f"after_message_id={payload.after_message_id}"
+            f"after_message_id={payload.after_message_id}, limit={limit}"
         )
 
         # Check token expiry before processing
@@ -329,37 +335,85 @@ class ChatNamespace(socketio.AsyncNamespace):
         await self.enter_room(sid, task_room)
 
         logger.info(
-            f"[WS] User {user_id} joined task room {payload.task_id} (room={task_room}, sid={sid})"
+            f"[WS] task:join joined room: {task_room}, "
+            f"fetching subtasks with limit={limit}"
         )
 
         # Get subtasks for immediate message sync
         # If after_message_id is provided, only fetch messages after that ID (incremental sync)
-        # Otherwise, fetch all messages (initial join)
-        subtasks_dict = None
+        # Otherwise, fetch recent messages with pagination (initial join)
+        subtasks_dict = []
+        has_more = False
         db = SessionLocal()
         try:
             if payload.after_message_id is not None:
                 # Incremental sync: only fetch messages after the cursor
+                # Use subtask_service to enforce visibility/membership filters
                 from app.services.context import context_service
+                from app.services.subtask import subtask_service
 
-                subtasks = (
-                    db.query(Subtask)
-                    .filter(
-                        Subtask.task_id == payload.task_id,
-                        Subtask.message_id > payload.after_message_id,
-                    )
-                    .order_by(Subtask.message_id.asc())
-                    .all()
+                # Fetch limit + 1 to determine if there are more messages
+                # subtask_service.get_by_task enforces visibility rules (membership/ownership)
+                subtasks = subtask_service.get_by_task(
+                    db=db,
+                    task_id=payload.task_id,
+                    user_id=user_id,
+                    after_message_id=payload.after_message_id,
+                    limit=limit + 1,
                 )
+
+                # Check if there are more messages based on the fetched subset
+                has_more = len(subtasks) > limit
+
+                # Trim to limit if we fetched extra
+                if has_more:
+                    subtasks = subtasks[:limit]
+
+                # Batch fetch contexts for all subtasks to avoid N+1 queries
+                subtask_ids = [st.id for st in subtasks]
+                contexts_map = {}
+                if subtask_ids:
+                    # Fetch all contexts for the subtasks in batch
+                    from app.models.subtask_context import SubtaskContext
+
+                    all_contexts = (
+                        db.query(SubtaskContext)
+                        .filter(SubtaskContext.subtask_id.in_(subtask_ids))
+                        .all()
+                    )
+                    # Group contexts by subtask_id
+                    for ctx in all_contexts:
+                        if ctx.subtask_id not in contexts_map:
+                            contexts_map[ctx.subtask_id] = []
+                        contexts_map[ctx.subtask_id].append(ctx)
+
+                # Batch fetch users for all user subtasks to avoid N+1 queries
+                user_ids = [
+                    st.user_id
+                    for st in subtasks
+                    if st.role == SubtaskRole.USER and st.user_id
+                ]
+                users_map = {}
+                if user_ids:
+                    users = db.query(User).filter(User.id.in_(user_ids)).all()
+                    users_map = {u.id: u for u in users}
 
                 # Convert to dict format matching task detail API
                 subtasks_dict = []
                 for st in subtasks:
-                    # Get contexts for this subtask
-                    contexts_briefs = context_service.get_briefs_by_subtask(db, st.id)
-                    contexts_list = [
-                        ctx.model_dump(mode="json") for ctx in contexts_briefs
-                    ]
+                    # Get contexts from preloaded map
+                    contexts_briefs = contexts_map.get(st.id, [])
+                    contexts_list = []
+                    for ctx in contexts_briefs:
+                        if hasattr(ctx, "model_dump"):
+                            contexts_list.append(ctx.model_dump(mode="json"))
+                        else:
+                            from app.schemas.subtask_context import (
+                                SubtaskContextBrief as ContextBrief,
+                            )
+
+                            brief = ContextBrief.from_model(ctx)
+                            contexts_list.append(brief.model_dump(mode="json"))
 
                     subtask_dict = {
                         "id": st.id,
@@ -380,17 +434,22 @@ class ChatNamespace(socketio.AsyncNamespace):
                         ),
                         "contexts": contexts_list,
                         "sender": None,
+                        "sender_user_id": None,
+                        "sender_user_name": None,
                     }
 
-                    # Add sender info for user messages
+                    # Add sender info for user messages from preloaded users map
                     if st.role == SubtaskRole.USER and st.user_id:
-                        user = db.query(User).filter(User.id == st.user_id).first()
+                        user = users_map.get(st.user_id)
                         if user:
                             subtask_dict["sender"] = {
                                 "user_id": user.id,
                                 "user_name": user.user_name,
                                 "avatar": user.avatar,
                             }
+                            # Also add flattened fields for frontend compatibility
+                            subtask_dict["sender_user_id"] = user.id
+                            subtask_dict["sender_user_name"] = user.user_name
 
                     subtasks_dict.append(subtask_dict)
 
@@ -399,20 +458,96 @@ class ChatNamespace(socketio.AsyncNamespace):
                     f"after message_id={payload.after_message_id} for task_id={payload.task_id}"
                 )
             else:
-                # Full sync: fetch all messages using existing service
-                from app.services.adapters.task_kinds import task_kinds_service
+                # Full sync with pagination: fetch only recent messages
+                # Use optimized query to get recent subtasks efficiently
+                from app.services.subtask import subtask_service
 
-                task_detail = task_kinds_service.get_task_detail(
-                    db, task_id=payload.task_id, user_id=user_id
+                # Fetch limit + 1 to determine if there are more messages
+                # This ensures has_more is based on the caller-scoped subset
+                subtasks = subtask_service.get_by_task(
+                    db=db,
+                    task_id=payload.task_id,
+                    user_id=user_id,
+                    from_latest=True,
+                    limit=limit + 1,
                 )
-                subtasks_dict = task_detail.get("subtasks")
+
+                # Check if there are more messages based on the fetched subset
+                has_more = len(subtasks) > limit
+
+                # Trim to limit if we fetched extra
+                # Note: get_by_task with from_latest=True returns in ascending order (oldest→newest)
+                # So we drop the first (oldest) element to keep the most recent `limit` items
+                if has_more:
+                    subtasks = subtasks[1:]
+
+                # Convert to dict format
+                subtasks_dict = []
+                for st in subtasks:
+                    # Convert contexts
+                    contexts_list = []
+                    if hasattr(st, "contexts") and st.contexts:
+                        from app.schemas.subtask_context import (
+                            SubtaskContextBrief as ContextBrief,
+                        )
+
+                        for ctx in st.contexts:
+                            if hasattr(ctx, "model_dump"):
+                                contexts_list.append(ctx.model_dump(mode="json"))
+                            else:
+                                brief = ContextBrief.from_model(ctx)
+                                contexts_list.append(brief.model_dump(mode="json"))
+
+                    subtask_dict = {
+                        "id": st.id,
+                        "message_id": st.message_id,
+                        "role": st.role.value if st.role else None,
+                        "prompt": st.prompt,
+                        "result": st.result,
+                        "status": st.status.value if st.status else None,
+                        "progress": st.progress,
+                        "created_at": (
+                            st.created_at.isoformat() if st.created_at else None
+                        ),
+                        "updated_at": (
+                            st.updated_at.isoformat() if st.updated_at else None
+                        ),
+                        "completed_at": (
+                            st.completed_at.isoformat() if st.completed_at else None
+                        ),
+                        "contexts": contexts_list,
+                        "sender": None,
+                        "sender_user_id": None,
+                        "sender_user_name": None,
+                    }
+
+                    # Add sender info for user messages
+                    if (
+                        st.role == SubtaskRole.USER
+                        and st.sender_user_id
+                        and st.sender_user_id > 0
+                    ):
+                        sender_user_name = getattr(st, "sender_user_name", None)
+                        subtask_dict["sender"] = {
+                            "user_id": st.sender_user_id,
+                            "user_name": sender_user_name,
+                            "avatar": None,  # Avatar not loaded in batch query
+                        }
+                        # Also add flattened fields for frontend compatibility
+                        subtask_dict["sender_user_id"] = st.sender_user_id
+                        subtask_dict["sender_user_name"] = sender_user_name
+
+                    subtasks_dict.append(subtask_dict)
+
                 logger.info(
-                    f"[WS] task:join full sync: fetched {len(subtasks_dict) if subtasks_dict else 0} "
-                    f"subtasks for task_id={payload.task_id}"
+                    f"[WS] task:join full sync with pagination: fetched {len(subtasks_dict)} "
+                    f"subtasks (has_more: {has_more}) for task_id={payload.task_id}"
                 )
         except Exception as e:
             logger.exception(f"[WS] task:join error fetching subtasks: {e}")
             # Continue without subtasks - frontend can fall back to API call
+            # Ensure subtasks_dict is always a list
+            subtasks_dict = subtasks_dict or []
         finally:
             db.close()
 
@@ -445,12 +580,13 @@ class ChatNamespace(socketio.AsyncNamespace):
                     "blocks": blocks,
                 },
                 "subtasks": subtasks_dict,
+                "has_more": has_more,
             }
 
         logger.info(
             f"[WS] task:join no active streaming found for task_id={payload.task_id}"
         )
-        return {"streaming": None, "subtasks": subtasks_dict}
+        return {"streaming": None, "subtasks": subtasks_dict, "has_more": has_more}
 
     @auto_task_context(TaskLeavePayload)
     async def on_task_leave(self, sid: str, data: dict) -> dict:
@@ -711,6 +847,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                 force_override_bot_model=payload.force_override_bot_model is not None,
                 force_override_bot_model_type=payload.force_override_bot_model_type,
                 is_group_chat=payload.is_group_chat,
+                linked_group=payload.linked_group,
                 git_url=payload.git_url,
                 git_repo=payload.git_repo,
                 git_repo_id=payload.git_repo_id,
@@ -1531,14 +1668,14 @@ class ChatNamespace(socketio.AsyncNamespace):
         db = SessionLocal()
         try:
             # Get messages after the specified ID
-            subtasks = (
-                db.query(Subtask)
-                .filter(
-                    Subtask.task_id == payload.task_id,
-                    Subtask.message_id > payload.after_message_id,
-                )
-                .order_by(Subtask.message_id.asc())
-                .all()
+            # Use subtask_service to enforce visibility/membership filters
+            from app.services.subtask import subtask_service
+
+            subtasks = subtask_service.get_by_task(
+                db=db,
+                task_id=payload.task_id,
+                user_id=user_id,
+                after_message_id=payload.after_message_id,
             )
 
             messages = []

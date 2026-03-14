@@ -879,7 +879,17 @@ def list_unified_skills(
     Returns combined list with user/group skills first, then public skills.
     User/group skills with same name take precedence over public skills.
     """
-    from app.services.group_permission import get_user_groups
+    from app.services.group_permission import (
+        get_effective_role_in_group,
+        get_user_groups,
+    )
+
+    # Validate scope parameter
+    if scope not in ("personal", "group", "all"):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Invalid scope '{scope}'. Must be one of: personal, group, all",
+        )
 
     user_skills = []
     user_skill_names = set()
@@ -887,38 +897,90 @@ def list_unified_skills(
     # Determine which namespaces to query based on scope
     if scope == "personal":
         # Personal scope: only query current user's skills in default namespace
-        namespaces_to_query = [("default", True)]  # (namespace, filter_by_user)
+        personal_namespaces = ["default"]
+        group_namespaces = []
     elif scope == "group":
         if group_name:
+            # Verify caller is a member of the specified group
+            user_role = get_effective_role_in_group(db, current_user.id, group_name)
+            if user_role is None:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"You are not a member of group '{group_name}'",
+                )
             # Group scope with specific group: query ALL skills in that namespace
-            namespaces_to_query = [(group_name, False)]  # Don't filter by user
+            personal_namespaces = []
+            group_namespaces = [group_name]
         else:
             # Query all user's groups (excluding default)
             user_groups = get_user_groups(db, current_user.id)
-            namespaces_to_query = [(g, False) for g in user_groups if g != "default"]
+            personal_namespaces = []
+            group_namespaces = [g for g in user_groups if g != "default"]
     else:  # scope == "all"
         # Query personal + all user's groups
         user_groups = get_user_groups(db, current_user.id)
-        namespaces_to_query = [("default", True)] + [
-            (g, False) for g in user_groups if g != "default"
-        ]
+        personal_namespaces = ["default"]
+        group_namespaces = [g for g in user_groups if g != "default"]
 
-    # Query skills from all relevant namespaces
-    for namespace_info in namespaces_to_query:
-        namespace, filter_by_user = namespace_info
+    # Batch query personal skills (filtered by user_id) across all personal namespaces
+    if personal_namespaces:
+        personal_skills = skill_kinds_service.list_skills_batch(
+            db=db, user_id=current_user.id, namespaces=personal_namespaces
+        )
+        for skill in personal_skills:
+            if skill.metadata.name not in user_skill_names:
+                user_skill_names.add(skill.metadata.name)
+                # Extract source information if available
+                source_info = None
+                if hasattr(skill.spec, "source") and skill.spec.source:
+                    source_info = {
+                        "type": (
+                            skill.spec.source.type
+                            if hasattr(skill.spec.source, "type")
+                            else "upload"
+                        ),
+                        "repo_url": (
+                            skill.spec.source.repo_url
+                            if hasattr(skill.spec.source, "repo_url")
+                            else None
+                        ),
+                        "skill_path": (
+                            skill.spec.source.skill_path
+                            if hasattr(skill.spec.source, "skill_path")
+                            else None
+                        ),
+                        "imported_at": (
+                            skill.spec.source.imported_at
+                            if hasattr(skill.spec.source, "imported_at")
+                            else None
+                        ),
+                    }
+                user_skills.append(
+                    {
+                        "id": int(skill.metadata.labels.get("id", 0)),
+                        "name": skill.metadata.name,
+                        "namespace": skill.metadata.namespace,
+                        "description": skill.spec.description,
+                        "displayName": getattr(skill.spec, "displayName", None),
+                        "version": skill.spec.version,
+                        "author": skill.spec.author,
+                        "tags": skill.spec.tags,
+                        "bindShells": skill.spec.bindShells,
+                        "is_active": True,
+                        "is_public": False,
+                        "user_id": int(skill.metadata.labels.get("user_id", 0)),
+                        "source": source_info,
+                        "created_at": None,
+                        "updated_at": None,
+                    }
+                )
 
-        if filter_by_user:
-            # Personal namespace: filter by current user
-            user_skills_list = skill_kinds_service.list_skills(
-                db=db, user_id=current_user.id, skip=0, limit=1000, namespace=namespace
-            )
-        else:
-            # Group namespace: get ALL skills in namespace (from any user)
-            user_skills_list = skill_kinds_service.list_skills_in_namespace(
-                db=db, namespace=namespace, skip=0, limit=1000
-            )
-
-        for skill in user_skills_list.items:
+    # Batch query group skills (not filtered by user_id) across all group namespaces
+    if group_namespaces:
+        group_skills = skill_kinds_service.list_skills_in_namespaces_batch(
+            db=db, namespaces=group_namespaces
+        )
+        for skill in group_skills:
             if skill.metadata.name not in user_skill_names:
                 user_skill_names.add(skill.metadata.name)
                 # Extract source information if available

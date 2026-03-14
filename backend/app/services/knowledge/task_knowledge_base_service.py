@@ -6,9 +6,11 @@
 Service for task knowledge base (group chat) binding management.
 """
 
+from __future__ import annotations
+
 import logging
 from datetime import datetime
-from typing import List, Optional
+from typing import TYPE_CHECKING
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
@@ -19,11 +21,12 @@ from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.kind import KnowledgeBaseTaskRef
 from app.services.group_permission import get_effective_role_in_group
-from app.services.knowledge.knowledge_service import (
-    KnowledgeService,
-    _is_organization_namespace,
-)
+from app.services.knowledge.knowledge_permission import is_organization_namespace
+from app.services.knowledge.knowledge_service import KnowledgeService
 from app.services.task_member_service import task_member_service
+
+if TYPE_CHECKING:
+    from sqlalchemy import Select
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +40,7 @@ class BoundKnowledgeBaseDetail:
         name: str,
         namespace: str,
         display_name: str,
-        description: Optional[str],
+        description: str | None,
         document_count: int,
         bound_by: str,
         bound_at: str,
@@ -69,7 +72,7 @@ class TaskKnowledgeBaseService:
 
     MAX_BOUND_KNOWLEDGE_BASES = 10
 
-    def get_task(self, db: Session, task_id: int) -> Optional[TaskResource]:
+    def get_task(self, db: Session, task_id: int) -> TaskResource | None:
         """Get a task by ID"""
         return (
             db.query(TaskResource)
@@ -81,7 +84,7 @@ class TaskKnowledgeBaseService:
             .first()
         )
 
-    def get_user(self, db: Session, user_id: int) -> Optional[User]:
+    def get_user(self, db: Session, user_id: int) -> User | None:
         """Get a user by ID"""
         return db.query(User).filter(User.id == user_id, User.is_active == True).first()
 
@@ -124,7 +127,7 @@ class TaskKnowledgeBaseService:
             return self._is_kb_bound_to_user_group_chat(db, kb.id, user_id)
 
         # For organization knowledge base, all authenticated users have access
-        if _is_organization_namespace(db, kb.namespace):
+        if is_organization_namespace(db, kb.namespace):
             return True
 
         # For team knowledge base, check group membership
@@ -139,79 +142,105 @@ class TaskKnowledgeBaseService:
         When a knowledge base is bound to a group chat, all members of that group chat
         should have access to the knowledge base (reporter permission level).
 
+        This method uses the task_knowledge_base_bindings table for efficient indexed
+        queries instead of scanning JSON data. It joins with TaskResource to ensure
+        only active group chat tasks are considered.
+
+        Note: Knowledge base access is determined solely by task binding membership
+        (resource_members with resource_type='Task'), not by linked_group membership.
+        This ensures that members can only access knowledge bases explicitly bound
+        to the group chat, not all knowledge bases in the linked group.
+
         Args:
             db: Database session
             kb_id: Knowledge base Kind.id
             user_id: User ID to check
 
         Returns:
-            True if KB is bound to at least one group chat where user is a member
+            True if KB is bound to at least one active group chat where user is a member
         """
+        from sqlalchemy import or_, select
+
         from app.models.resource_member import MemberStatus, ResourceMember
         from app.models.share_link import ResourceType
         from app.models.task import TaskResource
+        from app.models.task_kb_binding import TaskKnowledgeBaseBinding
 
-        # Query all group chat tasks where this KB is bound and user is a member
-        # We need to check task.json->spec->knowledgeBaseRefs for the KB binding
-        # First, get tasks where user is the owner
-        owned_tasks = (
-            db.query(TaskResource)
-            .filter(
-                TaskResource.kind == "Task",
-                TaskResource.is_active == TaskResource.STATE_ACTIVE,
-                TaskResource.user_id == user_id,
-            )
-            .all()
+        # Build query that joins TaskKnowledgeBaseBinding with TaskResource
+        # to ensure only active group chat tasks are considered
+        # Check if there's any binding where:
+        # 1. The KB matches the given kb_id
+        # 2. The task is an active "Task" kind AND is_group_chat=true (group chat)
+        # 3. The user is either the task owner OR an approved member
+        # Subquery: active group chat tasks owned by user
+        owned_task_subquery = select(TaskResource.id).where(
+            TaskResource.user_id == user_id,
+            TaskResource.is_active == True,
+            TaskResource.kind == "Task",
+            TaskResource.is_group_chat == True,
         )
 
-        # Then, get tasks where user is an approved member via ResourceMember
-        member_tasks = (
-            db.query(TaskResource)
-            .join(ResourceMember, ResourceMember.resource_id == TaskResource.id)
+        # Subquery: tasks where user is approved member (without join for performance)
+        # For linked group chats, members are already copied to resource_members table
+        # Only consider group chat tasks (is_group_chat=true)
+        # First get member task IDs, then filter by task properties in Python
+        member_task_ids = (
+            db.query(ResourceMember.resource_id)
             .filter(
-                TaskResource.kind == "Task",
-                TaskResource.is_active == TaskResource.STATE_ACTIVE,
-                ResourceMember.resource_type == ResourceType.TASK,
                 ResourceMember.user_id == user_id,
-                ResourceMember.status == MemberStatus.APPROVED,
+                ResourceMember.resource_type == ResourceType.TASK.value,
+                ResourceMember.status == MemberStatus.APPROVED.value,
             )
             .all()
         )
+        member_task_id_list = [row[0] for row in member_task_ids]
 
-        # Combine owned and member tasks
-        tasks_with_kb = list(owned_tasks) + list(member_tasks)
+        # Filter member tasks by task properties without join
+        valid_member_task_ids = []
+        if member_task_id_list:
+            # Batch query tasks to check is_active, kind, is_group_chat
+            valid_tasks = (
+                db.query(TaskResource.id)
+                .filter(
+                    TaskResource.id.in_(member_task_id_list),
+                    TaskResource.is_active == True,
+                    TaskResource.kind == "Task",
+                    TaskResource.is_group_chat == True,
+                )
+                .all()
+            )
+            valid_member_task_ids = [row[0] for row in valid_tasks]
 
-        for task in tasks_with_kb:
-            task_json = task.json if isinstance(task.json, dict) else {}
-            spec = task_json.get("spec", {})
-            kb_refs = spec.get("knowledgeBaseRefs", []) or []
+        # Main query: check if any binding exists with active group chat task
+        # Use exists query without join for performance
+        if valid_member_task_ids:
+            exists_query = (
+                db.query(TaskKnowledgeBaseBinding)
+                .filter(
+                    TaskKnowledgeBaseBinding.knowledge_base_id == kb_id,
+                    or_(
+                        TaskKnowledgeBaseBinding.task_id.in_(owned_task_subquery),
+                        TaskKnowledgeBaseBinding.task_id.in_(valid_member_task_ids),
+                    ),
+                )
+                .exists()
+            )
+        else:
+            exists_query = (
+                db.query(TaskKnowledgeBaseBinding)
+                .filter(
+                    TaskKnowledgeBaseBinding.knowledge_base_id == kb_id,
+                    TaskKnowledgeBaseBinding.task_id.in_(owned_task_subquery),
+                )
+                .exists()
+            )
 
-            for ref in kb_refs:
-                # Check if this KB is bound (match by ID or by name+namespace)
-                ref_id = ref.get("id")
-                ref_name = ref.get("name")
-                ref_namespace = ref.get("namespace", "default")
-
-                if ref_id == kb_id:
-                    return True
-
-                # Fallback: check by name+namespace if ID not available (legacy data)
-                if ref_id is None and ref_name and ref_namespace:
-                    kb = self.get_knowledge_base_by_id(db, kb_id)
-                    if kb:
-                        kb_spec = kb.json.get("spec", {}) if kb.json else {}
-                        kb_display_name = kb_spec.get("name")
-                        if (
-                            kb_display_name == ref_name
-                            and kb.namespace == ref_namespace
-                        ):
-                            return True
-
-        return False
+        result = db.query(exists_query).scalar()
+        return bool(result)
 
     def get_knowledge_base_by_name(
-        self, db: Session, name: str, namespace: str
-    ) -> Optional[Kind]:
+        self, db: Session, name: str, namespace: str, user_id: int | None = None
+    ) -> Kind | None:
         """Get a knowledge base by display name (spec.name) and namespace.
 
         Note: The 'name' parameter is the display name stored in spec.name,
@@ -221,30 +250,44 @@ class TaskKnowledgeBaseService:
             db: Database session
             name: Knowledge base display name (spec.name)
             namespace: Knowledge base namespace
+            user_id: Optional user ID to filter by owner (recommended to avoid ambiguity)
 
         Returns:
-            Kind object if found, None otherwise
+            Kind object if found and unambiguous, None otherwise
         """
-        # Query all knowledge bases in the namespace and filter by spec.name
-        knowledge_bases = (
-            db.query(Kind)
-            .filter(
-                Kind.kind == "KnowledgeBase",
-                Kind.namespace == namespace,
-                Kind.is_active == True,
-            )
-            .all()
+        # Build base query for knowledge bases in the namespace
+        query = db.query(Kind).filter(
+            Kind.kind == "KnowledgeBase",
+            Kind.namespace == namespace,
+            Kind.is_active == True,
         )
 
+        # If user_id provided, filter by owner to ensure unique lookup
+        if user_id is not None:
+            query = query.filter(Kind.user_id == user_id)
+
+        knowledge_bases = query.all()
+
         # Find the one with matching display name in spec
+        matching_kbs = []
         for kb in knowledge_bases:
             kb_spec = kb.json.get("spec", {})
             if kb_spec.get("name") == name:
-                return kb
+                matching_kbs.append(kb)
 
-        return None
+        # If no user_id provided and multiple matches found, log warning and return None
+        # to avoid ambiguous results
+        if user_id is None and len(matching_kbs) > 1:
+            logger.warning(
+                f"[get_knowledge_base_by_name] Ambiguous match: found {len(matching_kbs)} "
+                f"KBs with name '{name}' in namespace '{namespace}'. "
+                f"Provide user_id for accurate lookup."
+            )
+            return None
 
-    def get_knowledge_base_by_id(self, db: Session, kb_id: int) -> Optional[Kind]:
+        return matching_kbs[0] if matching_kbs else None
+
+    def get_knowledge_base_by_id(self, db: Session, kb_id: int) -> Kind | None:
         """Get a knowledge base by Kind.id.
 
         Args:
@@ -265,7 +308,7 @@ class TaskKnowledgeBaseService:
         )
 
     def get_knowledge_bases_by_ids(
-        self, db: Session, kb_ids: List[int]
+        self, db: Session, kb_ids: list[int]
     ) -> dict[int, Kind]:
         """Batch get knowledge bases by Kind.ids.
 
@@ -296,7 +339,7 @@ class TaskKnowledgeBaseService:
 
     def get_knowledge_base_by_ref(
         self, db: Session, ref: dict
-    ) -> tuple[Optional[Kind], bool]:
+    ) -> tuple[Kind | None, bool]:
         """Get knowledge base by reference (ID or name).
 
         This method implements ID-priority lookup with name fallback for
@@ -323,40 +366,22 @@ class TaskKnowledgeBaseService:
         if kb_id is not None:
             kb = self.get_knowledge_base_by_id(db, kb_id)
             if kb:
-                logger.debug(
-                    f"[get_knowledge_base_by_ref] Found KB by ID: "
-                    f"id={kb_id}, name={kb_name}"
-                )
                 return kb, False
-            else:
-                # ID exists but KB not found (possibly deleted)
-                logger.warning(
-                    f"[get_knowledge_base_by_ref] KB not found by ID: "
-                    f"id={kb_id}, name={kb_name}, namespace={kb_namespace}"
-                )
-                return None, False
+            # ID exists but KB not found (possibly deleted)
+            return None, False
 
         # Priority 2: Fall back to name + namespace lookup (legacy data)
         if kb_name:
             kb = self.get_knowledge_base_by_name(db, kb_name, kb_namespace)
             if kb:
-                logger.info(
-                    f"[get_knowledge_base_by_ref] Found KB by name (legacy data): "
-                    f"name={kb_name}, namespace={kb_namespace}, id={kb.id}"
-                )
                 return kb, True  # needs_migration = True
-            else:
-                logger.warning(
-                    f"[get_knowledge_base_by_ref] KB not found by name: "
-                    f"name={kb_name}, namespace={kb_namespace}"
-                )
-                return None, False
+            return None, False
 
         return None, False
 
     def resolve_kb_refs_batch(
-        self, db: Session, kb_refs: List[dict]
-    ) -> tuple[List[tuple[int, Kind, bool]], List[tuple[int, str, str]]]:
+        self, db: Session, kb_refs: list[dict]
+    ) -> tuple[list[tuple[int, Kind, bool]], list[tuple[int, str, str]]]:
         """Batch resolve knowledge base references with optimized queries.
 
         This method performs batch queries to avoid N+1 query problem:
@@ -377,8 +402,8 @@ class TaskKnowledgeBaseService:
             return [], []
 
         # Separate refs by type: with-ID vs legacy (name-only)
-        refs_with_id: List[tuple[int, int, str, str]] = []  # (idx, id, name, namespace)
-        refs_legacy: List[tuple[int, str, str]] = []  # (idx, name, namespace)
+        refs_with_id: list[tuple[int, int, str, str]] = []  # (idx, id, name, namespace)
+        refs_legacy: list[tuple[int, str, str]] = []  # (idx, name, namespace)
 
         for idx, ref in enumerate(kb_refs):
             kb_id = ref.get("id")
@@ -390,8 +415,8 @@ class TaskKnowledgeBaseService:
             elif kb_name:
                 refs_legacy.append((idx, kb_name, kb_namespace))
 
-        found_kbs: List[tuple[int, Kind, bool]] = []  # (idx, kb, needs_migration)
-        not_found: List[tuple[int, str, str]] = []  # (idx, name, namespace)
+        found_kbs: list[tuple[int, Kind, bool]] = []  # (idx, kb, needs_migration)
+        not_found: list[tuple[int, str, str]] = []  # (idx, name, namespace)
 
         # Batch query 1: Get KBs by IDs
         if refs_with_id:
@@ -401,21 +426,14 @@ class TaskKnowledgeBaseService:
             for idx, kb_id, kb_name, kb_namespace in refs_with_id:
                 kb = kb_map.get(kb_id)
                 if kb:
-                    logger.debug(
-                        f"[resolve_kb_refs_batch] Found KB by ID: id={kb_id}, name={kb_name}"
-                    )
                     found_kbs.append((idx, kb, False))
                 else:
-                    logger.warning(
-                        f"[resolve_kb_refs_batch] KB not found by ID: "
-                        f"id={kb_id}, name={kb_name}, namespace={kb_namespace}"
-                    )
                     not_found.append((idx, kb_name, kb_namespace))
 
         # Batch query 2: Get KBs for legacy refs (by namespace, then filter by name)
         if refs_legacy:
             # Group legacy refs by namespace for efficient querying
-            namespace_groups: dict[str, List[tuple[int, str]]] = {}
+            namespace_groups: dict[str, list[tuple[int, str]]] = {}
             for idx, name, namespace in refs_legacy:
                 if namespace not in namespace_groups:
                     namespace_groups[namespace] = []
@@ -445,16 +463,8 @@ class TaskKnowledgeBaseService:
                 for idx, name in name_refs:
                     kb = name_to_kb.get(name)
                     if kb:
-                        logger.info(
-                            f"[resolve_kb_refs_batch] Found KB by name (legacy): "
-                            f"name={name}, namespace={namespace}, id={kb.id}"
-                        )
                         found_kbs.append((idx, kb, True))  # needs_migration=True
                     else:
-                        logger.warning(
-                            f"[resolve_kb_refs_batch] KB not found by name: "
-                            f"name={name}, namespace={namespace}"
-                        )
                         not_found.append((idx, name, namespace))
 
         # Sort by original index to maintain order
@@ -479,29 +489,17 @@ class TaskKnowledgeBaseService:
             ref_index: Index of the ref in knowledgeBaseRefs list
             kb_id: Knowledge base Kind.id to add
         """
-        try:
-            task_json = task.json if isinstance(task.json, dict) else {}
-            spec = task_json.get("spec", {})
-            kb_refs = spec.get("knowledgeBaseRefs", []) or []
+        task_json = task.json if isinstance(task.json, dict) else {}
+        spec = task_json.get("spec", {})
+        kb_refs = spec.get("knowledgeBaseRefs", []) or []
 
-            if 0 <= ref_index < len(kb_refs):
-                old_name = kb_refs[ref_index].get("name")
-                kb_refs[ref_index]["id"] = kb_id
-                spec["knowledgeBaseRefs"] = kb_refs
-                task_json["spec"] = spec
-                task.json = task_json
-                flag_modified(task, "json")
-                db.commit()
-                logger.info(
-                    f"Migrated KB reference from name to ID: "
-                    f"task_id={task.id}, kb_name={old_name}, kb_id={kb_id}"
-                )
-        except Exception as e:
-            logger.warning(
-                f"Failed to migrate KB ref to ID: task_id={task.id}, "
-                f"ref_index={ref_index}, kb_id={kb_id}, error={e}"
-            )
-            db.rollback()
+        if 0 <= ref_index < len(kb_refs):
+            kb_refs[ref_index]["id"] = kb_id
+            spec["knowledgeBaseRefs"] = kb_refs
+            task_json["spec"] = spec
+            task.json = task_json
+            flag_modified(task, "json")
+            # Note: Caller is responsible for commit
 
     def _batch_migrate_kb_refs(
         self,
@@ -522,38 +520,83 @@ class TaskKnowledgeBaseService:
         if not refs_to_migrate:
             return
 
+        task_json = task.json if isinstance(task.json, dict) else {}
+        spec = task_json.get("spec", {})
+        kb_refs = spec.get("knowledgeBaseRefs", []) or []
+
+        for ref_index, kb_id in refs_to_migrate:
+            if 0 <= ref_index < len(kb_refs):
+                kb_refs[ref_index]["id"] = kb_id
+
+        spec["knowledgeBaseRefs"] = kb_refs
+        task_json["spec"] = spec
+        task.json = task_json
+        flag_modified(task, "json")
+        # Note: Caller is responsible for commit
+
+    def _create_kb_binding(
+        self,
+        db: Session,
+        task: TaskResource,
+        kb_id: int,
+        bound_by: str,
+        bound_at: datetime,
+        linked_group: str | None = None,
+    ) -> None:
+        """Create a KB binding record in the database.
+
+        This helper method creates a TaskKnowledgeBaseBinding record with proper
+        linked_group_id resolution and handles IntegrityError for duplicate bindings.
+
+        Args:
+            db: Database session
+            task: TaskResource object
+            kb_id: Knowledge base ID
+            bound_by: User name who bound the KB
+            bound_at: Timestamp when the KB was bound
+            linked_group: Optional linked group name to resolve to namespace_id
+        """
+        from sqlalchemy.exc import IntegrityError
+
+        from app.models.namespace import Namespace
+        from app.models.task_kb_binding import TaskKnowledgeBaseBinding
+
+        # Resolve linked_group_id from linked_group name if provided
+        linked_group_id = 0
+        if linked_group and linked_group.strip():
+            namespace = (
+                db.query(Namespace)
+                .filter(Namespace.name == linked_group, Namespace.is_active == True)
+                .first()
+            )
+            if namespace:
+                linked_group_id = namespace.id
+
+        binding = TaskKnowledgeBaseBinding(
+            task_id=task.id,
+            knowledge_base_id=kb_id,
+            linked_group_id=linked_group_id,
+            bound_by=bound_by,
+            bound_at=bound_at,
+        )
+
+        # Use nested transaction (savepoint) to handle IntegrityError
+        # without rolling back the outer transaction (which would undo JSON updates)
+        nested = db.begin_nested()
         try:
-            task_json = task.json if isinstance(task.json, dict) else {}
-            spec = task_json.get("spec", {})
-            kb_refs = spec.get("knowledgeBaseRefs", []) or []
-
-            migrated_names = []
-            for ref_index, kb_id in refs_to_migrate:
-                if 0 <= ref_index < len(kb_refs):
-                    old_name = kb_refs[ref_index].get("name")
-                    kb_refs[ref_index]["id"] = kb_id
-                    migrated_names.append(f"{old_name}->id={kb_id}")
-
-            spec["knowledgeBaseRefs"] = kb_refs
-            task_json["spec"] = spec
-            task.json = task_json
-            flag_modified(task, "json")
-            db.commit()
-
+            db.add(binding)
+            db.flush()
+            nested.commit()
+        except IntegrityError:
+            # Binding already exists, rollback only the nested transaction
+            nested.rollback()
             logger.info(
-                f"Batch migrated KB references from name to ID: "
-                f"task_id={task.id}, refs=[{', '.join(migrated_names)}]"
+                f"[_create_kb_binding] Binding already exists for task {task.id} and KB {kb_id}"
             )
-        except Exception as e:
-            logger.warning(
-                f"Failed to batch migrate KB refs: task_id={task.id}, "
-                f"refs_count={len(refs_to_migrate)}, error={e}"
-            )
-            db.rollback()
 
     def get_bound_knowledge_bases(
         self, db: Session, task_id: int, user_id: int
-    ) -> List[BoundKnowledgeBaseDetail]:
+    ) -> list[BoundKnowledgeBaseDetail]:
         """
         Get knowledge bases bound to a group chat task.
 
@@ -599,6 +642,10 @@ class TaskKnowledgeBaseService:
         result = []
         refs_to_migrate = []
 
+        # Collect all KB IDs for batch document count query
+        kb_ids = [kb.id for _, kb, _ in found_kbs]
+        doc_counts = KnowledgeService.get_active_document_counts_batch(db, kb_ids)
+
         for idx, kb, needs_migration in found_kbs:
             ref = kb_refs[idx]
             kb_name = ref.get("name")
@@ -610,7 +657,7 @@ class TaskKnowledgeBaseService:
             kb_spec = kb.json.get("spec", {})
             display_name = kb_spec.get("name", kb_name)
             description = kb_spec.get("description")
-            document_count = KnowledgeService.get_active_document_count(db, kb.id)
+            document_count = doc_counts.get(kb.id, 0)
 
             result.append(
                 BoundKnowledgeBaseDetail(
@@ -631,7 +678,7 @@ class TaskKnowledgeBaseService:
 
         return result
 
-    def get_bound_knowledge_base_ids(self, db: Session, task_id: int) -> List[int]:
+    def get_bound_knowledge_base_ids(self, db: Session, task_id: int) -> list[int]:
         """
         Get IDs of knowledge bases bound to a task.
         This method does not check permissions - used internally for AI integration.
@@ -764,11 +811,23 @@ class TaskKnowledgeBaseService:
         )
         kb_refs.append(new_ref.model_dump())
 
-        # Update task spec
+        # Update task spec (JSON)
         spec["knowledgeBaseRefs"] = kb_refs
         task_json["spec"] = spec
         task.json = task_json
         flag_modified(task, "json")
+
+        # Also write to bindings table for efficient queries
+        # Use the already-parsed spec from earlier in this function
+        linked_group = spec.get("linked_group")
+        self._create_kb_binding(
+            db=db,
+            task=task,
+            kb_id=kb.id,
+            bound_by=user_name,
+            bound_at=datetime.utcnow(),
+            linked_group=linked_group if isinstance(linked_group, str) else None,
+        )
 
         task.updated_at = datetime.utcnow()
         db.commit()
@@ -780,13 +839,15 @@ class TaskKnowledgeBaseService:
 
         # Return bound KB details
         kb_spec = kb.json.get("spec", {})
+        # Use batch method for single KB (consistent API, no N+1 issue here)
+        doc_counts = KnowledgeService.get_active_document_counts_batch(db, [kb.id])
         return BoundKnowledgeBaseDetail(
             id=kb.id,
             name=kb_name,
             namespace=kb_namespace,
             display_name=kb_spec.get("name", kb_name),
             description=kb_spec.get("description"),
-            document_count=KnowledgeService.get_active_document_count(db, kb.id),
+            document_count=doc_counts.get(kb.id, 0),
             bound_by=user_name,
             bound_at=new_ref.boundAt,
         )
@@ -798,7 +859,7 @@ class TaskKnowledgeBaseService:
         kb_name: str,
         kb_namespace: str,
         user_id: int,
-        kb_id: Optional[int] = None,
+        kb_id: int | None = None,
     ) -> bool:
         """
         Unbind a knowledge base from a group chat task.
@@ -837,17 +898,20 @@ class TaskKnowledgeBaseService:
 
         # Find and remove the binding (by ID or by name+namespace)
         found = False
+        found_kb_id = None
         new_refs = []
         for ref in kb_refs:
             # Match by ID (preferred) or by name+namespace
             is_match = False
             if kb_id is not None and ref.get("id") == kb_id:
                 is_match = True
+                found_kb_id = kb_id
             elif (
                 ref.get("name") == kb_name
                 and ref.get("namespace", "default") == kb_namespace
             ):
                 is_match = True
+                found_kb_id = ref.get("id")  # Get ID from ref for bindings table
 
             if is_match:
                 found = True
@@ -859,11 +923,27 @@ class TaskKnowledgeBaseService:
                 status_code=404, detail="Knowledge base is not bound to this task"
             )
 
-        # Update task spec
+        # Update task spec (JSON)
         spec["knowledgeBaseRefs"] = new_refs
         task_json["spec"] = spec
         task.json = task_json
         flag_modified(task, "json")
+
+        # Also delete from bindings table
+        if found_kb_id is None:
+            # Resolve KB id by looking up the knowledge base by name and namespace
+            # (for legacy name-only refs)
+            kb = self.get_knowledge_base_by_name(db, kb_name, kb_namespace)
+            if kb:
+                found_kb_id = kb.id
+
+        if found_kb_id is not None:
+            from app.models.task_kb_binding import TaskKnowledgeBaseBinding
+
+            db.query(TaskKnowledgeBaseBinding).filter(
+                TaskKnowledgeBaseBinding.task_id == task_id,
+                TaskKnowledgeBaseBinding.knowledge_base_id == found_kb_id,
+            ).delete()
 
         task.updated_at = datetime.utcnow()
         db.commit()
@@ -967,20 +1047,33 @@ class TaskKnowledgeBaseService:
                     return False
 
             # Add new binding with ID for stable references
+            bound_at = datetime.utcnow()
             new_ref = KnowledgeBaseTaskRef(
                 id=kb.id,
                 name=kb_name,
                 namespace=kb_namespace,
                 boundBy=user_name,
-                boundAt=datetime.utcnow().isoformat() + "Z",
+                boundAt=bound_at.isoformat() + "Z",
             )
             kb_refs.append(new_ref.model_dump())
 
-            # Update task spec
+            # Update task spec (JSON)
             spec["knowledgeBaseRefs"] = kb_refs
             task_json["spec"] = spec
             task.json = task_json
             flag_modified(task, "json")
+
+            # Also write to bindings table for efficient queries
+            # Use the already-parsed spec from earlier in this function
+            linked_group = spec.get("linked_group")
+            self._create_kb_binding(
+                db=db,
+                task=task,
+                kb_id=kb.id,
+                bound_by=user_name,
+                bound_at=bound_at,
+                linked_group=linked_group if isinstance(linked_group, str) else None,
+            )
 
             task.updated_at = datetime.utcnow()
             db.commit()

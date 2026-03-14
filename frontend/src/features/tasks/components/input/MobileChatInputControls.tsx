@@ -41,6 +41,8 @@ export interface MobileChatInputControlsProps {
   teamId?: number | null
   taskId?: number | null
   taskModelId?: string | null
+  /** Whether this is a group chat - if true, each user uses their own model preference */
+  isGroupChat?: boolean
   /** Knowledge base ID to exclude from context selector (used in notebook mode) */
   knowledgeBaseId?: number
 
@@ -114,6 +116,7 @@ export function MobileChatInputControls({
   teamId,
   taskId,
   taskModelId,
+  isGroupChat = false,
   knowledgeBaseId,
   showRepositorySelector,
   selectedRepo,
@@ -337,6 +340,7 @@ export function MobileChatInputControls({
               teamId={teamId}
               taskId={taskId}
               taskModelId={taskModelId}
+              isGroupChat={isGroupChat}
             />
           </div>
         )}

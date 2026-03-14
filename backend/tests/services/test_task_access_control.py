@@ -35,7 +35,18 @@ class TestTaskAccessControl:
         task.user_id = 1
         task.kind = "Task"
         task.is_active = True
-        task.json = {"status": {"status": "RUNNING"}}
+        task.json = {
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Task",
+            "metadata": {"name": "test-task", "namespace": "default"},
+            "spec": {
+                "title": "Test Task",
+                "prompt": "Test prompt",
+                "teamRef": {"name": "test-team", "namespace": "default"},
+                "workspaceRef": {"name": "test-workspace", "namespace": "default"},
+            },
+            "status": {"status": "RUNNING"},
+        }
         return task
 
     def test_owner_can_access_task(self, task_service, mock_db, mock_task):

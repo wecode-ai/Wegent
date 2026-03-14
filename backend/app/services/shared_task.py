@@ -669,7 +669,7 @@ class SharedTaskService:
         existing_share = (
             db.query(ResourceMember)
             .filter(
-                ResourceMember.resource_type == ResourceType.TASK,
+                ResourceMember.resource_type == ResourceType.TASK.value,
                 ResourceMember.resource_id == share_info.task_id,
                 ResourceMember.user_id == user_id,
             )
@@ -724,11 +724,11 @@ class SharedTaskService:
         else:
             # Create new share relationship record using ResourceMember
             resource_member = ResourceMember(
-                resource_type=ResourceType.TASK,
+                resource_type=ResourceType.TASK.value,
                 resource_id=share_info.task_id,
                 user_id=user_id,
-                permission_level=PermissionLevel.MANAGE,
-                status=MemberStatus.APPROVED,
+                permission_level=PermissionLevel.MANAGE.value,
+                status=MemberStatus.APPROVED.value,
                 invited_by_user_id=share_info.user_id,
                 share_link_id=0,
                 reviewed_by_user_id=0,
@@ -750,9 +750,9 @@ class SharedTaskService:
         resource_members = (
             db.query(ResourceMember)
             .filter(
-                ResourceMember.resource_type == ResourceType.TASK,
+                ResourceMember.resource_type == ResourceType.TASK.value,
                 ResourceMember.user_id == user_id,
-                ResourceMember.status == MemberStatus.APPROVED,
+                ResourceMember.status == MemberStatus.APPROVED.value,
                 ResourceMember.copied_resource_id > 0,  # Only entries with copied tasks
             )
             .all()
@@ -781,10 +781,10 @@ class SharedTaskService:
         resource_member = (
             db.query(ResourceMember)
             .filter(
-                ResourceMember.resource_type == ResourceType.TASK,
+                ResourceMember.resource_type == ResourceType.TASK.value,
                 ResourceMember.resource_id == original_task_id,
                 ResourceMember.user_id == user_id,
-                ResourceMember.status == MemberStatus.APPROVED,
+                ResourceMember.status == MemberStatus.APPROVED.value,
             )
             .first()
         )

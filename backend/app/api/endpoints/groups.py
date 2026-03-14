@@ -122,12 +122,20 @@ def list_members(
         )
 
     # Get all approved members with user information using ResourceMember
+    # First get Namespace ID by name (without join)
+    namespace = db.query(Namespace).filter(Namespace.name == group_name).first()
+    if not namespace:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f'Group "{group_name}" not found',
+        )
+
+    # Query members directly by namespace ID (without join)
     members = (
         db.query(ResourceMember)
-        .join(Namespace, Namespace.id == ResourceMember.resource_id)
         .filter(
             ResourceMember.resource_type == "Namespace",
-            Namespace.name == group_name,
+            ResourceMember.resource_id == namespace.id,
             ResourceMember.status == MemberStatus.APPROVED.value,
         )
         .all()

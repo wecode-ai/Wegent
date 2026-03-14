@@ -264,7 +264,7 @@ def _create_standard_subtask(
 
 
 def get_tasks_related_data_batch(
-    db: Session, tasks: List[Kind], user_id: int
+    db: Session, tasks: List[TaskResource], user_id: int
 ) -> Dict[str, Dict[str, Any]]:
     """
     Batch get workspace and team data for multiple tasks to reduce database queries.
@@ -491,9 +491,9 @@ def _add_group_chat_info(
             ResourceMember.resource_id, func.count(ResourceMember.id).label("count")
         )
         .filter(
-            ResourceMember.resource_type == ResourceType.TASK,
+            ResourceMember.resource_type == ResourceType.TASK.value,
             ResourceMember.resource_id.in_(task_ids),
-            ResourceMember.status == MemberStatus.APPROVED,
+            ResourceMember.status == MemberStatus.APPROVED.value,
             # Exclude share records (copied_resource_id > 0), only count actual group chat members
             ResourceMember.copied_resource_id == 0,
         )
@@ -539,7 +539,6 @@ def build_lite_task_list(
         return []
 
     related_data_batch = get_tasks_related_data_batch(db, tasks, user_id)
-
     result = []
     for task in tasks:
         task_crd = Task.model_validate(task.json)

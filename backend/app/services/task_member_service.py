@@ -6,11 +6,12 @@
 Service for task member (group chat) management.
 
 Uses the unified ResourceMember model instead of the legacy TaskMember table.
+Supports linked group chats where members are copied from group membership.
 """
 
 import logging
 from datetime import datetime
-from typing import List, Optional
+from typing import Optional
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
@@ -21,6 +22,7 @@ from app.models.resource_member import EPOCH_TIME, MemberStatus, ResourceMember
 from app.models.share_link import PermissionLevel, ResourceType
 from app.models.task import TaskResource
 from app.models.user import User
+from app.schemas.namespace import GroupRole
 from app.schemas.task_member import MemberStatus as SchemaMemberStatus
 from app.schemas.task_member import (
     TaskMemberListResponse,
@@ -65,24 +67,37 @@ class TaskMemberService:
 
     def is_member(self, db: Session, task_id: int, user_id: int) -> bool:
         """Check if a user is an active member of a task"""
+        logger.info(
+            f"[is_member] Checking membership: task_id={task_id}, user_id={user_id}"
+        )
+
         # Task owner is always considered a member
-        if self.is_task_owner(db, task_id, user_id):
+        is_owner = self.is_task_owner(db, task_id, user_id)
+        logger.info(
+            f"[is_member] is_task_owner: task_id={task_id}, user_id={user_id}, result={is_owner}"
+        )
+        if is_owner:
             return True
 
         # Check ResourceMember for approved status
+        # For linked group chats, members are copied to resource_members table
         # Exclude share records (copied_resource_id > 0), only consider actual group chat members
         member = (
             db.query(ResourceMember)
             .filter(
-                ResourceMember.resource_type == ResourceType.TASK,
+                ResourceMember.resource_type == ResourceType.TASK.value,
                 ResourceMember.resource_id == task_id,
                 ResourceMember.user_id == user_id,
-                ResourceMember.status == MemberStatus.APPROVED,
+                ResourceMember.status == MemberStatus.APPROVED.value,
                 ResourceMember.copied_resource_id == 0,
             )
             .first()
         )
-        return member is not None
+        result = member is not None
+        logger.info(
+            f"[is_member] ResourceMember check: task_id={task_id}, user_id={user_id}, result={result}"
+        )
+        return result
 
     def is_group_chat(self, db: Session, task_id: int) -> bool:
         """Check if a task is configured as a group chat"""
@@ -92,15 +107,9 @@ class TaskMemberService:
             logger.warning(f"[is_group_chat] Task {task_id} not found")
             return False
 
-        task_json = task.json if isinstance(task.json, dict) else {}
-        logger.info(
-            f"[is_group_chat] task_id={task_id}, task_json type={type(task.json)}, is_dict={isinstance(task.json, dict)}"
-        )
-        spec = task_json.get("spec", {})
-        is_group_chat = spec.get("is_group_chat", False)
-        logger.info(
-            f"[is_group_chat] task_id={task_id}, is_group_chat={is_group_chat}, spec={spec}"
-        )
+        # Use the indexed is_group_chat column instead of parsing JSON
+        is_group_chat = task.is_group_chat
+        logger.info(f"[is_group_chat] task_id={task_id}, is_group_chat={is_group_chat}")
         return is_group_chat
 
     def convert_to_group_chat(self, db: Session, task_id: int) -> bool:
@@ -109,21 +118,24 @@ class TaskMemberService:
         if not task:
             raise HTTPException(status_code=404, detail="Task not found")
 
+        # Check if already a group chat using the indexed column
+        if task.is_group_chat:
+            return False  # Already a group chat
+
         # Get current task JSON
         task_json = task.json if isinstance(task.json, dict) else {}
         spec = task_json.get("spec", {})
 
-        # Check if already a group chat
-        if spec.get("is_group_chat", False):
-            return False  # Already a group chat
-
-        # Set is_group_chat flag
+        # Set is_group_chat flag in JSON (for backward compatibility)
         spec["is_group_chat"] = True
         task_json["spec"] = spec
 
         # IMPORTANT: Mark the json field as modified so SQLAlchemy detects the change
         task.json = task_json
         flag_modified(task, "json")
+
+        # Also update the indexed column for efficient queries
+        task.is_group_chat = True
 
         task.updated_at = datetime.utcnow()
 
@@ -135,13 +147,15 @@ class TaskMemberService:
 
     def get_member_count(self, db: Session, task_id: int) -> int:
         """Get the number of active members in a task (including owner)"""
+        # For linked group chats, members are already copied to task's resource_members
+        # So we can use the same query logic as regular group chats
         # Exclude share records (copied_resource_id > 0), only count actual group chat members
         member_count = (
             db.query(ResourceMember)
             .filter(
-                ResourceMember.resource_type == ResourceType.TASK,
+                ResourceMember.resource_type == ResourceType.TASK.value,
                 ResourceMember.resource_id == task_id,
-                ResourceMember.status == MemberStatus.APPROVED,
+                ResourceMember.status == MemberStatus.APPROVED.value,
                 ResourceMember.copied_resource_id == 0,
             )
             .count()
@@ -151,8 +165,10 @@ class TaskMemberService:
 
     def get_members(self, db: Session, task_id: int) -> TaskMemberListResponse:
         """Get all active members of a task"""
+        logger.info(f"[get_members] Getting members for task_id={task_id}")
         task = self.get_task(db, task_id)
         if not task:
+            logger.warning(f"[get_members] Task {task_id} not found")
             raise HTTPException(status_code=404, detail="Task not found")
 
         task_owner_id = task.user_id
@@ -181,13 +197,14 @@ class TaskMemberService:
         members.append(owner_member)
 
         # Get other members from ResourceMember
+        # For linked group chats, members are already copied to resource_members table
         # Exclude share records (copied_resource_id > 0), only get actual group chat members
         task_members = (
             db.query(ResourceMember)
             .filter(
-                ResourceMember.resource_type == ResourceType.TASK,
+                ResourceMember.resource_type == ResourceType.TASK.value,
                 ResourceMember.resource_id == task_id,
-                ResourceMember.status == MemberStatus.APPROVED,
+                ResourceMember.status == MemberStatus.APPROVED.value,
                 ResourceMember.copied_resource_id == 0,
             )
             .all()
@@ -213,13 +230,18 @@ class TaskMemberService:
                     status=SchemaMemberStatus.ACTIVE,
                     joined_at=tm.requested_at,
                     is_owner=False,
+                    role=tm.role if tm.role else None,
                 )
                 members.append(member)
+
+        # Check if this is a linked group chat and include the info
+        linked_group = self.get_linked_group(db, task_id)
 
         return TaskMemberListResponse(
             members=members,
             total=len(members),
             task_owner_id=task_owner_id,
+            linked_group=linked_group,
         )
 
     def add_member(
@@ -234,11 +256,19 @@ class TaskMemberService:
             f"[add_member] Adding member: task_id={task_id}, user_id={user_id}, invited_by={invited_by}"
         )
 
+        # Linked group chats do not allow member modification
+        if self.is_linked_group_chat(db, task_id):
+            linked_group = self.get_linked_group(db, task_id)
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot add members to a linked group chat. Members are managed through the group '{linked_group}'.",
+            )
+
         # Check if user already exists (even if rejected)
         existing = (
             db.query(ResourceMember)
             .filter(
-                ResourceMember.resource_type == ResourceType.TASK,
+                ResourceMember.resource_type == ResourceType.TASK.value,
                 ResourceMember.resource_id == task_id,
                 ResourceMember.user_id == user_id,
             )
@@ -249,7 +279,7 @@ class TaskMemberService:
             logger.info(
                 f"[add_member] Existing member found: id={existing.id}, status={existing.status}"
             )
-            if existing.status == MemberStatus.APPROVED:
+            if existing.status == MemberStatus.APPROVED.value:
                 logger.warning(
                     f"[add_member] User {user_id} is already a member of task {task_id}"
                 )
@@ -258,7 +288,7 @@ class TaskMemberService:
             logger.info(
                 f"[add_member] Reactivating member: id={existing.id}, old_status={existing.status}"
             )
-            existing.status = MemberStatus.APPROVED
+            existing.status = MemberStatus.APPROVED.value
             existing.invited_by_user_id = invited_by
             existing.requested_at = datetime.utcnow()
             existing.updated_at = datetime.utcnow()
@@ -284,7 +314,7 @@ class TaskMemberService:
             resource_id=task_id,
             user_id=user_id,
             permission_level=PermissionLevel.MANAGE,  # Group chat members get manage permission
-            status=MemberStatus.APPROVED,
+            status=MemberStatus.APPROVED.value,
             invited_by_user_id=invited_by,
             share_link_id=0,
             reviewed_by_user_id=0,
@@ -305,6 +335,14 @@ class TaskMemberService:
         removed_by: int,
     ) -> bool:
         """Remove a member from a task (soft delete by setting status to rejected)"""
+        # Linked group chats do not allow member modification
+        if self.is_linked_group_chat(db, task_id):
+            linked_group = self.get_linked_group(db, task_id)
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot remove members from a linked group chat. Members are managed through the group '{linked_group}'.",
+            )
+
         # Cannot remove the task owner
         if self.is_task_owner(db, task_id, user_id):
             raise HTTPException(status_code=400, detail="Cannot remove the task owner")
@@ -312,10 +350,10 @@ class TaskMemberService:
         member = (
             db.query(ResourceMember)
             .filter(
-                ResourceMember.resource_type == ResourceType.TASK,
+                ResourceMember.resource_type == ResourceType.TASK.value,
                 ResourceMember.resource_id == task_id,
                 ResourceMember.user_id == user_id,
-                ResourceMember.status == MemberStatus.APPROVED,
+                ResourceMember.status == MemberStatus.APPROVED.value,
             )
             .first()
         )
@@ -323,7 +361,7 @@ class TaskMemberService:
         if not member:
             raise HTTPException(status_code=404, detail="Member not found")
 
-        member.status = MemberStatus.REJECTED
+        member.status = MemberStatus.REJECTED.value
         member.reviewed_by_user_id = removed_by
         member.reviewed_at = datetime.utcnow()
         member.updated_at = datetime.utcnow()
@@ -397,6 +435,132 @@ class TaskMemberService:
             logger.warning(f"Failed to get team name: {e}")
 
         return None
+
+    # =========================================================================
+    # Linked Group Chat Methods
+    # =========================================================================
+
+    def get_linked_group(self, db: Session, task_id: int) -> Optional[str]:
+        """Get the linked group name for a task.
+
+        Args:
+            db: Database session
+            task_id: Task ID
+
+        Returns:
+            Linked group name if set and valid, None otherwise
+        """
+        task = self.get_task(db, task_id)
+        if not task:
+            logger.info(f"[get_linked_group] Task {task_id} not found")
+            return None
+
+        # Validate task.json is a dict
+        if not isinstance(task.json, dict):
+            logger.warning(
+                f"[get_linked_group] task_id={task_id}, task.json is not a dict: {type(task.json)}"
+            )
+            return None
+
+        spec = task.json.get("spec")
+        # Validate spec is a dict
+        if not isinstance(spec, dict):
+            logger.warning(
+                f"[get_linked_group] task_id={task_id}, spec is not a dict: {type(spec)}"
+            )
+            return None
+
+        linked_group = spec.get("linked_group")
+        # Validate linked_group is a non-empty string
+        if not isinstance(linked_group, str) or not linked_group.strip():
+            logger.info(
+                f"[get_linked_group] task_id={task_id}, linked_group is not a valid string: {linked_group}"
+            )
+            return None
+
+        # Trim the linked_group value to avoid whitespace issues
+        trimmed_linked_group = linked_group.strip()
+
+        logger.info(
+            f"[get_linked_group] task_id={task_id}, linked_group={trimmed_linked_group}, spec_keys={list(spec.keys())}"
+        )
+        return trimmed_linked_group
+
+    def is_linked_group_chat(self, db: Session, task_id: int) -> bool:
+        """Check if a task is a linked group chat.
+
+        A linked group chat has its members derived from a group,
+        and member management is disabled in the UI.
+
+        Args:
+            db: Database session
+            task_id: Task ID
+
+        Returns:
+            True if the task is a linked group chat
+        """
+        # Require both that the task is a group chat (using indexed column)
+        # AND that get_linked_group returns a valid string
+        task = self.get_task(db, task_id)
+        if not task:
+            return False
+
+        # Check is_group_chat flag using the indexed column (not JSON)
+        if not task.is_group_chat:
+            return False
+
+        # Check that get_linked_group returns a valid string
+        linked_group = self.get_linked_group(db, task_id)
+        return bool(linked_group)
+
+    def get_linked_group_role(
+        self, db: Session, task_id: int, user_id: int
+    ) -> Optional[GroupRole]:
+        """Get the user's role in the linked group.
+
+        Args:
+            db: Database session
+            task_id: Task ID
+            user_id: User ID
+
+        Returns:
+            GroupRole value if user is a member of the linked group, None otherwise
+        """
+        linked_group = self.get_linked_group(db, task_id)
+        logger.info(
+            f"[get_linked_group_role] task_id={task_id}, user_id={user_id}, linked_group={linked_group}"
+        )
+        if not linked_group:
+            return None
+
+        from app.services.group_permission import get_effective_role_in_group
+
+        role = get_effective_role_in_group(db, user_id, linked_group)
+        logger.info(
+            f"[get_linked_group_role] task_id={task_id}, user_id={user_id}, role={role}"
+        )
+        return role
+
+    def is_member_via_linked_group(
+        self, db: Session, task_id: int, user_id: int
+    ) -> bool:
+        """Check if a user is a member via linked group.
+
+        Args:
+            db: Database session
+            task_id: Task ID
+            user_id: User ID
+
+        Returns:
+            True if user is a member of the linked group (and not RestrictedObserver)
+        """
+        role = self.get_linked_group_role(db, task_id, user_id)
+        # role is GroupRole enum, compare with enum
+        result = role is not None and role != GroupRole.RestrictedObserver
+        logger.info(
+            f"[is_member_via_linked_group] task_id={task_id}, user_id={user_id}, role={role}, result={result}"
+        )
+        return result
 
 
 task_member_service = TaskMemberService()

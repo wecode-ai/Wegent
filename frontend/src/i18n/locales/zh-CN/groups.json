@@ -25,7 +25,8 @@
       "Owner": "创建者",
       "Maintainer": "管理员",
       "Developer": "开发者",
-      "Reporter": "使用者"
+      "Reporter": "使用者",
+      "RestrictedObserver": "盲分析师"
     },
     "actions": {
       "addMember": "添加成员",
@@ -126,6 +127,13 @@
     "adding": "添加中...",
     "addCount": "添加 ({{count}})",
     "rolePermissions": "角色权限说明",
+    "roleShortDescriptions": {
+      "Owner": "拥有群组的完全控制权",
+      "Maintainer": "管理资源和成员，除删除群组外",
+      "Developer": "可编辑资源，无法管理成员",
+      "Reporter": "仅可查看资源",
+      "RestrictedObserver": "仅可通过对话使用知识库"
+    },
     "roleDescriptions": {
       "Reporter": "只能查看群组资源，无法进行任何修改操作，可离开群组",
       "Developer": "可查看、创建、编辑群组资源，可离开群组，但无法删除资源或管理成员",
@@ -137,6 +145,7 @@
         "updateRoles": "修改成员角色（除Owner外）",
         "canLeave": "可离开群组"
       },
+      "RestrictedObserver": "仅可通过对话使用群组知识库（RAG 搜索），无法查看文档内容或列表，可离开群组",
       "Owner": "拥有群组的完全控制权",
       "OwnerDetails": {
         "title": "包括：",

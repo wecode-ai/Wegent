@@ -77,6 +77,8 @@ export interface UseModelSelectionOptions {
   disabled?: boolean
   /** Model category type to filter models (default: 'llm') */
   modelCategoryType?: ModelCategoryType
+  /** Whether this is a group chat - if true, skip taskModelId and use user's own preference */
+  isGroupChat?: boolean
 }
 
 /** Return type for useModelSelection hook */
@@ -159,6 +161,7 @@ export function useModelSelection({
   selectedTeam,
   disabled = false,
   modelCategoryType = 'llm',
+  isGroupChat = false,
 }: UseModelSelectionOptions): UseModelSelectionReturn {
   const { t } = useTranslation()
 
@@ -313,16 +316,18 @@ export function useModelSelection({
 
       // Priority 1: Use taskModelId from API (if exists and not default)
       // Search in ALL models, not just filtered ones, since task already has a recorded model
-      if (taskModelId && taskModelId !== DEFAULT_MODEL_NAME) {
+      // NOTE: For group chat, skip this step - each user should use their own model preference
+      if (!isGroupChat && taskModelId && taskModelId !== DEFAULT_MODEL_NAME) {
         const foundModel = models.find(m => m.name === taskModelId || m.displayName === taskModelId)
         if (foundModel) {
           restoredModel = foundModel
         }
       }
 
-      // Priority 2: Use global preference (for new chat only, i.e. no taskId)
+      // Priority 2: Use global preference (for new chat or group chat)
+      // NOTE: For group chats, always use the current user's saved preference
       // NOTE: Must search in filteredModels to ensure model is compatible with current team's agent_type
-      if (!restoredModel && teamId && !taskId) {
+      if (!restoredModel && teamId && (!taskId || isGroupChat)) {
         const preference = getGlobalModelPreference(teamId)
         if (preference && preference.modelName !== DEFAULT_MODEL_NAME) {
           // Search in filteredModels (not models) to ensure compatibility with team's agent_type
@@ -340,7 +345,8 @@ export function useModelSelection({
       }
 
       // Priority 3: Use team's bot bind_model as fallback
-      if (!restoredModel && !taskModelId) {
+      // For group chat, use this as fallback when no user preference exists
+      if (!restoredModel && (!taskModelId || isGroupChat)) {
         const teamDefaultModel = getTeamDefaultModel()
         if (teamDefaultModel) {
           restoredModel = teamDefaultModel
@@ -392,6 +398,7 @@ export function useModelSelection({
     taskId,
     taskModelId,
     compatibleProvider,
+    isGroupChat,
   ])
 
   // -------------------------------------------------------------------------

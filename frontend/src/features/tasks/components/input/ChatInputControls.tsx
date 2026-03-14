@@ -60,6 +60,8 @@ export interface ChatInputControlsProps {
   taskId?: number | null
   /** Task's model_id from backend - used as fallback when no session preference exists */
   taskModelId?: string | null
+  /** Whether this is a group chat - if true, each user uses their own model preference */
+  isGroupChat?: boolean
   /** Knowledge base ID to exclude from context selector (used in notebook mode) */
   knowledgeBaseId?: number
 
@@ -184,6 +186,7 @@ export function ChatInputControls({
   teamId,
   taskId,
   taskModelId,
+  isGroupChat = false,
   knowledgeBaseId,
   showRepositorySelector,
   selectedRepo,
@@ -337,6 +340,7 @@ export function ChatInputControls({
         teamId={teamId}
         taskId={taskId}
         taskModelId={taskModelId}
+        isGroupChat={isGroupChat}
         knowledgeBaseId={knowledgeBaseId}
         showRepositorySelector={showRepositorySelector}
         selectedRepo={selectedRepo}
@@ -475,6 +479,15 @@ export function ChatInputControls({
               hideSelectors ? 'flex items-center gap-2 opacity-50 pointer-events-none' : 'contents'
             }
           >
+            {/* Context Selection - only show for chat shell */}
+            {isChatShell(selectedTeam) && (
+              <ChatContextInput
+                selectedContexts={selectedContexts}
+                onContextsChange={setSelectedContexts}
+                excludeKnowledgeBaseId={knowledgeBaseId}
+              />
+            )}
+
             {/* File Upload Button - show for shells that support attachments (Chat, ClaudeCode) */}
             {supportsAttachments(selectedTeam) && (
               <AttachmentButton onFileSelect={onFileSelect} disabled={isLoading || isStreaming} />
@@ -516,15 +529,6 @@ export function ChatInputControls({
                 isChatShell={isChatShell(selectedTeam)}
                 disabled={isLoading || isStreaming}
                 readOnly={hasMessages}
-              />
-            )}
-
-            {/* Context Selection - only show for chat shell */}
-            {isChatShell(selectedTeam) && (
-              <ChatContextInput
-                selectedContexts={selectedContexts}
-                onContextsChange={setSelectedContexts}
-                excludeKnowledgeBaseId={knowledgeBaseId}
               />
             )}
 
@@ -578,6 +582,7 @@ export function ChatInputControls({
                   teamId={teamId}
                   taskId={taskId}
                   taskModelId={taskModelId}
+                  isGroupChat={isGroupChat}
                 />
               </div>
             )}

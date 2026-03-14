@@ -111,10 +111,12 @@ _EXPLICIT_GROUP_FOR_ACCESSIBLE_SQL = text(
     AND k.is_active = :is_active
     AND k.namespace != 'system'
     AND (k.user_id = :user_id OR tm.id IS NOT NULL)
-    AND JSON_EXTRACT(k.json, '$.spec.is_group_chat') = true
+    AND k.is_group_chat = true
 """
 )
 
+# Query for owned group tasks - uses the same logic as accessible but with owner filter
+# The is_group_chat column is properly maintained by all writers, no need for JSON fallback
 _EXPLICIT_GROUP_FOR_OWNED_SQL = text(
     """
     SELECT DISTINCT k.id
@@ -123,7 +125,7 @@ _EXPLICIT_GROUP_FOR_OWNED_SQL = text(
     AND k.is_active = :is_active
     AND k.namespace != 'system'
     AND k.user_id = :user_id
-    AND JSON_EXTRACT(k.json, '$.spec.is_group_chat') = true
+    AND k.is_group_chat = true
 """
 )
 

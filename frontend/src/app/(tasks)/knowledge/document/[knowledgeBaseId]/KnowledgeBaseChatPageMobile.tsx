@@ -28,6 +28,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { ChatArea } from '@/features/tasks/components/chat'
 import { teamService } from '@/features/tasks/service/teamService'
 import { useKnowledgeBaseDetail } from '@/features/knowledge/document/hooks'
+import { useKnowledgePermissions } from '@/features/knowledge/permission/hooks/useKnowledgePermissions'
 import { DocumentList, KnowledgeBaseSummaryCard } from '@/features/knowledge/document/components'
 import { BoundKnowledgeBaseSummary } from '@/features/tasks/components/group-chat'
 import { taskKnowledgeBaseApi } from '@/apis/task-knowledge-base'
@@ -68,6 +69,18 @@ export function KnowledgeBaseChatPageMobile({ onKbTypeChanged }: KnowledgeBaseCh
     knowledgeBaseId: knowledgeBaseId || 0,
     autoLoad: !!knowledgeBaseId,
   })
+
+  // Fetch user permission for this knowledge base
+  const { myPermission, fetchMyPermission } = useKnowledgePermissions({
+    kbId: knowledgeBaseId || 0,
+  })
+
+  // Fetch my permission when knowledge base is loaded
+  useEffect(() => {
+    if (knowledgeBase && knowledgeBaseId) {
+      fetchMyPermission()
+    }
+  }, [knowledgeBase, knowledgeBaseId, fetchMyPermission])
 
   // Team state from service
   const { teams, isTeamsLoading, refreshTeams } = teamService.useTeams()
@@ -188,6 +201,30 @@ export function KnowledgeBaseChatPageMobile({ onKbTypeChanged }: KnowledgeBaseCh
     return groupRole === 'Owner' || groupRole === 'Maintainer' || groupRole === 'Developer'
   }, [knowledgeBase, user, groupRoleMap])
 
+  // Check if user can view documents (not RestrictedObserver role)
+  // RestrictedObserver role can only use KB via chat, cannot view document list
+  const canViewDocuments = useMemo(() => {
+    if (!knowledgeBase || !user) return false
+    // Personal knowledge base - owner can always view
+    if (knowledgeBase.namespace === 'default') {
+      // Owner can view
+      if (knowledgeBase.user_id === user.id) return true
+      // Check explicit permission from myPermission
+      // RestrictedObserver permission level is 'use', which cannot view documents
+      if (myPermission?.permission_level === 'use') return false
+      // Other permission levels (view, edit, manage) can view
+      return myPermission?.has_access === true
+    }
+    // Organization knowledge base - all authenticated users can view
+    if (knowledgeBase.namespace === 'organization') {
+      return true
+    }
+    // Group knowledge base - check group role
+    // RestrictedObserver role cannot view documents
+    const groupRole = groupRoleMap.get(knowledgeBase.namespace)
+    return groupRole !== 'RestrictedObserver' && groupRole !== undefined
+  }, [knowledgeBase, user, groupRoleMap, myPermission])
+
   // Loading state
   if (kbLoading) {
     return (
@@ -252,15 +289,17 @@ export function KnowledgeBaseChatPageMobile({ onKbTypeChanged }: KnowledgeBaseCh
           >
             <ArrowLeft className="h-4 w-4" />
           </Button>
-          {/* Document drawer button */}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setIsDocumentDrawerOpen(true)}
-            className="h-11 min-w-[44px] px-2 rounded-[7px]"
-          >
-            <FileText className="h-4 w-4" />
-          </Button>
+          {/* Document drawer button (hidden for RestrictedObserver role) */}
+          {canViewDocuments && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setIsDocumentDrawerOpen(true)}
+              className="h-11 min-w-[44px] px-2 rounded-[7px]"
+            >
+              <FileText className="h-4 w-4" />
+            </Button>
+          )}
           {shareButton}
           <ThemeToggle />
         </TopNavigation>

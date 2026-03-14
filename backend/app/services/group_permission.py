@@ -2,6 +2,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import time
+from functools import lru_cache
 from typing import Optional
 
 from sqlalchemy.orm import Session
@@ -13,6 +15,35 @@ from app.services.group_member_helper import (
     get_user_groups_with_roles,
     get_user_role_in_group,
 )
+
+# Simple in-memory cache for user groups with TTL
+_user_groups_cache: dict[int, tuple[list[str], float]] = {}
+_USER_GROUPS_CACHE_TTL = 60  # Cache for 60 seconds
+
+
+def _get_cached_user_groups(user_id: int) -> Optional[list[str]]:
+    """Get cached user groups if not expired."""
+    if user_id in _user_groups_cache:
+        groups, timestamp = _user_groups_cache[user_id]
+        if time.time() - timestamp < _USER_GROUPS_CACHE_TTL:
+            return groups
+        # Cache expired, remove it
+        del _user_groups_cache[user_id]
+    return None
+
+
+def _set_cached_user_groups(user_id: int, groups: list[str]) -> None:
+    """Cache user groups with current timestamp."""
+    _user_groups_cache[user_id] = (groups, time.time())
+
+
+def invalidate_user_groups_cache(user_id: Optional[int] = None) -> None:
+    """Invalidate user groups cache for a specific user or all users."""
+    global _user_groups_cache
+    if user_id is not None:
+        _user_groups_cache.pop(user_id, None)
+    else:
+        _user_groups_cache.clear()
 
 
 def get_user_role_in_group(
@@ -66,6 +97,7 @@ def check_group_permission(
         GroupRole.Maintainer: 1,
         GroupRole.Developer: 2,
         GroupRole.Reporter: 3,
+        GroupRole.RestrictedObserver: 4,
     }
 
     user_role = get_user_role_in_group(db, user_id, group_name)
@@ -93,6 +125,20 @@ def get_user_groups(db: Session, user_id: int) -> list[str]:
     Returns:
         List of group names (without duplicates)
     """
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+    # Check cache first
+    cached = _get_cached_user_groups(user_id)
+    if cached is not None:
+        logger.debug(
+            f"[get_user_groups] Cache hit for user_id={user_id}, returning {len(cached)} groups"
+        )
+        return cached
+
+    start_time = time.time()
+
     # Get all active groups
     all_groups = db.query(Namespace).filter(Namespace.is_active == True).all()
 
@@ -120,7 +166,17 @@ def get_user_groups(db: Session, user_id: int) -> list[str]:
                     accessible_groups.add(group.name)
                     break
 
-    return sorted(accessible_groups)
+    result = sorted(accessible_groups)
+
+    # Cache the result
+    _set_cached_user_groups(user_id, result)
+
+    elapsed = time.time() - start_time
+    logger.info(
+        f"[get_user_groups] Computed and cached for user_id={user_id}, found {len(result)} groups, took {elapsed:.3f}s"
+    )
+
+    return result
 
 
 def get_effective_role_in_group(
@@ -142,8 +198,18 @@ def get_effective_role_in_group(
     Returns:
         GroupRole if user has access (direct or inherited), None otherwise
     """
+    import logging
+
+    logger = logging.getLogger(__name__)
+
     # First check direct membership
+    logger.info(
+        f"[get_effective_role_in_group] Checking direct membership for user={user_id} in group='{group_name}'"
+    )
     direct_role = get_user_role_in_group(db, user_id, group_name)
+    logger.info(
+        f"[get_effective_role_in_group] Direct role for user={user_id} in group='{group_name}': {direct_role}"
+    )
     if direct_role is not None:
         return direct_role
 
