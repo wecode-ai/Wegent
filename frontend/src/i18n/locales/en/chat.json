@@ -610,5 +610,6 @@
     ],
     "action": "Download Weibo AI Toolbox",
     "reopen": "Show download notice"
-  }
+  },
+  "scroll_to_bottom": "Scroll to bottom"
 }

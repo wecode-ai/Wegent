@@ -588,5 +588,6 @@
     ],
     "action": "下载 Weibo AI Toolbox",
     "reopen": "显示下载通知"
-  }
+  },
+  "scroll_to_bottom": "滚动到底部"
 }
