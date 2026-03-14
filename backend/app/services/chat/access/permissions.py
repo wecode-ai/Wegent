@@ -7,6 +7,9 @@
 This module provides utilities for checking task access permissions,
 including ownership and group membership checks.
 Uses the unified ResourceMember model for access control.
+
+Note: Async functions use with_session_in_executor decorator to run
+database operations in a thread pool without blocking the event loop.
 """
 
 import logging
@@ -14,46 +17,37 @@ from typing import Any, Dict, Optional
 
 from sqlalchemy.orm import Session
 
-from app.db.session import SessionLocal
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
+from app.services.chat.storage.db import with_session_in_executor
 
 logger = logging.getLogger(__name__)
 
 
-async def can_access_task(user_id: int, task_id: int) -> bool:
+@with_session_in_executor
+def can_access_task(db: Session, user_id: int, task_id: int) -> bool:
     """
     Check if user can access a task.
+
+    This function is decorated with @with_session_in_executor, so when called
+    it runs in a thread pool and returns a coroutine. The db session is
+    automatically created and managed by the decorator.
 
     Supports:
     - Task ownership
     - Resource membership (via ResourceMember with status=approved)
 
     Args:
+        db: Database session (injected by decorator)
         user_id: User ID
         task_id: Task ID
 
     Returns:
         True if user can access the task
-    """
-    db = SessionLocal()
-    try:
-        return can_access_task_sync(db, user_id, task_id)
-    finally:
-        db.close()
 
-
-def can_access_task_sync(db: Session, user_id: int, task_id: int) -> bool:
-    """
-    Synchronous version of can_access_task.
-
-    Args:
-        db: Database session
-        user_id: User ID
-        task_id: Task ID
-
-    Returns:
-        True if user can access the task
+    Usage:
+        # Call as async function (db is injected automatically):
+        result = await can_access_task(user_id, task_id)
     """
     task = (
         db.query(TaskResource)
@@ -131,40 +125,56 @@ async def get_active_streaming(task_id: int) -> Optional[Dict[str, Any]]:
 
     # Fall back to database query if Redis doesn't have the status
     # This handles the case where Redis data expired or was cleared
+    # Use run_sync_in_executor to avoid blocking the event loop
     logger.info(
         f"[get_active_streaming] No Redis status, falling back to DB query for task_id={task_id}"
     )
-    db = SessionLocal()
-    try:
-        # Find running assistant subtask
-        subtask = (
-            db.query(Subtask)
-            .filter(
-                Subtask.task_id == task_id,
-                Subtask.role == SubtaskRole.ASSISTANT,
-                Subtask.status == SubtaskStatus.RUNNING,
-            )
-            .order_by(Subtask.id.desc())
-            .first()
+    return await _get_active_streaming_from_db(task_id)
+
+
+@with_session_in_executor
+def _get_active_streaming_from_db(
+    db: Session, task_id: int
+) -> Optional[Dict[str, Any]]:
+    """
+    Query database for active streaming subtask.
+
+    This is the database fallback for get_active_streaming when Redis
+    doesn't have the status.
+
+    Args:
+        db: Database session (injected by decorator)
+        task_id: Task ID
+
+    Returns:
+        Streaming info dict if active, None otherwise
+    """
+    # Find running assistant subtask
+    subtask = (
+        db.query(Subtask)
+        .filter(
+            Subtask.task_id == task_id,
+            Subtask.role == SubtaskRole.ASSISTANT,
+            Subtask.status == SubtaskStatus.RUNNING,
         )
+        .order_by(Subtask.id.desc())
+        .first()
+    )
 
-        if subtask:
-            logger.info(
-                f"[get_active_streaming] Found DB streaming subtask for task {task_id}: "
-                f"subtask_id={subtask.id}, status={subtask.status}"
-            )
-            return {
-                "subtask_id": subtask.id,
-                "user_id": subtask.user_id,
-                "started_at": (
-                    subtask.created_at.isoformat() if subtask.created_at else None
-                ),
-            }
-
+    if subtask:
         logger.info(
-            f"[get_active_streaming] No active streaming found for task_id={task_id}"
+            f"[get_active_streaming] Found DB streaming subtask for task {task_id}: "
+            f"subtask_id={subtask.id}, status={subtask.status}"
         )
-        return None
+        return {
+            "subtask_id": subtask.id,
+            "user_id": subtask.user_id,
+            "started_at": (
+                subtask.created_at.isoformat() if subtask.created_at else None
+            ),
+        }
 
-    finally:
-        db.close()
+    logger.info(
+        f"[get_active_streaming] No active streaming found for task_id={task_id}"
+    )
+    return None

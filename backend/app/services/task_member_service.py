@@ -117,13 +117,16 @@ class TaskMemberService:
         if spec.get("is_group_chat", False):
             return False  # Already a group chat
 
-        # Set is_group_chat flag
+        # Set is_group_chat flag in JSON
         spec["is_group_chat"] = True
         task_json["spec"] = spec
 
         # IMPORTANT: Mark the json field as modified so SQLAlchemy detects the change
         task.json = task_json
         flag_modified(task, "json")
+
+        # Sync to physical column for optimized queries
+        task.is_group_chat = True
 
         task.updated_at = datetime.utcnow()
 

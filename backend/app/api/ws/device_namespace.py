@@ -50,6 +50,7 @@ from app.schemas.device import (
     DeviceStatusPayload,
 )
 from app.services.chat.access import get_token_expiry, verify_jwt_token
+from app.services.chat.storage.db import get_db_session, run_sync_in_executor
 from app.services.chat.webpage_ws_chat_emitter import get_extended_emitter
 from app.services.device_service import device_service
 from app.services.execution.dispatcher import ResponsesAPIEventParser
@@ -217,6 +218,167 @@ def _update_device_status(user_id: int, device_id: str, status: str) -> None:
     pass
 
 
+def _match_cloud_device_sync(
+    user_id: int, client_ip: str, executor_device_id: str
+) -> Optional[tuple[str, bool, Optional[dict]]]:
+    """
+    Synchronous helper to match cloud device by device_id.
+
+    Returns:
+        Tuple of (sandbox_id, needs_migration, device_data) if matched, None otherwise.
+        - sandbox_id: The matched sandbox ID
+        - needs_migration: True if legacy device needs migration
+        - device_data: Dict with device info for migration (device_id, etc.)
+    """
+    from sqlalchemy import and_
+
+    from app.models.kind import Kind
+    from app.schemas.device import DeviceType
+
+    with get_db_session() as db:
+        cloud_devices = (
+            db.query(Kind)
+            .filter(
+                and_(
+                    Kind.user_id == user_id,
+                    Kind.kind == "Device",
+                    Kind.namespace == "default",
+                    Kind.is_active == True,
+                )
+            )
+            .all()
+        )
+
+        logger.info(
+            f"[Device WS] Cloud device matching: "
+            f"user_id={user_id}, client_ip={client_ip}, "
+            f"cloud_device_count={len(cloud_devices)}, "
+            f"executor_device_id={executor_device_id}"
+        )
+
+        for device in cloud_devices:
+            spec = device.json.get("spec", {})
+            if spec.get("deviceType") != DeviceType.CLOUD.value:
+                continue
+
+            cloud_config = spec.get("cloudConfig", {})
+            sandbox_id = cloud_config.get("sandboxId", device.name)
+            server_device_id = cloud_config.get("deviceId")
+
+            # New logic: verify server-generated device_id matches
+            if server_device_id:
+                if server_device_id == executor_device_id:
+                    logger.info(
+                        f"[Device WS] Cloud device matched by device_id: "
+                        f"sandbox_id={sandbox_id}, "
+                        f"device_id={executor_device_id}"
+                    )
+                    return (sandbox_id, False, None)
+                else:
+                    # Device ID mismatch - skip this device
+                    logger.debug(
+                        f"[Device WS] Cloud device ID mismatch: "
+                        f"expected={server_device_id}, "
+                        f"got={executor_device_id}"
+                    )
+                    continue
+            else:
+                # Backward compatibility: old device without deviceId field
+                # Use legacy matching (device.name still equals sandbox_id)
+                if device.name == sandbox_id:
+                    logger.info(
+                        f"[Device WS] Cloud device matched (legacy mode): "
+                        f"sandbox_id={sandbox_id}, "
+                        f"new_device_id={executor_device_id}"
+                    )
+                    return (
+                        sandbox_id,
+                        True,
+                        {"device_id": device.id},
+                    )
+
+    return None
+
+
+def _update_cloud_device_id_sync(
+    user_id: int,
+    device_db_id: int,
+    executor_device_id: str,
+    sandbox_id: str,
+) -> str:
+    """
+    Synchronous helper to update cloud device ID in CRD for backward compatibility.
+
+    Args:
+        user_id: User ID
+        device_db_id: Device database ID (Kind.id)
+        executor_device_id: New device ID from executor
+        sandbox_id: Sandbox ID
+
+    Returns:
+        Sandbox ID
+    """
+    import copy
+
+    from sqlalchemy.orm.attributes import flag_modified
+
+    from app.models.kind import Kind
+
+    with get_db_session() as db:
+        device = db.query(Kind).filter(Kind.id == device_db_id).first()
+        if not device:
+            logger.error(
+                f"[Device WS] Device not found for migration: id={device_db_id}"
+            )
+            return sandbox_id
+
+        device_json = copy.deepcopy(device.json)
+        old_device_id = device.name
+        device_json["metadata"]["name"] = executor_device_id
+        device_json["spec"]["deviceId"] = executor_device_id
+
+        # Update cloudConfig with deviceId for future matching
+        if "cloudConfig" in device_json["spec"]:
+            device_json["spec"]["cloudConfig"]["deviceId"] = executor_device_id
+
+        device.name = executor_device_id
+        device.json = device_json
+        flag_modified(device, "json")
+
+        logger.info(
+            f"[Device WS] Migrated legacy cloud device to new format: "
+            f"old_id={old_device_id}, new_id={executor_device_id}, "
+            f"sandbox_id={sandbox_id}"
+        )
+
+    return sandbox_id
+
+
+def _verify_api_key_sync(token: str) -> Optional[tuple[int, str]]:
+    """
+    Synchronous helper to verify API key.
+
+    Returns:
+        Tuple of (user_id, user_name) if valid, None otherwise.
+    """
+    with get_db_session() as db:
+        user = verify_api_key(db, token)
+        if user:
+            return (user.id, user.user_name)
+    return None
+
+
+def _get_device_slot_usage_sync(user_id: int, device_id: str) -> dict:
+    """
+    Synchronous helper to get device slot usage.
+
+    Returns:
+        Dict with slot usage info.
+    """
+    with get_db_session() as db:
+        return device_service.get_device_slot_usage(db, user_id, device_id)
+
+
 class DeviceNamespace(socketio.AsyncNamespace):
     """
     Socket.IO namespace for local executor connections.
@@ -353,132 +515,32 @@ class DeviceNamespace(socketio.AsyncNamespace):
             Cloud device ID (sandbox_id) if matched, None otherwise
         """
         try:
-            with _db_session() as db:
-                # Find all cloud devices for this user
-                from sqlalchemy import and_
+            # Run database query in executor to avoid blocking event loop
+            result = await run_sync_in_executor(
+                _match_cloud_device_sync, user_id, client_ip, executor_device_id
+            )
 
-                from app.models.kind import Kind
-                from app.schemas.device import DeviceType
+            if result is None:
+                return None
 
-                cloud_devices = (
-                    db.query(Kind)
-                    .filter(
-                        and_(
-                            Kind.user_id == user_id,
-                            Kind.kind == "Device",
-                            Kind.namespace == "default",
-                            Kind.is_active == True,
-                        )
-                    )
-                    .all()
+            sandbox_id, needs_migration, device_data = result
+
+            # If legacy device needs migration, do it in executor
+            if needs_migration and device_data:
+                await run_sync_in_executor(
+                    _update_cloud_device_id_sync,
+                    user_id,
+                    device_data["device_id"],
+                    executor_device_id,
+                    sandbox_id,
                 )
 
-                logger.info(
-                    f"[Device WS] Cloud device matching: "
-                    f"user_id={user_id}, client_ip={client_ip}, "
-                    f"cloud_device_count={len(cloud_devices)}, "
-                    f"executor_device_id={executor_device_id}"
-                )
-
-                for device in cloud_devices:
-                    spec = device.json.get("spec", {})
-                    if spec.get("deviceType") != DeviceType.CLOUD.value:
-                        continue
-
-                    cloud_config = spec.get("cloudConfig", {})
-                    sandbox_id = cloud_config.get("sandboxId", device.name)
-                    server_device_id = cloud_config.get("deviceId")
-
-                    # New logic: verify server-generated device_id matches
-                    if server_device_id:
-                        if server_device_id == executor_device_id:
-                            logger.info(
-                                f"[Device WS] Cloud device matched by device_id: "
-                                f"sandbox_id={sandbox_id}, "
-                                f"device_id={executor_device_id}"
-                            )
-                            return sandbox_id
-                        else:
-                            # Device ID mismatch - skip this device
-                            logger.debug(
-                                f"[Device WS] Cloud device ID mismatch: "
-                                f"expected={server_device_id}, "
-                                f"got={executor_device_id}"
-                            )
-                            continue
-                    else:
-                        # Backward compatibility: old device without deviceId field
-                        # Use legacy matching (device.name still equals sandbox_id)
-                        if device.name == sandbox_id:
-                            logger.info(
-                                f"[Device WS] Cloud device matched (legacy mode): "
-                                f"sandbox_id={sandbox_id}, "
-                                f"new_device_id={executor_device_id}"
-                            )
-                            return await self._update_cloud_device_id(
-                                db, user_id, device, executor_device_id, sandbox_id
-                            )
+            return sandbox_id
 
         except Exception as e:
             logger.error(f"[Device WS] Error matching cloud device: {e}")
 
         return None
-
-    async def _update_cloud_device_id(
-        self,
-        db: Session,
-        user_id: int,
-        device: Any,
-        executor_device_id: str,
-        sandbox_id: str,
-    ) -> str:
-        """Update cloud device ID in CRD for backward compatibility.
-
-        This method is only called for legacy cloud devices that don't have
-        cloudConfig.deviceId set. It migrates the old device to use the
-        new server-generated device ID format.
-
-        Args:
-            db: Database session
-            user_id: User ID
-            device: Kind device model
-            executor_device_id: New device ID from executor (backward compat)
-            sandbox_id: Sandbox ID
-
-        Returns:
-            Sandbox ID
-        """
-        # Update CRD with executor's device_id for backward compatibility
-        # Use deepcopy to ensure SQLAlchemy detects the JSON column change
-        import copy
-
-        from sqlalchemy.orm.attributes import flag_modified
-
-        device_json = copy.deepcopy(device.json)
-        old_device_id = device.name
-        device_json["metadata"]["name"] = executor_device_id
-        device_json["spec"]["deviceId"] = executor_device_id
-
-        # Update cloudConfig with deviceId for future matching
-        if "cloudConfig" in device_json["spec"]:
-            device_json["spec"]["cloudConfig"]["deviceId"] = executor_device_id
-
-        device.name = executor_device_id
-        device.json = device_json
-        flag_modified(device, "json")
-        db.add(device)
-        db.commit()
-
-        logger.info(
-            f"[Device WS] Migrated legacy cloud device to new format: "
-            f"old_id={old_device_id}, new_id={executor_device_id}, "
-            f"sandbox_id={sandbox_id}"
-        )
-
-        # Clean up old Redis key if exists
-        # TODO: Add cloud_device_provider.unregister() call if needed for cloud device management
-
-        return sandbox_id
 
     async def on_connect(self, sid: str, environ: dict, auth: Optional[dict] = None):
         """
@@ -529,20 +591,16 @@ class DeviceNamespace(socketio.AsyncNamespace):
         token_exp = None
 
         if is_api_key(token):
-            # API Key authentication
+            # API Key authentication - run in executor to avoid blocking event loop
             auth_type = "api_key"
-            with _db_session() as db:
-                user = verify_api_key(db, token)
-                if user:
-                    # Detach user from session to avoid DetachedInstanceError
-                    user_id = user.id
-                    user_name = user.user_name
-            if not user:
+            user_info = await run_sync_in_executor(_verify_api_key_sync, token)
+            if not user_info:
                 key_preview = token[:10] + "..." if len(token) > 10 else token
                 logger.warning(
                     f"[Device WS] Invalid API key sid={sid}, key={key_preview}"
                 )
                 raise ConnectionRefusedError("Invalid or expired API key")
+            user_id, user_name = user_info
             # API Key has no expiry (token_exp stays None)
             token_exp = None
         else:
@@ -615,9 +673,11 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 # Remove from Redis online status
                 await device_service.set_device_offline(user_id, device_id)
 
-                # Database operation: quick in, quick out
+                # Database operation: run in executor to avoid blocking event loop
                 # Returns list of failed subtasks for WebSocket emission
-                failed_subtasks = _handle_device_disconnect(user_id, device_id)
+                failed_subtasks = await run_sync_in_executor(
+                    _handle_device_disconnect, user_id, device_id
+                )
 
                 # WebSocket emissions happen AFTER database connection is released
                 extended_emitter = get_extended_emitter()
@@ -688,14 +748,16 @@ class DeviceNamespace(socketio.AsyncNamespace):
 
         # Database operation: skip if cloud device already updated in IP matching
         # Pass client_ip to _register_device for tracking
+        # Run in executor to avoid blocking event loop
         if not is_cloud_device:
-            success, error = _register_device(
+            success, error = await run_sync_in_executor(
+                _register_device,
                 user_id,
                 payload.device_id,
                 payload.name,
                 payload.client_ip,
-                device_type=payload.device_type.value,
-                bind_shell=payload.bind_shell.value,
+                payload.device_type.value,
+                payload.bind_shell.value,
             )
             if not success:
                 return {"error": f"Registration failed: {error}"}
@@ -1073,15 +1135,16 @@ class DeviceNamespace(socketio.AsyncNamespace):
         Broadcast device:slot_update event to user room via chat namespace.
 
         Queries current slot usage and emits the update.
+        Uses run_sync_in_executor to avoid blocking the event loop.
         """
         from app.core.socketio import get_sio
         from app.schemas.device import DeviceRunningTask
 
         try:
-            with _db_session() as db:
-                slot_info = await device_service.get_device_slot_usage_async(
-                    db, user_id, device_id
-                )
+            # Run database query in executor to avoid blocking event loop
+            slot_info = await run_sync_in_executor(
+                _get_device_slot_usage_sync, user_id, device_id
+            )
 
             sio = get_sio()
             event_data = DeviceSlotUpdateEvent(
