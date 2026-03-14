@@ -39,6 +39,8 @@ export interface User {
   updated_at: string
   git_info: GitInfo[]
   preferences?: UserPreferences
+  /** Whether admin setup wizard has been completed (only returned for 'admin' user) */
+  admin_setup_completed?: boolean | null
 }
 
 /** Git account information */
