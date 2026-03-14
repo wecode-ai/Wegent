@@ -9,29 +9,61 @@ import { WifiOff, Wifi, Check } from 'lucide-react'
 import { useSocket } from '@/contexts/SocketContext'
 import { useTranslation } from '@/hooks/useTranslation'
 
+/** Delay before showing disconnection banner (ms) */
+const DISCONNECTION_DISPLAY_DELAY = 3000
+
 /**
  * ConnectionStatusBanner Component
  *
  * Displays WebSocket connection status to users in the chat input area.
  * Shows different states:
- * - Disconnected: When connection is lost
- * - Reconnecting: During reconnection attempts with attempt count
+ * - Disconnected: When connection is lost for more than 3 seconds
+ * - Reconnecting: During reconnection attempts with attempt count (after 3s delay)
  * - Reconnected: Briefly shown after successful reconnection (auto-hides after 3s)
+ *
+ * The 3-second delay prevents UI flicker during brief network interruptions.
  */
 export function ConnectionStatusBanner() {
   const { isConnected, reconnectAttempts } = useSocket()
   const { t } = useTranslation('chat')
   const [showReconnected, setShowReconnected] = useState(false)
+  const [showDisconnected, setShowDisconnected] = useState(false)
   const prevConnectedRef = useRef(isConnected)
+  const disconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
-    // Detect state change from disconnected to connected
-    if (isConnected && !prevConnectedRef.current) {
-      setShowReconnected(true)
-      const timer = setTimeout(() => setShowReconnected(false), 3000)
-      return () => clearTimeout(timer)
+    // Clear any pending disconnect timer when connection state changes
+    if (disconnectTimerRef.current) {
+      clearTimeout(disconnectTimerRef.current)
+      disconnectTimerRef.current = null
     }
+
+    if (isConnected) {
+      // Connected: hide disconnection banner
+      setShowDisconnected(false)
+
+      // Detect state change from disconnected to connected (reconnection success)
+      if (!prevConnectedRef.current) {
+        setShowReconnected(true)
+        const timer = setTimeout(() => setShowReconnected(false), 3000)
+        prevConnectedRef.current = isConnected
+        return () => clearTimeout(timer)
+      }
+    } else {
+      // Disconnected: show banner only after 3 seconds delay
+      // This prevents UI flicker during brief network interruptions
+      disconnectTimerRef.current = setTimeout(() => {
+        setShowDisconnected(true)
+      }, DISCONNECTION_DISPLAY_DELAY)
+    }
+
     prevConnectedRef.current = isConnected
+
+    return () => {
+      if (disconnectTimerRef.current) {
+        clearTimeout(disconnectTimerRef.current)
+      }
+    }
   }, [isConnected])
 
   // Don't render anything when connected and no success message to show
@@ -46,6 +78,9 @@ export function ConnectionStatusBanner() {
       </div>
     )
   }
+
+  // Don't show disconnection banner until delay has passed
+  if (!showDisconnected) return null
 
   // Disconnected or reconnecting state
   return (
