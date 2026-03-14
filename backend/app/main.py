@@ -194,6 +194,9 @@ async def lifespan(app: FastAPI):
 
         except Exception as e:
             logger.error(f"✗ Startup initialization failed: {e}")
+            # Re-raise the exception to terminate startup
+            # This ensures the application does not start with a broken database state
+            raise
         finally:
             # Release lock
             redis_client.delete(STARTUP_LOCK_KEY)
