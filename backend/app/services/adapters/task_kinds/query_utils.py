@@ -71,59 +71,31 @@ _OWNED_IDS_SQL = text(
 """
 )
 
-_GROUP_BY_MEMBERS_FOR_ACCESSIBLE_SQL = text(
+# Optimized group chat queries using physical is_group_chat column
+# These queries avoid JOIN and JSON_EXTRACT for better performance
+
+# Query 1: User's own group chat tasks (no JOIN, uses indexed column)
+_OWNED_GROUP_CHAT_SQL = text(
     """
-    SELECT DISTINCT tm.resource_id
-    FROM resource_members tm
-    INNER JOIN tasks k ON k.id = tm.resource_id AND tm.resource_type = 'Task'
-    WHERE tm.status = 'approved'
-    AND k.kind = 'Task'
-    AND k.is_active = :is_active
-    AND k.namespace != 'system'
-    AND (k.user_id = :user_id OR tm.user_id = :user_id)
-    AND tm.copied_resource_id = 0
+    SELECT id
+    FROM tasks
+    WHERE kind = 'Task'
+    AND is_active = :is_active
+    AND namespace != 'system'
+    AND user_id = :user_id
+    AND is_group_chat = 1
 """
 )
 
-_GROUP_BY_MEMBERS_FOR_OWNED_SQL = text(
+# Query 2: Task IDs where user is a member (no JOIN, only queries resource_members)
+_MEMBER_TASK_IDS_SQL = text(
     """
-    SELECT DISTINCT tm.resource_id
-    FROM resource_members tm
-    INNER JOIN tasks k ON k.id = tm.resource_id AND tm.resource_type = 'Task'
-    WHERE tm.status = 'approved'
-    AND k.kind = 'Task'
-    AND k.is_active = :is_active
-    AND k.namespace != 'system'
-    AND k.user_id = :user_id
-    AND tm.copied_resource_id = 0
-"""
-)
-
-_EXPLICIT_GROUP_FOR_ACCESSIBLE_SQL = text(
-    """
-    SELECT DISTINCT k.id
-    FROM tasks k
-    LEFT JOIN resource_members tm ON k.id = tm.resource_id
-        AND tm.resource_type = 'Task'
-        AND tm.user_id = :user_id
-        AND tm.status = 'approved'
-    WHERE k.kind = 'Task'
-    AND k.is_active = :is_active
-    AND k.namespace != 'system'
-    AND (k.user_id = :user_id OR tm.id IS NOT NULL)
-    AND JSON_EXTRACT(k.json, '$.spec.is_group_chat') = true
-"""
-)
-
-_EXPLICIT_GROUP_FOR_OWNED_SQL = text(
-    """
-    SELECT DISTINCT k.id
-    FROM tasks k
-    WHERE k.kind = 'Task'
-    AND k.is_active = :is_active
-    AND k.namespace != 'system'
-    AND k.user_id = :user_id
-    AND JSON_EXTRACT(k.json, '$.spec.is_group_chat') = true
+    SELECT resource_id
+    FROM resource_members
+    WHERE resource_type = 'Task'
+    AND user_id = :user_id
+    AND status = 'approved'
+    AND copied_resource_id = 0
 """
 )
 
@@ -203,52 +175,49 @@ def get_owned_task_ids_and_total(
     return task_ids, total
 
 
-def _get_group_task_ids_by_membership(
-    db: Session, *, user_id: int, only_owned: bool
-) -> Set[int]:
-    sql = (
-        _GROUP_BY_MEMBERS_FOR_OWNED_SQL
-        if only_owned
-        else _GROUP_BY_MEMBERS_FOR_ACCESSIBLE_SQL
-    )
-    rows = _timed_rows(
-        db,
-        sql,
-        {"user_id": user_id, "is_active": TaskResource.STATE_ACTIVE},
-        "group_member_ids_owned" if only_owned else "group_member_ids_accessible",
-    )
-    return {row[0] for row in rows}
-
-
-def _get_explicit_group_task_ids(
-    db: Session, *, user_id: int, only_owned: bool
-) -> Set[int]:
-    sql = (
-        _EXPLICIT_GROUP_FOR_OWNED_SQL
-        if only_owned
-        else _EXPLICIT_GROUP_FOR_ACCESSIBLE_SQL
-    )
-    rows = _timed_rows(
-        db,
-        sql,
-        {"user_id": user_id, "is_active": TaskResource.STATE_ACTIVE},
-        "explicit_group_ids_owned" if only_owned else "explicit_group_ids_accessible",
-    )
-    return {row[0] for row in rows}
-
-
 def get_group_task_ids_for_accessible_user(db: Session, *, user_id: int) -> Set[int]:
-    """Return all accessible group task IDs for a user."""
-    return _get_group_task_ids_by_membership(
-        db, user_id=user_id, only_owned=False
-    ) | _get_explicit_group_task_ids(db, user_id=user_id, only_owned=False)
+    """Return all accessible group task IDs for a user.
+
+    Optimized version: uses two simple queries without JOIN,
+    merges results in application layer.
+
+    Query 1: User's own group chat tasks (uses indexed is_group_chat column)
+    Query 2: Task IDs where user is a member (queries resource_members only)
+    """
+    # Query 1: User's own group chat tasks (no JOIN)
+    owned_rows = _timed_rows(
+        db,
+        _OWNED_GROUP_CHAT_SQL,
+        {"user_id": user_id, "is_active": TaskResource.STATE_ACTIVE},
+        "owned_group_chat",
+    )
+    owned_ids = {row[0] for row in owned_rows}
+
+    # Query 2: Task IDs where user is a member (no JOIN)
+    member_rows = _timed_rows(
+        db,
+        _MEMBER_TASK_IDS_SQL,
+        {"user_id": user_id},
+        "member_task_ids",
+    )
+    member_task_ids = {row[0] for row in member_rows}
+
+    # Merge in application layer
+    return owned_ids | member_task_ids
 
 
 def get_group_task_ids_for_owned_tasks(db: Session, *, user_id: int) -> Set[int]:
-    """Return group task IDs that belong to the owner's task set."""
-    return _get_group_task_ids_by_membership(
-        db, user_id=user_id, only_owned=True
-    ) | _get_explicit_group_task_ids(db, user_id=user_id, only_owned=True)
+    """Return group task IDs that belong to the owner's task set.
+
+    Optimized version: uses indexed is_group_chat column instead of JSON_EXTRACT.
+    """
+    rows = _timed_rows(
+        db,
+        _OWNED_GROUP_CHAT_SQL,
+        {"user_id": user_id, "is_active": TaskResource.STATE_ACTIVE},
+        "owned_group_chat_only",
+    )
+    return {row[0] for row in rows}
 
 
 def load_tasks_by_ids(db: Session, task_ids: List[int]) -> List[TaskResource]:

@@ -222,7 +222,7 @@ export function ChatInputCard({
 
       {/* Group Chat Mention Hint - only show in group chat mode */}
       {isGroupChat && (
-        <div className="flex items-center gap-1.5 px-4 py-1.5 mb-1 text-text-muted text-xs">
+        <div className="flex items-center gap-1.5 pl-28 pr-4 py-1.5 mb-1 text-text-muted text-xs">
           <Sparkles className="h-3.5 w-3.5 flex-shrink-0" />
           <span>{t('groupChat.mentionHint')}</span>
         </div>
