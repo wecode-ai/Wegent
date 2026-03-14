@@ -4,7 +4,7 @@
 
 import asyncio
 import logging
-from typing import Any, Optional
+from typing import Any, Dict, List, Optional
 
 import orjson
 from redis import Redis as SyncRedis
@@ -60,6 +60,37 @@ class RedisCache:
         except Exception as e:
             logger.error(f"Error getting cache key {key}: {str(e)}")
             return None
+
+    async def mget(self, keys: List[str]) -> Dict[str, Any]:
+        """Get multiple values from cache in a single request.
+
+        Args:
+            keys: List of cache keys to retrieve
+
+        Returns:
+            Dict mapping keys to their values (missing keys are omitted)
+        """
+        if not keys:
+            return {}
+
+        try:
+            client = await self._get_client()
+            try:
+                values = await client.mget(keys)
+                result = {}
+                for key, data in zip(keys, values):
+                    if data is not None:
+                        try:
+                            result[key] = orjson.loads(data)
+                        except Exception:
+                            # If value was stored as plain bytes/string
+                            result[key] = data
+                return result
+            finally:
+                await client.aclose()
+        except Exception as e:
+            logger.error(f"Error getting cache keys {keys}: {str(e)}")
+            return {}
 
     def get_sync(self, key: str) -> Optional[Any]:
         """Get value from cache synchronously"""
