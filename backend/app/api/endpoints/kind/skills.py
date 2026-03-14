@@ -879,102 +879,156 @@ def list_unified_skills(
     Returns combined list with user/group skills first, then public skills.
     User/group skills with same name take precedence over public skills.
     """
+    from sqlalchemy import or_
+
     from app.services.group_permission import get_user_groups
 
     user_skills = []
     user_skill_names = set()
 
-    # Determine which namespaces to query based on scope
+    # Build optimized query based on scope
     if scope == "personal":
         # Personal scope: only query current user's skills in default namespace
-        namespaces_to_query = [("default", True)]  # (namespace, filter_by_user)
+        skill_kinds = (
+            db.query(Kind)
+            .filter(
+                Kind.user_id == current_user.id,
+                Kind.kind == "Skill",
+                Kind.namespace == "default",
+                Kind.is_active == True,
+            )
+            .order_by(Kind.created_at.desc())
+            .all()
+        )
     elif scope == "group":
         if group_name:
             # Group scope with specific group: query ALL skills in that namespace
-            namespaces_to_query = [(group_name, False)]  # Don't filter by user
+            skill_kinds = (
+                db.query(Kind)
+                .filter(
+                    Kind.kind == "Skill",
+                    Kind.namespace == group_name,
+                    Kind.is_active == True,
+                )
+                .order_by(Kind.created_at.desc())
+                .all()
+            )
         else:
             # Query all user's groups (excluding default)
             user_groups = get_user_groups(db, current_user.id)
-            namespaces_to_query = [(g, False) for g in user_groups if g != "default"]
-    else:  # scope == "all"
-        # Query personal + all user's groups
-        user_groups = get_user_groups(db, current_user.id)
-        namespaces_to_query = [("default", True)] + [
-            (g, False) for g in user_groups if g != "default"
-        ]
-
-    # Query skills from all relevant namespaces
-    for namespace_info in namespaces_to_query:
-        namespace, filter_by_user = namespace_info
-
-        if filter_by_user:
-            # Personal namespace: filter by current user
-            user_skills_list = skill_kinds_service.list_skills(
-                db=db, user_id=current_user.id, skip=0, limit=1000, namespace=namespace
-            )
-        else:
-            # Group namespace: get ALL skills in namespace (from any user)
-            user_skills_list = skill_kinds_service.list_skills_in_namespace(
-                db=db, namespace=namespace, skip=0, limit=1000
-            )
-
-        for skill in user_skills_list.items:
-            if skill.metadata.name not in user_skill_names:
-                user_skill_names.add(skill.metadata.name)
-                # Extract source information if available
-                source_info = None
-                if hasattr(skill.spec, "source") and skill.spec.source:
-                    source_info = {
-                        "type": (
-                            skill.spec.source.type
-                            if hasattr(skill.spec.source, "type")
-                            else "upload"
-                        ),
-                        "repo_url": (
-                            skill.spec.source.repo_url
-                            if hasattr(skill.spec.source, "repo_url")
-                            else None
-                        ),
-                        "skill_path": (
-                            skill.spec.source.skill_path
-                            if hasattr(skill.spec.source, "skill_path")
-                            else None
-                        ),
-                        "imported_at": (
-                            skill.spec.source.imported_at
-                            if hasattr(skill.spec.source, "imported_at")
-                            else None
-                        ),
-                    }
-                user_skills.append(
-                    {
-                        "id": int(skill.metadata.labels.get("id", 0)),
-                        "name": skill.metadata.name,
-                        "namespace": skill.metadata.namespace,
-                        "description": skill.spec.description,
-                        "displayName": getattr(skill.spec, "displayName", None),
-                        "version": skill.spec.version,
-                        "author": skill.spec.author,
-                        "tags": skill.spec.tags,
-                        "bindShells": skill.spec.bindShells,
-                        "is_active": True,
-                        "is_public": False,
-                        "user_id": int(skill.metadata.labels.get("user_id", 0)),
-                        "source": source_info,
-                        "created_at": None,
-                        "updated_at": None,
-                    }
+            group_namespaces = [g for g in user_groups if g != "default"]
+            if group_namespaces:
+                skill_kinds = (
+                    db.query(Kind)
+                    .filter(
+                        Kind.kind == "Skill",
+                        Kind.namespace.in_(group_namespaces),
+                        Kind.is_active == True,
+                    )
+                    .order_by(Kind.created_at.desc())
+                    .all()
                 )
+            else:
+                skill_kinds = []
+    else:  # scope == "all"
+        # Query personal + all user's groups in a single query
+        user_groups = get_user_groups(db, current_user.id)
+        group_namespaces = [g for g in user_groups if g != "default"]
 
-    # Get public skills
-    public_skills = public_skill_service.get_skills(db, skip=0, limit=1000)
+        # Build OR conditions for optimized single query
+        conditions = [
+            # Personal skills in default namespace
+            (Kind.user_id == current_user.id)
+            & (Kind.namespace == "default")
+        ]
+        if group_namespaces:
+            # Group skills in any of user's groups
+            conditions.append(Kind.namespace.in_(group_namespaces))
+
+        skill_kinds = (
+            db.query(Kind)
+            .filter(
+                Kind.kind == "Skill",
+                Kind.is_active == True,
+                or_(*conditions),
+            )
+            .order_by(Kind.created_at.desc())
+            .all()
+        )
+
+    # Convert Kind objects to response format
+    for kind in skill_kinds:
+        if kind.name not in user_skill_names:
+            user_skill_names.add(kind.name)
+            spec = kind.json.get("spec", {})
+
+            # Extract source information if available
+            source_data = spec.get("source")
+            source_info = None
+            if source_data:
+                source_info = {
+                    "type": source_data.get("type", "upload"),
+                    "repo_url": source_data.get("repo_url"),
+                    "skill_path": source_data.get("skill_path"),
+                    "imported_at": source_data.get("imported_at"),
+                }
+
+            user_skills.append(
+                {
+                    "id": kind.id,
+                    "name": kind.name,
+                    "namespace": kind.namespace,
+                    "description": spec.get("description", ""),
+                    "displayName": spec.get("displayName"),
+                    "version": spec.get("version"),
+                    "author": spec.get("author"),
+                    "tags": spec.get("tags"),
+                    "bindShells": spec.get("bindShells"),
+                    "is_active": True,
+                    "is_public": False,
+                    "user_id": kind.user_id,
+                    "source": source_info,
+                    "created_at": kind.created_at,
+                    "updated_at": kind.updated_at,
+                }
+            )
+
+    # Get public skills (user_id=0) - single query
+    public_skill_kinds = (
+        db.query(Kind)
+        .filter(
+            Kind.user_id == 0,
+            Kind.kind == "Skill",
+            Kind.namespace == "default",
+            Kind.is_active == True,
+        )
+        .order_by(Kind.created_at.desc())
+        .all()
+    )
 
     # Merge: public skills that don't exist in user's skills
-    for skill in public_skills:
-        if skill["name"] not in user_skill_names:
-            if "prompt" in skill:
-                del skill["prompt"]
-            user_skills.append(skill)
+    for kind in public_skill_kinds:
+        if kind.name not in user_skill_names:
+            spec = kind.json.get("spec", {})
+            user_skills.append(
+                {
+                    "id": kind.id,
+                    "name": kind.name,
+                    "namespace": kind.namespace,
+                    "description": spec.get("description", ""),
+                    "displayName": spec.get("displayName"),
+                    "version": spec.get("version"),
+                    "author": spec.get("author"),
+                    "tags": spec.get("tags"),
+                    "bindShells": spec.get("bindShells"),
+                    "is_active": True,
+                    "is_public": True,
+                    "user_id": kind.user_id,
+                    "source": None,
+                    "created_at": kind.created_at,
+                    "updated_at": kind.updated_at,
+                }
+            )
 
     # Apply pagination
     return user_skills[skip : skip + limit]
