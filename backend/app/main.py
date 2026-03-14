@@ -392,6 +392,7 @@ async def lifespan(app: FastAPI):
 
 
 def create_app():
+    _logger.info("hello world")
     # Toggle API docs/OpenAPI via environment (settings.ENABLE_API_DOCS, default True)
     enable_docs = settings.ENABLE_API_DOCS
     openapi_url = f"{settings.API_PREFIX}/openapi.json" if enable_docs else None
