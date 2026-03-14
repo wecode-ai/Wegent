@@ -360,64 +360,102 @@ show_docker_install_instructions() {
 }
 
 # Check if MySQL and Redis are running
+# Probe TCP connectivity to host:port, return 0 if reachable
+probe_tcp() {
+    local host=$1
+    local port=$2
+    # Try bash /dev/tcp first (no extra tools needed), fall back to nc
+    if (echo > /dev/tcp/"$host"/"$port") 2>/dev/null; then
+        return 0
+    elif command -v nc >/dev/null 2>&1 && nc -z -w2 "$host" "$port" 2>/dev/null; then
+        return 0
+    fi
+    return 1
+}
+
+# Extract host and port from DATABASE_URL (mysql+pymysql://user:pass@host:port/db)
+get_db_host_port() {
+    local url="${DATABASE_URL:-}"
+    if [ -z "$url" ]; then
+        # Fall back to compose defaults
+        echo "127.0.0.1 ${MYSQL_PORT:-3306}"
+        return
+    fi
+    local hostport
+    hostport=$(echo "$url" | sed -E 's|.*@([^/]+)/.*|\1|')
+    local host port
+    host=$(echo "$hostport" | cut -d: -f1)
+    port=$(echo "$hostport" | cut -d: -f2)
+    # Resolve docker container name to localhost when running outside docker
+    if [ "$host" != "localhost" ] && [ "$host" != "127.0.0.1" ]; then
+        host="127.0.0.1"
+    fi
+    echo "$host ${port:-3306}"
+}
+
+# Extract host and port from REDIS_URL (redis://:pass@host:port/db)
+get_redis_host_port() {
+    local url="${REDIS_URL:-}"
+    if [ -z "$url" ]; then
+        echo "127.0.0.1 ${REDIS_PORT:-6379}"
+        return
+    fi
+    local hostport
+    hostport=$(echo "$url" | sed -E 's|.*@([^/]+)(/.*)?$|\1|')
+    local host port
+    host=$(echo "$hostport" | cut -d: -f1)
+    port=$(echo "$hostport" | cut -d: -f2)
+    if [ "$host" != "localhost" ] && [ "$host" != "127.0.0.1" ]; then
+        host="127.0.0.1"
+    fi
+    echo "$host ${port:-6379}"
+}
+
 check_mysql_redis() {
-    local mysql_running=false
-    local redis_running=false
+    local db_host db_port redis_host redis_port
+    read -r db_host db_port <<< "$(get_db_host_port)"
+    read -r redis_host redis_port <<< "$(get_redis_host_port)"
 
-    # Check if MySQL container is running
-    if docker ps --format '{{.Names}}' | grep -q "^wegent-mysql$"; then
-        mysql_running=true
+    local mysql_reachable=false
+    local redis_reachable=false
+
+    if probe_tcp "$db_host" "$db_port"; then
+        mysql_reachable=true
+    fi
+    if probe_tcp "$redis_host" "$redis_port"; then
+        redis_reachable=true
     fi
 
-    # Check if Redis container is running
-    if docker ps --format '{{.Names}}' | grep -q "^wegent-redis$"; then
-        redis_running=true
-    fi
-
-    if [ "$mysql_running" = true ] && [ "$redis_running" = true ]; then
-        echo -e "${GREEN}✓ MySQL and Redis are already running${NC}"
+    if [ "$mysql_reachable" = true ] && [ "$redis_reachable" = true ]; then
+        echo -e "${GREEN}✓ MySQL ($db_host:$db_port) and Redis ($redis_host:$redis_port) are reachable${NC}"
         return 0
     fi
 
-    # Start MySQL and Redis if not running
-    echo -e "${YELLOW}MySQL or Redis is not running. Starting them with docker-compose...${NC}"
-    
+    # One or both are not reachable — try starting wegent's own containers
+    echo -e "${YELLOW}MySQL or Redis is not reachable. Starting them with docker-compose...${NC}"
+
     if ! docker compose up -d mysql redis; then
         echo -e "${RED}Error: Failed to start MySQL and Redis${NC}"
         echo -e "${YELLOW}Please check docker-compose.yml and ensure Docker is running${NC}"
         exit 1
     fi
 
-    # Wait for services to be healthy
+    # Wait until both ports become reachable (up to 60s)
     echo -e "${YELLOW}Waiting for MySQL and Redis to be ready...${NC}"
     local max_wait=60
     local waited=0
-    
+
     while [ $waited -lt $max_wait ]; do
-        local mysql_healthy=false
-        local redis_healthy=false
-        
-        # Check MySQL health
-        if docker inspect wegent-mysql --format='{{.State.Health.Status}}' 2>/dev/null | grep -q "healthy"; then
-            mysql_healthy=true
-        fi
-        
-        # Check Redis health
-        if docker inspect wegent-redis --format='{{.State.Health.Status}}' 2>/dev/null | grep -q "healthy"; then
-            redis_healthy=true
-        fi
-        
-        if [ "$mysql_healthy" = true ] && [ "$redis_healthy" = true ]; then
+        if probe_tcp "$db_host" "$db_port" && probe_tcp "$redis_host" "$redis_port"; then
             echo -e "${GREEN}✓ MySQL and Redis are ready${NC}"
             return 0
         fi
-        
         sleep 2
         waited=$((waited + 2))
         echo -e "  Waiting... (${waited}s/${max_wait}s)"
     done
-    
-    echo -e "${RED}Error: MySQL or Redis failed to become healthy within ${max_wait}s${NC}"
+
+    echo -e "${RED}Error: MySQL or Redis failed to become reachable within ${max_wait}s${NC}"
     echo -e "${YELLOW}You can check the logs with:${NC}"
     echo -e "  ${BLUE}docker logs wegent-mysql${NC}"
     echo -e "  ${BLUE}docker logs wegent-redis${NC}"
@@ -692,6 +730,7 @@ Options:
   -p, --port PORT               Frontend port (default: $DEFAULT_WEGENT_FRONTEND_PORT)
   -e, --executor-image IMG      Executor image (default: $DEFAULT_EXECUTOR_IMAGE)
   --socket-url URL              Socket direct url (auto-computed from BACKEND_PORT)
+  --backend                     Start backend services only (skip frontend)
   --init                        Interactive configuration initialization
   --stop                        Stop all services
   --restart                     Restart all services
@@ -727,6 +766,7 @@ Examples:
   $0 -e my-executor:latest              # Specify custom executor image
   $0 --socket-url http://192.168.1.100:8000  # Specify socket URL with your IP
   $0 --stop                             # Stop all services
+  $0 --backend                          # Start backend only (run frontend separately)
 
 EOF
 }
@@ -736,6 +776,7 @@ ACTION="start"
 
 # Track which variables were set via command line (to override config file)
 CLI_BACKEND_PORT=""
+CLI_BACKEND_ONLY=false
 CLI_CHAT_SHELL_PORT=""
 CLI_EXECUTOR_MANAGER_PORT=""
 CLI_WEGENT_FRONTEND_PORT=""
@@ -747,6 +788,10 @@ case $1 in
     -b|--backend-port)
         CLI_BACKEND_PORT="$2"
         shift 2
+        ;;
+    --backend)
+        CLI_BACKEND_ONLY=true
+        shift
         ;;
     -c|--chat-shell-port)
         CLI_CHAT_SHELL_PORT="$2"
@@ -885,7 +930,8 @@ check_socket_url_ip() {
 
 # Check all required ports
 check_all_ports() {
-    local ports=("$BACKEND_PORT:Backend" "$CHAT_SHELL_PORT:Chat Shell" "$EXECUTOR_MANAGER_PORT:Executor Manager" "$WEGENT_FRONTEND_PORT:Frontend")
+    local ports=("$BACKEND_PORT:Backend" "$CHAT_SHELL_PORT:Chat Shell" "$EXECUTOR_MANAGER_PORT:Executor Manager")
+    [ "$CLI_BACKEND_ONLY" = false ] && ports+=("$WEGENT_FRONTEND_PORT:Frontend")
     local conflicts=()
 
     for item in "${ports[@]}"; do
@@ -1031,7 +1077,7 @@ check_service_health() {
     local name=$1
     local port=$2
     local health_path=$3
-    local max_retries=15
+    local max_retries=${4:-15}
     local retry_interval=2
 
     echo -n "  Checking $name..."
@@ -1121,11 +1167,13 @@ start_services() {
     check_libmagic_installed
     echo -e "  ${GREEN}✓${NC} libmagic detected"
 
-    # Check Node.js
-    check_node_installed
-    local node_version=$(node --version 2>&1)
-    local npm_version=$(npm --version 2>&1)
-    echo -e "  ${GREEN}✓${NC} Node.js detected: $node_version (npm $npm_version)"
+    # Check Node.js (skipped in --backend mode)
+    if [ "$CLI_BACKEND_ONLY" = false ]; then
+        check_node_installed
+        local node_version=$(node --version 2>&1)
+        local npm_version=$(npm --version 2>&1)
+        echo -e "  ${GREEN}✓${NC} Node.js detected: $node_version (npm $npm_version)"
+    fi
 
     echo ""
     echo -e "${GREEN}Configuration:${NC}"
@@ -1163,10 +1211,12 @@ start_services() {
     check_python_env "chat_shell" "Chat Shell"
     echo ""
 
-    # Check frontend dependencies
-    echo -e "${BLUE}Checking frontend dependencies...${NC}"
-    check_frontend_dependencies
-    echo ""
+    # Check frontend dependencies (skipped in --backend mode)
+    if [ "$CLI_BACKEND_ONLY" = false ]; then
+        echo -e "${BLUE}Checking frontend dependencies...${NC}"
+        check_frontend_dependencies
+        echo ""
+    fi
 
     echo -e "${BLUE}Starting services...${NC}"
 
@@ -1200,53 +1250,62 @@ start_services() {
     start_service "executor_manager" "executor_manager" \
         "export EXECUTOR_IMAGE=$EXECUTOR_IMAGE && export TASK_API_DOMAIN=$TASK_API_DOMAIN && export DOCKER_HOST_ADDR=localhost && export NETWORK=wegent-network && export CALLBACK_HOST=$CALLBACK_HOST && source .venv/bin/activate && uvicorn main:app --reload --reload-dir . --reload-dir ../shared $RELOAD_EXCLUDE --host 0.0.0.0 --port $EXECUTOR_MANAGER_PORT --log-level debug"
 
-    # 4. Start Frontend (run in background)
-    echo -e "  Starting ${BLUE}frontend${NC}..."
-    cd "$SCRIPT_DIR/frontend"
+    # 4. Start Frontend (skipped in --backend mode)
+    if [ "$CLI_BACKEND_ONLY" = false ]; then
+        echo -e "  Starting ${BLUE}frontend${NC}..."
+        cd "$SCRIPT_DIR/frontend"
 
-    # Set environment variables (use same names as docker-compose)
-    export RUNTIME_INTERNAL_API_URL=http://localhost:$BACKEND_PORT
-    export RUNTIME_SOCKET_DIRECT_URL=$WEGENT_SOCKET_URL
+        # Set environment variables (use same names as docker-compose)
+        export RUNTIME_INTERNAL_API_URL=http://localhost:$BACKEND_PORT
+        export RUNTIME_SOCKET_DIRECT_URL=$WEGENT_SOCKET_URL
 
-    # Build the frontend startup command
-    # In WSL, use full path to node to ensure we use the correct nvm-installed version
-    # instead of potentially using Windows node or a different version
-    local frontend_cmd="PORT=$WEGENT_FRONTEND_PORT npm run dev"
-    
-    if is_wsl; then
-        # Get the full path to node from the current shell (which has nvm loaded)
-        local node_path=$(command -v node)
-        if [ -n "$node_path" ]; then
-            # Set PATH to use the nvm node directory
-            local node_dir=$(dirname "$node_path")
-            frontend_cmd="PATH=$node_dir:\$PATH $frontend_cmd"
+        # Build the frontend startup command
+        # In WSL, use full path to node to ensure we use the correct nvm-installed version
+        # instead of potentially using Windows node or a different version
+        local frontend_cmd="PORT=$WEGENT_FRONTEND_PORT npm run dev"
+
+        if is_wsl; then
+            # Get the full path to node from the current shell (which has nvm loaded)
+            local node_path=$(command -v node)
+            if [ -n "$node_path" ]; then
+                # Set PATH to use the nvm node directory
+                local node_dir=$(dirname "$node_path")
+                frontend_cmd="PATH=$node_dir:\$PATH $frontend_cmd"
+            fi
         fi
-    fi
 
-    # Start frontend in background
-    nohup bash -c "$frontend_cmd" > "$PID_DIR/frontend.log" 2>&1 &
-    local frontend_pid=$!
-    echo $frontend_pid > "$PID_DIR/frontend.pid"
+        # Start frontend in background
+        nohup bash -c "$frontend_cmd" > "$PID_DIR/frontend.log" 2>&1 &
+        local frontend_pid=$!
+        echo $frontend_pid > "$PID_DIR/frontend.pid"
 
-    sleep 3
+        sleep 3
 
-    if kill -0 "$frontend_pid" 2>/dev/null; then
-        echo -e "    ${GREEN}✓${NC} frontend started (PID: $frontend_pid)"
+        if kill -0 "$frontend_pid" 2>/dev/null; then
+            echo -e "    ${GREEN}✓${NC} frontend started (PID: $frontend_pid)"
+        else
+            echo -e "    ${RED}✗${NC} frontend failed to start, check log: $PID_DIR/frontend.log"
+        fi
+
+        cd "$SCRIPT_DIR"
     else
-        echo -e "    ${RED}✗${NC} frontend failed to start, check log: $PID_DIR/frontend.log"
+        echo -e "  ${YELLOW}--backend mode: skipping frontend${NC}"
     fi
-
-    cd "$SCRIPT_DIR"
 
     echo ""
     echo -e "${BLUE}Performing health checks...${NC}"
 
     # Health check for all services
     local failed=0
-    check_service_health "backend" $BACKEND_PORT "/health" || failed=1
+    # Backend needs more time: runs DB migrations + YAML init + Celery startup (~90s)
+    check_service_health "backend" $BACKEND_PORT "/health" 60 || failed=1
     check_service_health "chat_shell" $CHAT_SHELL_PORT "/health" || failed=1
     check_service_health "executor_manager" $EXECUTOR_MANAGER_PORT "/health" || failed=1
-    check_service_health "frontend" $WEGENT_FRONTEND_PORT "" || failed=1
+    # Frontend health check (skipped in --backend mode)
+    if [ "$CLI_BACKEND_ONLY" = false ]; then
+        # Frontend needs more time: Next.js Turbopack compilation (~60s)
+        check_service_health "frontend" $WEGENT_FRONTEND_PORT "" 60 || failed=1
+    fi
 
     echo ""
     if [ $failed -eq 1 ]; then
@@ -1267,11 +1326,11 @@ start_services() {
     echo ""
     echo -e "${GREEN}🌐 Access URLs:${NC}"
     echo -e "  Local Frontend:  ${BLUE}http://localhost:$WEGENT_FRONTEND_PORT${NC}"
-    echo -e "  Remote Frontend: ${BLUE}http://$(get_local_ip):$WEGENT_FRONTEND_PORT${NC}"
+    echo -e "  Remote Frontend: ${BLUE}http://$LOCAL_IP:$WEGENT_FRONTEND_PORT${NC}"
     echo -e "  Socket URL:      ${BLUE}$WEGENT_SOCKET_URL${NC}"
     echo ""
     echo -e "${YELLOW}📋 Share with others for remote access:${NC}"
-    echo -e "  Frontend URL: ${BLUE}http://$(get_local_ip):$WEGENT_FRONTEND_PORT${NC}"
+    echo -e "  Frontend URL: ${BLUE}http://$LOCAL_IP:$WEGENT_FRONTEND_PORT${NC}"
     echo -e "  Socket URL:   ${BLUE}$WEGENT_SOCKET_URL${NC}"
     echo ""
     echo -e "${YELLOW}Common Commands:${NC}"
