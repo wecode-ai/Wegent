@@ -10,18 +10,18 @@ import { useSocket } from '@/contexts/SocketContext'
 import { useTranslation } from '@/hooks/useTranslation'
 
 /** Delay before showing disconnection banner (ms) */
-const DISCONNECTION_DISPLAY_DELAY = 3000
+const DISCONNECTION_DISPLAY_DELAY = 5000
 
 /**
  * ConnectionStatusBanner Component
  *
  * Displays WebSocket connection status to users in the chat input area.
  * Shows different states:
- * - Disconnected: When connection is lost for more than 3 seconds
- * - Reconnecting: During reconnection attempts with attempt count (after 3s delay)
+ * - Disconnected: When connection is lost for more than 5 seconds
+ * - Reconnecting: During reconnection attempts with attempt count (after 5s delay)
  * - Reconnected: Briefly shown after successful reconnection (auto-hides after 3s)
  *
- * The 3-second delay prevents UI flicker during brief network interruptions.
+ * The 5-second delay prevents UI flicker during brief network interruptions.
  */
 export function ConnectionStatusBanner() {
   const { isConnected, reconnectAttempts } = useSocket()
@@ -39,18 +39,18 @@ export function ConnectionStatusBanner() {
     }
 
     if (isConnected) {
+      // Detect state change from disconnected to connected (reconnection success)
+      // Only show "reconnected" message if the disconnection banner was already shown
+      // This prevents showing "reconnected" for brief disconnections under 5 seconds
+      if (!prevConnectedRef.current && showDisconnected) {
+        setShowReconnected(true)
+        setTimeout(() => setShowReconnected(false), 3000)
+      }
+
       // Connected: hide disconnection banner
       setShowDisconnected(false)
-
-      // Detect state change from disconnected to connected (reconnection success)
-      if (!prevConnectedRef.current) {
-        setShowReconnected(true)
-        const timer = setTimeout(() => setShowReconnected(false), 3000)
-        prevConnectedRef.current = isConnected
-        return () => clearTimeout(timer)
-      }
     } else {
-      // Disconnected: show banner only after 3 seconds delay
+      // Disconnected: show banner only after 5 seconds delay
       // This prevents UI flicker during brief network interruptions
       disconnectTimerRef.current = setTimeout(() => {
         setShowDisconnected(true)
@@ -64,7 +64,7 @@ export function ConnectionStatusBanner() {
         clearTimeout(disconnectTimerRef.current)
       }
     }
-  }, [isConnected])
+  }, [isConnected, showDisconnected])
 
   // Don't render anything when connected and no success message to show
   if (isConnected && !showReconnected) return null
