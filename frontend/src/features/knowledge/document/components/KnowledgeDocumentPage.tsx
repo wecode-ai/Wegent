@@ -17,6 +17,7 @@ import {
   BookOpen,
   FolderOpen,
   Building2,
+  Settings,
 } from 'lucide-react'
 import { Spinner } from '@/components/ui/spinner'
 import { Card } from '@/components/ui/card'
@@ -706,8 +707,14 @@ function GroupKnowledgeContent({
   onCreateGroupChat,
 }: GroupKnowledgeContentProps) {
   const { t } = useTranslation()
+  const router = useRouter()
   const [selectedGroup, setSelectedGroup] = useState<Group | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
+
+  // Navigate to group manager page
+  const handleManageGroups = useCallback(() => {
+    router.push('/settings?tab=group-manager')
+  }, [router])
 
   // Filter out organization-level groups, then filter based on search query
   const filteredGroups = useMemo(() => {
@@ -761,7 +768,14 @@ function GroupKnowledgeContent({
     return (
       <div className="flex flex-col items-center justify-center py-12 text-text-secondary">
         <Users className="w-12 h-12 mb-4 opacity-50" />
-        <p className="text-sm">{t('knowledge:document.noGroupHint')}</p>
+        <p className="text-sm mb-4">{t('knowledge:document.noGroupHint')}</p>
+        <button
+          onClick={handleManageGroups}
+          className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-primary hover:bg-primary/10 rounded-md transition-colors"
+        >
+          <Settings className="w-4 h-4" />
+          {t('knowledge:document.manageGroups')}
+        </button>
       </div>
     )
   }
@@ -786,17 +800,27 @@ function GroupKnowledgeContent({
   // Show group cards grid - centered
   return (
     <div className="flex flex-col items-center">
-      {/* Search bar */}
+      {/* Search bar with manage groups button */}
       <div className="mb-4 w-full max-w-4xl">
-        <div className="relative w-full max-w-md mx-auto">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" />
-          <input
-            type="text"
-            className="w-full h-9 pl-9 pr-3 text-sm bg-surface border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
-            placeholder={t('knowledge:document.searchGroups')}
-            value={searchQuery}
-            onChange={e => setSearchQuery(e.target.value)}
-          />
+        <div className="flex items-center justify-center gap-2 w-full max-w-md mx-auto">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" />
+            <input
+              type="text"
+              className="w-full h-9 pl-9 pr-3 text-sm bg-surface border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
+              placeholder={t('knowledge:document.searchGroups')}
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+            />
+          </div>
+          <button
+            onClick={handleManageGroups}
+            className="flex items-center gap-1.5 h-9 px-3 text-sm font-medium text-text-secondary hover:text-primary hover:bg-primary/10 border border-border rounded-md transition-colors whitespace-nowrap"
+            title={t('knowledge:document.manageGroups')}
+          >
+            <Settings className="w-4 h-4" />
+            <span className="hidden sm:inline">{t('knowledge:document.manageGroups')}</span>
+          </button>
         </div>
       </div>
 
