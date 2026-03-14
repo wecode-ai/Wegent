@@ -23,7 +23,7 @@ import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContex
 import { useTaskContext } from '@/features/tasks/contexts/taskContext'
 import { paths } from '@/config/paths'
 import { useDevices } from '@/contexts/DeviceContext'
-import { teamService } from '@/features/tasks/service/teamService'
+import { useTeamContext } from '@/contexts/TeamContext'
 import { Monitor, WifiOff } from 'lucide-react'
 import { ChatArea } from '@/features/tasks/components/chat'
 import { TaskParamSync, DeviceTaskSync, DeviceParamSync } from '@/features/tasks/components/params'
@@ -37,8 +37,8 @@ export default function DeviceChatPage() {
     useTaskContext()
   const isMobile = useIsMobile()
 
-  // Team state from service (needed for ChatArea)
-  const { teams, isTeamsLoading, refreshTeams } = teamService.useTeams()
+  // Team state from context (centralized to avoid duplicate API calls)
+  const { teams, isTeamsLoading, refreshTeams } = useTeamContext()
 
   // Device state
   const { devices, selectedDeviceId, setSelectedDeviceId } = useDevices()
