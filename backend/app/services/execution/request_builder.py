@@ -81,7 +81,6 @@ class TaskRequestBuilder:
         # Session
         history_limit: Optional[int] = None,
         new_session: bool = False,
-        previous_bot_id: Optional[int] = None,
         attachments: Optional[List[dict]] = None,
         # Subscription
         is_subscription: bool = False,
@@ -154,10 +153,8 @@ class TaskRequestBuilder:
 
         # Build user info with git_domain to match correct git account
         user_info = self._build_user_info(user, git_domain)
+
         # Get model config with full resolution (decryption, placeholder replacement)
-        # In group chats, use task owner's user_id for model lookup to ensure
-        # group members can access the task owner's private models
-        is_group_chat = self._is_group_chat(task)
         model_config = self._get_model_config(
             bot=bot,
             user_id=user.id,
@@ -166,9 +163,6 @@ class TaskRequestBuilder:
             force_override=force_override,
             task_id=task.id,
             team_id=team.id,
-            task_user_id=(
-                task.user_id if is_group_chat else None
-            ),  # Only pass task owner's user_id for group chats
         )
 
         # Get base system prompt from Ghost
@@ -232,27 +226,8 @@ class TaskRequestBuilder:
         # Get collaboration model
         collaboration_model = team_crd.spec.collaborationModel or "solo"
 
-        # Determine if user has RestrictedObserver role for all requested knowledge bases.
-        # RestrictedObserver users can only use KB via RAG search, not browse documents.
-        is_restricted_observer = self._is_restricted_observer_for_all_kbs(
-            knowledge_base_ids, user.id
-        )
         # Determine if group chat
         is_group_chat = self._is_group_chat(task)
-
-        # Auto-determine new_session for pipeline mode
-        # In pipeline mode, new_session should be True when stage changes (different bot)
-        # This ensures each pipeline stage has independent context
-        if collaboration_model == "pipeline" and previous_bot_id is not None:
-            current_bot_id = bot.id if bot else None
-            if previous_bot_id != current_bot_id:
-                new_session = True
-                logger.info(
-                    "[TaskRequestBuilder] Pipeline: stage changed "
-                    "(previous_bot_id=%s, current_bot_id=%s), using new session",
-                    previous_bot_id,
-                    current_bot_id,
-                )
 
         return ExecutionRequest(
             task_id=task.id,
@@ -280,7 +255,6 @@ class TaskRequestBuilder:
             document_ids=document_ids,
             table_contexts=[],
             is_user_selected_kb=is_user_selected_kb,
-            is_restricted_observer=is_restricted_observer,
             workspace=workspace,
             # Git fields extracted from workspace for executor compatibility
             git_url=git_url,
@@ -301,29 +275,6 @@ class TaskRequestBuilder:
             system_mcp_config=system_mcp_config,
             trace_context=trace_context,
             executor_name=subtask.executor_name,
-        )
-
-    # =========================================================================
-    # RestrictedObserver Role Detection
-    # =========================================================================
-
-    def _is_restricted_observer_for_all_kbs(
-        self, knowledge_base_ids: Optional[List[int]], user_id: int
-    ) -> bool:
-        """Check if user holds RestrictedObserver role for ALL requested knowledge bases.
-
-        Returns False when there are no knowledge bases, so callers can safely
-        pass the result into ``is_restricted_observer`` without extra guards.
-        """
-        if not knowledge_base_ids:
-            return False
-
-        from app.services.share import knowledge_share_service
-
-        # Use the shared helper to check if user is RestrictedObserver for any KB
-        # If they are RestrictedObserver for ANY KB, we treat it as restricted for all
-        return knowledge_share_service.is_user_restricted_observer_for_any_kb(
-            self.db, user_id, knowledge_base_ids
         )
 
     # =========================================================================
@@ -427,7 +378,6 @@ class TaskRequestBuilder:
         force_override: bool,
         task_id: int,
         team_id: int,
-        task_user_id: int | None = None,
     ) -> dict[str, Any]:
         """Get model configuration for the bot.
 
@@ -440,13 +390,12 @@ class TaskRequestBuilder:
 
         Args:
             bot: Bot Kind object
-            user_id: User ID (for placeholder replacement)
+            user_id: User ID
             user_name: User name for placeholder replacement
             override_model_name: Optional model name override
             force_override: Whether override takes priority
             task_id: Task ID for placeholder replacement
             team_id: Team ID for placeholder replacement
-            task_user_id: Task owner's user ID (for model lookup in group chats)
 
         Returns:
             Model configuration dictionary
@@ -456,22 +405,14 @@ class TaskRequestBuilder:
             get_model_config_for_bot,
         )
 
-        # Determine which user_id to use for model lookup
-        # In group chats, use task owner's user_id to find their private models
-        # This ensures group members can use the task owner's models
-        model_lookup_user_id = task_user_id if task_user_id is not None else user_id
-
-        logger.info(
-            f"[_get_model_config] Model lookup: using user_id={model_lookup_user_id} "
-            f"(current_user={user_id}, task_user={task_user_id})"
-        )
-
         # Get base model config (extracts from DB and handles env placeholders + decryption)
-        # Use task_user_id (if available) to support group chats where task owner has the model
+        # Use user_id instead of team.user_id to support:
+        # 1. Flow tasks where Flow owner may have different models than Team owner
+        # 2. User's private models should be accessible based on the current user
         model_config = get_model_config_for_bot(
             self.db,
             bot,
-            model_lookup_user_id,
+            user_id,
             override_model_name=override_model_name,
             force_override=force_override,
         )
@@ -501,7 +442,7 @@ class TaskRequestBuilder:
         if model_config.get("modelType") in ("video", "image"):
             secondary_model_config = self._get_secondary_model_config(
                 bot=bot,
-                user_id=model_lookup_user_id,  # Use same user_id as primary model
+                user_id=user_id,
                 user_name=user_name,
                 task_id=task_id,
                 team_id=team_id,
@@ -620,30 +561,9 @@ class TaskRequestBuilder:
         """
         from app.services.chat.config.model_resolver import get_bot_system_prompt
 
-        # Get team member prompt from matching member if not provided
-        # In pipeline mode, each bot has its own member with a specific prompt
+        # Get team member prompt from first member if not provided
         if team_member_prompt is None and team_crd.spec.members:
-            # Find the member that matches the current bot
-            for member in team_crd.spec.members:
-                if (
-                    member.botRef.name == bot.name
-                    and member.botRef.namespace == bot.namespace
-                ):
-                    team_member_prompt = member.prompt
-                    logger.debug(
-                        "[TaskRequestBuilder] Found matching member prompt for bot=%s: %s",
-                        bot.name,
-                        team_member_prompt[:50] if team_member_prompt else None,
-                    )
-                    break
-            # Fallback to first member if no match found (for backward compatibility)
-            if team_member_prompt is None:
-                team_member_prompt = team_crd.spec.members[0].prompt
-                logger.debug(
-                    "[TaskRequestBuilder] No matching member found for bot=%s, "
-                    "using first member prompt",
-                    bot.name,
-                )
+            team_member_prompt = team_crd.spec.members[0].prompt
 
         # Get base system prompt (no enhancements applied here)
         return get_bot_system_prompt(
