@@ -143,6 +143,8 @@ export interface Team {
   bind_mode?: TaskType[] // Allowed modes for this team
   icon?: string // Icon ID from preset icon library
   requires_workspace?: boolean // Whether this team requires a workspace/repository (null = auto-infer from shell)
+  /** Modes this team is the default for (e.g., ['chat', 'code']) - computed from env config */
+  default_for_modes?: string[]
   user?: {
     user_name: string
   }
