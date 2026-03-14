@@ -57,9 +57,42 @@ async def get_feature_flags(
 
 
 @router.get("/me", response_model=UserInDB)
-async def read_current_user(current_user: User = Depends(security.get_current_user)):
-    """Get current user information"""
-    return current_user
+async def read_current_user(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """Get current user information.
+
+    For the initial 'admin' user, also returns admin_setup_completed status.
+    """
+    # Check admin setup status only for the initial 'admin' user
+    # This is used by GlobalAdminSetupWizard to show setup wizard on first login
+    admin_setup_completed = None
+    if current_user.user_name == "admin":
+        setup_config = (
+            db.query(SystemConfig)
+            .filter(SystemConfig.config_key == ADMIN_SETUP_CONFIG_KEY)
+            .first()
+        )
+        if setup_config and setup_config.config_value:
+            admin_setup_completed = setup_config.config_value.get("completed", False)
+        else:
+            admin_setup_completed = False
+
+    # Create response with admin_setup_completed field
+    return UserInDB(
+        id=current_user.id,
+        user_name=current_user.user_name,
+        email=current_user.email,
+        is_active=current_user.is_active,
+        git_info=current_user.git_info,
+        preferences=current_user.preferences,
+        role=current_user.role,
+        auth_source=current_user.auth_source,
+        created_at=current_user.created_at,
+        updated_at=current_user.updated_at,
+        admin_setup_completed=admin_setup_completed,
+    )
 
 
 @router.put("/me", response_model=UserInDB)
