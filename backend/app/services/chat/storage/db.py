@@ -7,6 +7,13 @@
 Note: This module is responsible ONLY for database operations.
 WebSocket notifications should be handled by the emitter chain (WebSocketResultEmitter),
 not by database operations. This follows the Single Responsibility Principle.
+
+This module also provides:
+- Thread pool executor for running sync DB operations without blocking event loop
+- Context manager for database sessions with auto-rollback
+- Utility function for running sync functions in executor
+
+Other modules can use run_sync_in_executor() to wrap their sync DB functions.
 """
 
 import asyncio
@@ -14,7 +21,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import datetime
-from typing import Any, Callable, Generator, TypeVar
+from typing import Any, Callable, Dict, Generator, Optional, TypeVar
 
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
@@ -26,7 +33,8 @@ from app.services.adapters.collaboration_strategy import CollaborationStrategy
 logger = logging.getLogger(__name__)
 
 # Thread pool for database operations
-_db_executor = ThreadPoolExecutor(max_workers=10)
+# Increased max_workers to handle concurrent DB operations across the application
+_db_executor = ThreadPoolExecutor(max_workers=20)
 
 # Terminal statuses that mark completion
 _TERMINAL_STATUSES = frozenset(["COMPLETED", "FAILED", "CANCELLED"])
@@ -314,3 +322,97 @@ class DatabaseHandler:
 
 # Global database handler instance
 db_handler = DatabaseHandler()
+
+
+# ============================================================
+# Public utility functions for other modules
+# ============================================================
+
+
+async def run_sync_in_executor(func: Callable[..., T], *args: Any) -> T:
+    """
+    Run a synchronous function in the shared thread pool executor.
+
+    This utility allows other modules to run their sync database operations
+    without blocking the async event loop. The function runs in a shared
+    thread pool with other database operations.
+
+    Usage:
+        from app.services.chat.storage.db import run_sync_in_executor
+
+        async def my_async_function():
+            result = await run_sync_in_executor(my_sync_db_function, arg1, arg2)
+            return result
+
+    Args:
+        func: Synchronous function to execute
+        *args: Arguments to pass to the function
+
+    Returns:
+        The return value of the synchronous function
+    """
+    return await asyncio.get_event_loop().run_in_executor(_db_executor, func, *args)
+
+
+def get_db_session() -> Generator[Session, None, None]:
+    """
+    Get a database session context manager.
+
+    This is a public alias for _db_session() for use by other modules.
+
+    Usage:
+        from app.services.chat.storage.db import get_db_session
+
+        def my_sync_function():
+            with get_db_session() as db:
+                # do database operations
+                pass
+
+    Returns:
+        Context manager yielding a database session
+    """
+    return _db_session()
+
+
+def with_session_in_executor(func: Callable[..., T]) -> Callable[..., T]:
+    """
+    Decorator that wraps a sync function (db: Session, ...) -> T into an async function.
+
+    The decorated function will:
+    1. Create a new database session
+    2. Run the original function in a thread pool executor
+    3. Handle commit/rollback automatically
+    4. Close the session when done
+
+    The original sync function MUST have `db: Session` as its first parameter.
+
+    Usage:
+        from app.services.chat.storage.db import with_session_in_executor
+
+        @with_session_in_executor
+        def can_access_task_sync(db: Session, user_id: int, task_id: int) -> bool:
+            task = db.query(Task).filter(Task.id == task_id).first()
+            return task is not None and task.user_id == user_id
+
+        # Now can_access_task_sync can be called as an async function:
+        result = await can_access_task_sync(user_id, task_id)
+
+    Args:
+        func: Synchronous function with signature (db: Session, *args, **kwargs) -> T
+
+    Returns:
+        Async function with signature (*args, **kwargs) -> T
+    """
+    import functools
+
+    @functools.wraps(func)
+    async def wrapper(*args: Any, **kwargs: Any) -> T:
+        def run_with_session() -> T:
+            with _db_session() as db:
+                return func(db, *args, **kwargs)
+
+        return await asyncio.get_event_loop().run_in_executor(
+            _db_executor, run_with_session
+        )
+
+    return wrapper
