@@ -81,6 +81,7 @@ class TaskRequestBuilder:
         # Session
         history_limit: Optional[int] = None,
         new_session: bool = False,
+        previous_bot_id: Optional[int] = None,
         attachments: Optional[List[dict]] = None,
         # Subscription
         is_subscription: bool = False,
@@ -231,11 +232,23 @@ class TaskRequestBuilder:
         # Get collaboration model
         collaboration_model = team_crd.spec.collaborationModel or "solo"
 
-        # Determine if user has RestrictedObserver role for all requested knowledge bases.
-        # RestrictedObserver users can only use KB via RAG search, not browse documents.
-        is_restricted_observer = self._is_restricted_observer_for_all_kbs(
-            knowledge_base_ids, user.id
-        )
+        # Determine if group chat
+        is_group_chat = self._is_group_chat(task)
+
+        # Auto-determine new_session for pipeline mode
+        # In pipeline mode, new_session should be True when stage changes (different bot)
+        # This ensures each pipeline stage has independent context
+        if collaboration_model == "pipeline" and previous_bot_id is not None:
+            current_bot_id = bot.id if bot else None
+            if previous_bot_id != current_bot_id:
+                new_session = True
+                logger.info(
+                    "[TaskRequestBuilder] Pipeline: stage changed "
+                    "(previous_bot_id=%s, current_bot_id=%s), using new session",
+                    previous_bot_id,
+                    current_bot_id,
+                )
+
         return ExecutionRequest(
             task_id=task.id,
             subtask_id=subtask.id,
@@ -602,9 +615,30 @@ class TaskRequestBuilder:
         """
         from app.services.chat.config.model_resolver import get_bot_system_prompt
 
-        # Get team member prompt from first member if not provided
+        # Get team member prompt from matching member if not provided
+        # In pipeline mode, each bot has its own member with a specific prompt
         if team_member_prompt is None and team_crd.spec.members:
-            team_member_prompt = team_crd.spec.members[0].prompt
+            # Find the member that matches the current bot
+            for member in team_crd.spec.members:
+                if (
+                    member.botRef.name == bot.name
+                    and member.botRef.namespace == bot.namespace
+                ):
+                    team_member_prompt = member.prompt
+                    logger.debug(
+                        "[TaskRequestBuilder] Found matching member prompt for bot=%s: %s",
+                        bot.name,
+                        team_member_prompt[:50] if team_member_prompt else None,
+                    )
+                    break
+            # Fallback to first member if no match found (for backward compatibility)
+            if team_member_prompt is None:
+                team_member_prompt = team_crd.spec.members[0].prompt
+                logger.debug(
+                    "[TaskRequestBuilder] No matching member found for bot=%s, "
+                    "using first member prompt",
+                    bot.name,
+                )
 
         # Get base system prompt (no enhancements applied here)
         return get_bot_system_prompt(
@@ -1367,6 +1401,13 @@ class TaskRequestBuilder:
                             # Convert "headers" to "auth" for chat_shell compatibility
                             if "headers" in server_config:
                                 server_entry["auth"] = server_config["headers"]
+                            # Include stdio-specific fields (command, args, env)
+                            if "command" in server_config:
+                                server_entry["command"] = server_config["command"]
+                            if "args" in server_config:
+                                server_entry["args"] = server_config["args"]
+                            if "env" in server_config:
+                                server_entry["env"] = server_config["env"]
                             bot_mcp_servers.append(server_entry)
 
         # Merge system and bot MCP servers (bot takes precedence)
@@ -1514,8 +1555,14 @@ class TaskRequestBuilder:
             server: Server config dict with 'url' and optional 'headers'
 
         Returns:
-            True if server responded, False on connection failure
+            True if server responded or is stdio type, False on connection failure
         """
+        server_type = server.get("type", "").lower()
+
+        # Skip reachability check for stdio servers (they run locally via command)
+        if server_type == "stdio":
+            return True
+
         url = server.get("url", "")
         if not url:
             return False

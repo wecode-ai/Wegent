@@ -20,3 +20,5 @@ public/fonts/*.ttf
 public/fonts/*.otf
 public/fonts/*.woff
 public/fonts/*.woff2
+# Google Sans woff2 files (downloaded at build time, not checked in)
+public/fonts/google-sans/

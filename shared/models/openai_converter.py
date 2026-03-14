@@ -107,6 +107,13 @@ class OpenAIRequestConverter:
                 auth = server.get("auth") or server.get("headers")
                 if auth:
                     tool["server_auth"] = auth
+                # Include stdio-specific fields (command, args, env)
+                if "command" in server:
+                    tool["command"] = server["command"]
+                if "args" in server:
+                    tool["args"] = server["args"]
+                if "env" in server:
+                    tool["env"] = server["env"]
                 tools.append(tool)
 
         # Build the OpenAI format request
@@ -180,6 +187,9 @@ class OpenAIRequestConverter:
             "validation_params": request.validation_params,
             "sandbox_metadata": request.sandbox_metadata,
             "callback_url": request.callback_url,
+            # Pipeline mode session control
+            "new_session": request.new_session,
+            "collaboration_model": request.collaboration_model,
         }
         openai_request["metadata"] = metadata
 
@@ -246,6 +256,13 @@ class OpenAIRequestConverter:
                 auth = tool.get("server_auth")
                 if auth:
                     server["auth"] = auth
+                # Include stdio-specific fields (command, args, env)
+                if "command" in tool:
+                    server["command"] = tool["command"]
+                if "args" in tool:
+                    server["args"] = tool["args"]
+                if "env" in tool:
+                    server["env"] = tool["env"]
                 mcp_servers.append(server)
 
         # Get user dict directly from metadata (passed from from_execution_request)
@@ -319,6 +336,9 @@ class OpenAIRequestConverter:
             validation_params=metadata.get("validation_params"),
             sandbox_metadata=metadata.get("sandbox_metadata"),
             callback_url=metadata.get("callback_url"),
+            # Pipeline mode session control
+            new_session=metadata.get("new_session", False),
+            collaboration_model=metadata.get("collaboration_model", "single"),
         )
 
 

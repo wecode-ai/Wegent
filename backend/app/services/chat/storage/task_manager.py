@@ -69,6 +69,10 @@ class TaskCreationParams:
     # Pipeline mode: specific bot_ids for the next stage
     # When set, only create subtask for these bots instead of all team members
     pipeline_bot_ids: Optional[List[int]] = None
+    # Pipeline mode: previous stage's bot_id for session management
+    # When set and different from current bot_id, a new session will be created
+    # This ensures each pipeline stage has independent context
+    previous_bot_id: Optional[int] = None
     # Device ID for local device execution (saved at task creation to avoid race condition)
     device_id: Optional[str] = None
     # Video generation parameters (user-selected at generation time)

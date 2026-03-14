@@ -33,3 +33,31 @@
 .animate-slide {
   animation: slide-horizontal 1.5s ease-in-out infinite;
 }
+
+.wmde-markdown,
+.markdown-content,
+.enhanced-markdown,
+.smart-text-line,
+.chat-message-prompt {
+  font-family:
+    'Google Sans Flex',
+    'Google Sans',
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    Roboto,
+    'Helvetica Neue',
+    Arial,
+    'PingFang SC',
+    'Hiragino Sans GB',
+    'Microsoft YaHei',
+    sans-serif;
+  font-size: 16px;
+  font-weight: 400;
+  line-height: 28px;
+  letter-spacing: normal;
+}
+
+.smart-text-line {
+  min-height: 28px;
+}

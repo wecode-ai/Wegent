@@ -5,6 +5,97 @@
   "attachment": {
     "characters": "characters"
   },
+  "remote_workspace": {
+    "button": "View the task files",
+    "unavailable": "Remote session unavailable",
+    "reason_loading": "Checking remote workspace status...",
+    "reason_status_check_failed": "Failed to check remote workspace status",
+    "reason_not_connected": "Remote session is not connected yet",
+    "reason_sandbox_not_running": "Remote sandbox is not running",
+    "reason_booting": "Remote workspace is booting",
+    "reason_warming": "Remote workspace is warming up",
+    "reason_starting": "Remote workspace is starting",
+    "chat_shell_disabled": "File management is not available in standard chat mode",
+    "title": "Remote Workspace",
+    "root": "Workspace",
+    "parent": "Parent",
+    "search_placeholder": "Search for the current file list",
+    "sort": {
+      "label": "Sort",
+      "options": {
+        "name_asc": "Name (A-Z)",
+        "name_desc": "Name (Z-A)",
+        "size_desc": "Size (Large first)",
+        "modified_desc": "Recently modified"
+      }
+    },
+    "actions": {
+      "cancel": "Cancel",
+      "download": "Download",
+      "go": "Go",
+      "preview": "Preview",
+      "refresh": "Refresh"
+    },
+    "columns": {
+      "select_all": "Select all files",
+      "name": "Name",
+      "size": "Size",
+      "modified": "Modified",
+      "type": "Type"
+    },
+    "status": {
+      "path": "Path",
+      "selected": "selected",
+      "items": "items"
+    },
+    "path": {
+      "edit": "Edit path",
+      "invalid": "Path is outside workspace"
+    },
+    "types": {
+      "folder": "Folder",
+      "file": "File",
+      "text": "Text",
+      "image": "Image",
+      "pdf": "PDF"
+    },
+    "detail": {
+      "title": "Details",
+      "no_file_selected": "Select one file to view details",
+      "multiple_selected": "Multiple items selected",
+      "metadata": "Metadata",
+      "metadata_path": "Path",
+      "metadata_size": "Size",
+      "metadata_modified": "Modified",
+      "metadata_type": "Type"
+    },
+    "mobile": {
+      "tabs": {
+        "files": "Files",
+        "preview": "Preview"
+      }
+    },
+    "tree": {
+      "title": "Directory Tree",
+      "expand": "Expand",
+      "collapse": "Collapse",
+      "open_directory": "Open directory",
+      "loading": "Loading...",
+      "loading_children": "Loading children...",
+      "empty": "No files found",
+      "load_failed": "Failed to load workspace tree",
+      "load_children_failed": "Failed to load child directories",
+      "retry": "Retry"
+    },
+    "preview": {
+      "title": "Preview",
+      "hint": "Double-click the file name to open preview",
+      "empty": "Select a file to preview",
+      "loading": "Loading preview...",
+      "load_failed": "Failed to load preview",
+      "unsupported": "This file type is not supported for preview. Please download."
+    }
+  },
   "workbench": {
     "overview": "Overview",
     "files_changed": "Files Changed",

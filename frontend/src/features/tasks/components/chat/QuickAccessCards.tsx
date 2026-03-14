@@ -94,20 +94,20 @@ export function QuickAccessCards({
   const allDisplayTeams: DisplayTeam[] =
     quickAccessTeams.length > 0
       ? quickAccessTeams
-        .map(qa => {
-          const fullTeam = filteredTeams.find(t => t.id === qa.id)
-          if (fullTeam) {
-            return {
-              ...fullTeam,
-              is_system: qa.is_system,
-              recommended_mode: qa.recommended_mode || fullTeam.recommended_mode,
-            } as DisplayTeam
-          }
-          return null
-        })
-        .filter((t): t is DisplayTeam => t !== null)
+          .map(qa => {
+            const fullTeam = filteredTeams.find(t => t.id === qa.id)
+            if (fullTeam) {
+              return {
+                ...fullTeam,
+                is_system: qa.is_system,
+                recommended_mode: qa.recommended_mode || fullTeam.recommended_mode,
+              } as DisplayTeam
+            }
+            return null
+          })
+          .filter((t): t is DisplayTeam => t !== null)
       : // Fallback: show first teams from filtered list if no quick access configured
-      filteredTeams.map(t => ({ ...t, is_system: false }) as DisplayTeam)
+        filteredTeams.map(t => ({ ...t, is_system: false }) as DisplayTeam)
 
   // Filter out default team only (keep selected team visible with selection state)
   const displayTeams = allDisplayTeams.filter(t => {
@@ -223,9 +223,10 @@ export function QuickAccessCards({
         className={`
           group relative flex flex-col justify-center
           cursor-pointer transition-all duration-200
-          ${isSelected
-            ? 'border-l-[3px] border-l-primary border-y border-r border-border bg-primary/5'
-            : 'border border-border bg-base'
+          ${
+            isSelected
+              ? 'border-l-[3px] border-l-primary border-y border-r border-border bg-primary/5'
+              : 'border border-border bg-base'
           }
           ${isClicked ? 'clicking-card' : ''}
           ${isClicked ? 'pointer-events-none' : ''}
@@ -242,8 +243,9 @@ export function QuickAccessCards({
       >
         <div className="mb-1 w-full">
           <span
-            className={`block text-[15px] font-semibold leading-5 truncate ${isSelected ? 'text-primary' : 'text-text-primary'
-              }`}
+            className={`block text-[15px] font-semibold leading-5 truncate ${
+              isSelected ? 'text-primary' : 'text-text-primary'
+            }`}
           >
             {team.name}
           </span>
@@ -340,8 +342,9 @@ export function QuickAccessCards({
                 return (
                   <div
                     key={team.id}
-                    className={`flex items-center gap-2 px-2 py-2 rounded-md cursor-pointer transition-colors ${isSelected ? 'bg-primary/10' : 'hover:bg-hover'
-                      }`}
+                    className={`flex items-center gap-2 px-2 py-2 rounded-md cursor-pointer transition-colors ${
+                      isSelected ? 'bg-primary/10' : 'hover:bg-hover'
+                    }`}
                     onClick={() => handleSelectTeamFromMore(team)}
                     role="button"
                     tabIndex={0}
@@ -353,10 +356,11 @@ export function QuickAccessCards({
                     }}
                   >
                     <div
-                      className={`w-4 h-4 rounded border flex items-center justify-center flex-shrink-0 ${isSelected
-                        ? 'bg-primary border-primary text-white'
-                        : 'border-border bg-background'
-                        }`}
+                      className={`w-4 h-4 rounded border flex items-center justify-center flex-shrink-0 ${
+                        isSelected
+                          ? 'bg-primary border-primary text-white'
+                          : 'border-border bg-background'
+                      }`}
                     >
                       {isSelected && <Check className="h-3 w-3" />}
                     </div>
@@ -428,7 +432,11 @@ export function QuickAccessCards({
         }
       `}</style>
 
-      <div className="w-full max-w-[820px] mx-auto flex flex-wrap items-center justify-center gap-3 mt-6" data-tour="quick-access-cards" data-testid="quick-access-cards">
+      <div
+        className="w-full max-w-[820px] mx-auto flex flex-wrap items-center justify-center gap-3 mt-6"
+        data-tour="quick-access-cards"
+        data-testid="quick-access-cards"
+      >
         {teamCardsToShow.map(team => (
           <div key={team.id}>{renderTeamCard(team)}</div>
         ))}

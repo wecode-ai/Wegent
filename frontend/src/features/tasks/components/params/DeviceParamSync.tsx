@@ -43,7 +43,7 @@ export default function DeviceParamSync() {
     // Wait for devices to load, then validate and select
     if (devices.length === 0) return
 
-    const deviceExists = devices.some((d) => d.device_id === deviceId)
+    const deviceExists = devices.some(d => d.device_id === deviceId)
     if (deviceExists) {
       setSelectedDeviceId(deviceId)
       syncedParamRef.current = deviceId
