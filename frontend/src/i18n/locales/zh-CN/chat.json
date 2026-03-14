@@ -580,5 +580,6 @@
     "generated_image": "生成的图片",
     "lightbox": "图片预览",
     "no_models": "暂无可用的图片模型"
-  }
+  },
+  "scroll_to_bottom": "滚动到底部"
 }

@@ -13,6 +13,7 @@ import { SloganDisplay } from './SloganDisplay'
 import { ChatInputCard } from '../input/ChatInputCard'
 import PipelineStageIndicator from './PipelineStageIndicator'
 import { ScrollToBottomIndicator } from './ScrollToBottomIndicator'
+import { ScrollbarMarkers } from './ScrollbarMarkers'
 import type { PipelineStageInfo } from '@/apis/tasks'
 import { useChatAreaState } from './useChatAreaState'
 import { useChatStreamHandlers } from './useChatStreamHandlers'
@@ -1050,6 +1051,8 @@ function ChatAreaContent({
             }}
           />
         )}
+        {/* Scrollbar markers - shows user message positions on the scrollbar track */}
+        <ScrollbarMarkers scrollContainerRef={scrollContainerRef} visible={hasMessages} />
         <div
           ref={scrollContainerRef}
           className={
