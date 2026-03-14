@@ -29,7 +29,6 @@ import { CheckCircleIcon } from '@heroicons/react/24/outline'
 import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
 import { adminApis } from '@/apis/admin'
-import { userApis } from '@/apis/user'
 import { useUser } from '@/features/common/UserContext'
 import { useSetupWizard } from '../contexts/SetupWizardContext'
 import SetupModelStep from './SetupModelStep'
@@ -39,13 +38,14 @@ const TOTAL_STEPS = 2
 
 /**
  * Global Admin Setup Wizard component that shows on any page when:
- * 1. Current user is an admin
+ * 1. Current user is the initial 'admin' user
  * 2. Admin setup has not been completed yet
  *
  * This component should be placed in the root layout to ensure it shows
  * regardless of which page the admin first lands on.
  *
- * Setup status is fetched from the welcome-config API to avoid extra API calls.
+ * Setup status is now fetched from /users/me API (admin_setup_completed field)
+ * to avoid extra API calls to welcome-config.
  */
 const GlobalAdminSetupWizard: React.FC = () => {
   const { t } = useTranslation('admin')
@@ -54,7 +54,6 @@ const GlobalAdminSetupWizard: React.FC = () => {
   const setupWizardContext = useSetupWizard()
 
   const [open, setOpen] = useState(false)
-  const [loading, setLoading] = useState(true)
   const [currentStep, setCurrentStep] = useState(1)
   const [isSkipDialogOpen, setIsSkipDialogOpen] = useState(false)
   const [completing, setCompleting] = useState(false)
@@ -64,37 +63,19 @@ const GlobalAdminSetupWizard: React.FC = () => {
     setupWizardContext?.setSetupWizardOpen(open)
   }, [open, setupWizardContext])
 
-  // Check setup status when user is loaded and is admin
+  // Check setup status from user context (admin_setup_completed field)
+  // This avoids an extra API call to welcome-config
   useEffect(() => {
-    const checkSetupStatus = async () => {
-      // Wait for user to be loaded
-      if (userLoading) {
-        return
-      }
-
-      // Only check for admin users
-      if (!user || user.role !== 'admin') {
-        setLoading(false)
-        return
-      }
-
-      try {
-        // Get setup status from welcome-config API
-        const response = await userApis.getWelcomeConfig()
-        // admin_setup_completed is only returned for admin users
-        if (response.admin_setup_completed === false) {
-          setOpen(true)
-        }
-      } catch (error) {
-        console.error('Failed to check setup status:', error)
-        // Don't show error toast for network errors
-        // The wizard simply won't show
-      } finally {
-        setLoading(false)
-      }
+    // Wait for user to be loaded
+    if (userLoading) {
+      return
     }
 
-    checkSetupStatus()
+    // Only show wizard for the initial 'admin' user when setup is not completed
+    // admin_setup_completed is only returned for user_name === 'admin'
+    if (user?.user_name === 'admin' && user.admin_setup_completed === false) {
+      setOpen(true)
+    }
   }, [user, userLoading])
 
   const handleNext = useCallback(() => {
@@ -150,8 +131,8 @@ const GlobalAdminSetupWizard: React.FC = () => {
     }
   }, [toast, t])
 
-  // Don't render anything while checking status or if not admin
-  if (loading || userLoading || !user || user.role !== 'admin') {
+  // Don't render anything while loading or if not the 'admin' user
+  if (userLoading || !user || user.user_name !== 'admin') {
     return null
   }
 

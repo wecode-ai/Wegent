@@ -97,6 +97,8 @@ class UserInDB(UserBase):
     auth_source: str = "unknown"
     created_at: datetime
     updated_at: datetime
+    # Admin-only field: indicates if admin setup wizard has been completed
+    admin_setup_completed: Optional[bool] = None
 
     @field_validator("preferences", mode="before")
     @classmethod
