@@ -4,7 +4,7 @@
 
 import logging
 import time
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 
 from app.api.dependencies import get_db
 from app.core import security
+from app.core.config import settings
 from app.models.kind import Kind
 from app.models.user import User
 from app.schemas.shared_team import (
@@ -35,7 +36,51 @@ from app.services.shared_team import shared_team_service
 router = APIRouter()
 
 
-@router.get("", response_model=TeamListResponse)
+def _get_default_teams_config() -> Dict[str, Dict[str, str]]:
+    """
+    Parse default teams configuration from environment variables.
+    Returns a dict mapping mode -> {name, namespace}.
+    """
+    config = {}
+    mode_settings = {
+        "chat": settings.DEFAULT_TEAM_CHAT,
+        "code": settings.DEFAULT_TEAM_CODE,
+        "knowledge": settings.DEFAULT_TEAM_KNOWLEDGE,
+        "task": settings.DEFAULT_TEAM_TASK,
+    }
+
+    for mode, value in mode_settings.items():
+        if value and value.strip():
+            parts = value.strip().split("#", 1)
+            name = parts[0].strip()
+            namespace = parts[1].strip() if len(parts) > 1 else "default"
+            if name:
+                config[mode] = {"name": name, "namespace": namespace}
+
+    return config
+
+
+def _add_default_for_modes(
+    items: List[Dict[str, Any]], default_config: Dict[str, Dict[str, str]]
+) -> List[Dict[str, Any]]:
+    """
+    Add default_for_modes field to each team item based on default teams config.
+    """
+    for item in items:
+        default_modes = []
+        team_name = item.get("name")
+        team_namespace = item.get("namespace") or "default"
+
+        for mode, config in default_config.items():
+            if config["name"] == team_name and config["namespace"] == team_namespace:
+                default_modes.append(mode)
+
+        item["default_for_modes"] = default_modes
+
+    return items
+
+
+@router.get("")
 def list_teams(
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(10, ge=1, le=100, description="Items per page"),
@@ -56,6 +101,9 @@ def list_teams(
     - scope='personal': personal teams + shared teams
     - scope='group': group teams (requires group_name)
     - scope='all' (default): personal + shared + all user's groups
+
+    Each team item includes a `default_for_modes` field (list of mode names)
+    indicating which modes this team is the default for (based on env config).
     """
     api_start = time.time()
     logger.info(
@@ -87,6 +135,10 @@ def list_teams(
     logger.info(
         f"[list_teams] count_user_teams took {time.time() - t2:.3f}s, total={total}"
     )
+
+    # Add default_for_modes field to each team based on env config
+    default_config = _get_default_teams_config()
+    items = _add_default_for_modes(items, default_config)
 
     logger.info(f"[list_teams] TOTAL API took {time.time() - api_start:.3f}s")
     return {"total": total, "items": items}

@@ -95,6 +95,9 @@ class CloudDeviceProvider(LocalDeviceProvider):
         include_offline: bool = True,
     ) -> List[Dict[str, Any]]:
         """List all cloud devices for a user."""
+        from app.core.cache import cache_manager
+        from app.schemas.device import MAX_DEVICE_SLOTS
+
         devices = (
             db.query(Kind)
             .filter(
@@ -108,23 +111,44 @@ class CloudDeviceProvider(LocalDeviceProvider):
             .all()
         )
 
-        result = []
+        # Filter cloud devices
+        cloud_devices = []
         for device_kind in devices:
             spec = device_kind.json.get("spec", {})
-            if spec.get("deviceType") != DeviceType.CLOUD.value:
-                continue
+            if spec.get("deviceType") == DeviceType.CLOUD.value:
+                cloud_devices.append(device_kind)
 
+        if not cloud_devices:
+            return []
+
+        # Batch fetch online info from Redis using mget
+        device_ids = [d.name for d in cloud_devices]
+        redis_keys = [self.generate_online_key(user_id, did) for did in device_ids]
+        online_info_map = await cache_manager.mget(redis_keys)
+
+        # Build result list
+        result = []
+        latest_version = settings.EXECUTOR_LATEST_VERSION
+
+        for i, device_kind in enumerate(cloud_devices):
+            spec = device_kind.json.get("spec", {})
             device_id = device_kind.name
-            online_info = await self._get_online_info(user_id, device_id)
+            redis_key = redis_keys[i]
+
+            online_info = online_info_map.get(redis_key)
             is_online = online_info is not None
+
             if not include_offline and not is_online:
                 continue
 
-            slot_info = await self.get_slot_usage(db, user_id, device_id)
+            # Get slot usage from cached online info (no extra Redis call)
+            running_task_ids = []
+            if online_info and "running_task_ids" in online_info:
+                running_task_ids = online_info["running_task_ids"]
+
             executor_version = (
                 online_info.get("executor_version") if online_info else None
             )
-            latest_version = settings.EXECUTOR_LATEST_VERSION
             update_available = self._is_update_available(
                 executor_version, latest_version
             )
@@ -148,9 +172,9 @@ class CloudDeviceProvider(LocalDeviceProvider):
                     "last_heartbeat": (
                         online_info.get("last_heartbeat") if online_info else None
                     ),
-                    "slot_used": slot_info["used"],
-                    "slot_max": slot_info["max"],
-                    "running_tasks": slot_info["running_tasks"],
+                    "slot_used": len(running_task_ids),
+                    "slot_max": MAX_DEVICE_SLOTS,
+                    "running_tasks": [],
                     "executor_version": executor_version,
                     "latest_version": latest_version,
                     "update_available": update_available,

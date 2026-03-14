@@ -11,7 +11,6 @@ import type {
   ChatSloganItem,
   ChatTipItem,
   MultiAttachmentUploadState,
-  DefaultTeamsResponse,
   TaskType,
 } from '@/types/api'
 import type { ContextItem } from '@/types/context'
@@ -56,7 +55,6 @@ export interface ChatAreaState {
   handleTeamChange: (team: Team | null) => void
 
   // Default team state
-  defaultTeamsConfig: DefaultTeamsResponse | null
   defaultTeam: Team | null
   isUsingDefaultTeam: boolean
   restoreDefaultTeam: () => void
@@ -189,8 +187,6 @@ export function useChatAreaState({
   const [selectedTeam, setSelectedTeam] = useState<Team | null>(null)
   const [hasRestoredPreferences, setHasRestoredPreferences] = useState(false)
 
-  // Default teams configuration (from server)
-  const [defaultTeamsConfig, setDefaultTeamsConfig] = useState<DefaultTeamsResponse | null>(null)
   // Track if user is using default team or manually selected one
   const [isUsingDefaultTeam, setIsUsingDefaultTeam] = useState(true)
 
@@ -303,20 +299,6 @@ export function useChatAreaState({
     fetchWelcomeConfig()
   }, [])
 
-  // Fetch default teams configuration
-  useEffect(() => {
-    const fetchDefaultTeams = async () => {
-      try {
-        const response = await userApis.getDefaultTeams()
-        setDefaultTeamsConfig(response)
-      } catch (error) {
-        console.error('Failed to fetch default teams config:', error)
-      }
-    }
-
-    fetchDefaultTeams()
-  }, [])
-
   // Get random slogan for display
   const randomSlogan = useMemo<ChatSloganItem | null>(() => {
     if (!welcomeConfig?.slogans || welcomeConfig.slogans.length === 0) {
@@ -401,42 +383,28 @@ export function useChatAreaState({
   }, [_teams, isTeamCompatibleWithMode])
 
   // Find default team for current mode from teams list
+  // Uses the default_for_modes field returned by the teams API
   // Returns null if no default team is configured for the mode
   const findDefaultTeamForMode = useCallback(
     (teams: Team[]): Team | null => {
       if (teams.length === 0) return null
-      if (!defaultTeamsConfig) return null
 
-      // Get the default config for current mode
-      const modeKey = taskType as keyof DefaultTeamsResponse
-      const defaultConfig = defaultTeamsConfig[modeKey]
+      // Find teams that have the current taskType in their default_for_modes array
+      const matchedTeams = teams.filter(
+        team => team.default_for_modes && team.default_for_modes.includes(taskType)
+      )
 
-      if (!defaultConfig) {
+      if (matchedTeams.length === 0) {
         // No default configured for this mode, return null
         // This allows all teams to be shown in QuickAccessCards
         return null
       }
 
-      // Normalize namespace to handle undefined case
-      const normalizedNamespace = defaultConfig.namespace || 'default'
-
-      // Find all teams matching name + namespace
-      const matchedTeams = teams.filter(
-        team =>
-          team.name === defaultConfig.name && (team.namespace || 'default') === normalizedNamespace
-      )
-
-      if (matchedTeams.length > 0) {
-        // Prioritize public team (user_id === 0) over personal team
-        const publicTeam = matchedTeams.find(team => team.user_id === 0)
-        const selectedTeam = publicTeam || matchedTeams[0]
-
-        return selectedTeam
-      }
-
-      return null
+      // Prioritize public team (user_id === 0) over personal team
+      const publicTeam = matchedTeams.find(team => team.user_id === 0)
+      return publicTeam || matchedTeams[0]
     },
-    [defaultTeamsConfig, taskType]
+    [taskType]
   )
 
   // Compute default team for current mode (only from compatible teams)
@@ -577,7 +545,6 @@ export function useChatAreaState({
     handleTeamChange,
 
     // Default team state
-    defaultTeamsConfig,
     defaultTeam,
     isUsingDefaultTeam,
     restoreDefaultTeam,

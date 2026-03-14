@@ -9,6 +9,7 @@ import { TaskContextProvider } from '@/features/tasks/contexts/taskContext'
 import { ChatStreamProvider } from '@/features/tasks/contexts/chatStreamContext'
 import { SocketProvider } from '@/contexts/SocketContext'
 import { DeviceProvider } from '@/contexts/DeviceContext'
+import { TeamProvider } from '@/contexts/TeamContext'
 import { PetProvider, PetWidget, PetStreamingBridge } from '@/features/pet'
 import { SetupWizardProvider } from '@/features/admin/contexts/SetupWizardContext'
 import GlobalAdminSetupWizard from '@/features/admin/components/GlobalAdminSetupWizard'
@@ -20,6 +21,7 @@ import GlobalAdminSetupWizard from '@/features/admin/components/GlobalAdminSetup
  *
  * SocketProvider is added for real-time WebSocket communication
  * DeviceProvider is added for local device management
+ * TeamProvider is added to centralize team data fetching and avoid duplicate API calls
  * PetProvider and PetWidget are added for the pet nurturing feature
  * PetStreamingBridge syncs AI streaming state with pet animation
  * SetupWizardProvider shares setup wizard state with other components (e.g., OnboardingTour)
@@ -30,18 +32,20 @@ export default function TasksLayout({ children }: { children: React.ReactNode })
     <UserProvider>
       <SocketProvider>
         <DeviceProvider>
-          <PetProvider>
-            <SetupWizardProvider>
-              <TaskContextProvider>
-                <ChatStreamProvider>
-                  {children}
-                  <PetStreamingBridge />
-                  <PetWidget />
-                  <GlobalAdminSetupWizard />
-                </ChatStreamProvider>
-              </TaskContextProvider>
-            </SetupWizardProvider>
-          </PetProvider>
+          <TeamProvider>
+            <PetProvider>
+              <SetupWizardProvider>
+                <TaskContextProvider>
+                  <ChatStreamProvider>
+                    {children}
+                    <PetStreamingBridge />
+                    <PetWidget />
+                    <GlobalAdminSetupWizard />
+                  </ChatStreamProvider>
+                </TaskContextProvider>
+              </SetupWizardProvider>
+            </PetProvider>
+          </TeamProvider>
         </DeviceProvider>
       </SocketProvider>
     </UserProvider>

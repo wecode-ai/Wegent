@@ -24,7 +24,7 @@ import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContex
 import { useSearchShortcut } from '@/features/tasks/hooks/useSearchShortcut'
 import { useTranslation } from '@/hooks/useTranslation'
 import { ChatArea } from '@/features/tasks/components/chat'
-import { teamService } from '@/features/tasks/service/teamService'
+import { useTeamContext } from '@/contexts/TeamContext'
 import { useKnowledgeBaseDetail } from '@/features/knowledge/document/hooks'
 import { useKnowledgePermissions } from '@/features/knowledge/permission/hooks/useKnowledgePermissions'
 import {
@@ -91,8 +91,8 @@ export function KnowledgeBaseChatPageDesktop({
     }
   }, [knowledgeBase, knowledgeBaseId, fetchMyPermission])
 
-  // Team state from service
-  const { teams, isTeamsLoading, refreshTeams } = teamService.useTeams()
+  // Team state from context (centralized to avoid duplicate API calls)
+  const { teams, isTeamsLoading, refreshTeams } = useTeamContext()
 
   // User state
   const { user, isLoading: isUserLoading } = useUser()
