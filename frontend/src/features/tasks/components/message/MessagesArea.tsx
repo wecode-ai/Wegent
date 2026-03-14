@@ -1110,6 +1110,12 @@ function MessagesArea({
               ? `${msg.type}-${msg.subtaskId}`
               : `msg-${index}-${msg.timestamp}`
 
+            // Data attribute for scrollbar markers to identify user messages
+            const messageDataAttrs = {
+              'data-message-type': msg.type,
+              'data-message-index': index,
+            }
+
             // Determine if this is the current user's message (for group chat alignment)
             const isCurrentUserMessage =
               msg.type === 'user' ? (isGroupChat ? msg.senderUserId === user?.id : true) : false
@@ -1133,22 +1139,23 @@ function MessagesArea({
             // Use StreamingMessageBubble for streaming AI messages
             if (msg.type === 'ai' && msg.status === 'streaming') {
               return (
-                <StreamingMessageBubble
-                  key={messageKey}
-                  message={msg}
-                  selectedTaskDetail={selectedTaskDetail}
-                  selectedTeam={selectedTeam}
-                  selectedRepo={selectedRepo}
-                  selectedBranch={selectedBranch}
-                  theme={theme as 'light' | 'dark'}
-                  t={t}
-                  onSendMessage={onSendMessage}
-                  index={index}
-                  isGroupChat={isGroupChat}
-                  isPendingConfirmation={isPendingConfirmation}
-                  onContextReselect={onContextReselect}
-                  onUseAsReference={onUseAsReference}
-                />
+                <div key={messageKey} {...messageDataAttrs}>
+                  <StreamingMessageBubble
+                    message={msg}
+                    selectedTaskDetail={selectedTaskDetail}
+                    selectedTeam={selectedTeam}
+                    selectedRepo={selectedRepo}
+                    selectedBranch={selectedBranch}
+                    theme={theme as 'light' | 'dark'}
+                    t={t}
+                    onSendMessage={onSendMessage}
+                    index={index}
+                    isGroupChat={isGroupChat}
+                    isPendingConfirmation={isPendingConfirmation}
+                    onContextReselect={onContextReselect}
+                    onUseAsReference={onUseAsReference}
+                  />
+                </div>
               )
             }
 
@@ -1163,7 +1170,11 @@ function MessagesArea({
               const originalQuestion = userMsg?.content || ''
 
               return (
-                <div key={messageKey} className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <div
+                  key={messageKey}
+                  {...messageDataAttrs}
+                  className="grid grid-cols-1 lg:grid-cols-2 gap-4"
+                >
                   <MessageBubble
                     msg={convertToMessage(msg)}
                     index={index}
@@ -1226,33 +1237,34 @@ function MessagesArea({
 
             // Use regular MessageBubble for other messages
             return (
-              <MessageBubble
-                key={messageKey}
-                msg={convertToMessage(msg)}
-                index={index}
-                selectedTaskDetail={selectedTaskDetail}
-                selectedTeam={selectedTeam}
-                selectedRepo={selectedRepo}
-                selectedBranch={selectedBranch}
-                theme={theme as 'light' | 'dark'}
-                t={t}
-                onSendMessage={onSendMessage}
-                isCurrentUserMessage={isCurrentUserMessage}
-                onRetry={onRetry}
-                isGroupChat={isGroupChat}
-                isPendingConfirmation={isPendingConfirmation}
-                onContextReselect={onContextReselect}
-                isEditing={msg.subtaskId ? editingMessageId === String(msg.subtaskId) : false}
-                onEdit={handleEditMessage}
-                onEditSave={handleEditSave}
-                onEditCancel={handleEditCancel}
-                isLastAiMessage={isLastAiMessage}
-                onRegenerate={!isGroupChat ? handleRegenerate : undefined}
-                isRegenerating={isRegenerating}
-                onUseAsReference={onUseAsReference}
-                onReEdit={onReEdit}
-                taskType={selectedTaskDetail?.task_type}
-              />
+              <div key={messageKey} {...messageDataAttrs}>
+                <MessageBubble
+                  msg={convertToMessage(msg)}
+                  index={index}
+                  selectedTaskDetail={selectedTaskDetail}
+                  selectedTeam={selectedTeam}
+                  selectedRepo={selectedRepo}
+                  selectedBranch={selectedBranch}
+                  theme={theme as 'light' | 'dark'}
+                  t={t}
+                  onSendMessage={onSendMessage}
+                  isCurrentUserMessage={isCurrentUserMessage}
+                  onRetry={onRetry}
+                  isGroupChat={isGroupChat}
+                  isPendingConfirmation={isPendingConfirmation}
+                  onContextReselect={onContextReselect}
+                  isEditing={msg.subtaskId ? editingMessageId === String(msg.subtaskId) : false}
+                  onEdit={handleEditMessage}
+                  onEditSave={handleEditSave}
+                  onEditCancel={handleEditCancel}
+                  isLastAiMessage={isLastAiMessage}
+                  onRegenerate={!isGroupChat ? handleRegenerate : undefined}
+                  isRegenerating={isRegenerating}
+                  onUseAsReference={onUseAsReference}
+                  onReEdit={onReEdit}
+                  taskType={selectedTaskDetail?.task_type}
+                />
+              </div>
             )
           })}
         </div>
