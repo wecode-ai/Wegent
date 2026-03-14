@@ -27,6 +27,7 @@
     "documents": "documents",
     "noTeamHint": "You haven't joined any teams yet. Create or join a team to view team knowledge bases here.",
     "noGroupHint": "You haven't joined any groups yet. Create or join a group to view group knowledge bases here.",
+    "manageGroups": "Manage Groups",
     "searchGroups": "Search groups...",
     "noGroupResults": "No matching groups",
     "tabs": {
