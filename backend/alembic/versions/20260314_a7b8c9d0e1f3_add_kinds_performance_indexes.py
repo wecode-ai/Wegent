@@ -52,23 +52,12 @@ def upgrade() -> None:
             ["kind", "namespace", "is_active"],
         )
 
-    # Index for sorting by updated_at (used in ORDER BY)
-    if "ix_kinds_updated_at" not in existing_indexes:
-        op.create_index(
-            "ix_kinds_updated_at",
-            "kinds",
-            [sa.text("updated_at DESC")],
-        )
-
 
 def downgrade() -> None:
     """Remove the composite indexes."""
     conn = op.get_bind()
     inspector = sa.inspect(conn)
     existing_indexes = {idx["name"] for idx in inspector.get_indexes("kinds")}
-
-    if "ix_kinds_updated_at" in existing_indexes:
-        op.drop_index("ix_kinds_updated_at", table_name="kinds")
 
     if "ix_kinds_kind_ns_active" in existing_indexes:
         op.drop_index("ix_kinds_kind_ns_active", table_name="kinds")
