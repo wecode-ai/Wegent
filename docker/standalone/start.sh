@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-# Standalone startup script - starts Backend and Frontend in a single container
+# Standalone startup script - starts Redis, Backend and Frontend in a single container
 
 set -e
 
@@ -11,8 +11,9 @@ echo "=========================================="
 echo "  Starting Wegent Standalone"
 echo "=========================================="
 echo ""
-# Create data directory for SQLite database
+# Create data directory for SQLite database and Redis
 mkdir -p /app/data
+mkdir -p /app/data/redis
 
 # Set absolute path for SQLite database
 # Note: SQLite absolute path requires 4 slashes: sqlite:////path/to/db
@@ -22,29 +23,74 @@ export DATABASE_URL="sqlite:////app/data/wegent.db"
 BACKEND_PORT=${BACKEND_PORT:-8000}
 FRONTEND_PORT=${FRONTEND_PORT:-3000}
 
+# Set Redis URL to localhost (embedded Redis)
+export REDIS_URL="${REDIS_URL:-redis://localhost:6379/0}"
+
 # ========================================
-# Step 1: Initialize Database
+# Step 1: Start Redis
+# ========================================
+echo "[1/5] Starting Redis..."
+
+# Create Redis configuration for persistence
+cat > /tmp/redis.conf <<EOF
+# Redis configuration for standalone mode
+bind 127.0.0.1
+port 6379
+daemonize no
+dir /app/data/redis
+dbfilename dump.rdb
+appendonly yes
+appendfilename "appendonly.aof"
+# Memory management
+maxmemory 256mb
+maxmemory-policy allkeys-lru
+# Logging
+loglevel notice
+logfile ""
+EOF
+
+# Start Redis in background
+redis-server /tmp/redis.conf &
+REDIS_PID=$!
+
+# Wait for Redis to be ready
+echo "      Waiting for Redis to be ready..."
+for i in {1..30}; do
+    if redis-cli ping > /dev/null 2>&1; then
+        echo "      Redis is ready (PID: ${REDIS_PID})"
+        break
+    fi
+    if [ $i -eq 30 ]; then
+        echo "      ERROR: Redis failed to start within 30 seconds"
+        kill $REDIS_PID 2>/dev/null || true
+        exit 1
+    fi
+    sleep 1
+done
+
+# ========================================
+# Step 2: Initialize Database
 # ========================================
 # Ensure we're in the correct directory for alembic
 cd /app/backend
 
 if [ ! -f /app/data/wegent.db ]; then
-    echo "[1/4] Initializing SQLite database..."
+    echo "[2/5] Initializing SQLite database..."
     # env.py will detect fresh database and use Base.metadata.create_all()
     # then stamp to head, bypassing old MySQL-specific migrations
     alembic upgrade head
     echo "      Database initialized successfully"
 else
-    echo "[1/4] Database exists, checking for migrations..."
+    echo "[2/5] Database exists, checking for migrations..."
     # For existing databases, run migrations normally
     alembic upgrade head
     echo "      Database migrations applied"
 fi
 
 # ========================================
-# Step 2: Start Backend
+# Step 3: Start Backend
 # ========================================
-echo "[2/4] Starting Backend (port ${BACKEND_PORT})..."
+echo "[3/5] Starting Backend (port ${BACKEND_PORT})..."
 cd /app/backend
 uvicorn app.main:app \
     --host 0.0.0.0 \
@@ -63,15 +109,16 @@ for i in {1..60}; do
     if [ $i -eq 60 ]; then
         echo "      ERROR: Backend failed to start within 60 seconds"
         kill $BACKEND_PID 2>/dev/null || true
+        kill $REDIS_PID 2>/dev/null || true
         exit 1
     fi
     sleep 1
 done
 
 # ========================================
-# Step 3: Start Frontend
+# Step 4: Start Frontend
 # ========================================
-echo "[3/4] Starting Frontend (port ${FRONTEND_PORT})..."
+echo "[4/5] Starting Frontend (port ${FRONTEND_PORT})..."
 cd /app/frontend
 
 # Set runtime environment variables for Frontend
@@ -105,9 +152,9 @@ for i in {1..30}; do
 done
 
 # ========================================
-# Step 4: All Services Started
+# Step 5: All Services Started
 # ========================================
-echo "[4/4] All services started!"
+echo "[5/5] All services started!"
 echo ""
 echo "=========================================="
 echo "  Wegent Standalone is running!"
@@ -115,9 +162,11 @@ echo "=========================================="
 echo ""
 echo "  Frontend: http://localhost:${FRONTEND_PORT}"
 echo "  Backend:  http://localhost:${BACKEND_PORT}"
+echo "  Redis:    localhost:6379 (embedded)"
 echo ""
 echo "  Data directory: /app/data"
 echo "  Database: /app/data/wegent.db"
+echo "  Redis data: /app/data/redis"
 echo ""
 echo "=========================================="
 echo ""
@@ -129,7 +178,7 @@ shutdown() {
     echo ""
     echo "Received shutdown signal, stopping services..."
     
-    # Send SIGTERM to both processes
+    # Send SIGTERM to all processes
     if [ -n "$FRONTEND_PID" ]; then
         echo "  Stopping Frontend (PID: ${FRONTEND_PID})..."
         kill -TERM $FRONTEND_PID 2>/dev/null || true
@@ -140,10 +189,17 @@ shutdown() {
         kill -TERM $BACKEND_PID 2>/dev/null || true
     fi
     
+    if [ -n "$REDIS_PID" ]; then
+        echo "  Stopping Redis (PID: ${REDIS_PID})..."
+        # Use redis-cli shutdown for graceful Redis shutdown (saves data)
+        redis-cli shutdown nosave 2>/dev/null || kill -TERM $REDIS_PID 2>/dev/null || true
+    fi
+    
     # Wait for processes to terminate gracefully
     echo "  Waiting for services to stop..."
     wait $FRONTEND_PID 2>/dev/null || true
     wait $BACKEND_PID 2>/dev/null || true
+    wait $REDIS_PID 2>/dev/null || true
     
     echo "  All services stopped"
     exit 0
@@ -156,7 +212,7 @@ trap shutdown SIGTERM SIGINT SIGQUIT
 # Keep Container Running
 # ========================================
 # Wait for any process to exit
-wait -n $BACKEND_PID $FRONTEND_PID
+wait -n $REDIS_PID $BACKEND_PID $FRONTEND_PID
 
 # If we get here, one of the processes exited
 EXIT_CODE=$?
@@ -164,6 +220,12 @@ echo ""
 echo "WARNING: A service has exited unexpectedly (exit code: ${EXIT_CODE})"
 
 # Check which process is still running
+if kill -0 $REDIS_PID 2>/dev/null; then
+    echo "  Redis is still running"
+else
+    echo "  Redis has stopped"
+fi
+
 if kill -0 $BACKEND_PID 2>/dev/null; then
     echo "  Backend is still running"
 else

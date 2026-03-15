@@ -6,7 +6,7 @@ sidebar_position: 3
 
 ## 概述
 
-Standalone 模式是一种单机部署方案，将 Backend、Frontend、Chat Shell 和 Executor 打包在一个 Docker 镜像中运行，使用 SQLite 替代 MySQL，Redis 作为外部依赖。
+Standalone 模式是一种单机部署方案，将 Backend、Frontend、Chat Shell、Executor 和 Redis 打包在一个 Docker 镜像中运行，使用 SQLite 作为数据库。无需任何外部依赖，只需要 Docker 即可运行。
 
 ### 适用场景
 
@@ -24,35 +24,47 @@ Standalone 模式是一种单机部署方案，将 Backend、Frontend、Chat She
 | 扩展性 | 好 | 有限 |
 | 隔离性 | 好（Docker） | 无 |
 | 数据库 | MySQL | SQLite |
+| Redis | 外部依赖 | 内嵌 |
 | 适用场景 | 生产环境 | 开发/测试/小规模 |
 
 ## 快速开始
 
-### 使用 Docker Compose（推荐）
+### 一键安装（推荐）
 
 ```bash
-# 克隆仓库
-git clone https://github.com/wecode-ai/wegent.git
-cd wegent
-
-# 启动服务
-docker-compose -f docker-compose.standalone.yml up -d
-
-# 查看日志
-docker-compose -f docker-compose.standalone.yml logs -f
+curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash
 ```
 
-### 单独运行容器
+这将自动：
+1. 检查并安装 Docker（如果需要）
+2. 拉取最新的 Wegent standalone 镜像
+3. 创建数据卷用于持久化
+4. 启动容器
 
-如果你已有 Redis 服务：
+### 手动运行容器
+
+如果你更喜欢手动运行：
 
 ```bash
 docker run -d \
-  --name wegent \
+  --name wegent-standalone \
+  --restart unless-stopped \
   -p 3000:3000 \
   -p 8000:8000 \
-  -e REDIS_URL=redis://host.docker.internal:6379/0 \
   -v wegent-data:/app/data \
+  ghcr.io/wecode-ai/wegent-standalone:latest
+```
+
+如需远程访问（将 `YOUR_SERVER_IP` 替换为你的实际 IP）：
+
+```bash
+docker run -d \
+  --name wegent-standalone \
+  --restart unless-stopped \
+  -p 3000:3000 \
+  -p 8000:8000 \
+  -v wegent-data:/app/data \
+  -e RUNTIME_SOCKET_DIRECT_URL=http://YOUR_SERVER_IP:8000 \
   ghcr.io/wecode-ai/wegent-standalone:latest
 ```
 
@@ -62,9 +74,10 @@ docker run -d \
 
 | 变量名 | 说明 | 默认值 |
 |--------|------|--------|
-| `REDIS_URL` | Redis 连接地址 | `redis://redis:6379/0` |
+| `RUNTIME_SOCKET_DIRECT_URL` | 前端 WebSocket 连接地址 | `http://localhost:8000` |
 | `STANDALONE_MODE` | 启用 standalone 模式 | `true` |
-| `DATABASE_URL` | 数据库连接地址 | `sqlite:///./data/wegent.db` |
+| `DATABASE_URL` | 数据库连接地址 | `sqlite:////app/data/wegent.db` |
+| `REDIS_URL` | Redis 连接地址 | `redis://localhost:6379/0` |
 | `ANTHROPIC_API_KEY` | Anthropic API 密钥 | - |
 | `OPENAI_API_KEY` | OpenAI API 密钥 | - |
 
@@ -72,12 +85,47 @@ docker run -d \
 
 数据存储在 `/app/data` 目录，包括：
 - `wegent.db` - SQLite 数据库文件
+- `redis/` - Redis 持久化数据（AOF 和 RDB）
 - 其他运行时数据
 
 使用 Docker volume 持久化：
 
 ```bash
+# 创建命名卷
+docker volume create wegent-data
+
+# 使用该卷运行
 docker run -v wegent-data:/app/data ...
+```
+
+## 常用命令
+
+```bash
+# 查看日志
+docker logs -f wegent-standalone
+
+# 停止容器
+docker stop wegent-standalone
+
+# 启动容器
+docker start wegent-standalone
+
+# 重启容器
+docker restart wegent-standalone
+
+# 删除容器（数据保留在卷中）
+docker rm -f wegent-standalone
+
+# 更新到最新版本
+docker pull ghcr.io/wecode-ai/wegent-standalone:latest
+docker rm -f wegent-standalone
+docker run -d \
+  --name wegent-standalone \
+  --restart unless-stopped \
+  -p 3000:3000 \
+  -p 8000:8000 \
+  -v wegent-data:/app/data \
+  ghcr.io/wecode-ai/wegent-standalone:latest
 ```
 
 ## 构建镜像
@@ -102,19 +150,18 @@ docker run -v wegent-data:/app/data ...
 1. **并发写入**：SQLite 不支持高并发写入，适合单用户或小规模使用
 2. **数据备份**：定期备份 `/app/data/wegent.db` 文件
 
+### 内嵌 Redis
+
+Standalone 镜像包含内嵌的 Redis 服务：
+- 数据持久化到 `/app/data/redis/`
+- 使用 AOF（Append Only File）保证数据持久性
+- 内存限制：256MB，使用 LRU 淘汰策略
+
 ### 进程内 Executor 限制
 
 1. **资源隔离**：没有 Docker 容器隔离，任务共享进程资源
 2. **安全性**：代码执行没有沙箱保护
 3. **适用场景**：仅适合可信环境和开发测试
-
-### Redis 依赖
-
-Standalone 模式仍然需要 Redis 用于：
-- 分布式锁
-- 会话管理
-- 任务队列
-- 缓存
 
 ## 从 Standalone 迁移到标准模式
 

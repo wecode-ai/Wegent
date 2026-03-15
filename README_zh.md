@@ -182,12 +182,13 @@ git clone https://github.com/wecode-ai/Wegent.git && cd Wegent && ./start.sh
 <summary><b>🔧 常用命令</b></summary>
 
 ```bash
-# Standalone 模式
-docker compose -f docker-compose.standalone.yml logs -f   # 查看日志
-docker compose -f docker-compose.standalone.yml down      # 停止
-docker compose -f docker-compose.standalone.yml up -d     # 启动
+# Standalone 模式（单容器）
+docker logs -f wegent-standalone      # 查看日志
+docker stop wegent-standalone         # 停止
+docker start wegent-standalone        # 启动
+docker restart wegent-standalone      # 重启
 
-# Standard 模式
+# Standard 模式（多容器）
 docker compose logs -f   # 查看日志
 docker compose down      # 停止
 docker compose up -d     # 启动
