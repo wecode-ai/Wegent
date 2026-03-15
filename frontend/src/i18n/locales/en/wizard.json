@@ -111,5 +111,14 @@
   "optimize_paragraph": "Optimize this paragraph",
   "optimizing": "Optimizing...",
   "optimizing_prompt": "Optimizing prompt, please wait...",
-  "click_to_test": "Click to Test"
+  "click_to_test": "Click to Test",
+  "skills_section": "Skills",
+  "skills_hint": "Add extra capabilities to your assistant for handling more types of tasks",
+  "recommended_skills": "Recommended Skills",
+  "other_skills": "Other Available Skills",
+  "no_skills_available": "No skills available",
+  "skill_confidence": "Confidence",
+  "skill_selected": "Selected",
+  "skill_select": "Select",
+  "skills_selected": "skills"
 }
