@@ -487,12 +487,16 @@ async def _create_subscription_task(
     reuse_task_id = None
     if ctx.preserve_history and ctx.bound_task_id > 0:
         # Check if the bound task still exists and is valid
+        # Note: Subscription tasks have is_active=STATE_SUBSCRIPTION (2), not STATE_ACTIVE (1)
+        # We need to check for both states to properly reuse the bound task
         bound_task = (
             db.query(TaskResource)
             .filter(
                 TaskResource.id == ctx.bound_task_id,
                 TaskResource.kind == "Task",
-                TaskResource.is_active == TaskResource.STATE_ACTIVE,
+                TaskResource.is_active.in_(
+                    [TaskResource.STATE_ACTIVE, TaskResource.STATE_SUBSCRIPTION]
+                ),
             )
             .first()
         )

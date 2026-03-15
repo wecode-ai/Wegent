@@ -66,6 +66,8 @@
   "enable_subscription": "Enable Subscription",
   "preserve_history": "Preserve History",
   "preserve_history_hint": "When enabled, AI can see previous execution history to track changes",
+  "history_message_count": "Messages to keep",
+  "history_message_count_hint": "(1-50)",
   "enabled_success": "Subscription enabled",
   "disabled_success": "Subscription disabled",
   "toggle_failed": "Failed to toggle subscription",

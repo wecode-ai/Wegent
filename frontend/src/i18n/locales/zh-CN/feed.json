@@ -66,6 +66,8 @@
   "enable_subscription": "启用订阅器",
   "preserve_history": "保留对话历史",
   "preserve_history_hint": "开启后，AI 可以看到之前执行的历史记录，便于追踪变化",
+  "history_message_count": "保留消息数",
+  "history_message_count_hint": "条（1-50）",
   "enabled_success": "订阅器已启用",
   "disabled_success": "订阅器已禁用",
   "toggle_failed": "切换状态失败",
