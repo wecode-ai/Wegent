@@ -39,6 +39,8 @@ import {
   type ParagraphAction,
 } from '@/features/tasks/components/message'
 import { useTheme } from '@/features/theme/ThemeProvider'
+import { useTeamContext } from '@/contexts/TeamContext'
+import { getModelFromConfig } from '@/features/settings/services/bots'
 import '../wizard-animations.css'
 
 interface PreviewAdjustStepProps {
@@ -157,21 +159,67 @@ export default function PreviewAdjustStep({
     }
   }, [sampleTestMessage]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Get teams from context to find default team for chat mode
+  const { teams } = useTeamContext()
+
   useEffect(() => {
     const loadModels = async () => {
       setIsLoadingModels(true)
       try {
         const response = await modelApis.getUnifiedModels('Chat', false, 'all', undefined, 'llm')
-        setAvailableModels(response.data || [])
+        const rawModelList = response.data || []
 
-        if (!selectedModel && response.data && response.data.length > 0) {
-          const firstModel = response.data[0]
-          onModelChange({
-            model_name: firstModel.name,
-            model_id: firstModel.modelId || undefined,
-            reason: '',
-            confidence: 1.0,
-          })
+        // Deduplicate models by name (prefer user models over public models)
+        const modelMap = new Map<string, UnifiedModel>()
+        for (const model of rawModelList) {
+          const existing = modelMap.get(model.name)
+          // If no existing model or current model is user type (higher priority), use current
+          if (!existing || model.type === 'user') {
+            modelMap.set(model.name, model)
+          }
+        }
+        const modelList = Array.from(modelMap.values())
+        setAvailableModels(modelList)
+
+        if (!selectedModel && modelList.length > 0) {
+          // Find default team for chat mode
+          const chatDefaultTeam = teams.find(
+            team => team.default_for_modes && team.default_for_modes.includes('chat')
+          )
+
+          let defaultModelName: string | null = null
+
+          // Try to get bind_model from default team's first bot
+          if (chatDefaultTeam?.bots && chatDefaultTeam.bots.length > 0) {
+            const firstBot = chatDefaultTeam.bots[0]
+            const botConfig = firstBot.bot?.agent_config as Record<string, unknown> | undefined
+            if (botConfig) {
+              defaultModelName = getModelFromConfig(botConfig)
+            }
+          }
+
+          // Find the model in the list
+          let modelToSelect: UnifiedModel | undefined
+
+          if (defaultModelName) {
+            modelToSelect = modelList.find(
+              m => m.name === defaultModelName || m.displayName === defaultModelName
+            )
+          }
+
+          // Fallback to first model if default not found
+          if (!modelToSelect) {
+            modelToSelect = modelList[0]
+          }
+
+          if (modelToSelect) {
+            onModelChange({
+              model_name: modelToSelect.name,
+              model_id: modelToSelect.modelId || undefined,
+              reason: '',
+              confidence: 1.0,
+            })
+          }
         }
       } catch (error) {
         console.error('Failed to load models:', error)
@@ -180,7 +228,7 @@ export default function PreviewAdjustStep({
       }
     }
     loadModels()
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [teams]) // eslint-disable-line react-hooks/exhaustive-deps
 
   if (isLoading) {
     return <GeneratingLoader />
