@@ -42,7 +42,7 @@ WORKDIR /app
 # Verify Node.js is available (already installed in base image)
 RUN node --version && npm --version
 
-# Install system packages for document generation
+# Install system packages for document generation and Redis
 RUN dnf install -y \
     # LibreOffice for document conversion and PDF operations
     libreoffice-core libreoffice-writer libreoffice-calc libreoffice-impress \
@@ -52,6 +52,8 @@ RUN dnf install -y \
     atk at-spi2-atk libXcomposite libXdamage libXfixes libXrandr libxkbcommon \
     # Skill-creator dependencies (JSON parsing and packaging)
     jq zip \
+    # Redis server for standalone mode (embedded)
+    redis \
     && npm install -g @anthropic-ai/claude-code@2.1.33 \
     && dnf clean all \
     && rm -rf /var/cache/dnf/*
@@ -132,6 +134,10 @@ ENV CHAT_SHELL_MODE=package
 ENV PYTHONPATH=/app:/app/backend:/app/chat_shell:/app/executor
 ENV NODE_PATH=/usr/lib/node_modules
 
+# Redis configuration (embedded in standalone mode)
+ENV REDIS_URL=redis://localhost:6379/0
+ENV REDIS_DATA_DIR=/app/data/redis
+
 # Server configuration
 ENV BACKEND_PORT=8000
 ENV FRONTEND_PORT=3000
@@ -140,7 +146,7 @@ ENV GRACEFUL_SHUTDOWN_TIMEOUT=600
 # Expose ports
 EXPOSE 3000 8000
 
-# Data volume for SQLite database and other persistent data
+# Data volume for SQLite database, Redis data, and other persistent data
 VOLUME ["/app/data"]
 
 # Health check - verify both services are running

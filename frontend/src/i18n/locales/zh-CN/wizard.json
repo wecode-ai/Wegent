@@ -111,5 +111,14 @@
   "optimize_paragraph": "优化这段回答",
   "optimizing": "正在优化...",
   "optimizing_prompt": "正在优化提示词，请稍候...",
-  "click_to_test": "点击测试效果"
+  "click_to_test": "点击测试效果",
+  "skills_section": "技能扩展",
+  "skills_hint": "为助手添加额外能力，让它能处理更多类型的任务",
+  "recommended_skills": "推荐技能",
+  "other_skills": "其他可用技能",
+  "no_skills_available": "暂无可用技能",
+  "skill_confidence": "推荐度",
+  "skill_selected": "已选择",
+  "skill_select": "选择",
+  "skills_selected": "个技能"
 }

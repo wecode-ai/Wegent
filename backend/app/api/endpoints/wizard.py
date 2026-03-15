@@ -26,6 +26,7 @@ from app.models.kind import Kind
 from app.models.user import User
 from app.schemas.kind import Bot, Ghost, Shell, Team
 from app.schemas.wizard import (
+    AvailableSkill,
     CoreQuestion,
     CoreQuestionsResponse,
     CreateAllRequest,
@@ -41,6 +42,7 @@ from app.schemas.wizard import (
     RecommendConfigRequest,
     RecommendConfigResponse,
     ShellRecommendation,
+    SkillRecommendation,
     TestPromptRequest,
     TestPromptResponse,
 )
@@ -225,6 +227,150 @@ async def _call_llm_for_wizard(
             status_code=500,
             detail=f"Failed to generate response: {str(e)}",
         )
+
+
+async def _get_skills_for_wizard(
+    db: Session,
+    user: User,
+    purpose: str,
+    system_prompt: str,
+    shell_type: str,
+) -> tuple[List[AvailableSkill], List[SkillRecommendation]]:
+    """
+    Get available skills and AI-recommended skills for the wizard.
+
+    Returns:
+        Tuple of (available_skills, recommended_skills)
+    """
+    from sqlalchemy import or_
+
+    # Get all available skills (user's + public)
+    skill_kinds = (
+        db.query(Kind)
+        .filter(
+            Kind.kind == "Skill",
+            Kind.is_active == True,
+            or_(Kind.user_id == user.id, Kind.user_id == 0),
+        )
+        .order_by(Kind.created_at.desc())
+        .all()
+    )
+
+    # Build available skills list
+    available_skills: List[AvailableSkill] = []
+    skill_info_for_llm: List[Dict[str, Any]] = []
+
+    for kind in skill_kinds:
+        spec = kind.json.get("spec", {})
+        bind_shells = spec.get("bindShells")
+
+        # Filter by shell type if bindShells is specified
+        if bind_shells and shell_type not in bind_shells:
+            continue
+
+        skill = AvailableSkill(
+            name=kind.name,
+            display_name=spec.get("displayName"),
+            description=spec.get("description", ""),
+            is_public=kind.user_id == 0,
+            bind_shells=bind_shells,
+        )
+        available_skills.append(skill)
+
+        # Collect info for LLM recommendation
+        skill_info_for_llm.append(
+            {
+                "name": kind.name,
+                "display_name": spec.get("displayName") or kind.name,
+                "description": spec.get("description", ""),
+                "is_public": kind.user_id == 0,
+            }
+        )
+
+    # If no skills available, return empty lists
+    if not available_skills:
+        return [], []
+
+    # Use LLM to recommend skills based on user's purpose
+    recommended_skills: List[SkillRecommendation] = []
+
+    try:
+        # Build skill list for LLM
+        skills_text = "\n".join(
+            [
+                f"- {s['name']}: {s['description']}"
+                for s in skill_info_for_llm
+                if s["description"]
+            ]
+        )
+
+        if not skills_text:
+            # No skills with descriptions, return all as available but no recommendations
+            return available_skills, []
+
+        recommend_system_prompt = """You are an expert at matching AI assistant capabilities with available skills.
+Based on the user's purpose and the generated system prompt, recommend the most relevant skills.
+
+IMPORTANT:
+- Only recommend skills that are DIRECTLY relevant to the user's stated purpose
+- Do NOT recommend skills just because they might be "nice to have"
+- If no skills are clearly relevant, return an empty list
+- Maximum 3 recommendations
+
+Response format (JSON):
+{
+  "recommendations": [
+    {"name": "skill-name", "reason": "Brief reason why this skill is relevant", "confidence": 0.9}
+  ]
+}
+
+Output ONLY valid JSON, no other text."""
+
+        recommend_user_message = f"""User's purpose: {purpose}
+
+Generated system prompt:
+{system_prompt[:500]}...
+
+Available skills:
+{skills_text}
+
+Which skills would be most useful for this AI assistant? Only recommend skills that are directly relevant."""
+
+        response = await _call_llm_for_wizard(
+            db, user, recommend_system_prompt, recommend_user_message
+        )
+
+        # Parse response
+        json_match = re.search(r"\{[\s\S]*\}", response)
+        if json_match:
+            result = json.loads(json_match.group())
+        else:
+            result = json.loads(response)
+
+        # Build recommended skills list
+        for rec in result.get("recommendations", []):
+            skill_name = rec.get("name")
+            # Find the skill in available skills
+            matching_skill = next(
+                (s for s in skill_info_for_llm if s["name"] == skill_name), None
+            )
+            if matching_skill:
+                recommended_skills.append(
+                    SkillRecommendation(
+                        name=skill_name,
+                        display_name=matching_skill.get("display_name"),
+                        description=matching_skill.get("description"),
+                        reason=rec.get("reason", "Recommended for your use case"),
+                        confidence=rec.get("confidence", 0.7),
+                        is_public=matching_skill.get("is_public", False),
+                    )
+                )
+
+    except Exception as e:
+        logger.warning(f"[Wizard] Failed to get skill recommendations: {e}")
+        # Return available skills without recommendations on error
+
+    return available_skills, recommended_skills
 
 
 @router.post("/generate-followup", response_model=FollowUpResponse)
@@ -762,11 +908,27 @@ IMPORTANT REMINDERS:
         else:
             result = json.loads(response)
 
+        generated_prompt = result.get("system_prompt", "")
+        suggested_name = result.get("suggested_name", "my-agent")
+        suggested_description = result.get("suggested_description", "")
+        sample_test_message = result.get("sample_test_message", "")
+
+        # Get available skills and recommend skills based on user's purpose
+        available_skills, recommended_skills = await _get_skills_for_wizard(
+            db=db,
+            user=current_user,
+            purpose=request.answers.purpose,
+            system_prompt=generated_prompt,
+            shell_type=request.shell_type,
+        )
+
         return GeneratePromptResponse(
-            system_prompt=result.get("system_prompt", ""),
-            suggested_name=result.get("suggested_name", "my-agent"),
-            suggested_description=result.get("suggested_description", ""),
-            sample_test_message=result.get("sample_test_message", ""),
+            system_prompt=generated_prompt,
+            suggested_name=suggested_name,
+            suggested_description=suggested_description,
+            sample_test_message=sample_test_message,
+            recommended_skills=recommended_skills,
+            available_skills=available_skills,
         )
 
     except json.JSONDecodeError:
@@ -795,6 +957,19 @@ I'm here to help you with: {request.answers.purpose}
 - I'll keep things simple and clear
 - {special_reqs}
 """
+        # Still try to get skills even if prompt generation failed
+        try:
+            available_skills, recommended_skills = await _get_skills_for_wizard(
+                db=db,
+                user=current_user,
+                purpose=request.answers.purpose,
+                system_prompt=default_prompt,
+                shell_type=request.shell_type,
+            )
+        except Exception:
+            available_skills = []
+            recommended_skills = []
+
         return GeneratePromptResponse(
             system_prompt=default_prompt,
             suggested_name="my-agent",
@@ -804,6 +979,8 @@ I'm here to help you with: {request.answers.purpose}
                 else "AI Assistant"
             ),
             sample_test_message="",
+            recommended_skills=recommended_skills,
+            available_skills=available_skills,
         )
 
 
@@ -830,7 +1007,7 @@ async def create_all_resources(
             "spec": {
                 "systemPrompt": request.system_prompt,
                 "mcpServers": {},
-                "skills": [],
+                "skills": request.skills or [],
             },
         }
 

@@ -299,6 +299,7 @@ export function SubscriptionForm({
     normalizeExecutionTarget(initialData?.executionTarget)
   )
   const [preserveHistory, setPreserveHistory] = useState(initialData?.preserveHistory ?? false)
+  const [historyMessageCount, setHistoryMessageCount] = useState(10)
   const [visibility, setVisibility] = useState<SubscriptionVisibility>(
     initialData?.visibility || 'private'
   )
@@ -566,6 +567,7 @@ export function SubscriptionForm({
       setEnabled(subscription.enabled)
       setExecutionTarget(normalizeExecutionTarget(subscription.execution_target))
       setPreserveHistory(subscription.preserve_history || false)
+      setHistoryMessageCount(subscription.history_message_count || 10)
       setVisibility(subscription.visibility || 'private')
       setMarketWhitelistUsers(
         (subscription.market_whitelist_user_ids || []).map(userId => ({
@@ -610,6 +612,7 @@ export function SubscriptionForm({
       setEnabled(initialData?.enabled ?? true)
       setExecutionTarget(normalizeExecutionTarget(initialData?.executionTarget))
       setPreserveHistory(initialData?.preserveHistory ?? false)
+      setHistoryMessageCount(10)
       setVisibility(initialData?.visibility || 'private')
       setMarketWhitelistUsers([])
       setSelectedRepo(null)
@@ -709,6 +712,7 @@ export function SubscriptionForm({
           enabled,
           execution_target: executionTarget,
           preserve_history: preserveHistory,
+          history_message_count: preserveHistory ? historyMessageCount : undefined,
           ...(isRental
             ? {}
             : {
@@ -766,6 +770,7 @@ export function SubscriptionForm({
           enabled,
           execution_target: executionTarget,
           preserve_history: preserveHistory,
+          history_message_count: preserveHistory ? historyMessageCount : undefined,
           visibility,
           market_whitelist_user_ids: marketWhitelistUserIds,
           ...(selectedRepo && {
@@ -816,6 +821,7 @@ export function SubscriptionForm({
     executionTarget,
     hasSelectableDevices,
     preserveHistory,
+    historyMessageCount,
     visibility,
     marketWhitelistUsers,
     selectedRepo,
@@ -886,6 +892,8 @@ export function SubscriptionForm({
               setKnowledgeBaseRefs={setKnowledgeBaseRefs}
               preserveHistory={preserveHistory}
               setPreserveHistory={setPreserveHistory}
+              historyMessageCount={historyMessageCount}
+              setHistoryMessageCount={setHistoryMessageCount}
               executionTarget={executionTarget}
               setExecutionTarget={setExecutionTarget}
               availableDevices={availableDevices}

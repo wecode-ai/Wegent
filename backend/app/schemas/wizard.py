@@ -112,6 +112,27 @@ class GeneratePromptRequest(BaseModel):
     model_name: Optional[str] = None
 
 
+class AvailableSkill(BaseModel):
+    """Available skill for selection"""
+
+    name: str
+    display_name: Optional[str] = None
+    description: Optional[str] = None
+    is_public: bool = False
+    bind_shells: Optional[List[str]] = None
+
+
+class SkillRecommendation(BaseModel):
+    """Skill recommendation with reason"""
+
+    name: str
+    display_name: Optional[str] = None
+    description: Optional[str] = None
+    reason: str
+    confidence: float  # 0.0 - 1.0
+    is_public: bool = False
+
+
 class GeneratePromptResponse(BaseModel):
     """Response containing generated system prompt"""
 
@@ -119,6 +140,8 @@ class GeneratePromptResponse(BaseModel):
     suggested_name: str
     suggested_description: str
     sample_test_message: str = ""  # AI-generated sample test message for preview
+    recommended_skills: List[SkillRecommendation] = []  # AI-recommended skills
+    available_skills: List[AvailableSkill] = []  # All available skills for selection
 
 
 class CreateAllRequest(BaseModel):
@@ -134,6 +157,7 @@ class CreateAllRequest(BaseModel):
     bind_mode: List[str] = ["chat", "code"]
     namespace: str = "default"
     icon: Optional[str] = None
+    skills: Optional[List[str]] = None  # Skill names to add to Ghost
 
 
 class CreateAllResponse(BaseModel):
@@ -179,3 +203,23 @@ class IteratePromptResponse(BaseModel):
 
     improved_prompt: str
     changes_summary: str
+
+
+# Skill recommendation schemas (SkillRecommendation is defined above)
+
+
+class RecommendSkillsRequest(BaseModel):
+    """Request for skill recommendations"""
+
+    answers: WizardAnswers
+    followup_answers: Optional[List[Dict[str, Any]]] = None
+    system_prompt: str
+    shell_type: str
+    namespace: str = "default"
+
+
+class RecommendSkillsResponse(BaseModel):
+    """Response containing skill recommendations"""
+
+    recommended_skills: List[SkillRecommendation]
+    available_skills: List[SkillRecommendation]

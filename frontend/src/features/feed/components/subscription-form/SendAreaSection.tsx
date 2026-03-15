@@ -22,6 +22,7 @@ import {
 } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import {
@@ -91,6 +92,8 @@ export function SendAreaSection({
   setKnowledgeBaseRefs,
   preserveHistory,
   setPreserveHistory,
+  historyMessageCount,
+  setHistoryMessageCount,
   isRental,
 }: SendAreaSectionProps) {
   const { t } = useTranslation('feed')
@@ -556,12 +559,35 @@ export function SendAreaSection({
       {modelRequired && <p className="text-xs text-destructive">{t('model_required_hint')}</p>}
 
       {/* Preserve History */}
-      <div className="flex items-center justify-between pt-2 border-t border-border/30">
-        <div className="space-y-0.5">
-          <Label className="text-sm font-medium">{t('preserve_history')}</Label>
-          <p className="text-xs text-text-muted">{t('preserve_history_hint')}</p>
+      <div className="space-y-3 pt-2 border-t border-border/30">
+        <div className="flex items-center justify-between">
+          <div className="space-y-0.5">
+            <Label className="text-sm font-medium">{t('preserve_history')}</Label>
+            <p className="text-xs text-text-muted">{t('preserve_history_hint')}</p>
+          </div>
+          <Switch checked={preserveHistory} onCheckedChange={setPreserveHistory} />
         </div>
-        <Switch checked={preserveHistory} onCheckedChange={setPreserveHistory} />
+
+        {/* History Message Count - only show when preserve history is enabled */}
+        {preserveHistory && (
+          <div className="flex items-center gap-3 pl-4 border-l-2 border-primary/30">
+            <Label className="text-sm text-text-muted whitespace-nowrap">
+              {t('history_message_count')}
+            </Label>
+            <Input
+              type="number"
+              min={1}
+              max={50}
+              value={historyMessageCount}
+              onChange={e => {
+                const value = parseInt(e.target.value) || 10
+                setHistoryMessageCount(Math.min(50, Math.max(1, value)))
+              }}
+              className="w-20 h-8 text-center"
+            />
+            <span className="text-xs text-text-muted">{t('history_message_count_hint')}</span>
+          </div>
+        )}
       </div>
     </CollapsibleSection>
   )
