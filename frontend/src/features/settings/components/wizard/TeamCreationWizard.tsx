@@ -130,6 +130,8 @@ export default function TeamCreationWizard({
         name: response.suggested_name,
         description: response.suggested_description,
         sampleTestMessage: response.sample_test_message || '',
+        recommendedSkills: response.recommended_skills || [],
+        availableSkills: response.available_skills || [],
       })
     } catch (error) {
       dispatch({ type: 'SET_ERROR', error: (error as Error).message })
@@ -225,6 +227,11 @@ export default function TeamCreationWizard({
     dispatch({ type: 'SET_PROMPT_REFRESHED', refreshed: false })
   }, [])
 
+  // Toggle skill selection
+  const handleToggleSkill = useCallback((skillName: string) => {
+    dispatch({ type: 'TOGGLE_SKILL', skillName })
+  }, [])
+
   // Create all resources
   const handleCreate = useCallback(async () => {
     if (!state.selectedShell || !state.agentName) return
@@ -250,6 +257,7 @@ export default function TeamCreationWizard({
         bind_mode: state.bindMode,
         namespace: scope === 'group' && groupName ? groupName : 'default',
         icon: state.icon || undefined,
+        skills: state.selectedSkills.length > 0 ? state.selectedSkills : undefined,
       })
 
       onSuccess(response.team_id, response.team_name)
@@ -267,6 +275,7 @@ export default function TeamCreationWizard({
     state.systemPrompt,
     state.bindMode,
     state.icon,
+    state.selectedSkills,
     scope,
     groupName,
     onSuccess,
@@ -414,6 +423,11 @@ export default function TeamCreationWizard({
             isLoading={state.isLoading}
             promptRefreshed={state.promptRefreshed}
             sampleTestMessage={state.sampleTestMessage}
+            // Skills props
+            availableSkills={state.availableSkills}
+            recommendedSkills={state.recommendedSkills}
+            selectedSkills={state.selectedSkills}
+            onToggleSkill={handleToggleSkill}
           />
         )
       case 4:

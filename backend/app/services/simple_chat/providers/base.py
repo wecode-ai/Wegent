@@ -150,8 +150,10 @@ class LLMProvider(ABC):
                     if not line or line.startswith(":"):
                         continue
 
-                    if line.startswith("data: "):
-                        data = line[6:]
+                    # Handle both "data: " (with space) and "data:" (without space)
+                    if line.startswith("data:"):
+                        # Strip "data:" prefix and any leading whitespace
+                        data = line[5:].lstrip()
                         if data == "[DONE]":
                             logger.info(
                                 "%s stream completed: %d chunks in %.2fs",
