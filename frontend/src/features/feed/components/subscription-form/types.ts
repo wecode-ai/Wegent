@@ -62,6 +62,9 @@ export interface SendAreaSectionProps {
   // Preserve History
   preserveHistory: boolean
   setPreserveHistory: (value: boolean) => void
+  // History Message Count
+  historyMessageCount: number
+  setHistoryMessageCount: (value: number) => void
   // Rental flag
   isRental: boolean
 }
