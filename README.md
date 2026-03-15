@@ -266,17 +266,17 @@ Thanks to the following developers for their contributions and efforts to make t
         </a>
     </td>
     <td align="center">
-        <a href="https://github.com/johnny0120">
-            <img src="https://avatars.githubusercontent.com/u/15564476?v=4" width="80;" alt="johnny0120"/>
-            <br />
-            <sub><b>Johnny0120</b></sub>
-        </a>
-    </td>
-    <td align="center">
         <a href="https://github.com/kissghosts">
             <img src="https://avatars.githubusercontent.com/u/3409715?v=4" width="80;" alt="kissghosts"/>
             <br />
             <sub><b>Yanhe</b></sub>
+        </a>
+    </td>
+    <td align="center">
+        <a href="https://github.com/johnny0120">
+            <img src="https://avatars.githubusercontent.com/u/15564476?v=4" width="80;" alt="johnny0120"/>
+            <br />
+            <sub><b>Johnny0120</b></sub>
         </a>
     </td>
     <td align="center">
@@ -295,17 +295,17 @@ Thanks to the following developers for their contributions and efforts to make t
         </a>
     </td>
     <td align="center">
-        <a href="https://github.com/moqimoqidea">
-            <img src="https://avatars.githubusercontent.com/u/39821951?v=4" width="80;" alt="moqimoqidea"/>
-            <br />
-            <sub><b>Moqimoqidea</b></sub>
-        </a>
-    </td>
-    <td align="center">
         <a href="https://github.com/icycrystal4">
             <img src="https://avatars.githubusercontent.com/u/946207?v=4" width="80;" alt="icycrystal4"/>
             <br />
             <sub><b>Icycrystal4</b></sub>
+        </a>
+    </td>
+    <td align="center">
+        <a href="https://github.com/moqimoqidea">
+            <img src="https://avatars.githubusercontent.com/u/39821951?v=4" width="80;" alt="moqimoqidea"/>
+            <br />
+            <sub><b>Moqimoqidea</b></sub>
         </a>
     </td>
     <td align="center">
@@ -359,6 +359,20 @@ Thanks to the following developers for their contributions and efforts to make t
         </a>
     </td>
     <td align="center">
+        <a href="https://github.com/LiDaiyan">
+            <img src="https://avatars.githubusercontent.com/u/36092701?v=4" width="80;" alt="LiDaiyan"/>
+            <br />
+            <sub><b>Li Daiyan</b></sub>
+        </a>
+    </td>
+    <td align="center">
+        <a href="https://github.com/haosenwang1018">
+            <img src="https://avatars.githubusercontent.com/u/167664334?v=4" width="80;" alt="haosenwang1018"/>
+            <br />
+            <sub><b>Sense_wang</b></sub>
+        </a>
+    </td>
+    <td align="center">
         <a href="https://github.com/jolestar">
             <img src="https://avatars.githubusercontent.com/u/77268?v=4" width="80;" alt="jolestar"/>
             <br />
@@ -385,12 +399,13 @@ Thanks to the following developers for their contributions and efforts to make t
             <br />
             <sub><b>Jasper Zhong</b></sub>
         </a>
-    </td>
+    </td></tr>
+<tr>
     <td align="center">
-        <a href="https://github.com/LiDaiyan">
-            <img src="https://avatars.githubusercontent.com/u/36092701?v=4" width="80;" alt="LiDaiyan"/>
+        <a href="https://github.com/rayzhang0603">
+            <img src="https://avatars.githubusercontent.com/u/2917437?v=4" width="80;" alt="rayzhang0603"/>
             <br />
-            <sub><b>Li Daiyan</b></sub>
+            <sub><b>Ray</b></sub>
         </a>
     </td>
     <td align="center">
@@ -398,14 +413,6 @@ Thanks to the following developers for their contributions and efforts to make t
             <img src="https://avatars.githubusercontent.com/u/44485717?v=4" width="80;" alt="RichardoMrMu"/>
             <br />
             <sub><b>RichardoMu</b></sub>
-        </a>
-    </td></tr>
-<tr>
-    <td align="center">
-        <a href="https://github.com/haosenwang1018">
-            <img src="https://avatars.githubusercontent.com/u/167664334?v=4" width="80;" alt="haosenwang1018"/>
-            <br />
-            <sub><b>Sense_wang</b></sub>
         </a>
     </td>
     <td align="center">
