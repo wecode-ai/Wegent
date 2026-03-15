@@ -270,6 +270,14 @@ class ChatContext:
             limit=history_limit,
         )
         add_span_event("chat_history_loaded", {"message_count": len(history)})
+
+        # Log detailed history content for debugging preserve_history feature
+        logger.info(
+            "[CHAT_CONTEXT] <<< History loaded: task_id=%d, count=%d, history_limit=%s",
+            self._request.task_id,
+            len(history),
+            history_limit,
+        )
         return history
 
     @trace_async(

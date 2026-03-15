@@ -125,6 +125,7 @@ export interface Subscription {
   execution_target?: SubscriptionExecutionTarget
   // History preservation settings
   preserve_history?: boolean // Whether to preserve conversation history across executions
+  history_message_count?: number // Number of history messages to preserve (1-50, default 10)
   bound_task_id?: number // Task ID bound to this subscription for history preservation
   webhook_url?: string
   webhook_secret?: string // HMAC signing secret for webhook verification
@@ -184,6 +185,7 @@ export interface SubscriptionCreateRequest {
   execution_target?: SubscriptionExecutionTarget
   // History preservation settings
   preserve_history?: boolean // Whether to preserve conversation history across executions
+  history_message_count?: number // Number of history messages to preserve (1-50, default 10)
   // Knowledge base references
   knowledge_base_refs?: SubscriptionKnowledgeBaseRef[]
   // Skill references
@@ -219,6 +221,7 @@ export interface SubscriptionUpdateRequest {
   execution_target?: SubscriptionExecutionTarget
   // History preservation settings
   preserve_history?: boolean // Whether to preserve conversation history across executions
+  history_message_count?: number // Number of history messages to preserve (1-50, default 10)
   // Knowledge base references
   knowledge_base_refs?: SubscriptionKnowledgeBaseRef[]
   // Skill references
