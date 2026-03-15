@@ -929,8 +929,8 @@ class TaskOperationsMixin:
             result = db.execute(
                 text(
                     """
-                INSERT INTO tasks (user_id, kind, name, namespace, json, is_active, created_at, updated_at, project_id)
-                VALUES (:user_id, 'Placeholder', 'temp-placeholder', 'default', :json, false, :created_at, :updated_at, :project_id)
+                INSERT INTO tasks (user_id, kind, name, namespace, json, is_active, created_at, updated_at, project_id, is_group_chat)
+                VALUES (:user_id, 'Placeholder', 'temp-placeholder', 'default', :json, false, :created_at, :updated_at, :project_id, false)
             """
                 ),
                 {

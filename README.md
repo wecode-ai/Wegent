@@ -181,12 +181,13 @@ git clone https://github.com/wecode-ai/Wegent.git && cd Wegent && ./start.sh
 <summary><b>🔧 Common Commands</b></summary>
 
 ```bash
-# Standalone mode
-docker compose -f docker-compose.standalone.yml logs -f   # View logs
-docker compose -f docker-compose.standalone.yml down      # Stop
-docker compose -f docker-compose.standalone.yml up -d     # Start
+# Standalone mode (single container)
+docker logs -f wegent-standalone      # View logs
+docker stop wegent-standalone         # Stop
+docker start wegent-standalone        # Start
+docker restart wegent-standalone      # Restart
 
-# Standard mode
+# Standard mode (multi-container)
 docker compose logs -f   # View logs
 docker compose down      # Stop
 docker compose up -d     # Start
