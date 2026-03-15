@@ -7,6 +7,8 @@ import type {
   FollowUpQuestion,
   ShellRecommendation,
   ModelRecommendation,
+  AvailableSkill,
+  SkillRecommendation,
 } from '@/apis/wizard'
 
 export interface TestConversation {
@@ -39,6 +41,10 @@ export interface WizardState {
   bindMode: ('chat' | 'code')[]
   icon: string | null
   sampleTestMessage: string
+  // Step 4: Skills
+  availableSkills: AvailableSkill[]
+  recommendedSkills: SkillRecommendation[]
+  selectedSkills: string[] // Skill names
   // Step 4: Test conversation
   testConversations: TestConversation[]
   isTestingPrompt: boolean
@@ -85,6 +91,8 @@ export type WizardAction =
       name: string
       description: string
       sampleTestMessage: string
+      recommendedSkills: SkillRecommendation[]
+      availableSkills: AvailableSkill[]
     }
   | { type: 'SET_SYSTEM_PROMPT'; prompt: string }
   | { type: 'SET_AGENT_NAME'; name: string }
@@ -102,6 +110,8 @@ export type WizardAction =
   | { type: 'CLEAR_TEST_CONVERSATIONS' }
   | { type: 'CLEAR_FOLLOWUP_DATA' }
   | { type: 'SAVE_CORE_ANSWERS_SNAPSHOT'; answers: WizardAnswers }
+  | { type: 'SET_SELECTED_SKILLS'; skills: string[] }
+  | { type: 'TOGGLE_SKILL'; skillName: string }
   | { type: 'RESET' }
 
 // Default Chat Shell configuration
@@ -140,6 +150,11 @@ export const initialWizardState: WizardState = {
   bindMode: ['chat'],
   icon: null,
   sampleTestMessage: '',
+  // Skills
+  availableSkills: [],
+  recommendedSkills: [],
+  selectedSkills: [],
+  // Test conversation
   testConversations: [],
   isTestingPrompt: false,
   isIteratingPrompt: false,
@@ -238,14 +253,22 @@ export function wizardReducer(state: WizardState, action: WizardAction): WizardS
       return { ...state, selectedShell: action.shell }
     case 'SET_SELECTED_MODEL':
       return { ...state, selectedModel: action.model }
-    case 'SET_GENERATED_PROMPT':
+    case 'SET_GENERATED_PROMPT': {
+      // Auto-select recommended skills
+      const autoSelectedSkills = action.recommendedSkills
+        .filter(s => s.confidence >= 0.7)
+        .map(s => s.name)
       return {
         ...state,
         systemPrompt: action.prompt,
         agentName: action.name,
         agentDescription: action.description,
         sampleTestMessage: action.sampleTestMessage,
+        recommendedSkills: action.recommendedSkills,
+        availableSkills: action.availableSkills,
+        selectedSkills: autoSelectedSkills,
       }
+    }
     case 'SET_SYSTEM_PROMPT':
       return { ...state, systemPrompt: action.prompt }
     case 'SET_AGENT_NAME':
@@ -304,7 +327,22 @@ export function wizardReducer(state: WizardState, action: WizardAction): WizardS
         sampleTestMessage: '',
         testConversations: [],
         lastGeneratedCoreAnswers: null,
+        // Clear skills data
+        availableSkills: [],
+        recommendedSkills: [],
+        selectedSkills: [],
       }
+    case 'SET_SELECTED_SKILLS':
+      return { ...state, selectedSkills: action.skills }
+    case 'TOGGLE_SKILL': {
+      const isSelected = state.selectedSkills.includes(action.skillName)
+      return {
+        ...state,
+        selectedSkills: isSelected
+          ? state.selectedSkills.filter(s => s !== action.skillName)
+          : [...state.selectedSkills, action.skillName],
+      }
+    }
     case 'SAVE_CORE_ANSWERS_SNAPSHOT':
       // Save a snapshot of core answers when generating questions
       return { ...state, lastGeneratedCoreAnswers: { ...action.answers } }
