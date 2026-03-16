@@ -24,7 +24,12 @@ jest.mock('@/hooks/useTranslation', () => ({
         'chat:mermaid.zoomOut': 'Zoom Out',
         'chat:mermaid.resetZoom': 'Reset Zoom',
         'chat:mermaid.exportPng': 'Export PNG',
+        'chat:mermaid.exportSvg': 'Export SVG',
         'chat:mermaid.exportSuccess': 'Exported',
+        'chat:mermaid.copyImage': 'Copy Image',
+        'chat:mermaid.viewCode': 'View Code',
+        'chat:mermaid.sourceCode': 'Mermaid Source Code',
+        'chat:mermaid.escToClose': 'Press ESC to close',
         'knowledge:diagram': 'Diagram',
       }
       return translations[key] || key
@@ -34,8 +39,11 @@ jest.mock('@/hooks/useTranslation', () => ({
 
 // Create mock functions for mermaid
 const mockInitialize = jest.fn()
-const mockRender = jest.fn().mockResolvedValue({
-  svg: '<svg width="100" height="100"><rect width="100" height="100" fill="blue"></rect></svg>',
+let mockRenderResolve: (value: { svg: string }) => void
+const mockRender = jest.fn().mockImplementation(() => {
+  return new Promise(resolve => {
+    mockRenderResolve = resolve
+  })
 })
 
 // Mock mermaid library - must match the dynamic import structure
@@ -53,6 +61,39 @@ const mockClipboard = {
 }
 Object.assign(navigator, { clipboard: mockClipboard })
 
+// Mock canvas getContext to avoid "Not implemented" errors
+HTMLCanvasElement.prototype.getContext = jest.fn(() => ({
+  fillRect: jest.fn(),
+  clearRect: jest.fn(),
+  getImageData: jest.fn(() => ({ data: new Uint8ClampedArray(4) })),
+  putImageData: jest.fn(),
+  createImageData: jest.fn(() => ({ data: new Uint8ClampedArray(4) })),
+  setTransform: jest.fn(),
+  drawImage: jest.fn(),
+  save: jest.fn(),
+  fillText: jest.fn(),
+  restore: jest.fn(),
+  beginPath: jest.fn(),
+  moveTo: jest.fn(),
+  lineTo: jest.fn(),
+  closePath: jest.fn(),
+  stroke: jest.fn(),
+  translate: jest.fn(),
+  scale: jest.fn(),
+  rotate: jest.fn(),
+  arc: jest.fn(),
+  fill: jest.fn(),
+  measureText: jest.fn(() => ({ width: 0 })),
+  transform: jest.fn(),
+  rect: jest.fn(),
+  clip: jest.fn(),
+})) as unknown as jest.Mock
+
+// Mock toBlob for canvas
+HTMLCanvasElement.prototype.toBlob = jest.fn(callback => {
+  callback?.(new Blob(['test'], { type: 'image/png' }))
+})
+
 // Helper function to render with TooltipProvider
 const renderWithProviders = (ui: React.ReactElement) => {
   return render(<TooltipProvider>{ui}</TooltipProvider>)
@@ -61,9 +102,11 @@ const renderWithProviders = (ui: React.ReactElement) => {
 describe('MermaidDiagram', () => {
   beforeEach(() => {
     jest.clearAllMocks()
-    // Reset mock implementation to default success case
-    mockRender.mockResolvedValue({
-      svg: '<svg width="100" height="100"><rect width="100" height="100" fill="blue"></rect></svg>',
+    // Reset mock implementation to default success case with controlled promise
+    mockRender.mockImplementation(() => {
+      return new Promise(resolve => {
+        mockRenderResolve = resolve
+      })
     })
   })
 
@@ -82,6 +125,13 @@ describe('MermaidDiagram', () => {
       renderWithProviders(<MermaidDiagram code={sampleMermaidCode} />)
     })
 
+    // Resolve the mermaid render promise to trigger state updates within act
+    await act(async () => {
+      mockRenderResolve({
+        svg: '<svg width="100" height="100"><rect width="100" height="100" fill="blue"></rect></svg>',
+      })
+    })
+
     await waitFor(
       () => {
         expect(screen.queryByText('Loading diagram...')).not.toBeInTheDocument()
@@ -98,6 +148,13 @@ describe('MermaidDiagram', () => {
       renderWithProviders(<MermaidDiagram code={sampleMermaidCode} />)
     })
 
+    // Resolve the mermaid render promise
+    await act(async () => {
+      mockRenderResolve({
+        svg: '<svg width="100" height="100"><rect width="100" height="100" fill="blue"></rect></svg>',
+      })
+    })
+
     await waitFor(() => {
       expect(screen.queryByText('Loading diagram...')).not.toBeInTheDocument()
     })
@@ -109,6 +166,13 @@ describe('MermaidDiagram', () => {
   it('handles zoom in', async () => {
     await act(async () => {
       renderWithProviders(<MermaidDiagram code={sampleMermaidCode} />)
+    })
+
+    // Resolve the mermaid render promise
+    await act(async () => {
+      mockRenderResolve({
+        svg: '<svg width="100" height="100"><rect width="100" height="100" fill="blue"></rect></svg>',
+      })
     })
 
     await waitFor(
@@ -135,6 +199,13 @@ describe('MermaidDiagram', () => {
       renderWithProviders(<MermaidDiagram code={sampleMermaidCode} />)
     })
 
+    // Resolve the mermaid render promise
+    await act(async () => {
+      mockRenderResolve({
+        svg: '<svg width="100" height="100"><rect width="100" height="100" fill="blue"></rect></svg>',
+      })
+    })
+
     await waitFor(
       () => {
         expect(screen.queryByText('Loading diagram...')).not.toBeInTheDocument()
@@ -159,6 +230,13 @@ describe('MermaidDiagram', () => {
       renderWithProviders(<MermaidDiagram code={sampleMermaidCode} />)
     })
 
+    // Resolve the mermaid render promise
+    await act(async () => {
+      mockRenderResolve({
+        svg: '<svg width="100" height="100"><rect width="100" height="100" fill="blue"></rect></svg>',
+      })
+    })
+
     await waitFor(() => {
       expect(screen.queryByText('Loading diagram...')).not.toBeInTheDocument()
     })
@@ -177,11 +255,21 @@ describe('MermaidDiagram', () => {
   })
 
   it('renders error state for invalid mermaid code', async () => {
-    // Mock mermaid to throw an error for this test
-    mockRender.mockRejectedValueOnce(new Error('Syntax error'))
+    // Create a mock that rejects for this test
+    let rejectRender: (error: Error) => void = () => {}
+    mockRender.mockImplementationOnce(() => {
+      return new Promise((_, reject) => {
+        rejectRender = reject
+      })
+    })
 
     await act(async () => {
       renderWithProviders(<MermaidDiagram code="invalid mermaid code" />)
+    })
+
+    // Reject the mermaid render promise within act
+    await act(async () => {
+      rejectRender(new Error('Syntax error'))
     })
 
     await waitFor(() => {
@@ -195,6 +283,13 @@ describe('MermaidDiagram', () => {
   it('applies custom className', async () => {
     await act(async () => {
       renderWithProviders(<MermaidDiagram code={sampleMermaidCode} className="custom-class" />)
+    })
+
+    // Resolve the mermaid render promise
+    await act(async () => {
+      mockRenderResolve({
+        svg: '<svg width="100" height="100"><rect width="100" height="100" fill="blue"></rect></svg>',
+      })
     })
 
     await waitFor(() => {
