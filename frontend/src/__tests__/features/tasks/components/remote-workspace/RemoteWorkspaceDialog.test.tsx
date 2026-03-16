@@ -146,8 +146,8 @@ describe('RemoteWorkspaceDialog', () => {
 
     expect(screen.getByText('Details')).toBeInTheDocument()
     expect(screen.getAllByText(/\/workspace\/diagram\.png/i).length).toBeGreaterThan(0)
-    // Download is rendered as a link when preview is available
-    expect(screen.getByRole('link', { name: 'Download' })).toBeInTheDocument()
+    // Download is rendered as a button when preview is available
+    expect(screen.getByRole('button', { name: 'Download' })).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'Preview' })).not.toBeInTheDocument()
   })
 

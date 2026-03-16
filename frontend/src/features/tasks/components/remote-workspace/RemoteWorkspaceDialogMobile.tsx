@@ -32,7 +32,6 @@ type RemoteWorkspaceDialogMobileProps = {
   selectedEntries: RemoteWorkspaceTreeEntry[]
   previewKind: PreviewKind
   inlineUrl: string
-  downloadUrl: string
   textContent: string
   isTextLoading: boolean
   textError: string | null
@@ -40,6 +39,7 @@ type RemoteWorkspaceDialogMobileProps = {
   sortOption: SortOption
   canGoParent: boolean
   canDownloadPreview: boolean
+  onDownload: (entry: RemoteWorkspaceTreeEntry) => void
   onGoRoot: () => void
   onGoParent: () => void
   onRefresh: () => void
@@ -81,7 +81,6 @@ export function RemoteWorkspaceDialogMobile({
   selectedEntries,
   previewKind,
   inlineUrl,
-  downloadUrl,
   textContent,
   isTextLoading,
   textError,
@@ -96,6 +95,7 @@ export function RemoteWorkspaceDialogMobile({
   onSortChange,
   onToggleEntrySelection,
   onOpenEntry,
+  onDownload,
 }: RemoteWorkspaceDialogMobileProps) {
   const selectedCount = selectedPaths.size
   const detailEntry = selectedEntries.length === 1 ? selectedEntries[0] : null
@@ -239,11 +239,13 @@ export function RemoteWorkspaceDialogMobile({
                 </p>
               </div>
 
-              {!detailEntry.is_directory && canDownloadPreview && (
-                <Button asChild variant="outline" className="h-11 min-w-[44px]">
-                  <a href={downloadUrl} download={detailEntry.name}>
-                    {t('remote_workspace.actions.download')}
-                  </a>
+              {!detailEntry.is_directory && canDownloadPreview && detailEntry && (
+                <Button
+                  variant="outline"
+                  className="h-11 min-w-[44px]"
+                  onClick={() => onDownload(detailEntry)}
+                >
+                  {t('remote_workspace.actions.download')}
                 </Button>
               )}
 

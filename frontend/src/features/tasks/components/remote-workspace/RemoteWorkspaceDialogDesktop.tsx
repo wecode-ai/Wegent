@@ -48,7 +48,6 @@ type RemoteWorkspaceDialogDesktopProps = {
   previewEntry: RemoteWorkspaceTreeEntry | null
   previewKind: PreviewKind
   inlineUrl: string
-  downloadUrl: string
   textContent: string
   isTextLoading: boolean
   textError: string | null
@@ -60,6 +59,7 @@ type RemoteWorkspaceDialogDesktopProps = {
   canGoParent: boolean
   canDownloadPreview: boolean
   isPreviewDialogOpen: boolean
+  onDownload: (entry: RemoteWorkspaceTreeEntry) => void
   onGoRoot: () => void
   onGoParent: () => void
   onRefresh: () => void
@@ -116,7 +116,6 @@ export function RemoteWorkspaceDialogDesktop({
   previewEntry,
   previewKind,
   inlineUrl,
-  downloadUrl,
   textContent,
   isTextLoading,
   textError,
@@ -145,6 +144,7 @@ export function RemoteWorkspaceDialogDesktop({
   onSelectEntry,
   onOpenEntry,
   onPreviewDialogOpenChange,
+  onDownload,
 }: RemoteWorkspaceDialogDesktopProps) {
   const allEntriesSelected =
     visibleEntries.length > 0 && visibleEntries.every(entry => selectedPaths.has(entry.path))
@@ -206,11 +206,14 @@ export function RemoteWorkspaceDialogDesktop({
           >
             {t('remote_workspace.actions.preview', 'Preview')}
           </Button>
-          {canDownloadPreview ? (
-            <Button asChild type="button" variant="outline" size="sm">
-              <a href={downloadUrl} download={previewEntry?.name}>
-                {t('remote_workspace.actions.download')}
-              </a>
+          {canDownloadPreview && previewEntry ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => onDownload(previewEntry)}
+            >
+              {t('remote_workspace.actions.download')}
             </Button>
           ) : (
             <Button type="button" variant="outline" size="sm" disabled>

@@ -169,7 +169,7 @@ export function RemoteWorkspaceDialog({
   )
 
   // Handle file download with authentication
-  const _handleDownloadFile = useCallback(
+  const handleDownloadFile = useCallback(
     async (entry: RemoteWorkspaceTreeEntry) => {
       try {
         const token = getToken()
@@ -572,7 +572,6 @@ export function RemoteWorkspaceDialog({
             inlineUrl={
               previewKind === 'image' || previewKind === 'pdf' ? previewBlobUrl : inlineUrl
             }
-            downloadUrl={downloadUrl}
             textContent={textContent}
             isTextLoading={isTextLoading}
             textError={textError}
@@ -580,6 +579,7 @@ export function RemoteWorkspaceDialog({
             sortOption={sortOption}
             canGoParent={canGoParent}
             canDownloadPreview={canDownloadPreview}
+            onDownload={handleDownloadFile}
             onGoRoot={() => navigateToDirectory(rootPath)}
             onGoParent={handleGoParent}
             onRefresh={() =>
@@ -615,7 +615,6 @@ export function RemoteWorkspaceDialog({
             inlineUrl={
               previewKind === 'image' || previewKind === 'pdf' ? previewBlobUrl : inlineUrl
             }
-            downloadUrl={downloadUrl}
             textContent={textContent}
             isTextLoading={isTextLoading}
             textError={textError}
@@ -627,6 +626,7 @@ export function RemoteWorkspaceDialog({
             canGoParent={canGoParent}
             canDownloadPreview={canDownloadPreview}
             isPreviewDialogOpen={isPreviewDialogOpen}
+            onDownload={handleDownloadFile}
             onGoRoot={() => navigateToDirectory(rootPath)}
             onGoParent={handleGoParent}
             onRefresh={() =>
