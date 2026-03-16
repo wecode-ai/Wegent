@@ -271,7 +271,9 @@ def _download_claude_binary_from_pypi(target_platform: str) -> tuple[str, str] |
 
 
 def build_executable(
-    target_arch: str | None = None, target_platform: str | None = None
+    target_arch: str | None = None,
+    target_platform: str | None = None,
+    version: str | None = None,
 ):
     """Build the executable using PyInstaller.
 
@@ -280,6 +282,7 @@ def build_executable(
                      If None, builds for the native architecture.
         target_platform: Target platform for cross-compilation (e.g., 'Windows', 'Darwin', 'Linux').
                         If None, builds for the current platform.
+        version: Version string to embed in the binary. If None, reads from pyproject.toml.
     """
     project_root = get_project_root()
     executor_root = get_executor_root()
@@ -288,7 +291,8 @@ def build_executable(
     effective_platform = target_platform or platform.system()
 
     # Get version and embed it into source
-    version = get_version_from_pyproject()
+    if version is None:
+        version = get_version_from_pyproject()
     print(f"Building version: {version}")
     if target_platform:
         print(f"Target platform: {target_platform}")
@@ -541,6 +545,10 @@ def main():
         help="Target platform for bundling platform-specific binaries. "
         "Use 'Windows' when building for Windows from macOS/Linux to include claude.exe.",
     )
+    parser.add_argument(
+        "--version",
+        help="Override version number (defaults to pyproject.toml version)",
+    )
     args = parser.parse_args()
 
     print("=" * 60)
@@ -558,7 +566,11 @@ def main():
     clean_build_artifacts()
 
     # Build executable
-    build_executable(target_arch=args.target_arch, target_platform=args.target_platform)
+    build_executable(
+        target_arch=args.target_arch,
+        target_platform=args.target_platform,
+        version=args.version,
+    )
 
     print()
     print("=" * 60)
