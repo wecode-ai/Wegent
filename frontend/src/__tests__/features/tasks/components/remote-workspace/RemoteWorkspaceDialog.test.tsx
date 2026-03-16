@@ -30,6 +30,7 @@ const translations: Record<string, string> = {
   'remote_workspace.sort.options.size_desc': 'Size (Large first)',
   'remote_workspace.sort.options.modified_desc': 'Recently modified',
   'remote_workspace.actions.download': 'Download',
+  'remote_workspace.actions.open': 'Open',
   'remote_workspace.actions.go': 'Go',
   'remote_workspace.actions.cancel': 'Cancel',
   'remote_workspace.actions.preview': 'Preview',
@@ -61,6 +62,7 @@ const translations: Record<string, string> = {
   'remote_workspace.tree.retry': 'Retry',
   'remote_workspace.preview.empty': 'Select a file to preview',
   'remote_workspace.preview.title': 'Preview',
+  'remote_workspace.preview.hint': 'Double-click the file name to open preview',
   'remote_workspace.preview.loading': 'Loading preview...',
   'remote_workspace.preview.load_failed': 'Failed to load preview',
   'remote_workspace.preview.unsupported':
@@ -68,9 +70,11 @@ const translations: Record<string, string> = {
   'tasks:remote_workspace.title': 'Remote Workspace',
   'tasks:remote_workspace.root': 'Workspace',
   'tasks:remote_workspace.preview.empty': 'Select a file to preview',
+  'tasks:remote_workspace.preview.hint': 'Double-click the file name to open preview',
   'tasks:remote_workspace.preview.unsupported':
     'This file type is not supported for preview. Please download.',
   'tasks:remote_workspace.actions.download': 'Download',
+  'tasks:remote_workspace.actions.preview': 'Preview',
 }
 
 const translationMock = (key: string) => translations[key] || key
@@ -141,9 +145,34 @@ describe('RemoteWorkspaceDialog', () => {
     await user.click(fileNode)
 
     expect(screen.getByText('Details')).toBeInTheDocument()
-    expect(screen.getByText(/\/workspace\/diagram\.png/i)).toBeInTheDocument()
+    expect(screen.getAllByText(/\/workspace\/diagram\.png/i).length).toBeGreaterThan(0)
+    // Download is rendered as a link when preview is available
     expect(screen.getByRole('link', { name: 'Download' })).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'Preview' })).not.toBeInTheDocument()
+  })
+
+  test('desktop toolbar exposes preview action and detail panel shows hint', async () => {
+    mockRootEntries()
+    ;(remoteWorkspaceApis.getFileUrl as jest.Mock).mockReturnValue(
+      '/api/tasks/1/remote-workspace/file'
+    )
+
+    render(<RemoteWorkspaceDialog open taskId={1} onOpenChange={jest.fn()} />)
+
+    await waitFor(() => {
+      expect(remoteWorkspaceApis.getTree).toHaveBeenCalledWith(1, '/workspace')
+    })
+
+    const user = userEvent.setup({ pointerEventsCheck: 0 })
+    const fileNode = await screen.findByText(/notes\.txt/i)
+    await user.click(fileNode)
+
+    // Preview button should be enabled when a file is selected
+    expect(screen.getByRole('button', { name: 'Preview' })).toBeEnabled()
+    // Detail panel shows hint for opening preview
+    expect(
+      screen.getAllByText('Double-click the file name to open preview').length
+    ).toBeGreaterThan(0)
   })
 
   test('renders directory tree panel on desktop', async () => {
@@ -416,7 +445,7 @@ describe('RemoteWorkspaceDialog', () => {
     await user.click(screen.getByRole('checkbox', { name: 'select-diagram.png' }))
     await user.click(screen.getByRole('checkbox', { name: 'select-notes.txt' }))
 
-    expect(screen.getByText(/^2\s+selected$/i)).toBeInTheDocument()
+    expect(screen.getAllByText(/^2\s+selected$/i).length).toBeGreaterThan(0)
     expect(screen.getByText('Multiple items selected')).toBeInTheDocument()
   })
 

@@ -6,6 +6,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
+import { getToken } from '@/apis/user'
+
 import { type RemoteWorkspaceTreeEntry, remoteWorkspaceApis } from '@/apis/remoteWorkspace'
 import {
   Dialog,
@@ -66,6 +68,11 @@ export function RemoteWorkspaceDialog({
   const [textContent, setTextContent] = useState('')
   const [isTextLoading, setIsTextLoading] = useState(false)
   const [textError, setTextError] = useState<string | null>(null)
+
+  // Blob URL for image/pdf preview (to support authenticated file access)
+  const [previewBlobUrl, setPreviewBlobUrl] = useState<string>('')
+  const [_isPreviewLoading, setIsPreviewLoading] = useState(false)
+  const [_previewError, setPreviewError] = useState<string | null>(null)
 
   const expandPathToDirectory = useCallback(
     (path: string) => {
@@ -130,6 +137,69 @@ export function RemoteWorkspaceDialog({
       }
     },
     [expandPathToDirectory, t, taskId]
+  )
+
+  // Fetch file content with authentication (for images/pdfs that can't use direct URL)
+  const fetchFileBlob = useCallback(
+    async (path: string, disposition: 'inline' | 'attachment') => {
+      setIsPreviewLoading(true)
+      setPreviewError(null)
+
+      try {
+        const token = getToken()
+        const url = remoteWorkspaceApis.getFileUrl(taskId, path, disposition)
+        const response = await fetch(url, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        })
+
+        if (!response.ok) {
+          throw new Error('fetch failed')
+        }
+
+        const blob = await response.blob()
+        const blobUrl = URL.createObjectURL(blob)
+        setPreviewBlobUrl(blobUrl)
+      } catch {
+        setPreviewError(t('remote_workspace.preview.load_failed', 'Failed to load preview'))
+      } finally {
+        setIsPreviewLoading(false)
+      }
+    },
+    [taskId, t]
+  )
+
+  // Handle file download with authentication
+  const _handleDownloadFile = useCallback(
+    async (entry: RemoteWorkspaceTreeEntry) => {
+      try {
+        const token = getToken()
+        const url = remoteWorkspaceApis.getFileUrl(taskId, entry.path, 'attachment')
+        const response = await fetch(url, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        })
+
+        if (!response.ok) {
+          throw new Error('fetch failed')
+        }
+
+        const blob = await response.blob()
+        const blobUrl = URL.createObjectURL(blob)
+
+        // Create temporary link and trigger download
+        const link = document.createElement('a')
+        link.href = blobUrl
+        link.download = entry.name
+        document.body.appendChild(link)
+        link.click()
+        document.body.removeChild(link)
+
+        // Clean up blob URL
+        URL.revokeObjectURL(blobUrl)
+      } catch {
+        // Error handling - could add toast notification here
+      }
+    },
+    [taskId]
   )
 
   useEffect(() => {
@@ -233,7 +303,10 @@ export function RemoteWorkspaceDialog({
     setIsTextLoading(true)
     setTextError(null)
 
-    fetch(inlineUrl)
+    const token = getToken()
+    fetch(inlineUrl, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
       .then(response => {
         if (!response.ok) {
           throw new Error('fetch failed')
@@ -266,6 +339,41 @@ export function RemoteWorkspaceDialog({
       setIsPreviewDialogOpen(false)
     }
   }, [isPreviewDialogOpen, previewEntry])
+
+  // Effect to load blob URL for image/pdf previews
+  useEffect(() => {
+    const shouldLoadPreview = isMobile || isPreviewDialogOpen
+    if (!open || !shouldLoadPreview || !previewEntry) {
+      // Clean up previous blob URL
+      if (previewBlobUrl) {
+        URL.revokeObjectURL(previewBlobUrl)
+        setPreviewBlobUrl('')
+      }
+      return
+    }
+
+    // Only load blob for image and pdf previews
+    if (previewKind !== 'image' && previewKind !== 'pdf') {
+      return
+    }
+
+    void fetchFileBlob(previewEntry.path, 'inline')
+
+    return () => {
+      if (previewBlobUrl) {
+        URL.revokeObjectURL(previewBlobUrl)
+      }
+    }
+  }, [
+    fetchFileBlob,
+    inlineUrl,
+    isMobile,
+    isPreviewDialogOpen,
+    open,
+    previewEntry,
+    previewKind,
+    previewBlobUrl,
+  ])
 
   const canGoParent = Boolean(getParentPath(rootPath, currentPath))
   const breadcrumbs = useMemo(
@@ -461,7 +569,9 @@ export function RemoteWorkspaceDialog({
             selectedPaths={selectedPathSet}
             selectedEntries={selectedEntries}
             previewKind={previewKind}
-            inlineUrl={inlineUrl}
+            inlineUrl={
+              previewKind === 'image' || previewKind === 'pdf' ? previewBlobUrl : inlineUrl
+            }
             downloadUrl={downloadUrl}
             textContent={textContent}
             isTextLoading={isTextLoading}
@@ -502,7 +612,9 @@ export function RemoteWorkspaceDialog({
             selectedEntries={selectedEntries}
             previewEntry={previewEntry}
             previewKind={previewKind}
-            inlineUrl={inlineUrl}
+            inlineUrl={
+              previewKind === 'image' || previewKind === 'pdf' ? previewBlobUrl : inlineUrl
+            }
             downloadUrl={downloadUrl}
             textContent={textContent}
             isTextLoading={isTextLoading}
