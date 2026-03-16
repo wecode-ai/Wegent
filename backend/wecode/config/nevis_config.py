@@ -45,6 +45,14 @@ class NevisSettings(BaseSettings):
         "repository/files/dist%2Fdevice_install-and-run-wegent.sh/raw?ref=master"
     )
 
+    # OpenClaw install script URL for cloud devices.
+    # Downloaded from the same repository as the wegent install script.
+    NEVIS_OPENCLAW_INSTALL_SCRIPT_URL: str = (
+        "https://git.intra.weibo.com/api/v4/projects/"
+        "weibo_rd%2Fcommon%2Fwecode%2Fwecode-cli-cc/"
+        "repository/files/dist%2Fdevice_install-and-run-openclaw.sh/raw?ref=master"
+    )
+
     # Private token for accessing executor binary download URL
     NEVIS_EXECUTOR_DOWNLOAD_TOKEN: str = ""
 

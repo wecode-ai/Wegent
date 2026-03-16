@@ -36,6 +36,7 @@ from app.services.device.base_provider import BaseDeviceProvider
 from wecode.config.nevis_config import nevis_settings
 from wecode.service.cloud_device_script import generate_simple_startup_script
 from wecode.service.nevis_client import NevisClient, NevisClientError, nevis_client
+from wecode.service.wecode_apikey_client import get_or_create_apikey_async
 
 logger = logging.getLogger(__name__)
 
@@ -128,6 +129,16 @@ class CloudDeviceProvider(BaseDeviceProvider):
         server_device_id = str(uuid.uuid4())
         server_device_name = f"{user_name}-cloud-{server_device_id[:8]}"
 
+        # Get API key for OpenClaw script (non-blocking, skip on failure)
+        api_key = ""
+        try:
+            api_key = await get_or_create_apikey_async(user_name)
+        except Exception as e:
+            logger.warning(
+                f"[CloudDeviceProvider] Failed to get API key for OpenClaw, "
+                f"skipping: {e}"
+            )
+
         # Generate startup script with server-generated device info
         user_data = generate_simple_startup_script(
             user_name=user_name,
@@ -139,6 +150,8 @@ class CloudDeviceProvider(BaseDeviceProvider):
             mail_password=mail_password,
             device_id=server_device_id,
             device_name=server_device_name,
+            openclaw_script_url=nevis_settings.NEVIS_OPENCLAW_INSTALL_SCRIPT_URL,
+            api_key=api_key,
         )
 
         # Create sandbox via Nevis API
