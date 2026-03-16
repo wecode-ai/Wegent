@@ -5,6 +5,13 @@
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const path = require('path')
 
+// Resolve path with POSIX-style separators for WSL/Windows compatibility
+// Using path.resolve can produce Windows-style paths (D:\...) in WSL environments
+// which webpack cannot handle. Converting to forward slashes fixes this.
+function resolveAlias(relativePath) {
+  return path.resolve(__dirname, relativePath).split(path.sep).join('/')
+}
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: false,
@@ -29,9 +36,12 @@ const nextConfig = {
   ],
   // Turbopack configuration (development mode)
   // Mirrors the remark-gfm alias from webpack config for iOS 16 Safari compatibility
+  // NOTE: Turbopack resolveAlias requires a project-relative path (starting with ./)
+  // NOT an absolute path — absolute paths (even with forward slashes) are treated as
+  // external modules which causes "chunking context does not support external modules"
   turbopack: {
     resolveAlias: {
-      'remark-gfm': path.resolve(__dirname, 'src/lib/remark-gfm-safe.ts'),
+      'remark-gfm': './src/lib/remark-gfm-safe.ts',
     },
   },
   // Webpack configuration (production builds)
@@ -41,7 +51,7 @@ const nextConfig = {
     // which uses lookbehind regex not supported by iOS 16
     config.resolve.alias = {
       ...config.resolve.alias,
-      'remark-gfm': path.resolve(__dirname, 'src/lib/remark-gfm-safe.ts'),
+      'remark-gfm': resolveAlias('src/lib/remark-gfm-safe.ts'),
     }
 
     // Handle chunk loading issues
