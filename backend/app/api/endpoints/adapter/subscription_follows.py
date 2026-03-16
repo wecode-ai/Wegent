@@ -21,6 +21,7 @@ from app.api.dependencies import get_db
 from app.core import security
 from app.models.user import User
 from app.schemas.subscription import (
+    AcceptInvitationRequest,
     DeveloperNotificationSettingsResponse,
     DeveloperNotificationSettingsUpdateRequest,
     DiscoverSubscriptionsListResponse,
@@ -411,16 +412,27 @@ invitation_router = APIRouter()
 @invitation_router.post("/{invitation_id}/accept", status_code=status.HTTP_200_OK)
 def accept_invitation(
     invitation_id: int,
+    request: Optional[AcceptInvitationRequest] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
     """
     Accept a subscription invitation.
+
+    Optionally specify notification settings (level and channels).
     """
+    notification_level = None
+    notification_channel_ids = None
+    if request:
+        notification_level = request.notification_level
+        notification_channel_ids = request.notification_channel_ids
+
     return subscription_follow_service.accept_invitation(
         db=db,
         invitation_id=invitation_id,
         user_id=current_user.id,
+        notification_level=notification_level,
+        notification_channel_ids=notification_channel_ids,
     )
 
 

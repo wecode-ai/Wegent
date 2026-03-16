@@ -13,12 +13,10 @@ import { useRouter } from 'next/navigation'
 import {
   ArrowLeft,
   CalendarClock,
-  Check,
   Clock,
   Eye,
   EyeOff,
   Loader2,
-  Plus,
   Settings,
   Share2,
   Timer,
@@ -40,6 +38,7 @@ import { paths } from '@/config/paths'
 import { useUser } from '@/features/common/UserContext'
 import { DeveloperNotificationSettingsDialog } from './DeveloperNotificationSettingsDialog'
 import { SubscriptionShareDialog } from './SubscriptionShareDialog'
+import { FollowWithNotificationDropdown } from './FollowWithNotificationDropdown'
 
 interface SubscriptionDetailPageProps {
   subscriptionId: number
@@ -64,7 +63,6 @@ export function SubscriptionDetailPage({ subscriptionId }: SubscriptionDetailPag
   const [followersLoading, setFollowersLoading] = useState(false)
   const [followersTotal, setFollowersTotal] = useState(0)
   const [isFollowing, setIsFollowing] = useState(false)
-  const [followLoading, setFollowLoading] = useState(false)
   const [shareDialogOpen, setShareDialogOpen] = useState(false)
   const [settingsDialogOpen, setSettingsDialogOpen] = useState(false)
 
@@ -114,34 +112,20 @@ export function SubscriptionDetailPage({ subscriptionId }: SubscriptionDetailPag
     }
   }, [isOwner, loadFollowers])
 
-  // Handle follow/unfollow
-  const handleFollow = useCallback(async () => {
-    if (!subscription) return
-
-    try {
-      setFollowLoading(true)
-      if (isFollowing) {
-        await subscriptionApis.unfollowSubscription(subscriptionId)
-        setIsFollowing(false)
-        setSubscription(prev =>
-          prev ? { ...prev, followers_count: Math.max(0, prev.followers_count - 1) } : null
-        )
-        toast.success(t('unfollow_success'))
-      } else {
-        await subscriptionApis.followSubscription(subscriptionId)
-        setIsFollowing(true)
-        setSubscription(prev =>
-          prev ? { ...prev, followers_count: prev.followers_count + 1 } : null
-        )
-        toast.success(t('follow_success'))
-      }
-    } catch (error) {
-      console.error('Failed to follow/unfollow:', error)
-      toast.error(isFollowing ? t('unfollow_failed') : t('follow_failed'))
-    } finally {
-      setFollowLoading(false)
-    }
-  }, [subscription, subscriptionId, isFollowing, t])
+  // Handle follow state change from dropdown
+  const handleFollowChange = useCallback((newIsFollowing: boolean) => {
+    setIsFollowing(newIsFollowing)
+    setSubscription(prev =>
+      prev
+        ? {
+            ...prev,
+            followers_count: newIsFollowing
+              ? prev.followers_count + 1
+              : Math.max(0, prev.followers_count - 1),
+          }
+        : null
+    )
+  }, [])
 
   // Get trigger label
   const getTriggerLabel = (sub: Subscription): string => {
@@ -209,26 +193,13 @@ export function SubscriptionDetailPage({ subscriptionId }: SubscriptionDetailPag
               </>
             )}
             {!isOwner && (
-              <Button
-                variant={isFollowing ? 'ghost' : 'default'}
+              <FollowWithNotificationDropdown
+                subscriptionId={subscriptionId}
+                isFollowing={isFollowing}
+                onSuccess={handleFollowChange}
+                variant="default"
                 size="sm"
-                onClick={handleFollow}
-                disabled={followLoading}
-                className={
-                  isFollowing
-                    ? 'text-text-muted hover:text-destructive hover:bg-destructive/10'
-                    : ''
-                }
-              >
-                {followLoading ? (
-                  <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
-                ) : isFollowing ? (
-                  <Check className="h-4 w-4 mr-1.5" />
-                ) : (
-                  <Plus className="h-4 w-4 mr-1.5" />
-                )}
-                {isFollowing ? t('following') : t('follow')}
-              </Button>
+              />
             )}
           </div>
         </div>

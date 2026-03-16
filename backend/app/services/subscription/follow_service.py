@@ -957,6 +957,8 @@ class SubscriptionFollowService:
         *,
         invitation_id: int,
         user_id: int,
+        notification_level: Optional[SchemaNotificationLevel] = None,
+        notification_channel_ids: Optional[List[int]] = None,
     ) -> dict:
         """
         Accept a subscription invitation.
@@ -965,6 +967,8 @@ class SubscriptionFollowService:
             db: Database session
             invitation_id: ID of the invitation (follow record)
             user_id: ID of the user accepting
+            notification_level: Optional notification level setting
+            notification_channel_ids: Optional Messager channel IDs for notify level
 
         Returns:
             Success message
@@ -989,13 +993,24 @@ class SubscriptionFollowService:
                 detail="Invitation not found or already responded",
             )
 
+        # Update invitation status
         follow.invitation_status = InvitationStatus.ACCEPTED.value
         follow.responded_at = datetime.now(timezone.utc).replace(tzinfo=None)
         follow.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+
+        # Update notification config if provided
+        if notification_level is not None:
+            config = SubscriptionFollowConfig(
+                notification_level=notification_level,
+                notification_channel_ids=notification_channel_ids,
+            )
+            follow.config = config.model_dump_json()
+
         db.commit()
 
         logger.info(
             f"[SubscriptionFollow] User {user_id} accepted invitation {invitation_id}"
+            f", notification_level={notification_level}"
         )
 
         return {"message": "Invitation accepted"}

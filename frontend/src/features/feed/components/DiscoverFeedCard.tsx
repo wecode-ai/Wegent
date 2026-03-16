@@ -25,7 +25,6 @@ import {
   AlertCircle,
   VolumeX,
 } from 'lucide-react'
-import { toast } from 'sonner'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -39,6 +38,7 @@ import { useUser } from '@/features/common/UserContext'
 import { parseUTCDate } from '@/lib/utils'
 import { EnhancedMarkdown } from '@/components/common/EnhancedMarkdown'
 import { useTheme } from '@/features/theme/ThemeProvider'
+import { FollowWithNotificationDropdown } from './FollowWithNotificationDropdown'
 
 // Status configuration for execution display
 const statusConfig: Record<
@@ -93,8 +93,7 @@ interface DiscoverFeedCardProps {
   subscription: DiscoverSubscriptionResponse
   latestExecution?: BackgroundExecution
   isFollowing: boolean
-  onFollow: (subscriptionId: number) => Promise<void>
-  onUnfollow: (subscriptionId: number) => Promise<void>
+  onFollowChange?: (subscriptionId: number, isFollowing: boolean) => void
   onClick: (subscription: DiscoverSubscriptionResponse) => void
 }
 
@@ -102,8 +101,7 @@ export function DiscoverFeedCard({
   subscription,
   latestExecution,
   isFollowing: initialIsFollowing,
-  onFollow,
-  onUnfollow,
+  onFollowChange,
   onClick,
 }: DiscoverFeedCardProps) {
   const { t } = useTranslation('feed')
@@ -113,7 +111,6 @@ export function DiscoverFeedCard({
 
   const [isExpanded, setIsExpanded] = useState(false)
   const [isFollowing, setIsFollowing] = useState(initialIsFollowing)
-  const [isFollowLoading, setIsFollowLoading] = useState(false)
   const [needsExpansion, setNeedsExpansion] = useState(false)
   const contentRef = useRef<HTMLDivElement>(null)
 
@@ -125,32 +122,18 @@ export function DiscoverFeedCard({
     }
   }, [latestExecution?.result_summary])
 
-  // Handle follow/unfollow toggle
-  const handleFollowClick = useCallback(
-    async (e: React.MouseEvent) => {
-      e.stopPropagation()
+  // Sync with prop changes
+  useEffect(() => {
+    setIsFollowing(initialIsFollowing)
+  }, [initialIsFollowing])
 
-      if (isFollowLoading) return
-
-      setIsFollowLoading(true)
-      try {
-        if (isFollowing) {
-          await onUnfollow(subscription.id)
-          setIsFollowing(false)
-          toast.success(t('unfollow_success'))
-        } else {
-          await onFollow(subscription.id)
-          setIsFollowing(true)
-          toast.success(t('follow_success'))
-        }
-      } catch (error) {
-        console.error('Failed to toggle follow:', error)
-        toast.error(isFollowing ? t('unfollow_failed') : t('follow_failed'))
-      } finally {
-        setIsFollowLoading(false)
-      }
+  // Handle follow state change from dropdown
+  const handleFollowChange = useCallback(
+    (newIsFollowing: boolean) => {
+      setIsFollowing(newIsFollowing)
+      onFollowChange?.(subscription.id, newIsFollowing)
     },
-    [isFollowing, isFollowLoading, onFollow, onUnfollow, subscription.id, t]
+    [subscription.id, onFollowChange]
   )
 
   // Handle view subscription detail
@@ -223,23 +206,12 @@ export function DiscoverFeedCard({
             </div>
             {/* Follow Button - Top Right */}
             {!isOwnSubscription && (
-              <button
-                onClick={handleFollowClick}
-                disabled={isFollowLoading}
-                className={`text-xs font-medium shrink-0 transition-colors ${
-                  isFollowing
-                    ? 'text-text-muted hover:text-destructive'
-                    : 'text-primary hover:text-primary/80'
-                }`}
-              >
-                {isFollowLoading ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : isFollowing ? (
-                  t('following')
-                ) : (
-                  <span className="flex items-center gap-0.5">+ {t('follow')}</span>
-                )}
-              </button>
+              <FollowWithNotificationDropdown
+                subscriptionId={subscription.id}
+                isFollowing={isFollowing}
+                onSuccess={handleFollowChange}
+                compact
+              />
             )}
           </div>
 
