@@ -198,6 +198,14 @@ def _generate_user_data_script(
         openclaw_curl_cmd = " ".join(openclaw_curl_parts)
 
         openclaw_section = f"""
+# Update Node.js to latest LTS via nvm before running OpenClaw
+echo "[CloudDevice] Updating Node.js via nvm..."
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+nvm install node --reinstall-packages-from=current
+nvm alias default node
+echo "[CloudDevice] Node.js updated: $(node --version)"
+
 # Download and execute the OpenClaw install script
 echo "[CloudDevice] Downloading OpenClaw install script..."
 {openclaw_curl_cmd}
