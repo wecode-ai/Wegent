@@ -22,7 +22,7 @@
  * 5. chat:done -> Update AI message status to 'completed'
  */
 
-import { useMemo, useEffect } from 'react'
+import { useMemo, useEffect, useRef, useCallback } from 'react'
 import { useTaskStateMachine } from './useTaskStateMachine'
 import { useUser } from '@/features/common/UserContext'
 import { useTaskContext } from '../contexts/taskContext'
@@ -218,16 +218,37 @@ export function useUnifiedMessages({
     isInitialized,
   } = useTaskStateMachine(effectiveTaskId, syncOptions)
 
+  // Track which tasks have had their initial recovery to avoid skipping
+  // recovery when chat:start races ahead and sets isStreaming=true before recover() runs
+  const recoveredTasksRef = useRef<Set<number>>(new Set())
+
+  // Cleanup old recovered task IDs to prevent unbounded growth
+  // Keep only the most recent MAX_RECOVERED_TASKS entries
+  const cleanupRecoveredTasks = useCallback(() => {
+    const MAX_RECOVERED_TASKS = 50
+    const tasks = Array.from(recoveredTasksRef.current)
+    if (tasks.length > MAX_RECOVERED_TASKS) {
+      const toRemove = tasks.slice(0, tasks.length - MAX_RECOVERED_TASKS)
+      toRemove.forEach(id => recoveredTasksRef.current.delete(id))
+    }
+  }, [])
+
   // Trigger recovery when task changes
   // Subtasks are now fetched from joinTask response, not passed as parameter
-  // IMPORTANT: Do NOT recover if already streaming - this would interrupt the stream
+  // IMPORTANT: Always perform initial recovery per task (even if already streaming),
+  // because after page refresh chat:start can set isStreaming before cached_content is loaded.
+  // After initial recovery, skip re-recovery when streaming to avoid interruption.
   useEffect(() => {
     if (!effectiveTaskId || !isInitialized) return
 
     // Only recover for positive task IDs (real tasks, not pending)
-    // Skip recovery if already streaming to avoid interrupting active streams
-    if (effectiveTaskId > 0 && !isStreaming) {
-      recover()
+    if (effectiveTaskId > 0) {
+      const needsInitialRecovery = !recoveredTasksRef.current.has(effectiveTaskId)
+      if (needsInitialRecovery || !isStreaming) {
+        recoveredTasksRef.current.add(effectiveTaskId)
+        cleanupRecoveredTasks()
+        recover()
+      }
     }
   }, [effectiveTaskId, isInitialized, recover, isStreaming])
 

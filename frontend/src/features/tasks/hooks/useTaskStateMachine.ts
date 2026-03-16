@@ -9,7 +9,7 @@
  * Handles subscription to state changes and provides convenient accessors.
  */
 
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useSyncExternalStore } from 'react'
 import { taskStateManager, TaskStateData, UnifiedMessage, SyncOptions } from '../state'
 
 export interface UseTaskStateMachineResult {
@@ -36,8 +36,13 @@ export function useTaskStateMachine(
 ): UseTaskStateMachineResult {
   const [state, setState] = useState<TaskStateData | null>(null)
 
-  // Check if manager is initialized
-  const isInitialized = taskStateManager.isInitialized()
+  // Reactively track manager initialization via useSyncExternalStore
+  const isInitialized = useSyncExternalStore(
+    taskStateManager.subscribeInit,
+    taskStateManager.getInitialized,
+    // SSR snapshot: always false on server
+    () => false
+  )
 
   // Subscribe to state changes
   // Subscribe to state changes

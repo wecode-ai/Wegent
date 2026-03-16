@@ -45,6 +45,7 @@ import { GeminiAnnotations } from '../chat/GeminiAnnotations'
 import CollapsibleMessage from './CollapsibleMessage'
 import { processCitePatterns } from '../../utils/processCitePatterns'
 import RegenerateModelPopover from './RegenerateModelPopover'
+import { useCopyCleanup } from '../../hooks/useCopyCleanup'
 import VideoConfigBadge from './VideoConfigBadge'
 import type { ClarificationData, FinalPromptData, ClarificationAnswer } from '@/types/api'
 import type { SourceReference, GeminiAnnotation } from '@/types/socket'
@@ -1332,6 +1333,9 @@ const MessageBubble = memo(
       }
     }
 
+    // Handle copy event to clean up extra newlines from DOM structure
+    const handleCopy = useCopyCleanup()
+
     // When editing, expand to full width for better editing experience
     const containerWidthClass = isEditing
       ? 'w-full'
@@ -1353,6 +1357,7 @@ const MessageBubble = memo(
             <div
               className={`${bubbleBaseClasses} ${bubbleTypeClasses}`}
               onMouseUp={handleTextSelection}
+              onCopy={handleCopy}
               data-message-content="true"
             >
               {/* Show header for AI messages */}

@@ -286,8 +286,8 @@ export const taskApis = {
     return apiClient.put(`/tasks/${id}`, data)
   },
 
-  getTaskDetail: async (id: number): Promise<TaskDetail> => {
-    return apiClient.get(`/tasks/${id}`)
+  getTaskDetail: async (id: number, signal?: AbortSignal): Promise<TaskDetail> => {
+    return apiClient.get(`/tasks/${id}`, signal ? { signal } : undefined)
   },
 
   // Send a message. If task_id not provided, create task first, then send.

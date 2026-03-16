@@ -94,6 +94,9 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
   // Track task status for notification
   const taskStatusMapRef = useRef<Map<number, TaskStatus>>(new Map())
 
+  // AbortController for cancelling stale getTaskDetail requests during rapid task switching
+  const abortControllerRef = useRef<AbortController | null>(null)
+
   // WebSocket connection for real-time task updates
   const { registerTaskHandlers, isConnected, leaveTask, joinTask, onReconnect } = useSocket()
 
@@ -688,18 +691,27 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
       return
     }
 
+    // Abort previous in-flight request to prevent stale responses overwriting current data
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort()
+    }
+    const controller = new AbortController()
+    abortControllerRef.current = controller
+
     try {
       // Clear access denied state before fetching
       setAccessDenied(false)
       // Fetch task metadata only (subtasks are now obtained via WebSocket task:join)
-      const updatedTaskDetail = await taskApis.getTaskDetail(selectedTask.id)
+      const updatedTaskDetail = await taskApis.getTaskDetail(selectedTask.id, controller.signal)
 
-      // Note: Workbench data extraction from subtasks is no longer needed here
-      // Subtasks are now managed by TaskStateMachine via WebSocket join response
-      // Workbench data should be obtained from the state machine or WebSocket events
+      // Verify the selected task hasn't changed while the request was in flight
+      if (controller.signal.aborted) return
 
       setSelectedTaskDetail(updatedTaskDetail)
     } catch (error) {
+      // Ignore abort errors - they are expected when switching tasks rapidly
+      if (error instanceof DOMException && error.name === 'AbortError') return
+
       // Check if it's a 403 Forbidden or 404 Not Found error (access denied or task not found)
       // Both cases should show the access denied UI to prevent information leakage
       if (error instanceof ApiError && (error.status === 403 || error.status === 404)) {
@@ -722,6 +734,8 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     // Leave previous task room if switching to a different task
     if (previousTaskId !== null && previousTaskId !== currentTaskId) {
       leaveTask(previousTaskId)
+      // Clear stale detail immediately so downstream hooks don't operate on wrong task data
+      setSelectedTaskDetail(null)
     }
 
     // Update the ref to track current task

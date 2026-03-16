@@ -19,11 +19,21 @@ import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { useUser } from '@/features/common/UserContext'
 import { useTaskContext } from '@/features/tasks/contexts/taskContext'
 
+// Loading skeleton for dynamic chat page imports
+function ChatPageSkeleton() {
+  return (
+    <div className="flex h-full w-full items-center justify-center bg-base">
+      <div className="h-6 w-6 animate-spin rounded-full border-2 border-border border-t-primary" />
+    </div>
+  )
+}
+
 // Dynamic imports for mobile and desktop page components with code splitting
 const ChatPageDesktop = dynamic(
   () => import('./ChatPageDesktop').then(mod => ({ default: mod.ChatPageDesktop })),
   {
     ssr: false,
+    loading: () => <ChatPageSkeleton />,
   }
 )
 
@@ -31,6 +41,7 @@ const ChatPageMobile = dynamic(
   () => import('./ChatPageMobile').then(mod => ({ default: mod.ChatPageMobile })),
   {
     ssr: false,
+    loading: () => <ChatPageSkeleton />,
   }
 )
 
