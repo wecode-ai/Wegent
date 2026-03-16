@@ -2,28 +2,10 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-# Build stage: compile executor to standalone binary
-FROM ghcr.io/wecode-ai/wegent-base-python3.12:latest AS builder
-
-WORKDIR /app
-
-# Copy pyproject.toml and install dependencies
-COPY executor/pyproject.toml /app/executor/pyproject.toml
-
-RUN cd /app/executor && uv pip install --system --no-cache -r pyproject.toml
-
-# Install PyInstaller for building standalone binary (using uv for speed)
-RUN uv pip install --system pyinstaller
-
-# Copy source code
-COPY executor /app/executor
-COPY shared /app/shared
-
-# Build standalone binary
-RUN cd /app/executor && bash build.sh
-
-# Runtime stage: minimal image with only the binary
-FROM ghcr.io/wecode-ai/wegent-base-python3.12:latest
+# ============================================================================
+# Stage 1: deps — system packages + Python dependencies (shared by all targets)
+# ============================================================================
+FROM ghcr.io/wecode-ai/wegent-base-python3.12:latest AS deps
 
 WORKDIR /app
 
@@ -42,14 +24,12 @@ RUN dnf install -y \
     && rm -rf /var/cache/dnf/*
 
 # Install Claude marketplace skills and npm packages for document generation
-# Install to /root so it's available in the base image
 RUN claude plugin marketplace add anthropics/skills \
     && npm install -g pptxgenjs playwright sharp react react-dom react-icons docx pdf-lib \
     && npx playwright install chromium \
     && npm cache clean --force
 
 # Install Python packages for document generation
-# These are commonly used by document skills
 RUN pip install python-pptx openpyxl python-docx reportlab Pillow pandas \
     pypdf pdfplumber pytesseract \
     "markitdown[pptx]" defusedxml weasyprint \
@@ -66,13 +46,44 @@ RUN mkdir -p /usr/share/fonts/truetype/noto && \
         -o /usr/share/fonts/truetype/noto/NotoSansSC.ttf) && \
     fc-cache -f -v
 
-
-# Copy only the standalone binary from builder
-COPY --from=builder /app/executor/dist/executor /app/executor
+# Install Python executor dependencies (cached unless pyproject.toml changes)
+COPY executor/pyproject.toml /app/executor/pyproject.toml
+RUN cd /app/executor && uv pip install --system --no-cache -r pyproject.toml
 
 ENV PORT=10001
 ENV PYTHONPATH=/app
 ENV NODE_PATH=/usr/lib/node_modules
 
-# Run the standalone binary
+# ============================================================================
+# Stage 2: builder — compiles executor Python source to standalone binary
+# ============================================================================
+FROM deps AS builder
+
+# Install PyInstaller
+RUN uv pip install --system pyinstaller
+
+# Copy source code and build binary
+COPY executor /app/executor
+COPY shared /app/shared
+RUN cd /app/executor && bash build.sh
+
+# ============================================================================
+# Stage 3: source — dev target, runs Python source directly (no compilation)
+#   docker build --target source -t wegent-executor:local-dev .
+# ============================================================================
+FROM deps AS source
+
+COPY executor /app/executor
+COPY shared /app/shared
+
+CMD ["python", "/app/executor/main.py"]
+
+# ============================================================================
+# Stage 4: binary — default target, runs compiled standalone binary
+#   docker build -t wegent-executor:latest .
+# ============================================================================
+FROM deps AS binary
+
+COPY --from=builder /app/executor/dist/executor /app/executor
+
 CMD ["/app/executor"]
