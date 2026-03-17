@@ -10,14 +10,19 @@
  * 1. Check if in DingTalk environment
  * 2. If not, redirect to fallback URL
  * 3. If yes, trigger DingTalk auth and login
+ *
+ * Supports redirect parameter: ?redirect=/download/shared?token=xxx
  */
 import { useEffect, useState } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { redirectIfNotDingTalk, getDingTalkConfig } from '@/dingtalk/lib/environment'
 import { useDingTalkAuth } from '@/dingtalk/hooks/useDingTalkAuth'
 
 export default function DingTalkAuthPage() {
   const [checking, setChecking] = useState(true)
   const { login, loading, error } = useDingTalkAuth()
+  const searchParams = useSearchParams()
+  const redirectUrl = searchParams.get('redirect') || undefined
 
   useEffect(() => {
     const init = async () => {
@@ -27,9 +32,9 @@ export default function DingTalkAuthPage() {
 
       setChecking(false)
 
-      // Auto-trigger login
+      // Auto-trigger login with redirect URL
       try {
-        await login()
+        await login(redirectUrl)
       } catch {
         // On error, redirect to fallback
         const config = getDingTalkConfig()
@@ -38,7 +43,7 @@ export default function DingTalkAuthPage() {
     }
 
     init()
-  }, [login])
+  }, [login, redirectUrl])
 
   // Show loading during environment check
   if (checking || loading) {
