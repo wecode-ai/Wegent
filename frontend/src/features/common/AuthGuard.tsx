@@ -34,7 +34,9 @@ export default function AuthGuard({ children }: AuthGuardProps) {
       '/auth/dingtalk', // DingTalk authentication page
       '/jump', // Jump page for notification redirects (no auth required)
     ]
-    if (!allowedPaths.includes(pathname)) {
+    // Allow download pages (they handle their own auth checks)
+    const isAllowedPath = allowedPaths.includes(pathname) || pathname.startsWith('/download/')
+    if (!isAllowedPath) {
       // Use isAuthenticated() to check both token existence and expiry
       const isAuth = userApis.isAuthenticated()
       if (!isAuth) {

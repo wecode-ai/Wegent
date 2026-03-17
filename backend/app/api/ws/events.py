@@ -83,6 +83,7 @@ class ServerEvents:
 
     # Background execution events (to user room)
     BACKGROUND_EXECUTION_UPDATE = "background:execution_update"
+    SUBSCRIPTION_GROUP_BINDING_UPDATED = "subscription:group_binding_updated"
 
     # Pet events (to user room)
     PET_EXPERIENCE_GAINED = "pet:experience_gained"

@@ -15,6 +15,7 @@ import type {
   WelcomeConfigResponse,
   DefaultTeamsResponse,
 } from '@/types/api'
+import type { NotificationChannelInfo } from '@/types/subscription'
 
 // Type definitions
 export interface LoginRequest {
@@ -188,6 +189,14 @@ export const userApis = {
    */
   async getFeatureFlags(): Promise<FeatureFlags> {
     return apiClient.get('/users/features')
+  },
+
+  /**
+   * Get available Messager channels for the current user
+   * This does not require an existing subscription
+   */
+  async getAvailableChannels(): Promise<NotificationChannelInfo[]> {
+    return apiClient.get('/users/me/available-channels')
   },
 
   isAuthenticated(): boolean {

@@ -11,7 +11,7 @@ via Socket.IO when execution status changes.
 
 import json
 import logging
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from sqlalchemy.orm import Session
 
@@ -146,5 +146,85 @@ def emit_background_execution_update(
     except Exception as e:
         logger.error(
             f"[WS] Failed to publish background:execution_update to Redis: {e}",
+            exc_info=True,
+        )
+
+
+def emit_subscription_binding_update(
+    *,
+    user_id: int,
+    payload: Dict[str, Any],
+) -> None:
+    """Emit subscription:group_binding_updated event to a user room."""
+    try:
+        import redis
+
+        from app.core.config import settings
+
+        redis_client = redis.from_url(settings.REDIS_URL, decode_responses=False)
+        socketio_message = {
+            "method": "emit",
+            "event": "subscription:group_binding_updated",
+            "data": [payload],
+            "namespace": "/chat",
+            "room": f"user:{user_id}",
+        }
+        redis_client.publish("socketio", json.dumps(socketio_message))
+        redis_client.close()
+    except Exception as e:
+        logger.error(
+            f"[WS] Failed to publish subscription:group_binding_updated: {e}",
+            exc_info=True,
+        )
+
+
+def emit_subscription_group_info(
+    *,
+    user_id: int,
+    channel_id: int,
+    group_name: str,
+    group_conversation_id: str,
+) -> None:
+    """
+    Emit subscription:group_info_received event to a user room.
+
+    This event is triggered when group chat information is received
+    from the IM platform during the binding process.
+
+    Args:
+        user_id: The user ID to emit the event to
+        channel_id: The Messager channel ID
+        group_name: The name of the group chat
+        group_conversation_id: The group conversation ID
+    """
+    try:
+        import redis
+
+        from app.core.config import settings
+
+        payload = {
+            "channel_id": channel_id,
+            "group_name": group_name,
+            "group_conversation_id": group_conversation_id,
+        }
+
+        redis_client = redis.from_url(settings.REDIS_URL, decode_responses=False)
+        socketio_message = {
+            "method": "emit",
+            "event": "subscription:group_info_received",
+            "data": [payload],
+            "namespace": "/chat",
+            "room": f"user:{user_id}",
+        }
+        redis_client.publish("socketio", json.dumps(socketio_message))
+        redis_client.close()
+
+        logger.debug(
+            f"[WS] Published subscription:group_info_received to user:{user_id} "
+            f"for channel_id={channel_id}, group_name={group_name}"
+        )
+    except Exception as e:
+        logger.error(
+            f"[WS] Failed to publish subscription:group_info_received: {e}",
             exc_info=True,
         )

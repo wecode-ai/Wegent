@@ -187,7 +187,9 @@ function downloadText(url, options = {}, maxRedirects = 5) {
     const req = protocol.get(url, { headers }, res => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
         const redirectUrl = resolveRedirectUrl(url, res.headers.location)
-        return downloadText(redirectUrl, options, maxRedirects - 1).then(resolve).catch(reject)
+        return downloadText(redirectUrl, options, maxRedirects - 1)
+          .then(resolve)
+          .catch(reject)
       }
 
       if (res.statusCode !== 200) {

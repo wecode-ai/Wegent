@@ -36,7 +36,13 @@ export default function OidcCallbackPage() {
             redirectTarget = validQueryRedirect || validStoredRedirect || redirectTarget
             sessionStorage.removeItem(POST_LOGIN_REDIRECT_KEY)
           }
-          router.replace(redirectTarget)
+          // For API endpoints (like /api/attachments/*), use full page navigation
+          // For internal routes, use Next.js router for client-side navigation
+          if (redirectTarget.startsWith('/api/')) {
+            window.location.href = redirectTarget
+          } else {
+            router.replace(redirectTarget)
+          }
         })
         .catch(error => {
           console.error('OIDC callback page - token processing failed:', error)
