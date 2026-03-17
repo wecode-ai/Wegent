@@ -11,7 +11,9 @@ import { useSearchParams } from 'next/navigation'
  * - DingTalk browser (mobile) -> outer URL (external access)
  * - PC browser -> inner URL (internal access)
  *
- * URL format: /jump?target={taskType}&taskId={taskId}&inner={innerUrl}&outer={outerUrl}
+ * URL formats:
+ * - Task pages: /jump?target={chat|code}&taskId={taskId}&inner={innerUrl}&outer={outerUrl}
+ * - Download pages: /jump?target=download/shared&token={token}&inner={innerUrl}&outer={outerUrl}
  */
 
 function JumpContent() {
@@ -21,14 +23,13 @@ function JumpContent() {
 
   useEffect(() => {
     // Perform redirect immediately without any auth checks
-    const target = searchParams.get('target') // e.g., 'chat' or 'code'
-    const taskId = searchParams.get('taskId')
+    const target = searchParams.get('target') // e.g., 'chat', 'code', or 'download/shared'
     const innerUrl = searchParams.get('inner') // internal URL (e.g., http://internal.example.com)
     const outerUrl = searchParams.get('outer') // external URL (e.g., https://external.example.com)
 
-    if (!target || !taskId) {
+    if (!target) {
       setStatus('error')
-      setErrorMessage('Missing required parameters: target or taskId')
+      setErrorMessage('Missing required parameter: target')
       return
     }
 
@@ -49,8 +50,28 @@ function JumpContent() {
       baseUrl = innerUrl || window.location.origin
     }
 
-    // Build final redirect URL
-    const redirectUrl = `${baseUrl}/${target}?taskId=${taskId}`
+    // Build final redirect URL based on target type
+    let redirectUrl: string
+
+    if (target === 'download/shared') {
+      // Download page - requires token parameter
+      const token = searchParams.get('token')
+      if (!token) {
+        setStatus('error')
+        setErrorMessage('Missing required parameter: token')
+        return
+      }
+      redirectUrl = `${baseUrl}/${target}?token=${encodeURIComponent(token)}`
+    } else {
+      // Task pages (chat, code) - require taskId parameter
+      const taskId = searchParams.get('taskId')
+      if (!taskId) {
+        setStatus('error')
+        setErrorMessage('Missing required parameter: taskId')
+        return
+      }
+      redirectUrl = `${baseUrl}/${target}?taskId=${taskId}`
+    }
 
     setStatus('redirecting')
 
