@@ -16,6 +16,7 @@ import asyncio
 import hashlib
 import hmac
 import logging
+import re
 import time
 from typing import Any, Dict, List, Optional
 
@@ -37,6 +38,65 @@ logger = logging.getLogger(__name__)
 
 # Messager CRD kind
 MESSAGER_KIND = "Messager"
+
+# Attachment URL pattern for link conversion
+ATTACHMENT_URL_PATTERN = r"/api/attachments/(\d+)/download"
+
+
+def _convert_to_frontend_attachment_url(attachment_id: str | int) -> str:
+    """Convert attachment ID to frontend download URL."""
+    from app.core.config import settings
+
+    base_url = settings.FRONTEND_URL.rstrip("/")
+    return f"{base_url}/download/attachment/{attachment_id}"
+
+
+def _convert_attachment_links_to_public(message: str) -> str:
+    """
+    Convert attachment download URLs to public share URLs.
+
+    This is necessary for external channels (DingTalk, Feishu, Webhook, etc.) to ensure
+    any logged-in user can download the attachment, not just the creator.
+
+    Converts:
+        /api/attachments/123/download
+    To:
+        https://wegent.com/download/shared?token=xxx
+
+    The generated token contains a random nonce to prevent enumeration attacks.
+
+    Args:
+        message: Original message that may contain attachment links
+
+    Returns:
+        Message with converted public share URLs
+    """
+    from app.api.endpoints.adapter.attachments import (
+        _generate_public_share_token,
+    )
+    from app.core.config import settings
+
+    base_url = settings.FRONTEND_URL.rstrip("/")
+
+    # Find all attachment URLs and replace with public share URLs
+    def replace_url(match: re.Match) -> str:
+        attachment_id = int(match.group(1))
+
+        # Generate public share token for this attachment
+        try:
+            token = _generate_public_share_token(
+                attachment_id=attachment_id, expires_in_days=7
+            )
+            return f"{base_url}/download/shared?token={token}"
+        except Exception as e:
+            logger.warning(
+                f"Failed to generate public share link for attachment {attachment_id}: {e}"
+            )
+            # Fallback to regular frontend URL
+            return _convert_to_frontend_attachment_url(attachment_id)
+
+    converted = re.sub(ATTACHMENT_URL_PATTERN, replace_url, message)
+    return converted
 
 
 class SubscriptionNotificationDispatcher:
@@ -175,6 +235,16 @@ class SubscriptionNotificationDispatcher:
         user_bindings = subscription_notification_service.get_user_im_bindings(
             db, user_id=user_id
         )
+        subscription = (
+            db.query(Kind)
+            .filter(
+                Kind.id == subscription_id,
+                Kind.kind == "Subscription",
+                Kind.is_active == True,
+            )
+            .first()
+        )
+        subscription_owner_id = subscription.user_id if subscription else None
 
         # Format the notification message based on status
         formatted_message = self._format_notification_message(
@@ -182,6 +252,11 @@ class SubscriptionNotificationDispatcher:
             status=status,
             result_summary=result_summary,
             detail_url=detail_url,
+        )
+        # Convert attachment links to public share URLs for external IM channels
+        # This allows any logged-in user to download, not just the creator
+        formatted_message = self._convert_attachment_links(
+            formatted_message, db, subscription_owner_id or user_id
         )
         logger.info(
             f"[_send_messager_notifications] Formatted message with detail_url: {detail_url}, status: {status}"
@@ -224,6 +299,20 @@ class SubscriptionNotificationDispatcher:
 
             # Dispatch based on channel type
             if channel_type == "dingtalk":
+                binding_config = (
+                    subscription_notification_service.get_subscription_channel_binding_config(
+                        db, subscription_id=subscription_id, channel_id=channel_id
+                    )
+                    if subscription_owner_id == user_id
+                    else None
+                )
+                send_private = True
+                send_group = False
+                group_conversation_id = None
+                if binding_config:
+                    send_private = bool(binding_config.get("bind_private", True))
+                    send_group = bool(binding_config.get("bind_group", False))
+                    group_conversation_id = binding_config.get("group_conversation_id")
                 tasks.append(
                     self._send_dingtalk_notification(
                         db=db,
@@ -234,6 +323,9 @@ class SubscriptionNotificationDispatcher:
                         subscription_id=subscription_id,
                         execution_id=execution_id,
                         subscription_display_name=subscription_display_name,
+                        send_private=send_private,
+                        send_group=send_group,
+                        group_conversation_id=group_conversation_id,
                     )
                 )
             elif channel_type == "telegram":
@@ -269,6 +361,9 @@ class SubscriptionNotificationDispatcher:
         subscription_id: int,
         execution_id: int,
         subscription_display_name: str,
+        send_private: bool = True,
+        send_group: bool = False,
+        group_conversation_id: Optional[str] = None,
     ) -> None:
         """
         Send notification via DingTalk.
@@ -284,10 +379,8 @@ class SubscriptionNotificationDispatcher:
             subscription_display_name: Display name of the subscription
         """
         try:
-            # Get DingTalk user ID from binding
-            # For oToMessages/batchSend API, we need staffId (sender_staff_id), not sender_id
             dingtalk_user_id = binding.sender_staff_id or binding.sender_id
-            if not dingtalk_user_id:
+            if send_private and not dingtalk_user_id:
                 logger.warning(
                     f"[SubscriptionNotificationDispatcher] User {user_id} has no "
                     f"sender_staff_id or sender_id for DingTalk channel {channel.id}"
@@ -320,34 +413,111 @@ class SubscriptionNotificationDispatcher:
                 client_secret=client_secret,
             )
 
-            # Format message with subscription name as header (same as webhook)
-            # - title: Shows in contact list preview, use content preview
-            # - text: The actual message content with subscription name as header
-            title_preview = message[:20] + "..." if len(message) > 20 else message
-            # Remove newlines from title preview for cleaner display
-            title_preview = title_preview.replace("\n", " ").strip()
-            text_with_title = f"### {subscription_display_name}\n\n{message}"
+            # Check if AI card template is configured
+            card_template_id = config.get("card_template_id")
 
-            # Send markdown message for better formatting
-            logger.info(
-                f"[_send_dingtalk_notification] Sending message with length: {len(message)}, contains detail_url: {'[查看详情]' in message}"
-            )
-            result = await sender.send_markdown_message(
-                user_ids=[dingtalk_user_id],
-                title=title_preview,
-                text=text_with_title,
-            )
+            if card_template_id:
+                # Use AI card for better visual experience
+                # Note: status field in AI card is designed for streaming scenarios
+                # (e.g., "thinking..."). For completed notifications, we add status
+                # indicator to content instead of using status field.
 
-            if result.get("success"):
+                # Add status icon to content for visual indication
+                content_with_status = message
+
                 logger.info(
-                    f"[SubscriptionNotificationDispatcher] Sent DingTalk notification "
-                    f"to user {user_id} (dingtalk_id={dingtalk_user_id})"
+                    f"[_send_dingtalk_notification] Sending AI card notification with "
+                    f"template={card_template_id}"
                 )
+
+                if send_private:
+                    result = await sender.send_ai_card_notification(
+                        user_id=dingtalk_user_id,
+                        title=subscription_display_name,
+                        content=content_with_status,
+                        card_template_id=card_template_id,
+                        status="",
+                        enable_streaming=False,
+                    )
+                    if result.get("success"):
+                        logger.info(
+                            f"[SubscriptionNotificationDispatcher] Sent DingTalk AI card "
+                            f"notification to user {user_id} (dingtalk_id={dingtalk_user_id}, "
+                            f"outTrackId={result.get('outTrackId')})"
+                        )
+                    else:
+                        logger.warning(
+                            f"[SubscriptionNotificationDispatcher] Failed to send DingTalk "
+                            f"AI card notification to user {user_id}: {result.get('error')}"
+                        )
+
+                if send_group and group_conversation_id:
+                    group_open_space_id = f"dtv1.card//IM_GROUP.{group_conversation_id}"
+                    logger.info(
+                        f"[_send_dingtalk_notification] Sending group AI card to "
+                        f"group_conversation_id={group_conversation_id}, open_space_id={group_open_space_id}"
+                    )
+                    group_result = await sender.send_ai_card_notification(
+                        user_id=dingtalk_user_id or "group",
+                        title=subscription_display_name,
+                        content=content_with_status,
+                        card_template_id=card_template_id,
+                        status="",
+                        enable_streaming=False,
+                        open_space_id=group_open_space_id,
+                    )
+                    logger.info(
+                        f"[_send_dingtalk_notification] Group AI card result: {group_result}"
+                    )
+                    if group_result.get("success"):
+                        logger.info(
+                            f"[SubscriptionNotificationDispatcher] Sent DingTalk group AI card "
+                            f"conversation_id={group_conversation_id}"
+                        )
+                    else:
+                        logger.warning(
+                            f"[SubscriptionNotificationDispatcher] Failed to send DingTalk "
+                            f"group AI card conversation_id={group_conversation_id}: "
+                            f"{group_result.get('error')}"
+                        )
             else:
-                logger.warning(
-                    f"[SubscriptionNotificationDispatcher] Failed to send DingTalk "
-                    f"notification to user {user_id}: {result.get('error')}"
+                # Fallback to markdown message (legacy mode)
+                # Format message with subscription name as header (same as webhook)
+                # - title: Shows in contact list preview, use content preview
+                # - text: The actual message content with subscription name as header
+                title_preview = message[:20] + "..." if len(message) > 20 else message
+                # Remove newlines from title preview for cleaner display
+                title_preview = title_preview.replace("\n", " ").strip()
+                text_with_title = f"### {subscription_display_name}\n\n{message}"
+
+                # Send markdown message for better formatting
+                logger.info(
+                    f"[_send_dingtalk_notification] Sending markdown message (AI card template not configured) "
+                    f"with length: {len(message)}, contains detail_url: {'[查看详情]' in message}"
                 )
+                if send_private:
+                    result = await sender.send_markdown_message(
+                        user_ids=[dingtalk_user_id],
+                        title=title_preview,
+                        text=text_with_title,
+                    )
+
+                    if result.get("success"):
+                        logger.info(
+                            f"[SubscriptionNotificationDispatcher] Sent DingTalk notification "
+                            f"to user {user_id} (dingtalk_id={dingtalk_user_id})"
+                        )
+                    else:
+                        logger.warning(
+                            f"[SubscriptionNotificationDispatcher] Failed to send DingTalk "
+                            f"notification to user {user_id}: {result.get('error')}"
+                        )
+
+                if send_group and group_conversation_id:
+                    logger.info(
+                        "[SubscriptionNotificationDispatcher] Group delivery skipped because "
+                        "AI card template is not configured"
+                    )
 
         except Exception as e:
             logger.error(
@@ -539,6 +709,14 @@ class SubscriptionNotificationDispatcher:
         enabled_webhooks = [w for w in webhooks if w.enabled]
         results["enabled_count"] = len(enabled_webhooks)
 
+        # Log all webhooks for debugging
+        for i, w in enumerate(webhooks):
+            logger.info(
+                f"[SubscriptionNotificationDispatcher] Webhook {i}: "
+                f"type={w.type.value}, enabled={w.enabled}, "
+                f"url={w.url[:50]}..., has_secret={bool(w.secret)}"
+            )
+
         if not enabled_webhooks:
             logger.info(
                 f"[SubscriptionNotificationDispatcher] No enabled webhooks for "
@@ -546,9 +724,17 @@ class SubscriptionNotificationDispatcher:
             )
             return results
 
+        logger.info(
+            f"[SubscriptionNotificationDispatcher] Sending to {len(enabled_webhooks)} enabled webhooks"
+        )
+
         # Send to each webhook concurrently
         tasks = []
         for webhook in enabled_webhooks:
+            logger.info(
+                f"[SubscriptionNotificationDispatcher] Preparing webhook: "
+                f"type={webhook.type.value}, url={webhook.url}..."
+            )
             tasks.append(
                 self._send_webhook_notification(
                     webhook=webhook,
@@ -577,11 +763,17 @@ class SubscriptionNotificationDispatcher:
                     f"Webhook {enabled_webhooks[i].type.value} failed: {result.get('error', 'Unknown error')}"
                 )
 
+        # Log summary with errors
+        error_details = ""
+        if results["errors"]:
+            error_details = f", errors={'; '.join(results['errors'])}"
+
         logger.info(
             f"[SubscriptionNotificationDispatcher] Webhook notifications for "
             f"subscription {subscription_display_name}: "
             f"total={results['total_webhooks']}, enabled={results['enabled_count']}, "
             f"success={results['success_count']}, failed={results['failed_count']}"
+            f"{error_details}"
         )
 
         return results
@@ -635,13 +827,49 @@ class SubscriptionNotificationDispatcher:
         # Decrypt secret if encrypted
         decrypted_secret = self._decrypt_webhook_secret(webhook.secret)
 
-        # Format the notification message based on status
-        formatted_message = self._format_notification_message(
-            subscription_display_name=subscription_display_name,
-            status=status,
-            result_summary=result_summary,
-            detail_url=detail_url,
+        logger.info(
+            f"[_send_webhook_notification] Processing webhook:\n"
+            f"  Type: {webhook.type.value}\n"
+            f"  URL: {webhook.url[:50]}...\n"
+            f"  Has Secret: {bool(webhook.secret)}\n"
+            f"  Status: {status}\n"
+            f"  Execution ID: {execution_id}"
         )
+
+        # Format the notification message based on status
+        try:
+            formatted_message = self._format_notification_message(
+                subscription_display_name=subscription_display_name,
+                status=status,
+                result_summary=result_summary,
+                detail_url=detail_url,
+            )
+            logger.info(
+                f"[_send_webhook_notification] Formatted message, length: {len(formatted_message)}"
+            )
+        except Exception as e:
+            logger.error(
+                f"[_send_webhook_notification] Failed to format message: {e}",
+                exc_info=True,
+            )
+            return {"success": False, "error": f"Message formatting failed: {str(e)}"}
+
+        # Convert attachment links to public share URLs for external webhooks
+        # This allows any logged-in user to download, not just the creator
+        try:
+            formatted_message = _convert_attachment_links_to_public(formatted_message)
+            logger.info(
+                f"[_send_webhook_notification] Converted attachment links to public URLs, final length: {len(formatted_message)}"
+            )
+        except Exception as e:
+            logger.error(
+                f"[_send_webhook_notification] Failed to convert attachment links: {e}",
+                exc_info=True,
+            )
+            return {
+                "success": False,
+                "error": f"Attachment link conversion failed: {str(e)}",
+            }
 
         try:
             if webhook.type == NotificationWebhookType.DINGTALK:
@@ -714,67 +942,94 @@ class SubscriptionNotificationDispatcher:
         Returns:
             Dict with success status and optional error message
         """
-        # Build the webhook URL with signature if secret is provided
-        # DingTalk signing algorithm:
-        # 1. timestamp (milliseconds) + "\n" + secret
-        # 2. HMAC-SHA256 with secret as key
-        # 3. Base64 encode
-        # 4. URL encode (quote_plus)
-        final_url = url
-        if secret:
-            import base64
-            import urllib.parse
+        try:
+            # Build the webhook URL with signature if secret is provided
+            # DingTalk signing algorithm:
+            # 1. timestamp (milliseconds) + "\n" + secret
+            # 2. HMAC-SHA256 with secret as key
+            # 3. Base64 encode
+            # 4. URL encode (quote_plus)
+            final_url = url
+            if secret:
+                import base64
+                import urllib.parse
 
-            timestamp = str(int(time.time() * 1000))
-            string_to_sign = f"{timestamp}\n{secret}"
-            hmac_code = hmac.new(
-                secret.encode("utf-8"),
-                string_to_sign.encode("utf-8"),
-                digestmod=hashlib.sha256,
-            ).digest()
-            # Use standard base64 encoding, then URL encode
-            sign = urllib.parse.quote_plus(base64.b64encode(hmac_code).decode("utf-8"))
+                timestamp = str(int(time.time() * 1000))
+                string_to_sign = f"{timestamp}\n{secret}"
+                hmac_code = hmac.new(
+                    secret.encode("utf-8"),
+                    string_to_sign.encode("utf-8"),
+                    digestmod=hashlib.sha256,
+                ).digest()
+                # Use standard base64 encoding, then URL encode
+                sign = urllib.parse.quote_plus(
+                    base64.b64encode(hmac_code).decode("utf-8")
+                )
 
-            # Append timestamp and sign to URL
-            separator = "&" if "?" in url else "?"
-            final_url = f"{url}{separator}timestamp={timestamp}&sign={sign}"
+                # Append timestamp and sign to URL
+                separator = "&" if "?" in url else "?"
+                final_url = f"{url}{separator}timestamp={timestamp}&sign={sign}"
 
-        # Send model output directly as markdown
-        # DingTalk webhook payload:
-        # - title: Shows in contact list preview, use content preview instead of subscription name
-        # - text: The actual message content with subscription name as header
-        # Truncate title to first 20 chars of result_summary for contact list preview
-        title_preview = (
-            result_summary[:20] + "..." if len(result_summary) > 20 else result_summary
-        )
-        # Remove newlines from title preview for cleaner display
-        title_preview = title_preview.replace("\n", " ").strip()
-        text_with_title = f"### {subscription_display_name}\n\n{result_summary}"
-        payload = {
-            "msgtype": "markdown",
-            "markdown": {
-                "title": title_preview,
-                "text": text_with_title,
-            },
-        }
+            # Send model output directly as markdown
+            # DingTalk webhook payload:
+            # - title: Shows in contact list preview, use content preview instead of subscription name
+            # - text: The actual message content with subscription name as header
+            # Truncate title to first 20 chars of result_summary for contact list preview
+            title_preview = (
+                result_summary[:20] + "..."
+                if len(result_summary) > 20
+                else result_summary
+            )
+            # Remove newlines from title preview for cleaner display
+            title_preview = title_preview.replace("\n", " ").strip()
+            text_with_title = f"### {subscription_display_name}\n\n{result_summary}"
+            payload = {
+                "msgtype": "markdown",
+                "markdown": {
+                    "title": title_preview,
+                    "text": text_with_title,
+                },
+            }
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(final_url, json=payload)
-            response.raise_for_status()
-            result = response.json()
+            # Log request details
+            logger.info(
+                f"[_send_dingtalk_webhook] Sending request:\n"
+                f"  URL: {url}\n"
+                f"  Final URL: {final_url}\n"
+                f"  Has Secret: {bool(secret)}\n"
+                f"  Payload: {payload}"
+            )
 
-            if result.get("errcode") == 0:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(final_url, json=payload)
+                response.raise_for_status()
+                result = response.json()
+
+                # Log response details
                 logger.info(
-                    f"[SubscriptionNotificationDispatcher] Sent DingTalk webhook notification "
-                    f"for subscription {subscription_display_name}"
+                    f"[_send_dingtalk_webhook] Received response:\n"
+                    f"  Status Code: {response.status_code}\n"
+                    f"  Response Body: {result}"
                 )
-                return {"success": True}
-            else:
-                error_msg = result.get("errmsg", "Unknown error")
-                logger.warning(
-                    f"[SubscriptionNotificationDispatcher] DingTalk webhook failed: {error_msg}"
-                )
-                return {"success": False, "error": error_msg}
+
+                if result.get("errcode") == 0:
+                    logger.info(
+                        f"[SubscriptionNotificationDispatcher] Sent DingTalk webhook notification "
+                        f"for subscription {subscription_display_name}"
+                    )
+                    return {"success": True}
+                else:
+                    error_msg = result.get("errmsg", "Unknown error")
+                    logger.warning(
+                        f"[SubscriptionNotificationDispatcher] DingTalk webhook failed: {error_msg}"
+                    )
+                    return {"success": False, "error": error_msg}
+        except Exception as e:
+            logger.error(
+                f"[_send_dingtalk_webhook] Exception occurred: {type(e).__name__}: {e}",
+                exc_info=True,
+            )
+            return {"success": False, "error": f"{type(e).__name__}: {str(e)}"}
 
     async def _send_feishu_webhook(
         self,
@@ -909,6 +1164,55 @@ class SubscriptionNotificationDispatcher:
                 f"for subscription {subscription_display_name} to {url}"
             )
             return {"success": True}
+
+    def _convert_attachment_links(self, message: str, db: Session, user_id: int) -> str:
+        """
+        Convert attachment download URLs to public share URLs.
+
+        This is necessary for external IM channels (DingTalk, etc.) to ensure
+        any logged-in user can download the attachment, not just the creator.
+
+        Converts:
+            /api/attachments/123/download
+        To:
+            https://wegent.com/download/attachment/public?token=xxx
+
+        The generated token contains a random nonce to prevent enumeration attacks.
+
+        Args:
+            message: Original message that may contain attachment links
+            db: Database session for generating share tokens
+            user_id: User ID (attachment owner) for generating share tokens
+
+        Returns:
+            Message with converted public share URLs
+        """
+        from app.api.endpoints.adapter.attachments import (
+            _generate_public_share_token,
+        )
+        from app.core.config import settings
+
+        base_url = settings.FRONTEND_URL.rstrip("/")
+
+        # Find all attachment URLs and replace with public share URLs
+        def replace_url(match: re.Match) -> str:
+            attachment_id = int(match.group(1))
+
+            # Generate public share token for this attachment
+            try:
+                token = _generate_public_share_token(
+                    attachment_id=attachment_id, expires_in_days=7
+                )
+                return f"{base_url}/download/shared?token={token}"
+            except Exception as e:
+                logger.warning(
+                    f"Failed to generate public share link for attachment {attachment_id}: {e}"
+                )
+                # Fallback to regular frontend URL
+                return _convert_to_frontend_attachment_url(attachment_id)
+
+        converted = re.sub(ATTACHMENT_URL_PATTERN, replace_url, message)
+        return converted
 
 
 # Singleton instance

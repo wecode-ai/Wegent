@@ -13,6 +13,7 @@ from app.services.channels.dingtalk.emitter import (
     SyncResponseEmitter,
 )
 from app.services.channels.dingtalk.handler import WegentChatbotHandler
+from app.services.channels.dingtalk.sender import AICardSession, DingTalkRobotSender
 from app.services.channels.dingtalk.service import DingTalkChannelProvider
 from app.services.channels.dingtalk.user_mapping import (
     BaseUserMapper,
@@ -27,6 +28,8 @@ __all__ = [
     "DingTalkChannelProvider",
     "WegentChatbotHandler",
     "DingTalkUserResolver",
+    "DingTalkRobotSender",
+    "AICardSession",
     "SyncResponseEmitter",
     "StreamingResponseEmitter",
     "BaseUserMapper",

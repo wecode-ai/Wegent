@@ -482,10 +482,47 @@ export interface DeveloperNotificationSettingsResponse {
   notification_level: NotificationLevel
   notification_channel_ids: number[]
   available_channels: NotificationChannelInfo[]
+  channel_binding_configs: NotificationChannelBindingConfig[]
 }
 
 // Update developer notification settings request
 export interface DeveloperNotificationSettingsUpdateRequest {
   notification_level: NotificationLevel
   notification_channel_ids?: number[]
+  channel_binding_configs?: NotificationChannelBindingConfig[]
+}
+
+export interface NotificationChannelBindingConfig {
+  channel_id: number
+  bind_private: boolean
+  bind_group: boolean
+  group_conversation_id?: string
+  group_name?: string
+}
+
+export interface DeveloperBindingSessionStartRequest {
+  channel_id: number
+  bind_private: boolean
+  bind_group: boolean
+}
+
+export interface DeveloperBindingSessionCancelRequest {
+  channel_id: number
+}
+
+export interface DeveloperBindingSessionResponse {
+  status: 'waiting' | 'cancelled'
+  subscription_id?: number
+  channel_id: number
+  bind_private?: boolean
+  bind_group?: boolean
+}
+
+/**
+ * WebSocket payload for subscription group info notification
+ */
+export interface SubscriptionGroupInfoPayload {
+  channel_id: number
+  group_name: string
+  group_conversation_id: string
 }

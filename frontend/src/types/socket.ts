@@ -64,6 +64,7 @@ export const ServerEvents = {
 
   // Background execution events (to user room)
   BACKGROUND_EXECUTION_UPDATE: 'background:execution_update',
+  SUBSCRIPTION_GROUP_BINDING_UPDATED: 'subscription:group_binding_updated',
 
   // Generic Skill Events
   SKILL_REQUEST: 'skill:request', // Server -> Client: generic skill request
@@ -472,6 +473,16 @@ export interface BackgroundExecutionUpdatePayload {
   trigger_reason?: string
   created_at: string
   updated_at: string
+}
+
+export interface SubscriptionGroupBindingUpdatedPayload {
+  subscription_id: number
+  channel_id: number
+  conversation_id?: string
+  private_bound: boolean
+  group_bound: boolean
+  completed: boolean
+  status: 'success' | 'partial'
 }
 
 // ============================================================

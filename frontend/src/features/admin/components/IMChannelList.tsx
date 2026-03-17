@@ -95,6 +95,7 @@ const IMChannelList: React.FC = () => {
     client_id: string
     client_secret: string
     bot_token: string
+    card_template_id: string
     user_mapping_mode: UserMappingMode
     target_user_id: number
   }>({
@@ -106,6 +107,7 @@ const IMChannelList: React.FC = () => {
     client_id: '',
     client_secret: '',
     bot_token: '',
+    card_template_id: '',
     user_mapping_mode: 'select_user',
     target_user_id: 0,
   })
@@ -305,6 +307,11 @@ const IMChannelList: React.FC = () => {
         config.client_secret = formData.client_secret.trim()
       }
 
+      // Add card_template_id if provided (for AI card notifications)
+      if (formData.card_template_id.trim()) {
+        config.card_template_id = formData.card_template_id.trim()
+      }
+
       // Add user_mapping_config if select_user mode
       if (formData.user_mapping_mode === 'select_user' && formData.target_user_id) {
         config.user_mapping_config = {
@@ -400,6 +407,11 @@ const IMChannelList: React.FC = () => {
         }
       }
 
+      // Add card_template_id if provided (for AI card notifications)
+      if (formData.card_template_id.trim()) {
+        newConfig.card_template_id = formData.card_template_id.trim()
+      }
+
       // Add user_mapping_config if select_user mode
       if (formData.user_mapping_mode === 'select_user' && formData.target_user_id) {
         newConfig.user_mapping_config = {
@@ -488,6 +500,7 @@ const IMChannelList: React.FC = () => {
       client_id: '',
       client_secret: '',
       bot_token: '',
+      card_template_id: '',
       user_mapping_mode: 'select_user',
       target_user_id: 0,
     })
@@ -512,6 +525,7 @@ const IMChannelList: React.FC = () => {
       client_id: (channel.config?.client_id as string) || '',
       client_secret: '', // Don't show existing secret
       bot_token: '', // Don't show existing bot_token
+      card_template_id: (channel.config?.card_template_id as string) || '',
       user_mapping_mode: userMappingMode,
       target_user_id: targetUserId,
     })
@@ -690,7 +704,7 @@ const IMChannelList: React.FC = () => {
 
       {/* Create Channel Dialog */}
       <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{t('admin:im_channels.create_channel')}</DialogTitle>
             <DialogDescription>{t('admin:im_channels.create_description')}</DialogDescription>
@@ -760,6 +774,20 @@ const IMChannelList: React.FC = () => {
                     onChange={e => setFormData({ ...formData, client_secret: e.target.value })}
                     placeholder={t('admin:im_channels.form.client_secret_placeholder')}
                   />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="card_template_id">
+                    {t('admin:im_channels.form.card_template_id')}
+                  </Label>
+                  <Input
+                    id="card_template_id"
+                    value={formData.card_template_id}
+                    onChange={e => setFormData({ ...formData, card_template_id: e.target.value })}
+                    placeholder={t('admin:im_channels.form.card_template_id_placeholder')}
+                  />
+                  <p className="text-xs text-text-muted">
+                    {t('admin:im_channels.form.card_template_id_help')}
+                  </p>
                 </div>
               </>
             )}
@@ -902,7 +930,7 @@ const IMChannelList: React.FC = () => {
 
       {/* Edit Channel Dialog */}
       <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{t('admin:im_channels.edit_channel')}</DialogTitle>
           </DialogHeader>
@@ -966,6 +994,20 @@ const IMChannelList: React.FC = () => {
                     onChange={e => setFormData({ ...formData, client_secret: e.target.value })}
                     placeholder={t('admin:im_channels.form.client_secret_edit_placeholder')}
                   />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-card_template_id">
+                    {t('admin:im_channels.form.card_template_id')}
+                  </Label>
+                  <Input
+                    id="edit-card_template_id"
+                    value={formData.card_template_id}
+                    onChange={e => setFormData({ ...formData, card_template_id: e.target.value })}
+                    placeholder={t('admin:im_channels.form.card_template_id_placeholder')}
+                  />
+                  <p className="text-xs text-text-muted">
+                    {t('admin:im_channels.form.card_template_id_help')}
+                  </p>
                 </div>
               </>
             )}

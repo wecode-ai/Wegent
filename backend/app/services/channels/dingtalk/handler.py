@@ -642,6 +642,14 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
                 user = await self._channel_handler.resolve_user(db, message_context)
                 if user and self._channel_id:
                     try:
+                        self.logger.info(
+                            "[DingTalkHandler] Updating IM binding from message: user_id=%s, channel_id=%s, conversation_type=%s, conversation_id=%s, sender_id=%s",
+                            user.id,
+                            self._channel_id,
+                            message_context.conversation_type,
+                            message_context.conversation_id,
+                            message_context.sender_id,
+                        )
                         subscription_notification_service.update_user_im_binding(
                             db=db,
                             user_id=user.id,
@@ -653,9 +661,32 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
                             ),
                             conversation_id=message_context.conversation_id,
                         )
+                        # Extract group name from incoming message for group binding
+                        group_name = getattr(
+                            incoming_message, "conversation_title", None
+                        )
+
+                        binding_result = subscription_notification_service.handle_dingtalk_binding_from_message(
+                            db=db,
+                            user_id=user.id,
+                            channel_id=self._channel_id,
+                            conversation_type=message_context.conversation_type,
+                            conversation_id=message_context.conversation_id,
+                            sender_id=message_context.sender_id,
+                            sender_staff_id=message_context.extra_data.get(
+                                "sender_staff_id"
+                            ),
+                            group_name=group_name,
+                        )
+                        self.logger.info(
+                            "[DingTalkHandler] Binding check result: user_id=%s, channel_id=%s, result=%s",
+                            user.id,
+                            self._channel_id,
+                            binding_result,
+                        )
                     except Exception as e:
-                        self.logger.warning(
-                            "[DingTalkHandler] Failed to update IM binding: %s", e
+                        self.logger.exception(
+                            "[DingTalkHandler] Failed during IM binding update/check"
                         )
             finally:
                 db.close()

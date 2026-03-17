@@ -115,7 +115,9 @@ test.describe('Remote Workspace', () => {
 
     // Wait for task list to load in sidebar and find the created task
     // The task should appear in the sidebar after creation
-    const taskListItem = page.locator(`[data-testid="task-item-${taskId}"], [data-task-id="${taskId}"]`)
+    const taskListItem = page.locator(
+      `[data-testid="task-item-${taskId}"], [data-task-id="${taskId}"]`
+    )
     const taskTitleInSidebar = page.locator(`text=e2e remote workspace unavailable state`).first()
 
     // Try to find and click the task in sidebar to trigger selection

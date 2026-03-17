@@ -8,6 +8,7 @@
 
 import type { Team, GitRepoInfo, GitBranch, SearchUser } from '@/types/api'
 import type {
+  NotificationChannelBindingConfig,
   NotificationChannelInfo,
   NotificationLevel,
   NotificationWebhook,
@@ -114,4 +115,9 @@ export interface NotificationSectionProps {
   devSettingsLoading: boolean
   notificationWebhooks: NotificationWebhook[]
   setNotificationWebhooks: React.Dispatch<React.SetStateAction<NotificationWebhook[]>>
+  channelBindingConfigs: NotificationChannelBindingConfig[]
+  setChannelBindingConfigs: React.Dispatch<React.SetStateAction<NotificationChannelBindingConfig[]>>
+  onStartBinding: (channelId: number, bindPrivate: boolean, bindGroup: boolean) => Promise<void>
+  onCancelBinding: (channelId: number) => Promise<void>
+  bindingWaitingState: Record<number, boolean>
 }

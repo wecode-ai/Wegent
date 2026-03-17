@@ -21,6 +21,9 @@ from app.api.dependencies import get_db
 from app.core import security
 from app.models.user import User
 from app.schemas.subscription import (
+    DeveloperBindingSessionCancelRequest,
+    DeveloperBindingSessionResponse,
+    DeveloperBindingSessionStartRequest,
     DeveloperNotificationSettingsResponse,
     DeveloperNotificationSettingsUpdateRequest,
     DiscoverSubscriptionsListResponse,
@@ -233,6 +236,121 @@ def update_developer_notification_settings(
             user_id=current_user.id,
             notification_level=request.notification_level,
             notification_channel_ids=request.notification_channel_ids,
+            channel_binding_configs=request.channel_binding_configs,
+        )
+    except ValueError as e:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post(
+    "/{subscription_id}/developer/binding/start",
+    response_model=DeveloperBindingSessionResponse,
+)
+def start_developer_binding_session_with_id(
+    subscription_id: int,
+    request: DeveloperBindingSessionStartRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """Start a temporary developer binding session in Redis for an existing subscription."""
+    try:
+        return subscription_notification_service.start_developer_binding_session(
+            db=db,
+            subscription_id=subscription_id,
+            user_id=current_user.id,
+            channel_id=request.channel_id,
+            bind_private=request.bind_private,
+            bind_group=request.bind_group,
+        )
+    except ValueError as e:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post(
+    "/developer/binding/start",
+    response_model=DeveloperBindingSessionResponse,
+)
+def start_developer_binding_session(
+    request: DeveloperBindingSessionStartRequest,
+    subscription_id: Optional[int] = Query(
+        None, description="Optional subscription ID for existing subscriptions"
+    ),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """Start a temporary developer binding session in Redis.
+
+    Can be used with or without a subscription_id:
+    - Without subscription_id: For new subscriptions during creation flow
+    - With subscription_id: For existing subscriptions (same as /{subscription_id}/developer/binding/start)
+    """
+    try:
+        return subscription_notification_service.start_developer_binding_session(
+            db=db,
+            subscription_id=subscription_id,
+            user_id=current_user.id,
+            channel_id=request.channel_id,
+            bind_private=request.bind_private,
+            bind_group=request.bind_group,
+        )
+    except ValueError as e:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post(
+    "/{subscription_id}/developer/binding/cancel",
+    response_model=DeveloperBindingSessionResponse,
+)
+def cancel_developer_binding_session_with_id(
+    subscription_id: int,
+    request: DeveloperBindingSessionCancelRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """Cancel a temporary developer binding session in Redis for an existing subscription."""
+    try:
+        return subscription_notification_service.cancel_developer_binding_session(
+            db=db,
+            subscription_id=subscription_id,
+            user_id=current_user.id,
+            channel_id=request.channel_id,
+        )
+    except ValueError as e:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post(
+    "/developer/binding/cancel",
+    response_model=DeveloperBindingSessionResponse,
+)
+def cancel_developer_binding_session(
+    request: DeveloperBindingSessionCancelRequest,
+    subscription_id: Optional[int] = Query(
+        None, description="Optional subscription ID for existing subscriptions"
+    ),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """Cancel a temporary developer binding session in Redis.
+
+    Can be used with or without a subscription_id:
+    - Without subscription_id: For new subscriptions during creation flow
+    - With subscription_id: For existing subscriptions (same as /{subscription_id}/developer/binding/cancel)
+    """
+    try:
+        return subscription_notification_service.cancel_developer_binding_session(
+            db=db,
+            subscription_id=subscription_id,
+            user_id=current_user.id,
+            channel_id=request.channel_id,
         )
     except ValueError as e:
         from fastapi import HTTPException

@@ -20,8 +20,12 @@ from app.schemas.admin import (
     QuickAccessTeam,
     WelcomeConfigResponse,
 )
+from app.schemas.subscription import NotificationChannelInfo
 from app.schemas.user import UserCreate, UserInDB, UserUpdate
 from app.services.kind import kind_service
+from app.services.subscription.notification_service import (
+    subscription_notification_service,
+)
 from app.services.user import user_service
 
 router = APIRouter()
@@ -485,3 +489,21 @@ async def search_users(
         ],
         total=len(users),
     )
+
+
+# ==================== Available Notification Channels ====================
+
+
+@router.get("/me/available-channels", response_model=list[NotificationChannelInfo])
+async def get_user_available_channels(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Get available Messager channels for the current user.
+
+    Returns a list of all enabled Messager channels with their binding status.
+    This endpoint does not require an existing subscription, making it suitable
+    for new subscription creation scenarios.
+    """
+    return subscription_notification_service.get_available_channels(db, current_user.id)

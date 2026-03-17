@@ -35,6 +35,7 @@ import type {
   Subscription,
   SubscriptionCreateRequest,
   SubscriptionExecutionTarget,
+  SubscriptionGroupInfoPayload,
   SubscriptionKnowledgeBaseRef,
   SubscriptionSkillRef,
   SubscriptionTaskType,
@@ -44,6 +45,7 @@ import type {
 } from '@/types/subscription'
 import { toast } from 'sonner'
 import { getCompatibleProviderFromAgentType } from '@/utils/modelCompatibility'
+import { useSocket } from '@/contexts/SocketContext'
 import {
   SendAreaSection,
   BasicInfoSection,
@@ -275,6 +277,7 @@ export function SubscriptionForm({
   initialData,
 }: SubscriptionFormProps) {
   const { t } = useTranslation('feed')
+  const { socket } = useSocket()
   const isEditing = !!subscription
   const isRental = subscription?.is_rental ?? false
 
@@ -335,6 +338,15 @@ export function SubscriptionForm({
   const [devNotificationLevel, setDevNotificationLevel] = useState<NotificationLevel>('notify')
   const [devNotificationChannels, setDevNotificationChannels] = useState<number[]>([])
   const [devAvailableChannels, setDevAvailableChannels] = useState<NotificationChannelInfo[]>([])
+  const [channelBindingConfigs, setChannelBindingConfigs] = useState<
+    Array<{
+      channel_id: number
+      bind_private: boolean
+      bind_group: boolean
+      group_conversation_id?: string
+    }>
+  >([])
+  const [bindingWaitingState, setBindingWaitingState] = useState<Record<number, boolean>>({})
   const [devSettingsLoading, setDevSettingsLoading] = useState(false)
 
   // Notification webhooks state
@@ -352,22 +364,19 @@ export function SubscriptionForm({
           setDevNotificationLevel(response.notification_level)
           setDevNotificationChannels(response.notification_channel_ids || [])
           setDevAvailableChannels(response.available_channels || [])
+          setChannelBindingConfigs(response.channel_binding_configs || [])
         } else {
           setDevNotificationLevel('notify')
           setDevNotificationChannels([])
+          setChannelBindingConfigs([])
           try {
-            const subscriptionsResponse = await subscriptionApis.getSubscriptions({
-              page: 1,
-              limit: 1,
-            })
-            if (subscriptionsResponse.items.length > 0) {
-              const firstSubId = subscriptionsResponse.items[0].id
-              const settingsResponse =
-                await subscriptionApis.getDeveloperNotificationSettings(firstSubId)
-              setDevAvailableChannels(settingsResponse.available_channels || [])
-            }
+            // Use the new API to get available channels without requiring a subscription
+            const availableChannels = await userApis.getAvailableChannels()
+            setDevAvailableChannels(availableChannels || [])
+            setChannelBindingConfigs([])
           } catch {
             setDevAvailableChannels([])
+            setChannelBindingConfigs([])
           }
         }
       } catch (error) {
@@ -741,6 +750,7 @@ export function SubscriptionForm({
             await subscriptionApis.updateDeveloperNotificationSettings(subscription.id, {
               notification_level: devNotificationLevel,
               notification_channel_ids: devNotificationChannels,
+              channel_binding_configs: channelBindingConfigs,
             })
           } catch (error) {
             console.error('Failed to update developer notification settings:', error)
@@ -791,6 +801,7 @@ export function SubscriptionForm({
           await subscriptionApis.updateDeveloperNotificationSettings(createdSubscription.id, {
             notification_level: devNotificationLevel,
             notification_channel_ids: devNotificationChannels,
+            channel_binding_configs: channelBindingConfigs,
           })
         } catch (error) {
           console.error('Failed to update developer notification settings:', error)
@@ -839,7 +850,59 @@ export function SubscriptionForm({
     teams,
     devNotificationLevel,
     devNotificationChannels,
+    channelBindingConfigs,
   ])
+
+  const startBindingSession = useCallback(
+    async (channelId: number, bindPrivate: boolean, bindGroup: boolean) => {
+      await subscriptionApis.startDeveloperBindingSession(subscription?.id || null, {
+        channel_id: channelId,
+        bind_private: bindPrivate,
+        bind_group: bindGroup,
+      })
+      setBindingWaitingState(prev => ({ ...prev, [channelId]: true }))
+    },
+    [subscription?.id]
+  )
+
+  const cancelBindingSession = useCallback(
+    async (channelId: number) => {
+      await subscriptionApis.cancelDeveloperBindingSession(subscription?.id || null, {
+        channel_id: channelId,
+      })
+      setBindingWaitingState(prev => ({ ...prev, [channelId]: false }))
+    },
+    [subscription?.id]
+  )
+
+  // Listen for group info received event from WebSocket
+  useEffect(() => {
+    if (!socket) return
+
+    const handler = (payload: SubscriptionGroupInfoPayload) => {
+      // Update channelBindingConfigs with group info
+      setChannelBindingConfigs(prev =>
+        prev.map(item =>
+          item.channel_id === payload.channel_id
+            ? {
+                ...item,
+                group_conversation_id: payload.group_conversation_id,
+                group_name: payload.group_name,
+              }
+            : item
+        )
+      )
+      // Update binding waiting state
+      setBindingWaitingState(prev => ({ ...prev, [payload.channel_id]: false }))
+      // Show success toast
+      toast.success(t('notification_settings.binding_success'))
+    }
+
+    socket.on('subscription:group_info_received', handler)
+    return () => {
+      socket.off('subscription:group_info_received', handler)
+    }
+  }, [socket, t])
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -937,6 +1000,11 @@ export function SubscriptionForm({
               devSettingsLoading={devSettingsLoading}
               notificationWebhooks={notificationWebhooks}
               setNotificationWebhooks={setNotificationWebhooks}
+              channelBindingConfigs={channelBindingConfigs}
+              setChannelBindingConfigs={setChannelBindingConfigs}
+              onStartBinding={startBindingSession}
+              onCancelBinding={cancelBindingSession}
+              bindingWaitingState={bindingWaitingState}
             />
           )}
         </div>
