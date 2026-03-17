@@ -33,6 +33,17 @@ async function setupCodePage(page: any) {
     document.querySelectorAll('.driver-overlay, .driver-popover, .driver-popover-tip').forEach(el => el.remove())
   })
 
+  // Remove Next.js dev overlay if present (it can block pointer events)
+  await page.evaluate(() => {
+    const closeButton = document.querySelector('nextjs-portal button[aria-label="Close"]') as HTMLElement
+    if (closeButton) closeButton.click()
+    document.querySelectorAll('nextjs-portal').forEach(el => {
+      if (el.querySelector('[data-nextjs-dev-overlay]')) {
+        el.remove()
+      }
+    })
+  })
+
   // Wait for page to stabilize
   await page.waitForTimeout(1000)
 
@@ -166,6 +177,10 @@ async function setupCodePage(page: any) {
 }
 
 test.describe('Code Flow', () => {
+  // Code Flow tests need to run serially because they share the same page state
+  // and concurrent execution causes navigation issues
+test.describe.configure({ mode: 'serial' })
+
   test('should analyze repository and provide code suggestions', async ({ page }) => {
     test.setTimeout(300000) // 5 minutes timeout for AI response
 
@@ -183,32 +198,63 @@ test.describe('Code Flow', () => {
     // Find and click send button
     const sendButton = page.locator('[data-testid="send-button"]').first()
     await expect(sendButton).toBeEnabled({ timeout: 5000 })
-    await sendButton.click()
 
-    // Wait for AI response
-    const messagesContainer = page.locator('.messages-container').first()
+    // Dismiss any overlay before clicking
+    await page.evaluate(() => {
+      const closeButton = document.querySelector('nextjs-portal button[aria-label="Close"]') as HTMLElement
+      if (closeButton) closeButton.click()
+      document.querySelectorAll('nextjs-portal').forEach(el => {
+        if (el.querySelector('[data-nextjs-dev-overlay]')) el.remove()
+      })
+    })
+
+    await sendButton.click()
+    console.log('Send button clicked, waiting for navigation...')
+
+    // Wait for page navigation to task view (URL should change from /code to /code?taskId=xxx)
+    try {
+      await page.waitForURL(/\/code\?.*taskId=/, { timeout: 30000 })
+      console.log('Navigation to task view detected')
+    } catch (e) {
+      console.log('Navigation timeout - checking if already on task view')
+      const currentUrl = page.url()
+      console.log('Current URL:', currentUrl)
+      if (!currentUrl.includes('taskId')) {
+        throw new Error('Page did not navigate to task view after clicking send')
+      }
+    }
+    await page.waitForTimeout(2000)
+
+    // Wait for AI response - use more flexible selector
+    const messagesContainer = page.locator('[data-testid="messages-container"]').first()
     await expect(messagesContainer).toBeVisible({ timeout: 30000 })
 
-    // Wait for AI message to appear
-    const aiMessage = messagesContainer.locator('> div').filter({
-      has: page.locator('svg.lucide-bot'),
-    }).last()
+    // Wait for AI message to appear (AI messages have data-testid="ai-message-icon")
+    const aiMessage = messagesContainer.locator('[data-message-type="ai"]').first()
     await expect(aiMessage).toBeVisible({ timeout: 120000 })
+
+    // Wait for the AI icon to confirm it's an AI message
+    const aiIcon = aiMessage.locator('[data-testid="ai-message-icon"]').first()
+    await expect(aiIcon).toBeVisible({ timeout: 10000 })
+
+    // Wait for streaming to complete
+    await page.waitForTimeout(5000)
 
     // Wait for streaming to complete
     await page.waitForTimeout(5000)
 
     // Verify the response
-    const allMessages = await messagesContainer.locator('> div').all()
+    const allMessages = await messagesContainer.locator('[data-message-type]').all()
     expect(allMessages.length).toBeGreaterThanOrEqual(2)
 
     // Verify user message
-    const userMessage = allMessages[allMessages.length - 2]
+    const userMessage = messagesContainer.locator('[data-message-type="user"]').first()
     const userMessageText = await userMessage.textContent()
     expect(userMessageText).toContain(testMessage)
 
     // Verify AI message has content
-    const aiMessageText = await aiMessage.textContent()
+    const aiMessageFinal = messagesContainer.locator('[data-message-type="ai"]').last()
+    const aiMessageText = await aiMessageFinal.textContent()
     expect(aiMessageText).toBeTruthy()
     expect(aiMessageText!.length).toBeGreaterThan(20)
 
@@ -231,24 +277,24 @@ test.describe('Code Flow', () => {
     await sendButton.click()
     console.log('Message sent, waiting for response...')
 
-    // Wait for page to transition to chat view
+    // Wait for page navigation to task view (URL should change from /code to /code?taskId=xxx)
+    await page.waitForURL(/\/code\?.*taskId=/, { timeout: 30000 })
     await page.waitForTimeout(2000)
 
     // Wait for AI response
-    const messagesContainer = page.locator('.messages-container').first()
+    const messagesContainer = page.locator('[data-testid="messages-container"]').first()
     await expect(messagesContainer).toBeVisible({ timeout: 30000 })
 
-    // Wait for AI message
-    const aiMessage = messagesContainer.locator('> div').filter({
-      has: page.locator('svg.lucide-bot'),
-    }).last()
+    // Wait for AI message (AI messages have data-message-type="ai")
+    const aiMessage = messagesContainer.locator('[data-message-type="ai"]').first()
     await expect(aiMessage).toBeVisible({ timeout: 120000 })
 
     // Wait for streaming to complete
     await page.waitForTimeout(5000)
 
     // Check if AI response has meaningful content
-    const aiMessageText = await aiMessage.textContent()
+    const aiMessageFinal = messagesContainer.locator('[data-message-type="ai"]').last()
+    const aiMessageText = await aiMessageFinal.textContent()
     console.log('AI Response:', aiMessageText?.substring(0, 300) + '...')
 
     // Verify AI responded with some content (at least 10 characters)

@@ -31,6 +31,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.db.session import SessionLocal
 from app.models.kind import Kind
+from app.models.subtask_context import ContextType, SubtaskContext
 from app.schemas.rag import (
     SemanticSplitterConfig,
     SentenceSplitterConfig,
@@ -39,6 +40,8 @@ from app.schemas.rag import (
 from shared.telemetry import add_span_event
 
 logger = logging.getLogger(__name__)
+
+RAG_INDEXING_DISABLED_EXTENSIONS = frozenset({".xls", ".xlsx"})
 
 
 @dataclass
@@ -68,6 +71,37 @@ class RAGIndexingParams:
     user_name: str
     splitter_config: Optional[SplitterConfig]
     kb_index_info: KnowledgeBaseIndexInfo
+
+
+def normalize_document_extension(file_extension: Optional[str]) -> str:
+    """Normalize a document extension for indexing checks."""
+    ext = (file_extension or "").strip().lower()
+    if not ext:
+        return ""
+    if not ext.startswith("."):
+        return f".{ext}"
+    return ext
+
+
+def get_rag_indexing_skip_reason(
+    source_type: Optional[str],
+    file_extension: Optional[str],
+) -> Optional[str]:
+    """Return the reason why a document should skip RAG indexing, if any."""
+    normalized_source_type = (source_type or "").strip().lower()
+    normalized_extension = normalize_document_extension(file_extension)
+
+    if normalized_source_type == "table":
+        return (
+            "Table documents are queried in real-time and do not support RAG indexing"
+        )
+
+    if normalized_extension in RAG_INDEXING_DISABLED_EXTENSIONS:
+        return (
+            f"Excel documents ({normalized_extension}) are excluded from RAG indexing"
+        )
+
+    return None
 
 
 def is_organization_namespace(db: Session, namespace: str) -> bool:
@@ -439,6 +473,58 @@ def run_document_indexing(
         db = SessionLocal()
 
     try:
+        document = None
+        file_extension = None
+        source_type = None
+
+        if document_id is not None:
+            from app.models.knowledge import KnowledgeDocument
+
+            document = (
+                db.query(KnowledgeDocument)
+                .filter(KnowledgeDocument.id == document_id)
+                .first()
+            )
+            if document:
+                file_extension = document.file_extension
+                source_type = document.source_type
+        elif attachment_id:
+            attachment = (
+                db.query(SubtaskContext)
+                .filter(
+                    SubtaskContext.id == attachment_id,
+                    SubtaskContext.context_type == ContextType.ATTACHMENT.value,
+                )
+                .first()
+            )
+            if attachment:
+                file_extension = attachment.file_extension
+
+        skip_reason = get_rag_indexing_skip_reason(source_type, file_extension)
+        if skip_reason:
+            logger.info(
+                f"[Indexing] Skipping: kb_id={knowledge_base_id}, "
+                f"document_id={document_id}, attachment_id={attachment_id}, "
+                f"reason={skip_reason}"
+            )
+            add_span_event(
+                "rag.indexing.skipped",
+                {
+                    "kb_id": str(knowledge_base_id),
+                    "document_id": str(document_id),
+                    "attachment_id": str(attachment_id),
+                    "reason": skip_reason,
+                },
+            )
+            return {
+                "status": "skipped",
+                "reason": skip_reason,
+                "document_id": document_id,
+                "knowledge_base_id": knowledge_base_id,
+                "indexed_count": 0,
+                "index_name": None,
+            }
+
         # Resolve KB index info (use pre-computed or fetch from DB)
         kb_info = resolve_kb_index_info(
             db=db,

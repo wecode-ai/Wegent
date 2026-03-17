@@ -9,7 +9,9 @@ import { test, expect } from '@playwright/test'
  */
 
 // ==================== Test Data ====================
-const TEST_KB_NAME = `Test-KB-${Date.now()}`
+// Use random suffix for concurrent test isolation
+const TEST_ID = Math.random().toString(36).substring(2, 8)
+const TEST_KB_NAME = `Test-KB-${TEST_ID}-${Date.now()}`
 const TEST_KB_DESCRIPTION = 'Test knowledge base for E2E testing'
 const TEST_FILE_NAME = 'test-document.txt'
 
@@ -50,6 +52,32 @@ async function loginIfNeeded(page: any) {
 }
 
 /**
+ * Helper to dismiss Next.js dev overlay before critical clicks
+ */
+async function dismissDevOverlay(page: any) {
+  await page.evaluate(() => {
+    // Method 1: Click close button
+    const closeButton = document.querySelector('nextjs-portal button[aria-label="Close"]') as HTMLElement
+    if (closeButton) closeButton.click()
+
+    // Method 2: Remove all nextjs-portal elements
+    document.querySelectorAll('nextjs-portal').forEach(el => {
+      if (el.querySelector('[data-nextjs-dev-overlay]')) {
+        el.remove()
+      }
+    })
+
+    // Method 3: Hide overlay with CSS
+    const style = document.createElement('style')
+    style.textContent = `
+      nextjs-portal { display: none !important; }
+      [data-nextjs-dev-overlay] { display: none !important; }
+    `
+    document.head.appendChild(style)
+  })
+}
+
+/**
  * Skip onboarding tour and navigate to knowledge page
  */
 async function setupKnowledgePage(page: any) {
@@ -73,6 +101,21 @@ async function setupKnowledgePage(page: any) {
   // Double check and force remove any driver.js overlay
   await page.evaluate(() => {
     document.querySelectorAll('.driver-overlay, .driver-popover, .driver-popover-tip').forEach(el => el.remove())
+  })
+
+  // Remove Next.js dev overlay if present (it can block pointer events)
+  await page.evaluate(() => {
+    // Close error overlay
+    const closeButton = document.querySelector('nextjs-portal button[aria-label="Close"]') as HTMLElement
+    if (closeButton) closeButton.click()
+
+    // Remove the overlay entirely
+    document.querySelectorAll('nextjs-portal').forEach(el => {
+      // Only remove if it's the error overlay (not the root portal)
+      if (el.querySelector('[data-nextjs-dev-overlay]')) {
+        el.remove()
+      }
+    })
   })
 
   // Wait for page to stabilize
@@ -157,10 +200,62 @@ async function deleteKnowledgeBase(page: any, name: string) {
   }
 }
 
+/**
+ * Cleanup all test knowledge bases with matching TEST_ID prefix
+ * Used for concurrent test isolation - cleans up any leftover KBs from this test run
+ */
+async function cleanupAllTestKnowledgeBases(page: any, testId: string) {
+  await page.goto('/knowledge')
+  await page.waitForLoadState('networkidle', { timeout: 30000 })
+  await page.waitForTimeout(2000)
+
+  const kbPattern = `Test-KB-${testId}`
+  let cleanedCount = 0
+
+  // Keep trying to clean until no more matching KBs found
+  for (let attempt = 0; attempt < 10; attempt++) {
+    // Find any KB with our test ID pattern
+    const kbCards = page.locator('h3', { hasText: new RegExp(kbPattern) })
+    const count = await kbCards.count()
+
+    if (count === 0) break
+
+    // Try to delete the first matching KB
+    const firstKb = kbCards.first()
+    if (await firstKb.isVisible({ timeout: 3000 }).catch(() => false)) {
+      const card = firstKb.locator('..').locator('..').first()
+      const deleteButton = card.locator('button[title="Delete"], button:has-text("Delete")').first()
+
+      if (await deleteButton.isVisible({ timeout: 3000 }).catch(() => false)) {
+        await deleteButton.click()
+
+        const confirmDialog = page.locator('[role="dialog"]').filter({ hasText: /Delete|Confirm/ }).first()
+        if (await confirmDialog.isVisible({ timeout: 5000 }).catch(() => false)) {
+          const confirmButton = confirmDialog.locator('button:has-text("Delete"), button:has-text("Confirm")').first()
+          await confirmButton.click()
+          await page.waitForTimeout(1500)
+          cleanedCount++
+        }
+      }
+
+      // Refresh page to find next KB
+      await page.goto('/knowledge')
+      await page.waitForTimeout(2000)
+    }
+  }
+
+  if (cleanedCount > 0) {
+    console.log(`✓ Cleaned up ${cleanedCount} leftover test knowledge bases`)
+  }
+}
+
 // ==================== Test Suite ====================
 
 test.describe('Knowledge Flow', () => {
   test.beforeEach(async ({ page }) => {
+    // First cleanup any leftover test KBs from this test run
+    await cleanupAllTestKnowledgeBases(page, TEST_ID)
+    // Then setup the page
     await setupKnowledgePage(page)
   })
 
@@ -204,6 +299,8 @@ test.describe('Knowledge Flow', () => {
     // Look for settings or convert option
     const settingsButton = page.locator('button:has-text("Settings"), button[title="Settings"]').first()
     if (await settingsButton.isVisible({ timeout: 3000 }).catch(() => false)) {
+      // Dismiss any overlay before clicking
+      await dismissDevOverlay(page)
       await settingsButton.click()
 
       // Try to find convert option
