@@ -38,6 +38,7 @@ from app.schemas.knowledge import (
     KnowledgeDocumentListResponse,
     KnowledgeDocumentResponse,
     KnowledgeDocumentUpdate,
+    PersonalKnowledgeBaseGroup,
     ResourceScope,
 )
 from app.schemas.knowledge_qa_history import QAHistoryResponse
@@ -120,6 +121,25 @@ def get_accessible_knowledge(
     This endpoint is designed for AI chat integration.
     """
     return KnowledgeService.get_accessible_knowledge(
+        db=db,
+        user_id=current_user.id,
+    )
+
+
+@router.get("/personal/grouped", response_model=PersonalKnowledgeBaseGroup)
+@trace_sync("get_personal_knowledge_bases_grouped", "knowledge.api")
+def get_personal_knowledge_bases_grouped(
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Get personal knowledge bases grouped by ownership.
+
+    Returns knowledge bases in two groups:
+    - **created_by_me**: Knowledge bases created by the current user
+    - **shared_with_me**: Knowledge bases shared with the current user by others
+    """
+    return KnowledgeService.get_personal_knowledge_bases_grouped(
         db=db,
         user_id=current_user.id,
     )

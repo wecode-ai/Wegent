@@ -14,7 +14,7 @@ const nextConfig = {
   output: 'standalone',
   // Allow cross-origin requests in development mode
   // This prevents "Cross origin request detected" warning
-  allowedDevOrigins: ['localhost:3000'],
+  allowedDevOrigins: ['localhost:3000', '10.37.254.194'],
   // Transpile node_modules that ship modern JS syntax for iOS 16 Safari compatibility
   transpilePackages: [
     'mermaid',

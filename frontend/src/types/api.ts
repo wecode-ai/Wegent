@@ -634,6 +634,7 @@ export interface KnowledgeBaseRef {
 export type {
   KnowledgeBase,
   KnowledgeBaseListResponse as KnowledgeBasesResponse,
+  PersonalKnowledgeBaseGroup,
 } from './knowledge'
 
 // Project Types

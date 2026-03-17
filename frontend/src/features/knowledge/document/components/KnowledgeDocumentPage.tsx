@@ -18,6 +18,8 @@ import {
   FolderOpen,
   Building2,
   Settings,
+  UserCircle,
+  Share2,
 } from 'lucide-react'
 import { Spinner } from '@/components/ui/spinner'
 import { Card } from '@/components/ui/card'
@@ -42,6 +44,7 @@ import { saveGlobalModelPreference, type ModelPreference } from '@/utils/modelPr
 import { useKnowledgeBases } from '../hooks/useKnowledgeBases'
 import { useUser } from '@/features/common/UserContext'
 import { getOrganizationNamespace } from '@/apis/knowledge'
+import { knowledgeBaseApi } from '@/apis/knowledge-base'
 import type { Group } from '@/types/group'
 import type { KnowledgeBase, KnowledgeBaseType, SummaryModelRef } from '@/types/knowledge'
 import type { DefaultTeamsResponse, Team } from '@/types/api'
@@ -372,13 +375,20 @@ export function KnowledgeDocumentPage() {
       <div>
         {activeTab === 'personal' && (
           <PersonalKnowledgeContent
-            knowledgeBases={personalKb.knowledgeBases}
-            loading={personalKb.loading}
             onSelectKb={handleSelectKb}
             onEditKb={setEditingKb}
             onDeleteKb={setDeletingKb}
             onShareKb={setSharingKb}
             onCreateKb={kbType => handleCreateKb(null, kbType)}
+            onRefreshRef={ref => {
+              // Store the child component's refresh function
+              if (ref) {
+                // Wrap the sync refresh to match the expected Promise<void> return type
+                personalKb.refresh = async () => {
+                  await ref()
+                }
+              }
+            }}
           />
         )}
 
@@ -489,36 +499,94 @@ export function KnowledgeDocumentPage() {
   )
 }
 
+// Hook for fetching grouped personal knowledge bases
+function usePersonalKnowledgeBasesGrouped() {
+  const [data, setData] = useState<{
+    created_by_me: KnowledgeBase[]
+    shared_with_me: KnowledgeBase[]
+  } | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  const fetchData = useCallback(async () => {
+    try {
+      setLoading(true)
+      setError(null)
+      const response = await knowledgeBaseApi.getPersonalGrouped()
+      setData(response)
+    } catch (err) {
+      console.error('Failed to fetch personal knowledge bases:', err)
+      setError('Failed to load knowledge bases')
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    fetchData()
+  }, [fetchData])
+
+  const refresh = useCallback(() => {
+    fetchData()
+  }, [fetchData])
+
+  return {
+    data,
+    loading,
+    error,
+    refresh,
+  }
+}
+
 // Personal knowledge content component
 interface PersonalKnowledgeContentProps {
-  knowledgeBases: KnowledgeBase[]
-  loading: boolean
   onSelectKb: (kb: KnowledgeBase) => void
   onEditKb: (kb: KnowledgeBase) => void
   onDeleteKb: (kb: KnowledgeBase) => void
   onShareKb: (kb: KnowledgeBase) => void
   onCreateKb: (kbType: KnowledgeBaseType) => void
+  onRefreshRef?: (refresh: (() => void) | null) => void
 }
 
 function PersonalKnowledgeContent({
-  knowledgeBases,
-  loading,
   onSelectKb,
   onEditKb,
   onDeleteKb,
   onShareKb,
   onCreateKb,
+  onRefreshRef,
 }: PersonalKnowledgeContentProps) {
   const { t } = useTranslation()
+  const { data, loading, refresh } = usePersonalKnowledgeBasesGrouped()
+
+  // Expose refresh function to parent via callback ref
+  useEffect(() => {
+    onRefreshRef?.(refresh)
+    return () => {
+      onRefreshRef?.(null)
+    }
+  }, [refresh, onRefreshRef])
   const [searchQuery, setSearchQuery] = useState('')
 
-  const filteredKnowledgeBases = useMemo(() => {
-    if (!searchQuery.trim()) return knowledgeBases
+  const createdByMe = data?.created_by_me || []
+  const sharedWithMe = data?.shared_with_me || []
+
+  // Filter knowledge bases based on search query
+  const filteredCreatedByMe = useMemo(() => {
+    if (!searchQuery.trim()) return createdByMe
     const query = searchQuery.toLowerCase()
-    return knowledgeBases.filter(
+    return createdByMe.filter(
       kb => kb.name.toLowerCase().includes(query) || kb.description?.toLowerCase().includes(query)
     )
-  }, [knowledgeBases, searchQuery])
+  }, [createdByMe, searchQuery])
+
+  const filteredSharedWithMe = useMemo(() => {
+    if (!searchQuery.trim()) return sharedWithMe
+    const query = searchQuery.toLowerCase()
+    return sharedWithMe.filter(
+      kb => kb.name.toLowerCase().includes(query) || kb.description?.toLowerCase().includes(query)
+    )
+  }, [sharedWithMe, searchQuery])
 
   if (loading) {
     return (
@@ -528,7 +596,10 @@ function PersonalKnowledgeContent({
     )
   }
 
-  if (knowledgeBases.length === 0) {
+  const totalKbs = createdByMe.length + sharedWithMe.length
+
+  // Empty state - no knowledge bases at all
+  if (totalKbs === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-16">
         <DropdownMenu>
@@ -536,6 +607,7 @@ function PersonalKnowledgeContent({
             <Card
               padding="lg"
               className="hover:bg-hover transition-colors cursor-pointer flex flex-col items-center justify-center w-64 h-48"
+              data-testid="create-kb-card"
             >
               <div className="w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center mb-4">
                 <Plus className="w-8 h-8 text-primary" />
@@ -552,6 +624,7 @@ function PersonalKnowledgeContent({
             <DropdownMenuItem
               onClick={() => onCreateKb('notebook')}
               className="flex items-start gap-3 py-3"
+              data-testid="kb-type-notebook"
             >
               <BookOpen className="w-5 h-5 text-primary mt-0.5 flex-shrink-0" />
               <div>
@@ -566,6 +639,7 @@ function PersonalKnowledgeContent({
             <DropdownMenuItem
               onClick={() => onCreateKb('classic')}
               className="flex items-start gap-3 py-3"
+              data-testid="kb-type-classic"
             >
               <FolderOpen className="w-5 h-5 text-text-secondary mt-0.5 flex-shrink-0" />
               <div>
@@ -599,77 +673,122 @@ function PersonalKnowledgeContent({
         </div>
       </div>
 
-      <div className="w-full max-w-4xl grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-        {/* Add knowledge base card with dropdown */}
-        {!searchQuery && (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Card
-                padding="sm"
-                className="hover:bg-hover transition-colors cursor-pointer flex flex-col items-center justify-center h-[140px]"
-              >
-                <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center mb-3">
-                  <Plus className="w-6 h-6 text-primary" />
-                </div>
-                <h3 className="font-medium text-sm">
-                  {t('knowledge:document.knowledgeBase.create')}
-                </h3>
-              </Card>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="center" className="w-56">
-              <DropdownMenuItem
-                onClick={() => onCreateKb('notebook')}
-                className="flex items-start gap-3 py-3"
-              >
-                <BookOpen className="w-5 h-5 text-primary mt-0.5 flex-shrink-0" />
-                <div>
-                  <div className="font-medium">
-                    {t('knowledge:document.knowledgeBase.typeNotebook')}
-                  </div>
-                  <div className="text-xs text-text-muted">
-                    {t('knowledge:document.knowledgeBase.notebookDesc')}
-                  </div>
-                </div>
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={() => onCreateKb('classic')}
-                className="flex items-start gap-3 py-3"
-              >
-                <FolderOpen className="w-5 h-5 text-text-secondary mt-0.5 flex-shrink-0" />
-                <div>
-                  <div className="font-medium">
-                    {t('knowledge:document.knowledgeBase.typeClassic')}
-                  </div>
-                  <div className="text-xs text-text-muted">
-                    {t('knowledge:document.knowledgeBase.classicDesc')}
-                  </div>
-                </div>
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        )}
+      <div className="w-full max-w-4xl space-y-6">
+        {/* Created by Me Section */}
+        <div>
+          <div className="flex items-center gap-2 mb-3">
+            <UserCircle className="w-4 h-4 text-primary" />
+            <h3 className="text-sm font-medium text-text-primary">
+              {t('knowledge:document.personalGroups.createdByMe')}
+              <span className="ml-2 text-xs text-text-muted">({createdByMe.length})</span>
+            </h3>
+          </div>
 
-        {/* Knowledge base cards */}
-        {filteredKnowledgeBases.map(kb => (
-          <KnowledgeBaseCard
-            key={kb.id}
-            knowledgeBase={kb}
-            onClick={() => onSelectKb(kb)}
-            onEdit={() => onEditKb(kb)}
-            onDelete={() => onDeleteKb(kb)}
-            onShare={() => onShareKb(kb)}
-            canShare={true}
-          />
-        ))}
-      </div>
+          {filteredCreatedByMe.length === 0 && searchQuery ? (
+            <div className="text-sm text-text-muted py-4">
+              {t('knowledge:document.knowledgeBase.noResults')}
+            </div>
+          ) : filteredCreatedByMe.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-8 text-text-muted">
+              <p className="text-sm">{t('knowledge:document.personalGroups.noCreated')}</p>
+              <p className="text-xs mt-1">{t('knowledge:document.personalGroups.createdDesc')}</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {/* Add knowledge base card - only show in created by me section when no search */}
+              {!searchQuery && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Card
+                      padding="sm"
+                      className="hover:bg-hover transition-colors cursor-pointer flex flex-col items-center justify-center h-[140px]"
+                    >
+                      <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center mb-3">
+                        <Plus className="w-6 h-6 text-primary" />
+                      </div>
+                      <h3 className="font-medium text-sm">
+                        {t('knowledge:document.knowledgeBase.create')}
+                      </h3>
+                    </Card>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="center" className="w-56">
+                    <DropdownMenuItem
+                      onClick={() => onCreateKb('notebook')}
+                      className="flex items-start gap-3 py-3"
+                    >
+                      <BookOpen className="w-5 h-5 text-primary mt-0.5 flex-shrink-0" />
+                      <div>
+                        <div className="font-medium">
+                          {t('knowledge:document.knowledgeBase.typeNotebook')}
+                        </div>
+                        <div className="text-xs text-text-muted">
+                          {t('knowledge:document.knowledgeBase.notebookDesc')}
+                        </div>
+                      </div>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() => onCreateKb('classic')}
+                      className="flex items-start gap-3 py-3"
+                    >
+                      <FolderOpen className="w-5 h-5 text-text-secondary mt-0.5 flex-shrink-0" />
+                      <div>
+                        <div className="font-medium">
+                          {t('knowledge:document.knowledgeBase.typeClassic')}
+                        </div>
+                        <div className="text-xs text-text-muted">
+                          {t('knowledge:document.knowledgeBase.classicDesc')}
+                        </div>
+                      </div>
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
 
-      {/* No results message */}
-      {searchQuery && filteredKnowledgeBases.length === 0 && (
-        <div className="flex flex-col items-center justify-center py-12 text-text-secondary">
-          <FileText className="w-12 h-12 mb-4 opacity-50" />
-          <p>{t('knowledge:document.knowledgeBase.noResults')}</p>
+              {filteredCreatedByMe.map(kb => (
+                <KnowledgeBaseCard
+                  key={kb.id}
+                  knowledgeBase={kb}
+                  onClick={() => onSelectKb(kb)}
+                  onEdit={() => onEditKb(kb)}
+                  onDelete={() => onDeleteKb(kb)}
+                  onShare={() => onShareKb(kb)}
+                  canShare={true}
+                />
+              ))}
+            </div>
+          )}
         </div>
-      )}
+
+        {/* Shared with Me Section */}
+        {sharedWithMe.length > 0 && (
+          <div>
+            <div className="flex items-center gap-2 mb-3">
+              <Share2 className="w-4 h-4 text-text-secondary" />
+              <h3 className="text-sm font-medium text-text-primary">
+                {t('knowledge:document.personalGroups.sharedWithMe')}
+                <span className="ml-2 text-xs text-text-muted">({sharedWithMe.length})</span>
+              </h3>
+            </div>
+
+            {filteredSharedWithMe.length === 0 && searchQuery ? (
+              <div className="text-sm text-text-muted py-4">
+                {t('knowledge:document.knowledgeBase.noResults')}
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                {filteredSharedWithMe.map(kb => (
+                  <KnowledgeBaseCard
+                    key={kb.id}
+                    knowledgeBase={kb}
+                    onClick={() => onSelectKb(kb)}
+                    canShare={false}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   )
 }

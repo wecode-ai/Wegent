@@ -223,6 +223,21 @@ class RetrievalService:
                 f"Knowledge base {knowledge_base_id} not found or access denied for user {user_id}"
             )
 
+        # Check if user is a Restricted Analyst in the knowledge base's group
+        # Restricted Analysts cannot access knowledge base content
+        if kb.namespace != "default":
+            from app.services.group_permission import is_restricted_analyst
+
+            if is_restricted_analyst(db, user_id, kb.namespace):
+                logger.warning(
+                    f"[RetrievalService] User {user_id} is Restricted Analyst in group "
+                    f"'{kb.namespace}', blocking RAG retrieval from KB {knowledge_base_id}"
+                )
+                raise ValueError(
+                    f"Access denied: You have Restricted Analyst permissions in group "
+                    f"'{kb.namespace}'. You cannot retrieve content from this knowledge base."
+                )
+
         return await self._retrieve_from_kb_internal(
             query=query,
             kb=kb,
@@ -461,6 +476,7 @@ class RetrievalService:
         db: Session,
         max_chunks: int = 10000,
         query: Optional[str] = None,
+        user_id: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         """
         Get all chunks from a knowledge base without permission check.
@@ -473,6 +489,7 @@ class RetrievalService:
             db: Database session
             max_chunks: Maximum number of chunks to retrieve (safety limit)
             query: Optional query string for logging purposes
+            user_id: Optional user ID for Restricted Analyst check
 
         Returns:
             List of chunk dicts with content, title, chunk_id, doc_ref, metadata
@@ -495,6 +512,21 @@ class RetrievalService:
 
         if not kb:
             raise ValueError(f"Knowledge base {knowledge_base_id} not found")
+
+        # Check if user is a Restricted Analyst in the knowledge base's group
+        # This check is optional (user_id can be None for internal calls)
+        if user_id is not None and kb.namespace != "default":
+            from app.services.group_permission import is_restricted_analyst
+
+            if is_restricted_analyst(db, user_id, kb.namespace):
+                logger.warning(
+                    f"[RetrievalService] User {user_id} is Restricted Analyst in group "
+                    f"'{kb.namespace}', blocking get_all_chunks from KB {knowledge_base_id}"
+                )
+                raise ValueError(
+                    f"Access denied: You have Restricted Analyst permissions in group "
+                    f"'{kb.namespace}'. You cannot retrieve content from this knowledge base."
+                )
 
         # Extract retrieval configuration from knowledge base spec
         kb_json = kb.json or {}

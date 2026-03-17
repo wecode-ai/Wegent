@@ -1528,6 +1528,12 @@ class TaskRequestBuilder:
         if not url:
             return False
 
+        # URLs pointing to our own backend are always reachable.
+        # Checking them with a synchronous HTTP request would deadlock
+        # (single-worker uvicorn can't serve the request while blocked).
+        if "${{backend_url}}" in url:
+            return True
+
         try:
             # Use GET instead of HEAD because some servers (especially SSE endpoints)
             # don't support HEAD method and will timeout

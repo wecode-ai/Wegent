@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import type { KnowledgeBasesResponse } from '@/types/api'
+import type { KnowledgeBasesResponse, PersonalKnowledgeBaseGroup } from '@/types/api'
 import type { DocumentDetailResponse, KnowledgeBaseSummaryResponse } from '@/types/knowledge'
 import client from './client'
 
@@ -23,6 +23,17 @@ export const knowledgeBaseApi = {
     const url = `/knowledge-bases${queryString ? `?${queryString}` : ''}`
 
     const response = await client.get<KnowledgeBasesResponse>(url)
+    return response
+  },
+
+  /**
+   * Get personal knowledge bases grouped by ownership
+   * Returns { created_by_me: KnowledgeBase[], shared_with_me: KnowledgeBase[] }
+   */
+  getPersonalGrouped: async (): Promise<PersonalKnowledgeBaseGroup> => {
+    const response = await client.get<PersonalKnowledgeBaseGroup>(
+      '/knowledge-bases/personal/grouped'
+    )
     return response
   },
 

@@ -259,13 +259,23 @@ def _apply_env_overrides(config: DeviceConfig) -> tuple[DeviceConfig, bool]:
     # Device overrides
     if os.environ.get("DEVICE_ID"):
         env_value = os.environ["DEVICE_ID"]
-        if not config.device_id:
+        if config.device_id != env_value:
+            log_msg = (
+                f"DEVICE_ID override: '{config.device_id}' -> '{env_value}' "
+                f"(will be saved to config)"
+            )
+            logger.info(log_msg)
             should_save = True
         config.device_id = env_value
 
     if os.environ.get("DEVICE_NAME"):
         env_value = os.environ["DEVICE_NAME"]
-        if not config.device_name:
+        if config.device_name != env_value:
+            log_msg = (
+                f"DEVICE_NAME override: '{config.device_name}' -> '{env_value}' "
+                f"(will be saved to config)"
+            )
+            logger.info(log_msg)
             should_save = True
         config.device_name = env_value
 

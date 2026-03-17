@@ -22,6 +22,7 @@ import BotEdit from './BotEdit'
 import UnifiedAddButton from '@/components/common/UnifiedAddButton'
 import { useTranslation } from '@/hooks/useTranslation'
 import { sortBotsByUpdatedAt } from '@/utils/bot'
+import type { GroupRole } from '@/types/group'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { ResourceListItem } from '@/components/common/ResourceListItem'
@@ -37,7 +38,7 @@ import { useToast } from '@/hooks/use-toast'
 interface BotListProps {
   scope?: 'personal' | 'group' | 'all'
   groupName?: string
-  groupRoleMap?: Map<string, 'Owner' | 'Maintainer' | 'Developer' | 'Reporter'>
+  groupRoleMap?: Map<string, GroupRole>
 }
 
 export default function BotList({ scope = 'personal', groupName, groupRoleMap }: BotListProps) {

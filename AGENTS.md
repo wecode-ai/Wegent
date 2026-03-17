@@ -155,6 +155,19 @@ npm run format && npm run lint
 1. Search existing components in `src/components/ui/`, `src/components/common/`, `src/features/*/components/`
 2. Extract reusable logic if implementing similar UI patterns multiple times
 
+### Testing Attributes (data-testid)
+
+⚠️ **Preserve and add `data-testid` attributes for E2E testing**
+
+**When modifying existing code:**
+- ✅ **ALWAYS preserve** existing `data-testid` attributes - they are used by E2E tests
+- ❌ Never rename or remove `data-testid` unless you are also updating the corresponding E2E tests
+
+**When creating new interactive components:**
+- ✅ **MUST add** `data-testid` attributes to interactive elements (buttons, inputs, links, selects, etc.)
+- ✅ Use descriptive, consistent naming: `{action}-{element-type}` (e.g., `save-button`, `cancel-link`, `search-input`)
+- ❌ Do not omit `data-testid` on interactive elements
+
 ### Responsive Architecture
 
 ⚠️ **Wegent uses a mobile-first, component-separation architecture for responsive design**

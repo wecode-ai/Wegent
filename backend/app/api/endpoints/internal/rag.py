@@ -2,8 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""
-Internal RAG API endpoints for chat_shell service.
+"""Internal RAG API endpoints for chat_shell service.
 
 Provides a simplified RAG retrieval endpoint for chat_shell HTTP mode.
 These endpoints are intended for service-to-service communication.
@@ -18,6 +17,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
+from app.core import security
+from app.models.user import User
 from shared.telemetry.decorators import trace_async
 
 # Constants for document reading pagination
@@ -635,6 +636,7 @@ class AllChunksResponse(BaseModel):
 async def get_all_chunks(
     request: AllChunksRequest,
     db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
 ):
     """
     Get all chunks from a knowledge base for direct injection.
@@ -645,6 +647,7 @@ async def get_all_chunks(
     Args:
         request: Request with knowledge base ID and max chunks
         db: Database session
+        current_user: Authenticated user
 
     Returns:
         All chunks from the knowledge base
@@ -654,11 +657,14 @@ async def get_all_chunks(
 
         retrieval_service = RetrievalService()
 
+        # Use authenticated user's ID for Restricted Analyst check
+        # Do NOT trust request.user_id - always use current_user.id
         chunks = await retrieval_service.get_all_chunks_from_knowledge_base(
             knowledge_base_id=request.knowledge_base_id,
             db=db,
             max_chunks=request.max_chunks,
             query=request.query,
+            user_id=current_user.id,
         )
 
         # Calculate total content size for logging

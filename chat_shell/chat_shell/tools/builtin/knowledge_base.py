@@ -755,6 +755,7 @@ class KnowledgeBaseTool(KnowledgeBaseToolABC, BaseTool):
                         db=self.db_session,
                         max_chunks=10000,
                         query=query,
+                        user_id=self.user_id,
                     )
 
                     logger.info(
@@ -815,7 +816,11 @@ class KnowledgeBaseTool(KnowledgeBaseToolABC, BaseTool):
         async with httpx.AsyncClient(timeout=60.0) as client:
             for kb_id in self.knowledge_base_ids:
                 try:
-                    payload = {"knowledge_base_id": kb_id, "max_chunks": 10000}
+                    payload = {
+                        "knowledge_base_id": kb_id,
+                        "max_chunks": 10000,
+                        "user_id": self.user_id,
+                    }
                     if query:
                         payload["query"] = query
 

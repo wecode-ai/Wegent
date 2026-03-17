@@ -9,13 +9,28 @@ import { test, expect } from '@playwright/test'
  * - Waits for input to be enabled
  */
 async function setupCodePage(page: any) {
-  // Navigate to code page
+  // First navigate to set localStorage, then reload to skip onboarding
   await page.goto('/code')
+
+  // Set localStorage to mark onboarding as completed
+  await page.evaluate(() => {
+    localStorage.setItem('user_onboarding_completed', 'true')
+    localStorage.setItem('onboarding_in_progress', '')
+    localStorage.removeItem('onboarding_in_progress')
+  })
+
+  // Reload page - now onboarding should be skipped
+  await page.reload()
 
   // Wait for page to load - sidebar should be visible
   await page.waitForSelector('[data-tour="task-sidebar"]', {
     state: 'visible',
     timeout: 30000,
+  })
+
+  // Double check and force remove any driver.js overlay
+  await page.evaluate(() => {
+    document.querySelectorAll('.driver-overlay, .driver-popover, .driver-popover-tip').forEach(el => el.remove())
   })
 
   // Wait for page to stabilize

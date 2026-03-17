@@ -527,7 +527,7 @@ jobs:
         working-directory: executor
         run: |
           uv sync --group build
-          uv run python scripts/build_local.py
+          uv run python scripts/build_local.py --version ${{ needs.prepare-release.outputs.new_version }}
 
       - name: Rename binary with platform suffix
         run: |
@@ -575,7 +575,7 @@ jobs:
         run: |
           # Use x86_64 Python and uv to install dependencies and build
           arch -x86_64 /usr/local/bin/python3.11 -m uv sync --group build
-          arch -x86_64 /usr/local/bin/python3.11 -m uv run python scripts/build_local.py
+          arch -x86_64 /usr/local/bin/python3.11 -m uv run python scripts/build_local.py --version ${{ needs.prepare-release.outputs.new_version }}
 
       - name: Rename binary with platform suffix
         run: |
@@ -617,7 +617,7 @@ jobs:
         working-directory: executor
         run: |
           uv sync --group build
-          uv run python scripts/build_local.py
+          uv run python scripts/build_local.py --version ${{ needs.prepare-release.outputs.new_version }}
 
       - name: Rename binary with platform suffix
         run: |
@@ -653,7 +653,7 @@ jobs:
         working-directory: executor
         run: |
           uv sync --group build
-          uv run python scripts/build_local.py
+          uv run python scripts/build_local.py --version ${{ needs.prepare-release.outputs.new_version }}
 
       - name: Rename binary with platform suffix
         run: |
@@ -694,7 +694,7 @@ jobs:
         shell: pwsh
         run: |
           uv sync --group build
-          uv run python scripts/build_local.py
+          uv run python scripts/build_local.py --version ${{ needs.prepare-release.outputs.new_version }}
 
       - name: Rename binary with platform suffix
         shell: pwsh
