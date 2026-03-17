@@ -65,9 +65,15 @@ def index_document_task(
         splitter_config_dict: Optional splitter configuration as dict
         trigger_summary: Whether to trigger document summary after indexing
     """
+    task_id = getattr(self.request, "id", "unknown")
+    retry_count = getattr(self.request, "retries", 0)
+    worker_hostname = getattr(self.request, "hostname", "unknown")
+
     logger.info(
-        f"[Celery RAG Indexing] Task started: kb_id={knowledge_base_id}, "
-        f"attachment_id={attachment_id}, document_id={document_id}"
+        f"[Celery RAG Indexing] Task started: task_id={task_id}, "
+        f"worker={worker_hostname}, retry={retry_count}/{self.max_retries}, "
+        f"kb_id={knowledge_base_id}, attachment_id={attachment_id}, "
+        f"document_id={document_id}, trigger_summary={trigger_summary}"
     )
 
     try:
@@ -88,17 +94,43 @@ def index_document_task(
             trigger_summary=trigger_summary,
         )
 
-        logger.info(
-            f"[Celery RAG Indexing] Completed for document {document_id}: {result}"
-        )
+        result_status = result.get("status")
+        if result_status == "skipped":
+            logger.info(
+                f"[Celery RAG Indexing] Task skipped: task_id={task_id}, "
+                f"document_id={document_id}, attachment_id={attachment_id}, "
+                f"reason={result.get('reason')}"
+            )
+        else:
+            logger.info(
+                f"[Celery RAG Indexing] Completed: task_id={task_id}, "
+                f"document_id={document_id}, attachment_id={attachment_id}, "
+                f"result={result}"
+            )
         return result
 
     except Exception as e:
+        retry_count = getattr(self.request, "retries", 0)
+        will_retry = retry_count < self.max_retries
         logger.error(
-            f"[Celery RAG Indexing] Error indexing document {document_id}: {e}",
+            f"[Celery RAG Indexing] Error: task_id={task_id}, "
+            f"document_id={document_id}, attachment_id={attachment_id}, "
+            f"retry={retry_count}/{self.max_retries}, will_retry={will_retry}, "
+            f"error={e}",
             exc_info=True,
         )
-        # Retry the task
+
+        if will_retry:
+            logger.warning(
+                f"[Celery RAG Indexing] Retrying task: task_id={task_id}, "
+                f"document_id={document_id}, next_retry={retry_count + 1}/{self.max_retries}"
+            )
+        else:
+            logger.error(
+                f"[Celery RAG Indexing] Retries exhausted: task_id={task_id}, "
+                f"document_id={document_id}, attachment_id={attachment_id}"
+            )
+
         raise self.retry(exc=e)
 
 

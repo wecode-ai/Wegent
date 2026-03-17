@@ -8,6 +8,8 @@ from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
+from app.schemas.knowledge import DocumentSourceType, KnowledgeDocumentCreate
+from app.services.knowledge.indexing import get_rag_indexing_skip_reason
 from app.services.knowledge.orchestrator import (
     KnowledgeOrchestrator,
     _build_filename,
@@ -342,3 +344,90 @@ class TestKnowledgeOrchestrator:
                     name="test",
                     source_type="invalid",
                 )
+
+    def test_create_document_from_attachment_skips_excel_indexing(
+        self, orchestrator, mock_db, mock_user
+    ):
+        """Test Excel documents are created without scheduling RAG indexing."""
+        mock_kb = MagicMock()
+        mock_kb.id = 1
+        mock_kb.json = {"spec": {}}
+
+        mock_doc = MagicMock()
+        mock_doc.id = 99
+        mock_doc.attachment_id = 123
+
+        data = KnowledgeDocumentCreate(
+            attachment_id=123,
+            name="report.xlsx",
+            file_extension="xlsx",
+            file_size=1024,
+            source_type=DocumentSourceType.FILE,
+        )
+
+        with patch(
+            "app.services.knowledge.orchestrator.KnowledgeService"
+        ) as mock_service:
+            mock_service.get_knowledge_base.return_value = mock_kb
+            mock_service.create_document.return_value = mock_doc
+
+            with patch.object(
+                orchestrator, "_schedule_indexing_celery"
+            ) as mock_schedule:
+                with patch(
+                    "app.services.knowledge.orchestrator.KnowledgeDocumentResponse"
+                ) as mock_response:
+                    mock_response.model_validate.return_value = MagicMock()
+
+                    orchestrator.create_document_from_attachment(
+                        db=mock_db,
+                        user=mock_user,
+                        knowledge_base_id=1,
+                        data=data,
+                        trigger_indexing=True,
+                        trigger_summary=False,
+                    )
+
+        mock_schedule.assert_not_called()
+
+    def test_reindex_document_raises_for_excel_document(
+        self, orchestrator, mock_db, mock_user
+    ):
+        """Test Excel documents cannot be reindexed."""
+        mock_document = MagicMock()
+        mock_document.id = 1
+        mock_document.source_type = DocumentSourceType.FILE.value
+        mock_document.file_extension = "xlsx"
+
+        with patch.object(mock_db, "query") as mock_query:
+            mock_query.return_value.filter.return_value.first.return_value = (
+                mock_document
+            )
+
+            with pytest.raises(
+                ValueError, match="Excel documents \\(.xlsx\\) are excluded"
+            ):
+                orchestrator.reindex_document(
+                    db=mock_db,
+                    user=mock_user,
+                    document_id=1,
+                )
+
+
+class TestIndexingPolicy:
+    """Tests for knowledge indexing skip policy."""
+
+    def test_excel_documents_are_skipped(self):
+        """Test Excel extensions are excluded from RAG indexing."""
+        reason = get_rag_indexing_skip_reason("file", "xlsx")
+
+        assert reason == "Excel documents (.xlsx) are excluded from RAG indexing"
+
+    def test_table_documents_are_skipped(self):
+        """Test table source types are excluded from RAG indexing."""
+        reason = get_rag_indexing_skip_reason("table", "txt")
+
+        assert (
+            reason
+            == "Table documents are queried in real-time and do not support RAG indexing"
+        )

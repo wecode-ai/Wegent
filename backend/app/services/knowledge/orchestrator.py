@@ -1089,6 +1089,7 @@ class KnowledgeOrchestrator:
             KnowledgeDocumentResponse
         """
         from app.schemas.knowledge import DocumentSourceType
+        from app.services.knowledge.indexing import get_rag_indexing_skip_reason
 
         # Create document
         document = KnowledgeService.create_document(
@@ -1102,9 +1103,16 @@ class KnowledgeOrchestrator:
             f"[Orchestrator] Created document {document.id} in KB {knowledge_base_id}"
         )
 
-        # Schedule indexing via Celery if enabled
-        # Skip RAG indexing for TABLE source type as table data should be queried in real-time
-        if trigger_indexing and data.source_type != DocumentSourceType.TABLE:
+        skip_reason = get_rag_indexing_skip_reason(
+            (
+                data.source_type.value
+                if data.source_type
+                else DocumentSourceType.FILE.value
+            ),
+            data.file_extension,
+        )
+
+        if trigger_indexing and not skip_reason:
             self._schedule_indexing_celery(
                 db=db,
                 knowledge_base=knowledge_base,
@@ -1112,6 +1120,11 @@ class KnowledgeOrchestrator:
                 user=user,
                 trigger_summary=trigger_summary,
                 splitter_config=splitter_config,
+            )
+        elif trigger_indexing and skip_reason:
+            logger.info(
+                f"[Orchestrator] Skipping indexing for document {document.id}: "
+                f"{skip_reason}"
             )
 
         return KnowledgeDocumentResponse.model_validate(document)
@@ -1282,7 +1295,7 @@ class KnowledgeOrchestrator:
         )
 
         # Schedule indexing via Celery
-        index_document_task.delay(
+        async_result = index_document_task.delay(
             knowledge_base_id=str(knowledge_base.id),
             attachment_id=document.attachment_id,
             retriever_name=retriever_name,
@@ -1294,6 +1307,11 @@ class KnowledgeOrchestrator:
             document_id=document.id,
             splitter_config_dict=splitter_config,
             trigger_summary=trigger_summary,
+        )
+        logger.info(
+            f"[Orchestrator] RAG indexing task enqueued: "
+            f"document_id={document.id}, attachment_id={document.attachment_id}, "
+            f"kb_id={knowledge_base.id}, celery_task_id={async_result.id}"
         )
 
     def reindex_document(
@@ -1323,9 +1341,9 @@ class KnowledgeOrchestrator:
             ValueError: If document not found, access denied, or RAG not configured
         """
         from app.models.knowledge import KnowledgeDocument
-        from app.schemas.knowledge import DocumentSourceType
         from app.services.knowledge.indexing import (
             extract_rag_config_from_knowledge_base,
+            get_rag_indexing_skip_reason,
         )
         from app.tasks.knowledge_tasks import index_document_task
 
@@ -1339,9 +1357,11 @@ class KnowledgeOrchestrator:
         if not document:
             raise ValueError("Document not found")
 
-        # TABLE documents do not support RAG indexing (real-time query instead)
-        if document.source_type == DocumentSourceType.TABLE.value:
-            raise ValueError("Table documents do not support indexing")
+        skip_reason = get_rag_indexing_skip_reason(
+            document.source_type, document.file_extension
+        )
+        if skip_reason:
+            raise ValueError(skip_reason)
 
         # Check access permission via knowledge base
         knowledge_base = KnowledgeService.get_knowledge_base(
@@ -1362,7 +1382,7 @@ class KnowledgeOrchestrator:
             )
 
         # Schedule re-indexing via Celery
-        index_document_task.delay(
+        async_result = index_document_task.delay(
             knowledge_base_id=str(document.kind_id),
             attachment_id=document.attachment_id,
             retriever_name=rag_params.retriever_name,
@@ -1377,7 +1397,9 @@ class KnowledgeOrchestrator:
         )
 
         logger.info(
-            f"[Orchestrator] Scheduled reindex via Celery for document {document.id}"
+            f"[Orchestrator] Scheduled reindex via Celery for document {document.id}: "
+            f"celery_task_id={async_result.id}, attachment_id={document.attachment_id}, "
+            f"kb_id={document.kind_id}"
         )
 
         return {
