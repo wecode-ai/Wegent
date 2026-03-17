@@ -5,14 +5,9 @@ import { useSearchParams, useRouter } from 'next/navigation'
 import { FileIcon, Download, Loader2, AlertCircle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { UserProvider, useUser } from '@/features/common/UserContext'
+import { getToken } from '@/apis/user'
 
 const API_BASE_URL = ''
-
-function getToken(): string | null {
-  if (typeof document === 'undefined') return null
-  const match = document.cookie.match(/wegent-token=([^;]+)/)
-  return match ? match[1] : null
-}
 
 interface AttachmentInfo {
   id: number
