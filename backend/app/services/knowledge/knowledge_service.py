@@ -27,6 +27,7 @@ from app.schemas.knowledge import (
     AccessibleKnowledgeResponse,
     BatchOperationResult,
     KnowledgeBaseCreate,
+    KnowledgeBaseResponse,
     KnowledgeBaseUpdate,
     KnowledgeDocumentCreate,
     KnowledgeDocumentUpdate,
@@ -817,6 +818,41 @@ class KnowledgeService:
         )
 
     @staticmethod
+    def get_active_document_counts(
+        db: Session,
+        knowledge_base_ids: list[int],
+    ) -> dict[int, int]:
+        """
+        Get active document counts for multiple knowledge bases in a single query.
+
+        Args:
+            db: Database session
+            knowledge_base_ids: List of knowledge base IDs
+
+        Returns:
+            Dict mapping kb_id -> active document count
+        """
+        from sqlalchemy import func
+
+        if not knowledge_base_ids:
+            return {}
+
+        results = (
+            db.query(
+                KnowledgeDocument.kind_id,
+                func.count(KnowledgeDocument.id).label("count"),
+            )
+            .filter(
+                KnowledgeDocument.kind_id.in_(knowledge_base_ids),
+                KnowledgeDocument.is_active == True,
+            )
+            .group_by(KnowledgeDocument.kind_id)
+            .all()
+        )
+
+        return {kb_id: count for kb_id, count in results}
+
+    @staticmethod
     def get_active_document_text_length_stats(
         db: Session,
         knowledge_base_id: int,
@@ -1512,6 +1548,90 @@ class KnowledgeService:
                 )
 
         return AccessibleKnowledgeResponse(personal=personal, team=team_groups)
+
+    @staticmethod
+    def get_personal_knowledge_bases_grouped(
+        db: Session,
+        user_id: int,
+    ) -> dict:
+        """
+        Get personal knowledge bases grouped by ownership.
+
+        Groups knowledge bases into:
+        - created_by_me: Knowledge bases created by the current user (namespace=default)
+        - shared_with_me: Knowledge bases shared with the current user (via ResourceMember, any namespace)
+
+        Args:
+            db: Database session
+            user_id: Current user ID
+
+        Returns:
+            Dict with 'created_by_me' and 'shared_with_me' lists
+        """
+        from app.models.resource_member import MemberStatus, ResourceMember
+        from app.models.share_link import ResourceType
+
+        # Get KBs created by user (personal knowledge bases, namespace=default)
+        created_kbs = (
+            db.query(Kind)
+            .filter(
+                Kind.kind == "KnowledgeBase",
+                Kind.is_active == True,
+                Kind.namespace == "default",
+                Kind.user_id == user_id,
+            )
+            .order_by(Kind.updated_at.desc())
+            .all()
+        )
+
+        # Get KB IDs that are shared with the user via ResourceMember
+        shared_kb_ids = (
+            db.query(ResourceMember.resource_id)
+            .filter(
+                ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
+                ResourceMember.user_id == user_id,
+                ResourceMember.status == MemberStatus.APPROVED.value,
+            )
+            .all()
+        )
+        shared_kb_ids = [p[0] for p in shared_kb_ids]
+
+        # Query shared KBs (any namespace, but not created by current user)
+        shared_kbs = []
+        if shared_kb_ids:
+            shared_kbs = (
+                db.query(Kind)
+                .filter(
+                    Kind.kind == "KnowledgeBase",
+                    Kind.is_active == True,
+                    Kind.id.in_(shared_kb_ids),
+                    Kind.user_id != user_id,  # Exclude KBs created by current user
+                )
+                .order_by(Kind.updated_at.desc())
+                .all()
+            )
+
+        # Batch fetch document counts for all KBs to avoid N+1 queries
+        all_kb_ids = [kb.id for kb in created_kbs] + [kb.id for kb in shared_kbs]
+        document_counts = KnowledgeService.get_active_document_counts(db, all_kb_ids)
+
+        # Build response lists using batched counts
+        created_by_me = []
+        for kb in created_kbs:
+            document_count = document_counts.get(kb.id, 0)
+            kb_response = KnowledgeBaseResponse.from_kind(kb, document_count)
+            created_by_me.append(kb_response)
+
+        shared_with_me = []
+        for kb in shared_kbs:
+            document_count = document_counts.get(kb.id, 0)
+            kb_response = KnowledgeBaseResponse.from_kind(kb, document_count)
+            shared_with_me.append(kb_response)
+
+        return {
+            "created_by_me": created_by_me,
+            "shared_with_me": shared_with_me,
+        }
 
     @staticmethod
     def can_manage_knowledge_base(

@@ -229,6 +229,7 @@ def create_group_member(
         GroupRole.Maintainer.value: "manage",
         GroupRole.Developer.value: "edit",
         GroupRole.Reporter.value: "view",
+        GroupRole.RestrictedAnalyst.value: "view",
     }
     permission_level = role_to_permission.get(role, "view")
 

@@ -25,7 +25,8 @@
       "Owner": "创建者",
       "Maintainer": "管理员",
       "Developer": "开发者",
-      "Reporter": "使用者"
+      "Reporter": "使用者",
+      "RestrictedAnalyst": "盲分析师"
     },
     "actions": {
       "addMember": "添加成员",
@@ -144,7 +145,8 @@
         "deleteGroup": "删除群组",
         "transferOwnership": "转让Owner权限",
         "cannotLeave": "无法直接离开群组（需先转让Owner）"
-      }
+      },
+      "RestrictedAnalyst": "只能查看对话，无法访问知识库内容以保护敏感信息"
     }
   }
 }

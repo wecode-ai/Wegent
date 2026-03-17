@@ -40,6 +40,7 @@ import {
 } from '@/components/ui/select'
 import { modelApis, ModelCRD, UnifiedModel, ModelCategoryType } from '@/apis/models'
 import UnifiedAddButton from '@/components/common/UnifiedAddButton'
+import type { GroupRole } from '@/types/group'
 
 // Model category type filter options
 const MODEL_CATEGORY_FILTER_OPTIONS: { value: ModelCategoryType | 'all'; labelKey: string }[] = [
@@ -80,7 +81,7 @@ interface DisplayModel {
 interface ModelListProps {
   scope?: 'personal' | 'group' | 'all'
   groupName?: string
-  groupRoleMap?: Map<string, 'Owner' | 'Maintainer' | 'Developer' | 'Reporter'>
+  groupRoleMap?: Map<string, GroupRole>
   onEditResource?: (namespace: string) => void
 }
 

@@ -4,10 +4,16 @@
 
 """Shared prompt templates module."""
 
-from .knowledge_base import KB_PROMPT_NO_RAG, KB_PROMPT_RELAXED, KB_PROMPT_STRICT
+from .knowledge_base import (
+    KB_PROMPT_NO_RAG,
+    KB_PROMPT_RELAXED,
+    KB_PROMPT_RESTRICTED_ANALYST,
+    KB_PROMPT_STRICT,
+)
 
 __all__ = [
     "KB_PROMPT_STRICT",
     "KB_PROMPT_RELAXED",
     "KB_PROMPT_NO_RAG",
+    "KB_PROMPT_RESTRICTED_ANALYST",
 ]

@@ -173,7 +173,7 @@ export function CreateKnowledgeBaseDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-hidden flex flex-col">
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-hidden flex flex-col" data-testid="create-kb-dialog">
         <DialogHeader>
           <DialogTitle>{t('knowledge:document.knowledgeBase.create')}</DialogTitle>
         </DialogHeader>
@@ -256,6 +256,7 @@ export function CreateKnowledgeBaseDialog({
             onClick={() => handleOpenChange(false)}
             disabled={loading}
             className="h-11 min-w-[44px]"
+            data-testid="cancel-create-kb"
           >
             {t('common:actions.cancel')}
           </Button>
@@ -264,6 +265,7 @@ export function CreateKnowledgeBaseDialog({
             variant="primary"
             disabled={loading}
             className="h-11 min-w-[44px]"
+            data-testid="submit-create-kb"
           >
             {loading ? t('common:actions.creating') : t('common:actions.create')}
           </Button>

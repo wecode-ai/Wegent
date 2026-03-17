@@ -383,6 +383,13 @@ class AccessibleKnowledgeResponse(BaseModel):
     team: list[TeamKnowledgeGroup]
 
 
+class PersonalKnowledgeBaseGroup(BaseModel):
+    """Schema for personal knowledge base group (created by me vs shared with me)."""
+
+    created_by_me: list[KnowledgeBaseResponse]
+    shared_with_me: list[KnowledgeBaseResponse]
+
+
 # ============== Table URL Validation Schemas ==============
 
 

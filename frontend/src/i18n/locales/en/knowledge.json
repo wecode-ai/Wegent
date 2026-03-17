@@ -36,6 +36,14 @@
       "organization": "Organization",
       "external": "External"
     },
+    "personalGroups": {
+      "createdByMe": "Created by Me",
+      "sharedWithMe": "Shared with Me",
+      "noCreated": "You haven't created any knowledge bases yet",
+      "noShared": "No knowledge bases have been shared with you",
+      "createdDesc": "Click the button above to create your first knowledge base",
+      "sharedDesc": "Knowledge bases shared by other users will appear here"
+    },
     "noOrgKnowledgeBase": "No organization knowledge base",
     "noOrgKnowledgeBaseHint": "Organization knowledge bases are managed by administrators. All members can view.",
     "orgKnowledgeBaseReadOnly": "You have view-only access.",

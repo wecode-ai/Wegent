@@ -25,7 +25,11 @@ from app.models.knowledge import KnowledgeDocument
 from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
 from app.services.context import context_service
 from shared.models.knowledge import ChatContextsResult, KnowledgeBaseToolsResult
-from shared.prompts import KB_PROMPT_RELAXED, KB_PROMPT_STRICT
+from shared.prompts import (
+    KB_PROMPT_RELAXED,
+    KB_PROMPT_RESTRICTED_ANALYST,
+    KB_PROMPT_STRICT,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1039,7 +1043,37 @@ async def _process_attachment_contexts_for_message(
         )
         return f"{combined_contents}[User Question]:\n{message}"
 
+    # Return original message if no attachment contents were processed
     return message
+
+
+def _check_user_kb_access(
+    db: Session,
+    user_id: int,
+    knowledge_base_ids: List[int],
+) -> tuple[bool, str]:
+    """Check if user has access to knowledge base content.
+
+    For Restricted Analysts in a group, they cannot access knowledge base content
+    even if the KB is in a group they belong to.
+
+    Args:
+        db: Database session
+        user_id: User ID
+        knowledge_base_ids: List of knowledge base IDs to check
+
+    Returns:
+        Tuple of (has_access, reason)
+        - has_access: True if user can access KB content
+        - reason: Explanation if access is denied
+    """
+    from app.services.group_permission import (
+        check_knowledge_base_access_for_restricted_analyst_by_ids,
+    )
+
+    return check_knowledge_base_access_for_restricted_analyst_by_ids(
+        db, user_id, knowledge_base_ids
+    )
 
 
 def _prepare_kb_tools_from_contexts(
@@ -1087,6 +1121,26 @@ def _prepare_kb_tools_from_contexts(
             )
     else:
         knowledge_base_ids = []
+
+    # Check if user is a Restricted Analyst for any of the knowledge bases
+    # If so, block access to all KB content
+    has_access, _denial_reason = _check_user_kb_access(db, user_id, knowledge_base_ids)
+
+    if not has_access:
+        logger.warning(
+            f"[_prepare_kb_tools_from_contexts] User {user_id} is Restricted Analyst, "
+            f"blocking access to knowledge bases: {knowledge_base_ids}, "
+            f"reason: {_denial_reason}"
+        )
+        # Return result with no tools and restricted analyst prompt
+        return KnowledgeBaseToolsResult(
+            extra_tools=[],  # No KB tools for restricted analysts
+            enhanced_system_prompt=f"{base_system_prompt}{KB_PROMPT_RESTRICTED_ANALYST}",
+            kb_meta_prompt="",  # No KB metadata for restricted analysts
+            knowledge_base_ids=[],  # Don't expose KB IDs
+            is_user_selected_kb=False,
+            document_ids=[],
+        )
 
     # Extract document_ids from subtask KB contexts (no extra DB query needed).
     # Normalize to int, skip invalid values, and deduplicate while preserving order.

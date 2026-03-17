@@ -167,6 +167,7 @@ export function KnowledgeBaseForm({
           onChange={e => onNameChange(e.target.value)}
           placeholder={t('knowledge:document.knowledgeBase.namePlaceholder')}
           maxLength={100}
+          data-testid="kb-name-input"
         />
       </div>
       <div className="space-y-2">
@@ -180,6 +181,7 @@ export function KnowledgeBaseForm({
           placeholder={t('knowledge:document.knowledgeBase.descriptionPlaceholder')}
           maxLength={500}
           rows={3}
+          data-testid="kb-description-input"
         />
       </div>
 

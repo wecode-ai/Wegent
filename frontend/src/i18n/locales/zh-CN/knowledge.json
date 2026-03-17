@@ -36,6 +36,14 @@
       "organization": "公司知识",
       "external": "外部知识库"
     },
+    "personalGroups": {
+      "createdByMe": "我创建的",
+      "sharedWithMe": "分享给我的",
+      "noCreated": "您还没有创建任何知识库",
+      "noShared": "暂没有分享给您的知识库",
+      "createdDesc": "点击上方按钮创建您的第一个知识库",
+      "sharedDesc": "当其他用户分享知识库给您时，将显示在这里"
+    },
     "noOrgKnowledgeBase": "暂无公司知识库",
     "noOrgKnowledgeBaseHint": "公司知识库由管理员创建和管理，所有成员可查看",
     "orgKnowledgeBaseReadOnly": "您没有管理权限，仅可查看",

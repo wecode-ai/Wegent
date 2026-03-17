@@ -452,10 +452,11 @@ class LocalRunner:
             return
 
         # Pre-execute
-        pre_status = await agent.pre_execute()
+        pre_status, pre_error = await agent.pre_execute()
         if pre_status != TaskStatus.SUCCESS:
-            logger.error(f"Agent pre-execution failed: {pre_status}")
-            await ws_emitter.error("Agent pre-execution failed", "pre_execute_error")
+            error_msg = pre_error or "Agent pre-execution failed"
+            logger.error(f"Agent pre-execution failed: {error_msg}")
+            await ws_emitter.error(error_msg, "pre_execute_error")
             return
 
         # Execute the task (Claude client will be created inside, triggering heartbeat callback)

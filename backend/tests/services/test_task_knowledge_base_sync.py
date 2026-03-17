@@ -228,6 +228,7 @@ class TestKBPriorityLogic:
         # Create subtask KB contexts
         kb_context = Mock(spec=SubtaskContext)
         kb_context.knowledge_id = 10
+        kb_context.type_data = None
 
         # Mock task-level KB (should be ignored when subtask has KB)
         with patch(
@@ -238,20 +239,24 @@ class TestKBPriorityLogic:
             with patch("chat_shell.tools.builtin.KnowledgeBaseTool") as mock_kb_tool:
                 mock_kb_tool.return_value = Mock()
 
-                kb_result = _prepare_kb_tools_from_contexts(
-                    kb_contexts=[kb_context],
-                    user_id=1,
-                    db=mock_db,
-                    base_system_prompt="Base prompt",
-                    task_id=100,
-                    user_subtask_id=1,
-                )
+                with patch(
+                    "app.services.chat.preprocessing.contexts._check_user_kb_access",
+                    return_value=(True, ""),
+                ):
+                    kb_result = _prepare_kb_tools_from_contexts(
+                        kb_contexts=[kb_context],
+                        user_id=1,
+                        db=mock_db,
+                        base_system_prompt="Base prompt",
+                        task_id=100,
+                        user_subtask_id=1,
+                    )
 
-                # Should use only subtask KB (10), not task-level (20, 30)
-                mock_kb_tool.assert_called_once()
-                call_args = mock_kb_tool.call_args
-                assert call_args[1]["knowledge_base_ids"] == [10]
-                assert len(kb_result.extra_tools) == 1
+                    # Should use only subtask KB (10), not task-level (20, 30)
+                    mock_kb_tool.assert_called_once()
+                    call_args = mock_kb_tool.call_args
+                    assert call_args[1]["knowledge_base_ids"] == [10]
+                    assert len(kb_result.extra_tools) == 1
 
     def test_fallback_to_task_kb_when_no_subtask_kb(self, mock_db):
         """Test that task-level KB is used when subtask has no KB"""
@@ -268,20 +273,24 @@ class TestKBPriorityLogic:
             with patch("chat_shell.tools.builtin.KnowledgeBaseTool") as mock_kb_tool:
                 mock_kb_tool.return_value = Mock()
 
-                kb_result = _prepare_kb_tools_from_contexts(
-                    kb_contexts=[],  # No subtask KB
-                    user_id=1,
-                    db=mock_db,
-                    base_system_prompt="Base prompt",
-                    task_id=100,
-                    user_subtask_id=1,
-                )
+                with patch(
+                    "app.services.chat.preprocessing.contexts._check_user_kb_access",
+                    return_value=(True, ""),
+                ):
+                    kb_result = _prepare_kb_tools_from_contexts(
+                        kb_contexts=[],  # No subtask KB
+                        user_id=1,
+                        db=mock_db,
+                        base_system_prompt="Base prompt",
+                        task_id=100,
+                        user_subtask_id=1,
+                    )
 
-                # Should use task-level KBs (20, 30)
-                mock_kb_tool.assert_called_once()
-                call_args = mock_kb_tool.call_args
-                assert set(call_args[1]["knowledge_base_ids"]) == {20, 30}
-                assert len(kb_result.extra_tools) == 1
+                    # Should use task-level KBs (20, 30)
+                    mock_kb_tool.assert_called_once()
+                    call_args = mock_kb_tool.call_args
+                    assert set(call_args[1]["knowledge_base_ids"]) == {20, 30}
+                    assert len(kb_result.extra_tools) == 1
 
     def test_no_kb_when_both_empty(self, mock_db):
         """Test that no KB tool is created when both levels have no KB"""

@@ -135,3 +135,33 @@ D) **Knowledge base management** (optional, only if tools exist)
 - Do not use general knowledge or assumptions beyond what you have read
 </knowledge_base>
 """
+
+# Restricted Analyst mode prompt: User has Restricted Analyst role in the group.
+# AI must NOT reveal any knowledge base content, structure, or summaries.
+KB_PROMPT_RESTRICTED_ANALYST = """
+
+<knowledge_base>
+## Knowledge Base Access Restricted
+
+You are assisting a user who has **Restricted Analyst** permissions in this group.
+
+### IMPORTANT RESTRICTIONS:
+1. **DO NOT** reveal any knowledge base document content, summaries, or excerpts
+2. **DO NOT** list documents, file names, or document structure from the knowledge base
+3. **DO NOT** provide overviews, topics, or any information about what the knowledge base contains
+4. **DO NOT** use `knowledge_base_search`, `kb_ls`, or `kb_head` tools for this user
+
+### Allowed Actions:
+- Acknowledge that knowledge bases exist (metadata only - name and description)
+- Answer general questions not related to knowledge base content
+- Help with task management and conversation-related queries
+
+### Response Guidelines:
+If the user asks about knowledge base content:
+- Politely explain that you cannot access knowledge base documents on their behalf
+- Suggest they contact a group Owner, Maintainer, or Developer for assistance
+
+Example response:
+"I apologize, but I cannot access knowledge base documents or reveal their contents, as you have Restricted Analyst permissions in this group. This role allows you to view conversations but not access document content. Please contact a group Owner, Maintainer, or Developer if you need information from the knowledge base."
+</knowledge_base>
+"""

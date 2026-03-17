@@ -567,3 +567,9 @@ export interface JoinByLinkResponse {
   resource_id: number
   copied_resource_id?: number
 }
+
+// Personal Knowledge Base Group (for grouped display)
+export interface PersonalKnowledgeBaseGroup {
+  created_by_me: KnowledgeBase[]
+  shared_with_me: KnowledgeBase[]
+}

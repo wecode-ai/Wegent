@@ -25,7 +25,8 @@
       "Owner": "Owner",
       "Maintainer": "Maintainer",
       "Developer": "Developer",
-      "Reporter": "Reporter"
+      "Reporter": "Reporter",
+      "RestrictedAnalyst": "Restricted Analyst"
     },
     "actions": {
       "addMember": "Add Member",
@@ -144,7 +145,8 @@
         "deleteGroup": "Delete group",
         "transferOwnership": "Transfer ownership",
         "cannotLeave": "Cannot leave group directly (must transfer ownership first)"
-      }
+      },
+      "RestrictedAnalyst": "Can only view conversation and cannot access knowledge base content to protect sensitive information"
     }
   }
 }

@@ -30,6 +30,7 @@ import TeamCreationWizard from './wizard/TeamCreationWizard'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useToast } from '@/hooks/use-toast'
 import { sortTeamsByUpdatedAt } from '@/utils/team'
+import type { GroupRole } from '@/types/group'
 import { sortBotsByUpdatedAt } from '@/utils/bot'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
@@ -49,7 +50,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 interface TeamListProps {
   scope?: 'personal' | 'group' | 'all'
   groupName?: string
-  groupRoleMap?: Map<string, 'Owner' | 'Maintainer' | 'Developer' | 'Reporter'>
+  groupRoleMap?: Map<string, GroupRole>
   onEditResource?: (namespace: string) => void
 }
 
