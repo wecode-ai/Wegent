@@ -56,10 +56,6 @@ class NevisSettings(BaseSettings):
     # Private token for accessing executor binary download URL
     NEVIS_EXECUTOR_DOWNLOAD_TOKEN: str = ""
 
-    # Comma-separated list of usernames allowed to create cloud devices.
-    # If empty, all users are allowed.
-    NEVIS_CREATE_WHITELIST: str = ""
-
     # Callback URL for cloud device executor to connect back to backend.
     # If not set, falls back to BACKEND_INTERNAL_URL.
     NEVIS_CALLBACK_URL: str = ""
@@ -67,36 +63,6 @@ class NevisSettings(BaseSettings):
     class Config:
         env_file = ".env"
         extra = "ignore"
-
-    def get_create_whitelist(self) -> list[str]:
-        """Get list of usernames allowed to create cloud devices.
-
-        Returns:
-            List of usernames from NEVIS_CREATE_WHITELIST.
-            Empty list means all users are allowed.
-        """
-        if not self.NEVIS_CREATE_WHITELIST:
-            return []
-        return [
-            username.strip()
-            for username in self.NEVIS_CREATE_WHITELIST.split(",")
-            if username.strip()
-        ]
-
-    def can_create_cloud_device(self, username: str) -> bool:
-        """Check if a user can create cloud devices.
-
-        Args:
-            username: The username to check.
-
-        Returns:
-            True if the user is allowed to create cloud devices.
-            If whitelist is empty, all users are allowed.
-        """
-        whitelist = self.get_create_whitelist()
-        if not whitelist:
-            return True
-        return username in whitelist
 
 
 # Singleton instance
