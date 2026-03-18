@@ -218,7 +218,7 @@ class TestKnowledgeOrchestrator:
         with patch(
             "app.services.knowledge.orchestrator.KnowledgeService"
         ) as mock_service:
-            mock_service.get_knowledge_base.return_value = None
+            mock_service.get_knowledge_base.return_value = (None, False)
 
             with pytest.raises(ValueError, match="Knowledge base not found"):
                 orchestrator.list_documents(mock_db, mock_user, knowledge_base_id=999)
@@ -231,7 +231,7 @@ class TestKnowledgeOrchestrator:
             mock_kb = MagicMock()
             mock_kb.id = 1
             mock_kb.json = {"spec": {}}
-            mock_kb_service.get_knowledge_base.return_value = mock_kb
+            mock_kb_service.get_knowledge_base.return_value = (mock_kb, True)
 
             mock_doc = MagicMock()
             mock_doc.id = 1
@@ -274,7 +274,7 @@ class TestKnowledgeOrchestrator:
             mock_kb = MagicMock()
             mock_kb.id = 1
             mock_kb.json = {"spec": {}}
-            mock_kb_service.get_knowledge_base.return_value = mock_kb
+            mock_kb_service.get_knowledge_base.return_value = (mock_kb, True)
 
             mock_doc = MagicMock()
             mock_doc.id = 1
@@ -314,7 +314,7 @@ class TestKnowledgeOrchestrator:
             "app.services.knowledge.orchestrator.KnowledgeService"
         ) as mock_service:
             mock_kb = MagicMock()
-            mock_service.get_knowledge_base.return_value = mock_kb
+            mock_service.get_knowledge_base.return_value = (mock_kb, True)
 
             with pytest.raises(ValueError, match="content is required"):
                 orchestrator.create_document_with_content(
@@ -334,7 +334,7 @@ class TestKnowledgeOrchestrator:
             "app.services.knowledge.orchestrator.KnowledgeService"
         ) as mock_service:
             mock_kb = MagicMock()
-            mock_service.get_knowledge_base.return_value = mock_kb
+            mock_service.get_knowledge_base.return_value = (mock_kb, True)
 
             with pytest.raises(ValueError, match="Invalid source_type"):
                 orchestrator.create_document_with_content(
@@ -368,7 +368,7 @@ class TestKnowledgeOrchestrator:
         with patch(
             "app.services.knowledge.orchestrator.KnowledgeService"
         ) as mock_service:
-            mock_service.get_knowledge_base.return_value = mock_kb
+            mock_service.get_knowledge_base.return_value = (mock_kb, True)
             mock_service.create_document.return_value = mock_doc
 
             with patch.object(

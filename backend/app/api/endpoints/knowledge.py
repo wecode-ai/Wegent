@@ -262,10 +262,22 @@ def get_knowledge_base(
             knowledge_base_id=knowledge_base_id,
         )
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(e),
-        )
+        error_msg = str(e)
+        if "access denied" in error_msg.lower():
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied",
+            )
+        elif "not found" in error_msg.lower():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Knowledge base not found",
+            )
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=error_msg,
+            )
 
 
 @router.put("/{knowledge_base_id}", response_model=KnowledgeBaseResponse)
@@ -683,12 +695,17 @@ def get_document_detail_standalone(
         )
 
     # Check access permission via knowledge base
-    kb = KnowledgeService.get_knowledge_base(
+    kb, has_access = KnowledgeService.get_knowledge_base(
         db=db,
         knowledge_base_id=document.kind_id,
         user_id=current_user.id,
     )
     if not kb:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Knowledge base not found",
+        )
+    if not has_access:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access denied to this document",
@@ -971,11 +988,16 @@ async def get_kb_summary(
     from app.services.knowledge import get_summary_service
 
     # Validate KB access permission
-    kb = KnowledgeService.get_knowledge_base(db, kb_id, current_user.id)
+    kb, has_access = KnowledgeService.get_knowledge_base(db, kb_id, current_user.id)
     if not kb:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Knowledge base not found or access denied",
+            detail="Knowledge base not found",
+        )
+    if not has_access:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied to this knowledge base",
         )
 
     summary_service = get_summary_service(db)
@@ -1000,11 +1022,16 @@ async def refresh_kb_summary(
     from app.schemas.summary import SummaryRefreshResponse
 
     # Validate KB access permission
-    kb = KnowledgeService.get_knowledge_base(db, kb_id, current_user.id)
+    kb, has_access = KnowledgeService.get_knowledge_base(db, kb_id, current_user.id)
     if not kb:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Knowledge base not found or access denied",
+            detail="Knowledge base not found",
+        )
+    if not has_access:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied to this knowledge base",
         )
 
     # Run in background, return immediately
@@ -1053,11 +1080,16 @@ async def get_document_detail(
     from app.services.knowledge import get_summary_service
 
     # Validate KB access permission first
-    kb = KnowledgeService.get_knowledge_base(db, kb_id, current_user.id)
+    kb, has_access = KnowledgeService.get_knowledge_base(db, kb_id, current_user.id)
     if not kb:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Knowledge base not found or access denied",
+            detail="Knowledge base not found",
+        )
+    if not has_access:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied to this knowledge base",
         )
 
     # Validate document belongs to the specified knowledge base
@@ -1147,11 +1179,16 @@ async def get_document_summary(
     from app.services.knowledge import get_summary_service
 
     # Validate KB access permission first
-    kb = KnowledgeService.get_knowledge_base(db, kb_id, current_user.id)
+    kb, has_access = KnowledgeService.get_knowledge_base(db, kb_id, current_user.id)
     if not kb:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Knowledge base not found or access denied",
+            detail="Knowledge base not found",
+        )
+    if not has_access:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied to this knowledge base",
         )
 
     # Validate document belongs to the specified knowledge base
@@ -1192,11 +1229,16 @@ async def refresh_document_summary(
     from app.schemas.summary import SummaryRefreshResponse
 
     # Validate KB access permission first
-    kb = KnowledgeService.get_knowledge_base(db, kb_id, current_user.id)
+    kb, has_access = KnowledgeService.get_knowledge_base(db, kb_id, current_user.id)
     if not kb:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Knowledge base not found or access denied",
+            detail="Knowledge base not found",
+        )
+    if not has_access:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied to this knowledge base",
         )
 
     # Validate document belongs to the specified knowledge base
@@ -1403,12 +1445,17 @@ def list_document_chunks(
         )
 
     # Check access permission via knowledge base
-    kb = KnowledgeService.get_knowledge_base(
+    kb, has_access = KnowledgeService.get_knowledge_base(
         db=db,
         knowledge_base_id=document.kind_id,
         user_id=current_user.id,
     )
     if not kb:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Knowledge base not found",
+        )
+    if not has_access:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access denied to this document",
@@ -1471,12 +1518,17 @@ def get_document_chunk(
         )
 
     # Check access permission via knowledge base
-    kb = KnowledgeService.get_knowledge_base(
+    kb, has_access = KnowledgeService.get_knowledge_base(
         db=db,
         knowledge_base_id=document.kind_id,
         user_id=current_user.id,
     )
     if not kb:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Knowledge base not found",
+        )
+    if not has_access:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access denied to this document",

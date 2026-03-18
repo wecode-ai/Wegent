@@ -212,16 +212,16 @@ class RetrievalService:
             ValueError: If knowledge base not found, access denied, or configuration invalid
         """
         # Get knowledge base configuration with permission check
-        kb = KnowledgeService.get_knowledge_base(
+        kb, has_access = KnowledgeService.get_knowledge_base(
             db=db,
             knowledge_base_id=knowledge_base_id,
             user_id=user_id,
         )
 
         if not kb:
-            raise ValueError(
-                f"Knowledge base {knowledge_base_id} not found or access denied for user {user_id}"
-            )
+            raise ValueError(f"Knowledge base {knowledge_base_id} not found")
+        if not has_access:
+            raise ValueError(f"Access denied to knowledge base {knowledge_base_id}")
 
         # Check if user is a Restricted Analyst in the knowledge base's group
         # Restricted Analysts cannot access knowledge base content

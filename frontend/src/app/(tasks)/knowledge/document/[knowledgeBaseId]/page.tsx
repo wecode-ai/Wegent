@@ -6,13 +6,16 @@
 
 import { Suspense } from 'react'
 import dynamic from 'next/dynamic'
-import { useParams } from 'next/navigation'
+import { useParams, useRouter } from 'next/navigation'
 import '@/app/tasks/tasks.css'
 import '@/features/common/scrollbar.css'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { TaskParamSync } from '@/features/tasks/components/params'
 import { Spinner } from '@/components/ui/spinner'
+import { Button } from '@/components/ui/button'
 import { useKnowledgeBaseDetail } from '@/features/knowledge/document/hooks'
+import { useTranslation } from '@/hooks/useTranslation'
+import { ArrowLeft, Lock } from 'lucide-react'
 
 // Loading fallback component for dynamic imports
 function PageLoadingFallback() {
@@ -86,6 +89,8 @@ export default function KnowledgeBaseChatPage() {
   // Mobile detection
   const isMobile = useIsMobile()
   const params = useParams()
+  const router = useRouter()
+  const { t } = useTranslation('knowledge')
 
   // Parse knowledge base ID from URL
   const knowledgeBaseId = params.knowledgeBaseId
@@ -97,15 +102,70 @@ export default function KnowledgeBaseChatPage() {
   const {
     knowledgeBase,
     loading,
+    error,
+    accessDenied,
     refresh: refreshKnowledgeBase,
   } = useKnowledgeBaseDetail({
     knowledgeBaseId: knowledgeBaseId || 0,
     autoLoad: !!knowledgeBaseId,
   })
 
+  // Handle back navigation with fallback to knowledge list
+  const handleBack = () => {
+    // Check if there's history to go back to
+    if (typeof window !== 'undefined' && window.history.length > 1) {
+      router.back()
+    } else {
+      // Fallback to knowledge list when no history available
+      router.push('/knowledge?type=document')
+    }
+  }
+
+  // Handle navigate to knowledge base list
+  const handleGoToList = () => {
+    router.push('/knowledge?type=document')
+  }
+
   // Show loading while fetching knowledge base info
-  if (loading || !knowledgeBase) {
+  if (loading) {
     return <PageLoadingFallback />
+  }
+
+  // Show access denied state for 403 errors
+  if (accessDenied) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-base">
+        <div className="text-center max-w-md px-6">
+          <div className="w-16 h-16 bg-surface rounded-full flex items-center justify-center mx-auto mb-6">
+            <Lock className="w-8 h-8 text-text-muted" />
+          </div>
+          <h1 className="text-xl font-semibold text-text-primary mb-3">
+            {t('chatPage.accessDenied.title')}
+          </h1>
+          <p className="text-text-muted mb-8 leading-relaxed">
+            {t('chatPage.accessDenied.description')}
+          </p>
+          <Button variant="primary" onClick={handleGoToList}>
+            {t('chatPage.accessDenied.backButton')}
+          </Button>
+        </div>
+      </div>
+    )
+  }
+
+  // Show error state if fetch failed (non-403 errors)
+  if (error || !knowledgeBase) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-base">
+        <div className="text-center">
+          <p className="text-text-muted mb-4">{error || t('chatPage.notFound')}</p>
+          <Button variant="outline" onClick={handleBack}>
+            <ArrowLeft className="w-4 h-4 mr-2" />
+            {t('chatPage.backToList')}
+          </Button>
+        </div>
+      </div>
+    )
   }
 
   // Determine the layout type (default to 'notebook' if not specified)

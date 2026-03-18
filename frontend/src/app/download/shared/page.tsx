@@ -116,7 +116,7 @@ function ImagePreview({ url, filename }: { url: string; filename: string }) {
   return (
     <div className="flex flex-col h-full">
       {/* 图片工具栏 */}
-      <div className="flex items-center justify-center gap-2 p-2 bg-surface border-b border-border">
+      <div className="flex items-center justify-center gap-2 p-2 bg-surface dark:bg-gray-800 border-b border-border dark:border-gray-700">
         <Button
           variant="ghost"
           size="sm"
@@ -136,7 +136,7 @@ function ImagePreview({ url, filename }: { url: string; filename: string }) {
         >
           <ZoomIn className="w-4 h-4" />
         </Button>
-        <div className="w-px h-6 bg-border mx-2" />
+        <div className="w-px h-6 bg-border dark:bg-gray-600 mx-2" />
         <Button
           variant="ghost"
           size="sm"
@@ -148,7 +148,7 @@ function ImagePreview({ url, filename }: { url: string; filename: string }) {
       </div>
 
       {/* 图片显示区域 */}
-      <div className="flex-1 overflow-auto bg-gray-100 flex items-center justify-center p-4">
+      <div className="flex-1 overflow-auto bg-gray-100 dark:bg-gray-900 flex items-center justify-center p-4">
         <img
           src={url}
           alt={filename}
@@ -166,7 +166,7 @@ function ImagePreview({ url, filename }: { url: string; filename: string }) {
 function PDFPreview({ url, filename }: { url: string; filename: string }) {
   return (
     <div className="flex flex-col h-full">
-      <div className="flex-1 bg-gray-100">
+      <div className="flex-1 bg-gray-100 dark:bg-gray-900">
         <iframe src={url} className="w-full h-full border-0" title={filename} />
       </div>
     </div>
@@ -181,14 +181,14 @@ function TextPreview({ content, filename }: { content: string; filename: string 
   )
 
   return (
-    <div className="flex flex-col h-full bg-white">
+    <div className="flex flex-col h-full bg-white dark:bg-gray-900">
       <div className="flex-1 overflow-auto p-4">
         {isCode ? (
-          <pre className="font-mono text-sm text-text-primary whitespace-pre-wrap break-all">
+          <pre className="font-mono text-sm text-text-primary dark:text-gray-200 whitespace-pre-wrap break-all">
             {content}
           </pre>
         ) : (
-          <div className="text-text-primary whitespace-pre-wrap break-all leading-relaxed">
+          <div className="text-text-primary dark:text-gray-200 whitespace-pre-wrap break-all leading-relaxed">
             {content}
           </div>
         )}
@@ -277,7 +277,7 @@ function ExcelPreview({ sheets, filename }: { sheets: ExcelSheet[]; filename: st
 
   if (sheets.length === 0) {
     return (
-      <div className="flex flex-col h-full bg-white items-center justify-center">
+      <div className="flex flex-col h-full bg-white dark:bg-gray-900 items-center justify-center">
         <div className="text-text-secondary">无法解析表格内容</div>
       </div>
     )
@@ -286,18 +286,18 @@ function ExcelPreview({ sheets, filename }: { sheets: ExcelSheet[]; filename: st
   const currentSheet = sheets[activeSheet]
 
   return (
-    <div className="flex flex-col h-full bg-white">
+    <div className="flex flex-col h-full bg-white dark:bg-gray-900">
       {/* Sheet 切换标签 */}
       {sheets.length > 1 && (
-        <div className="flex items-center gap-1 p-2 bg-surface border-b border-border overflow-x-auto">
+        <div className="flex items-center gap-1 p-2 bg-surface dark:bg-gray-800 border-b border-border dark:border-gray-700 overflow-x-auto">
           {sheets.map((sheet, index) => (
             <button
               key={index}
               onClick={() => setActiveSheet(index)}
               className={`px-4 py-2 text-sm font-medium rounded-md transition-colors whitespace-nowrap ${
                 index === activeSheet
-                  ? 'bg-white text-text-primary shadow-sm border border-border'
-                  : 'text-text-secondary hover:text-text-primary hover:bg-white/50'
+                  ? 'bg-white dark:bg-gray-700 text-text-primary dark:text-white shadow-sm border border-border dark:border-gray-600'
+                  : 'text-text-secondary hover:text-text-primary hover:bg-white/50 dark:hover:bg-gray-700/50'
               }`}
             >
               {sheet.name}
@@ -312,9 +312,9 @@ function ExcelPreview({ sheets, filename }: { sheets: ExcelSheet[]; filename: st
           <table className="border-collapse text-sm">
             <tbody>
               {currentSheet.data.map((row, rowIndex) => (
-                <tr key={rowIndex} className={rowIndex === 0 ? 'bg-surface' : ''}>
+                <tr key={rowIndex} className={rowIndex === 0 ? 'bg-surface dark:bg-gray-800' : ''}>
                   {/* 行号 */}
-                  <td className="sticky left-0 w-12 px-2 py-2 text-right text-xs text-text-secondary bg-inherit border-r border-b border-border select-none">
+                  <td className="sticky left-0 w-12 px-2 py-2 text-right text-xs text-text-secondary bg-inherit dark:bg-gray-800 border-r border-b border-border dark:border-gray-700 select-none">
                     {rowIndex + 1}
                   </td>
                   {row.map((cell, cellIndex) => {
@@ -324,10 +324,10 @@ function ExcelPreview({ sheets, filename }: { sheets: ExcelSheet[]; filename: st
                     return (
                       <td
                         key={cellIndex}
-                        className={`px-3 py-2 border-r border-b border-border min-w-[80px] max-w-[400px] ${
+                        className={`px-3 py-2 border-r border-b border-border dark:border-gray-700 min-w-[80px] max-w-[400px] ${
                           isHeader
-                            ? 'font-semibold text-text-primary bg-surface'
-                            : 'text-text-primary bg-white'
+                            ? 'font-semibold text-text-primary dark:text-white bg-surface dark:bg-gray-800'
+                            : 'text-text-primary dark:text-gray-200 bg-white dark:bg-gray-900'
                         }`}
                         title={cellValue}
                       >
@@ -343,7 +343,7 @@ function ExcelPreview({ sheets, filename }: { sheets: ExcelSheet[]; filename: st
       </div>
 
       {/* 底部信息 */}
-      <div className="px-4 py-2 bg-surface border-t border-border text-xs text-text-secondary">
+      <div className="px-4 py-2 bg-surface dark:bg-gray-800 border-t border-border dark:border-gray-700 text-xs text-text-secondary">
         {filename} · {currentSheet.name} · {currentSheet.data.length} 行
       </div>
     </div>
@@ -353,10 +353,10 @@ function ExcelPreview({ sheets, filename }: { sheets: ExcelSheet[]; filename: st
 // Word/PPT 文本预览组件
 function WordPreview({ content }: { content: string; filename?: string }) {
   return (
-    <div className="flex flex-col h-full bg-white">
+    <div className="flex flex-col h-full bg-white dark:bg-gray-900">
       <div className="flex-1 overflow-auto p-4">
         <div className="max-w-3xl mx-auto">
-          <div className="text-text-primary whitespace-pre-wrap break-all leading-relaxed">
+          <div className="text-text-primary dark:text-gray-200 whitespace-pre-wrap break-all leading-relaxed">
             {content}
           </div>
         </div>
@@ -529,10 +529,10 @@ function PublicDownloadContent() {
 
   if (authLoading || loading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center">
         <div className="flex flex-col items-center gap-4">
           <Loader2 className="w-8 h-8 animate-spin text-primary" />
-          <p className="text-gray-600">加载中...</p>
+          <p className="text-gray-600 dark:text-gray-400">加载中...</p>
         </div>
       </div>
     )
@@ -540,11 +540,11 @@ function PublicDownloadContent() {
 
   if (error) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
-        <div className="bg-white rounded-xl shadow-lg p-8 max-w-md w-full text-center">
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center p-4">
+        <div className="bg-white dark:bg-gray-800 rounded-xl shadow-lg p-8 max-w-md w-full text-center">
           <AlertCircle className="w-16 h-16 mx-auto text-red-500 mb-4" />
-          <h1 className="text-xl font-semibold mb-2">加载失败</h1>
-          <p className="text-gray-600 mb-6">{error}</p>
+          <h1 className="text-xl font-semibold mb-2 dark:text-white">加载失败</h1>
+          <p className="text-gray-600 dark:text-gray-400 mb-6">{error}</p>
           <Button onClick={() => router.push('/chat')}>返回首页</Button>
         </div>
       </div>
@@ -553,10 +553,10 @@ function PublicDownloadContent() {
 
   if (!attachmentInfo) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
-        <div className="bg-white rounded-xl shadow-lg p-8 max-w-md w-full text-center">
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center p-4">
+        <div className="bg-white dark:bg-gray-800 rounded-xl shadow-lg p-8 max-w-md w-full text-center">
           <AlertCircle className="w-16 h-16 mx-auto text-yellow-500 mb-4" />
-          <h1 className="text-xl font-semibold mb-2">无法加载文件</h1>
+          <h1 className="text-xl font-semibold mb-2 dark:text-white">无法加载文件</h1>
           <Button onClick={() => router.push('/chat')}>返回首页</Button>
         </div>
       </div>
@@ -566,9 +566,9 @@ function PublicDownloadContent() {
   const previewType = getPreviewType(attachmentInfo.mime_type, attachmentInfo.filename)
 
   return (
-    <div className="min-h-screen bg-white flex flex-col">
+    <div className="min-h-screen bg-white dark:bg-gray-900 flex flex-col">
       {/* Header */}
-      <header className="flex items-center justify-between px-4 py-3 border-b border-border bg-white sticky top-0 z-10">
+      <header className="flex items-center justify-between px-4 py-3 border-b border-border dark:border-gray-700 bg-white dark:bg-gray-900 sticky top-0 z-10">
         <div className="flex items-center gap-3 min-w-0">
           <FileTypeIcon
             mimeType={attachmentInfo.mime_type}
@@ -644,10 +644,10 @@ export default function PublicAttachmentDownloadPage() {
     <UserProvider>
       <Suspense
         fallback={
-          <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+          <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center">
             <div className="flex flex-col items-center gap-4">
               <Loader2 className="w-8 h-8 animate-spin text-primary" />
-              <p className="text-gray-600">加载中...</p>
+              <p className="text-gray-600 dark:text-gray-400">加载中...</p>
             </div>
           </div>
         }
