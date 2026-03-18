@@ -30,6 +30,8 @@ from executor.modes.local.events import ChatEvents, TaskEvents
 from executor.modes.local.handlers import TaskHandler
 from executor.modes.local.heartbeat import LocalHeartbeatService
 from executor.modes.local.websocket_client import WebSocketClient
+from executor.services.updater.process_manager import ProcessManager
+from executor.version import get_version
 from shared.logger import setup_logger
 from shared.models import ResponsesAPIEmitter
 from shared.models.execution import ExecutionRequest
@@ -89,6 +91,9 @@ class LocalRunner:
         # File logging handler (for cleanup on shutdown)
         self._file_handler: Optional[logging.Handler] = None
 
+        # Process manager for PID file and auto-restart support
+        self._process_manager = ProcessManager()
+
     def _handle_signal(self, signum: int, frame: Any) -> None:
         """Handle shutdown signals."""
         signal_name = signal.Signals(signum).name
@@ -120,6 +125,9 @@ class LocalRunner:
         logger.info(f"Auth Token: {'***' if config.WEGENT_AUTH_TOKEN else 'NOT SET'}")
         logger.info(f"Workspace Root: {config.LOCAL_WORKSPACE_ROOT}")
         self._running = True
+
+        # Write PID file for auto-restart support
+        self._process_manager.write_pid_file(get_version())
 
         # Ensure workspace directory exists
         workspace_root = config.LOCAL_WORKSPACE_ROOT
@@ -195,6 +203,9 @@ class LocalRunner:
 
         # Disconnect WebSocket
         await self.websocket_client.disconnect()
+
+        # Remove PID file on graceful exit
+        self._process_manager.remove_pid_file()
 
         logger.info("Local Executor Runner shutdown complete")
 
