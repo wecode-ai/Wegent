@@ -21,8 +21,12 @@ export default function IntegrationsPage() {
         <p className="text-sm text-text-muted mb-1">{t('common:integrations.description')}</p>
       </div>
 
+      {/* Git integration section */}
       <GitHubIntegration />
+
       <EmailTokenSection />
+
+      {/* Future: more integration sections here */}
     </div>
   )
 }
