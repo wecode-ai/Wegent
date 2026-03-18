@@ -28,11 +28,7 @@ import { DeviceInfo } from '@/apis/devices'
 import { getToken } from '@/apis/user'
 import { Monitor, Loader2 } from 'lucide-react'
 import { getSocketUrl } from '@/lib/runtime-config'
-import {
-  DeviceCard,
-  DevicesPageHeader,
-  DeviceSection,
-} from '@/features/devices/components'
+import { DeviceCard, DevicesPageHeader, DeviceSection } from '@/features/devices/components'
 import { useDeviceHandlers } from '@/features/devices/hooks'
 import { CloudDeviceSection } from '@wecode/components/devices/CloudDeviceSection'
 import { DeviceSetupGuide } from '@wecode/components/devices/DeviceSetupGuide'
@@ -185,7 +181,13 @@ export default function DevicesPage() {
                   }}
                   onClose={() => setShowSetupGuide(false)}
                   showCloseButton={devices.length > 0}
-                  cloudDeviceCount={sortedDevices.filter(d => d.device_type === 'cloud').length}
+                  cloudDeviceCount={
+                    new Set(
+                      sortedDevices
+                        .filter(d => d.device_type === 'cloud')
+                        .map(d => d.cloud_config?.sandboxId ?? d.device_id)
+                    ).size
+                  }
                 />
               </div>
             )}
