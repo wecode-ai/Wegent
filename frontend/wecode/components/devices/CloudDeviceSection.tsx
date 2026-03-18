@@ -5,14 +5,13 @@
 /**
  * Cloud device section component.
  *
- * Groups cloud devices by sandboxId into machine cards.
- * Each machine may have multiple devices (executor + OpenClaw).
+ * Displays cloud devices and provides actions for deleting cloud devices.
  */
 
 'use client'
 
 import '@wecode/i18n' // side-effect import to load wecode translations
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Button } from '@/components/ui/button'
 import {
@@ -42,28 +41,6 @@ import { SlotIndicator } from '@/features/devices/components/SlotIndicator'
 import { VersionBadge } from '@/features/devices/components/VersionBadge'
 import { RunningTasksList } from '@/features/devices/components/RunningTasksList'
 
-/**
- * Group cloud devices by sandboxId into machine groups.
- * Each group represents one physical/virtual machine.
- */
-function groupDevicesByMachine(devices: DeviceInfo[]): Record<string, DeviceInfo[]> {
-  const groups: Record<string, DeviceInfo[]> = {}
-  for (const device of devices) {
-    const key = device.cloud_config?.sandboxId ?? device.device_id
-    if (!groups[key]) groups[key] = []
-    groups[key].push(device)
-  }
-  return groups
-}
-
-/**
- * Get the primary device (executor/claudecode) from a machine group.
- * Falls back to the first device if no executor found.
- */
-function getPrimaryDevice(devices: DeviceInfo[]): DeviceInfo {
-  return devices.find(d => d.bind_shell !== 'openclaw') ?? devices[0]
-}
-
 interface CloudDeviceSectionProps {
   cloudDevices: DeviceInfo[]
   onDeviceCreated: () => void
@@ -85,16 +62,12 @@ export function CloudDeviceSection({
   const [deviceToDelete, setDeviceToDelete] = useState<DeviceInfo | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
 
-  // Group devices by sandboxId
-  const machineGroups = useMemo(() => groupDevicesByMachine(cloudDevices), [cloudDevices])
-  const machineCount = Object.keys(machineGroups).length
-
   const handleDeleteConfirm = useCallback(async () => {
     if (!deviceToDelete) return
 
     setIsDeleting(true)
     try {
-      // Use cloud device API for deletion (backend cascades to all devices in same sandbox)
+      // Use cloud device API for deletion
       await cloudDeviceApis.deleteCloudDevice(deviceToDelete.device_id)
       toast.success(t('cloud_device.delete_success'))
       // Notify parent to refresh device list
@@ -138,7 +111,7 @@ export function CloudDeviceSection({
       <div className="flex items-center gap-2">
         <Cloud className="w-5 h-5 text-text-secondary" />
         <h3 className="text-sm font-medium text-text-secondary">{t('cloud_device.title')}</h3>
-        <span className="text-xs text-text-muted">({machineCount})</span>
+        <span className="text-xs text-text-muted">({cloudDevices.length})</span>
       </div>
 
       {/* Creating notice alert */}
@@ -149,21 +122,21 @@ export function CloudDeviceSection({
         </Alert>
       )}
 
-      {/* Cloud machine list */}
-      {machineCount === 0 ? (
+      {/* Cloud devices list */}
+      {cloudDevices.length === 0 ? (
         <div className="text-center py-8 text-text-muted">
           <Cloud className="w-12 h-12 mx-auto mb-3 opacity-30" />
           <p className="text-sm">{t('cloud_device.empty')}</p>
         </div>
       ) : (
         <div className="grid gap-4">
-          {Object.entries(machineGroups).map(([sandboxId, devices]) => (
-            <CloudMachineCard
-              key={sandboxId}
-              devices={devices}
+          {cloudDevices.map(device => (
+            <CloudDeviceCard
+              key={device.device_id}
+              device={device}
               onStartTask={onStartTask}
               onSetDefault={onSetDefault}
-              onDelete={device => setDeviceToDelete(device)}
+              onDelete={() => setDeviceToDelete(device)}
               onCancelTask={onCancelTask}
               t={t}
             />
@@ -199,53 +172,57 @@ export function CloudDeviceSection({
   )
 }
 
-interface CloudMachineCardProps {
-  devices: DeviceInfo[]
+interface CloudDeviceCardProps {
+  device: DeviceInfo
   onStartTask: (deviceId: string) => void
   onSetDefault: (device: DeviceInfo) => Promise<void>
-  onDelete: (device: DeviceInfo) => void
+  onDelete: () => void
   onCancelTask: (taskId: number) => Promise<void>
   t: (key: string, options?: Record<string, unknown>) => string
 }
 
-/**
- * Card representing a single cloud machine (VM).
- * May contain multiple devices (e.g., executor + OpenClaw).
- */
-function CloudMachineCard({
-  devices,
+function CloudDeviceCard({
+  device,
   onStartTask,
   onSetDefault,
   onDelete,
   onCancelTask,
   t,
-}: CloudMachineCardProps) {
-  const primaryDevice = getPrimaryDevice(devices)
-  const isAnyOnline = devices.some(d => d.status === 'online' || d.status === 'busy')
+}: CloudDeviceCardProps) {
+  const isOnline = device.status === 'online' || device.status === 'busy'
+  const slotsAvailable = device.slot_max === 0 || device.slot_used < device.slot_max
+  const canStartTask = isOnline && slotsAvailable
 
-  const getMachineStatusColor = () => {
-    if (devices.some(d => d.status === 'online')) return 'bg-green-500'
-    if (devices.some(d => d.status === 'busy')) return 'bg-yellow-500'
-    return 'bg-gray-400'
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'online':
+        return 'bg-green-500'
+      case 'busy':
+        return 'bg-yellow-500'
+      default:
+        return 'bg-gray-400'
+    }
   }
 
-  const getMachineStatusText = () => {
-    if (devices.some(d => d.status === 'online')) return t('devices:status_online')
-    if (devices.some(d => d.status === 'busy')) return t('devices:status_busy')
-    return t('devices:status_offline')
+  const getStatusText = (status: string) => {
+    switch (status) {
+      case 'online':
+        return t('devices:status_online')
+      case 'busy':
+        return t('devices:status_busy')
+      default:
+        return t('devices:status_offline')
+    }
   }
-
-  // Collect all running tasks across all devices
-  const allRunningTasks = devices.flatMap(d => d.running_tasks)
 
   return (
     <div
       className={cn(
         'bg-surface border rounded-lg p-4',
-        primaryDevice.is_default ? 'border-primary' : 'border-border'
+        device.is_default ? 'border-primary' : 'border-border'
       )}
     >
-      {/* Machine header row */}
+      {/* Device info row */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
           <div className="w-10 h-10 bg-primary/10 rounded-lg flex items-center justify-center">
@@ -253,8 +230,8 @@ function CloudMachineCard({
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h4 className="font-medium text-text-primary">{primaryDevice.name}</h4>
-              {primaryDevice.is_default && (
+              <h4 className="font-medium text-text-primary">{device.name}</h4>
+              {device.is_default && (
                 <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium bg-primary/10 text-primary rounded-full">
                   <Star className="w-3 h-3 fill-current" />
                   {t('devices:default_device')}
@@ -262,42 +239,70 @@ function CloudMachineCard({
               )}
             </div>
             <div className="flex items-center gap-2">
-              <p className="text-sm text-text-muted">{primaryDevice.device_id}</p>
-              {isAnyOnline && primaryDevice.executor_version && (
+              <p className="text-sm text-text-muted">{device.device_id}</p>
+              {isOnline && (
                 <VersionBadge
-                  executorVersion={primaryDevice.executor_version}
-                  latestVersion={primaryDevice.latest_version}
-                  updateAvailable={primaryDevice.update_available}
+                  executorVersion={device.executor_version}
+                  latestVersion={device.latest_version}
+                  updateAvailable={device.update_available}
                 />
               )}
             </div>
+            {/* Slot indicator - only show for online devices */}
+            {isOnline && (
+              <div className="mt-1">
+                <SlotIndicator
+                  used={device.slot_used}
+                  max={device.slot_max}
+                  runningTasks={device.running_tasks}
+                />
+              </div>
+            )}
           </div>
         </div>
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2">
-            <span className={cn('w-2 h-2 rounded-full', getMachineStatusColor())} />
-            <span className="text-sm text-text-secondary">{getMachineStatusText()}</span>
+            <span className={cn('w-2 h-2 rounded-full', getStatusColor(device.status))} />
+            <span className="text-sm text-text-secondary">{getStatusText(device.status)}</span>
           </div>
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <div>
+                  <Button
+                    variant="default"
+                    size="sm"
+                    onClick={() => onStartTask(device.device_id)}
+                    disabled={!canStartTask}
+                    className="flex items-center gap-2"
+                  >
+                    <Play className="w-4 h-4" />
+                    {!slotsAvailable ? t('devices:slots_full') : t('devices:start_task')}
+                  </Button>
+                </div>
+              </TooltipTrigger>
+              {!slotsAvailable && isOnline && (
+                <TooltipContent>
+                  <p className="text-sm">{t('devices:slots_full_hint')}</p>
+                </TooltipContent>
+              )}
+            </Tooltip>
+          </TooltipProvider>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-8 w-8 p-0"
-                data-testid="cloud-machine-menu"
-              >
+              <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
                 <MoreVertical className="w-4 h-4" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              {!primaryDevice.is_default && (
-                <DropdownMenuItem onClick={() => onSetDefault(primaryDevice)}>
+              {!device.is_default && (
+                <DropdownMenuItem onClick={() => onSetDefault(device)}>
                   <Star className="w-4 h-4 mr-2" />
                   {t('devices:set_as_default')}
                 </DropdownMenuItem>
               )}
               <DropdownMenuItem
-                onClick={() => onDelete(primaryDevice)}
+                onClick={onDelete}
                 className="text-destructive focus:text-destructive"
               >
                 <Trash2 className="w-4 h-4 mr-2" />
@@ -308,98 +313,14 @@ function CloudMachineCard({
         </div>
       </div>
 
-      {/* Device capability rows */}
-      <div className="mt-3 space-y-2">
-        {devices.map(device => (
-          <DeviceCapabilityRow
-            key={device.device_id}
-            device={device}
-            onStartTask={onStartTask}
-            t={t}
-          />
-        ))}
-      </div>
-
-      {/* Running tasks list (aggregated from all devices) */}
-      {allRunningTasks.length > 0 && (
+      {/* Running tasks list */}
+      {device.running_tasks.length > 0 && (
         <RunningTasksList
-          tasks={allRunningTasks}
-          deviceName={primaryDevice.name}
+          tasks={device.running_tasks}
+          deviceName={device.name}
           onCancelTask={onCancelTask}
         />
       )}
-    </div>
-  )
-}
-
-interface DeviceCapabilityRowProps {
-  device: DeviceInfo
-  onStartTask: (deviceId: string) => void
-  t: (key: string, options?: Record<string, unknown>) => string
-}
-
-/**
- * A row within a machine card showing one device capability (Executor or OpenClaw)
- * with its own online status and start task button.
- */
-function DeviceCapabilityRow({ device, onStartTask, t }: DeviceCapabilityRowProps) {
-  const isOnline = device.status === 'online' || device.status === 'busy'
-  const slotsAvailable = device.slot_max === 0 || device.slot_used < device.slot_max
-  const canStartTask = isOnline && slotsAvailable
-  const isOpenClaw = device.bind_shell === 'openclaw'
-
-  const capabilityLabel = isOpenClaw
-    ? t('cloud_device.capability_openclaw')
-    : t('cloud_device.capability_executor')
-
-  const statusColor = isOnline
-    ? device.status === 'busy'
-      ? 'bg-yellow-500'
-      : 'bg-green-500'
-    : 'bg-gray-400'
-
-  return (
-    <div className="flex items-center justify-between pl-14 py-1.5">
-      <div className="flex items-center gap-2">
-        <span className={cn('w-1.5 h-1.5 rounded-full', statusColor)} />
-        <span
-          className={cn('text-sm font-medium', isOpenClaw ? 'text-red-600' : 'text-text-secondary')}
-        >
-          {capabilityLabel}
-        </span>
-        {/* Slot indicator for online devices */}
-        {isOnline && device.slot_used > 0 && (
-          <SlotIndicator
-            used={device.slot_used}
-            max={device.slot_max}
-            runningTasks={device.running_tasks}
-          />
-        )}
-      </div>
-      <TooltipProvider>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <div>
-              <Button
-                variant="default"
-                size="sm"
-                onClick={() => onStartTask(device.device_id)}
-                disabled={!canStartTask}
-                className="flex items-center gap-2"
-                data-testid={`start-task-${device.bind_shell ?? 'executor'}`}
-              >
-                <Play className="w-4 h-4" />
-                {!slotsAvailable ? t('devices:slots_full') : t('devices:start_task')}
-              </Button>
-            </div>
-          </TooltipTrigger>
-          {!canStartTask && isOnline && !slotsAvailable && (
-            <TooltipContent>
-              <p className="text-sm">{t('devices:slots_full_hint')}</p>
-            </TooltipContent>
-          )}
-        </Tooltip>
-      </TooltipProvider>
     </div>
   )
 }

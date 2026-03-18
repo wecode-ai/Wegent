@@ -29,7 +29,6 @@ def generate_cloud_init_script(
     device_name: str = "",
     openclaw_script_url: str = "",
     api_key: str = "",
-    openclaw_device_id: str = "",
 ) -> str:
     """Generate Base64 encoded cloud-init startup script.
 
@@ -50,7 +49,6 @@ def generate_cloud_init_script(
         device_name: Server-generated device name.
         openclaw_script_url: URL of the OpenClaw install script to download.
         api_key: API key for OpenClaw script authentication.
-        openclaw_device_id: Server-generated device UUID for OpenClaw.
 
     Returns:
         Base64 encoded script string for cloud-init user_data
@@ -67,7 +65,6 @@ def generate_cloud_init_script(
         device_name,
         openclaw_script_url,
         api_key,
-        openclaw_device_id,
     )
 
     encoded = base64.b64encode(script.encode("utf-8")).decode("utf-8")
@@ -92,7 +89,6 @@ def generate_simple_startup_script(
     device_name: str = "",
     openclaw_script_url: str = "",
     api_key: str = "",
-    openclaw_device_id: str = "",
 ) -> str:
     """Generate Base64 encoded simple startup script (non-MIME format).
 
@@ -111,7 +107,6 @@ def generate_simple_startup_script(
         device_name: Server-generated device name.
         openclaw_script_url: URL of the OpenClaw install script to download.
         api_key: API key for OpenClaw script authentication.
-        openclaw_device_id: Server-generated device UUID for OpenClaw.
 
     Returns:
         Base64 encoded script string
@@ -128,7 +123,6 @@ def generate_simple_startup_script(
         device_name,
         openclaw_script_url,
         api_key,
-        openclaw_device_id,
     )
 
     encoded = base64.b64encode(script.encode("utf-8")).decode("utf-8")
@@ -153,7 +147,6 @@ def _generate_user_data_script(
     device_name: str = "",
     openclaw_script_url: str = "",
     api_key: str = "",
-    openclaw_device_id: str = "",
 ) -> str:
     """Generate startup script (user_data) for cloud device.
 
@@ -173,7 +166,6 @@ def _generate_user_data_script(
         device_name: Server-generated device name.
         openclaw_script_url: URL of the OpenClaw install script to download.
         api_key: API key for OpenClaw script authentication.
-        openclaw_device_id: Server-generated device UUID for OpenClaw.
     """
     # Build curl command for downloading the install script
     curl_parts = ["curl", "-fsSL", "--retry", "3", "--retry-delay", "5"]
@@ -205,10 +197,6 @@ def _generate_user_data_script(
         )
         openclaw_curl_cmd = " ".join(openclaw_curl_parts)
 
-        openclaw_install_args = f'-t "{auth_token}" -k "{api_key}"'
-        if openclaw_device_id:
-            openclaw_install_args += f' -d "{openclaw_device_id}"'
-
         openclaw_section = f"""
 # Update Node.js to latest LTS via nvm before running OpenClaw
 echo "[CloudDevice] Updating Node.js via nvm..."
@@ -223,7 +211,7 @@ echo "[CloudDevice] Downloading OpenClaw install script..."
 {openclaw_curl_cmd}
 chmod +x device_install-and-run-openclaw.sh
 echo "[CloudDevice] Running OpenClaw install script..."
-./device_install-and-run-openclaw.sh {openclaw_install_args}
+./device_install-and-run-openclaw.sh -t "{auth_token}" -k "{api_key}"
 echo "[CloudDevice] OpenClaw install script completed"
 """
 
