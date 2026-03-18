@@ -36,7 +36,7 @@ class TestMailTokenService:
         """Create a mock user with an existing mail token."""
         user = MagicMock()
         user.user_name = "testuser"
-        user.preferences = json.dumps({"mail_token": "encrypted_token_value"})
+        user.preferences = json.dumps({"sina_mail_token": "encrypted_token_value"})
         return user
 
     @pytest.fixture
@@ -151,9 +151,9 @@ class TestMailTokenService:
         """Test deleting mail token removes it from preferences."""
         await service.delete(mock_db, mock_user_with_token)
 
-        # Verify preferences were updated without mail_token
+        # Verify preferences were updated without sina_mail_token
         updated_prefs = json.loads(mock_user_with_token.preferences)
-        assert "mail_token" not in updated_prefs
+        assert "sina_mail_token" not in updated_prefs
         mock_db.commit.assert_called_once()
 
     @pytest.mark.asyncio
@@ -188,8 +188,8 @@ class TestMailTokenService:
     ):
         """Test _update_preferences removes a key when value is None."""
         MailTokenService._update_preferences(
-            mock_db, mock_user_with_token, "mail_token", None
+            mock_db, mock_user_with_token, "sina_mail_token", None
         )
         updated = json.loads(mock_user_with_token.preferences)
-        assert "mail_token" not in updated
+        assert "sina_mail_token" not in updated
         mock_db.commit.assert_called_once()
