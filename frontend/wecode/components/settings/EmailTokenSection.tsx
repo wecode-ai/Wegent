@@ -84,8 +84,8 @@ export function EmailTokenSection() {
   return (
     <div className="space-y-3">
       <div>
-        <h2 className="text-xl font-semibold text-text-primary mb-1">{t('mail_token.title')}</h2>
-        <p className="text-sm text-text-muted mb-1">{t('mail_token.description')}</p>
+        <h3 className="text-base font-medium text-text-primary mb-1">{t('mail_token.title')}</h3>
+        <p className="text-xs text-text-muted mb-1">{t('mail_token.description')}</p>
       </div>
 
       <div className="bg-base border border-border rounded-md p-4 space-y-3">
