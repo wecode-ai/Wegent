@@ -36,7 +36,7 @@ class TestMailTokenService:
         """Create a mock user with an existing mail token."""
         user = MagicMock()
         user.user_name = "testuser"
-        user.preferences = json.dumps({"sina_mail.token": "encrypted_token_value"})
+        user.preferences = json.dumps({"sina_mail": {"token": "encrypted_token_value"}})
         return user
 
     @pytest.fixture
@@ -153,7 +153,7 @@ class TestMailTokenService:
 
         # Verify preferences were updated without sina_mail.token
         updated_prefs = json.loads(mock_user_with_token.preferences)
-        assert "sina_mail.token" not in updated_prefs
+        assert "token" not in updated_prefs.get("sina_mail", {})
         mock_db.commit.assert_called_once()
 
     @pytest.mark.asyncio
@@ -188,10 +188,10 @@ class TestMailTokenService:
     ):
         """Test _update_preferences removes a key when value is None."""
         MailTokenService._update_preferences(
-            mock_db, mock_user_with_token, "sina_mail.token", None
+            mock_db, mock_user_with_token, "sina_mail", None
         )
         updated = json.loads(mock_user_with_token.preferences)
-        assert "sina_mail.token" not in updated
+        assert "sina_mail" not in updated
         mock_db.commit.assert_called_once()
 
 
@@ -206,7 +206,7 @@ class TestBuildUserInfoPatch:
         wrapped = _wrap_build_user_info(original)
 
         user = MagicMock()
-        user.preferences = json.dumps({"sina_mail.token": "encrypted_value"})
+        user.preferences = json.dumps({"sina_mail": {"token": "encrypted_value"}})
 
         with patch(
             "shared.utils.crypto.decrypt_sensitive_data",
@@ -240,7 +240,7 @@ class TestBuildUserInfoPatch:
         wrapped = _wrap_build_user_info(original)
 
         user = MagicMock()
-        user.preferences = json.dumps({"sina_mail.token": "bad_encrypted"})
+        user.preferences = json.dumps({"sina_mail": {"token": "bad_encrypted"}})
 
         with patch(
             "shared.utils.crypto.decrypt_sensitive_data",
