@@ -6,7 +6,7 @@ import json
 from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, EmailStr, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 
 class MCPProviderKeys(BaseModel):
@@ -26,11 +26,15 @@ class MCPProviderKeys(BaseModel):
 class UserPreferences(BaseModel):
     """User preferences model"""
 
+    model_config = ConfigDict(populate_by_name=True)
+
     send_key: Literal["enter", "cmd_enter"] = "enter"
     search_key: Literal["cmd_k", "cmd_f", "disabled"] = "cmd_k"
     memory_enabled: bool = False
     mcp_provider_keys: Optional[MCPProviderKeys] = None
-    sina_mail_token: Optional[str] = None  # Encrypted mail token
+    sina_mail_dot_token: Optional[str] = Field(
+        None, alias="sina_mail.token"
+    )  # Encrypted mail token
 
 
 class Token(BaseModel):

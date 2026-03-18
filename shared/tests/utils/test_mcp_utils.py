@@ -139,13 +139,13 @@ def test_replace_with_none_task_data_returns_unchanged() -> None:
 
 
 def test_replace_user_sina_mail_token_placeholder() -> None:
-    """Test that ${{user.sina_mail_token}} is resolved from user dict."""
+    """Test that ${{user.sina_mail.token}} is resolved from user dict."""
     mcp_servers = {
         "mail-server": {
             "type": "streamable-http",
             "url": "https://mail-api.example.com/mcp",
             "headers": {
-                "Authorization": "Bearer ${{user.sina_mail_token}}",
+                "Authorization": "Bearer ${{user.sina_mail.token}}",
             },
         }
     }
@@ -153,7 +153,7 @@ def test_replace_user_sina_mail_token_placeholder() -> None:
         user={
             "id": 1,
             "name": "testuser",
-            "sina_mail_token": "my-decrypted-token",
+            "sina_mail": {"token": "my-decrypted-token"},
         },
     )
 
@@ -166,10 +166,10 @@ def test_replace_user_sina_mail_token_placeholder() -> None:
 
 
 def test_user_sina_mail_token_preserves_when_absent() -> None:
-    """Test that ${{user.sina_mail_token}} is preserved when not present in user dict."""
+    """Test that ${{user.sina_mail.token}} is preserved when not present in user dict."""
     mcp_servers = {
         "mail-server": {
-            "headers": {"Authorization": "Bearer ${{user.sina_mail_token}}"},
+            "headers": {"Authorization": "Bearer ${{user.sina_mail.token}}"},
         }
     }
     task_data = ExecutionRequest(
@@ -180,5 +180,5 @@ def test_user_sina_mail_token_preserves_when_absent() -> None:
 
     assert (
         replaced["mail-server"]["headers"]["Authorization"]
-        == "Bearer ${{user.sina_mail_token}}"
+        == "Bearer ${{user.sina_mail.token}}"
     )

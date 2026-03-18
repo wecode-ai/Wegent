@@ -60,16 +60,16 @@ class MailTokenService:
 
         # Encrypt and store in preferences
         encrypted_token = encrypt_sensitive_data(mail_token)
-        self._update_preferences(db, user, "sina_mail_token", encrypted_token)
+        self._update_preferences(db, user, "sina_mail.token", encrypted_token)
 
     def get_status(self, user: User) -> bool:
         """Check whether a mail token is configured for the user."""
         prefs = self._parse_preferences(user)
-        return bool(prefs.get("sina_mail_token"))
+        return bool(prefs.get("sina_mail.token"))
 
     async def delete(self, db: Session, user: User) -> None:
         """Remove the mail token from user preferences."""
-        self._update_preferences(db, user, "sina_mail_token", None)
+        self._update_preferences(db, user, "sina_mail.token", None)
 
     @staticmethod
     def _parse_preferences(user: User) -> dict:

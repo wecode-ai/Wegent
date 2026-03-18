@@ -42,25 +42,28 @@ def _parse_preferences(preferences) -> dict:
 
 def _wrap_build_user_info(original_method: Callable) -> Callable:
     """
-    Wrap _build_user_info to inject decrypted sina_mail_token into user dict.
+    Wrap _build_user_info to inject decrypted sina_mail.token into user dict.
+
+    The token is injected as user_info["sina_mail"]["token"] so that the
+    MCP placeholder ${{user.sina_mail.token}} resolves via dot-path traversal.
     """
 
     @wraps(original_method)
     def wrapper(self, user, git_domain=None):
         user_info = original_method(self, user, git_domain)
-        # Inject decrypted sina_mail_token from user preferences
+        # Inject decrypted sina_mail.token from user preferences
         prefs = _parse_preferences(user.preferences)
-        encrypted = prefs.get("sina_mail_token")
+        encrypted = prefs.get("sina_mail.token")
         if encrypted:
             try:
                 from shared.utils.crypto import decrypt_sensitive_data
 
                 decrypted = decrypt_sensitive_data(encrypted)
                 if decrypted:
-                    user_info["sina_mail_token"] = decrypted
+                    user_info.setdefault("sina_mail", {})["token"] = decrypted
             except Exception:
                 logger.warning(
-                    "[request_builder_patch] Failed to decrypt sina_mail_token"
+                    "[request_builder_patch] Failed to decrypt sina_mail.token"
                 )
         return user_info
 
@@ -161,7 +164,7 @@ def apply_patch() -> None:
             f"[request_builder_patch] Failed to patch TaskRequestBuilder.build: {str(e)}"
         )
 
-    # Patch _build_user_info to inject sina_mail_token
+    # Patch _build_user_info to inject sina_mail.token
     original_build_user_info = getattr(TaskRequestBuilder, "_build_user_info", None)
     if original_build_user_info and not getattr(
         original_build_user_info, "_wecode_user_info_patched", False

@@ -36,7 +36,7 @@ class TestMailTokenService:
         """Create a mock user with an existing mail token."""
         user = MagicMock()
         user.user_name = "testuser"
-        user.preferences = json.dumps({"sina_mail_token": "encrypted_token_value"})
+        user.preferences = json.dumps({"sina_mail.token": "encrypted_token_value"})
         return user
 
     @pytest.fixture
@@ -151,9 +151,9 @@ class TestMailTokenService:
         """Test deleting mail token removes it from preferences."""
         await service.delete(mock_db, mock_user_with_token)
 
-        # Verify preferences were updated without sina_mail_token
+        # Verify preferences were updated without sina_mail.token
         updated_prefs = json.loads(mock_user_with_token.preferences)
-        assert "sina_mail_token" not in updated_prefs
+        assert "sina_mail.token" not in updated_prefs
         mock_db.commit.assert_called_once()
 
     @pytest.mark.asyncio
@@ -188,25 +188,25 @@ class TestMailTokenService:
     ):
         """Test _update_preferences removes a key when value is None."""
         MailTokenService._update_preferences(
-            mock_db, mock_user_with_token, "sina_mail_token", None
+            mock_db, mock_user_with_token, "sina_mail.token", None
         )
         updated = json.loads(mock_user_with_token.preferences)
-        assert "sina_mail_token" not in updated
+        assert "sina_mail.token" not in updated
         mock_db.commit.assert_called_once()
 
 
 class TestBuildUserInfoPatch:
-    """Tests for _build_user_info patch that injects sina_mail_token."""
+    """Tests for _build_user_info patch that injects sina_mail.token."""
 
     def test_inject_sina_mail_token_into_user_info(self):
-        """Test that decrypted sina_mail_token is injected into user dict."""
+        """Test that decrypted sina_mail.token is injected as nested dict."""
         from wecode.service.request_builder_patch import _wrap_build_user_info
 
         original = MagicMock(return_value={"id": 1, "name": "testuser"})
         wrapped = _wrap_build_user_info(original)
 
         user = MagicMock()
-        user.preferences = json.dumps({"sina_mail_token": "encrypted_value"})
+        user.preferences = json.dumps({"sina_mail.token": "encrypted_value"})
 
         with patch(
             "shared.utils.crypto.decrypt_sensitive_data",
@@ -214,11 +214,11 @@ class TestBuildUserInfoPatch:
         ):
             result = wrapped(None, user)
 
-        assert result["sina_mail_token"] == "decrypted_mail_token"
+        assert result["sina_mail"]["token"] == "decrypted_mail_token"
         assert result["id"] == 1
 
     def test_no_token_in_preferences(self):
-        """Test that user_info is unchanged when no sina_mail_token in preferences."""
+        """Test that user_info is unchanged when no sina_mail.token in preferences."""
         from wecode.service.request_builder_patch import _wrap_build_user_info
 
         original = MagicMock(return_value={"id": 1, "name": "testuser"})
@@ -229,7 +229,7 @@ class TestBuildUserInfoPatch:
 
         result = wrapped(None, user)
 
-        assert "sina_mail_token" not in result
+        assert "sina_mail" not in result
         assert result["id"] == 1
 
     def test_decrypt_failure_does_not_crash(self):
@@ -240,7 +240,7 @@ class TestBuildUserInfoPatch:
         wrapped = _wrap_build_user_info(original)
 
         user = MagicMock()
-        user.preferences = json.dumps({"sina_mail_token": "bad_encrypted"})
+        user.preferences = json.dumps({"sina_mail.token": "bad_encrypted"})
 
         with patch(
             "shared.utils.crypto.decrypt_sensitive_data",
@@ -248,7 +248,7 @@ class TestBuildUserInfoPatch:
         ):
             result = wrapped(None, user)
 
-        assert "sina_mail_token" not in result
+        assert "sina_mail" not in result
         assert result["id"] == 1
 
     def test_none_preferences(self):
@@ -263,4 +263,4 @@ class TestBuildUserInfoPatch:
 
         result = wrapped(None, user)
 
-        assert "sina_mail_token" not in result
+        assert "sina_mail" not in result
