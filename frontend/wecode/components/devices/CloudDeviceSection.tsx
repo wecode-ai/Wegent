@@ -348,9 +348,7 @@ function DeviceCapabilityRow({ device, onStartTask, t }: DeviceCapabilityRowProp
   const canStartTask = isOnline && slotsAvailable
   const isOpenClaw = device.bind_shell === 'openclaw'
 
-  const capabilityLabel = isOpenClaw
-    ? t('cloud_device.capability_openclaw')
-    : t('cloud_device.capability_executor')
+  const capabilityLabel = device.bind_shell ?? 'claudecode'
 
   const statusColor = isOnline
     ? device.status === 'busy'
@@ -360,10 +358,14 @@ function DeviceCapabilityRow({ device, onStartTask, t }: DeviceCapabilityRowProp
 
   return (
     <div className="flex items-center justify-between pl-14 py-1.5">
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2.5">
         <span className={cn('w-1.5 h-1.5 rounded-full', statusColor)} />
+        <span className="text-sm text-text-primary truncate max-w-[240px]">{device.name}</span>
         <span
-          className={cn('text-sm font-medium', isOpenClaw ? 'text-red-600' : 'text-text-secondary')}
+          className={cn(
+            'inline-flex items-center px-1.5 py-0.5 text-xs font-medium rounded',
+            isOpenClaw ? 'bg-red-50 text-red-600' : 'bg-primary/10 text-primary'
+          )}
         >
           {capabilityLabel}
         </span>
