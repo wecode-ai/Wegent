@@ -348,7 +348,7 @@ function DeviceCapabilityRow({ device, onStartTask, t }: DeviceCapabilityRowProp
   const canStartTask = isOnline && slotsAvailable
   const isOpenClaw = device.bind_shell === 'openclaw'
 
-  const capabilityLabel = device.bind_shell ?? 'claudecode'
+  const capabilityLabel = isOpenClaw ? '🦞 openclaw' : 'claudecode'
 
   const statusColor = isOnline
     ? device.status === 'busy'
