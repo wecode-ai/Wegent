@@ -19,6 +19,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { UserProvider, useUser } from '@/features/common/UserContext'
 import { getToken } from '@/apis/user'
+import { isAuthModeDingTalk } from '@/dingtalk/lib/environment'
 import * as XLSX from 'xlsx'
 
 const API_BASE_URL = ''
@@ -398,9 +399,14 @@ function PublicDownloadContent() {
     if (authLoading) return
 
     if (!isAuthenticated) {
-      // Not logged in, redirect to login with return URL
+      // Not logged in, redirect to login or DingTalk auth with return URL
       const currentUrl = window.location.href
-      router.push(`/login?redirect=${encodeURIComponent(currentUrl)}`)
+      if (isAuthModeDingTalk()) {
+        // DingTalk mode: use DingTalk auth flow to preserve redirect URL
+        router.push(`/auth/dingtalk?redirect=${encodeURIComponent(currentUrl)}`)
+      } else {
+        router.push(`/login?redirect=${encodeURIComponent(currentUrl)}`)
+      }
       return
     }
 

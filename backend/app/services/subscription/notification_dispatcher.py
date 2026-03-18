@@ -53,15 +53,18 @@ def _convert_to_frontend_attachment_url(attachment_id: str | int) -> str:
 
 def _convert_attachment_links_to_public(message: str) -> str:
     """
-    Convert attachment download URLs to public share URLs.
+    Convert attachment download URLs to public share URLs with jump page support.
 
     This is necessary for external channels (DingTalk, Feishu, Webhook, etc.) to ensure
     any logged-in user can download the attachment, not just the creator.
 
+    For DingTalk mobile users, generates a jump page URL that redirects to external URL.
+    For PC browser users, redirects to internal URL.
+
     Converts:
         /api/attachments/123/download
     To:
-        https://wegent.com/download/shared?token=xxx
+        https://external.com/jump?target=download/shared&token=xxx&inner=...&outer=...
 
     The generated token contains a random nonce to prevent enumeration attacks.
 
@@ -69,14 +72,17 @@ def _convert_attachment_links_to_public(message: str) -> str:
         message: Original message that may contain attachment links
 
     Returns:
-        Message with converted public share URLs
+        Message with converted public share URLs (with jump page if configured)
     """
     from app.api.endpoints.adapter.attachments import (
         _generate_public_share_token,
     )
     from app.core.config import settings
+    from shared.utils.url_util import build_download_notification_url
 
-    base_url = settings.FRONTEND_URL.rstrip("/")
+    frontend_url = settings.FRONTEND_URL.rstrip("/")
+    # Use TASK_NOTIFICATION_URL as external URL for jump page (if configured)
+    notification_url = getattr(settings, "TASK_NOTIFICATION_URL", "") or frontend_url
 
     # Find all attachment URLs and replace with public share URLs
     def replace_url(match: re.Match) -> str:
@@ -87,7 +93,12 @@ def _convert_attachment_links_to_public(message: str) -> str:
             token = _generate_public_share_token(
                 attachment_id=attachment_id, expires_in_days=7
             )
-            return f"{base_url}/download/shared?token={token}"
+            # Use build_download_notification_url to generate jump URL
+            return build_download_notification_url(
+                token=token,
+                frontend_url=frontend_url,
+                notification_url=notification_url if notification_url != frontend_url else None,
+            )
         except Exception as e:
             logger.warning(
                 f"Failed to generate public share link for attachment {attachment_id}: {e}"
@@ -1167,15 +1178,18 @@ class SubscriptionNotificationDispatcher:
 
     def _convert_attachment_links(self, message: str, db: Session, user_id: int) -> str:
         """
-        Convert attachment download URLs to public share URLs.
+        Convert attachment download URLs to public share URLs with jump page support.
 
         This is necessary for external IM channels (DingTalk, etc.) to ensure
         any logged-in user can download the attachment, not just the creator.
 
+        For DingTalk mobile users, generates a jump page URL that redirects to external URL.
+        For PC browser users, redirects to internal URL.
+
         Converts:
             /api/attachments/123/download
         To:
-            https://wegent.com/download/attachment/public?token=xxx
+            https://external.com/jump?target=download/shared&token=xxx&inner=...&outer=...
 
         The generated token contains a random nonce to prevent enumeration attacks.
 
@@ -1185,14 +1199,17 @@ class SubscriptionNotificationDispatcher:
             user_id: User ID (attachment owner) for generating share tokens
 
         Returns:
-            Message with converted public share URLs
+            Message with converted public share URLs (with jump page if configured)
         """
         from app.api.endpoints.adapter.attachments import (
             _generate_public_share_token,
         )
         from app.core.config import settings
+        from shared.utils.url_util import build_download_notification_url
 
-        base_url = settings.FRONTEND_URL.rstrip("/")
+        frontend_url = settings.FRONTEND_URL.rstrip("/")
+        # Use TASK_NOTIFICATION_URL as external URL for jump page (if configured)
+        notification_url = getattr(settings, "TASK_NOTIFICATION_URL", "") or frontend_url
 
         # Find all attachment URLs and replace with public share URLs
         def replace_url(match: re.Match) -> str:
@@ -1203,7 +1220,12 @@ class SubscriptionNotificationDispatcher:
                 token = _generate_public_share_token(
                     attachment_id=attachment_id, expires_in_days=7
                 )
-                return f"{base_url}/download/shared?token={token}"
+                # Use build_download_notification_url to generate jump URL
+                return build_download_notification_url(
+                    token=token,
+                    frontend_url=frontend_url,
+                    notification_url=notification_url if notification_url != frontend_url else None,
+                )
             except Exception as e:
                 logger.warning(
                     f"Failed to generate public share link for attachment {attachment_id}: {e}"
