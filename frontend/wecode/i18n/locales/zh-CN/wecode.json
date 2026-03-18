@@ -11,7 +11,7 @@
     "create_confirm_message": "创建云设备时，系统将自动为您生成一个 API Key 用于设备认证。该 Key 会内置到云设备中，无需手动配置。",
     "create_confirm_note": "首次使用需要等待约 1~3 分钟启动设备，请耐心等待。",
     "delete_confirm_title": "删除云设备",
-    "delete_confirm_message": "确定要删除此云设备吗？删除后虚拟机将被销毁，无法恢复。",
+    "delete_confirm_message": "确定要删除此云设备吗？删除后虚拟机将被销毁，该机器上的所有设备将一并删除，无法恢复。",
     "limit_reached": "已达到云设备数量上限（最多 {{max}} 个）",
     "create_success": "云设备创建成功，正在启动执行器...",
     "create_error": "云设备创建失败",
@@ -22,6 +22,24 @@
     "mail_email": "邮箱账号",
     "mail_email_placeholder": "例如: zhangsan",
     "mail_email_hint": "无需输入 @staff.sina.com.cn 后缀",
-    "mail_password": "邮箱密码"
+    "mail_password": "邮箱密码",
+    "capability_executor": "Executor",
+    "capability_openclaw": "OpenClaw",
+    "machines_count": "台机器"
+  },
+  "mail_token": {
+    "title": "公司邮件",
+    "description": "配置公司邮件令牌以启用邮件相关功能",
+    "configured": "已配置",
+    "reconfigure": "重新配置",
+    "input_placeholder": "请输入从钉钉机器人获取的 token",
+    "input_hint": "从钉钉机器人（IT机器人），发送连接邮件的命令获取 token",
+    "save": "保存",
+    "saving": "保存中...",
+    "cancel": "取消",
+    "save_success": "邮件令牌配置成功",
+    "save_error": "邮件令牌配置失败",
+    "delete_success": "邮件令牌已删除",
+    "delete_error": "删除邮件令牌失败"
   }
 }

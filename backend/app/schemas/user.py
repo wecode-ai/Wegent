@@ -23,6 +23,12 @@ class MCPProviderKeys(BaseModel):
     mcp_router: Optional[str] = None  # MCP Router API key
 
 
+class SinaMailPreferences(BaseModel):
+    """Nested preferences for Sina mail integration."""
+
+    token: Optional[str] = None  # Encrypted mail token
+
+
 class UserPreferences(BaseModel):
     """User preferences model"""
 
@@ -30,6 +36,7 @@ class UserPreferences(BaseModel):
     search_key: Literal["cmd_k", "cmd_f", "disabled"] = "cmd_k"
     memory_enabled: bool = False
     mcp_provider_keys: Optional[MCPProviderKeys] = None
+    sina_mail: Optional[SinaMailPreferences] = None
 
 
 class Token(BaseModel):

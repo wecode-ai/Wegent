@@ -11,7 +11,7 @@
     "create_confirm_message": "An API Key will be automatically generated for device authentication. The key will be embedded in the cloud device — no manual configuration needed.",
     "create_confirm_note": "First-time startup may take 1–3 minutes. Please be patient.",
     "delete_confirm_title": "Delete Cloud Device",
-    "delete_confirm_message": "Are you sure you want to delete this cloud device? The VM will be destroyed and cannot be recovered.",
+    "delete_confirm_message": "Are you sure you want to delete this cloud device? The VM will be destroyed and all devices on this machine will be removed. This cannot be undone.",
     "limit_reached": "Cloud device limit reached (max {{max}})",
     "create_success": "Cloud device created, starting executor...",
     "create_error": "Failed to create cloud device",
@@ -22,6 +22,24 @@
     "mail_email": "Email Account",
     "mail_email_placeholder": "e.g. zhangsan",
     "mail_email_hint": "No need to enter @staff.sina.com.cn suffix",
-    "mail_password": "Email Password"
+    "mail_password": "Email Password",
+    "capability_executor": "Executor",
+    "capability_openclaw": "OpenClaw",
+    "machines_count": "machine(s)"
+  },
+  "mail_token": {
+    "title": "Company Mail",
+    "description": "Configure a company mail token to enable email-related features",
+    "configured": "Configured",
+    "reconfigure": "Reconfigure",
+    "input_placeholder": "Enter the token from DingTalk bot",
+    "input_hint": "Send the email connection command to the DingTalk bot (IT Bot) to get the token",
+    "save": "Save",
+    "saving": "Saving...",
+    "cancel": "Cancel",
+    "save_success": "Mail token configured successfully",
+    "save_error": "Failed to configure mail token",
+    "delete_success": "Mail token deleted",
+    "delete_error": "Failed to delete mail token"
   }
 }
