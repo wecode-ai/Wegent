@@ -127,17 +127,27 @@ class CloudDeviceProvider(BaseDeviceProvider):
 
         # Generate server-side device_id (UUID) and device_name
         server_device_id = str(uuid.uuid4())
-        server_device_name = f"{user_name}-cloud-{server_device_id[:8]}"
+        server_device_name = f"{user_name}-executor-{server_device_id.split('-')[-1]}"
+
+        # Generate OpenClaw device_id (separate from executor, same VM)
+        openclaw_device_id = ""
+        openclaw_device_name = ""
 
         # Get API key for OpenClaw script (non-blocking, skip on failure)
         api_key = ""
-        try:
-            api_key = await get_or_create_apikey_async(user_name)
-        except Exception as e:
-            logger.warning(
-                f"[CloudDeviceProvider] Failed to get API key for OpenClaw, "
-                f"skipping: {e}"
+        openclaw_enabled = bool(nevis_settings.NEVIS_OPENCLAW_INSTALL_SCRIPT_URL)
+        if openclaw_enabled:
+            openclaw_device_id = str(uuid.uuid4())
+            openclaw_device_name = (
+                f"{user_name}-openclaw-{openclaw_device_id.split('-')[-1]}"
             )
+            try:
+                api_key = await get_or_create_apikey_async(user_name)
+            except Exception as e:
+                logger.warning(
+                    f"[CloudDeviceProvider] Failed to get API key for OpenClaw, "
+                    f"skipping: {e}"
+                )
 
         # Generate startup script with server-generated device info
         user_data = generate_simple_startup_script(
@@ -152,6 +162,7 @@ class CloudDeviceProvider(BaseDeviceProvider):
             device_name=server_device_name,
             openclaw_script_url=nevis_settings.NEVIS_OPENCLAW_INSTALL_SCRIPT_URL,
             api_key=api_key,
+            openclaw_device_id=openclaw_device_id,
         )
 
         # Create sandbox via Nevis API
@@ -173,11 +184,29 @@ class CloudDeviceProvider(BaseDeviceProvider):
             name=server_device_name,
             sandbox_id=sandbox_id,
             image_id=nevis_settings.NEVIS_IMAGE_ID,
+            bind_shell="claudecode",
         )
+
+        # Create OpenClaw Device CRD if enabled
+        if openclaw_enabled and openclaw_device_id:
+            await self._create_device_crd(
+                db=db,
+                user_id=user_id,
+                device_id=openclaw_device_id,
+                name=openclaw_device_name,
+                sandbox_id=sandbox_id,
+                image_id=nevis_settings.NEVIS_IMAGE_ID,
+                bind_shell="openclaw",
+            )
 
         logger.info(
             f"[CloudDeviceProvider] Cloud device created: user_id={user_id}, "
             f"device_id={server_device_id}, sandbox_id={sandbox_id}"
+            + (
+                f", openclaw_device_id={openclaw_device_id}"
+                if openclaw_device_id
+                else ""
+            )
         )
 
         return {
@@ -197,6 +226,7 @@ class CloudDeviceProvider(BaseDeviceProvider):
         name: str,
         sandbox_id: str,
         image_id: str,
+        bind_shell: str = "claudecode",
     ) -> Kind:
         """Create Device CRD for cloud device.
 
@@ -207,6 +237,7 @@ class CloudDeviceProvider(BaseDeviceProvider):
             name: Device display name
             sandbox_id: Nevis sandbox ID
             image_id: Image ID used for VM
+            bind_shell: Shell runtime binding ('claudecode' or 'openclaw')
 
         Returns:
             Created Kind model instance
@@ -239,6 +270,7 @@ class CloudDeviceProvider(BaseDeviceProvider):
                 "displayName": name,
                 "deviceType": DeviceType.CLOUD.value,
                 "connectionMode": DeviceConnectionMode.WEBSOCKET.value,
+                "bindShell": bind_shell,
                 "isDefault": is_first_device,
                 "capabilities": None,
                 "cloudConfig": {
@@ -295,12 +327,18 @@ class CloudDeviceProvider(BaseDeviceProvider):
         )
 
         count = 0
+        sandbox_ids = set()
         for device in devices:
             spec = device.json.get("spec", {})
             if spec.get("deviceType") == DeviceType.CLOUD.value:
-                count += 1
+                sandbox_id = spec.get("cloudConfig", {}).get("sandboxId")
+                if sandbox_id:
+                    sandbox_ids.add(sandbox_id)
+                else:
+                    # Legacy device without sandboxId, count individually
+                    count += 1
 
-        return count
+        return count + len(sandbox_ids)
 
     async def delete_device(
         self,
@@ -364,16 +402,35 @@ class CloudDeviceProvider(BaseDeviceProvider):
                 )
                 raise
 
-        # Soft delete Device CRD
-        device_kind.is_active = False
+        # Soft delete Device CRD and all related devices with same sandboxId
+        deleted_device_ids = []
+        all_devices = (
+            db.query(Kind)
+            .filter(
+                and_(
+                    Kind.user_id == user_id,
+                    Kind.kind == "Device",
+                    Kind.namespace == "default",
+                    Kind.is_active == True,
+                )
+            )
+            .all()
+        )
+        for device in all_devices:
+            dev_spec = device.json.get("spec", {})
+            dev_sandbox_id = dev_spec.get("cloudConfig", {}).get("sandboxId")
+            if dev_sandbox_id == sandbox_id:
+                device.is_active = False
+                deleted_device_ids.append(device.name)
         db.commit()
 
-        # Clean up Redis online status
-        await self.unregister(db, user_id, device_id)
+        # Clean up Redis online status for all deleted devices
+        for did in deleted_device_ids:
+            await self.unregister(db, user_id, did)
 
         logger.info(
             f"[CloudDeviceProvider] Cloud device deleted: user_id={user_id}, "
-            f"device_id={device_id}"
+            f"sandbox_id={sandbox_id}, deleted_devices={deleted_device_ids}"
         )
 
         return True
@@ -583,6 +640,7 @@ class CloudDeviceProvider(BaseDeviceProvider):
             "executor_version": executor_version,
             "latest_version": latest_version,
             "update_available": update_available,
+            "bind_shell": spec.get("bindShell", "claudecode"),
             "cloud_config": spec.get("cloudConfig"),
         }
 
@@ -683,6 +741,7 @@ class CloudDeviceProvider(BaseDeviceProvider):
                     "executor_version": executor_version,
                     "latest_version": latest_version,
                     "update_available": update_available,
+                    "bind_shell": spec.get("bindShell", "claudecode"),
                     "cloud_config": spec.get("cloudConfig"),
                 }
             )
