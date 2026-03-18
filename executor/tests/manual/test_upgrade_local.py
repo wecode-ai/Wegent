@@ -18,7 +18,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 from executor.services.updater.updater_service import UpdaterService
-from executor.services.updater.version_checker import VersionChecker
+from executor.services.updater.github_version_checker import GithubVersionChecker
+from executor.config.device_config import UpdateConfig
 
 
 async def test_version_check():
@@ -27,7 +28,7 @@ async def test_version_check():
     print("测试 1: 版本检查")
     print("=" * 60)
 
-    checker = VersionChecker()
+    checker = GithubVersionChecker()
 
     # 测试平台检测
     binary_name = checker.get_binary_name()
@@ -56,7 +57,9 @@ async def test_update_flow():
     print("\n注意: 这会调用真实的更新API!")
     print("当前只是检查版本，不会真的下载和替换\n")
 
-    service = UpdaterService()
+    # Create update config (empty config defaults to GitHub)
+    update_config = UpdateConfig()
+    service = UpdaterService(update_config=update_config)
 
     try:
         result = await service.check_and_update()
@@ -79,7 +82,9 @@ def test_binary_path():
     print("测试 3: 二进制路径检测")
     print("=" * 60)
 
-    service = UpdaterService()
+    # Create update config (empty config defaults to GitHub)
+    update_config = UpdateConfig()
+    service = UpdaterService(update_config=update_config)
 
     # 当前是开发模式，应该返回脚本路径
     path = service._get_current_binary_path()
@@ -93,7 +98,9 @@ def test_disk_space():
     print("测试 4: 磁盘空间检查")
     print("=" * 60)
 
-    service = UpdaterService()
+    # Create update config (empty config defaults to GitHub)
+    update_config = UpdateConfig()
+    service = UpdaterService(update_config=update_config)
 
     result = service._check_disk_space()
     print(f"\n磁盘空间充足: {result}")

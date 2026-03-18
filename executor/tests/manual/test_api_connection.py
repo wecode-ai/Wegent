@@ -13,16 +13,16 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 import requests
 from urllib.parse import urljoin
 
-from executor.services.updater.version_checker import VersionChecker
+from executor.services.updater.github_version_checker import GithubVersionChecker
 
 
 def test_api_connection():
     """测试 API 连接"""
-    checker = VersionChecker()
+    checker = GithubVersionChecker()
     binary_name = checker.get_binary_name()
 
-    # 构建 API URL
-    api_url = f"{checker.API_BASE}/{binary_name}/update.json"
+    # 构建 API URL (for GitHub API)
+    api_url = f"{checker.API_BASE}/repos/{checker._get_github_repo()}/releases/latest"
 
     print(f"测试 API 连接:")
     print(f"  二进制名称: {binary_name}")
@@ -36,7 +36,7 @@ def test_api_connection():
     print("测试 1: 使用 requests 直接访问")
     print("=" * 60)
 
-    headers = {"PRIVATE-TOKEN": checker.API_TOKEN}
+    headers = {"Accept": "application/vnd.github+json"}
 
     try:
         print(f"正在发送 GET 请求到 {api_url}...")
@@ -85,9 +85,8 @@ def test_api_connection():
     print("=" * 60)
 
     browser_headers = {
-        "PRIVATE-TOKEN": checker.API_TOKEN,
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
-        "Accept": "application/json",
+        "Accept": "application/vnd.github+json",
     }
 
     try:
@@ -110,7 +109,7 @@ def test_api_connection():
 
     import socket
     try:
-        hostname = "ai-state-machine.gemini-emu.com"
+        hostname = "api.github.com"
         ip = socket.gethostbyname(hostname)
         print(f"  {hostname} -> {ip}")
         print(f"  ✓ DNS 解析成功")
