@@ -5,7 +5,7 @@
 'use client'
 
 import GitHubIntegration from '@/features/settings/components/GitHubIntegration'
-import { EmailTokenSection } from '@/wecode/components/settings/EmailTokenSection'
+import { EmailTokenSection } from '@wecode/components/settings/EmailTokenSection'
 
 /**
  * Integrations settings page that combines Git token management

@@ -14,7 +14,7 @@ import {
   CollapsedSidebarButtons,
 } from '@/features/tasks/components/sidebar'
 import { SettingsTabNav, SettingsTabId } from '@/features/settings/components/SettingsTabNav'
-import { IntegrationsPage } from '@/wecode/components/settings/IntegrationsPage'
+import { IntegrationsPage } from '@wecode/components/settings/IntegrationsPage'
 import NotificationSettings from '@/features/settings/components/NotificationSettings'
 import { GroupManager } from '@/features/settings/components/groups/GroupManager'
 import { ModelListWithScope } from '@/features/settings/components/ModelListWithScope'

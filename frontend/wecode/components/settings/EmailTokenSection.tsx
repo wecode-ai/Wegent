@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/input'
 import { CheckCircleIcon, TrashIcon } from '@heroicons/react/24/outline'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useToast } from '@/hooks/use-toast'
-import { mailTokenApis } from '@/wecode/apis'
+import { mailTokenApis } from '@wecode/apis'
 
 /**
  * Email token configuration section for the integrations settings page.
