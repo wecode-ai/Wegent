@@ -14,7 +14,7 @@ import {
   CollapsedSidebarButtons,
 } from '@/features/tasks/components/sidebar'
 import { SettingsTabNav, SettingsTabId } from '@/features/settings/components/SettingsTabNav'
-import GitHubIntegration from '@/features/settings/components/GitHubIntegration'
+import { IntegrationsPage } from '@/wecode/components/settings/IntegrationsPage'
 import NotificationSettings from '@/features/settings/components/NotificationSettings'
 import { GroupManager } from '@/features/settings/components/groups/GroupManager'
 import { ModelListWithScope } from '@/features/settings/components/ModelListWithScope'
@@ -208,7 +208,7 @@ function SettingsContent() {
           />
         )
       case 'integrations':
-        return <GitHubIntegration />
+        return <IntegrationsPage />
       case 'general':
         return <NotificationSettings />
       case 'api-keys':

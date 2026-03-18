@@ -7,3 +7,4 @@
  */
 
 export * from './cloud-devices'
+export * from './mail-token'

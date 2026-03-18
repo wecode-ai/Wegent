@@ -30,6 +30,7 @@ class UserPreferences(BaseModel):
     search_key: Literal["cmd_k", "cmd_f", "disabled"] = "cmd_k"
     memory_enabled: bool = False
     mcp_provider_keys: Optional[MCPProviderKeys] = None
+    mail_token: Optional[str] = None  # Encrypted mail token
 
 
 class Token(BaseModel):
