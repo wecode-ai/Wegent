@@ -388,6 +388,8 @@
   "integrations": {
     "title": "集成",
     "description": "设置外部服务以增强您的工作流程",
+    "git_title": "Git 令牌",
+    "git_description": "管理用于仓库操作的 Git 访问令牌",
     "loading": "加载 Git 集成中...",
     "edit_token": "编辑令牌",
     "delete": "删除",

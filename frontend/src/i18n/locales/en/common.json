@@ -388,6 +388,8 @@
   "integrations": {
     "title": "Integrations",
     "description": "Setting external services to enhance your workflow",
+    "git_title": "Git Tokens",
+    "git_description": "Manage Git access tokens for repository operations",
     "loading": "Loading Git integrations...",
     "edit_token": "Edit Token",
     "delete": "Delete",

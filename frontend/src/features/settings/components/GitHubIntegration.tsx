@@ -105,10 +105,10 @@ export default function GitHubIntegration() {
   return (
     <div className="space-y-3">
       <div>
-        <h2 className="text-xl font-semibold text-text-primary mb-1">
-          {t('common:integrations.title')}
-        </h2>
-        <p className="text-sm text-text-muted mb-1">{t('common:integrations.description')}</p>
+        <h3 className="text-base font-medium text-text-primary mb-1">
+          {t('common:integrations.git_title')}
+        </h3>
+        <p className="text-xs text-text-muted">{t('common:integrations.git_description')}</p>
       </div>
       <div className="bg-base border border-border rounded-md p-2 space-y-1 max-h-[70vh] overflow-y-auto custom-scrollbar w-full">
         {isLoading ? (
