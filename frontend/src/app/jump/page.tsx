@@ -61,7 +61,15 @@ function JumpContent() {
         setErrorMessage('Missing required parameter: token')
         return
       }
-      redirectUrl = `${baseUrl}/${target}?token=${encodeURIComponent(token)}`
+
+      // Optimization for DingTalk: skip intermediate download page, go directly to auth
+      // This reduces redirects from 3 to 2 (jump -> auth -> download instead of jump -> download -> auth -> download)
+      if (isDingTalk) {
+        const finalDownloadUrl = `${baseUrl}/${target}?token=${encodeURIComponent(token)}`
+        redirectUrl = `${baseUrl}/auth/dingtalk?redirect=${encodeURIComponent(finalDownloadUrl)}`
+      } else {
+        redirectUrl = `${baseUrl}/${target}?token=${encodeURIComponent(token)}`
+      }
     } else {
       // Task pages (chat, code) - require taskId parameter
       const taskId = searchParams.get('taskId')
