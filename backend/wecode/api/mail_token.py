@@ -14,8 +14,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app.api.dependencies import get_db
 from app.core import security
-from app.core.database import get_db
 from app.models.user import User
 from wecode.service.mail_token_service import mail_token_service
 
