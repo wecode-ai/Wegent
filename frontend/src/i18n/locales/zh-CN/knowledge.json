@@ -507,6 +507,11 @@
     "summaryFailed": "摘要生成失败",
     "summaryFailedHint": "点击重试按钮重新生成摘要",
     "summaryRetry": "重试",
-    "summaryRetrying": "重试中..."
+    "summaryRetrying": "重试中...",
+    "accessDenied": {
+      "title": "无法访问知识库",
+      "description": "您没有该知识库详细信息的访问权限。如有疑问，请联系知识库创建者或管理员。",
+      "backButton": "返回知识库列表"
+    }
   }
 }

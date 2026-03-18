@@ -701,18 +701,67 @@ class HistoryTruncationStrategy(CompressionStrategy):
 
         # Build result with truncation notice if any messages were removed
         if messages_to_remove > 0:
-            truncation_notice_msg = {
-                "role": "system",
-                "content": self.TRUNCATION_NOTICE,
-            }
+            is_anthropic = token_counter.provider == "anthropic"
 
-            result = (
-                system_messages
-                + first_messages
-                + [truncation_notice_msg]
-                + kept_middle
-                + last_messages
-            )
+            if is_anthropic:
+                # Anthropic requires strict user/assistant alternation and
+                # no non-leading system messages. Adapt the notice role based
+                # on adjacent messages.
+                prev_role = first_messages[-1]["role"] if first_messages else None
+                following = kept_middle if kept_middle else last_messages
+                next_role = following[0]["role"] if following else None
+
+                if prev_role == next_role and prev_role is not None:
+                    # Odd removal broke alternation (e.g., user→[removed]→user).
+                    # Insert notice with opposite role to bridge the gap.
+                    notice_role = (
+                        "assistant" if prev_role == "user" else "user"
+                    )
+                    truncation_notice_msg = {
+                        "role": notice_role,
+                        "content": self.TRUNCATION_NOTICE,
+                    }
+                    result = (
+                        system_messages
+                        + first_messages
+                        + [truncation_notice_msg]
+                        + kept_middle
+                        + last_messages
+                    )
+                elif following:
+                    # Alternation is intact. Merge notice into the next message
+                    # to avoid inserting a message that breaks alternation.
+                    following[0] = {
+                        **following[0],
+                        "content": (
+                            self.TRUNCATION_NOTICE
+                            + "\n\n"
+                            + following[0]["content"]
+                        ),
+                    }
+                    result = (
+                        system_messages
+                        + first_messages
+                        + kept_middle
+                        + last_messages
+                    )
+                else:
+                    # No messages after the truncation point
+                    result = system_messages + first_messages
+            else:
+                # Non-Anthropic models (OpenAI, Google, etc.) support
+                # system messages anywhere, so keep original behavior.
+                truncation_notice_msg = {
+                    "role": "system",
+                    "content": self.TRUNCATION_NOTICE,
+                }
+                result = (
+                    system_messages
+                    + first_messages
+                    + [truncation_notice_msg]
+                    + kept_middle
+                    + last_messages
+                )
         else:
             result = messages
 

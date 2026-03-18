@@ -237,7 +237,7 @@ class KnowledgeService:
         db: Session,
         knowledge_base_id: int,
         user_id: int,
-    ) -> Optional[Kind]:
+    ) -> tuple[Optional[Kind], bool]:
         """
         Get a knowledge base by ID with permission check.
 
@@ -247,7 +247,9 @@ class KnowledgeService:
             user_id: Requesting user ID
 
         Returns:
-            Kind if found and accessible, None otherwise
+            Tuple of (Kind, has_access):
+            - Kind: The knowledge base Kind if found, None otherwise
+            - has_access: True if user has access to the knowledge base, False otherwise
         """
         from app.services.share import knowledge_share_service
 
@@ -262,17 +264,14 @@ class KnowledgeService:
         )
 
         if not kb:
-            return None
+            return None, False
 
         # Use the knowledge share service to check access
         has_access, _, _, _ = knowledge_share_service.get_user_kb_permission(
             db, knowledge_base_id, user_id
         )
 
-        if not has_access:
-            return None
-
-        return kb
+        return kb, has_access
 
     @staticmethod
     def list_knowledge_bases(
@@ -481,8 +480,10 @@ class KnowledgeService:
         Raises:
             ValueError: If validation fails or permission denied
         """
-        kb = KnowledgeService.get_knowledge_base(db, knowledge_base_id, user_id)
-        if not kb:
+        kb, has_access = KnowledgeService.get_knowledge_base(
+            db, knowledge_base_id, user_id
+        )
+        if not kb or not has_access:
             return None
 
         # Check permission for organization-level knowledge base (admin only)
@@ -633,8 +634,10 @@ class KnowledgeService:
             # Admin can delete organization KB, skip get_knowledge_base permission check
         else:
             # For non-organization KBs, use get_knowledge_base for permission check
-            kb = KnowledgeService.get_knowledge_base(db, knowledge_base_id, user_id)
-            if not kb:
+            kb, has_access = KnowledgeService.get_knowledge_base(
+                db, knowledge_base_id, user_id
+            )
+            if not kb or not has_access:
                 return False
             # Only creator can delete personal/group knowledge base
             if kb.user_id != user_id:
@@ -678,8 +681,10 @@ class KnowledgeService:
         Raises:
             ValueError: If validation fails or permission denied
         """
-        kb = KnowledgeService.get_knowledge_base(db, knowledge_base_id, user_id)
-        if not kb:
+        kb, has_access = KnowledgeService.get_knowledge_base(
+            db, knowledge_base_id, user_id
+        )
+        if not kb or not has_access:
             return None
 
         # Check permission for team knowledge base
@@ -1015,8 +1020,8 @@ class KnowledgeService:
             return None
 
         # Check access via knowledge base
-        kb = KnowledgeService.get_knowledge_base(db, doc.kind_id, user_id)
-        if not kb:
+        kb, has_access = KnowledgeService.get_knowledge_base(db, doc.kind_id, user_id)
+        if not kb or not has_access:
             return None
 
         return doc
@@ -1039,8 +1044,10 @@ class KnowledgeService:
             List of documents
         """
         # Check access to knowledge base
-        kb = KnowledgeService.get_knowledge_base(db, knowledge_base_id, user_id)
-        if not kb:
+        kb, has_access = KnowledgeService.get_knowledge_base(
+            db, knowledge_base_id, user_id
+        )
+        if not kb or not has_access:
             return []
 
         return (

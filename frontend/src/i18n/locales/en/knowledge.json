@@ -507,6 +507,11 @@
     "summaryFailed": "Summary generation failed",
     "summaryFailedHint": "Click retry to regenerate summary",
     "summaryRetry": "Retry",
-    "summaryRetrying": "Retrying..."
+    "summaryRetrying": "Retrying...",
+    "accessDenied": {
+      "title": "Cannot Access Knowledge Base",
+      "description": "You do not have permission to access this knowledge base. If you have any questions, please contact the knowledge base creator or administrator.",
+      "backButton": "Back to Knowledge Base List"
+    }
   }
 }

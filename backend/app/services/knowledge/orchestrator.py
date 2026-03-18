@@ -603,13 +603,15 @@ class KnowledgeOrchestrator:
             ValueError: If knowledge base not found or access denied
         """
         # Verify access
-        kb = KnowledgeService.get_knowledge_base(
+        kb, has_access = KnowledgeService.get_knowledge_base(
             db=db,
             knowledge_base_id=knowledge_base_id,
             user_id=user.id,
         )
         if not kb:
-            raise ValueError("Knowledge base not found or access denied")
+            raise ValueError("Knowledge base not found")
+        if not has_access:
+            raise ValueError("Access denied to knowledge base")
 
         documents = KnowledgeService.list_documents(
             db=db,
@@ -642,14 +644,16 @@ class KnowledgeOrchestrator:
         Raises:
             ValueError: If knowledge base not found or access denied
         """
-        knowledge_base = KnowledgeService.get_knowledge_base(
+        knowledge_base, has_access = KnowledgeService.get_knowledge_base(
             db=db,
             knowledge_base_id=knowledge_base_id,
             user_id=user.id,
         )
 
         if not knowledge_base:
-            raise ValueError("Knowledge base not found or access denied")
+            raise ValueError("Knowledge base not found")
+        if not has_access:
+            raise ValueError("Access denied to knowledge base")
 
         return KnowledgeBaseResponse.from_kind(
             knowledge_base, KnowledgeService.get_document_count(db, knowledge_base.id)
@@ -878,12 +882,12 @@ class KnowledgeOrchestrator:
         db.commit()
 
         # Fetch and return created knowledge base
-        knowledge_base = KnowledgeService.get_knowledge_base(
+        knowledge_base, has_access = KnowledgeService.get_knowledge_base(
             db=db,
             knowledge_base_id=kb_id,
             user_id=user.id,
         )
-        if not knowledge_base:
+        if not knowledge_base or not has_access:
             raise ValueError("Failed to retrieve created knowledge base")
 
         return KnowledgeBaseResponse.from_kind(
@@ -933,13 +937,15 @@ class KnowledgeOrchestrator:
         from app.services.context import context_service
 
         # Verify access
-        kb = KnowledgeService.get_knowledge_base(
+        kb, has_access = KnowledgeService.get_knowledge_base(
             db=db,
             knowledge_base_id=knowledge_base_id,
             user_id=user.id,
         )
         if not kb:
-            raise ValueError("Knowledge base not found or access denied")
+            raise ValueError("Knowledge base not found")
+        if not has_access:
+            raise ValueError("Access denied to knowledge base")
 
         # Validate input based on source_type
         normalized_ext: str = DEFAULT_TEXT_FILE_EXTENSION
@@ -1033,13 +1039,15 @@ class KnowledgeOrchestrator:
             ValueError: If validation fails or access denied
         """
         # Verify access
-        kb = KnowledgeService.get_knowledge_base(
+        kb, has_access = KnowledgeService.get_knowledge_base(
             db=db,
             knowledge_base_id=knowledge_base_id,
             user_id=user.id,
         )
         if not kb:
-            raise ValueError("Knowledge base not found or access denied")
+            raise ValueError("Knowledge base not found")
+        if not has_access:
+            raise ValueError("Access denied to knowledge base")
 
         # Get splitter config from data if provided
         splitter_config_dict = None
@@ -1167,14 +1175,14 @@ class KnowledgeOrchestrator:
         logger.info(f"[Orchestrator] Updated document {document_id} content")
 
         # Get knowledge base for indexing config
-        kb = KnowledgeService.get_knowledge_base(
+        kb, has_access = KnowledgeService.get_knowledge_base(
             db=db,
             knowledge_base_id=document.kind_id,
             user_id=user.id,
         )
 
         # Schedule re-indexing via Celery if enabled
-        if trigger_reindex and kb:
+        if trigger_reindex and kb and has_access:
             self._schedule_indexing_celery(
                 db=db,
                 knowledge_base=kb,
@@ -1364,13 +1372,13 @@ class KnowledgeOrchestrator:
             raise ValueError(skip_reason)
 
         # Check access permission via knowledge base
-        knowledge_base = KnowledgeService.get_knowledge_base(
+        knowledge_base, has_access = KnowledgeService.get_knowledge_base(
             db=db,
             knowledge_base_id=document.kind_id,
             user_id=user.id,
         )
 
-        if not knowledge_base:
+        if not knowledge_base or not has_access:
             raise ValueError("Access denied to this document")
 
         # Extract RAG config using shared helper
@@ -1454,12 +1462,12 @@ class KnowledgeOrchestrator:
         )
 
         # Verify knowledge base access
-        knowledge_base = KnowledgeService.get_knowledge_base(
+        knowledge_base, has_access = KnowledgeService.get_knowledge_base(
             db=db,
             knowledge_base_id=knowledge_base_id,
             user_id=user.id,
         )
-        if not knowledge_base:
+        if not knowledge_base or not has_access:
             raise ValueError("Knowledge base not found or access denied")
 
         # Scrape the web page (async)
@@ -1711,12 +1719,12 @@ class KnowledgeOrchestrator:
 
             # Trigger RAG re-indexing via Celery if enabled
             if trigger_indexing:
-                knowledge_base = KnowledgeService.get_knowledge_base(
+                knowledge_base, has_access = KnowledgeService.get_knowledge_base(
                     db=db,
                     knowledge_base_id=document.kind_id,
                     user_id=user.id,
                 )
-                if knowledge_base:
+                if knowledge_base and has_access:
                     self._schedule_indexing_celery(
                         db=db,
                         knowledge_base=knowledge_base,

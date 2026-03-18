@@ -28,12 +28,24 @@ from app.schemas.share import (
     PendingRequestInfo,
 )
 from app.schemas.share import PermissionLevel as SchemaPermissionLevel
-from app.services.group_permission import get_effective_role_in_group
+from app.services.group_permission import (
+    get_effective_role_in_group,
+    is_restricted_analyst,
+)
 from app.services.knowledge.knowledge_service import _is_organization_namespace
 from app.services.share.base_service import UnifiedShareService
 from shared.telemetry.decorators import add_span_event, set_span_attribute, trace_sync
 
 logger = logging.getLogger(__name__)
+
+# Shared role-to-permission mapping for group team roles
+# Maps team_role to (SchemaMemberRole, SchemaPermissionLevel)
+GROUP_ROLE_PERMISSION_MAP: dict[str, tuple[SchemaMemberRole, SchemaPermissionLevel]] = {
+    "Owner": (SchemaMemberRole.MAINTAINER, SchemaPermissionLevel.MANAGE),
+    "Maintainer": (SchemaMemberRole.MAINTAINER, SchemaPermissionLevel.MANAGE),
+    "Developer": (SchemaMemberRole.DEVELOPER, SchemaPermissionLevel.EDIT),
+    "Reporter": (SchemaMemberRole.REPORTER, SchemaPermissionLevel.VIEW),
+}
 
 
 class KnowledgeShareService(UnifiedShareService):
@@ -58,6 +70,9 @@ class KnowledgeShareService(UnifiedShareService):
         2. Explicit shared access (ResourceMember)
         3. Organization membership (for organization knowledge bases)
         4. Team membership (for team knowledge bases)
+
+        Note: For group KBs, Restricted Analysts are denied access regardless of
+        explicit permissions (creator or ResourceMember grants).
         """
         logger.info(
             f"[_get_resource] Fetching KnowledgeBase: resource_id={resource_id}, user_id={user_id}"
@@ -83,6 +98,18 @@ class KnowledgeShareService(UnifiedShareService):
             f"[_get_resource] KnowledgeBase found: id={kb.id}, "
             f"kb.user_id={kb.user_id}, namespace={kb.namespace}"
         )
+
+        # For group knowledge bases, check Restricted Analyst status FIRST
+        # This check must run before creator/explicit-share checks to prevent bypass
+        if kb.namespace != "default" and not _is_organization_namespace(
+            db, kb.namespace
+        ):
+            if is_restricted_analyst(db, user_id, kb.namespace):
+                logger.warning(
+                    f"[_get_resource] User {user_id} is Restricted Analyst in group "
+                    f"'{kb.namespace}', blocking access to KB {resource_id}"
+                )
+                return None
 
         # Check if user is creator
         if kb.user_id == user_id:
@@ -231,6 +258,18 @@ class KnowledgeShareService(UnifiedShareService):
         if not kb:
             return False, None, None, False
 
+        # For group knowledge bases, check Restricted Analyst status FIRST
+        # This check must run before creator/explicit-share checks to prevent bypass
+        if kb.namespace != "default" and not _is_organization_namespace(
+            db, kb.namespace
+        ):
+            if is_restricted_analyst(db, user_id, kb.namespace):
+                logger.warning(
+                    f"[get_user_kb_permission] User {user_id} is Restricted Analyst in group "
+                    f"'{kb.namespace}', denying access to KB {knowledge_base_id}"
+                )
+                return False, None, None, False
+
         # Check if user is creator
         if kb.user_id == user_id:
             return True, ResourceRole.OWNER.value, PermissionLevel.MANAGE.value, True
@@ -261,6 +300,7 @@ class KnowledgeShareService(UnifiedShareService):
             if group_role is not None:
                 # Map group role to permission level
                 # Owner/Maintainer -> manage, Developer -> edit, Reporter -> view
+                # Use shared mapping constant
                 role_mapping = {
                     "Owner": (
                         ResourceRole.MAINTAINER.value,
@@ -414,9 +454,22 @@ class KnowledgeShareService(UnifiedShareService):
                 pending_request=None,
             )
 
+        # For group knowledge bases, check Restricted Analyst status FIRST
+        # This check must run before creator/explicit-share checks to prevent bypass
+        is_restricted = False
+        if kb.namespace != "default" and not _is_organization_namespace(
+            db, kb.namespace
+        ):
+            if is_restricted_analyst(db, user_id, kb.namespace):
+                logger.warning(
+                    f"[get_my_permission] User {user_id} is Restricted Analyst in group "
+                    f"'{kb.namespace}', denying access to KB {knowledge_base_id}"
+                )
+                is_restricted = True
+
         # Check if user is creator
         is_creator = kb.user_id == user_id
-        if is_creator:
+        if is_creator and not is_restricted:
             return MyKBPermissionResponse(
                 has_access=True,
                 role=SchemaMemberRole.OWNER,
@@ -441,7 +494,7 @@ class KnowledgeShareService(UnifiedShareService):
         explicit_role = None
         explicit_level = None
 
-        if explicit_perm:
+        if explicit_perm and not is_restricted:
             effective_role = explicit_perm.get_effective_role()
             if explicit_perm.status == MemberStatus.APPROVED.value:
                 has_explicit_access = True
@@ -462,28 +515,17 @@ class KnowledgeShareService(UnifiedShareService):
         group_level = None
         if _is_organization_namespace(db, kb.namespace):
             # Organization KB - all authenticated users have VIEW access
-            group_role = SchemaMemberRole.REPORTER
-            group_level = SchemaPermissionLevel.VIEW
+            # Unless they are Restricted Analysts
+            if not is_restricted:
+                group_role = SchemaMemberRole.REPORTER
+                group_level = SchemaPermissionLevel.VIEW
         elif kb.namespace != "default":
             team_role = get_effective_role_in_group(db, user_id, kb.namespace)
-            if team_role is not None:
-                role_mapping = {
-                    "Owner": (
-                        SchemaMemberRole.MAINTAINER,
-                        SchemaPermissionLevel.MANAGE,
-                    ),
-                    "Maintainer": (
-                        SchemaMemberRole.MAINTAINER,
-                        SchemaPermissionLevel.MANAGE,
-                    ),
-                    "Developer": (
-                        SchemaMemberRole.DEVELOPER,
-                        SchemaPermissionLevel.EDIT,
-                    ),
-                    "Reporter": (SchemaMemberRole.REPORTER, SchemaPermissionLevel.VIEW),
-                }
-                group_role, group_level = role_mapping.get(
-                    team_role, (SchemaMemberRole.REPORTER, SchemaPermissionLevel.VIEW)
+            if team_role is not None and not is_restricted:
+                # Use shared mapping constant
+                group_role, group_level = GROUP_ROLE_PERMISSION_MAP.get(
+                    team_role,
+                    (SchemaMemberRole.REPORTER, SchemaPermissionLevel.VIEW),
                 )
 
         # Determine final access level (higher of explicit vs group)
@@ -525,7 +567,7 @@ class KnowledgeShareService(UnifiedShareService):
                 has_access=False,
                 role=None,
                 permission_level=None,
-                is_creator=False,
+                is_creator=is_creator,  # Still report creator status even if restricted
                 pending_request=pending_request,
             )
 

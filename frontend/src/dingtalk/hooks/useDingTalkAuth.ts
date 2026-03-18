@@ -30,7 +30,7 @@ export function useDingTalkAuth() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const login = useCallback(async () => {
+  const login = useCallback(async (redirectUrl?: string) => {
     setLoading(true);
     setError(null);
 
@@ -48,12 +48,16 @@ export function useDingTalkAuth() {
       // Step 3: Store token
       setToken(data.access_token);
 
-      // Step 4: Redirect to chat or code based on user preference
-      const lastTab = getLastTab();
-      if (lastTab === 'code') {
-        router.replace(paths.code.getHref());
+      // Step 4: Redirect to specified URL or default based on user preference
+      if (redirectUrl) {
+        router.replace(redirectUrl);
       } else {
-        router.replace(paths.chat.getHref());
+        const lastTab = getLastTab();
+        if (lastTab === 'code') {
+          router.replace(paths.code.getHref());
+        } else {
+          router.replace(paths.chat.getHref());
+        }
       }
 
       return data.user;
