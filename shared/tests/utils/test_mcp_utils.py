@@ -136,3 +136,49 @@ def test_replace_with_none_task_data_returns_unchanged() -> None:
 
     # Placeholders should remain because task_data is None
     assert result["s"]["headers"]["X-User"] == "${{user.name}}"
+
+
+def test_replace_user_sina_mail_token_placeholder() -> None:
+    """Test that ${{user.sina_mail_token}} is resolved from user dict."""
+    mcp_servers = {
+        "mail-server": {
+            "type": "streamable-http",
+            "url": "https://mail-api.example.com/mcp",
+            "headers": {
+                "Authorization": "Bearer ${{user.sina_mail_token}}",
+            },
+        }
+    }
+    task_data = ExecutionRequest(
+        user={
+            "id": 1,
+            "name": "testuser",
+            "sina_mail_token": "my-decrypted-token",
+        },
+    )
+
+    replaced = replace_mcp_server_variables(mcp_servers, task_data)
+
+    assert (
+        replaced["mail-server"]["headers"]["Authorization"]
+        == "Bearer my-decrypted-token"
+    )
+
+
+def test_user_sina_mail_token_preserves_when_absent() -> None:
+    """Test that ${{user.sina_mail_token}} is preserved when not present in user dict."""
+    mcp_servers = {
+        "mail-server": {
+            "headers": {"Authorization": "Bearer ${{user.sina_mail_token}}"},
+        }
+    }
+    task_data = ExecutionRequest(
+        user={"id": 1, "name": "testuser"},
+    )
+
+    replaced = replace_mcp_server_variables(mcp_servers, task_data)
+
+    assert (
+        replaced["mail-server"]["headers"]["Authorization"]
+        == "Bearer ${{user.sina_mail_token}}"
+    )
