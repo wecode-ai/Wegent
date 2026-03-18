@@ -6,6 +6,7 @@
 
 import { useTranslation } from '@/hooks/useTranslation'
 import GitHubIntegration from './GitHubIntegration'
+import { EmailTokenSection } from '@wecode/components/settings/EmailTokenSection'
 
 export default function IntegrationsPage() {
   const { t } = useTranslation()
@@ -20,10 +21,8 @@ export default function IntegrationsPage() {
         <p className="text-sm text-text-muted mb-1">{t('common:integrations.description')}</p>
       </div>
 
-      {/* Git integration section */}
       <GitHubIntegration />
-
-      {/* Future: more integration sections here */}
+      <EmailTokenSection />
     </div>
   )
 }
