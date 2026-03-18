@@ -127,7 +127,7 @@ class CloudDeviceProvider(BaseDeviceProvider):
 
         # Generate server-side device_id (UUID) and device_name
         server_device_id = str(uuid.uuid4())
-        server_device_name = f"{user_name}-cloud-{server_device_id[:8]}"
+        server_device_name = f"{user_name}-cloud-{server_device_id.split('-')[-1]}"
 
         # Generate OpenClaw device_id (separate from executor, same VM)
         openclaw_device_id = ""
@@ -138,7 +138,9 @@ class CloudDeviceProvider(BaseDeviceProvider):
         openclaw_enabled = bool(nevis_settings.NEVIS_OPENCLAW_INSTALL_SCRIPT_URL)
         if openclaw_enabled:
             openclaw_device_id = str(uuid.uuid4())
-            openclaw_device_name = f"{user_name}-openclaw-{openclaw_device_id[:8]}"
+            openclaw_device_name = (
+                f"{user_name}-openclaw-{openclaw_device_id.split('-')[-1]}"
+            )
             try:
                 api_key = await get_or_create_apikey_async(user_name)
             except Exception as e:
