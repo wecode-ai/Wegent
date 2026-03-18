@@ -26,5 +26,20 @@
     "capability_executor": "Executor",
     "capability_openclaw": "OpenClaw",
     "machines_count": "台机器"
+  },
+  "mail_token": {
+    "title": "公司邮件",
+    "description": "配置公司邮件令牌以启用邮件相关功能",
+    "configured": "已配置",
+    "reconfigure": "重新配置",
+    "input_placeholder": "请输入从钉钉机器人获取的 token",
+    "input_hint": "从钉钉机器人（IT机器人），发送连接邮件的命令获取 token",
+    "save": "保存",
+    "saving": "保存中...",
+    "cancel": "取消",
+    "save_success": "邮件令牌配置成功",
+    "save_error": "邮件令牌配置失败",
+    "delete_success": "邮件令牌已删除",
+    "delete_error": "删除邮件令牌失败"
   }
 }

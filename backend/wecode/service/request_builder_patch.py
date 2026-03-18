@@ -12,6 +12,7 @@ correctly replaces the ${WECODE_USER_API_KEY} placeholder in model_config.api_ke
 Auto-applied on import.
 """
 
+import json
 import logging
 from functools import wraps
 from typing import Callable
@@ -23,6 +24,51 @@ from wecode.service.wecode_apikey_client import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_preferences(preferences) -> dict:
+    """Parse user.preferences to dict (handles str, dict, None)."""
+    if not preferences:
+        return {}
+    if isinstance(preferences, dict):
+        return preferences
+    if isinstance(preferences, str):
+        try:
+            return json.loads(preferences)
+        except (json.JSONDecodeError, TypeError):
+            return {}
+    return {}
+
+
+def _wrap_build_user_info(original_method: Callable) -> Callable:
+    """
+    Wrap _build_user_info to inject decrypted sina_mail.token into user dict.
+
+    The token is injected as user_info["sina_mail"]["token"] so that the
+    MCP placeholder ${{user.sina_mail.token}} resolves via dot-path traversal.
+    """
+
+    @wraps(original_method)
+    def wrapper(self, user, git_domain=None):
+        user_info = original_method(self, user, git_domain)
+        # Inject decrypted sina_mail.token from user preferences
+        prefs = _parse_preferences(user.preferences)
+        encrypted = prefs.get("sina_mail", {}).get("token")
+        if encrypted:
+            try:
+                from shared.utils.crypto import decrypt_sensitive_data
+
+                decrypted = decrypt_sensitive_data(encrypted)
+                if decrypted:
+                    user_info.setdefault("sina_mail", {})["token"] = decrypted
+            except Exception:
+                logger.warning(
+                    "[request_builder_patch] Failed to decrypt sina_mail.token"
+                )
+        return user_info
+
+    setattr(wrapper, "_wecode_user_info_patched", True)
+    return wrapper
 
 
 def _wrap_build_method(original_method: Callable) -> Callable:
@@ -117,6 +163,26 @@ def apply_patch() -> None:
         logger.error(
             f"[request_builder_patch] Failed to patch TaskRequestBuilder.build: {str(e)}"
         )
+
+    # Patch _build_user_info to inject sina_mail.token
+    original_build_user_info = getattr(TaskRequestBuilder, "_build_user_info", None)
+    if original_build_user_info and not getattr(
+        original_build_user_info, "_wecode_user_info_patched", False
+    ):
+        try:
+            logger.info(
+                "[request_builder_patch] Applying patch to TaskRequestBuilder._build_user_info"
+            )
+            TaskRequestBuilder._build_user_info = _wrap_build_user_info(
+                original_build_user_info
+            )
+            logger.info(
+                "[request_builder_patch] Successfully patched TaskRequestBuilder._build_user_info"
+            )
+        except Exception as e:
+            logger.error(
+                f"[request_builder_patch] Failed to patch _build_user_info: {str(e)}"
+            )
 
 
 # Auto-apply on import
