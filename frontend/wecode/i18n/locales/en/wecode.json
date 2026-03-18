@@ -28,7 +28,7 @@
     "machines_count": "machine(s)"
   },
   "mail_token": {
-    "title": "Company Mail Token",
+    "title": "Company Mail",
     "description": "Configure a company mail token to enable email-related features",
     "configured": "Configured",
     "reconfigure": "Reconfigure",

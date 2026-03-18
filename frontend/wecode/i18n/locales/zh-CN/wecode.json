@@ -28,7 +28,7 @@
     "machines_count": "台机器"
   },
   "mail_token": {
-    "title": "公司邮件令牌",
+    "title": "公司邮件",
     "description": "配置公司邮件令牌以启用邮件相关功能",
     "configured": "已配置",
     "reconfigure": "重新配置",
