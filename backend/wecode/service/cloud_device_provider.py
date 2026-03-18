@@ -127,7 +127,7 @@ class CloudDeviceProvider(BaseDeviceProvider):
 
         # Generate server-side device_id (UUID) and device_name
         server_device_id = str(uuid.uuid4())
-        server_device_name = f"{user_name}-cloud-{server_device_id.split('-')[-1]}"
+        server_device_name = f"{user_name}-executor-{server_device_id.split('-')[-1]}"
 
         # Generate OpenClaw device_id (separate from executor, same VM)
         openclaw_device_id = ""
