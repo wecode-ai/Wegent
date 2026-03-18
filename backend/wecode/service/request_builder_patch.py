@@ -53,7 +53,7 @@ def _wrap_build_user_info(original_method: Callable) -> Callable:
         user_info = original_method(self, user, git_domain)
         # Inject decrypted sina_mail.token from user preferences
         prefs = _parse_preferences(user.preferences)
-        encrypted = prefs.get("sina_mail", {}).get("token")
+        encrypted = (prefs.get("sina_mail") or {}).get("token")
         if encrypted:
             try:
                 from shared.utils.crypto import decrypt_sensitive_data
