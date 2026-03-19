@@ -130,7 +130,8 @@
     "restarting": "Restarting...",
     "success": "Upgrade successful",
     "error": "Upgrade error",
-    "skipped": "Already on latest version"
+    "skipped": "Already on latest version",
+    "unsupportedVersion": "Current version ({{current}}) does not support auto-upgrade, please delete and recreate the device"
   },
   "version": {
     "current": "Current Version",
