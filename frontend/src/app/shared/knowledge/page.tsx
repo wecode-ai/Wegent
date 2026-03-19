@@ -18,7 +18,7 @@ import { GithubStarButton } from '@/features/layout/GithubStarButton'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Spinner } from '@/components/ui/spinner'
 import type { User } from '@/types/api'
-import type { PublicKnowledgeBaseResponse, PermissionLevel } from '@/types/knowledge'
+import type { PublicKnowledgeBaseResponse, MemberRole } from '@/types/knowledge'
 import { InAppBrowserGuard } from '@/components/InAppBrowserGuard'
 import { detectInAppBrowser } from '@/utils/browserDetection'
 import '@/features/common/scrollbar.css'
@@ -38,7 +38,7 @@ function SharedKnowledgeContent() {
   const [error, setError] = useState<string | null>(null)
   const [currentUser, setCurrentUser] = useState<User | null>(null)
   const [showInAppBrowserGuard, setShowInAppBrowserGuard] = useState(false)
-  const [selectedLevel, setSelectedLevel] = useState<PermissionLevel>('view')
+  const [selectedRole, setSelectedRole] = useState<MemberRole>('Reporter')
   const [isApplying, setIsApplying] = useState(false)
   const [applyStatus, setApplyStatus] = useState<'idle' | 'pending' | 'success' | 'error'>('idle')
   const [applyError, setApplyError] = useState<string | null>(null)
@@ -131,7 +131,7 @@ function SharedKnowledgeContent() {
     try {
       const response = await knowledgePermissionApi.joinByLink({
         share_token: token,
-        requested_permission_level: selectedLevel,
+        requested_role: selectedRole,
       })
 
       if (response.status === 'approved') {
@@ -301,10 +301,18 @@ function SharedKnowledgeContent() {
               <div className="bg-muted rounded-lg p-4 text-sm">
                 <div className="flex justify-between mb-2">
                   <span className="text-text-muted">
-                    {t('knowledge:document.permission.permissionLevel')}:
+                    {t('knowledge:document.permission.role')}:
                   </span>
                   <span className="font-medium">
-                    {selectedLevel === 'view' ? t('view_permission') : t('edit_permission')}
+                    {selectedRole === 'Owner'
+                      ? t('knowledge:document.permission.role.Owner')
+                      : selectedRole === 'Maintainer'
+                        ? t('knowledge:document.permission.role.Maintainer')
+                        : selectedRole === 'Developer'
+                          ? t('knowledge:document.permission.role.Developer')
+                          : selectedRole === 'Reporter'
+                            ? t('knowledge:document.permission.role.Reporter')
+                            : t('knowledge:document.permission.role.RestrictedAnalyst')}
                   </span>
                 </div>
               </div>
@@ -407,50 +415,124 @@ function SharedKnowledgeContent() {
                 <div className="space-y-4">
                   <h2 className="text-lg font-semibold">{t('apply_permission')}</h2>
 
-                  {/* Permission Level Selection */}
+                  {/* Role Selection */}
                   <div className="space-y-3">
-                    <label className="text-sm font-medium">{t('select_permission')}</label>
                     <div className="space-y-2">
-                      {/* View Option */}
+                      {/* Owner Option */}
                       <label
                         className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
-                          selectedLevel === 'view'
+                          selectedRole === 'Owner'
                             ? 'border-primary bg-primary/5'
                             : 'border-border hover:border-primary/50'
                         }`}
                       >
                         <input
                           type="radio"
-                          name="permission"
-                          value="view"
-                          checked={selectedLevel === 'view'}
-                          onChange={() => setSelectedLevel('view')}
+                          name="role"
+                          value="Owner"
+                          checked={selectedRole === 'Owner'}
+                          onChange={() => setSelectedRole('Owner')}
                           className="mt-1"
                         />
                         <div>
-                          <div className="font-medium">{t('view_permission')}</div>
-                          <div className="text-sm text-text-muted">{t('view_permission_desc')}</div>
+                          <div className="font-medium">
+                            {t('knowledge:document.permission.role.Owner')}
+                          </div>
+                          <div className="text-sm text-text-muted">{t('owner_role_desc')}</div>
                         </div>
                       </label>
-                      {/* Edit Option */}
+                      {/* Maintainer Option */}
                       <label
                         className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
-                          selectedLevel === 'edit'
+                          selectedRole === 'Maintainer'
                             ? 'border-primary bg-primary/5'
                             : 'border-border hover:border-primary/50'
                         }`}
                       >
                         <input
                           type="radio"
-                          name="permission"
-                          value="edit"
-                          checked={selectedLevel === 'edit'}
-                          onChange={() => setSelectedLevel('edit')}
+                          name="role"
+                          value="Maintainer"
+                          checked={selectedRole === 'Maintainer'}
+                          onChange={() => setSelectedRole('Maintainer')}
                           className="mt-1"
                         />
                         <div>
-                          <div className="font-medium">{t('edit_permission')}</div>
-                          <div className="text-sm text-text-muted">{t('edit_permission_desc')}</div>
+                          <div className="font-medium">
+                            {t('knowledge:document.permission.role.Maintainer')}
+                          </div>
+                          <div className="text-sm text-text-muted">{t('maintainer_role_desc')}</div>
+                        </div>
+                      </label>
+                      {/* Developer Option */}
+                      <label
+                        className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+                          selectedRole === 'Developer'
+                            ? 'border-primary bg-primary/5'
+                            : 'border-border hover:border-primary/50'
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name="role"
+                          value="Developer"
+                          checked={selectedRole === 'Developer'}
+                          onChange={() => setSelectedRole('Developer')}
+                          className="mt-1"
+                        />
+                        <div>
+                          <div className="font-medium">
+                            {t('knowledge:document.permission.role.Developer')}
+                          </div>
+                          <div className="text-sm text-text-muted">{t('developer_role_desc')}</div>
+                        </div>
+                      </label>
+                      {/* Reporter Option */}
+                      <label
+                        className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+                          selectedRole === 'Reporter'
+                            ? 'border-primary bg-primary/5'
+                            : 'border-border hover:border-primary/50'
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name="role"
+                          value="Reporter"
+                          checked={selectedRole === 'Reporter'}
+                          onChange={() => setSelectedRole('Reporter')}
+                          className="mt-1"
+                        />
+                        <div>
+                          <div className="font-medium">
+                            {t('knowledge:document.permission.role.Reporter')}
+                          </div>
+                          <div className="text-sm text-text-muted">{t('reporter_role_desc')}</div>
+                        </div>
+                      </label>
+                      {/* RestrictedAnalyst Option */}
+                      <label
+                        className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+                          selectedRole === 'RestrictedAnalyst'
+                            ? 'border-primary bg-primary/5'
+                            : 'border-border hover:border-primary/50'
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name="role"
+                          value="RestrictedAnalyst"
+                          checked={selectedRole === 'RestrictedAnalyst'}
+                          onChange={() => setSelectedRole('RestrictedAnalyst')}
+                          className="mt-1"
+                        />
+                        <div>
+                          <div className="font-medium">
+                            {t('knowledge:document.permission.role.RestrictedAnalyst')}
+                          </div>
+                          <div className="text-sm text-text-muted">
+                            {t('restricted_analyst_role_desc')}
+                          </div>
                         </div>
                       </label>
                     </div>

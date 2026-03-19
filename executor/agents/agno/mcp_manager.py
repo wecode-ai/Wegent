@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-import json
 from datetime import timedelta
 from typing import Any, Dict, List, Optional
 
@@ -63,7 +62,9 @@ class MCPManager:
         try:
             # Handle dict format where keys are server names and values are server configs
             if isinstance(mcp_servers, dict):
-                logger.info(f"MCP Tools configured for servers: {mcp_servers}")
+                logger.info(
+                    "MCP Tools configured for servers: %s", list(mcp_servers.keys())
+                )
                 for server_name, server_config in mcp_servers.items():
                     # Skip if server_config is not a dict
                     if not isinstance(server_config, dict):
@@ -103,7 +104,11 @@ class MCPManager:
                 title_key="thinking.mcp_init_fail",
                 report_immediately=True,
                 details={
-                    "error_message": f"Failed to setup MCP tools. \nerror message: {str(e)}. \ntools: {json.dumps(mcp_servers, ensure_ascii=False)}"
+                    "error_message": (
+                        "Failed to setup MCP tools. \n"
+                        f"error message: {str(e)}. \n"
+                        f"servers: {list(mcp_servers.keys()) if isinstance(mcp_servers, dict) else 'default'}"
+                    )
                 },
             )
 

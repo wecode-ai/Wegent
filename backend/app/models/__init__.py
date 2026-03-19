@@ -17,8 +17,8 @@ from app.models.knowledge import KnowledgeDocument
 from app.models.namespace import Namespace
 from app.models.namespace_member import NamespaceMember
 from app.models.project import Project
-from app.models.resource_member import MemberStatus, ResourceMember
-from app.models.share_link import PermissionLevel, ResourceType, ShareLink
+from app.models.resource_member import MemberStatus, ResourceMember, ResourceRole
+from app.models.share_link import ResourceType, ShareLink
 from app.models.skill_binary import SkillBinary
 from app.models.subscription import BackgroundExecution
 from app.models.subscription_follow import (
@@ -35,6 +35,7 @@ from app.models.task import TaskResource
 # Import User last as it may have relationships to other models
 from app.models.user import User
 from app.models.wiki import WikiContent, WikiGeneration, WikiProject
+from app.schemas.namespace import GroupRole
 
 __all__ = [
     "User",
@@ -60,6 +61,7 @@ __all__ = [
     "ShareLink",
     "ResourceMember",
     "ResourceType",
-    "PermissionLevel",
+    "GroupRole",
+    "ResourceRole",
     "MemberStatus",
 ]

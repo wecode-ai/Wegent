@@ -23,10 +23,15 @@ from app.schemas.admin import (
 from app.schemas.subscription import NotificationChannelInfo
 from app.schemas.user import UserCreate, UserInDB, UserUpdate
 from app.services.kind import kind_service
+from app.services.mcp_provider_registry import (
+    get_mcp_provider,
+    get_mcp_provider_service,
+)
 from app.services.subscription.notification_service import (
     subscription_notification_service,
 )
 from app.services.user import user_service
+from app.services.user_mcp_service import user_mcp_service
 
 router = APIRouter()
 
@@ -38,6 +43,24 @@ class FeatureFlags(BaseModel):
     """System-level feature flags for the frontend"""
 
     memory_enabled: bool = False  # Whether long-term memory service is available
+
+
+class MCPProviderServiceConfigRequest(BaseModel):
+    """User-scoped MCP provider service configuration."""
+
+    enabled: bool = False
+    url: str = ""
+
+
+class MCPProviderServiceConfigResponse(BaseModel):
+    """Response model for an MCP provider service configuration."""
+
+    provider_id: str
+    service_id: str
+    server_name: str
+    detail_url: str
+    enabled: bool = False
+    url: str = ""
 
 
 @router.get("/features", response_model=FeatureFlags)
@@ -115,6 +138,105 @@ async def update_current_user_endpoint(
         return user
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@router.get(
+    "/me/mcps/providers/{provider_id}/services",
+    response_model=list[MCPProviderServiceConfigResponse],
+)
+async def list_mcp_provider_services(
+    provider_id: str,
+    current_user: User = Depends(security.get_current_user),
+):
+    """List MCP provider services merged with the current user's configuration."""
+    provider = get_mcp_provider(provider_id)
+    if not provider:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Unsupported MCP provider: {provider_id}",
+        )
+
+    return [
+        MCPProviderServiceConfigResponse(**service)
+        for service in user_mcp_service.list_provider_service_configs(
+            current_user.preferences, provider_id
+        )
+    ]
+
+
+@router.get(
+    "/me/mcps/providers/{provider_id}/services/{service_id}",
+    response_model=MCPProviderServiceConfigResponse,
+)
+async def get_mcp_provider_service_config(
+    provider_id: str,
+    service_id: str,
+    current_user: User = Depends(security.get_current_user),
+):
+    """Get the current user's MCP provider service configuration."""
+    service = get_mcp_provider_service(provider_id, service_id)
+    if not service:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Unsupported MCP provider service: {provider_id}/{service_id}",
+        )
+
+    config = user_mcp_service.get_provider_service_config(
+        current_user.preferences, provider_id, service_id
+    )
+    return MCPProviderServiceConfigResponse(
+        provider_id=provider_id, **service, **config
+    )
+
+
+@router.put(
+    "/me/mcps/providers/{provider_id}/services/{service_id}",
+    response_model=MCPProviderServiceConfigResponse,
+)
+async def update_mcp_provider_service_config(
+    provider_id: str,
+    service_id: str,
+    config: MCPProviderServiceConfigRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """Update the current user's MCP provider service configuration."""
+    service = get_mcp_provider_service(provider_id, service_id)
+    if not service:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Unsupported MCP provider service: {provider_id}/{service_id}",
+        )
+
+    url = config.url.strip()
+    if config.enabled and not url:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "url is required when MCP provider service "
+                f"'{provider_id}/{service_id}' is enabled"
+            ),
+        )
+
+    updated_preferences = user_mcp_service.set_provider_service_config(
+        current_user.preferences,
+        provider_id=provider_id,
+        service_id=service_id,
+        enabled=config.enabled,
+        url=url,
+    )
+    current_user.preferences = user_mcp_service.dump_preferences(updated_preferences)
+
+    db.add(current_user)
+    db.commit()
+    db.refresh(current_user)
+
+    updated_config = user_mcp_service.get_provider_service_config(
+        current_user.preferences, provider_id, service_id
+    )
+    return MCPProviderServiceConfigResponse(
+        provider_id=provider_id, **service, **updated_config
+    )
 
 
 @router.delete("/me/git-token/{git_domain:path}", response_model=UserInDB)

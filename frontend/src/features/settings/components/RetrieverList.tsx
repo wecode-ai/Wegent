@@ -33,12 +33,12 @@ import {
 } from '@/components/ui/alert-dialog'
 import { retrieverApis, UnifiedRetriever } from '@/apis/retrievers'
 import UnifiedAddButton from '@/components/common/UnifiedAddButton'
-import type { GroupRole } from '@/types/group'
+import type { BaseRole } from '@/types/base-role'
 
 interface RetrieverListProps {
   scope?: 'personal' | 'group' | 'all'
   groupName?: string
-  groupRoleMap?: Map<string, GroupRole>
+  groupRoleMap?: Map<string, BaseRole>
   onEditResource?: (namespace: string) => void
 }
 

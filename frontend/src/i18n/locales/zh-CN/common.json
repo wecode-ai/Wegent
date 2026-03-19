@@ -377,7 +377,7 @@
     "bind_mode": "绑定模式",
     "bind_mode_chat": "聊天",
     "bind_mode_code": "编码",
-    "bind_mode_task": "任务",
+    "bind_mode_task": "设备",
     "bind_mode_video": "视频",
     "bind_mode_image": "图片",
     "bind_mode_required": "请至少选择一个绑定模式",
@@ -409,6 +409,49 @@
     "delete": "删除",
     "no_tokens": "没有配置 Git 令牌",
     "new_token": "新建令牌"
+  },
+  "dingtalk": {
+    "loading": "加载钉钉配置中...",
+    "url_label": "MCP URL",
+    "url_placeholder": "请粘贴 StreamableHttp URL",
+    "url_hint": "请打开钉钉 MCP 页面，点击“获取MCP Server配置”按钮，然后复制页面中的“StreamableHttp URL”并粘贴到这里，不需要粘贴整段 JSON 配置。该 URL 会按用户级敏感凭据加密存储。",
+    "open_link": "获取钉钉 URL",
+    "save": "保存",
+    "saving": "保存中",
+    "load_failed": "加载钉钉配置失败",
+    "modal": {
+      "title": "配置钉钉 MCP",
+      "description": "当前会话还没有可用的 {{service}} MCP。请先获取 StreamableHttp URL 并保存。",
+      "steps_intro": "请按以下步骤完成配置：",
+      "step_open_home": "打开钉钉 MCP 页面",
+      "step_choose_service": "选择“{{service}}”相关的 MCP 服务",
+      "step_get_config": "点击“获取MCP Server配置”",
+      "step_confirm": "如有弹窗，确认开通",
+      "step_copy_url": "复制其中的 StreamableHttp URL",
+      "open_home": "打开钉钉 MCP 页面",
+      "save": "保存并启用",
+      "save_success": "钉钉 MCP 已保存并启用"
+    },
+    "services": {
+      "docs": {
+        "title": "钉钉文档",
+        "description": "为默认智能体启用钉钉文档和表格 MCP 能力。",
+        "default_name": "钉钉文档",
+        "enable_label": "启用钉钉文档 MCP",
+        "enable_hint": "启用后，Wegent 会将你的钉钉文档 MCP 自动注入到支持的智能体中。",
+        "save_success": "钉钉文档配置已保存",
+        "save_failed": "保存钉钉文档配置失败"
+      },
+      "ai_table": {
+        "title": "钉钉AI表格",
+        "description": "为默认智能体启用钉钉AI表格 MCP 能力。",
+        "default_name": "钉钉AI表格",
+        "enable_label": "启用钉钉AI表格 MCP",
+        "enable_hint": "启用后，Wegent 会将你的钉钉AI表格 MCP 自动注入到支持的智能体中。",
+        "save_success": "钉钉AI表格配置已保存",
+        "save_failed": "保存钉钉AI表格配置失败"
+      }
+    }
   },
   "auth": {
     "login_title": "登录 Wegent AI",

@@ -17,8 +17,13 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.kind import Kind
-from app.models.resource_member import EPOCH_TIME, MemberStatus, ResourceMember
-from app.models.share_link import PermissionLevel, ResourceType
+from app.models.resource_member import (
+    EPOCH_TIME,
+    MemberStatus,
+    ResourceMember,
+    ResourceRole,
+)
+from app.models.share_link import ResourceType
 from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.task_member import MemberStatus as SchemaMemberStatus
@@ -265,9 +270,9 @@ class TaskMemberService:
             existing.invited_by_user_id = invited_by
             existing.requested_at = datetime.utcnow()
             existing.updated_at = datetime.utcnow()
-            existing.permission_level = (
-                PermissionLevel.MANAGE
-            )  # Group chat members get manage permission
+            existing.role = (
+                ResourceRole.Maintainer.value
+            )  # Group chat members get maintainer role
             # Clear stale review metadata from previous rejection
             existing.reviewed_by_user_id = 0
             existing.reviewed_at = EPOCH_TIME
@@ -286,7 +291,7 @@ class TaskMemberService:
             resource_type=ResourceType.TASK,
             resource_id=task_id,
             user_id=user_id,
-            permission_level=PermissionLevel.MANAGE,  # Group chat members get manage permission
+            role=ResourceRole.Maintainer.value,  # Group chat members get maintainer role
             status=MemberStatus.APPROVED,
             invited_by_user_id=invited_by,
             share_link_id=0,

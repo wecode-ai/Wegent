@@ -20,6 +20,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { useKnowledgePermissions } from '../hooks/useKnowledgePermissions'
 import { AddUserDialog } from './add-user-dialog'
 import type { MemberRole, PendingPermissionInfo, PermissionUserInfo } from '@/types/knowledge'
+import { ASSIGNABLE_ROLES } from '@/types/base-role'
 
 interface PermissionManagementTabProps {
   kbId: number
@@ -56,7 +57,6 @@ export function PermissionManagementTab({ kbId }: PermissionManagementTabProps) 
         const additions: Record<number, MemberRole> = {}
         permissions.pending.forEach(p => {
           if (!(p.id in prev)) {
-            // Use role if available, otherwise fallback to permission_level
             additions[p.id] = p.role || 'Reporter'
           }
         })
@@ -126,7 +126,8 @@ export function PermissionManagementTab({ kbId }: PermissionManagementTabProps) 
     (permissions?.approved.Owner?.length || 0) +
     (permissions?.approved.Maintainer?.length || 0) +
     (permissions?.approved.Developer?.length || 0) +
-    (permissions?.approved.Reporter?.length || 0)
+    (permissions?.approved.Reporter?.length || 0) +
+    (permissions?.approved.RestrictedAnalyst?.length || 0)
 
   return (
     <div className="space-y-6 p-4">
@@ -184,7 +185,7 @@ export function PermissionManagementTab({ kbId }: PermissionManagementTabProps) 
                     {t('document.permission.requesting')}:{' '}
                     {permission.role
                       ? t(`document.permission.role.${permission.role}`)
-                      : permission.permission_level || 'view'}
+                      : t('document.permission.role.Reporter')}
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
@@ -198,15 +199,11 @@ export function PermissionManagementTab({ kbId }: PermissionManagementTabProps) 
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="Maintainer">
-                        {t('document.permission.role.Maintainer')}
-                      </SelectItem>
-                      <SelectItem value="Developer">
-                        {t('document.permission.role.Developer')}
-                      </SelectItem>
-                      <SelectItem value="Reporter">
-                        {t('document.permission.role.Reporter')}
-                      </SelectItem>
+                      {ASSIGNABLE_ROLES.map(role => (
+                        <SelectItem key={role} value={role}>
+                          {t(`document.permission.role.${role}`)}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                   <Button
@@ -316,6 +313,22 @@ export function PermissionManagementTab({ kbId }: PermissionManagementTabProps) 
                 t={t}
               />
             )}
+            {/* RestrictedAnalyst permissions */}
+            {(permissions?.approved.RestrictedAnalyst?.length || 0) > 0 && (
+              <PermissionGroup
+                title={t('document.permission.role.RestrictedAnalyst')}
+                users={permissions!.approved.RestrictedAnalyst}
+                editingId={editingId}
+                editingRole={editingRole}
+                setEditingRole={setEditingRole}
+                onStartEditing={startEditing}
+                onCancelEditing={cancelEditing}
+                onUpdateRole={handleUpdateRole}
+                onDelete={handleDelete}
+                loading={loading}
+                t={t}
+              />
+            )}
           </div>
         )}
       </Card>
@@ -381,15 +394,11 @@ function PermissionGroup({
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="Maintainer">
-                      {t('document.permission.role.Maintainer')}
-                    </SelectItem>
-                    <SelectItem value="Developer">
-                      {t('document.permission.role.Developer')}
-                    </SelectItem>
-                    <SelectItem value="Reporter">
-                      {t('document.permission.role.Reporter')}
-                    </SelectItem>
+                    {ASSIGNABLE_ROLES.map(role => (
+                      <SelectItem key={role} value={role}>
+                        {t(`document.permission.role.${role}`)}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
                 <Button

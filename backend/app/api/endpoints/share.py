@@ -25,7 +25,6 @@ from app.schemas.share import (
     MemberListResponse,
     MyKBPermissionResponse,
     PendingRequestListResponse,
-    PermissionLevel,
     PublicKnowledgeBaseResponse,
     ResourceMemberCreate,
     ResourceMemberResponse,

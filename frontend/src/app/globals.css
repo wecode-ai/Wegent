@@ -144,6 +144,16 @@ body {
     text-wrap: balance;
   }
 
+  /* Scrollbar gutter - reserves space for scrollbar to prevent layout shift on Windows */
+  .scrollbar-gutter-stable {
+    scrollbar-gutter: stable;
+  }
+
+  /* Firefox thin scrollbar */
+  .scrollbar-thin {
+    scrollbar-width: thin;
+  }
+
   /* Smart height that works on both mobile and desktop */
   .smart-h-screen {
     height: min(100vh, 100dvh);

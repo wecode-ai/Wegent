@@ -4,15 +4,54 @@
 
 /**
  * Modal handlers for wegent://modal/* scheme URLs
- * Currently no modal schemes are supported
  */
+
+import { registerScheme } from './registry'
+import type { SchemeHandlerContext } from './types'
 
 /**
  * Initializes modal mappings
  * This should be called once during app initialization
  */
 export function initializeModalMappings(): void {
-  // No modal schemes currently supported
-  // Modal selectors (model, team, repository) are part of the page UI
-  // and cannot be programmatically opened via scheme URLs
+  registerScheme('modal-mcp-provider-config', {
+    pattern: 'wegent://modal/mcp-provider-config',
+    handler: (context: SchemeHandlerContext) => {
+      const event = new CustomEvent('wegent:open-dialog', {
+        detail: {
+          type: 'mcp-provider-config',
+          params: context.parsed.params,
+        },
+      })
+      window.dispatchEvent(event)
+    },
+    requireAuth: true,
+    description: 'Open MCP provider configuration dialog',
+    examples: [
+      'wegent://modal/mcp-provider-config?provider=dingtalk&service=docs',
+      'wegent://modal/mcp-provider-config?provider=dingtalk&service=ai_table',
+    ],
+  })
+
+  registerScheme('modal-dingtalk-mcp-config', {
+    pattern: 'wegent://modal/dingtalk-mcp-config',
+    handler: (context: SchemeHandlerContext) => {
+      const event = new CustomEvent('wegent:open-dialog', {
+        detail: {
+          type: 'mcp-provider-config',
+          params: {
+            provider: 'dingtalk',
+            ...context.parsed.params,
+          },
+        },
+      })
+      window.dispatchEvent(event)
+    },
+    requireAuth: true,
+    description: 'Open DingTalk MCP configuration dialog',
+    examples: [
+      'wegent://modal/dingtalk-mcp-config',
+      'wegent://modal/dingtalk-mcp-config?service=docs',
+    ],
+  })
 }
