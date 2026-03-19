@@ -33,7 +33,7 @@ export interface DeviceCardProps {
   onSetDefault: (device: DeviceInfo) => void
   onDelete: (device: DeviceInfo) => void
   onCancelTask: (taskId: number) => Promise<void>
-  onUpgrade?: (deviceId: string) => void
+  onUpgrade?: (device: DeviceInfo) => void
   isUpgrading?: boolean
   upgradeStatus?: DeviceUpgradeState
 }
@@ -111,7 +111,7 @@ export function DeviceCard({
                   executorVersion={device.executor_version}
                   latestVersion={device.latest_version}
                   updateAvailable={device.update_available}
-                  onUpgrade={device.update_available && device.status === 'online' && !isUpgrading ? () => onUpgrade?.(device.device_id) : undefined}
+                  onUpgrade={device.update_available && device.status === 'online' && !isUpgrading ? () => onUpgrade?.(device) : undefined}
                   isUpgrading={isUpgrading}
                 />
               )}

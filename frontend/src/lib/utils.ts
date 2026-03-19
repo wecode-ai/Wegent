@@ -42,3 +42,39 @@ export function formatUTCDate(dateStr: string | null | undefined, fallback: stri
   if (!date || isNaN(date.getTime())) return fallback
   return date.toLocaleString()
 }
+
+/**
+ * Compare two semantic version strings.
+ * Returns true if version >= targetVersion.
+ * Supports versions like "1.6.5", "1.6.5-beta", etc.
+ *
+ * @param version - Current version string
+ * @param targetVersion - Minimum required version string
+ * @returns True if version is at least targetVersion, false if invalid
+ */
+export function isVersionAtLeast(version: string, targetVersion: string): boolean {
+  const parseVersion = (v: string): number[] | null => {
+    // Remove any pre-release suffix (e.g., "-beta", "-rc1")
+    const baseVersion = v.split('-')[0]
+    const parts = baseVersion.split('.').map(Number)
+    // Validate all parts are valid numbers
+    if (parts.some(isNaN) || parts.length === 0) {
+      return null
+    }
+    return parts
+  }
+
+  const v1 = parseVersion(version)
+  const v2 = parseVersion(targetVersion)
+
+  // Return false if either version is invalid
+  if (!v1 || !v2) return false
+
+  for (let i = 0; i < Math.max(v1.length, v2.length); i++) {
+    const num1 = v1[i] || 0
+    const num2 = v2[i] || 0
+    if (num1 > num2) return true
+    if (num1 < num2) return false
+  }
+  return true
+}
