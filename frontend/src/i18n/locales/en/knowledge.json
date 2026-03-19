@@ -44,6 +44,19 @@
       "createdDesc": "Click the button above to create your first knowledge base",
       "sharedDesc": "Knowledge bases shared by other users will appear here"
     },
+    "tree": {
+      "myKnowledge": "My Knowledge",
+      "groupKnowledge": "Group Knowledge",
+      "orgKnowledge": "Organization Knowledge",
+      "searchPlaceholder": "Search knowledge bases...",
+      "emptyState": "Select a knowledge base from the left panel",
+      "emptyStateHint": "Browse and select a knowledge base to view its details",
+      "noResults": "No matching knowledge bases found",
+      "collapseTree": "Collapse tree",
+      "expandTree": "Expand tree",
+      "docCount": "{{count}} docs",
+      "loadingKbs": "Loading knowledge bases..."
+    },
     "accessDenied": {
       "title": "Access Denied",
       "description": "You don't have permission to access this knowledge base. Please contact the knowledge base creator or administrator if you have questions.",
