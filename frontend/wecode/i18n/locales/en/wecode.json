@@ -41,7 +41,7 @@
     "save_error": "Failed to configure mail token",
     "delete_success": "Mail token deleted",
     "delete_error": "Failed to delete mail token",
-    "apply": "Apply for Mail Token",
+    "apply": "Bind Company Mailbox",
     "applying": "Applying...",
     "apply_hint": "Click the button to automatically apply for a company mail token",
     "apply_success": "Mail token applied successfully, please save",
