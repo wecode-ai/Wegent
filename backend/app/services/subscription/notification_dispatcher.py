@@ -97,7 +97,9 @@ def _convert_attachment_links_to_public(message: str) -> str:
             return build_download_notification_url(
                 token=token,
                 frontend_url=frontend_url,
-                notification_url=notification_url if notification_url != frontend_url else None,
+                notification_url=(
+                    notification_url if notification_url != frontend_url else None
+                ),
             )
         except Exception as e:
             logger.warning(
@@ -1209,7 +1211,9 @@ class SubscriptionNotificationDispatcher:
 
         frontend_url = settings.FRONTEND_URL.rstrip("/")
         # Use TASK_NOTIFICATION_URL as external URL for jump page (if configured)
-        notification_url = getattr(settings, "TASK_NOTIFICATION_URL", "") or frontend_url
+        notification_url = (
+            getattr(settings, "TASK_NOTIFICATION_URL", "") or frontend_url
+        )
 
         # Find all attachment URLs and replace with public share URLs
         def replace_url(match: re.Match) -> str:
@@ -1224,7 +1228,9 @@ class SubscriptionNotificationDispatcher:
                 return build_download_notification_url(
                     token=token,
                     frontend_url=frontend_url,
-                    notification_url=notification_url if notification_url != frontend_url else None,
+                    notification_url=(
+                        notification_url if notification_url != frontend_url else None
+                    ),
                 )
             except Exception as e:
                 logger.warning(

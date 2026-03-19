@@ -36,9 +36,16 @@ class GitLabProvider(GitRepoProvider):
         return f"{self.base_url}/api/v4/projects/{project_path}"
 
     def get_api_headers(self, auth: RepoAuthInfo) -> Dict[str, str]:
-        """Get API headers for GitLab authentication."""
+        """
+        Get API headers for GitLab authentication.
+
+        Send both Bearer and Private-Token headers to support:
+        - OAuth tokens (Authorization: Bearer)
+        - Personal/Project access tokens (PRIVATE-TOKEN)
+        """
         headers = {}
         if auth and auth.password:
+            headers["Authorization"] = f"Bearer {auth.password}"
             headers["PRIVATE-TOKEN"] = auth.password
         return headers
 
@@ -47,12 +54,23 @@ class GitLabProvider(GitRepoProvider):
         return None
 
     def get_zip_headers(self, auth: RepoAuthInfo) -> Dict[str, str]:
-        """Get headers for ZIP download authentication (GitLab uses PRIVATE-TOKEN header)."""
+        """Get headers for ZIP download authentication on GitLab."""
         headers = {}
         if auth and auth.password:
+            headers["Authorization"] = f"Bearer {auth.password}"
             headers["PRIVATE-TOKEN"] = auth.password
         return headers
 
     def get_zip_download_url(self, owner: str, repo: str, branch: str) -> str:
-        """Get the URL to download the repository as a ZIP file."""
-        return f"{self.base_url}/{owner}/{repo}/-/archive/{branch}/{repo}-{branch}.zip"
+        """
+        Get the URL to download the repository as a ZIP file.
+
+        Use GitLab API archive endpoint instead of web endpoint (`/-/archive/...`),
+        because API token headers are reliably supported there.
+        """
+        project_path = quote(f"{owner}/{repo}", safe="")
+        encoded_branch = quote(branch, safe="")
+        return (
+            f"{self.base_url}/api/v4/projects/{project_path}/repository/archive.zip"
+            f"?sha={encoded_branch}"
+        )
