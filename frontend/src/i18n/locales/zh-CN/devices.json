@@ -80,11 +80,6 @@
   "token_expiry_hint": "认证 Token 有效期为 7 天，过期后可重新执行上述启动命令刷新",
   "copy_success": "已复制到剪贴板",
   "copy_failed": "复制失败",
-  "version": {
-    "current": "当前版本",
-    "latest": "最新版本",
-    "updateAvailable": "有新版本可用"
-  },
   "add_device": "添加设备",
   "hide_guide": "收起指南",
   "auth_mode_token": "会话 Token",
@@ -121,5 +116,26 @@
   "cloud_coming_soon_title": "云端设备即将推出",
   "cloud_coming_soon_description": "云端设备支持正在积极开发中，敬请期待！",
   "openclaw_badge": "🦞 OpenClaw",
-  "got_it": "知道了"
+  "got_it": "知道了",
+  "actions": {
+    "upgrade": "升级"
+  },
+  "upgrade": {
+    "started": "升级已开始",
+    "failed": "升级失败",
+    "inProgress": "升级中...",
+    "checking": "检查更新中...",
+    "downloading": "下载中...",
+    "installing": "安装中...",
+    "restarting": "重启中...",
+    "success": "升级成功",
+    "error": "升级出错",
+    "skipped": "已是最新版本"
+  },
+  "version": {
+    "current": "当前版本",
+    "latest": "最新版本",
+    "updateAvailable": "有新版本可用",
+    "clickToUpgrade": "点击升级"
+  }
 }

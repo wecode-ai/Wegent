@@ -100,6 +100,62 @@ class LoggingConfig:
 
 
 @dataclass
+class UpdateConfig:
+    """Update source configuration.
+
+    Simple configuration:
+    - No registry: Use GitHub Releases (default, public)
+    - Has registry: Use Registry API (for private deployments)
+    """
+
+    registry: str = ""  # Registry URL (e.g., "https://example.com/ai-tool-box")
+    registry_token: str = ""  # Optional auth token for registry
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary."""
+        return {
+            "registry": self.registry,
+            "registry_token": self.registry_token,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "UpdateConfig":
+        """Create from dictionary.
+
+        Backward compatible: reads old field names 'url'/'token' if new fields not present.
+        """
+        # Check for new field names first, fall back to old names for backward compatibility
+        registry = data.get("registry", "")
+        if not registry and "url" in data:
+            registry = data.get("url", "")
+
+        registry_token = data.get("registry_token", "")
+        if not registry_token and "token" in data:
+            registry_token = data.get("token", "")
+
+        return cls(
+            registry=registry,
+            registry_token=registry_token,
+        )
+
+    def is_registry(self) -> bool:
+        """Check if registry update source is configured."""
+        # Check config field first
+        if self.registry:
+            return True
+        # Check environment variables
+        return bool(os.environ.get("REGISTRY"))
+
+    def get_registry_url(self) -> Optional[str]:
+        """Get registry URL from config or environment."""
+        return self.registry or os.environ.get("REGISTRY") or None
+
+    def get_token(self) -> Optional[str]:
+        """Get auth token from config or environment."""
+        return self.registry_token or os.environ.get("REGISTRY_TOKEN") or None
+
+
+@dataclass
 class DeviceConfig:
     """Device configuration for executor.
 
@@ -134,6 +190,9 @@ class DeviceConfig:
     # Logging settings
     logging: LoggingConfig = field(default_factory=LoggingConfig)
 
+    # Update settings
+    update: UpdateConfig = field(default_factory=UpdateConfig)
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return {
@@ -146,6 +205,7 @@ class DeviceConfig:
             "max_concurrent_tasks": self.max_concurrent_tasks,
             "connection": self.connection.to_dict(),
             "logging": self.logging.to_dict(),
+            "update": self.update.to_dict(),
         }
 
     @classmethod
@@ -153,6 +213,7 @@ class DeviceConfig:
         """Create from dictionary."""
         connection_data = data.get("connection", {})
         logging_data = data.get("logging", {})
+        update_data = data.get("update", {})
 
         return cls(
             mode=data.get("mode", "local"),
@@ -164,6 +225,7 @@ class DeviceConfig:
             max_concurrent_tasks=data.get("max_concurrent_tasks", 5),
             connection=ConnectionConfig.from_dict(connection_data),
             logging=LoggingConfig.from_dict(logging_data),
+            update=UpdateConfig.from_dict(update_data),
         )
 
 
@@ -304,6 +366,20 @@ def _apply_env_overrides(config: DeviceConfig) -> tuple[DeviceConfig, bool]:
     # Logging overrides (don't save, just override)
     if os.environ.get("LOG_LEVEL"):
         config.logging.level = os.environ["LOG_LEVEL"].lower()
+
+    # Update source overrides (REGISTRY and REGISTRY_TOKEN)
+    if os.environ.get("REGISTRY"):
+        env_value = os.environ["REGISTRY"]
+        if not config.update.registry:
+            should_save = True
+        config.update.registry = env_value
+        logger.info(f"REGISTRY override: using registry at '{env_value}'")
+
+    if os.environ.get("REGISTRY_TOKEN"):
+        env_value = os.environ["REGISTRY_TOKEN"]
+        if not config.update.registry_token:
+            should_save = True
+        config.update.registry_token = env_value
 
     return config, should_save
 

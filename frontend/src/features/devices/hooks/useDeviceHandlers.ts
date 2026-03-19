@@ -17,7 +17,7 @@ import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContex
 import { useTaskContext } from '@/features/tasks/contexts/taskContext'
 import { useSocket } from '@/contexts/SocketContext'
 import { useDevices } from '@/contexts/DeviceContext'
-import { DeviceInfo } from '@/apis/devices'
+import { DeviceInfo, deviceApis } from '@/apis/devices'
 import { useTranslation } from '@/hooks/useTranslation'
 
 /**
@@ -28,6 +28,7 @@ export interface DeviceHandlers {
   handleSetDefault: (device: DeviceInfo) => Promise<void>
   handleDeleteDevice: (device: DeviceInfo) => Promise<void>
   handleCancelTask: (taskId: number) => Promise<void>
+  handleUpgradeDevice: (deviceId: string) => Promise<void>
 }
 
 /**
@@ -127,10 +128,29 @@ export function useDeviceHandlers(): DeviceHandlers {
     [closeTaskSession, refreshDevices, t]
   )
 
+  /**
+   * Handle triggering a device upgrade.
+   *
+   * @param deviceId - Device unique identifier
+   */
+  const handleUpgradeDevice = useCallback(
+    async (deviceId: string) => {
+      try {
+        await deviceApis.upgradeDevice(deviceId, { auto_confirm: true })
+        toast.success(t('upgrade.started'))
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : t('upgrade.failed')
+        toast.error(errorMessage)
+      }
+    },
+    [t]
+  )
+
   return {
     handleStartTask,
     handleSetDefault,
     handleDeleteDevice,
     handleCancelTask,
+    handleUpgradeDevice,
   }
 }

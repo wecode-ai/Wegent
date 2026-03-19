@@ -37,10 +37,12 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 import { cloudDeviceApis } from '@wecode/apis/cloud-devices'
+import { isVersionAtLeast } from '@wecode/lib/version'
 import type { DeviceInfo } from '@/apis/devices'
 import { SlotIndicator } from '@/features/devices/components/SlotIndicator'
 import { VersionBadge } from '@/features/devices/components/VersionBadge'
 import { RunningTasksList } from '@/features/devices/components/RunningTasksList'
+import type { DeviceUpgradeState } from '@/contexts/DeviceContext'
 
 /**
  * Group cloud devices by sandboxId into machine groups.
@@ -71,6 +73,9 @@ interface CloudDeviceSectionProps {
   onSetDefault: (device: DeviceInfo) => Promise<void>
   onStartTask: (deviceId: string) => void
   onCancelTask: (taskId: number) => Promise<void>
+  onUpgradeDevice?: (deviceId: string) => void
+  isDeviceUpgrading?: (deviceId: string) => boolean
+  getUpgradeStatus?: (deviceId: string) => DeviceUpgradeState | undefined
 }
 
 export function CloudDeviceSection({
@@ -80,6 +85,9 @@ export function CloudDeviceSection({
   onSetDefault,
   onStartTask,
   onCancelTask,
+  onUpgradeDevice,
+  isDeviceUpgrading,
+  getUpgradeStatus,
 }: CloudDeviceSectionProps) {
   const { t } = useTranslation('wecode')
   const [deviceToDelete, setDeviceToDelete] = useState<DeviceInfo | null>(null)
@@ -165,6 +173,9 @@ export function CloudDeviceSection({
               onSetDefault={onSetDefault}
               onDelete={device => setDeviceToDelete(device)}
               onCancelTask={onCancelTask}
+              onUpgradeDevice={onUpgradeDevice}
+              isDeviceUpgrading={isDeviceUpgrading}
+              getUpgradeStatus={getUpgradeStatus}
               t={t}
             />
           ))}
@@ -205,6 +216,9 @@ interface CloudMachineCardProps {
   onSetDefault: (device: DeviceInfo) => Promise<void>
   onDelete: (device: DeviceInfo) => void
   onCancelTask: (taskId: number) => Promise<void>
+  onUpgradeDevice?: (deviceId: string) => void
+  isDeviceUpgrading?: (deviceId: string) => boolean
+  getUpgradeStatus?: (deviceId: string) => DeviceUpgradeState | undefined
   t: (key: string, options?: Record<string, unknown>) => string
 }
 
@@ -212,16 +226,41 @@ interface CloudMachineCardProps {
  * Card representing a single cloud machine (VM).
  * May contain multiple devices (e.g., executor + OpenClaw).
  */
+// Minimum version required for auto-upgrade
+const MIN_UPGRADE_VERSION = '1.6.5'
+
 function CloudMachineCard({
   devices,
   onStartTask,
   onSetDefault,
   onDelete,
   onCancelTask,
+  onUpgradeDevice,
+  isDeviceUpgrading,
+  getUpgradeStatus,
   t,
 }: CloudMachineCardProps) {
   const primaryDevice = getPrimaryDevice(devices)
   const isAnyOnline = devices.some(d => d.status === 'online' || d.status === 'busy')
+
+  // Get upgrade status
+  const isUpgrading = isDeviceUpgrading?.(primaryDevice.device_id) ?? false
+  const upgradeStatus = getUpgradeStatus?.(primaryDevice.device_id)
+
+  // Check if device supports auto-upgrade (>= 1.6.5)
+  const supportsAutoUpgrade = useMemo(() => {
+    if (!primaryDevice.executor_version) return false
+    return isVersionAtLeast(primaryDevice.executor_version, MIN_UPGRADE_VERSION)
+  }, [primaryDevice.executor_version])
+
+  // Handle upgrade with version check
+  const handleUpgrade = useCallback(() => {
+    if (!supportsAutoUpgrade) {
+      toast.error(t('upgrade.cloud_version_not_supported'))
+      return
+    }
+    onUpgradeDevice?.(primaryDevice.device_id)
+  }, [supportsAutoUpgrade, onUpgradeDevice, primaryDevice.device_id, t])
 
   const getMachineStatusColor = () => {
     if (devices.some(d => d.status === 'online')) return 'bg-green-500'
@@ -268,6 +307,14 @@ function CloudMachineCard({
                   executorVersion={primaryDevice.executor_version}
                   latestVersion={primaryDevice.latest_version}
                   updateAvailable={primaryDevice.update_available}
+                  onUpgrade={
+                    primaryDevice.update_available &&
+                    primaryDevice.status === 'online' &&
+                    !isUpgrading
+                      ? handleUpgrade
+                      : undefined
+                  }
+                  isUpgrading={isUpgrading}
                 />
               )}
             </div>
@@ -278,6 +325,13 @@ function CloudMachineCard({
             <span className={cn('w-2 h-2 rounded-full', getMachineStatusColor())} />
             <span className="text-sm text-text-secondary">{getMachineStatusText()}</span>
           </div>
+          {/* Upgrade progress */}
+          {isUpgrading && (
+            <div className="flex items-center gap-2 text-sm text-text-secondary">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              <span>{upgradeStatus?.message || t('devices:upgrade.inProgress')}</span>
+            </div>
+          )}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button
