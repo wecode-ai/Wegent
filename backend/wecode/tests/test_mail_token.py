@@ -27,6 +27,7 @@ class TestMailTokenService:
     def mock_user(self):
         """Create a mock user with empty preferences."""
         user = MagicMock()
+        user.id = 1
         user.user_name = "testuser"
         user.preferences = json.dumps({})
         return user
@@ -35,6 +36,7 @@ class TestMailTokenService:
     def mock_user_with_token(self):
         """Create a mock user with an existing mail token."""
         user = MagicMock()
+        user.id = 1
         user.user_name = "testuser"
         user.preferences = json.dumps({"sina_mail": {"token": "encrypted_token_value"}})
         return user
@@ -88,7 +90,7 @@ class TestMailTokenService:
 
         # Verify KMS was called correctly
         mock_client.post.assert_called_once_with(
-            MailTokenService.KMS_URL,
+            MailTokenService.KMS_TOKEN_URL,
             json={
                 "client_token": "client_token_123",
                 "user_id": "testuser",
@@ -161,6 +163,105 @@ class TestMailTokenService:
         """Test deleting when no token exists is a no-op."""
         await service.delete(mock_db, mock_user)
         mock_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    @patch("wecode.service.mail_token_service.httpx.AsyncClient")
+    async def test_apply_token_a_success(self, mock_client_cls, service, mock_user):
+        """Test successful token_a application."""
+        # Mock httpx response
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"success": True, "token_a": "test_token_a"}
+        mock_response.raise_for_status = MagicMock()
+
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_response
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client_cls.return_value = mock_client
+
+        success, token_a, message = await service.apply_token_a(
+            mock_user, '{"source": "test"}'
+        )
+
+        assert success is True
+        assert token_a == "test_token_a"
+        assert message is None
+
+        # Verify KMS was called correctly
+        mock_client.post.assert_called_once()
+        call_args = mock_client.post.call_args
+        assert call_args[0][0] == MailTokenService.KMS_TOKEN_A_URL
+        assert "jwt_token" in call_args[1]["json"]
+        assert call_args[1]["json"]["client-data"] == '{"source": "test"}'
+
+    @pytest.mark.asyncio
+    @patch("wecode.service.mail_token_service.httpx.AsyncClient")
+    async def test_apply_token_a_whitelist_failure(
+        self, mock_client_cls, service, mock_user
+    ):
+        """Test token_a application when user is not whitelisted."""
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "success": False,
+            "message": "User not in whitelist",
+        }
+        mock_response.raise_for_status = MagicMock()
+
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_response
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client_cls.return_value = mock_client
+
+        success, token_a, message = await service.apply_token_a(mock_user)
+
+        assert success is False
+        assert token_a is None
+        assert message == "User not in whitelist"
+
+    @pytest.mark.asyncio
+    @patch("wecode.service.mail_token_service.httpx.AsyncClient")
+    async def test_apply_token_a_missing_token(
+        self, mock_client_cls, service, mock_user
+    ):
+        """Test token_a application when response is missing token_a."""
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"success": True}  # Missing token_a
+        mock_response.raise_for_status = MagicMock()
+
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_response
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client_cls.return_value = mock_client
+
+        success, token_a, message = await service.apply_token_a(mock_user)
+
+        assert success is False
+        assert token_a is None
+        assert message == "KMS response missing token_a"
+
+    @pytest.mark.asyncio
+    @patch("wecode.service.mail_token_service.httpx.AsyncClient")
+    async def test_apply_token_a_default_client_data(
+        self, mock_client_cls, service, mock_user
+    ):
+        """Test token_a application uses default client_data when not provided."""
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"success": True, "token_a": "test_token"}
+        mock_response.raise_for_status = MagicMock()
+
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_response
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client_cls.return_value = mock_client
+
+        success, token_a, message = await service.apply_token_a(mock_user)
+
+        assert success is True
+        call_args = mock_client.post.call_args
+        assert call_args[1]["json"]["client-data"] == '{"source": "wegent-backend"}'
 
     def test_parse_preferences_dict(self, service):
         """Test _parse_preferences with dict input."""
