@@ -23,8 +23,8 @@ from shared.utils.crypto import encrypt_sensitive_data
 logger = logging.getLogger(__name__)
 
 # JWT configuration for KMS API authentication (from environment variables)
-KMS_SECRET_KEY = os.environ.get("KMS_SECRET_KEY", "")
-KMS_BASE_URL = os.environ.get("KMS_BASE_URL", "")
+KMS_SECRET_KEY = os.environ.get("KMS_SECRET_KEY", "").strip()
+KMS_BASE_URL = os.environ.get("KMS_BASE_URL", "").strip()
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_MINUTES = 5
 
@@ -38,8 +38,15 @@ class KMSNotConfiguredError(Exception):
 class MailTokenService:
     """Service for managing company mail tokens."""
 
-    KMS_TOKEN_URL = f"{KMS_BASE_URL}/mail/token"
-    KMS_TOKEN_A_URL = f"{KMS_BASE_URL}/mail/token_a"
+    @property
+    def KMS_TOKEN_URL(self) -> str:
+        """Get the KMS token exchange URL."""
+        return f"{KMS_BASE_URL}/mail/token"
+
+    @property
+    def KMS_TOKEN_A_URL(self) -> str:
+        """Get the KMS token_a application URL."""
+        return f"{KMS_BASE_URL}/mail/token_a"
 
     @staticmethod
     def _check_kms_config() -> None:
