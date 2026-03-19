@@ -41,6 +41,16 @@ HOST_PROVIDER_MAP = {
 }
 
 
+def _is_same_domain_or_subdomain(host: str, domain: str) -> bool:
+    """Check whether host equals domain or is one of its subdomains."""
+    return host == domain or host.endswith(f".{domain}")
+
+
+def _has_domain_label(host: str, label: str) -> bool:
+    """Check whether a specific DNS label exists in host."""
+    return label in [part for part in host.split(".") if part]
+
+
 def get_provider_by_type(git_type: str, host: str, base_url: str) -> GitRepoProvider:
     """
     Get the appropriate Git provider based on the configured type.
@@ -68,10 +78,14 @@ def get_provider_by_host(host: str, base_url: str) -> GitRepoProvider:
     Returns:
         GitRepoProvider instance
     """
-    # Check for known hosts
+    # Check for known hosts first (exact/contains match)
     for known_host, provider_class in HOST_PROVIDER_MAP.items():
-        if known_host in host:
+        if _is_same_domain_or_subdomain(host, known_host):
             return provider_class(host, base_url)
+
+    # Self-hosted GitLab domains (e.g. gitlab.company.com)
+    if _has_domain_label(host, "gitlab"):
+        return GitLabProvider(host, base_url)
 
     # Default to Gitea for unknown hosts
     return GiteaProvider(host, base_url)
