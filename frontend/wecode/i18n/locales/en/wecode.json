@@ -32,14 +32,21 @@
     "description": "Configure a company mail token to enable email-related features",
     "configured": "Configured",
     "reconfigure": "Reconfigure",
-    "input_placeholder": "Enter the token from DingTalk bot",
-    "input_hint": "Send the email connection command to the DingTalk bot (IT Bot) to get the token",
+    "input_placeholder": "Enter mail token",
+    "input_hint": "Contact administrator to get mail token",
     "save": "Save",
     "saving": "Saving...",
     "cancel": "Cancel",
     "save_success": "Mail token configured successfully",
     "save_error": "Failed to configure mail token",
     "delete_success": "Mail token deleted",
-    "delete_error": "Failed to delete mail token"
+    "delete_error": "Failed to delete mail token",
+    "apply": "Apply for Mail Token",
+    "applying": "Applying...",
+    "apply_hint": "Click the button to automatically apply for a company mail token",
+    "apply_success": "Mail token applied successfully, please save",
+    "apply_error": "Failed to apply for mail token, please try again later",
+    "apply_failed_title": "Application Failed",
+    "apply_failed_contact_admin": "You are not in the mail token whitelist. Please contact the administrator to request access."
   }
 }

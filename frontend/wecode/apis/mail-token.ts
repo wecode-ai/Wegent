@@ -19,9 +19,27 @@ export interface MailTokenStatusResponse {
 }
 
 /**
+ * Response from token_a application
+ */
+export interface ApplyTokenResponse {
+  success: boolean
+  token_a?: string
+  message?: string
+}
+
+/**
  * Mail token API services
  */
 export const mailTokenApis = {
+  /**
+   * Apply for client token from KMS via backend.
+   *
+   * @param clientData - Client information (browser info, etc.)
+   */
+  async applyToken(clientData: string): Promise<ApplyTokenResponse> {
+    return apiClient.post('/wecode/mail/apply', { client_data: clientData })
+  },
+
   /**
    * Exchange a client_token for a mail_token and save it.
    *
