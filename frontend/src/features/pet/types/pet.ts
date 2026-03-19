@@ -97,8 +97,8 @@ export const DOMAIN_APPEARANCE_MAP: Record<string, { color_tone: string; accesso
 // Stage thresholds
 export const STAGE_THRESHOLDS: Record<PetStage, number> = {
   1: 0, // Baby: 0-99
-  2: 100, // Growing: 100-499
-  3: 500, // Mature: 500+
+  2: 1000, // Growing: 100-499
+  3: 5000, // Mature: 500+
 }
 
 // Stage names mapping

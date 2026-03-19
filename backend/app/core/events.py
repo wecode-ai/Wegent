@@ -16,15 +16,17 @@ The event bus handles cross-loop execution gracefully:
 Usage:
     # Define an event
     @dataclass
-    class ChatCompletedEvent:
-        user_id: int
+    class TaskCompletedEvent:
         task_id: int
+        subtask_id: int
+        user_id: int
+        status: str
 
     # Subscribe to events (typically in module initialization)
-    event_bus.subscribe(ChatCompletedEvent, handle_chat_completed)
+    event_bus.subscribe(TaskCompletedEvent, handle_task_completed)
 
     # Publish events (from any module)
-    await event_bus.publish(ChatCompletedEvent(user_id=123, task_id=456))
+    await event_bus.publish(TaskCompletedEvent(task_id=1, subtask_id=2, user_id=123, status="COMPLETED"))
 """
 
 import asyncio
@@ -37,17 +39,6 @@ logger = logging.getLogger(__name__)
 
 # Type variable for event types
 T = TypeVar("T")
-
-
-@dataclass
-class ChatCompletedEvent:
-    """Event emitted when a chat message is completed.
-
-    Attributes:
-        user_id: User ID who completed the chat
-    """
-
-    user_id: int
 
 
 @dataclass
