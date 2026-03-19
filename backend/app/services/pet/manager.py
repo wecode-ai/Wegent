@@ -387,9 +387,9 @@ class PetService:
 
     # Stage thresholds
     STAGE_THRESHOLDS = {
-        1: 0,  # Baby: 0-99
-        2: 100,  # Growing: 100-499
-        3: 500,  # Mature: 500+
+        1: 0,  # Baby: 0-999
+        2: 1000,  # Growing: 1000-4999
+        3: 5000,  # Mature: 5000+
     }
 
     def _generate_svg_seed(self) -> str:
