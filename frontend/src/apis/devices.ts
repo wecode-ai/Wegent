@@ -65,6 +65,20 @@ export interface DeviceListResponse {
   total: number
 }
 
+export interface UpgradeDeviceOptions {
+  force?: boolean
+  auto_confirm?: boolean
+  verbose?: boolean
+  force_stop_tasks?: boolean
+  registry?: string
+  registry_token?: string
+}
+
+export interface UpgradeDeviceResponse {
+  success: boolean
+  message: string
+}
+
 /**
  * Device API services
  */
@@ -117,5 +131,18 @@ export const deviceApis = {
    */
   async cancelTask(taskId: number): Promise<{ message: string; status: string }> {
     return apiClient.post(`/tasks/${taskId}/cancel`)
+  },
+
+  /**
+   * Trigger a remote upgrade for a device.
+   *
+   * @param deviceId - Device unique identifier
+   * @param options - Upgrade options (force, auto_confirm, verbose, force_stop_tasks, registry, registry_token)
+   */
+  async upgradeDevice(
+    deviceId: string,
+    options?: UpgradeDeviceOptions
+  ): Promise<UpgradeDeviceResponse> {
+    return apiClient.post(`/devices/${encodeURIComponent(deviceId)}/upgrade`, options || {})
   },
 }

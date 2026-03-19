@@ -77,6 +77,7 @@ export const ServerEvents = {
   DEVICE_OFFLINE: 'device:offline',
   DEVICE_STATUS: 'device:status',
   DEVICE_SLOT_UPDATE: 'device:slot_update',
+  DEVICE_UPGRADE_STATUS: 'device:upgrade_status',
 } as const
 
 // Client -> Server Skill events
@@ -735,4 +736,30 @@ export interface DeviceInfoWs {
   name: string
   status: DeviceStatus
   last_heartbeat?: string
+}
+
+// ============================================================
+// Device Upgrade Event Payloads
+// ============================================================
+
+/** Device upgrade status types */
+export type DeviceUpgradeStatus =
+  | 'checking'
+  | 'downloading'
+  | 'installing'
+  | 'restarting'
+  | 'success'
+  | 'error'
+  | 'skipped'
+  | 'busy'
+
+/** Payload for device:upgrade_status event */
+export interface DeviceUpgradeStatusPayload {
+  device_id: string
+  status: DeviceUpgradeStatus
+  message: string
+  old_version?: string
+  new_version?: string
+  progress?: number
+  error?: string
 }

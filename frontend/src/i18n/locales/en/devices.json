@@ -80,11 +80,6 @@
   "token_expiry_hint": "The auth token expires in 7 days. Re-run the startup command to refresh it",
   "copy_success": "Copied to clipboard",
   "copy_failed": "Failed to copy",
-  "version": {
-    "current": "Current Version",
-    "latest": "Latest Version",
-    "updateAvailable": "Update Available"
-  },
   "add_device": "Add Device",
   "hide_guide": "Hide Guide",
   "auth_mode_token": "Session Token",
@@ -121,5 +116,26 @@
   "cloud_coming_soon_title": "Cloud Devices Coming Soon",
   "cloud_coming_soon_description": "Cloud device support is under active development. Stay tuned for updates!",
   "openclaw_badge": "🦞 OpenClaw",
-  "got_it": "Got it"
+  "got_it": "Got it",
+  "actions": {
+    "upgrade": "Upgrade"
+  },
+  "upgrade": {
+    "started": "Upgrade started",
+    "failed": "Upgrade failed",
+    "inProgress": "Upgrading...",
+    "checking": "Checking for updates...",
+    "downloading": "Downloading...",
+    "installing": "Installing...",
+    "restarting": "Restarting...",
+    "success": "Upgrade successful",
+    "error": "Upgrade error",
+    "skipped": "Already on latest version"
+  },
+  "version": {
+    "current": "Current Version",
+    "latest": "Latest Version",
+    "updateAvailable": "Update Available",
+    "clickToUpgrade": "Click to upgrade"
+  }
 }

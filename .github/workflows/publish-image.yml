@@ -525,6 +525,8 @@ jobs:
 
       - name: Install dependencies and build
         working-directory: executor
+        env:
+          GITHUB_REPO: ${{ github.repository }}
         run: |
           uv sync --group build
           uv run python scripts/build_local.py --version ${{ needs.prepare-release.outputs.new_version }}
@@ -572,6 +574,8 @@ jobs:
 
       - name: Install dependencies and build (x86_64)
         working-directory: executor
+        env:
+          GITHUB_REPO: ${{ github.repository }}
         run: |
           # Use x86_64 Python and uv to install dependencies and build
           arch -x86_64 /usr/local/bin/python3.11 -m uv sync --group build
@@ -615,6 +619,8 @@ jobs:
 
       - name: Install dependencies and build
         working-directory: executor
+        env:
+          GITHUB_REPO: ${{ github.repository }}
         run: |
           uv sync --group build
           uv run python scripts/build_local.py --version ${{ needs.prepare-release.outputs.new_version }}
@@ -651,6 +657,8 @@ jobs:
 
       - name: Install dependencies and build
         working-directory: executor
+        env:
+          GITHUB_REPO: ${{ github.repository }}
         run: |
           uv sync --group build
           uv run python scripts/build_local.py --version ${{ needs.prepare-release.outputs.new_version }}
@@ -692,6 +700,8 @@ jobs:
       - name: Install dependencies and build
         working-directory: executor
         shell: pwsh
+        env:
+          GITHUB_REPO: ${{ github.repository }}
         run: |
           uv sync --group build
           uv run python scripts/build_local.py --version ${{ needs.prepare-release.outputs.new_version }}
