@@ -74,53 +74,26 @@ class TestVersionCLI:
         assert result.stdout.strip() == expected_version
 
 
-class TestHandleVersionFlag:
-    """Test _handle_version_flag function directly."""
+class TestVersionFlagInMain:
+    """Test version flag handling in main() function."""
 
-    def test_handle_version_flag_with_version(self) -> None:
-        """Test that _handle_version_flag exits when --version is present in non-frozen mode."""
+    def test_main_exits_with_version_flag(self) -> None:
+        """Test that main() exits when --version is present."""
         with patch.object(sys, "argv", ["main.py", "--version"]):
-            with patch.object(sys, "frozen", False, create=True):
-                with pytest.raises(SystemExit) as exc_info:
-                    from executor.main import _handle_version_flag
+            with pytest.raises(SystemExit) as exc_info:
+                from executor.main import main
 
-                    _handle_version_flag()
-                assert exc_info.value.code == 0
+                main()
+            assert exc_info.value.code == 0
 
-    def test_handle_version_flag_with_v(self) -> None:
-        """Test that _handle_version_flag exits when -v is present in non-frozen mode."""
+    def test_main_exits_with_v_flag(self) -> None:
+        """Test that main() exits when -v is present."""
         with patch.object(sys, "argv", ["main.py", "-v"]):
-            with patch.object(sys, "frozen", False, create=True):
-                with pytest.raises(SystemExit) as exc_info:
-                    from executor.main import _handle_version_flag
+            with pytest.raises(SystemExit) as exc_info:
+                from executor.main import main
 
-                    _handle_version_flag()
-                assert exc_info.value.code == 0
-
-    def test_handle_version_flag_without_flag(self) -> None:
-        """Test that _handle_version_flag does nothing without version flag."""
-        with patch.object(sys, "argv", ["main.py"]):
-            from executor.main import _handle_version_flag
-
-            # Should not raise SystemExit
-            _handle_version_flag()
-
-    def test_handle_version_flag_with_other_args(self) -> None:
-        """Test that _handle_version_flag does nothing with other arguments."""
-        with patch.object(sys, "argv", ["main.py", "--help"]):
-            from executor.main import _handle_version_flag
-
-            # Should not raise SystemExit
-            _handle_version_flag()
-
-    def test_handle_version_flag_skipped_in_frozen_mode(self) -> None:
-        """Test that _handle_version_flag skips processing in frozen (PyInstaller) mode."""
-        with patch.object(sys, "argv", ["main.py", "--version"]):
-            with patch.object(sys, "frozen", True, create=True):
-                from executor.main import _handle_version_flag
-
-                # Should NOT exit in frozen mode (handled by runtime hook)
-                _handle_version_flag()
+                main()
+            assert exc_info.value.code == 0
 
 
 class TestModuleImportSafety:

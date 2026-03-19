@@ -61,5 +61,8 @@
   "vnc_fullscreen": "全屏",
   "vnc_exit_fullscreen": "退出全屏",
   "slots_full": "任务槽已满",
-  "slots_full_hint": "所有任务槽已被占用，请等待当前任务完成后再试"
+  "slots_full_hint": "所有任务槽已被占用，请等待当前任务完成后再试",
+  "upgrade": {
+    "cloud_version_not_supported": "当前版本不支持自动升级，请删除设备重建"
+  }
 }

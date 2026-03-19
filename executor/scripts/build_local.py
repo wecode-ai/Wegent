@@ -125,6 +125,55 @@ def restore_version_source(original_content: str) -> None:
     print("Restored version.py to original content")
 
 
+def embed_github_repo_in_source(repo: str) -> str | None:
+    """Embed GitHub repo into github_version_checker.py for PyInstaller builds.
+
+    Args:
+        repo: GitHub repo in format "owner/repo"
+
+    Returns:
+        Original content of github_version_checker.py for restoration, or None if failed
+    """
+    github_checker_py = (
+        get_executor_root() / "services" / "updater" / "github_version_checker.py"
+    )
+
+    # Read original content
+    original_content = github_checker_py.read_text()
+
+    # Replace _EMBEDDED_GITHUB_REPO: Optional[str] = None with the actual repo
+    modified_content = re.sub(
+        r"_EMBEDDED_GITHUB_REPO:\s*Optional\[str\]\s*=\s*None",
+        f'_EMBEDDED_GITHUB_REPO: Optional[str] = "{repo}"',
+        original_content,
+    )
+
+    if modified_content == original_content:
+        print(
+            "Warning: Could not find _EMBEDDED_GITHUB_REPO placeholder in github_version_checker.py"
+        )
+        return None
+
+    # Write modified content
+    github_checker_py.write_text(modified_content)
+    print(f"Embedded GitHub repo {repo} into github_version_checker.py")
+
+    return original_content
+
+
+def restore_github_repo_source(original_content: str) -> None:
+    """Restore github_version_checker.py to its original content.
+
+    Args:
+        original_content: Original content to restore
+    """
+    github_checker_py = (
+        get_executor_root() / "services" / "updater" / "github_version_checker.py"
+    )
+    github_checker_py.write_text(original_content)
+    print("Restored github_version_checker.py to original content")
+
+
 def find_claude_agent_sdk_binary(
     target_platform: str | None = None,
 ) -> tuple[str, str] | None:
@@ -297,6 +346,10 @@ def build_executable(
     if target_platform:
         print(f"Target platform: {target_platform}")
     original_version_content = embed_version_in_source(version)
+
+    # Get GitHub repo from environment and embed it
+    github_repo = os.environ.get("GITHUB_REPO", "wecode-ai/Wegent")
+    original_repo_content = embed_github_repo_in_source(github_repo)
 
     try:
         # Change to project root for correct imports
@@ -525,9 +578,11 @@ def build_executable(
             print(f"Error: Output file not found at {output_path}")
             sys.exit(1)
     finally:
-        # Always restore version.py to its original content
+        # Always restore source files to their original content
         if original_version_content:
             restore_version_source(original_version_content)
+        if original_repo_content:
+            restore_github_repo_source(original_repo_content)
 
 
 def main():
