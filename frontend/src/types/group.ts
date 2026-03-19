@@ -6,7 +6,11 @@
  * Group (Namespace) related types
  */
 
-export type GroupRole = 'Owner' | 'Maintainer' | 'Developer' | 'Reporter' | 'RestrictedAnalyst'
+// Import BaseRole from base-role module
+import type { BaseRole } from './base-role'
+
+// Re-export GroupRole as backward compatible alias
+export type GroupRole = BaseRole
 
 export type GroupVisibility = 'private' | 'internal' | 'public'
 

@@ -220,8 +220,11 @@ class RetrievalService:
 
         if not kb:
             raise ValueError(f"Knowledge base {knowledge_base_id} not found")
+
         if not has_access:
-            raise ValueError(f"Access denied to knowledge base {knowledge_base_id}")
+            raise ValueError(
+                f"Access denied to knowledge base {knowledge_base_id} for user {user_id}"
+            )
 
         # Check if user is a Restricted Analyst in the knowledge base's group
         # Restricted Analysts cannot access knowledge base content

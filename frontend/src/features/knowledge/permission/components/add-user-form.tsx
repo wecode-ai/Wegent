@@ -83,6 +83,16 @@ export function AddUserForm({
                   </div>
                 </div>
               </SelectItem>
+              <SelectItem value="RestrictedAnalyst">
+                <div>
+                  <div className="font-medium">
+                    {t('document.permission.role.RestrictedAnalyst')}
+                  </div>
+                  <div className="text-xs text-text-muted">
+                    {t('document.permission.role.RestrictedAnalystDescription')}
+                  </div>
+                </div>
+              </SelectItem>
             </SelectContent>
           </Select>
         </div>

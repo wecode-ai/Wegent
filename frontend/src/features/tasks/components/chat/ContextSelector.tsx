@@ -57,6 +57,10 @@ interface ContextSelectorProps {
   selectedContexts: ContextItem[]
   onSelect: (context: ContextItem) => void
   onDeselect: (id: number | string) => void
+  /** Batch selection callback for selecting multiple contexts at once (e.g., group selection) */
+  onSelectMultiple?: (contexts: ContextItem[]) => void
+  /** Batch deselection callback for deselecting multiple contexts at once */
+  onDeselectMultiple?: (ids: (number | string)[]) => void
   children: React.ReactNode
   /** Task ID for group chat mode - if provided, shows bound knowledge bases */
   taskId?: number
@@ -132,6 +136,8 @@ export default function ContextSelector({
   selectedContexts,
   onSelect,
   onDeselect,
+  onSelectMultiple,
+  onDeselectMultiple,
   children,
   taskId,
   isGroupChat,
@@ -299,27 +305,41 @@ export default function ContextSelector({
 
     if (isFullySelected) {
       // Deselect all knowledge bases in the group
-      kbs.forEach(kb => {
-        if (isSelected(kb.id)) {
-          onDeselect(kb.id)
-        }
-      })
+      // Use batch deselect if available to avoid closure issues
+      const idsToDeselect = kbs.filter(kb => isSelected(kb.id)).map(kb => kb.id)
+      if (onDeselectMultiple && idsToDeselect.length > 0) {
+        onDeselectMultiple(idsToDeselect)
+      } else {
+        // Fallback to individual deselect
+        kbs.forEach(kb => {
+          if (isSelected(kb.id)) {
+            onDeselect(kb.id)
+          }
+        })
+      }
     } else {
       // Select all unselected knowledge bases in the group
-      kbs.forEach(kb => {
-        if (!isSelected(kb.id)) {
-          const context: KnowledgeBaseContext = {
-            id: kb.id,
-            name: kb.name,
-            type: 'knowledge_base',
-            description: kb.description ?? undefined,
-            retriever_name: kb.retrieval_config?.retriever_name,
-            retriever_namespace: kb.retrieval_config?.retriever_namespace,
-            document_count: kb.document_count,
-          }
+      // Use batch select if available to avoid closure issues
+      const contextsToAdd: KnowledgeBaseContext[] = kbs
+        .filter(kb => !isSelected(kb.id))
+        .map(kb => ({
+          id: kb.id,
+          name: kb.name,
+          type: 'knowledge_base' as const,
+          description: kb.description ?? undefined,
+          retriever_name: kb.retrieval_config?.retriever_name,
+          retriever_namespace: kb.retrieval_config?.retriever_namespace,
+          document_count: kb.document_count,
+        }))
+
+      if (onSelectMultiple && contextsToAdd.length > 0) {
+        onSelectMultiple(contextsToAdd)
+      } else {
+        // Fallback to individual select
+        contextsToAdd.forEach(context => {
           onSelect(context)
-        }
-      })
+        })
+      }
     }
   }
 

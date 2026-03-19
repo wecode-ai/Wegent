@@ -8,7 +8,7 @@ import { useState, useEffect } from 'react'
 import ShellList from './ShellList'
 import { GroupSelector } from './groups/GroupSelector'
 import { listGroups } from '@/apis/groups'
-import type { GroupRole } from '@/types/group'
+import type { BaseRole } from '@/types/base-role'
 
 interface ShellListWithScopeProps {
   scope: 'personal' | 'group' | 'all'
@@ -23,7 +23,7 @@ export function ShellListWithScope({
 }: ShellListWithScopeProps) {
   // Use external state if provided, otherwise use internal state
   const [internalSelectedGroup, setInternalSelectedGroup] = useState<string | null>(null)
-  const [groupRoleMap, setGroupRoleMap] = useState<Map<string, GroupRole>>(new Map())
+  const [groupRoleMap, setGroupRoleMap] = useState<Map<string, BaseRole>>(new Map())
 
   const selectedGroup =
     externalSelectedGroup !== undefined ? externalSelectedGroup : internalSelectedGroup
@@ -40,7 +40,7 @@ export function ShellListWithScope({
   useEffect(() => {
     listGroups()
       .then(response => {
-        const roleMap = new Map<string, GroupRole>()
+        const roleMap = new Map<string, BaseRole>()
         response.items.forEach(group => {
           if (group.my_role) {
             roleMap.set(group.name, group.my_role)

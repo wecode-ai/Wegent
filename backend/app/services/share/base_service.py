@@ -24,26 +24,27 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.resource_member import MemberStatus, ResourceMember, ResourceRole
-from app.models.share_link import PermissionLevel, ResourceType, ShareLink
+from app.models.share_link import ResourceType, ShareLink
 from app.models.user import User
+from app.schemas.base_role import BaseRole, has_permission
 from app.schemas.share import (
     JoinByLinkResponse,
     MemberListResponse,
 )
-from app.schemas.share import MemberRole as SchemaMemberRole
 from app.schemas.share import MemberStatus as SchemaMemberStatus
 from app.schemas.share import (
     PendingRequestListResponse,
     PendingRequestResponse,
-)
-from app.schemas.share import PermissionLevel as SchemaPermissionLevel
-from app.schemas.share import (
     ResourceMemberResponse,
     ReviewRequestResponse,
     ShareInfoResponse,
     ShareLinkConfig,
     ShareLinkResponse,
 )
+
+# SchemaMemberRole is an alias to BaseRole for backward compatibility
+# All role-related code should use BaseRole as the single source of truth
+SchemaMemberRole = BaseRole
 
 logger = logging.getLogger(__name__)
 
@@ -65,36 +66,6 @@ class UnifiedShareService(ABC):
     - _get_share_url_base(): Get base URL for share links
     - _on_member_approved(): Hook called when member is approved
     """
-
-    # Permission hierarchy for comparison (legacy, use ROLE_HIERARCHY)
-    PERMISSION_HIERARCHY: Dict[str, int] = {
-        PermissionLevel.VIEW.value: 1,
-        PermissionLevel.EDIT.value: 2,
-        PermissionLevel.MANAGE.value: 3,
-    }
-
-    # Role hierarchy for comparison
-    ROLE_HIERARCHY: Dict[str, int] = {
-        ResourceRole.REPORTER.value: 1,
-        ResourceRole.DEVELOPER.value: 2,
-        ResourceRole.MAINTAINER.value: 3,
-        ResourceRole.OWNER.value: 4,
-    }
-
-    # Role to permission level mapping for backward compatibility
-    ROLE_TO_PERMISSION: Dict[str, str] = {
-        ResourceRole.OWNER.value: PermissionLevel.MANAGE.value,
-        ResourceRole.MAINTAINER.value: PermissionLevel.MANAGE.value,
-        ResourceRole.DEVELOPER.value: PermissionLevel.EDIT.value,
-        ResourceRole.REPORTER.value: PermissionLevel.VIEW.value,
-    }
-
-    # Permission level to role mapping for backward compatibility
-    PERMISSION_TO_ROLE: Dict[str, str] = {
-        PermissionLevel.VIEW.value: ResourceRole.REPORTER.value,
-        PermissionLevel.EDIT.value: ResourceRole.DEVELOPER.value,
-        PermissionLevel.MANAGE.value: ResourceRole.MAINTAINER.value,
-    }
 
     def __init__(self, resource_type: ResourceType):
         """Initialize the share service for a specific resource type."""
@@ -335,10 +306,7 @@ class UnifiedShareService(ABC):
                 f"[create_share_link] UPDATING existing link: id={existing_link.id}"
             )
             existing_link.require_approval = config.require_approval
-            # Map default_role to permission_level for backward compatibility
-            existing_link.default_permission_level = self.ROLE_TO_PERMISSION.get(
-                config.default_role.value, PermissionLevel.VIEW.value
-            )
+            existing_link.default_role = config.default_role.value
             if config.expires_in_hours:
                 existing_link.expires_at = datetime.utcnow() + timedelta(
                     hours=config.expires_in_hours
@@ -386,16 +354,12 @@ class UnifiedShareService(ABC):
         logger.info(
             f"[create_share_link] Creating new ShareLink record with token: {share_token[:50]}..."
         )
-        # Map default_role to permission_level for backward compatibility
-        default_permission_level = self.ROLE_TO_PERMISSION.get(
-            config.default_role.value, PermissionLevel.VIEW.value
-        )
         share_link = ShareLink(
             resource_type=self.resource_type.value,
             resource_id=resource_id,
             share_token=share_token,
             require_approval=config.require_approval,
-            default_permission_level=default_permission_level,
+            default_role=config.default_role.value,
             expires_at=expires_at,
             created_by_user_id=user_id,
             is_active=True,
@@ -496,12 +460,10 @@ class UnifiedShareService(ABC):
 
     def _share_link_to_response(self, share_link: ShareLink) -> ShareLinkResponse:
         """Convert ShareLink model to response schema."""
-        # Get default_role from the model, fallback to mapping from default_permission_level
+        # Get default_role from the model
         default_role = getattr(share_link, "default_role", None)
         if not default_role:
-            default_role = self.PERMISSION_TO_ROLE.get(
-                share_link.default_permission_level.lower(), ResourceRole.REPORTER.value
-            )
+            default_role = ResourceRole.Reporter.value
 
         return ShareLinkResponse(
             id=share_link.id,
@@ -511,7 +473,6 @@ class UnifiedShareService(ABC):
             share_token=share_link.share_token,
             require_approval=share_link.require_approval,
             default_role=default_role,
-            default_permission_level=share_link.default_permission_level,
             expires_at=share_link.expires_at,
             is_active=share_link.is_active,
             created_by_user_id=share_link.created_by_user_id,
@@ -573,12 +534,10 @@ class UnifiedShareService(ABC):
         )
         owner_name = owner.user_name if owner else f"User_{owner_id}"
 
-        # Get default_role from the model, fallback to mapping from default_permission_level
+        # Get default_role from the model
         default_role = getattr(share_link, "default_role", None)
         if not default_role:
-            default_role = self.PERMISSION_TO_ROLE.get(
-                share_link.default_permission_level.lower(), ResourceRole.REPORTER.value
-            )
+            default_role = ResourceRole.Reporter.value
 
         return ShareInfoResponse(
             resource_type=self.resource_type.value,
@@ -588,7 +547,6 @@ class UnifiedShareService(ABC):
             owner_user_name=owner_name,
             require_approval=share_link.require_approval,
             default_role=default_role,
-            default_permission_level=share_link.default_permission_level,
             is_expired=is_expired,
         )
 
@@ -682,15 +640,17 @@ class UnifiedShareService(ABC):
             # Determine role from share link default_role or requested_role
             default_role = getattr(share_link, "default_role", None)
             if not default_role:
-                default_role = self.PERMISSION_TO_ROLE.get(
-                    share_link.default_permission_level.lower(),
-                    ResourceRole.REPORTER.value,
-                )
+                default_role = ResourceRole.Reporter.value
 
             # Use requested role if provided and approval is required, otherwise use default
             role = (
                 requested_role.value if is_pending and requested_role else default_role
             )
+
+            # Security guard: Never grant Owner role via share link join
+            if role == ResourceRole.Owner.value:
+                role = ResourceRole.Reporter.value
+
             existing_member.set_role(role)
             existing_member.share_link_id = share_link.id
             existing_member.requested_at = datetime.utcnow()
@@ -712,15 +672,16 @@ class UnifiedShareService(ABC):
             # Determine role from share link default_role or requested_role
             default_role = getattr(share_link, "default_role", None)
             if not default_role:
-                default_role = self.PERMISSION_TO_ROLE.get(
-                    share_link.default_permission_level.lower(),
-                    ResourceRole.REPORTER.value,
-                )
+                default_role = ResourceRole.Reporter.value
 
             # Use requested role if provided and approval is required, otherwise use default
             role = (
                 requested_role.value if is_pending and requested_role else default_role
             )
+
+            # Security guard: Never grant Owner role via share link join
+            if role == ResourceRole.Owner.value:
+                role = ResourceRole.Reporter.value
 
             # Create member record
             # For PENDING status, use 0 as placeholder for reviewed_by_user_id
@@ -857,7 +818,7 @@ class UnifiedShareService(ABC):
 
         owner_id = self._get_resource_owner_id(resource)
         has_manage = self.check_permission(
-            db, resource_id, current_user_id, SchemaPermissionLevel.MANAGE
+            db, resource_id, current_user_id, SchemaMemberRole.Maintainer
         )
 
         if owner_id != current_user_id and not has_manage:
@@ -929,7 +890,7 @@ class UnifiedShareService(ABC):
                         resource_id=resource_id,
                         share_token=share_token,
                         require_approval=True,
-                        default_permission_level=PermissionLevel.VIEW.value,
+                        default_role=ResourceRole.Reporter.value,
                         expires_at=datetime.utcnow() + timedelta(days=365 * 100),
                         created_by_user_id=current_user_id,
                         is_active=True,
@@ -972,7 +933,7 @@ class UnifiedShareService(ABC):
                     resource_id=resource_id,
                     share_token=share_token,
                     require_approval=True,
-                    default_permission_level=PermissionLevel.VIEW.value,
+                    default_role=ResourceRole.Reporter.value,
                     expires_at=datetime.utcnow() + timedelta(days=365 * 100),
                     created_by_user_id=current_user_id,
                     is_active=True,
@@ -1030,7 +991,7 @@ class UnifiedShareService(ABC):
 
         owner_id = self._get_resource_owner_id(resource)
         has_manage = self.check_permission(
-            db, resource_id, current_user_id, SchemaPermissionLevel.MANAGE
+            db, resource_id, current_user_id, SchemaMemberRole.Maintainer
         )
 
         if owner_id != current_user_id and not has_manage:
@@ -1057,7 +1018,7 @@ class UnifiedShareService(ABC):
         if not member:
             raise HTTPException(status_code=404, detail="Member not found")
 
-        # Update role (this also updates permission_level for backward compatibility)
+        # Update role
         member.set_role(role.value)
         member.updated_at = datetime.utcnow()
         db.commit()
@@ -1090,7 +1051,7 @@ class UnifiedShareService(ABC):
 
         owner_id = self._get_resource_owner_id(resource)
         has_manage = self.check_permission(
-            db, resource_id, current_user_id, SchemaPermissionLevel.MANAGE
+            db, resource_id, current_user_id, SchemaMemberRole.Maintainer
         )
 
         if owner_id != current_user_id and not has_manage:
@@ -1155,7 +1116,6 @@ class UnifiedShareService(ABC):
             user_name=user_name,
             user_email=user_email,
             role=effective_role,
-            permission_level=member.permission_level,
             status=member.status,
             invited_by_user_id=member.invited_by_user_id,
             invited_by_user_name=invited_by_user_name,
@@ -1183,7 +1143,7 @@ class UnifiedShareService(ABC):
 
         owner_id = self._get_resource_owner_id(resource)
         has_manage = self.check_permission(
-            db, resource_id, user_id, SchemaPermissionLevel.MANAGE
+            db, resource_id, user_id, SchemaMemberRole.Maintainer
         )
 
         if owner_id != user_id and not has_manage:
@@ -1237,7 +1197,6 @@ class UnifiedShareService(ABC):
                         else None
                     ),
                     requested_role=effective_role,
-                    requested_permission_level=m.permission_level,
                     requested_at=m.requested_at,
                 )
             )
@@ -1261,7 +1220,7 @@ class UnifiedShareService(ABC):
 
         owner_id = self._get_resource_owner_id(resource)
         has_manage = self.check_permission(
-            db, resource_id, reviewer_id, SchemaPermissionLevel.MANAGE
+            db, resource_id, reviewer_id, SchemaMemberRole.Maintainer
         )
 
         if owner_id != reviewer_id and not has_manage:
@@ -1323,7 +1282,6 @@ class UnifiedShareService(ABC):
             member_id=member.id,
             new_status=SchemaMemberStatus(member.status),
             role=effective_role if approved else None,
-            permission_level=member.permission_level if approved else None,
         )
 
     # =========================================================================
@@ -1335,12 +1293,12 @@ class UnifiedShareService(ABC):
         db: Session,
         resource_id: int,
         user_id: int,
-        required_level: SchemaPermissionLevel,
+        required_role: SchemaMemberRole,
     ) -> bool:
         """
-        Check if user has required permission level.
+        Check if user has required permission role.
 
-        Permission hierarchy: manage > edit > view
+        Role hierarchy: Owner > Maintainer > Developer > Reporter > RestrictedAnalyst
         """
         # Note: Database may store resource_type in different formats (e.g., "KNOWLEDGE_BASE" vs "KnowledgeBase")
         resource_type_variants = [self.resource_type.value]
@@ -1353,6 +1311,8 @@ class UnifiedShareService(ABC):
             MemberStatus.APPROVED.value.upper(),
         ]
 
+        from sqlalchemy import case
+
         member = (
             db.query(ResourceMember)
             .filter(
@@ -1360,6 +1320,14 @@ class UnifiedShareService(ABC):
                 ResourceMember.resource_id == resource_id,
                 ResourceMember.user_id == user_id,
                 ResourceMember.status.in_(approved_status_variants),
+            )
+            .order_by(
+                # Prefer canonical resource_type, then most recent updated_at
+                case(
+                    (ResourceMember.resource_type == self.resource_type.value, 1),
+                    else_=0,
+                ).desc(),
+                ResourceMember.updated_at.desc(),
             )
             .first()
         )
@@ -1369,19 +1337,12 @@ class UnifiedShareService(ABC):
 
         # Use effective role for permission check
         effective_role = member.get_effective_role()
-        actual_level = self.ROLE_HIERARCHY.get(effective_role, 0)
-        # Map required permission level to role hierarchy
-        required_role = self.PERMISSION_TO_ROLE.get(
-            required_level.value, ResourceRole.REPORTER.value
-        )
-        required = self.ROLE_HIERARCHY.get(required_role, 0)
+        return has_permission(effective_role, required_role.value)
 
-        return actual_level >= required
-
-    def get_user_permission_level(
+    def get_user_role(
         self, db: Session, resource_id: int, user_id: int
     ) -> Optional[str]:
-        """Get user's permission level for a resource."""
+        """Get user's role for a resource."""
         # Note: Database may store resource_type in different formats (e.g., "KNOWLEDGE_BASE" vs "KnowledgeBase")
         resource_type_variants = [self.resource_type.value]
         if self.resource_type.value == "KnowledgeBase":
@@ -1393,6 +1354,8 @@ class UnifiedShareService(ABC):
             MemberStatus.APPROVED.value.upper(),
         ]
 
+        from sqlalchemy import case
+
         member = (
             db.query(ResourceMember)
             .filter(
@@ -1401,7 +1364,15 @@ class UnifiedShareService(ABC):
                 ResourceMember.user_id == user_id,
                 ResourceMember.status.in_(approved_status_variants),
             )
+            .order_by(
+                # Prefer canonical resource_type, then most recent updated_at
+                case(
+                    (ResourceMember.resource_type == self.resource_type.value, 1),
+                    else_=0,
+                ).desc(),
+                ResourceMember.updated_at.desc(),
+            )
             .first()
         )
 
-        return member.permission_level if member else None
+        return member.get_effective_role() if member else None

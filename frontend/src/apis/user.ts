@@ -53,6 +53,15 @@ export interface FeatureFlags {
   memory_enabled: boolean
 }
 
+export interface McpProviderServiceConfig {
+  provider_id: string
+  service_id: string
+  server_name: string
+  detail_url: string
+  enabled: boolean
+  url: string
+}
+
 const TOKEN_KEY = 'auth_token'
 const TOKEN_EXPIRE_KEY = 'auth_token_expire'
 const TOKEN_COOKIE_NAME = 'auth_token'
@@ -181,6 +190,30 @@ export const userApis = {
 
   async searchUsers(query: string): Promise<SearchUsersResponse> {
     return apiClient.get(`/users/search?q=${encodeURIComponent(query)}`)
+  },
+
+  async getMcpProviderServices(providerId: string): Promise<McpProviderServiceConfig[]> {
+    return apiClient.get(`/users/me/mcps/providers/${encodeURIComponent(providerId)}/services`)
+  },
+
+  async getMcpProviderService(
+    providerId: string,
+    serviceId: string
+  ): Promise<McpProviderServiceConfig> {
+    return apiClient.get(
+      `/users/me/mcps/providers/${encodeURIComponent(providerId)}/services/${encodeURIComponent(serviceId)}`
+    )
+  },
+
+  async updateMcpProviderService(
+    providerId: string,
+    serviceId: string,
+    data: Pick<McpProviderServiceConfig, 'enabled' | 'url'>
+  ): Promise<McpProviderServiceConfig> {
+    return apiClient.put(
+      `/users/me/mcps/providers/${encodeURIComponent(providerId)}/services/${encodeURIComponent(serviceId)}`,
+      data
+    )
   },
 
   /**

@@ -22,8 +22,8 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.kind import Kind
-from app.models.resource_member import MemberStatus, ResourceMember
-from app.models.share_link import PermissionLevel, ResourceType
+from app.models.resource_member import MemberStatus, ResourceMember, ResourceRole
+from app.models.share_link import ResourceType
 from app.models.subtask import Subtask
 from app.models.subtask_context import ContextType, SubtaskContext
 from app.models.task import TaskResource
@@ -727,7 +727,7 @@ class SharedTaskService:
                 resource_type=ResourceType.TASK,
                 resource_id=share_info.task_id,
                 user_id=user_id,
-                permission_level=PermissionLevel.MANAGE,
+                role=ResourceRole.Maintainer.value,
                 status=MemberStatus.APPROVED,
                 invited_by_user_id=share_info.user_id,
                 share_link_id=0,

@@ -6,6 +6,7 @@
 
 import { useTranslation } from '@/hooks/useTranslation'
 import GitHubIntegration from './GitHubIntegration'
+import McpProviderIntegrations from './McpProviderIntegrations'
 import { EmailTokenSection } from '@wecode/components/settings/EmailTokenSection'
 
 export default function IntegrationsPage() {
@@ -26,7 +27,7 @@ export default function IntegrationsPage() {
 
       <EmailTokenSection />
 
-      {/* Future: more integration sections here */}
+      <McpProviderIntegrations providerId="dingtalk" />
     </div>
   )
 }

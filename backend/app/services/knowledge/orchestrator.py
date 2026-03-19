@@ -608,10 +608,8 @@ class KnowledgeOrchestrator:
             knowledge_base_id=knowledge_base_id,
             user_id=user.id,
         )
-        if not kb:
-            raise ValueError("Knowledge base not found")
-        if not has_access:
-            raise ValueError("Access denied to knowledge base")
+        if not kb or not has_access:
+            raise ValueError("Knowledge base not found or access denied")
 
         documents = KnowledgeService.list_documents(
             db=db,
@@ -887,8 +885,10 @@ class KnowledgeOrchestrator:
             knowledge_base_id=kb_id,
             user_id=user.id,
         )
-        if not knowledge_base or not has_access:
-            raise ValueError("Failed to retrieve created knowledge base")
+        if not knowledge_base:
+            raise ValueError("Knowledge base not found")
+        if not has_access:
+            raise ValueError("Access denied to knowledge base")
 
         return KnowledgeBaseResponse.from_kind(
             knowledge_base, KnowledgeService.get_document_count(db, knowledge_base.id)
@@ -1378,8 +1378,10 @@ class KnowledgeOrchestrator:
             user_id=user.id,
         )
 
-        if not knowledge_base or not has_access:
-            raise ValueError("Access denied to this document")
+        if not knowledge_base:
+            raise ValueError("Knowledge base not found")
+        if not has_access:
+            raise ValueError("Access denied to knowledge base")
 
         # Extract RAG config using shared helper
         rag_params = extract_rag_config_from_knowledge_base(db, knowledge_base, user.id)
@@ -1467,8 +1469,10 @@ class KnowledgeOrchestrator:
             knowledge_base_id=knowledge_base_id,
             user_id=user.id,
         )
-        if not knowledge_base or not has_access:
-            raise ValueError("Knowledge base not found or access denied")
+        if not knowledge_base:
+            raise ValueError("Knowledge base not found")
+        if not has_access:
+            raise ValueError("Access denied to knowledge base")
 
         # Scrape the web page (async)
         service = get_web_scraper_service()

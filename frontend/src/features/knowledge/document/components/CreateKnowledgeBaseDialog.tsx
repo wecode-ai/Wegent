@@ -173,7 +173,10 @@ export function CreateKnowledgeBaseDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-hidden flex flex-col" data-testid="create-kb-dialog">
+      <DialogContent
+        className="max-w-2xl max-h-[90vh] overflow-hidden flex flex-col"
+        data-testid="create-kb-dialog"
+      >
         <DialogHeader>
           <DialogTitle>{t('knowledge:document.knowledgeBase.create')}</DialogTitle>
         </DialogHeader>
