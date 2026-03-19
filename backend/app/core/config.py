@@ -84,6 +84,16 @@ class Settings(BaseSettings):
     # This is used to show upgrade warnings in the UI
     EXECUTOR_LATEST_VERSION: str = "1.0.0"
 
+    # Executor version checking configuration
+    # If EXECUTOR_REGISTRY_URL is set, version is fetched from registry
+    # Otherwise, version is fetched from GitHub (public repo, no auth needed)
+    # Registry URL for internal deployments (e.g., "https://registry.example.com/update.json")
+    EXECUTOR_REGISTRY_URL: str = ""
+    # Auth token for private registry (e.g., GitLab private token)
+    EXECUTOR_REGISTRY_TOKEN: str = ""
+    # Cache TTL for executor version in seconds (default: 60 seconds = 1 minute)
+    EXECUTOR_VERSION_CACHE_TTL: int = 60
+
     # JWT configuration
     SECRET_KEY: str = "secret-key"
     ALGORITHM: str = "HS256"
