@@ -133,8 +133,32 @@ def parse_repo_url(url: str) -> ParsedRepoUrl:
         )
 
 
+def _normalize_git_domain(domain: Optional[str]) -> str:
+    """Normalize git domain for robust matching."""
+    if not domain:
+        return ""
+
+    raw_domain = domain.strip().lower()
+    if not raw_domain:
+        return ""
+
+    # Ensure urlparse can reliably extract hostname.
+    normalized_input = (
+        raw_domain
+        if raw_domain.startswith(("http://", "https://"))
+        else f"https://{raw_domain}"
+    )
+    parsed = urlparse(normalized_input)
+    host = parsed.hostname.lower() if parsed.hostname else raw_domain
+    port = f":{parsed.port}" if parsed.port and parsed.port not in (80, 443) else ""
+    return f"{host}{port}"
+
+
 def get_user_git_info(
-    user_id: int, domain: str, db: Session
+    user_id: int,
+    domain: str,
+    db: Session,
+    git_type: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """
     Get user's Git info for a specific domain.
@@ -143,6 +167,7 @@ def get_user_git_info(
         user_id: User ID
         domain: Git domain (e.g., "github.com", "gitlab.company.com")
         db: Database session
+        git_type: Git provider type fallback (e.g., "gitlab")
 
     Returns:
         Git info dict with decrypted token, or None if not found
@@ -153,16 +178,33 @@ def get_user_git_info(
     if not user or not user.git_info:
         return None
 
-    # git_info is a list of GitInfo objects
+    normalized_domain = _normalize_git_domain(domain)
+
+    # 1) Exact domain match first (normalized)
     for git_info in user.git_info:
-        if git_info.get("git_domain") == domain:
-            encrypted_token = git_info.get("git_token")
-            if encrypted_token:
-                return {
-                    "type": git_info.get("type"),
-                    "token": decrypt_git_token(encrypted_token),
-                    "git_domain": git_info.get("git_domain"),
-                }
+        info_domain = _normalize_git_domain(git_info.get("git_domain"))
+        encrypted_token = git_info.get("git_token")
+        if info_domain == normalized_domain and encrypted_token:
+            return {
+                "type": git_info.get("type"),
+                "token": decrypt_git_token(encrypted_token),
+                "git_domain": git_info.get("git_domain"),
+            }
+
+    # 2) Fallback by type only when there is a single unambiguous entry
+    if git_type:
+        typed_entries = [
+            info
+            for info in user.git_info
+            if info.get("type") == git_type and info.get("git_token")
+        ]
+        if len(typed_entries) == 1:
+            encrypted_token = typed_entries[0].get("git_token")
+            return {
+                "type": typed_entries[0].get("type"),
+                "token": decrypt_git_token(encrypted_token),
+                "git_domain": typed_entries[0].get("git_domain"),
+            }
 
     return None
 
@@ -197,7 +239,12 @@ def get_auth_for_repo(
 
     # Otherwise, try to get git info from platform integration
     domain = parsed.domain
-    git_info = get_user_git_info(user_id, domain, db)
+    git_info = get_user_git_info(
+        user_id,
+        domain,
+        db,
+        git_type=parsed.provider.name.lower(),
+    )
 
     if git_info:
         token = git_info.get("token")
@@ -314,12 +361,30 @@ def download_repo_zip(
                     status_code=response.status_code,
                     detail=f"Failed to download repository: {response.text}",
                 )
+
+            # Guard against login/HTML responses with 200 status.
+            if not _is_valid_zip_bytes(response.content):
+                content_type = response.headers.get("content-type", "unknown")
+                raise HTTPException(
+                    status_code=502,
+                    detail=(
+                        "Downloaded content is not a valid ZIP archive. "
+                        f"Received content_type={content_type}."
+                    ),
+                )
             return response.content
     except httpx.RequestError as e:
         raise HTTPException(
             status_code=503,
             detail=f"Failed to download repository: {str(e)}",
         )
+
+
+def _is_valid_zip_bytes(content: bytes) -> bool:
+    """Check ZIP signature by magic bytes."""
+    if not content:
+        return False
+    return content.startswith((b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08"))
 
 
 def parse_skill_md(content: str) -> Dict[str, Any]:
