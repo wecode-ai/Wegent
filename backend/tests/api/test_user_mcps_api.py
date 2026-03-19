@@ -7,31 +7,33 @@
 import json
 
 import pytest
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
-from app.api.endpoints.users import router
 from app.core import security
+from app.core.security import create_access_token
 from app.models.user import User
 from shared.utils.crypto import is_data_encrypted
 
 
 @pytest.fixture
-def user_mcps_client(test_db: Session, test_user: User) -> TestClient:
-    """Create a focused test client for user MCP endpoints."""
+def user_mcps_client(
+    test_db: Session, test_user: User, test_client: TestClient
+) -> TestClient:
+    """Create a test client with authentication for user MCP endpoints.
 
-    app = FastAPI()
-    app.include_router(router, prefix="/api/users")
+    Uses the existing test_client fixture which already has proper db override,
+    and adds authentication via JWT token.
+    """
+    return test_client
 
-    def override_get_db():
-        yield test_db
 
-    app.dependency_overrides[get_db] = override_get_db
-    app.dependency_overrides[security.get_current_user] = lambda: test_user
-
-    return TestClient(app)
+@pytest.fixture
+def auth_headers(test_user: User) -> dict:
+    """Create authentication headers for the test user."""
+    token = create_access_token(data={"sub": test_user.user_name})
+    return {"Authorization": f"Bearer {token}"}
 
 
 @pytest.mark.api
@@ -41,6 +43,7 @@ class TestUserMcpsAPI:
     def test_update_and_get_provider_service_config(
         self,
         user_mcps_client: TestClient,
+        auth_headers: dict,
         test_db: Session,
         test_user: User,
     ):
@@ -50,6 +53,7 @@ class TestUserMcpsAPI:
                 "enabled": True,
                 "url": "https://example.com/mcp?token=secret",
             },
+            headers=auth_headers,
         )
 
         assert response.status_code == 200
@@ -71,6 +75,7 @@ class TestUserMcpsAPI:
 
         get_response = user_mcps_client.get(
             "/api/users/me/mcps/providers/dingtalk/services/docs",
+            headers=auth_headers,
         )
 
         assert get_response.status_code == 200
@@ -84,10 +89,11 @@ class TestUserMcpsAPI:
         }
 
     def test_list_provider_services_returns_registry_and_config(
-        self, user_mcps_client: TestClient
+        self, user_mcps_client: TestClient, auth_headers: dict
     ):
         response = user_mcps_client.get(
-            "/api/users/me/mcps/providers/dingtalk/services"
+            "/api/users/me/mcps/providers/dingtalk/services",
+            headers=auth_headers,
         )
 
         assert response.status_code == 200
@@ -111,11 +117,12 @@ class TestUserMcpsAPI:
         ]
 
     def test_enable_provider_service_without_url_fails(
-        self, user_mcps_client: TestClient
+        self, user_mcps_client: TestClient, auth_headers: dict
     ):
         response = user_mcps_client.put(
             "/api/users/me/mcps/providers/dingtalk/services/docs",
             json={"enabled": True, "url": ""},
+            headers=auth_headers,
         )
 
         assert response.status_code == 400
