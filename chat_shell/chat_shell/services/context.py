@@ -575,9 +575,13 @@ class ChatContext:
         """
 
         logger.info(
-            "[CHAT_CONTEXT] _connect_mcp_servers called: task_id=%d, mcp_servers=%s",
+            "[CHAT_CONTEXT] _connect_mcp_servers called: task_id=%d, mcp_server_names=%s",
             self._request.task_id,
-            self._request.mcp_servers,
+            [
+                server.get("name", "server")
+                for server in (self._request.mcp_servers or [])
+                if isinstance(server, dict)
+            ],
         )
 
         if not self._request.mcp_servers:

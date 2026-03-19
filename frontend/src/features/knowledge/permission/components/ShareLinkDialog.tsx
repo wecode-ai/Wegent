@@ -76,7 +76,7 @@ export function ShareLinkDialog({ open, onOpenChange, kbId, kbName }: ShareLinkD
           if (!link) {
             link = await knowledgePermissionApi.createShareLink(kbId, {
               require_approval: true,
-              default_permission_level: 'view',
+              default_role: 'Reporter',
             })
           }
 

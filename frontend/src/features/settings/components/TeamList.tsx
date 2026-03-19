@@ -30,7 +30,7 @@ import TeamCreationWizard from './wizard/TeamCreationWizard'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useToast } from '@/hooks/use-toast'
 import { sortTeamsByUpdatedAt } from '@/utils/team'
-import type { GroupRole } from '@/types/group'
+import type { BaseRole } from '@/types/base-role'
 import { sortBotsByUpdatedAt } from '@/utils/bot'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
@@ -50,7 +50,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 interface TeamListProps {
   scope?: 'personal' | 'group' | 'all'
   groupName?: string
-  groupRoleMap?: Map<string, GroupRole>
+  groupRoleMap?: Map<string, BaseRole>
   onEditResource?: (namespace: string) => void
 }
 
@@ -610,7 +610,7 @@ export default function TeamList({
                               variant="ghost"
                               size="icon"
                               onClick={() => handleShareTeam(team)}
-                              title={t('teams.share')}
+                              title={t('teams.share.title')}
                               className="h-7 w-7 sm:h-8 sm:w-8"
                               disabled={sharingId === team.id}
                             >

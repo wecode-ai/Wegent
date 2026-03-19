@@ -17,8 +17,12 @@ import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContex
 import { useTaskContext } from '@/features/tasks/contexts/taskContext'
 import { useSocket } from '@/contexts/SocketContext'
 import { useDevices } from '@/contexts/DeviceContext'
-import { DeviceInfo } from '@/apis/devices'
+import { DeviceInfo, deviceApis } from '@/apis/devices'
 import { useTranslation } from '@/hooks/useTranslation'
+import { isVersionAtLeast } from '@/lib/utils'
+
+// Minimum executor version that supports auto-upgrade
+const MIN_AUTO_UPGRADE_VERSION = '1.6.5'
 
 /**
  * Device action handlers.
@@ -28,6 +32,7 @@ export interface DeviceHandlers {
   handleSetDefault: (device: DeviceInfo) => Promise<void>
   handleDeleteDevice: (device: DeviceInfo) => Promise<void>
   handleCancelTask: (taskId: number) => Promise<void>
+  handleUpgradeDevice: (device: DeviceInfo) => Promise<void>
 }
 
 /**
@@ -127,10 +132,43 @@ export function useDeviceHandlers(): DeviceHandlers {
     [closeTaskSession, refreshDevices, t]
   )
 
+  /**
+   * Handle triggering a device upgrade.
+   *
+   * @param device - Device to upgrade
+   */
+  const handleUpgradeDevice = useCallback(
+    async (device: DeviceInfo) => {
+      // Check if executor version supports auto-upgrade (>= 1.6.5)
+      if (
+        device.executor_version &&
+        !isVersionAtLeast(device.executor_version, MIN_AUTO_UPGRADE_VERSION)
+      ) {
+        toast.error(
+          t('upgrade.unsupportedVersion', {
+            current: device.executor_version,
+            required: MIN_AUTO_UPGRADE_VERSION,
+          })
+        )
+        return
+      }
+
+      try {
+        await deviceApis.upgradeDevice(device.device_id, { auto_confirm: true })
+        toast.success(t('upgrade.started'))
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : t('upgrade.failed')
+        toast.error(errorMessage)
+      }
+    },
+    [t]
+  )
+
   return {
     handleStartTask,
     handleSetDefault,
     handleDeleteDevice,
     handleCancelTask,
+    handleUpgradeDevice,
   }
 }

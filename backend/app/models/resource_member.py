@@ -29,7 +29,8 @@ from sqlalchemy.orm import Mapped, relationship
 from sqlalchemy.sql import func
 
 from app.db.base import Base
-from app.models.share_link import PermissionLevel, ResourceType
+from app.models.share_link import ResourceType
+from app.schemas.base_role import BaseRole
 
 if TYPE_CHECKING:
     from app.models.user import User
@@ -47,20 +48,9 @@ class MemberStatus(str, PyEnum):
     REJECTED = "rejected"  # Access denied
 
 
-class ResourceRole(str, PyEnum):
-    """Member role for resource access control.
-
-    Maps to permission_level for backward compatibility:
-    - Owner: Creator of the resource, has manage permission (only creator can be Owner)
-    - Maintainer: Can manage members, has manage permission
-    - Developer: Can edit content, has edit permission
-    - Reporter: Can only view, has view permission
-    """
-
-    OWNER = "Owner"
-    MAINTAINER = "Maintainer"
-    DEVELOPER = "Developer"
-    REPORTER = "Reporter"
+# ResourceRole is an alias to BaseRole for backward compatibility
+# All role-related code should use BaseRole as the single source of truth
+ResourceRole = BaseRole
 
 
 class ResourceMember(Base):
@@ -70,7 +60,7 @@ class ResourceMember(Base):
     Stores user permissions for shared resources including:
     - Target resource (type + id)
     - Member user ID
-    - Permission level (view/edit/manage)
+    - Role (Owner/Maintainer/Developer/Reporter)
     - Approval status (pending/approved/rejected)
     - Invitation/review information
     - Task-specific copied resource ID
@@ -109,22 +99,13 @@ class ResourceMember(Base):
         "User", foreign_keys=[user_id], back_populates="resource_members"
     )
 
-    # Role-based permission (new field)
+    # Role-based permission
     role = Column(
         String(20),
         nullable=False,
-        default="",
-        server_default="",
+        default=ResourceRole.Reporter.value,
+        server_default="Reporter",
         comment="Member role: Owner, Maintainer, Developer, Reporter",
-    )
-
-    # Permission level (legacy field, kept for backward compatibility)
-    permission_level = Column(
-        String(20),
-        nullable=False,
-        default=PermissionLevel.VIEW.value,
-        server_default="view",
-        comment="Permission level: view, edit, manage (deprecated, use role)",
     )
 
     # Status
@@ -236,37 +217,15 @@ class ResourceMember(Base):
     def get_effective_role(self) -> str:
         """Get effective role for this member.
 
-        Returns the role if set, otherwise derives it from permission_level
-        for backward compatibility during migration.
-
         Returns:
             Role string: Owner, Maintainer, Developer, or Reporter
         """
-        # If role is set, use it
-        if self.role:
-            return self.role
-
-        # Otherwise, derive from permission_level for backward compatibility
-        level_map = {
-            PermissionLevel.VIEW.value: ResourceRole.REPORTER.value,
-            PermissionLevel.EDIT.value: ResourceRole.DEVELOPER.value,
-            PermissionLevel.MANAGE.value: ResourceRole.MAINTAINER.value,
-        }
-        return level_map.get(self.permission_level.lower(), ResourceRole.REPORTER.value)
+        return self.role if self.role else ResourceRole.Reporter.value
 
     def set_role(self, role: str) -> None:
-        """Set role and update permission_level for backward compatibility.
+        """Set role for this member.
 
         Args:
             role: The role to set (Owner, Maintainer, Developer, Reporter)
         """
         self.role = role
-
-        # Update permission_level for backward compatibility
-        role_to_permission = {
-            ResourceRole.OWNER.value: PermissionLevel.MANAGE.value,
-            ResourceRole.MAINTAINER.value: PermissionLevel.MANAGE.value,
-            ResourceRole.DEVELOPER.value: PermissionLevel.EDIT.value,
-            ResourceRole.REPORTER.value: PermissionLevel.VIEW.value,
-        }
-        self.permission_level = role_to_permission.get(role, PermissionLevel.VIEW.value)

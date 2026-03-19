@@ -17,17 +17,19 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.models.kind import Kind
 from app.models.resource_member import MemberStatus, ResourceMember, ResourceRole
-from app.models.share_link import PermissionLevel, ResourceType, ShareLink
+from app.models.share_link import ResourceType, ShareLink
 from app.models.user import User
+from app.schemas.base_role import BaseRole, has_permission
 from app.schemas.share import (
     KBShareInfoResponse,
-)
-from app.schemas.share import MemberRole as SchemaMemberRole
-from app.schemas.share import (
     MyKBPermissionResponse,
     PendingRequestInfo,
 )
-from app.schemas.share import PermissionLevel as SchemaPermissionLevel
+
+# SchemaMemberRole is an alias to BaseRole for backward compatibility
+# All role-related code should use BaseRole as the single source of truth
+SchemaMemberRole = BaseRole
+from app.schemas.namespace import GroupRole
 from app.services.group_permission import (
     get_effective_role_in_group,
     is_restricted_analyst,
@@ -37,15 +39,6 @@ from app.services.share.base_service import UnifiedShareService
 from shared.telemetry.decorators import add_span_event, set_span_attribute, trace_sync
 
 logger = logging.getLogger(__name__)
-
-# Shared role-to-permission mapping for group team roles
-# Maps team_role to (SchemaMemberRole, SchemaPermissionLevel)
-GROUP_ROLE_PERMISSION_MAP: dict[str, tuple[SchemaMemberRole, SchemaPermissionLevel]] = {
-    "Owner": (SchemaMemberRole.MAINTAINER, SchemaPermissionLevel.MANAGE),
-    "Maintainer": (SchemaMemberRole.MAINTAINER, SchemaPermissionLevel.MANAGE),
-    "Developer": (SchemaMemberRole.DEVELOPER, SchemaPermissionLevel.EDIT),
-    "Reporter": (SchemaMemberRole.REPORTER, SchemaPermissionLevel.VIEW),
-}
 
 
 class KnowledgeShareService(UnifiedShareService):
@@ -134,6 +127,12 @@ class KnowledgeShareService(UnifiedShareService):
             .first()
         )
         if member:
+            # RestrictedAnalyst is not allowed to access knowledge base details
+            if member.get_effective_role() == ResourceRole.RestrictedAnalyst.value:
+                logger.warning(
+                    f"[_get_resource] User has explicit access but is RestrictedAnalyst: member_id={member.id}"
+                )
+                return None
             logger.info(
                 f"[_get_resource] User has explicit shared access: member_id={member.id}"
             )
@@ -155,6 +154,12 @@ class KnowledgeShareService(UnifiedShareService):
             )
             role = get_effective_role_in_group(db, user_id, kb.namespace)
             if role is not None:
+                # RestrictedAnalyst is not allowed to access knowledge base details
+                if role == GroupRole.RestrictedAnalyst:
+                    logger.warning(
+                        "[_get_resource] User has team role but is RestrictedAnalyst"
+                    )
+                    return None
                 logger.info(f"[_get_resource] User has team role: role={role}")
                 return kb
             logger.warning(
@@ -212,7 +217,7 @@ class KnowledgeShareService(UnifiedShareService):
         # No copy needed for Knowledge Bases
         logger.info(
             f"KnowledgeBase member approved: user={member.user_id}, "
-            f"kb={resource.id}, permission={member.permission_level}"
+            f"kb={resource.id}, role={member.role}"
         )
         return None
 
@@ -220,29 +225,19 @@ class KnowledgeShareService(UnifiedShareService):
     # Permission Check Methods (integrated from KnowledgePermissionService)
     # =========================================================================
 
-    @staticmethod
-    def get_permission_priority(level: str) -> int:
-        """Get priority value for permission level (higher = more permissions)."""
-        priority_map = {
-            PermissionLevel.VIEW.value: 1,
-            PermissionLevel.EDIT.value: 2,
-            PermissionLevel.MANAGE.value: 3,
-        }
-        return priority_map.get(level, 0)
-
     def get_user_kb_permission(
         self,
         db: Session,
         knowledge_base_id: int,
         user_id: int,
-    ) -> Tuple[bool, Optional[str], Optional[str], bool]:
+    ) -> Tuple[bool, Optional[str], bool]:
         """
         Get user's permission for a knowledge base.
 
         Priority: creator > explicit permission (ResourceMember) > group permission > task binding
 
         Returns:
-            Tuple of (has_access, role, permission_level, is_creator)
+            Tuple of (has_access, role, is_creator)
         """
         # Get the knowledge base
         kb = (
@@ -256,7 +251,7 @@ class KnowledgeShareService(UnifiedShareService):
         )
 
         if not kb:
-            return False, None, None, False
+            return False, None, False
 
         # For group knowledge bases, check Restricted Analyst status FIRST
         # This check must run before creator/explicit-share checks to prevent bypass
@@ -268,11 +263,11 @@ class KnowledgeShareService(UnifiedShareService):
                     f"[get_user_kb_permission] User {user_id} is Restricted Analyst in group "
                     f"'{kb.namespace}', denying access to KB {knowledge_base_id}"
                 )
-                return False, None, None, False
+                return False, None, False
 
         # Check if user is creator
         if kb.user_id == user_id:
-            return True, ResourceRole.OWNER.value, PermissionLevel.MANAGE.value, True
+            return True, ResourceRole.Owner.value, True
 
         # Check explicit permission in resource_members table
         explicit_perm = (
@@ -288,55 +283,39 @@ class KnowledgeShareService(UnifiedShareService):
 
         if explicit_perm:
             effective_role = explicit_perm.get_effective_role()
-            return True, effective_role, explicit_perm.permission_level, False
+            # RestrictedAnalyst is not allowed to access knowledge base details
+            if effective_role == ResourceRole.RestrictedAnalyst.value:
+                return False, None, False
+            return True, effective_role, False
 
         # For organization knowledge bases, all authenticated users have VIEW access
         if _is_organization_namespace(db, kb.namespace):
-            return True, ResourceRole.REPORTER.value, PermissionLevel.VIEW.value, False
+            return True, ResourceRole.Reporter.value, False
 
         # For team knowledge bases, check group permission
         if kb.namespace != "default":
             group_role = get_effective_role_in_group(db, user_id, kb.namespace)
             if group_role is not None:
-                # Map group role to permission level
-                # Owner/Maintainer -> manage, Developer -> edit, Reporter -> view
-                # Use shared mapping constant
+                # RestrictedAnalyst is not allowed to access knowledge base details
+                if group_role == GroupRole.RestrictedAnalyst:
+                    return False, None, False
+                # Map group role to resource role
                 role_mapping = {
-                    "Owner": (
-                        ResourceRole.MAINTAINER.value,
-                        PermissionLevel.MANAGE.value,
-                    ),
-                    "Maintainer": (
-                        ResourceRole.MAINTAINER.value,
-                        PermissionLevel.MANAGE.value,
-                    ),
-                    "Developer": (
-                        ResourceRole.DEVELOPER.value,
-                        PermissionLevel.EDIT.value,
-                    ),
-                    "Reporter": (
-                        ResourceRole.REPORTER.value,
-                        PermissionLevel.VIEW.value,
-                    ),
+                    GroupRole.Owner: ResourceRole.Owner.value,
+                    GroupRole.Maintainer: ResourceRole.Maintainer.value,
+                    GroupRole.Developer: ResourceRole.Developer.value,
+                    GroupRole.Reporter: ResourceRole.Reporter.value,
                 }
-                role, perm_level = role_mapping.get(
-                    group_role,
-                    (ResourceRole.REPORTER.value, PermissionLevel.VIEW.value),
-                )
-                return True, role, perm_level, False
+                role = role_mapping.get(group_role, ResourceRole.Reporter.value)
+                return True, role, False
 
         # For personal knowledge bases (namespace == "default"), check if bound to group chat
         if kb.namespace == "default":
             if self._is_kb_bound_to_user_group_chat(db, knowledge_base_id, user_id):
                 # User is member of a group chat that has this KB bound
-                return (
-                    True,
-                    ResourceRole.REPORTER.value,
-                    PermissionLevel.VIEW.value,
-                    False,
-                )
+                return True, ResourceRole.Reporter.value, False
 
-        return False, None, None, False
+        return False, None, False
 
     def _is_kb_bound_to_user_group_chat(
         self, db: Session, kb_id: int, user_id: int
@@ -408,14 +387,14 @@ class KnowledgeShareService(UnifiedShareService):
         user_id: int,
     ) -> bool:
         """Check if user can manage permissions for a knowledge base."""
-        has_access, role, permission_level, is_creator = self.get_user_kb_permission(
+        has_access, role, is_creator = self.get_user_kb_permission(
             db, knowledge_base_id, user_id
         )
         if is_creator:
             return True
         return has_access and role in (
-            ResourceRole.OWNER.value,
-            ResourceRole.MAINTAINER.value,
+            ResourceRole.Owner.value,
+            ResourceRole.Maintainer.value,
         )
 
     def get_my_permission(
@@ -449,7 +428,6 @@ class KnowledgeShareService(UnifiedShareService):
         if not kb:
             return MyKBPermissionResponse(
                 has_access=False,
-                permission_level=None,
                 is_creator=False,
                 pending_request=None,
             )
@@ -472,8 +450,7 @@ class KnowledgeShareService(UnifiedShareService):
         if is_creator and not is_restricted:
             return MyKBPermissionResponse(
                 has_access=True,
-                role=SchemaMemberRole.OWNER,
-                permission_level=SchemaPermissionLevel.MANAGE,
+                role=SchemaMemberRole.Owner,
                 is_creator=True,
                 pending_request=None,
             )
@@ -492,57 +469,56 @@ class KnowledgeShareService(UnifiedShareService):
         pending_request = None
         has_explicit_access = False
         explicit_role = None
-        explicit_level = None
 
         if explicit_perm and not is_restricted:
             effective_role = explicit_perm.get_effective_role()
             if explicit_perm.status == MemberStatus.APPROVED.value:
-                has_explicit_access = True
-                explicit_role = SchemaMemberRole(effective_role)
-                explicit_level = SchemaPermissionLevel(explicit_perm.permission_level)
+                # RestrictedAnalyst is not allowed to access knowledge base details
+                if effective_role != ResourceRole.RestrictedAnalyst.value:
+                    has_explicit_access = True
+                    explicit_role = SchemaMemberRole(effective_role)
             elif explicit_perm.status == MemberStatus.PENDING.value:
                 pending_request = PendingRequestInfo(
                     id=explicit_perm.id,
                     role=SchemaMemberRole(effective_role),
-                    permission_level=SchemaPermissionLevel(
-                        explicit_perm.permission_level
-                    ),
                     requested_at=explicit_perm.requested_at,
                 )
 
         # Check group permission for team KB or organization KB
         group_role = None
-        group_level = None
         if _is_organization_namespace(db, kb.namespace):
             # Organization KB - all authenticated users have VIEW access
-            # Unless they are Restricted Analysts
-            if not is_restricted:
-                group_role = SchemaMemberRole.REPORTER
-                group_level = SchemaPermissionLevel.VIEW
+            group_role = SchemaMemberRole.Reporter
         elif kb.namespace != "default":
             team_role = get_effective_role_in_group(db, user_id, kb.namespace)
-            if team_role is not None and not is_restricted:
-                # Use shared mapping constant
-                group_role, group_level = GROUP_ROLE_PERMISSION_MAP.get(
-                    team_role,
-                    (SchemaMemberRole.REPORTER, SchemaPermissionLevel.VIEW),
-                )
+            if team_role is not None:
+                # RestrictedAnalyst is not allowed to access knowledge base details
+                if team_role != GroupRole.RestrictedAnalyst:
+                    role_mapping = {
+                        GroupRole.Owner: SchemaMemberRole.Owner,
+                        GroupRole.Maintainer: SchemaMemberRole.Maintainer,
+                        GroupRole.Developer: SchemaMemberRole.Developer,
+                        GroupRole.Reporter: SchemaMemberRole.Reporter,
+                    }
+                    group_role = role_mapping.get(team_role, SchemaMemberRole.Reporter)
 
         # Determine final access level (higher of explicit vs group)
-        if has_explicit_access and group_level:
-            # Take the higher permission
-            explicit_priority = self.get_permission_priority(explicit_level.value)
-            group_priority = self.get_permission_priority(group_level.value)
-            final_role = (
-                explicit_role if explicit_priority >= group_priority else group_role
-            )
-            final_level = (
-                explicit_level if explicit_priority >= group_priority else group_level
-            )
+        # Use has_permission() for consistent role comparison
+        # Role priority: Owner > Maintainer > Developer > Reporter > RestrictedAnalyst
+
+        if has_explicit_access and group_role:
+            # Take the higher permission using has_permission
+            # has_permission(user_role, required_role) returns True if user_role >= required_role
+            # So we check which role has permission over the other
+            if has_permission(explicit_role.value, group_role.value):
+                # explicit_role is higher or equal
+                final_role = explicit_role
+            else:
+                # group_role is higher
+                final_role = group_role
             return MyKBPermissionResponse(
                 has_access=True,
                 role=final_role,
-                permission_level=final_level,
                 is_creator=False,
                 pending_request=None,
             )
@@ -550,15 +526,13 @@ class KnowledgeShareService(UnifiedShareService):
             return MyKBPermissionResponse(
                 has_access=True,
                 role=explicit_role,
-                permission_level=explicit_level,
                 is_creator=False,
                 pending_request=None,
             )
-        elif group_level:
+        elif group_role:
             return MyKBPermissionResponse(
                 has_access=True,
                 role=group_role,
-                permission_level=group_level,
                 is_creator=False,
                 pending_request=pending_request,
             )
@@ -566,8 +540,7 @@ class KnowledgeShareService(UnifiedShareService):
             return MyKBPermissionResponse(
                 has_access=False,
                 role=None,
-                permission_level=None,
-                is_creator=is_creator,  # Still report creator status even if restricted
+                is_creator=False,
                 pending_request=pending_request,
             )
 
@@ -714,19 +687,10 @@ class KnowledgeShareService(UnifiedShareService):
         creator = db.query(User).filter(User.id == kb.user_id).first()
         creator_name = creator.user_name if creator else f"User {kb.user_id}"
 
-        # Get default_role from the model, fallback to mapping from default_permission_level
+        # Get default_role from the model, fallback to Reporter
         default_role = getattr(share_link, "default_role", None)
         if not default_role:
-            role_mapping = {
-                PermissionLevel.VIEW.value: ResourceRole.REPORTER.value,
-                PermissionLevel.EDIT.value: ResourceRole.DEVELOPER.value,
-                PermissionLevel.MANAGE.value: ResourceRole.MAINTAINER.value,
-            }
-            perm_level = share_link.default_permission_level
-            default_role = role_mapping.get(
-                perm_level.lower() if perm_level else "",
-                ResourceRole.REPORTER.value,
-            )
+            default_role = ResourceRole.Reporter.value
 
         return {
             "id": kb.id,
@@ -736,7 +700,6 @@ class KnowledgeShareService(UnifiedShareService):
             "creator_name": creator_name,
             "require_approval": share_link.require_approval,
             "default_role": default_role,
-            "default_permission_level": share_link.default_permission_level,
             "is_expired": is_expired,
         }
 

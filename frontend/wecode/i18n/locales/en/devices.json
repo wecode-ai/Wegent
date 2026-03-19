@@ -61,5 +61,8 @@
   "vnc_fullscreen": "Fullscreen",
   "vnc_exit_fullscreen": "Exit Fullscreen",
   "slots_full": "Slots Full",
-  "slots_full_hint": "All task slots are occupied. Please wait for current tasks to finish."
+  "slots_full_hint": "All task slots are occupied. Please wait for current tasks to finish.",
+  "upgrade": {
+    "cloud_version_not_supported": "Current version does not support auto-upgrade. Please delete and recreate the device."
+  }
 }

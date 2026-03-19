@@ -22,30 +22,25 @@ CLI options:
   to avoid module initialization issues.
 """
 
+import argparse
 import multiprocessing
 import os
 import sys
+from pathlib import Path
 
 
-def _handle_version_flag() -> None:
-    """Handle --version/-v flag before any other initialization.
-
-    If the flag is present, print version and exit immediately.
-    This is done before any heavy imports to ensure fast response.
-
-    Note: In PyInstaller builds, version flag is handled earlier by the
-    runtime hook (hooks/rthook_version.py) to avoid cleanup errors.
-    This function serves as a fallback for non-frozen (development) mode.
+def _handle_upgrade_flag(args: argparse.Namespace) -> int:
     """
-    # Skip if already handled by PyInstaller runtime hook
-    if getattr(sys, "frozen", False):
-        return
+    Handle --upgrade flag.
+    Returns exit code (0 for success, 1 for failure).
+    """
+    from executor.services.updater.upgrade_handler import UpgradeHandler
 
-    if "--version" in sys.argv or "-v" in sys.argv:
-        from executor.version import get_version
+    # Check for verbose flag
+    verbose = getattr(args, "verbose", False) or "--verbose" in sys.argv
 
-        print(get_version(), flush=True)
-        sys.exit(0)
+    handler = UpgradeHandler(verbose=verbose)
+    return handler.handle(args)
 
 
 # Required for PyInstaller on macOS/Windows to prevent infinite fork
@@ -69,6 +64,42 @@ from shared.logger import setup_logger
 logger = setup_logger("task_executor")
 
 
+def _parse_args() -> argparse.Namespace:
+    """Parse command line arguments.
+
+    Returns:
+        Parsed arguments namespace.
+    """
+    parser = argparse.ArgumentParser(
+        description="Wegent Executor - AI-native operating system for agent teams",
+        add_help=False,
+    )
+
+    # Flags that exit immediately
+    parser.add_argument(
+        "--version", "-v", action="store_true", help="Print version and exit"
+    )
+    parser.add_argument(
+        "--upgrade", action="store_true", help="Check for updates and upgrade if available"
+    )
+    parser.add_argument(
+        "--yes", "-y", action="store_true", help="Auto-confirm upgrade without prompting"
+    )
+    parser.add_argument(
+        "--verbose", action="store_true", help="Enable verbose logging for upgrade"
+    )
+    parser.add_argument(
+        "--config", type=str, help="Path to config file (default: ~/.wegent-executor/device-config.json)"
+    )
+    parser.add_argument(
+        "-h", "--help", action="store_true", help="Show this help message and exit"
+    )
+
+    # Parse only known args to avoid breaking on unexpected args
+    args, _ = parser.parse_known_args()
+    return args
+
+
 def main() -> None:
     """
     Main function for running the executor.
@@ -81,8 +112,19 @@ def main() -> None:
     In local mode, starts the WebSocket-based local runner.
     In Docker mode (default), starts the FastAPI server.
     """
+    # Parse arguments first
+    args = _parse_args()
+
     # Handle version flag first (before any heavy initialization)
-    _handle_version_flag()
+    if args.version:
+        from executor.version import get_version
+
+        print(get_version(), flush=True)
+        sys.exit(0)
+
+    # Handle upgrade flag second (before heavy imports)
+    if args.upgrade:
+        sys.exit(_handle_upgrade_flag(args))
 
     from executor.config.device_config import (
         get_config_path_from_args,

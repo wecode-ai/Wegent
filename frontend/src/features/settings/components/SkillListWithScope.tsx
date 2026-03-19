@@ -21,6 +21,7 @@ import {
 import { checkSkillMarketAvailable, SkillMarketAvailability } from '@/apis/skillMarket'
 import { getGroup } from '@/apis/groups'
 import { Group } from '@/types/group'
+import { canDelete } from '@/types/base-role'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -155,9 +156,9 @@ export function SkillListWithScope({ scope, selectedGroup }: SkillListWithScopeP
     // User can delete their own skills
     if (skill.user_id === user.id) return true
 
-    // In group scope, check if user is group admin (Owner or Maintainer)
+    // In group scope, check if user has delete permission (Owner or Maintainer)
     if (scope === 'group' && currentGroup?.my_role) {
-      return currentGroup.my_role === 'Owner' || currentGroup.my_role === 'Maintainer'
+      return canDelete(currentGroup.my_role)
     }
 
     // System admin can delete any skill

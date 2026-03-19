@@ -7,6 +7,7 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from app.models.namespace import Namespace
+from app.schemas.base_role import has_permission
 from app.schemas.namespace import GroupRole
 from app.services.group_member_helper import (
     NAMESPACE_RESOURCE_TYPE,
@@ -59,22 +60,13 @@ def check_group_permission(
     Returns:
         True if user has permission, False otherwise
     """
-    # Define role hierarchy (lower number = higher permission)
-    role_hierarchy = {
-        GroupRole.Owner: 0,
-        GroupRole.Maintainer: 1,
-        GroupRole.Developer: 2,
-        GroupRole.Reporter: 3,
-        GroupRole.RestrictedAnalyst: 4,
-    }
-
     user_role = get_user_role_in_group(db, user_id, group_name)
 
     if user_role is None:
         return False
 
-    # Check if user's role level is equal or higher than required
-    return role_hierarchy[user_role] <= role_hierarchy[required_role]
+    # Use shared has_permission function from base_role
+    return has_permission(user_role, required_role)
 
 
 def get_user_groups(db: Session, user_id: int) -> list[str]:
@@ -219,9 +211,10 @@ def check_knowledge_base_access_for_restricted_analyst(
     """
     Check if a user can access knowledge base content.
 
-    For Restricted Analysts in a group, they cannot access knowledge base content
-    even if the KB is in a group they belong to. This prevents them from
-    extracting document content through conversation.
+    For Restricted Analysts, they are prevented from accessing non-default (group)
+    knowledge bases but are allowed to access the default (personal) namespace
+    and shared personal KBs. This prevents them from extracting document content
+    through conversation while maintaining access to their own personal KBs.
 
     Args:
         db: Database session
@@ -233,18 +226,15 @@ def check_knowledge_base_access_for_restricted_analyst(
         - has_access: True if user can access KB content
         - reason: Explanation if access is denied
     """
-    # Personal knowledge bases (namespace='default') are always accessible
-    if knowledge_base_namespace == "default":
-        return True, ""
-
-    # Check if user is a Restricted Analyst in this group
-    if is_restricted_analyst(db, user_id, knowledge_base_namespace):
-        return (
-            False,
-            "Restricted Analysts cannot access knowledge base content. "
-            "You can view conversations but cannot retrieve document content, "
-            "structure, or summaries from group knowledge bases.",
-        )
+    # Check if user is a Restricted Analyst in this group (for group KBs)
+    if knowledge_base_namespace != "default":
+        if is_restricted_analyst(db, user_id, knowledge_base_namespace):
+            return (
+                False,
+                "Restricted Analysts cannot access knowledge base content. "
+                "You can view conversations but cannot retrieve document content, "
+                "structure, or summaries from group knowledge bases.",
+            )
 
     return True, ""
 
@@ -257,9 +247,10 @@ def check_knowledge_base_access_for_restricted_analyst_by_ids(
     """
     Check if a user can access knowledge base content by KB IDs.
 
-    For Restricted Analysts in a group, they cannot access knowledge base content
-    even if the KB is in a group they belong to. This prevents them from
-    extracting document content through conversation.
+    For Restricted Analysts, they are prevented from accessing non-default (group)
+    knowledge bases but are allowed to access the default (personal) namespace
+    and shared personal KBs. This prevents them from extracting document content
+    through conversation while maintaining access to their own personal KBs.
 
     Args:
         db: Database session

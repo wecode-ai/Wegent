@@ -44,6 +44,11 @@
       "createdDesc": "Click the button above to create your first knowledge base",
       "sharedDesc": "Knowledge bases shared by other users will appear here"
     },
+    "accessDenied": {
+      "title": "Access Denied",
+      "description": "You don't have permission to access this knowledge base. Please contact the knowledge base creator or administrator if you have questions.",
+      "backButton": "Back to Knowledge Base List"
+    },
     "noOrgKnowledgeBase": "No organization knowledge base",
     "noOrgKnowledgeBaseHint": "Organization knowledge bases are managed by administrators. All members can view.",
     "orgKnowledgeBaseReadOnly": "You have view-only access.",
@@ -307,10 +312,12 @@
         "Maintainer": "Maintainer",
         "Developer": "Developer",
         "Reporter": "Reporter",
+        "RestrictedAnalyst": "Restricted Analyst",
         "OwnerDescription": "Creator with full permissions (only the creator can have this role)",
         "MaintainerDescription": "Maintainer who can manage members and edit content",
         "DeveloperDescription": "Developer who can edit content",
-        "ReporterDescription": "User who can only view content"
+        "ReporterDescription": "User who can only view content",
+        "RestrictedAnalystDescription": "Restricted analyst with limited content access"
       },
       "viewDescription": "Can browse knowledge base content only",
       "editDescription": "Can add, modify, and delete documents",

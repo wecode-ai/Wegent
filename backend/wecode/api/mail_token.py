@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from app.api.dependencies import get_db
 from app.core import security
 from app.models.user import User
-from wecode.service.mail_token_service import mail_token_service
+from wecode.service.mail_token_service import KMSNotConfiguredError, mail_token_service
 
 logger = logging.getLogger(__name__)
 
@@ -30,10 +30,45 @@ class MailTokenRequest(BaseModel):
     client_token: str
 
 
+class ApplyTokenRequest(BaseModel):
+    """Request body for applying token from KMS."""
+
+    client_data: str | None = None
+
+
+class ApplyTokenResponse(BaseModel):
+    """Response for token_a application."""
+
+    success: bool
+    token_a: str | None = None
+    message: str | None = None
+
+
 class MailTokenStatusResponse(BaseModel):
     """Response for mail token status query."""
 
     configured: bool
+
+
+@router.post("/mail/apply", response_model=ApplyTokenResponse)
+async def apply_mail_token(
+    request: ApplyTokenRequest | None = None,
+    current_user: User = Depends(security.get_current_user),
+):
+    """Apply for client token (token_a) from KMS.
+
+    This endpoint combines JWT generation and KMS API call,
+    keeping KMS URLs and credentials private to the backend.
+    """
+    try:
+        client_data = request.client_data if request else None
+        success, token_a, message = await mail_token_service.apply_token_a(
+            current_user, client_data
+        )
+        return ApplyTokenResponse(success=success, token_a=token_a, message=message)
+    except Exception as e:
+        logger.error(f"Token application failed for {current_user.user_name}: {e}")
+        return ApplyTokenResponse(success=False, message=str(e))
 
 
 @router.post("/mail/token")
@@ -48,6 +83,9 @@ async def save_mail_token(
             db, current_user, request.client_token
         )
         return {"message": "ok"}
+    except KMSNotConfiguredError as e:
+        logger.error(f"KMS not configured: {e}")
+        raise HTTPException(status_code=503, detail=str(e))
     except ValueError as e:
         logger.error(f"Mail token exchange failed for {current_user.user_name}: {e}")
         raise HTTPException(status_code=400, detail=str(e))

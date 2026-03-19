@@ -267,7 +267,7 @@ class KnowledgeService:
             return None, False
 
         # Use the knowledge share service to check access
-        has_access, _, _, _ = knowledge_share_service.get_user_kb_permission(
+        has_access, _, _ = knowledge_share_service.get_user_kb_permission(
             db, knowledge_base_id, user_id
         )
 

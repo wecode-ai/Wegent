@@ -8,15 +8,12 @@ from typing import Optional
 
 from pydantic import BaseModel, Field, field_validator
 
+# Import BaseRole and create GroupRole alias for backward compatibility
+from app.schemas.base_role import BaseRole
 
-class GroupRole(str, Enum):
-    """Group member roles"""
-
-    Owner = "Owner"
-    Maintainer = "Maintainer"
-    Developer = "Developer"
-    Reporter = "Reporter"
-    RestrictedAnalyst = "RestrictedAnalyst"
+# GroupRole is an alias to BaseRole for backward compatibility
+# All role-related code should use BaseRole as the single source of truth
+GroupRole = BaseRole
 
 
 class GroupVisibility(str, Enum):

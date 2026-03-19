@@ -25,8 +25,8 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from app.core.config import settings
 from app.models.kind import Kind
-from app.models.resource_member import MemberStatus, ResourceMember
-from app.models.share_link import PermissionLevel, ResourceType
+from app.models.resource_member import MemberStatus, ResourceMember, ResourceRole
+from app.models.share_link import ResourceType
 from app.models.user import User
 from app.schemas.kind import Team
 from app.schemas.shared_team import (
@@ -211,7 +211,7 @@ class SharedTeamService:
             # Reactivate existing record
             rejected.status = MemberStatus.APPROVED
             rejected.invited_by_user_id = original_user_id
-            rejected.permission_level = PermissionLevel.MANAGE
+            rejected.role = ResourceRole.Maintainer.value
             rejected.updated_at = datetime.now()
             db.commit()
             db.refresh(rejected)
@@ -231,7 +231,7 @@ class SharedTeamService:
             resource_type=ResourceType.TEAM,
             resource_id=team_id,
             user_id=user_id,
-            permission_level=PermissionLevel.MANAGE,
+            role=ResourceRole.Maintainer.value,
             status=MemberStatus.APPROVED,
             invited_by_user_id=original_user_id,
             share_link_id=0,

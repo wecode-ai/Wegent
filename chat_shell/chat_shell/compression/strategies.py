@@ -714,9 +714,7 @@ class HistoryTruncationStrategy(CompressionStrategy):
                 if prev_role == next_role and prev_role is not None:
                     # Odd removal broke alternation (e.g., user→[removed]→user).
                     # Insert notice with opposite role to bridge the gap.
-                    notice_role = (
-                        "assistant" if prev_role == "user" else "user"
-                    )
+                    notice_role = "assistant" if prev_role == "user" else "user"
                     truncation_notice_msg = {
                         "role": notice_role,
                         "content": self.TRUNCATION_NOTICE,
@@ -734,16 +732,11 @@ class HistoryTruncationStrategy(CompressionStrategy):
                     following[0] = {
                         **following[0],
                         "content": (
-                            self.TRUNCATION_NOTICE
-                            + "\n\n"
-                            + following[0]["content"]
+                            self.TRUNCATION_NOTICE + "\n\n" + following[0]["content"]
                         ),
                     }
                     result = (
-                        system_messages
-                        + first_messages
-                        + kept_middle
-                        + last_messages
+                        system_messages + first_messages + kept_middle + last_messages
                     )
                 else:
                     # No messages after the truncation point
