@@ -29,6 +29,7 @@ from app.schemas.device import (
     DeviceType,
 )
 from app.services.device.base_provider import BaseDeviceProvider
+from app.services.device.version_service import executor_version_service
 
 logger = logging.getLogger(__name__)
 
@@ -265,7 +266,10 @@ class LocalDeviceProvider(BaseDeviceProvider):
 
         # Get version info
         executor_version = online_info.get("executor_version") if online_info else None
-        latest_version = settings.EXECUTOR_LATEST_VERSION
+        latest_version = (
+            await executor_version_service.get_latest_version()
+            or settings.EXECUTOR_LATEST_VERSION
+        )
         update_available = self._is_update_available(executor_version, latest_version)
 
         return {
@@ -344,7 +348,10 @@ class LocalDeviceProvider(BaseDeviceProvider):
 
         # Build result list
         result = []
-        latest_version = settings.EXECUTOR_LATEST_VERSION
+        latest_version = (
+            await executor_version_service.get_latest_version()
+            or settings.EXECUTOR_LATEST_VERSION
+        )
 
         for i, device_kind in enumerate(local_devices):
             device_json = device_kind.json

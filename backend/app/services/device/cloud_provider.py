@@ -19,6 +19,7 @@ from app.core.config import settings
 from app.models.kind import Kind
 from app.schemas.device import DeviceConnectionMode, DeviceType
 from app.services.device.local_provider import LocalDeviceProvider
+from app.services.device.version_service import executor_version_service
 
 
 class CloudDeviceProvider(LocalDeviceProvider):
@@ -61,7 +62,10 @@ class CloudDeviceProvider(LocalDeviceProvider):
         slot_info = await self.get_slot_usage(db, user_id, device_id)
 
         executor_version = online_info.get("executor_version") if online_info else None
-        latest_version = settings.EXECUTOR_LATEST_VERSION
+        latest_version = (
+            await executor_version_service.get_latest_version()
+            or settings.EXECUTOR_LATEST_VERSION
+        )
         update_available = self._is_update_available(executor_version, latest_version)
 
         return {
@@ -128,7 +132,10 @@ class CloudDeviceProvider(LocalDeviceProvider):
 
         # Build result list
         result = []
-        latest_version = settings.EXECUTOR_LATEST_VERSION
+        latest_version = (
+            await executor_version_service.get_latest_version()
+            or settings.EXECUTOR_LATEST_VERSION
+        )
 
         for i, device_kind in enumerate(cloud_devices):
             spec = device_kind.json.get("spec", {})
