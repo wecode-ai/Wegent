@@ -68,7 +68,7 @@ export default function DevicesPage() {
   // Get auth token
   const authToken = useMemo(() => getToken() || '<YOUR_AUTH_TOKEN>', [])
 
-  const { devices, isLoading, error, refreshDevices } = useDevices()
+  const { devices, isLoading, error, refreshDevices, isDeviceUpgrading, getUpgradeStatus } = useDevices()
 
   // Device action handlers (consolidated in custom hook)
   const handlers = useDeviceHandlers()
@@ -197,6 +197,9 @@ export default function DevicesPage() {
                       onSetDefault={handlers.handleSetDefault}
                       onDelete={handlers.handleDeleteDevice}
                       onCancelTask={handlers.handleCancelTask}
+                      onUpgrade={handlers.handleUpgradeDevice}
+                      isUpgrading={isDeviceUpgrading(device.device_id)}
+                      upgradeStatus={getUpgradeStatus(device.device_id)}
                     />
                   )}
                 </DeviceSection>
@@ -216,6 +219,9 @@ export default function DevicesPage() {
                       onSetDefault={handlers.handleSetDefault}
                       onDelete={handlers.handleDeleteDevice}
                       onCancelTask={handlers.handleCancelTask}
+                      onUpgrade={handlers.handleUpgradeDevice}
+                      isUpgrading={isDeviceUpgrading(device.device_id)}
+                      upgradeStatus={getUpgradeStatus(device.device_id)}
                     />
                   )}
                 </DeviceSection>

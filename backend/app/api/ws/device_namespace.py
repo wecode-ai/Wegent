@@ -399,6 +399,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
             "device:register": "on_device_register",
             "device:heartbeat": "on_device_heartbeat",
             "device:status": "on_device_status",
+            "device:upgrade_status": "on_device_upgrade_status",
         }
 
         # Shared event parser for OpenAI Responses API events
@@ -900,6 +901,55 @@ class DeviceNamespace(socketio.AsyncNamespace):
 
         return {"success": True}
 
+    async def on_device_upgrade_status(self, sid: str, data: dict) -> dict:
+        """
+        Handle device:upgrade_status event from executor.
+
+        Receives upgrade status updates from the executor and broadcasts
+        them to the user's room via the chat namespace.
+
+        Args:
+            sid: Socket ID
+            data: Upgrade status data containing device_id, status, message, etc.
+
+        Returns:
+            {"success": True} or {"error": str}
+        """
+        try:
+            from app.schemas.device import DeviceUpgradeStatusEvent
+
+            payload = DeviceUpgradeStatusEvent(**data)
+        except Exception as e:
+            logger.warning(f"[Device WS] Invalid upgrade_status payload: {e}")
+            return {"error": f"Invalid payload: {e}"}
+
+        session = await self.get_session(sid)
+        user_id = session.get("user_id")
+        session_device_id = session.get("device_id")
+
+        if not user_id:
+            return {"error": "Not authenticated"}
+
+        if session_device_id != payload.device_id:
+            return {"error": "Device ID mismatch"}
+
+        logger.info(
+            f"[Device WS] Upgrade status: user={user_id}, device={payload.device_id}, "
+            f"status={payload.status}, message={payload.message}"
+        )
+
+        # Broadcast to user room via chat namespace
+        await self._broadcast_device_upgrade_status(user_id, payload)
+
+        # If terminal state (success/error/skipped), update device metadata
+        if payload.status in ["success", "error", "skipped"]:
+            logger.info(
+                f"[Device WS] Upgrade terminal state reached: "
+                f"status={payload.status}, device={payload.device_id}"
+            )
+
+        return {"success": True}
+
     # ============================================================
     # OpenAI Responses API Event Handler
     # ============================================================
@@ -1169,6 +1219,64 @@ class DeviceNamespace(socketio.AsyncNamespace):
         except Exception as e:
             logger.error(f"[Device WS] Error broadcasting slot update: {e}")
 
+    async def emit_upgrade_command(self, socket_id: str, params: dict) -> bool:
+        """
+        Emit device:upgrade command to a specific device.
+
+        This method is called from the internal API to trigger a remote upgrade.
+
+        Args:
+            socket_id: The Socket.IO session ID of the target device
+            params: Upgrade parameters (force, auto_confirm, verbose, etc.)
+
+        Returns:
+            True if the command was emitted successfully, False otherwise
+        """
+        try:
+            await self.emit(
+                "device:upgrade",
+                params,
+                room=socket_id,
+            )
+            logger.info(f"[Device WS] Sent upgrade command to socket {socket_id}")
+            return True
+        except Exception as e:
+            logger.error(f"[Device WS] Failed to send upgrade command: {e}")
+            return False
+
+    async def _broadcast_device_upgrade_status(
+        self, user_id: int, payload: "DeviceUpgradeStatusEvent"
+    ) -> None:
+        """
+        Broadcast device:upgrade_status event to user room via chat namespace.
+
+        Args:
+            user_id: User ID for the room
+            payload: DeviceUpgradeStatusEvent payload
+        """
+        from app.core.socketio import get_sio
+
+        try:
+            sio = get_sio()
+            event_data = payload.model_dump()
+
+            await sio.emit(
+                "device:upgrade_status",
+                event_data,
+                room=f"user:{user_id}",
+                namespace="/chat",
+            )
+            logger.debug(
+                f"[Device WS] Broadcast device:upgrade_status to user:{user_id}, "
+                f"device={payload.device_id}, status={payload.status}"
+            )
+        except Exception as e:
+            logger.error(f"[Device WS] Error broadcasting upgrade status: {e}")
+
+
+# Global singleton instance (initialized by register_device_namespace)
+device_namespace: Optional[DeviceNamespace] = None
+
 
 # Factory function to create the namespace
 def create_device_namespace() -> DeviceNamespace:
@@ -1183,6 +1291,7 @@ def register_device_namespace(sio: socketio.AsyncServer) -> None:
     Args:
         sio: Socket.IO server instance
     """
-    device_ns = DeviceNamespace("/local-executor")
-    sio.register_namespace(device_ns)
+    global device_namespace
+    device_namespace = DeviceNamespace("/local-executor")
+    sio.register_namespace(device_namespace)
     logger.info("Device namespace registered at /local-executor")

@@ -29,10 +29,10 @@ class TestUpdateConfig:
     def test_custom_values(self):
         """Test UpdateConfig with custom values."""
         config = UpdateConfig(
-            registry="https://ai-state-machine.intra.weibo.com/ai-tool-box",
+            registry="https://example.com/ai-tool-box",
             registry_token="my_registry_token"
         )
-        assert config.registry == "https://ai-state-machine.intra.weibo.com/ai-tool-box"
+        assert config.registry == "https://example.com/ai-tool-box"
         assert config.registry_token == "my_registry_token"
 
     def test_to_dict(self):
@@ -225,10 +225,10 @@ class TestEnvOverridesForUpdate:
         config = DeviceConfig()
         config.update.registry = ""  # Empty
 
-        with patch.dict(os.environ, {"REGISTRY": "https://ai-state-machine.intra.weibo.com/ai-tool-box"}):
+        with patch.dict(os.environ, {"REGISTRY": "https://example.com/ai-tool-box"}):
             updated_config, should_save = _apply_env_overrides(config)
 
-            assert updated_config.update.registry == "https://ai-state-machine.intra.weibo.com/ai-tool-box"
+            assert updated_config.update.registry == "https://example.com/ai-tool-box"
             assert should_save is True  # Should save because it filled empty value
 
     def test_registry_env_no_override_if_set(self):
@@ -273,14 +273,14 @@ class TestEnvOverridesForUpdate:
         config.update.registry_token = ""
 
         env_vars = {
-            "REGISTRY": "https://ai-state-machine.intra.weibo.com/ai-tool-box",
+            "REGISTRY": "https://example.com/ai-tool-box",
             "REGISTRY_TOKEN": "my_registry_token"
         }
 
         with patch.dict(os.environ, env_vars):
             updated_config, should_save = _apply_env_overrides(config)
 
-            assert updated_config.update.registry == "https://ai-state-machine.intra.weibo.com/ai-tool-box"
+            assert updated_config.update.registry == "https://example.com/ai-tool-box"
             assert updated_config.update.registry_token == "my_registry_token"
             assert should_save is True  # Filled empty values
 

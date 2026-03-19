@@ -9,7 +9,7 @@
 
 'use client'
 
-import { Monitor, Play, Star, MoreVertical, Trash2 } from 'lucide-react'
+import { Monitor, Play, Star, MoreVertical, Trash2, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -20,6 +20,7 @@ import {
 import { Tooltip, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { DeviceInfo } from '@/apis/devices'
+import { DeviceUpgradeState } from '@/contexts/DeviceContext'
 import { SlotIndicator } from './SlotIndicator'
 import { RunningTasksList } from './RunningTasksList'
 import { VersionBadge } from './VersionBadge'
@@ -32,6 +33,9 @@ export interface DeviceCardProps {
   onSetDefault: (device: DeviceInfo) => void
   onDelete: (device: DeviceInfo) => void
   onCancelTask: (taskId: number) => Promise<void>
+  onUpgrade?: (deviceId: string) => void
+  isUpgrading?: boolean
+  upgradeStatus?: DeviceUpgradeState
 }
 
 /**
@@ -51,6 +55,9 @@ export function DeviceCard({
   onSetDefault,
   onDelete,
   onCancelTask,
+  onUpgrade,
+  isUpgrading,
+  upgradeStatus,
 }: DeviceCardProps) {
   const { t } = useTranslation('devices')
 
@@ -104,6 +111,8 @@ export function DeviceCard({
                   executorVersion={device.executor_version}
                   latestVersion={device.latest_version}
                   updateAvailable={device.update_available}
+                  onUpgrade={device.update_available && device.status === 'online' && !isUpgrading ? () => onUpgrade?.(device.device_id) : undefined}
+                  isUpgrading={isUpgrading}
                 />
               )}
             </div>
@@ -124,6 +133,14 @@ export function DeviceCard({
             <span className={cn('w-2 h-2 rounded-full', getStatusColor(device.status))} />
             <span className="text-sm text-text-secondary">{getStatusText(device.status)}</span>
           </div>
+          {/* Upgrade progress */}
+          {isUpgrading && (
+            <div className="flex items-center gap-2 text-sm text-text-secondary">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              <span>{upgradeStatus?.message || t('upgrade.inProgress')}</span>
+            </div>
+          )}
+
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>

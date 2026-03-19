@@ -28,25 +28,25 @@ class TestVersionCheckerFactory:
     def test_create_registry_checker_with_registry(self):
         """Test factory creates RegistryVersionChecker when registry is set."""
         config = UpdateConfig(
-            registry="https://ai-state-machine.intra.weibo.com/ai-tool-box",
+            registry="https://example.com/ai-tool-box",
             registry_token=""
         )
         checker = create_version_checker(config)
 
         assert isinstance(checker, RegistryVersionChecker)
-        assert checker.registry_url == "https://ai-state-machine.intra.weibo.com/ai-tool-box"
+        assert checker.registry_url == "https://example.com/ai-tool-box"
         assert checker.auth_token is None  # Empty string -> None
 
     def test_create_registry_checker_with_token(self):
         """Test factory creates RegistryVersionChecker with auth token."""
         config = UpdateConfig(
-            registry="https://ai-state-machine.intra.weibo.com/ai-tool-box",
+            registry="https://example.com/ai-tool-box",
             registry_token="my_registry_token"
         )
         checker = create_version_checker(config)
 
         assert isinstance(checker, RegistryVersionChecker)
-        assert checker.registry_url == "https://ai-state-machine.intra.weibo.com/ai-tool-box"
+        assert checker.registry_url == "https://example.com/ai-tool-box"
         assert checker.auth_token == "my_registry_token"
 
     def test_create_registry_checker_from_env_var(self):

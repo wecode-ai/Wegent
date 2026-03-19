@@ -223,3 +223,29 @@ class DeviceSlotUpdateEvent(BaseModel):
     slot_used: int
     slot_max: int
     running_tasks: List[DeviceRunningTask]
+
+
+class DeviceUpgradeStatusEvent(BaseModel):
+    """Event payload for device upgrade status updates.
+
+    Sent from executor to backend to report upgrade progress and results.
+    """
+
+    device_id: str = Field(..., description="Device unique identifier")
+    status: str = Field(
+        ...,
+        description="Upgrade status: checking | downloading | installing | restarting | success | error | skipped | busy",
+    )
+    message: str = Field(..., description="Human-readable status message")
+    old_version: Optional[str] = Field(
+        None, description="Version before upgrade (if applicable)"
+    )
+    new_version: Optional[str] = Field(
+        None, description="Version after upgrade (if applicable)"
+    )
+    progress: Optional[int] = Field(
+        None, description="Download progress (0-100, if applicable)"
+    )
+    error: Optional[str] = Field(
+        None, description="Error details (if status is 'error')"
+    )

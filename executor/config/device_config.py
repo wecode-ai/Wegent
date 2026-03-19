@@ -108,7 +108,7 @@ class UpdateConfig:
     - Has registry: Use Registry API (for private deployments)
     """
 
-    registry: str = ""  # Registry URL (e.g., "https://ai-state-machine.intra.weibo.com/ai-tool-box")
+    registry: str = ""  # Registry URL (e.g., "https://example.com/ai-tool-box")
     registry_token: str = ""  # Optional auth token for registry
 
     def to_dict(self) -> Dict[str, Any]:

@@ -27,7 +27,7 @@ from typing import Any, Dict, Optional
 from executor.config import config
 from executor.config.device_config import DeviceConfig
 from executor.modes.local.events import ChatEvents, TaskEvents
-from executor.modes.local.handlers import TaskHandler
+from executor.modes.local.handlers import TaskHandler, UpgradeHandler
 from executor.modes.local.heartbeat import LocalHeartbeatService
 from executor.modes.local.websocket_client import WebSocketClient
 from executor.services.updater.process_manager import ProcessManager
@@ -77,6 +77,7 @@ class LocalRunner:
 
         # Event handlers
         self.task_handler = TaskHandler(self)
+        self.upgrade_handler = UpgradeHandler(self)
 
         # Task queue for execution
         self.task_queue: asyncio.Queue = asyncio.Queue()
@@ -228,6 +229,11 @@ class LocalRunner:
             ChatEvents.MESSAGE, self.task_handler.handle_chat_message
         )
 
+        # Upgrade handler
+        self.websocket_client.on(
+            "device:upgrade", self.upgrade_handler.handle_upgrade_command
+        )
+
         logger.info("WebSocket event handlers registered")
 
     async def enqueue_task(self, task_data: ExecutionRequest) -> None:
@@ -324,6 +330,36 @@ class LocalRunner:
             logger.info(f"Sent heartbeat after closing session for task {task_id}")
         except Exception as e:
             logger.error(f"Failed to send heartbeat after closing session: {e}")
+
+    def has_running_tasks(self) -> bool:
+        """Check if any tasks are currently running.
+
+        Returns:
+            True if there are running tasks, False otherwise.
+        """
+        running_count = len(self._running_tasks)
+        if running_count > 0:
+            logger.debug(f"[Runner] Found {running_count} running task(s)")
+        return running_count > 0
+
+    async def cancel_all_tasks(self) -> None:
+        """Cancel all running tasks.
+
+        Iterates through all running tasks and cancels each one.
+        Used before upgrade to ensure no tasks are running.
+        """
+        task_ids = list(self._running_tasks.keys())
+        if not task_ids:
+            logger.info("[Runner] No tasks to cancel")
+            return
+
+        logger.info(f"[Runner] Cancelling {len(task_ids)} running task(s)")
+        for task_id in task_ids:
+            try:
+                await self.cancel_task(task_id)
+                logger.info(f"[Runner] Cancelled task {task_id}")
+            except Exception as e:
+                logger.error(f"[Runner] Failed to cancel task {task_id}: {e}")
 
     async def _task_loop(self) -> None:
         """Main task processing loop.

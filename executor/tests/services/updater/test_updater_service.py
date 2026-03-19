@@ -26,7 +26,7 @@ def default_update_config():
 def registry_update_config():
     """Fixture for registry UpdateConfig."""
     return UpdateConfig(
-        registry="https://ai-state-machine.intra.weibo.com/ai-tool-box",
+        registry="https://example.com/ai-tool-box",
         registry_token=""
     )
 

@@ -17,26 +17,26 @@ class TestRegistryVersionCheckerInit:
 
     def test_init_with_no_token(self):
         """Test initialization with no auth token (None)."""
-        checker = RegistryVersionChecker(registry_url="https://ai-state-machine.intra.weibo.com/ai-tool-box")
-        assert checker.registry_url == "https://ai-state-machine.intra.weibo.com/ai-tool-box"
+        checker = RegistryVersionChecker(registry_url="https://example.com/ai-tool-box")
+        assert checker.registry_url == "https://example.com/ai-tool-box"
         assert checker.auth_token is None
 
     def test_init_with_custom_token(self):
         """Test initialization with custom auth token."""
         checker = RegistryVersionChecker(
-            registry_url="https://ai-state-machine.intra.weibo.com/ai-tool-box",
+            registry_url="https://example.com/ai-tool-box",
             auth_token="custom_token"
         )
-        assert checker.registry_url == "https://ai-state-machine.intra.weibo.com/ai-tool-box"
+        assert checker.registry_url == "https://example.com/ai-tool-box"
         assert checker.auth_token == "custom_token"
 
     def test_init_with_none_token_explicit(self):
         """Test initialization with explicitly None auth token."""
         checker = RegistryVersionChecker(
-            registry_url="https://ai-state-machine.intra.weibo.com/ai-tool-box",
+            registry_url="https://example.com/ai-tool-box",
             auth_token=None
         )
-        assert checker.registry_url == "https://ai-state-machine.intra.weibo.com/ai-tool-box"
+        assert checker.registry_url == "https://example.com/ai-tool-box"
         assert checker.auth_token is None
 
 
@@ -78,14 +78,14 @@ class TestRegistryVersionCheckerCheckForUpdates:
     @pytest.fixture
     def registry_url(self):
         """Fixture for test registry URL."""
-        return "https://ai-state-machine.intra.weibo.com/ai-tool-box"
+        return "https://example.com/ai-tool-box"
 
     @pytest.fixture
     def mock_registry_response(self):
         """Fixture for mock registry API response."""
         return {
             "version": "1.6.6",
-            "url": "https://ai-state-machine.intra.weibo.com/ai-tool-box/wegent-executor-macos-arm64/download"
+            "url": "https://example.com/ai-tool-box/wegent-executor-macos-arm64/download"
         }
 
     @pytest.mark.asyncio
@@ -268,7 +268,7 @@ class TestRegistryVersionCheckerHeaders:
     @pytest.mark.asyncio
     async def test_request_includes_private_token_header_when_token_provided(self):
         """Test that request includes PRIVATE-TOKEN header when token is provided."""
-        registry_url = "https://ai-state-machine.intra.weibo.com/ai-tool-box"
+        registry_url = "https://example.com/ai-tool-box"
         checker = RegistryVersionChecker(registry_url=registry_url, auth_token="my_token")
 
         mock_response = Mock()
@@ -288,7 +288,7 @@ class TestRegistryVersionCheckerHeaders:
     @pytest.mark.asyncio
     async def test_request_excludes_private_token_header_when_no_token(self):
         """Test that request excludes PRIVATE-TOKEN header when no token is provided."""
-        registry_url = "https://ai-state-machine.intra.weibo.com/ai-tool-box"
+        registry_url = "https://example.com/ai-tool-box"
         checker = RegistryVersionChecker(registry_url=registry_url, auth_token=None)
 
         mock_response = Mock()
