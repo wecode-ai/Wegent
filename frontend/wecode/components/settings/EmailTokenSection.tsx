@@ -140,16 +140,16 @@ export function EmailTokenSection() {
   }
 
   return (
-    <div className="space-y-3">
-      <div>
-        <h3 className="text-base font-medium text-text-primary mb-1">{t('mail_token.title')}</h3>
-        <p className="text-xs text-text-muted mb-1">{t('mail_token.description')}</p>
+    <div className="space-y-3 rounded-md border border-border bg-base p-4">
+      <div className="space-y-1">
+        <h3 className="text-base font-medium text-text-primary">{t('mail_token.title')}</h3>
+        <p className="text-sm text-text-muted">{t('mail_token.description')}</p>
       </div>
 
-      <div className="bg-base border border-border rounded-md p-4 space-y-3">
-        {configured && !showInput ? (
-          // Configured state
-          <div className="flex items-center justify-between">
+      {configured && !showInput ? (
+        // Configured state - show as inner card with status
+        <>
+          <div className="flex items-center justify-between rounded-md border border-border/70 bg-surface px-3 py-2.5">
             <div className="flex items-center gap-2">
               <CheckCircleIcon className="w-5 h-5 text-primary" />
               <span className="text-sm text-text-primary">{t('mail_token.configured')}</span>
@@ -175,44 +175,50 @@ export function EmailTokenSection() {
               </Button>
             </div>
           </div>
-        ) : showInput ? (
-          // Input state (after apply or manual reconfigure)
-          <div className="space-y-3">
-            <div>
-              <Input
-                value={clientToken}
-                onChange={e => setClientToken(e.target.value)}
-                placeholder={t('mail_token.input_placeholder')}
-                data-testid="mail-token-input"
-              />
-              <p className="text-xs text-text-muted mt-1">{t('mail_token.input_hint')}</p>
-            </div>
-            <div className="flex items-center gap-2">
-              <Button
-                variant="primary"
-                size="sm"
-                onClick={handleSave}
-                disabled={saving || !clientToken.trim()}
-                data-testid="save-mail-token-button"
-              >
-                {saving ? t('mail_token.saving') : t('mail_token.save')}
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  setShowInput(false)
-                  setClientToken('')
-                }}
-                data-testid="cancel-mail-token-button"
-              >
-                {t('mail_token.cancel')}
-              </Button>
+        </>
+      ) : showInput ? (
+        // Input state (after apply or manual reconfigure)
+        <>
+          <div className="space-y-1.5">
+            <Input
+              value={clientToken}
+              onChange={e => setClientToken(e.target.value)}
+              placeholder={t('mail_token.input_placeholder')}
+              data-testid="mail-token-input"
+            />
+            <p className="text-xs text-text-muted">{t('mail_token.input_hint')}</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 pt-1">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowInput(false)
+                setClientToken('')
+              }}
+              data-testid="cancel-mail-token-button"
+            >
+              {t('mail_token.cancel')}
+            </Button>
+            <Button
+              variant="primary"
+              onClick={handleSave}
+              disabled={saving || !clientToken.trim()}
+              data-testid="save-mail-token-button"
+            >
+              {saving ? t('mail_token.saving') : t('mail_token.save')}
+            </Button>
+          </div>
+        </>
+      ) : (
+        // Unconfigured state - show apply button in inner card style
+        <>
+          <div className="flex items-center justify-between rounded-md border border-border/70 bg-surface px-3 py-2.5">
+            <div className="space-y-0.5 pr-4">
+              <span className="text-sm font-medium">{t('mail_token.apply')}</span>
+              <p className="text-xs text-text-muted">{t('mail_token.apply_hint')}</p>
             </div>
           </div>
-        ) : (
-          // Unconfigured state - show apply button
-          <div className="space-y-3">
+          <div className="flex flex-wrap items-center gap-2 pt-1">
             <Button
               variant="primary"
               onClick={handleApply}
@@ -221,10 +227,9 @@ export function EmailTokenSection() {
             >
               {applying ? t('mail_token.applying') : t('mail_token.apply')}
             </Button>
-            <p className="text-xs text-text-muted">{t('mail_token.apply_hint')}</p>
           </div>
-        )}
-      </div>
+        </>
+      )}
     </div>
   )
 }
