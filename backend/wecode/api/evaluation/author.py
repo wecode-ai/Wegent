@@ -18,12 +18,20 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.api.dependencies import get_db
 from app.core import security
+from app.models.kind import Kind
 from app.models.user import User
-from wecode.models.evaluation import EvalQuestion
+from wecode.models.evaluation import (
+    EvalAnswer,
+    EvalQuestion,
+    EvalQuestionVersion,
+)
+from wecode.models.evaluation_exam_session import EvalExamSession
 from wecode.schemas.evaluation import (
+    AggregatorModelConfig,
     GradingConfigResponse,
     GradingConfigUpdate,
     PermissionCreate,
@@ -35,6 +43,7 @@ from wecode.schemas.evaluation import (
     QuestionUpdate,
     QuestionVersionInDB,
     QuestionVersionListResponse,
+    ScorerModelConfig,
     TopicCreate,
     TopicInDB,
     TopicListResponse,
@@ -619,8 +628,6 @@ def list_question_versions(
 
     Only the topic creator can view question versions.
     """
-    from wecode.models.evaluation import EvalQuestionVersion
-
     question_service = get_question_service()
 
     question = question_service.get(db, question_id)
@@ -921,8 +928,6 @@ def get_grading_config(
     team_valid = True
     team_id = config.get("team_id")
     if team_id:
-        from app.models.kind import Kind
-
         team = (
             db.query(Kind)
             .filter(
@@ -937,13 +942,39 @@ def get_grading_config(
         else:
             team_valid = False
 
+    # Parse scorer_models from config (stored as dicts in JSON)
+    scorer_models_data = config.get("scorer_models", [])
+    scorer_models = (
+        [ScorerModelConfig(**m) for m in scorer_models_data]
+        if scorer_models_data
+        else []
+    )
+
+    # Parse aggregator_model from config
+    aggregator_model_data = config.get("aggregator_model")
+    aggregator_model = (
+        AggregatorModelConfig(**aggregator_model_data)
+        if aggregator_model_data
+        else None
+    )
+
     return GradingConfigResponse(
         team_id=config.get("team_id"),
         auto_trigger=config.get("auto_trigger", False),
         trigger_condition=config.get("trigger_condition", "manual"),
         grading_timeout=config.get("grading_timeout", 3600),
+        prompt_template=config.get("prompt_template"),
+        model_id=config.get("model_id"),
+        force_override_bot_model=config.get("force_override_bot_model", False),
         team_name=team_name,
         team_valid=team_valid,
+        grading_mode=config.get("grading_mode", "single"),
+        scorer_team_id=config.get("scorer_team_id"),
+        aggregator_team_id=config.get("aggregator_team_id"),
+        scorer_models=scorer_models,
+        aggregator_model=aggregator_model,
+        scorer_prompt_template=config.get("scorer_prompt_template"),
+        aggregator_prompt_template=config.get("aggregator_prompt_template"),
     )
 
 
@@ -970,8 +1001,6 @@ def update_grading_config(
     team_name = None
     team_valid = True
     if config_update.team_id:
-        from app.models.kind import Kind
-
         team = (
             db.query(Kind)
             .filter(
@@ -1002,8 +1031,6 @@ def update_grading_config(
 
     # Update grading config
     # Note: Must reassign the entire dict for SQLAlchemy to detect changes on JSON fields
-    from sqlalchemy.orm.attributes import flag_modified
-
     existing_config = topic.grading_team_config or {}
     updated_config = {
         **existing_config,
@@ -1012,6 +1039,36 @@ def update_grading_config(
         "trigger_condition": config_update.trigger_condition,
         "grading_timeout": config_update.grading_timeout,
     }
+    # Only include optional fields if they are explicitly provided (not None)
+    if config_update.prompt_template is not None:
+        updated_config["prompt_template"] = config_update.prompt_template
+    if config_update.model_id is not None:
+        updated_config["model_id"] = config_update.model_id
+    if config_update.force_override_bot_model is not None:
+        updated_config["force_override_bot_model"] = (
+            config_update.force_override_bot_model
+        )
+
+    # Multi-model grading fields
+    if config_update.grading_mode is not None:
+        updated_config["grading_mode"] = config_update.grading_mode
+    if config_update.scorer_team_id is not None:
+        updated_config["scorer_team_id"] = config_update.scorer_team_id
+    if config_update.aggregator_team_id is not None:
+        updated_config["aggregator_team_id"] = config_update.aggregator_team_id
+    if config_update.scorer_models is not None:
+        updated_config["scorer_models"] = [
+            m.model_dump() for m in config_update.scorer_models
+        ]
+    if config_update.aggregator_model is not None:
+        updated_config["aggregator_model"] = (
+            config_update.aggregator_model.model_dump()
+        )
+    if config_update.scorer_prompt_template is not None:
+        updated_config["scorer_prompt_template"] = config_update.scorer_prompt_template
+    if config_update.aggregator_prompt_template is not None:
+        updated_config["aggregator_prompt_template"] = config_update.aggregator_prompt_template
+
     topic.grading_team_config = updated_config
     # Explicitly mark the JSON field as modified to ensure SQLAlchemy persists the change
     flag_modified(topic, "grading_team_config")
@@ -1023,8 +1080,18 @@ def update_grading_config(
         auto_trigger=config_update.auto_trigger,
         trigger_condition=config_update.trigger_condition,
         grading_timeout=config_update.grading_timeout,
+        prompt_template=config_update.prompt_template,
+        model_id=config_update.model_id,
+        force_override_bot_model=config_update.force_override_bot_model,
         team_name=team_name,
         team_valid=team_valid,
+        grading_mode=config_update.grading_mode,
+        scorer_team_id=config_update.scorer_team_id,
+        aggregator_team_id=config_update.aggregator_team_id,
+        scorer_models=config_update.scorer_models,
+        aggregator_model=config_update.aggregator_model,
+        scorer_prompt_template=config_update.scorer_prompt_template,
+        aggregator_prompt_template=config_update.aggregator_prompt_template,
     )
 
 
@@ -1098,9 +1165,6 @@ def get_topic_exam_sessions(
     _verify_topic_ownership(db, topic, current_user.id)
 
     extra_data = topic.extra_data or {}
-
-    from app.models.user import User
-    from wecode.models.evaluation_exam_session import EvalExamSession
 
     # Build base query
     query = (
@@ -1362,10 +1426,6 @@ def get_exam_session_detail(
     - All answers with content and attachments
     - Selected question details
     """
-    from app.models.user import User
-    from wecode.models.evaluation import EvalAnswer, EvalQuestion
-    from wecode.models.evaluation_exam_session import EvalExamSession
-
     topic = _get_topic_or_404(db, topic_id)
     _verify_topic_ownership(db, topic, current_user.id)
 

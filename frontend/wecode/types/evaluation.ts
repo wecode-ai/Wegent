@@ -226,6 +226,18 @@ export interface RespondentProgress {
   completion_rate: number
 }
 
+// Scorer model configuration
+export interface ScorerModelConfig {
+  model_id: string
+  force_override: boolean
+}
+
+// Aggregator model configuration
+export interface AggregatorModelConfig {
+  model_id: string
+  force_override: boolean
+}
+
 // Grading task types
 export interface GradingTask {
   id: number
@@ -254,8 +266,26 @@ export interface GradingTask {
   version?: number
 }
 
+// Scoring result from individual scorer
+export interface ScoringResult {
+  task_id: number
+  model_id: string
+  content: string
+  status: string
+  error_message?: string
+  s3_path?: string
+}
+
 export interface GradingTaskExecuteRequest {
   team_id?: number
+  model_id?: string
+  force_override_bot_model?: boolean
+  // Multi-model grading fields
+  grading_mode?: string
+  scorer_team_id?: number
+  aggregator_team_id?: number
+  scorer_models?: ScorerModelConfig[]
+  aggregator_model?: AggregatorModelConfig
 }
 
 export interface GradingTaskPublishRequest {
@@ -269,19 +299,45 @@ export interface GradingTaskUpdateReportRequest {
 
 // Grading configuration types
 export interface GradingConfig {
+  // Legacy single-model fields
   team_id?: number
   auto_trigger: boolean
   trigger_condition: string
   grading_timeout: number
   team_name?: string
   team_valid?: boolean
+  model_id?: string
+  force_override_bot_model?: boolean
+  prompt_template?: string
+
+  // Multi-model grading fields
+  grading_mode?: string
+  scorer_team_id?: number
+  aggregator_team_id?: number
+  scorer_models?: ScorerModelConfig[]
+  aggregator_model?: AggregatorModelConfig
+  scorer_prompt_template?: string
+  aggregator_prompt_template?: string
 }
 
 export interface GradingConfigUpdate {
+  // Legacy single-model fields
   team_id?: number
   auto_trigger?: boolean
   trigger_condition?: string
   grading_timeout?: number
+  prompt_template?: string
+  model_id?: string
+  force_override_bot_model?: boolean
+
+  // Multi-model grading fields
+  grading_mode?: string
+  scorer_team_id?: number
+  aggregator_team_id?: number
+  scorer_models?: ScorerModelConfig[]
+  aggregator_model?: AggregatorModelConfig
+  scorer_prompt_template?: string
+  aggregator_prompt_template?: string
 }
 
 // List response types

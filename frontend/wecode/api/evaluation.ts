@@ -347,11 +347,17 @@ export async function publishGradingTask(
 export async function batchExecuteGradingTasks(
   topicId: number,
   taskIds: number[],
-  teamId?: number
+  teamId?: number,
+  modelId?: string,
+  forceOverrideBotModel?: boolean
 ): Promise<{ executed_count: number; task_ids: number[] }> {
-  const searchParams = teamId ? `?team_id=${teamId}` : ''
+  const searchParams = new URLSearchParams()
+  if (teamId) searchParams.set('team_id', teamId.toString())
+  if (modelId) searchParams.set('model_id', modelId)
+  if (forceOverrideBotModel) searchParams.set('force_override_bot_model', 'true')
+  const queryString = searchParams.toString() ? `?${searchParams.toString()}` : ''
   return fetchJson(
-    getEvaluationUrl(`/topics/${topicId}/grading-tasks/batch-execute${searchParams}`),
+    getEvaluationUrl(`/topics/${topicId}/grading-tasks/batch-execute${queryString}`),
     {
       method: 'POST',
       body: JSON.stringify(taskIds),

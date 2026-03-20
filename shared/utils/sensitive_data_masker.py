@@ -66,6 +66,7 @@ class SensitiveDataMasker:
     # Using more specific patterns to avoid false positives
     SENSITIVE_ENV_VARS = [
         "_TOKEN",
+        "TOKEN_A",  # KMS token_a field
         "_KEY",
         "PASSWORD",
         "PASSWD",

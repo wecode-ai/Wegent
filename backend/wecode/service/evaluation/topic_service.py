@@ -13,12 +13,17 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from wecode.models.evaluation import (
+    EvalAnswer,
+    EvalGradingTask,
     EvalPermission,
     EvalQuestion,
     EvalTopic,
     EvalTopicVersion,
+    GradingTaskStatus,
+    PermissionRole,
     QuestionStatus,
     TopicStatus,
     TopicVisibility,
@@ -137,8 +142,6 @@ class TopicService:
 
         if my_only:
             # User's own topics OR topics where user has question_creator permission
-            from wecode.models.evaluation import EvalPermission, PermissionRole
-
             question_creator_topic_ids = (
                 db.query(EvalPermission.topic_id)
                 .filter(
@@ -225,8 +228,6 @@ class TopicService:
         Returns:
             Updated topic
         """
-        from sqlalchemy.orm.attributes import flag_modified
-
         if name:
             topic.name = name
 
@@ -238,12 +239,14 @@ class TopicService:
             or extra_data is not None
         ):
             current_extra_data = dict(topic.extra_data) if topic.extra_data else {}
+            # First update with extra_data, then apply explicit description/instructions
+            # so that explicit parameters take precedence over extra_data values
+            if extra_data is not None:
+                current_extra_data.update(extra_data)
             if description is not None:
                 current_extra_data["description"] = description
             if instructions is not None:
                 current_extra_data["instructions"] = instructions
-            if extra_data is not None:
-                current_extra_data.update(extra_data)
             topic.extra_data = current_extra_data
             # Explicitly mark the JSON field as modified to ensure SQLAlchemy persists the change
             flag_modified(topic, "extra_data")
@@ -405,12 +408,6 @@ class TopicService:
         Returns:
             Dictionary with statistics
         """
-        from wecode.models.evaluation import (
-            EvalAnswer,
-            EvalGradingTask,
-            GradingTaskStatus,
-        )
-
         # Question counts
         total_questions = (
             db.query(func.count(EvalQuestion.id))

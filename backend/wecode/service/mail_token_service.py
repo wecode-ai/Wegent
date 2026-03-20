@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from app.models.user import User
 from shared.utils.crypto import encrypt_sensitive_data
+from shared.utils.sensitive_data_masker import mask_sensitive_data
 
 logger = logging.getLogger(__name__)
 
@@ -80,18 +81,36 @@ class MailTokenService:
         """
         self._check_kms_config()
 
+        request_body = {
+            "client_token": client_token,
+            "user_id": user.user_name,
+        }
+
+        logger.info(
+            f"KMS /mail/token request: user={user.user_name}, "
+            f"body={mask_sensitive_data(request_body)}"
+        )
+
         # Call KMS API to exchange client_token for mail_token
         async with httpx.AsyncClient(timeout=30) as client:
             response = await client.post(
                 self.KMS_TOKEN_URL,
-                json={
-                    "client_token": client_token,
-                    "user_id": user.user_name,
-                },
+                json=request_body,
                 headers={"Content-Type": "application/json"},
             )
+
+            try:
+                response_data = response.json()
+            except Exception:
+                response_data = response.text
+
+            logger.info(
+                f"KMS /mail/token response: status={response.status_code}, "
+                f"body={mask_sensitive_data(response_data)}"
+            )
+
             response.raise_for_status()
-            data = response.json()
+            data = response_data if isinstance(response_data, dict) else {}
 
         mail_token = data.get("token")
         if not mail_token:
@@ -166,17 +185,35 @@ class MailTokenService:
         if client_data is None:
             client_data = json.dumps({"source": "wegent-backend"})
 
+        request_body = {
+            "jwt_token": jwt_token,
+            "client-data": client_data,
+        }
+
+        logger.info(
+            f"KMS /mail/token_a request: user={user.user_name}, "
+            f"body={mask_sensitive_data(request_body)}"
+        )
+
         async with httpx.AsyncClient(timeout=30) as client:
             response = await client.post(
                 self.KMS_TOKEN_A_URL,
-                json={
-                    "jwt_token": jwt_token,
-                    "client-data": client_data,
-                },
+                json=request_body,
                 headers={"Content-Type": "application/json"},
             )
+
+            try:
+                response_data = response.json()
+            except Exception:
+                response_data = response.text
+
+            logger.info(
+                f"KMS /mail/token_a response: status={response.status_code}, "
+                f"body={mask_sensitive_data(response_data)}"
+            )
+
             response.raise_for_status()
-            data = response.json()
+            data = response_data if isinstance(response_data, dict) else {}
 
         if not data.get("success"):
             return False, None, data.get("message", "Unknown error from KMS")

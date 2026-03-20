@@ -120,9 +120,13 @@ export async function graderExecuteTask(
   })
 }
 
-export async function graderRetryTask(taskId: number): Promise<GradingTask> {
+export async function graderRetryTask(
+  taskId: number,
+  data?: GradingTaskExecuteRequest
+): Promise<GradingTask> {
   return fetchJson<GradingTask>(getGraderUrl(`/tasks/${taskId}/retry`), {
     method: 'POST',
+    body: data ? JSON.stringify(data) : undefined,
   })
 }
 

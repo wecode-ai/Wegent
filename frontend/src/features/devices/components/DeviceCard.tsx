@@ -112,11 +112,15 @@ export function DeviceCard({
                   latestVersion={device.latest_version}
                   updateAvailable={device.update_available}
                   onUpgrade={
-                    device.update_available && device.status === 'online' && !isUpgrading
+                    device.update_available &&
+                    device.status === 'online' &&
+                    !isUpgrading &&
+                    !isOpenClawDevice(device)
                       ? () => onUpgrade?.(device)
                       : undefined
                   }
                   isUpgrading={isUpgrading}
+                  isOpenClaw={isOpenClawDevice(device)}
                 />
               )}
             </div>

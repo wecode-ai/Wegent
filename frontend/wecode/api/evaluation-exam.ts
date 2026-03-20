@@ -9,7 +9,7 @@
 
 import { fetchJson, getRespondentUrl, getEvaluationUrl } from './evaluation-client'
 import type {
-  ExamTopicExtraData,
+  ExamTopicConfig,
   ExamAnswerContent,
   ExamSessionStatus,
 } from '@wecode/types/evaluation-exam'
@@ -20,7 +20,7 @@ import type { Topic, Question, Answer } from '@wecode/types/evaluation'
  */
 export interface ExamDataResponse {
   /** Topic with exam configuration */
-  topic: Omit<Topic, 'extra_data'> & { extra_data: ExamTopicExtraData }
+  topic: Omit<Topic, 'extra_data'> & { extra_data: ExamTopicConfig }
   /** Questions with rich exam content */
   questions: Question[]
   /** User's existing answer if already submitted */

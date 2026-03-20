@@ -17,6 +17,7 @@ interface VersionBadgeProps {
   className?: string
   onUpgrade?: () => void
   isUpgrading?: boolean
+  isOpenClaw?: boolean
 }
 
 export function VersionBadge({
@@ -26,6 +27,7 @@ export function VersionBadge({
   className,
   onUpgrade,
   isUpgrading,
+  isOpenClaw,
 }: VersionBadgeProps) {
   const { t } = useTranslation('devices')
 
@@ -34,7 +36,7 @@ export function VersionBadge({
   return (
     <div className={cn('flex items-center gap-1.5', className)}>
       <span className="text-xs text-text-muted">v{executorVersion}</span>
-      {updateAvailable && !isUpgrading && (
+      {updateAvailable && !isUpgrading && !isOpenClaw && (
         <TooltipProvider>
           <Tooltip>
             <TooltipTrigger asChild>
@@ -58,9 +60,7 @@ export function VersionBadge({
                 <p className="text-text-muted">
                   {t('version.latest')}: {latestVersion}
                 </p>
-                {onUpgrade && (
-                  <p className="text-xs text-primary">{t('version.clickToUpgrade')}</p>
-                )}
+                {onUpgrade && <p className="text-xs text-primary">{t('version.clickToUpgrade')}</p>}
               </div>
             </TooltipContent>
           </Tooltip>

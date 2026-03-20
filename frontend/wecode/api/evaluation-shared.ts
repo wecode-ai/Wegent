@@ -278,6 +278,35 @@ export async function uploadTextAsFile(
 }
 
 // ============================================================================
+// File Content API (for reading text files)
+// ============================================================================
+
+/**
+ * Fetch file content as text through backend proxy.
+ * Used for reading uploaded text files (like supplementary notes) back into the UI.
+ *
+ * @param s3Path - S3 storage path
+ * @returns File content as text string
+ */
+export async function fetchFileContent(s3Path: string): Promise<string> {
+  const token = getToken()
+  const params = new URLSearchParams({ s3_path: s3Path })
+  const url = getEvaluationUrl(`/shared/files/content?${params}`)
+
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  })
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}))
+    throw new Error(errorData.detail || `Failed to fetch file content: ${response.status}`)
+  }
+
+  return response.text()
+}
+
+// ============================================================================
 // Report Viewing API
 // ============================================================================
 

@@ -420,8 +420,11 @@ export const Icons: Record<string, React.FC<IconProps>> = {
   eye: EyeIcon,
 }
 
+// Icon name type derived from the Icons mapping
+export type IconName = keyof typeof Icons
+
 interface IconComponentProps extends IconProps {
-  name: string
+  name: IconName
 }
 
 export const Icon = ({ name, size, className }: IconComponentProps) => {
