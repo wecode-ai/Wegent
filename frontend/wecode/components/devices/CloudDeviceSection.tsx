@@ -26,7 +26,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import { Cloud, Loader2, Trash2, Play, Star, MoreVertical } from 'lucide-react'
+import { Cloud, Loader2, Trash2, Play, Star, MoreVertical, ExternalLink } from 'lucide-react'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -147,6 +147,15 @@ export function CloudDeviceSection({
         <Cloud className="w-5 h-5 text-text-secondary" />
         <h3 className="text-sm font-medium text-text-secondary">{t('cloud_device.title')}</h3>
         <span className="text-xs text-text-muted">({machineCount})</span>
+        <a
+          href="https://cloud.nevis.sina.com.cn/"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-primary bg-primary/10 rounded-full hover:bg-primary/20 transition-colors"
+        >
+          {t('cloud_device.powered_by_prefix')}Nevis{t('cloud_device.powered_by_suffix')}
+          <ExternalLink className="w-3 h-3" />
+        </a>
       </div>
 
       {/* Creating notice alert */}

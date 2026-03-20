@@ -25,7 +25,9 @@
     "mail_password": "邮箱密码",
     "capability_executor": "Executor",
     "capability_openclaw": "OpenClaw",
-    "machines_count": "台机器"
+    "machines_count": "台机器",
+    "powered_by_prefix": "由",
+    "powered_by_suffix": "平台提供云算力"
   },
   "mail_token": {
     "title": "公司邮件",

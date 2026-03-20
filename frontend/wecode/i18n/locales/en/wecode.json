@@ -25,7 +25,9 @@
     "mail_password": "Email Password",
     "capability_executor": "Executor",
     "capability_openclaw": "OpenClaw",
-    "machines_count": "machine(s)"
+    "machines_count": "machine(s)",
+    "powered_by_prefix": "Cloud computing powered by",
+    "powered_by_suffix": ""
   },
   "mail_token": {
     "title": "Company Mail",
