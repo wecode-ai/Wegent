@@ -12,11 +12,13 @@ import { getToken, removeToken } from './user'
 // Custom error class for API errors with status code
 export class ApiError extends Error {
   status: number
+  errorCode?: string | number
 
-  constructor(message: string, status: number) {
+  constructor(message: string, status: number, errorCode?: string | number) {
     super(message)
     this.name = 'ApiError'
     this.status = status
+    this.errorCode = errorCode
   }
 }
 
@@ -95,17 +97,24 @@ class APIClient {
       if (!response.ok) {
         const errorText = await response.text()
         let errorMsg = errorText
+        let errorCode: string | number | undefined
         try {
           // Try to parse as JSON and extract detail field
           const json = JSON.parse(errorText)
           if (json && typeof json.detail === 'string') {
             errorMsg = json.detail
           }
+          if (
+            json &&
+            (typeof json.error_code === 'string' || typeof json.error_code === 'number')
+          ) {
+            errorCode = json.error_code
+          }
         } catch {
           // Not JSON, use original text directly
         }
         // Throw ApiError with status code for better error handling
-        throw new ApiError(errorMsg, response.status)
+        throw new ApiError(errorMsg, response.status, errorCode)
       }
 
       // Handle 204 No Content responses

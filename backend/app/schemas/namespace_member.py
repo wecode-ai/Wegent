@@ -5,7 +5,7 @@
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.schemas.namespace import GroupRole
 
@@ -27,6 +27,52 @@ class GroupMemberUpdate(BaseModel):
     """Group member update model"""
 
     role: GroupRole
+
+
+class GroupMemberBatchUpdateItem(BaseModel):
+    """Single member role update in a batch request."""
+
+    user_id: int
+    role: GroupRole
+
+
+class GroupMemberBatchUpdateRequest(BaseModel):
+    """Batch member role update request."""
+
+    updates: list[GroupMemberBatchUpdateItem] = Field(
+        ..., min_length=1, description="List of member role updates"
+    )
+
+    @model_validator(mode="after")
+    def validate_unique_user_ids(self) -> "GroupMemberBatchUpdateRequest":
+        user_ids = [update.user_id for update in self.updates]
+        if len(user_ids) != len(set(user_ids)):
+            raise ValueError(
+                "Duplicate user_id values are not allowed in batch updates"
+            )
+        return self
+
+
+class GroupMemberBatchUpdateFailedItem(BaseModel):
+    """Failed member role update in a batch response."""
+
+    user_id: int
+    role: GroupRole
+    error: str
+    error_code: str | None = None
+
+
+class GroupMemberBatchUpdateResponse(BaseModel):
+    """Batch member role update response."""
+
+    updated_members: list["GroupMemberResponse"] = Field(
+        default_factory=list, description="Successfully updated members"
+    )
+    failed_updates: list[GroupMemberBatchUpdateFailedItem] = Field(
+        default_factory=list, description="Failed member role updates"
+    )
+    total_updated: int = Field(0, description="Total number of updated members")
+    total_failed: int = Field(0, description="Total number of failed updates")
 
 
 class GroupMemberResponse(GroupMemberBase):

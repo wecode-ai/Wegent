@@ -70,6 +70,7 @@
     "noGroups": "No groups yet",
     "editGroup": "Edit group",
     "manageMembers": "Manage members",
+    "viewMembers": "View members",
     "deleteGroup": "Delete group",
     "enterGroup": "Enter group"
   },
@@ -121,12 +122,22 @@
     "userAlreadyMember": "This user is already a member of the group",
     "addByUsernameNotSupported": "Adding members by username is not yet supported. Please contact admin to use 'Invite All Users' feature",
     "searchPlaceholder": "Search username or email...",
+    "searchMembersPlaceholder": "Search member name, inviter, or role...",
     "selectedUsers": "{{count}} user(s) selected",
     "addMembersSuccess": "Successfully added {{count}} member(s)",
     "alreadyMembers": "{{count}} user(s) already members",
     "adding": "Adding...",
     "addCount": "Add ({{count}})",
+    "pendingChange": "Unsaved",
+    "pendingChangesCount": "{{count}} change(s) pending",
+    "visibleMembersCount": "Showing {{count}} member(s)",
+    "confirmDiscardRoleChanges": "You have unsaved role changes. Discard them?",
+    "saveRoleChangesSuccess": "Saved {{count}} role change(s)",
+    "noMembersFound": "No matching members found",
     "rolePermissions": "Role Permissions",
+    "errors": {
+      "currentOwnerRoleChangeRequiresTransfer": "Cannot change the current group owner's role. Transfer ownership first."
+    },
     "roleDescriptions": {
       "Reporter": "Can only view group resources, cannot make any modifications, can leave group",
       "Developer": "Can view, create, and edit group resources, can leave group, but cannot delete resources or manage members",

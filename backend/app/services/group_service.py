@@ -8,6 +8,7 @@ from typing import Optional
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
+from app.core.exceptions import CustomHTTPException
 from app.models.kind import Kind
 from app.models.namespace import Namespace
 from app.models.resource_member import MemberStatus, ResourceMember
@@ -21,9 +22,11 @@ from app.schemas.namespace import (
     GroupVisibility,
 )
 from app.schemas.namespace_member import (
+    GroupMemberBatchUpdateFailedItem,
+    GroupMemberBatchUpdateItem,
+    GroupMemberBatchUpdateResponse,
     GroupMemberCreate,
     GroupMemberResponse,
-    GroupMemberUpdate,
 )
 from app.services.group_member_helper import (
     NAMESPACE_RESOURCE_TYPE,
@@ -44,6 +47,10 @@ from app.services.group_permission import (
 
 # Maximum nesting depth for groups
 MAX_GROUP_DEPTH = 5
+CURRENT_GROUP_OWNER_ROLE_CHANGE_ERROR_CODE = "GROUP_OWNER_ROLE_CHANGE_REQUIRES_TRANSFER"
+CURRENT_GROUP_OWNER_ROLE_CHANGE_ERROR = (
+    "Cannot change role of the current group owner. Transfer ownership first."
+)
 
 
 def create_group(
@@ -482,19 +489,106 @@ def add_member(
     db.commit()
     db.refresh(new_member)
 
-    # Build response with group_name field for backward compatibility
-    response_data = {
-        "id": new_member.id,
-        "group_name": group_name,
-        "user_id": new_member.user_id,
-        "role": new_member.role,
-        "invited_by_user_id": new_member.invited_by_user_id,
-        "is_active": new_member.status == MemberStatus.APPROVED.value,
-        "created_at": new_member.created_at,
-        "updated_at": new_member.updated_at,
-    }
+    return _build_group_member_response(new_member, group_name)
 
+
+def _build_group_member_response(
+    member: ResourceMember, group_name: str
+) -> GroupMemberResponse:
+    """Build API response for a group member."""
+    response_data = {
+        "id": member.id,
+        "group_name": group_name,
+        "user_id": member.user_id,
+        "role": member.role,
+        "invited_by_user_id": member.invited_by_user_id,
+        "is_active": member.status == MemberStatus.APPROVED.value,
+        "created_at": member.created_at,
+        "updated_at": member.updated_at,
+    }
     return GroupMemberResponse(**response_data)
+
+
+def _get_group_or_404(db: Session, group_name: str) -> Namespace:
+    """Get an active group or raise 404."""
+    group = (
+        db.query(Namespace)
+        .filter(
+            Namespace.name == group_name,
+            Namespace.is_active.is_(True),
+        )
+        .first()
+    )
+
+    if not group:
+        raise HTTPException(status_code=404, detail="Group not found")
+
+    return group
+
+
+def _get_role_updater_role(
+    db: Session, group_name: str, updated_by_user_id: int
+) -> GroupRole:
+    """Validate and return the updater's effective role for role changes."""
+    updater_role = get_user_role_in_group(db, updated_by_user_id, group_name)
+    if updater_role not in [GroupRole.Owner, GroupRole.Maintainer]:
+        raise HTTPException(
+            status_code=403,
+            detail="Only Maintainers and Owners can update member roles",
+        )
+    return updater_role
+
+
+def _validate_member_role_change(
+    member: ResourceMember,
+    new_role: GroupRole,
+    updater_role: GroupRole,
+) -> None:
+    """Validate a single member role change without mutating database state."""
+    current_role = GroupRole(member.role)
+
+    if updater_role == GroupRole.Maintainer:
+        if current_role == GroupRole.Owner:
+            raise HTTPException(
+                status_code=403,
+                detail="Maintainers cannot modify Owner roles",
+            )
+        if new_role == GroupRole.Owner:
+            raise HTTPException(
+                status_code=403,
+                detail="Only Owners can promote members to Owner role",
+            )
+
+
+def _validate_current_group_owner_role_change(
+    group: Namespace, member: ResourceMember, new_role: GroupRole
+) -> None:
+    """Reject role changes that would desynchronize the primary group owner."""
+    if (
+        member.user_id == group.owner_user_id
+        and GroupRole(member.role) == GroupRole.Owner
+        and new_role != GroupRole.Owner
+    ):
+        raise CustomHTTPException(
+            status_code=400,
+            detail=CURRENT_GROUP_OWNER_ROLE_CHANGE_ERROR,
+            error_code=CURRENT_GROUP_OWNER_ROLE_CHANGE_ERROR_CODE,
+        )
+
+
+def _get_batch_role_update_priority(
+    member: ResourceMember | None, new_role: GroupRole
+) -> int:
+    """Order batch updates so Owner promotions are applied before Owner demotions."""
+    if member is None:
+        return 1
+
+    current_role = GroupRole(member.role)
+    if current_role != GroupRole.Owner and new_role == GroupRole.Owner:
+        return 0
+    if current_role == GroupRole.Owner and new_role != GroupRole.Owner:
+        return 2
+    return 1
 
 
 def remove_member(
@@ -595,34 +689,17 @@ def update_member_role(
     Raises:
         HTTPException: If member not found or insufficient permissions
     """
-    # Check member exists
+    group = _get_group_or_404(db, group_name)
+
     member = get_group_member(db, group_name, user_id)
 
     if not member:
         raise HTTPException(status_code=404, detail="Member not found")
 
-    # Check permission (must be at least Maintainer to change roles)
-    updater_role = get_user_role_in_group(db, updated_by_user_id, group_name)
-    if updater_role not in [GroupRole.Owner, GroupRole.Maintainer]:
-        raise HTTPException(
-            status_code=403,
-            detail="Only Maintainers and Owners can update member roles",
-        )
-
+    updater_role = _get_role_updater_role(db, group_name, updated_by_user_id)
+    _validate_member_role_change(member, new_role, updater_role)
+    _validate_current_group_owner_role_change(group, member, new_role)
     current_role = GroupRole(member.role)
-
-    # Maintainers cannot modify Owner roles or promote to Owner
-    if updater_role == GroupRole.Maintainer:
-        if current_role == GroupRole.Owner:
-            raise HTTPException(
-                status_code=403,
-                detail="Maintainers cannot modify Owner roles",
-            )
-        if new_role == GroupRole.Owner:
-            raise HTTPException(
-                status_code=403,
-                detail="Only Owners can promote members to Owner role",
-            )
 
     # Prevent downgrading the last owner
     if current_role == GroupRole.Owner and new_role != GroupRole.Owner:
@@ -640,19 +717,109 @@ def update_member_role(
     db.commit()
     db.refresh(member)
 
-    # Build response with group_name field for backward compatibility
-    response_data = {
-        "id": member.id,
-        "group_name": group_name,
-        "user_id": member.user_id,
-        "role": member.role,
-        "invited_by_user_id": member.invited_by_user_id,
-        "is_active": member.status == MemberStatus.APPROVED.value,
-        "created_at": member.created_at,
-        "updated_at": member.updated_at,
-    }
+    return _build_group_member_response(member, group_name)
 
-    return GroupMemberResponse(**response_data)
+
+def update_member_roles_batch(
+    db: Session,
+    group_name: str,
+    updates: list[GroupMemberBatchUpdateItem],
+    updated_by_user_id: int,
+) -> GroupMemberBatchUpdateResponse:
+    """
+    Batch update member roles with a single commit.
+
+    Owner promotions are applied before Owner demotions so a single batch can
+    safely process mixed owner updates without transient last-owner failures.
+    """
+    group = _get_group_or_404(db, group_name)
+    updater_role = _get_role_updater_role(db, group_name, updated_by_user_id)
+
+    namespace_id = get_namespace_id_by_name(db, group_name)
+    user_ids = [update.user_id for update in updates]
+    members = (
+        db.query(ResourceMember)
+        .filter(
+            ResourceMember.resource_type == NAMESPACE_RESOURCE_TYPE,
+            ResourceMember.resource_id == namespace_id,
+            ResourceMember.user_id.in_(user_ids),
+            ResourceMember.status == MemberStatus.APPROVED.value,
+        )
+        .all()
+    )
+    members_by_user_id = {member.user_id: member for member in members}
+
+    owner_count = count_group_members_by_role(db, group_name, GroupRole.Owner.value)
+    failed_updates: dict[int, GroupMemberBatchUpdateFailedItem] = {}
+    successful_user_ids: set[int] = set()
+    processed_updates = sorted(
+        enumerate(updates),
+        key=lambda item: (
+            _get_batch_role_update_priority(
+                members_by_user_id.get(item[1].user_id), item[1].role
+            ),
+            item[0],
+        ),
+    )
+
+    for _, update in processed_updates:
+        member = members_by_user_id.get(update.user_id)
+        if not member:
+            failed_updates[update.user_id] = GroupMemberBatchUpdateFailedItem(
+                user_id=update.user_id,
+                role=update.role,
+                error="Member not found",
+                error_code=None,
+            )
+            continue
+
+        try:
+            _validate_member_role_change(member, update.role, updater_role)
+            _validate_current_group_owner_role_change(group, member, update.role)
+
+            current_role = GroupRole(member.role)
+            if current_role == GroupRole.Owner and update.role != GroupRole.Owner:
+                if owner_count <= 1:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Cannot change role of the last owner. Add another owner first.",
+                    )
+                owner_count -= 1
+            elif current_role != GroupRole.Owner and update.role == GroupRole.Owner:
+                owner_count += 1
+
+            member.role = update.role.value
+            successful_user_ids.add(update.user_id)
+        except HTTPException as exc:
+            failed_updates[update.user_id] = GroupMemberBatchUpdateFailedItem(
+                user_id=update.user_id,
+                role=update.role,
+                error=str(exc.detail),
+                error_code=getattr(exc, "error_code", None),
+            )
+
+    if successful_user_ids:
+        db.commit()
+        for user_id in successful_user_ids:
+            db.refresh(members_by_user_id[user_id])
+
+    updated_members = [
+        _build_group_member_response(members_by_user_id[update.user_id], group_name)
+        for update in updates
+        if update.user_id in successful_user_ids
+    ]
+    failed_items = [
+        failed_updates[update.user_id]
+        for update in updates
+        if update.user_id in failed_updates
+    ]
+
+    return GroupMemberBatchUpdateResponse(
+        updated_members=updated_members,
+        failed_updates=failed_items,
+        total_updated=len(updated_members),
+        total_failed=len(failed_items),
+    )
 
 
 def transfer_ownership(

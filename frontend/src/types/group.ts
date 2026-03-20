@@ -70,6 +70,29 @@ export interface GroupMemberUpdate {
   role: GroupRole
 }
 
+export interface GroupMemberBatchUpdateItem {
+  user_id: number
+  role: GroupRole
+}
+
+export interface GroupMemberBatchUpdateRequest {
+  updates: GroupMemberBatchUpdateItem[]
+}
+
+export interface GroupMemberBatchUpdateFailedItem {
+  user_id: number
+  role: GroupRole
+  error: string
+  error_code?: string | null
+}
+
+export interface GroupMemberBatchUpdateResponse {
+  updated_members: GroupMember[]
+  failed_updates: GroupMemberBatchUpdateFailedItem[]
+  total_updated: number
+  total_failed: number
+}
+
 export interface GroupListResponse {
   total: number
   items: Group[]
