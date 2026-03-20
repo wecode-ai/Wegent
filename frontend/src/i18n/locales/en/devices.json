@@ -137,6 +137,7 @@
     "current": "Current Version",
     "latest": "Latest Version",
     "updateAvailable": "Update Available",
-    "clickToUpgrade": "Click to upgrade"
+    "clickToUpgrade": "Click to upgrade",
+    "openclawNotSupported": "OpenClaw devices do not support auto-upgrade"
   }
 }
