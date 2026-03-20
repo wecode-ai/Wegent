@@ -28,6 +28,8 @@ from app.models.share_link import ResourceType, ShareLink
 from app.models.user import User
 from app.schemas.base_role import BaseRole, has_permission
 from app.schemas.share import (
+    BatchResourceMemberResponse,
+    FailedMemberResponse,
     JoinByLinkResponse,
     MemberListResponse,
 )
@@ -41,6 +43,7 @@ from app.schemas.share import (
     ShareLinkConfig,
     ShareLinkResponse,
 )
+from shared.telemetry.decorators import trace_sync
 
 # SchemaMemberRole is an alias to BaseRole for backward compatibility
 # All role-related code should use BaseRole as the single source of truth
@@ -288,7 +291,7 @@ class UnifiedShareService(ABC):
             .filter(
                 ShareLink.resource_type.in_(resource_type_variants),
                 ShareLink.resource_id == resource_id,
-                ShareLink.is_active == True,
+                ShareLink.is_active.is_(True),
             )
             .first()
         )
@@ -411,7 +414,7 @@ class UnifiedShareService(ABC):
             .filter(
                 ShareLink.resource_type.in_(resource_type_variants),
                 ShareLink.resource_id == resource_id,
-                ShareLink.is_active == True,
+                ShareLink.is_active.is_(True),
             )
             .first()
         )
@@ -444,7 +447,7 @@ class UnifiedShareService(ABC):
             .filter(
                 ShareLink.resource_type.in_(resource_type_variants),
                 ShareLink.resource_id == resource_id,
-                ShareLink.is_active == True,
+                ShareLink.is_active.is_(True),
             )
             .first()
         )
@@ -508,7 +511,7 @@ class UnifiedShareService(ABC):
             .filter(
                 ShareLink.resource_type.in_(resource_type_variants),
                 ShareLink.resource_id == resource_id,
-                ShareLink.is_active == True,
+                ShareLink.is_active.is_(True),
             )
             .first()
         )
@@ -530,7 +533,7 @@ class UnifiedShareService(ABC):
 
         # Get owner info
         owner = (
-            db.query(User).filter(User.id == owner_id, User.is_active == True).first()
+            db.query(User).filter(User.id == owner_id, User.is_active.is_(True)).first()
         )
         owner_name = owner.user_name if owner else f"User_{owner_id}"
 
@@ -589,7 +592,7 @@ class UnifiedShareService(ABC):
             .filter(
                 ShareLink.resource_type.in_(resource_type_variants),
                 ShareLink.resource_id == resource_id,
-                ShareLink.is_active == True,
+                ShareLink.is_active.is_(True),
             )
             .first()
         )
@@ -831,7 +834,7 @@ class UnifiedShareService(ABC):
         # Check target user exists
         target_user = (
             db.query(User)
-            .filter(User.id == target_user_id, User.is_active == True)
+            .filter(User.id == target_user_id, User.is_active.is_(True))
             .first()
         )
         if not target_user:
@@ -877,7 +880,7 @@ class UnifiedShareService(ABC):
                     .filter(
                         ShareLink.resource_type.in_(resource_type_variants),
                         ShareLink.resource_id == resource_id,
-                        ShareLink.is_active == True,
+                        ShareLink.is_active.is_(True),
                     )
                     .first()
                 )
@@ -920,7 +923,7 @@ class UnifiedShareService(ABC):
                 .filter(
                     ShareLink.resource_type.in_(resource_type_variants),
                     ShareLink.resource_id == resource_id,
-                    ShareLink.is_active == True,
+                    ShareLink.is_active.is_(True),
                 )
                 .first()
             )
@@ -974,6 +977,200 @@ class UnifiedShareService(ABC):
         logger.info(f"[add_member] User map created with {len(user_map)} users")
 
         return self._member_to_response(member, user_map)
+
+    @trace_sync(
+        span_name="share.batch_add_members",
+        tracer_name="backend.services.share",
+        extract_attributes=lambda self, db, resource_id, current_user_id, members_data: {
+            "resource_id": resource_id,
+            "current_user_id": current_user_id,
+            "members_count": len(members_data),
+        },
+    )
+    def batch_add_members(
+        self,
+        db: Session,
+        resource_id: int,
+        current_user_id: int,
+        members_data: List[Tuple[int, SchemaMemberRole]],
+    ) -> BatchResourceMemberResponse:
+        """Batch add multiple members to a resource in a single transaction.
+
+        Args:
+            db: Database session
+            resource_id: Resource ID
+            current_user_id: Current user performing the action
+            members_data: List of (target_user_id, role) tuples
+        """
+        # Validate resource and ownership/manage permission once
+        resource = self._get_resource(db, resource_id, current_user_id)
+        if not resource:
+            raise HTTPException(status_code=404, detail="Resource not found")
+
+        owner_id = self._get_resource_owner_id(resource)
+        has_manage = self.check_permission(
+            db, resource_id, current_user_id, SchemaMemberRole.Maintainer
+        )
+        if owner_id != current_user_id and not has_manage:
+            raise HTTPException(status_code=403, detail="No permission to add members")
+
+        # Get or create share link once for all members
+        resource_type_variants = [self.resource_type.value]
+        if self.resource_type.value == "KnowledgeBase":
+            resource_type_variants.append("KNOWLEDGE_BASE")
+
+        share_link = (
+            db.query(ShareLink)
+            .filter(
+                ShareLink.resource_type.in_(resource_type_variants),
+                ShareLink.resource_id == resource_id,
+                ShareLink.is_active.is_(True),
+            )
+            .first()
+        )
+        if not share_link:
+            share_token = self._generate_share_token(current_user_id, resource_id)
+            share_link = ShareLink(
+                resource_type=self.resource_type.value,
+                resource_id=resource_id,
+                share_token=share_token,
+                require_approval=True,
+                default_role=ResourceRole.Reporter.value,
+                expires_at=datetime.utcnow() + timedelta(days=365 * 100),
+                created_by_user_id=current_user_id,
+                is_active=True,
+            )
+            db.add(share_link)
+            db.flush()
+
+        # Batch-query all target users and existing members
+        target_user_ids = [uid for uid, _ in members_data]
+        target_users = (
+            db.query(User)
+            .filter(User.id.in_(target_user_ids), User.is_active.is_(True))
+            .all()
+        )
+        valid_user_map = {u.id: u for u in target_users}
+
+        existing_members = (
+            db.query(ResourceMember)
+            .filter(
+                ResourceMember.resource_type.in_(resource_type_variants),
+                ResourceMember.resource_id == resource_id,
+                ResourceMember.user_id.in_(target_user_ids),
+            )
+            .all()
+        )
+        existing_map = {m.user_id: m for m in existing_members}
+
+        succeeded: List[ResourceMember] = []
+        failed: List[FailedMemberResponse] = []
+        # Track processed IDs to guard against duplicates within members_data
+        processed_user_ids: set = set()
+
+        for target_user_id, role in members_data:
+            # Skip self-add
+            if target_user_id == current_user_id:
+                failed.append(
+                    FailedMemberResponse(
+                        user_id=target_user_id, error="Cannot add yourself"
+                    )
+                )
+                continue
+
+            # Skip duplicate entries within the same batch request
+            if target_user_id in processed_user_ids:
+                failed.append(
+                    FailedMemberResponse(
+                        user_id=target_user_id,
+                        error="Duplicate entry in request",
+                    )
+                )
+                continue
+
+            # Check user exists
+            if target_user_id not in valid_user_map:
+                failed.append(
+                    FailedMemberResponse(
+                        user_id=target_user_id, error="User not found or inactive"
+                    )
+                )
+                continue
+
+            existing = existing_map.get(target_user_id)
+            if existing:
+                if existing.status.lower() == MemberStatus.APPROVED.value.lower():
+                    failed.append(
+                        FailedMemberResponse(
+                            user_id=target_user_id,
+                            error="User already has access",
+                        )
+                    )
+                    continue
+
+                # Update existing pending/rejected record
+                if not existing.share_link_id:
+                    existing.share_link_id = share_link.id
+                existing.set_role(role.value)
+                existing.status = MemberStatus.APPROVED.value
+                existing.invited_by_user_id = current_user_id
+                existing.reviewed_by_user_id = current_user_id
+                existing.reviewed_at = datetime.utcnow()
+                existing.updated_at = datetime.utcnow()
+                succeeded.append(existing)
+                # Mark as processed so later duplicates are caught
+                processed_user_ids.add(target_user_id)
+            else:
+                # Create new member
+                member = ResourceMember(
+                    resource_type=self.resource_type.value,
+                    resource_id=resource_id,
+                    user_id=target_user_id,
+                    status=MemberStatus.APPROVED.value,
+                    invited_by_user_id=current_user_id,
+                    share_link_id=share_link.id,
+                    reviewed_by_user_id=current_user_id,
+                    reviewed_at=datetime.utcnow(),
+                    requested_at=datetime.utcnow(),
+                )
+                member.set_role(role.value)
+                db.add(member)
+                succeeded.append(member)
+                # Update both maps so subsequent iterations see the new member
+                existing_map[target_user_id] = member
+                processed_user_ids.add(target_user_id)
+
+        db.commit()
+
+        # Refresh all succeeded members, then call approval hooks and collect
+        # copied_resource_id values in-memory before a single final commit.
+        for member in succeeded:
+            db.refresh(member)
+
+        for member in succeeded:
+            try:
+                copied_resource_id = self._on_member_approved(db, member, resource)
+                if copied_resource_id:
+                    member.copied_resource_id = copied_resource_id
+            except Exception as exc:
+                logger.error(
+                    "Approval hook failed for member user_id=%s: %s",
+                    member.user_id,
+                    exc,
+                )
+
+        # Persist all copied_resource_id updates in one commit
+        db.commit()
+
+        # Build user map for responses
+        all_user_ids = set(target_user_ids) | {current_user_id}
+        all_users = db.query(User).filter(User.id.in_(all_user_ids)).all()
+        user_map = {u.id: u for u in all_users}
+
+        return BatchResourceMemberResponse(
+            succeeded=[self._member_to_response(m, user_map) for m in succeeded],
+            failed=failed,
+        )
 
     def update_member(
         self,

@@ -19,6 +19,8 @@ from app.api.dependencies import get_db
 from app.core import security
 from app.models.user import User
 from app.schemas.share import (
+    BatchResourceMemberCreate,
+    BatchResourceMemberResponse,
     JoinByLinkRequest,
     JoinByLinkResponse,
     KBShareInfoResponse,
@@ -349,6 +351,39 @@ def add_member(
         current_user_id=current_user.id,
         target_user_id=body.user_id,
         role=body.role,
+    )
+
+
+@router.post(
+    "/{resource_type}/{resource_id}/members/batch",
+    response_model=BatchResourceMemberResponse,
+    summary="Batch add members",
+)
+def batch_add_members(
+    resource_type: str,
+    resource_id: int,
+    body: BatchResourceMemberCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+) -> BatchResourceMemberResponse:
+    """
+    Batch add multiple members to a resource.
+
+    Requires owner or manage permission.
+    Members are added with approved status immediately.
+    Returns succeeded and failed results for each member.
+
+    - **resource_type**: Resource type (Team, Task, KnowledgeBase)
+    - **resource_id**: Resource ID
+    - **body**: List of members (user_id, role)
+    """
+    service = _get_share_service(resource_type)
+    members_data = [(m.user_id, m.role) for m in body.members]
+    return service.batch_add_members(
+        db=db,
+        resource_id=resource_id,
+        current_user_id=current_user.id,
+        members_data=members_data,
     )
 
 

@@ -154,6 +154,14 @@ class ResourceMemberCreate(BaseModel):
         return v
 
 
+class BatchResourceMemberCreate(BaseModel):
+    """Request body for batch adding members directly."""
+
+    members: List[ResourceMemberCreate] = Field(
+        description="List of members to add", min_length=1, max_length=10
+    )
+
+
 class ResourceMemberUpdate(BaseModel):
     """Request body for updating member permissions."""
 
@@ -192,6 +200,25 @@ class ResourceMemberResponse(BaseModel):
     requested_at: datetime
     created_at: datetime
     updated_at: datetime
+
+
+class FailedMemberResponse(BaseModel):
+    """Response entry for a failed member addition."""
+
+    user_id: int
+    error: str
+
+
+class BatchResourceMemberResponse(BaseModel):
+    """Response containing batch member addition results."""
+
+    succeeded: List[ResourceMemberResponse] = Field(
+        default_factory=list, description="Successfully added members"
+    )
+    failed: List[FailedMemberResponse] = Field(
+        default_factory=list,
+        description="Failed additions with user_id and error message",
+    )
 
 
 class ResourceMemberInDB(BaseModel):
