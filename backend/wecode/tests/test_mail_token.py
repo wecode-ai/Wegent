@@ -90,7 +90,7 @@ class TestMailTokenService:
 
         # Verify KMS was called correctly
         mock_client.post.assert_called_once_with(
-            MailTokenService.KMS_TOKEN_URL,
+            service.KMS_TOKEN_URL,
             json={
                 "client_token": "client_token_123",
                 "user_id": "testuser",
@@ -190,7 +190,7 @@ class TestMailTokenService:
         # Verify KMS was called correctly
         mock_client.post.assert_called_once()
         call_args = mock_client.post.call_args
-        assert call_args[0][0] == MailTokenService.KMS_TOKEN_A_URL
+        assert call_args[0][0] == service.KMS_TOKEN_A_URL
         assert "jwt_token" in call_args[1]["json"]
         assert call_args[1]["json"]["client-data"] == '{"source": "test"}'
 
