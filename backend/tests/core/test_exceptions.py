@@ -65,6 +65,18 @@ class TestCustomExceptions:
         assert exc.detail == "Bad request"
         assert exc.error_code is None
 
+    def test_custom_http_exception_with_string_error_code(self):
+        """Test CustomHTTPException supports string business error codes."""
+        exc = CustomHTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Bad request",
+            error_code="GROUP_OWNER_ROLE_CHANGE_REQUIRES_TRANSFER",
+        )
+
+        assert exc.status_code == status.HTTP_400_BAD_REQUEST
+        assert exc.detail == "Bad request"
+        assert exc.error_code == "GROUP_OWNER_ROLE_CHANGE_REQUIRES_TRANSFER"
+
 
 @pytest.mark.asyncio
 @pytest.mark.unit
@@ -96,6 +108,23 @@ class TestExceptionHandlers:
         response_body = eval(response.body.decode())
         assert response_body["detail"] == "Server error"
         assert response_body["error_code"] == 5001
+
+    async def test_http_exception_handler_with_string_error_code(self):
+        """Test HTTP exception handler returns string business error codes."""
+        exc = CustomHTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Business error",
+            error_code="GROUP_OWNER_ROLE_CHANGE_REQUIRES_TRANSFER",
+        )
+
+        response = await http_exception_handler(request=None, exc=exc)
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        response_body = eval(response.body.decode())
+        assert response_body["detail"] == "Business error"
+        assert (
+            response_body["error_code"] == "GROUP_OWNER_ROLE_CHANGE_REQUIRES_TRANSFER"
+        )
 
     async def test_validation_exception_handler(self):
         """Test validation exception handler"""

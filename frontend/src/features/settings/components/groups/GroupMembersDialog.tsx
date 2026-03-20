@@ -9,6 +9,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import Modal from '@/features/common/Modal'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { Input } from '@/components/ui/input'
 import {
   Select,
   SelectContent,
@@ -20,15 +21,23 @@ import {
   listGroupMembers,
   addGroupMemberByUsername,
   removeGroupMember,
-  updateGroupMemberRole,
+  batchUpdateGroupMemberRoles,
   inviteAllUsers,
   leaveGroup,
 } from '@/apis/groups'
+import { ApiError } from '@/apis/client'
 import { toast } from 'sonner'
 import type { Group, GroupMember, GroupRole } from '@/types/group'
 import type { SearchUser } from '@/types/api'
-import { canManageMembers, canLeave, isOwner } from '@/types/base-role'
-import { UserPlusIcon, LogOutIcon } from 'lucide-react'
+import {
+  ASSIGNABLE_ROLES,
+  BASE_ROLES,
+  canLeave,
+  canManageMembers,
+  compareRoles,
+  isOwner,
+} from '@/types/base-role'
+import { ArrowUpDown, ChevronDown, ChevronUp, UserPlusIcon, LogOutIcon } from 'lucide-react'
 import { UserSearchSelect } from '@/components/common/UserSearchSelect'
 
 interface GroupMembersDialogProps {
@@ -37,6 +46,88 @@ interface GroupMembersDialogProps {
   onSuccess: () => void
   group: Group | null
   currentUserId?: number
+}
+
+type MemberSortField = 'role' | 'username' | 'joinDate'
+type SortOrder = 'asc' | 'desc'
+type MemberListItem = {
+  member: GroupMember
+  displayedRole: GroupRole
+  roleLabel: string
+}
+
+const GROUP_MEMBER_ERROR_MESSAGE_KEYS: Record<string, string> = {
+  GROUP_OWNER_ROLE_CHANGE_REQUIRES_TRANSFER:
+    'groups:groupMembers.errors.currentOwnerRoleChangeRequiresTransfer',
+}
+
+function getMemberDisplayName(member: GroupMember): string {
+  return member.user_name?.trim() || `User ${member.user_id}`
+}
+
+function getGroupMemberErrorMessage(
+  t: (key: string) => string,
+  errorCode?: string | number | null,
+  fallbackMessage?: string
+): string {
+  if (typeof errorCode === 'string') {
+    const translationKey = GROUP_MEMBER_ERROR_MESSAGE_KEYS[errorCode]
+    if (translationKey) {
+      return t(translationKey)
+    }
+  }
+
+  return fallbackMessage || t('groups:groupMembers.updateRoleFailed')
+}
+
+function filterMembers(members: MemberListItem[], query: string): MemberListItem[] {
+  const normalizedQuery = query.trim().toLowerCase()
+  if (!normalizedQuery) {
+    return members
+  }
+
+  return members.filter(member =>
+    [
+      getMemberDisplayName(member.member),
+      member.member.invited_by_user_name || '',
+      member.displayedRole,
+      member.roleLabel,
+      String(member.member.user_id),
+    ].some(value => value.toLowerCase().includes(normalizedQuery))
+  )
+}
+
+function sortMembers(
+  members: MemberListItem[],
+  sortField: MemberSortField,
+  sortOrder: SortOrder
+): MemberListItem[] {
+  return [...members].sort((left, right) => {
+    const leftName = getMemberDisplayName(left.member)
+    const rightName = getMemberDisplayName(right.member)
+    const nameDiff = leftName.localeCompare(rightName, undefined, {
+      numeric: true,
+      sensitivity: 'base',
+    })
+
+    let comparison = 0
+
+    if (sortField === 'username') {
+      comparison = nameDiff || left.member.user_id - right.member.user_id
+    } else if (sortField === 'joinDate') {
+      comparison =
+        new Date(left.member.created_at).getTime() - new Date(right.member.created_at).getTime() ||
+        nameDiff ||
+        left.member.user_id - right.member.user_id
+    } else {
+      comparison =
+        compareRoles(right.displayedRole, left.displayedRole) ||
+        nameDiff ||
+        left.member.user_id - right.member.user_id
+    }
+
+    return sortOrder === 'asc' ? comparison : -comparison
+  })
 }
 
 export function GroupMembersDialog({
@@ -52,7 +143,12 @@ export function GroupMembersDialog({
   const [showAddMember, setShowAddMember] = useState(false)
   const [selectedRole, setSelectedRole] = useState<GroupRole>('Reporter')
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [isSavingRoleChanges, setIsSavingRoleChanges] = useState(false)
   const [selectedUsers, setSelectedUsers] = useState<SearchUser[]>([])
+  const [searchQuery, setSearchQuery] = useState('')
+  const [sortField, setSortField] = useState<MemberSortField>('role')
+  const [sortOrder, setSortOrder] = useState<SortOrder>('asc')
+  const [roleDrafts, setRoleDrafts] = useState<Record<number, GroupRole>>({})
 
   const myRole = group?.my_role
   const isPrivateGroup = group?.visibility === 'private'
@@ -64,9 +160,32 @@ export function GroupMembersDialog({
   const canUpdateRole = canManageMembers(myRole)
   const canInviteAll = canManageMembers(myRole) && !isPrivateGroup
   const canLeaveGroup = canLeave(myRole)
+  const hasMemberManagementPermission = canAddMember || canRemoveMember || canUpdateRole
+  const hasUnsavedRoleChanges = Object.keys(roleDrafts).length > 0
+  const editableRoleOptions = myRole === 'Owner' ? BASE_ROLES : ASSIGNABLE_ROLES
+  const memberListItems = members.map(member => {
+    const displayedRole = roleDrafts[member.user_id] ?? member.role
+    return {
+      member,
+      displayedRole,
+      roleLabel: t(`groups:groups.roles.${displayedRole}`),
+    }
+  })
+  const visibleMembers = sortMembers(
+    filterMembers(memberListItems, searchQuery),
+    sortField,
+    sortOrder
+  )
 
   useEffect(() => {
     if (isOpen && group) {
+      setRoleDrafts({})
+      setSearchQuery('')
+      setSortField('role')
+      setSortOrder('asc')
+      setShowAddMember(false)
+      setSelectedRole('Reporter')
+      setSelectedUsers([])
       loadMembers()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -81,6 +200,14 @@ export function GroupMembersDialog({
       // Backend returns array directly, not wrapped in {items: []}
       const membersList = Array.isArray(response) ? response : response.items || []
       setMembers(membersList)
+      setRoleDrafts(prevDrafts =>
+        Object.fromEntries(
+          Object.entries(prevDrafts).filter(([userId, role]) => {
+            const member = membersList.find(item => item.user_id === Number(userId))
+            return member && member.role !== role
+          })
+        )
+      )
     } catch (error) {
       console.error('Failed to load members:', error)
       toast.error(t('groups:groupMembers.loadMembersFailed'))
@@ -155,7 +282,12 @@ export function GroupMembersDialog({
     try {
       await removeGroupMember(group.name, userId)
       toast.success(t('groups:groups.messages.memberRemoved'))
-      loadMembers()
+      setMembers(prevMembers => prevMembers.filter(member => member.user_id !== userId))
+      setRoleDrafts(prevDrafts => {
+        const nextDrafts = { ...prevDrafts }
+        delete nextDrafts[userId]
+        return nextDrafts
+      })
       onSuccess()
     } catch (error: unknown) {
       console.error('Failed to remove member:', error)
@@ -165,19 +297,80 @@ export function GroupMembersDialog({
     }
   }
 
-  const handleUpdateRole = async (userId: number, newRole: GroupRole) => {
-    if (!group) return
+  const handleRoleDraftChange = (member: GroupMember, newRole: GroupRole) => {
+    if (isSavingRoleChanges) {
+      return
+    }
+
+    setRoleDrafts(prevDrafts => {
+      if (newRole === member.role) {
+        const nextDrafts = { ...prevDrafts }
+        delete nextDrafts[member.user_id]
+        return nextDrafts
+      }
+
+      return {
+        ...prevDrafts,
+        [member.user_id]: newRole,
+      }
+    })
+  }
+
+  const handleDiscardRoleChanges = () => {
+    setRoleDrafts({})
+  }
+
+  const handleSaveRoleChanges = async () => {
+    if (!group || !hasUnsavedRoleChanges) return
+
+    setIsSavingRoleChanges(true)
+    const updates = Object.entries(roleDrafts).map(([userId, role]) => ({
+      user_id: Number(userId),
+      role,
+    }))
 
     try {
-      await updateGroupMemberRole(group.name, userId, { role: newRole })
-      toast.success(t('groups:groups.messages.roleUpdated'))
-      loadMembers()
-      onSuccess()
+      const result = await batchUpdateGroupMemberRoles(group.name, { updates })
+      const successfulUpdates = new Map(
+        result.updated_members.map(member => [member.user_id, member.role] as const)
+      )
+
+      if (successfulUpdates.size > 0) {
+        setMembers(prevMembers =>
+          prevMembers.map(member => ({
+            ...member,
+            role: successfulUpdates.get(member.user_id) ?? member.role,
+          }))
+        )
+        setRoleDrafts(prevDrafts => {
+          const nextDrafts = { ...prevDrafts }
+          successfulUpdates.forEach((_, userId) => {
+            delete nextDrafts[userId]
+          })
+          return nextDrafts
+        })
+        toast.success(
+          t('groups:groupMembers.saveRoleChangesSuccess', { count: successfulUpdates.size })
+        )
+      }
+
+      if (result.failed_updates.length > 0) {
+        result.failed_updates.forEach(({ user_id, error, error_code }) => {
+          const memberName =
+            members.find(item => item.user_id === user_id)?.user_name || `User ${user_id}`
+          toast.error(`${memberName}: ${getGroupMemberErrorMessage(t, error_code, error)}`)
+        })
+      }
     } catch (error: unknown) {
-      console.error('Failed to update role:', error)
-      const err = error as { message?: string }
-      const errorMessage = err?.message || t('groups:groupMembers.updateRoleFailed')
-      toast.error(errorMessage)
+      console.error('Failed to save role changes:', error)
+      if (error instanceof ApiError) {
+        toast.error(getGroupMemberErrorMessage(t, error.errorCode, error.message))
+      } else {
+        const err = error as { message?: string }
+        toast.error(err?.message || t('groups:groupMembers.updateRoleFailed'))
+      }
+    } finally {
+      setIsSavingRoleChanges(false)
     }
   }
 
@@ -192,7 +385,7 @@ export function GroupMembersDialog({
     try {
       await inviteAllUsers(group.name)
       toast.success(t('groups:groupMembers.inviteAllSuccess'))
-      loadMembers()
+      await loadMembers()
       onSuccess()
     } catch (error: unknown) {
       console.error('Failed to invite all users:', error)
@@ -224,6 +417,40 @@ export function GroupMembersDialog({
     }
   }
 
+  const handleDialogClose = () => {
+    if (isSubmitting || isSavingRoleChanges) {
+      return
+    }
+
+    if (hasUnsavedRoleChanges && !confirm(t('groups:groupMembers.confirmDiscardRoleChanges'))) {
+      return
+    }
+
+    onClose()
+  }
+
+  const handleSort = (field: MemberSortField) => {
+    if (sortField === field) {
+      setSortOrder(currentOrder => (currentOrder === 'asc' ? 'desc' : 'asc'))
+      return
+    }
+
+    setSortField(field)
+    setSortOrder(field === 'joinDate' ? 'desc' : 'asc')
+  }
+
+  const SortIcon = ({ field }: { field: MemberSortField }) => {
+    if (sortField !== field) {
+      return <ArrowUpDown className="ml-1 h-3.5 w-3.5 text-text-muted/80" />
+    }
+
+    return sortOrder === 'asc' ? (
+      <ChevronUp className="ml-1 h-3.5 w-3.5 text-primary" />
+    ) : (
+      <ChevronDown className="ml-1 h-3.5 w-3.5 text-primary" />
+    )
+  }
+
   const getRoleBadgeVariant = (
     role: GroupRole
   ): 'default' | 'secondary' | 'success' | 'error' | 'warning' | 'info' => {
@@ -250,8 +477,12 @@ export function GroupMembersDialog({
   return (
     <Modal
       isOpen={isOpen}
-      onClose={onClose}
-      title={t('groups:groups.actions.manageMembers')}
+      onClose={handleDialogClose}
+      title={
+        hasMemberManagementPermission
+          ? t('groups:groups.actions.manageMembers')
+          : t('groups:groups.members')
+      }
       maxWidth="3xl"
     >
       <div className="space-y-4">
@@ -442,6 +673,17 @@ export function GroupMembersDialog({
           </div>
         )}
 
+        <div className="w-full md:max-w-xs">
+          <Input
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            placeholder={t('groups:groupMembers.searchMembersPlaceholder')}
+            aria-label={t('groups:groupMembers.searchMembersPlaceholder')}
+            disabled={loading}
+            data-testid="group-members-search-input"
+          />
+        </div>
+
         {/* Members Table */}
         {loading ? (
           <div className="text-center py-8 text-text-secondary">{t('common:actions.loading')}</div>
@@ -451,17 +693,68 @@ export function GroupMembersDialog({
               <table className="w-full">
                 <thead className="bg-muted border-b border-border sticky top-0">
                   <tr>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-text-primary">
-                      {t('groups:groupMembers.username')}
+                    <th
+                      className="px-4 py-3 text-left text-xs font-medium text-text-primary"
+                      aria-sort={
+                        sortField === 'username'
+                          ? sortOrder === 'asc'
+                            ? 'ascending'
+                            : 'descending'
+                          : 'none'
+                      }
+                    >
+                      <button
+                        type="button"
+                        onClick={() => handleSort('username')}
+                        className="inline-flex items-center text-left transition-colors hover:text-primary"
+                        data-testid="group-members-sort-username-button"
+                      >
+                        {t('groups:groupMembers.username')}
+                        <SortIcon field="username" />
+                      </button>
                     </th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-text-primary">
-                      {t('groups:groups.role')}
+                    <th
+                      className="px-4 py-3 text-left text-xs font-medium text-text-primary"
+                      aria-sort={
+                        sortField === 'role'
+                          ? sortOrder === 'asc'
+                            ? 'ascending'
+                            : 'descending'
+                          : 'none'
+                      }
+                    >
+                      <button
+                        type="button"
+                        onClick={() => handleSort('role')}
+                        className="inline-flex items-center text-left transition-colors hover:text-primary"
+                        data-testid="group-members-sort-role-button"
+                      >
+                        {t('groups:groups.role')}
+                        <SortIcon field="role" />
+                      </button>
                     </th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-text-primary">
                       {t('groups:groupMembers.invitedBy')}
                     </th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-text-primary">
-                      {t('groups:groupMembers.joinDate')}
+                    <th
+                      className="px-4 py-3 text-left text-xs font-medium text-text-primary"
+                      aria-sort={
+                        sortField === 'joinDate'
+                          ? sortOrder === 'asc'
+                            ? 'ascending'
+                            : 'descending'
+                          : 'none'
+                      }
+                    >
+                      <button
+                        type="button"
+                        onClick={() => handleSort('joinDate')}
+                        className="inline-flex items-center text-left transition-colors hover:text-primary"
+                        data-testid="group-members-sort-join-date-button"
+                      >
+                        {t('groups:groupMembers.joinDate')}
+                        <SortIcon field="joinDate" />
+                      </button>
                     </th>
                     <th className="px-4 py-3 text-right text-xs font-medium text-text-primary">
                       {t('groups:groupMembers.actions')}
@@ -469,81 +762,77 @@ export function GroupMembersDialog({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
-                  {members.map(member => {
+                  {visibleMembers.length === 0 && (
+                    <tr>
+                      <td colSpan={5} className="px-4 py-8 text-center text-sm text-text-secondary">
+                        {t('groups:groupMembers.noMembersFound')}
+                      </td>
+                    </tr>
+                  )}
+                  {visibleMembers.map(({ member, displayedRole }) => {
                     const isMe = member.user_id === currentUserId
-                    const memberIsOwner = isOwner(member.role)
+                    const memberIsOwner = isOwner(displayedRole)
+                    const hasDraftRoleChange = displayedRole !== member.role
 
                     return (
-                      <tr key={member.id} className="hover:bg-surface">
+                      <tr
+                        key={member.id}
+                        className={
+                          hasDraftRoleChange
+                            ? 'bg-primary/5 hover:bg-primary/10'
+                            : 'hover:bg-surface'
+                        }
+                      >
                         <td className="px-4 py-3 text-sm font-medium text-text-primary">
-                          {member.user_name || `User ${member.user_id}`}
+                          {getMemberDisplayName(member)}
                           {isMe && (
                             <Badge variant="info" className="ml-2">
                               {t('groups:groupMembers.you')}
                             </Badge>
                           )}
+                          {hasDraftRoleChange && (
+                            <Badge variant="warning" className="ml-2">
+                              {t('groups:groupMembers.pendingChange')}
+                            </Badge>
+                          )}
                         </td>
                         <td className="px-4 py-3 text-sm">
-                          {canUpdateRole && !isMe && !(myRole === 'Maintainer' && memberIsOwner) ? (
+                          {canUpdateRole &&
+                          !isMe &&
+                          !(myRole === 'Maintainer' && isOwner(member.role)) ? (
                             <Select
-                              value={member.role}
-                              onValueChange={(value: GroupRole) =>
-                                handleUpdateRole(member.user_id, value)
-                              }
+                              value={displayedRole}
+                              onValueChange={(value: GroupRole) => {
+                                if (isSavingRoleChanges) {
+                                  return
+                                }
+                                handleRoleDraftChange(member, value)
+                              }}
+                              disabled={isSavingRoleChanges}
                             >
                               <SelectTrigger className="h-8 w-[180px]">
-                                <SelectValue placeholder={t(`groups:groups.roles.${member.role}`)}>
-                                  {t(`groups:groups.roles.${member.role}`)}
+                                <SelectValue
+                                  placeholder={t(`groups:groups.roles.${displayedRole}`)}
+                                >
+                                  {t(`groups:groups.roles.${displayedRole}`)}
                                 </SelectValue>
                               </SelectTrigger>
                               <SelectContent>
-                                {myRole === 'Owner' && (
-                                  <SelectItem value="Owner">
+                                {editableRoleOptions.map(role => (
+                                  <SelectItem key={role} value={role}>
                                     <div className="flex flex-col">
-                                      <span>{t('groups:groups.roles.Owner')}</span>
+                                      <span>{t(`groups:groups.roles.${role}`)}</span>
                                       <span className="text-xs text-text-muted">
-                                        {t('groups:groupMembers.roleDescriptions.Owner')}
+                                        {t(`groups:groupMembers.roleDescriptions.${role}`)}
                                       </span>
                                     </div>
                                   </SelectItem>
-                                )}
-                                <SelectItem value="Maintainer">
-                                  <div className="flex flex-col">
-                                    <span>{t('groups:groups.roles.Maintainer')}</span>
-                                    <span className="text-xs text-text-muted">
-                                      {t('groups:groupMembers.roleDescriptions.Maintainer')}
-                                    </span>
-                                  </div>
-                                </SelectItem>
-                                <SelectItem value="Developer">
-                                  <div className="flex flex-col">
-                                    <span>{t('groups:groups.roles.Developer')}</span>
-                                    <span className="text-xs text-text-muted">
-                                      {t('groups:groupMembers.roleDescriptions.Developer')}
-                                    </span>
-                                  </div>
-                                </SelectItem>
-                                <SelectItem value="Reporter">
-                                  <div className="flex flex-col">
-                                    <span>{t('groups:groups.roles.Reporter')}</span>
-                                    <span className="text-xs text-text-muted">
-                                      {t('groups:groupMembers.roleDescriptions.Reporter')}
-                                    </span>
-                                  </div>
-                                </SelectItem>
-                                <SelectItem value="RestrictedAnalyst">
-                                  <div className="flex flex-col">
-                                    <span>{t('groups:groups.roles.RestrictedAnalyst')}</span>
-                                    <span className="text-xs text-text-muted">
-                                      {t('groups:groupMembers.roleDescriptions.RestrictedAnalyst')}
-                                    </span>
-                                  </div>
-                                </SelectItem>
+                                ))}
                               </SelectContent>
                             </Select>
                           ) : (
-                            <Badge variant={getRoleBadgeVariant(member.role)}>
-                              {t(`groups:groups.roles.${member.role}`)}
+                            <Badge variant={getRoleBadgeVariant(displayedRole)}>
+                              {t(`groups:groups.roles.${displayedRole}`)}
                             </Badge>
                           )}
                         </td>
@@ -560,6 +849,7 @@ export function GroupMembersDialog({
                               size="sm"
                               onClick={() => handleRemoveMember(member.user_id)}
                               className="text-error hover:text-error"
+                              disabled={isSavingRoleChanges}
                             >
                               {t('groups:groupMembers.remove')}
                             </Button>
@@ -575,10 +865,43 @@ export function GroupMembersDialog({
         )}
 
         {/* Footer */}
-        <div className="flex justify-end pt-4">
-          <Button variant="outline" onClick={onClose}>
-            {t('common:actions.close')}
-          </Button>
+        <div className="flex flex-col gap-3 border-t border-border pt-4 md:flex-row md:items-center md:justify-between">
+          <div className="text-sm text-text-secondary">
+            {hasUnsavedRoleChanges
+              ? t('groups:groupMembers.pendingChangesCount', {
+                  count: Object.keys(roleDrafts).length,
+                })
+              : t('groups:groupMembers.visibleMembersCount', { count: visibleMembers.length })}
+          </div>
+          <div className="flex flex-wrap justify-end gap-2">
+            {hasUnsavedRoleChanges && (
+              <Button
+                variant="outline"
+                onClick={handleDiscardRoleChanges}
+                disabled={isSavingRoleChanges || isSubmitting}
+                data-testid="group-members-discard-changes-button"
+              >
+                {t('settings:actions.discard_changes')}
+              </Button>
+            )}
+            {hasUnsavedRoleChanges && (
+              <Button
+                variant="primary"
+                onClick={handleSaveRoleChanges}
+                disabled={isSavingRoleChanges || isSubmitting}
+                data-testid="group-members-save-changes-button"
+              >
+                {isSavingRoleChanges ? t('common:actions.saving') : t('common:actions.save')}
+              </Button>
+            )}
+            <Button
+              variant="outline"
+              onClick={handleDialogClose}
+              data-testid="group-members-close-button"
+            >
+              {t('common:actions.close')}
+            </Button>
+          </div>
         </div>
       </div>
     </Modal>

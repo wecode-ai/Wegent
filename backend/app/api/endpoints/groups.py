@@ -19,12 +19,15 @@ from app.schemas.namespace import (
 )
 from app.schemas.namespace_member import (
     AddMemberResult,
+    GroupMemberBatchUpdateRequest,
+    GroupMemberBatchUpdateResponse,
     GroupMemberCreate,
     GroupMemberResponse,
     GroupMemberUpdate,
 )
 from app.services import group_service
 from app.services.group_permission import get_effective_role_in_group
+from shared.telemetry.decorators import trace_sync
 
 router = APIRouter()
 
@@ -130,6 +133,7 @@ def list_members(
             Namespace.name == group_name,
             ResourceMember.status == MemberStatus.APPROVED.value,
         )
+        .order_by(ResourceMember.id.asc())
         .all()
     )
 
@@ -253,6 +257,7 @@ def add_member_by_username_endpoint(
 
 
 @router.put("/{group_name:path}/members/{user_id}", response_model=GroupMemberResponse)
+@trace_sync("update_group_member_role", "groups.api")
 def update_member_role_endpoint(
     group_name: str = Path(
         ..., description="Group name (may contain slashes for subgroups)"
@@ -264,7 +269,7 @@ def update_member_role_endpoint(
 ):
     """
     Update a member's role.
-    Only the group Owner can update member roles.
+    Maintainers and Owners can update member roles.
     """
     try:
         return group_service.update_member_role(
@@ -280,6 +285,38 @@ def update_member_role_endpoint(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to update member role: {str(e)}",
+        )
+
+
+@router.put(
+    "/{group_name:path}/members/batch/roles",
+    response_model=GroupMemberBatchUpdateResponse,
+)
+@trace_sync("batch_update_group_member_roles", "groups.api")
+def update_member_roles_batch_endpoint(
+    group_name: str = Path(
+        ..., description="Group name (may contain slashes for subgroups)"
+    ),
+    batch_update: GroupMemberBatchUpdateRequest = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Batch update multiple member roles with a single request.
+    """
+    try:
+        return group_service.update_member_roles_batch(
+            db=db,
+            group_name=group_name,
+            updates=batch_update.updates,
+            updated_by_user_id=current_user.id,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update member roles: {str(e)}",
         )
 
 
