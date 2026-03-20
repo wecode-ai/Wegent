@@ -415,6 +415,13 @@
       "exemptCallsHint": "豁免 token 检查的调用次数 (必须小于最大调用次数)",
       "validationError": "豁免次数必须小于最大调用次数"
     },
+    "guidedQuestions": {
+      "label": "引导问题（可选）",
+      "placeholder": "输入引导问题",
+      "addButton": "添加问题",
+      "helpText": "配置后将在新对话时显示在输入框上方，帮助用户快速提问",
+      "maxReached": "最多配置 3 个引导问题"
+    },
     "retrievalTest": {
       "button": "召回测试",
       "title": "召回测试",
@@ -519,6 +526,9 @@
     "summaryFailedHint": "点击重试按钮重新生成摘要",
     "summaryRetry": "重试",
     "summaryRetrying": "重试中...",
+    "guidedQuestions": {
+      "hint": "试试这些问题："
+    },
     "accessDenied": {
       "title": "无法访问知识库",
       "description": "您没有该知识库详细信息的访问权限。如有疑问，请联系知识库创建者或管理员。",

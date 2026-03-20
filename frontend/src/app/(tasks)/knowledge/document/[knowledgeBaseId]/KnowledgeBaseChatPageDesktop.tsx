@@ -378,6 +378,7 @@ export function KnowledgeBaseChatPageDesktop({
                 document_count: knowledgeBase.document_count,
               }}
               selectedDocumentIds={selectedDocumentIds}
+              guidedQuestions={knowledgeBase.guided_questions}
               onTaskCreated={async (taskId: number) => {
                 // Bind the knowledge base to the newly created task
                 try {

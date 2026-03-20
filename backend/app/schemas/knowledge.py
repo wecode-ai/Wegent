@@ -8,7 +8,7 @@ Pydantic schemas for knowledge base and document management.
 
 from datetime import datetime
 from enum import Enum
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -76,6 +76,27 @@ class KnowledgeBaseCreate(BaseModel):
         None,
         description="Model reference for summary generation. Format: {'name': 'model-name', 'namespace': 'default', 'type': 'public|user|group'}",
     )
+    guided_questions: Optional[List[str]] = Field(
+        None,
+        max_length=3,
+        description="Guided questions list (max 3) to show in notebook mode for quick user interaction",
+    )
+
+    @field_validator("guided_questions")
+    @classmethod
+    def validate_guided_questions(cls, v):
+        """Validate guided questions list."""
+        if v is not None:
+            if len(v) > 3:
+                raise ValueError("Maximum 3 guided questions allowed")
+            for i, q in enumerate(v):
+                if not q or len(q.strip()) == 0:
+                    raise ValueError(f"Guided question at index {i} cannot be empty")
+                if len(q) > 200:
+                    raise ValueError(
+                        f"Guided question at index {i} exceeds 200 characters"
+                    )
+        return v
 
 
 class RetrievalConfigUpdate(BaseModel):
@@ -112,6 +133,11 @@ class KnowledgeBaseUpdate(BaseModel):
         None,
         description="Model reference for summary generation. Format: {'name': 'model-name', 'namespace': 'default', 'type': 'public|user|group'}",
     )
+    guided_questions: Optional[List[str]] = Field(
+        None,
+        max_length=3,
+        description="Guided questions list (max 3) to show in notebook mode for quick user interaction",
+    )
 
     # Knowledge base tool call limit configuration
     max_calls_per_conversation: Optional[int] = Field(
@@ -138,6 +164,22 @@ class KnowledgeBaseUpdate(BaseModel):
                     "exempt_calls_before_check must be less than max_calls_per_conversation"
                 )
         return self
+
+    @field_validator("guided_questions")
+    @classmethod
+    def validate_guided_questions(cls, v):
+        """Validate guided questions list."""
+        if v is not None:
+            if len(v) > 3:
+                raise ValueError("Maximum 3 guided questions allowed")
+            for i, q in enumerate(v):
+                if not q or len(q.strip()) == 0:
+                    raise ValueError(f"Guided question at index {i} cannot be empty")
+                if len(q) > 200:
+                    raise ValueError(
+                        f"Guided question at index {i} exceeds 200 characters"
+                    )
+        return v
 
 
 class KnowledgeBaseTypeUpdate(BaseModel):
@@ -179,6 +221,10 @@ class KnowledgeBaseResponse(BaseModel):
         None,
         description="Knowledge base summary (short_summary, long_summary, topics, etc.)",
     )
+    guided_questions: Optional[List[str]] = Field(
+        None,
+        description="Guided questions list (max 3) to show in notebook mode for quick user interaction",
+    )
 
     # Knowledge base tool call limit configuration
     max_calls_per_conversation: int = Field(default=10)
@@ -202,6 +248,9 @@ class KnowledgeBaseResponse(BaseModel):
         summary_model_ref = spec.get("summaryModelRef")
         # Extract kb_type from spec, default to 'notebook' for backward compatibility
         kb_type = spec.get("kbType", "notebook")
+
+        # Extract guided questions from spec
+        guided_questions = spec.get("guidedQuestions")
 
         # Extract call limit configuration with defaults for backward compatibility
         max_calls = spec.get("maxCallsPerConversation", 10)
@@ -230,6 +279,7 @@ class KnowledgeBaseResponse(BaseModel):
             summary_enabled=spec.get("summaryEnabled", False),
             summary_model_ref=summary_model_ref,
             summary=summary,
+            guided_questions=guided_questions,
             max_calls_per_conversation=max_calls,
             exempt_calls_before_check=exempt_calls,
             is_active=kind.is_active,

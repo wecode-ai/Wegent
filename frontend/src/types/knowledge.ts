@@ -97,6 +97,8 @@ export interface KnowledgeBase {
   summary?: KnowledgeBaseSummary | null
   /** Knowledge base display type: 'notebook' (three-column with chat) or 'classic' (document list only) */
   kb_type?: KnowledgeBaseType
+  /** Guided questions list (max 3) for notebook mode quick user interaction */
+  guided_questions?: string[]
   /** Maximum number of knowledge base tool calls allowed per conversation */
   max_calls_per_conversation: number
   /** Number of calls exempt from token checking (must be < max_calls_per_conversation) */
@@ -114,6 +116,8 @@ export interface KnowledgeBaseCreate {
   summary_model_ref?: SummaryModelRef | null
   /** Knowledge base display type: 'notebook' (three-column with chat) or 'classic' (document list only) */
   kb_type?: KnowledgeBaseType
+  /** Guided questions list (max 3) for notebook mode quick user interaction */
+  guided_questions?: string[]
   /** Maximum number of knowledge base tool calls allowed per conversation */
   max_calls_per_conversation?: number
   /** Number of calls exempt from token checking (must be < max_calls_per_conversation) */
@@ -136,6 +140,8 @@ export interface KnowledgeBaseUpdate {
   retrieval_config?: RetrievalConfigUpdate
   summary_enabled?: boolean
   summary_model_ref?: SummaryModelRef | null
+  /** Guided questions list (max 3) for notebook mode quick user interaction */
+  guided_questions?: string[]
   /** Maximum number of knowledge base tool calls allowed per conversation */
   max_calls_per_conversation?: number
   /** Number of calls exempt from token checking (must be < max_calls_per_conversation) */

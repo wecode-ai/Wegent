@@ -287,6 +287,7 @@ export function KnowledgeBaseChatPageMobile({ onKbTypeChanged }: KnowledgeBaseCh
               namespace: knowledgeBase.namespace,
               document_count: knowledgeBase.document_count,
             }}
+            guidedQuestions={knowledgeBase.guided_questions}
             onTaskCreated={async (taskId: number) => {
               // Bind the knowledge base to the newly created task
               try {

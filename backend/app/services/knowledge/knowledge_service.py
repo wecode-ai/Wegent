@@ -201,6 +201,10 @@ class KnowledgeService:
         if data.summary_model_ref:
             spec_kwargs["summaryModelRef"] = data.summary_model_ref
 
+        # Add guidedQuestions if provided
+        if data.guided_questions:
+            spec_kwargs["guidedQuestions"] = data.guided_questions
+
         kb_crd = KnowledgeBaseCRD(
             apiVersion="agent.wecode.io/v1",
             kind="KnowledgeBase",
@@ -562,6 +566,10 @@ class KnowledgeService:
         # Use model_fields_set to detect if the field was explicitly passed
         if "summary_model_ref" in data.model_fields_set:
             spec["summaryModelRef"] = data.summary_model_ref
+
+        # Update guided_questions if explicitly provided (including null to clear)
+        if "guided_questions" in data.model_fields_set:
+            spec["guidedQuestions"] = data.guided_questions
 
         # Update call limit configuration if provided
         if data.max_calls_per_conversation is not None:

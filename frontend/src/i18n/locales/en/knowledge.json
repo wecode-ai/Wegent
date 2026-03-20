@@ -415,6 +415,13 @@
       "exemptCallsHint": "Number of calls exempt from token checking (must be less than maximum calls)",
       "validationError": "Exempt calls must be less than maximum calls"
     },
+    "guidedQuestions": {
+      "label": "Guided Questions (Optional)",
+      "placeholder": "Enter a guided question",
+      "addButton": "Add Question",
+      "helpText": "Will be displayed above the input when starting a new conversation",
+      "maxReached": "Maximum 3 guided questions allowed"
+    },
     "retrievalTest": {
       "button": "Retrieval Test",
       "title": "Retrieval Test",
@@ -519,6 +526,9 @@
     "summaryFailedHint": "Click retry to regenerate summary",
     "summaryRetry": "Retry",
     "summaryRetrying": "Retrying...",
+    "guidedQuestions": {
+      "hint": "Try these questions:"
+    },
     "accessDenied": {
       "title": "Cannot Access Knowledge Base",
       "description": "You do not have permission to access this knowledge base. If you have any questions, please contact the knowledge base creator or administrator.",
