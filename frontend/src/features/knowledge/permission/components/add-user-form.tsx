@@ -47,7 +47,7 @@ export function AddUserForm({
             selectedUsers={selectedUsers}
             onSelectedUsersChange={onSelectedUsersChange}
             placeholder={t('document.permission.searchUserPlaceholder')}
-            multiple={false}
+            multiple={true}
           />
         </div>
 
