@@ -22,20 +22,23 @@
  * ```
  */
 // Main page component
+export { AIAssessmentExamPage } from './AIAssessmentExamPage'
 export { ExamPage } from './ExamPage'
+export type { AIAssessmentExamPageProps, ExamData, UploadSlotConfig } from './AIAssessmentExamPage'
 
 // UI Components
-export { TopicCard } from './TopicCard'
-export { TopicDetail } from './TopicDetail'
-export { FileUploadSection } from './FileUploadSection'
-export { ConfirmModal } from './ConfirmModal'
-export { SuccessModal } from './SuccessModal'
 export { SlotBasedFileUpload } from './SlotBasedFileUpload'
+export { ExamMarkdownContent } from './ExamMarkdownContent'
+export type { ExamMarkdownContentProps } from './ExamMarkdownContent'
+export { examMarkdownComponents, examMarkdownPlugins } from './ExamMarkdownContent'
+export { IconSelector } from './IconSelector'
+export type { IconName } from './ExamIcons'
 
 // AI Assessment specific components
 export { Icon, Icons } from './ExamIcons'
 export { AIAssessmentTopicCard } from './AIAssessmentTopicCard'
 export { AIAssessmentTopicDetail } from './AIAssessmentTopicDetail'
+export { ExamTopicDetail } from './ExamTopicDetail'
 export { ExamHeader } from './ExamHeader'
 export { ExamInfoSection } from './ExamInfoSection'
 export { BonusItemsSection } from './BonusItemsSection'

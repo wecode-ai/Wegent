@@ -19,6 +19,36 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
 # ============================================================================
+# Multi-Model Grading Configuration Schemas (defined first to avoid forward references)
+# ============================================================================
+
+
+class ScorerModelConfig(BaseModel):
+    """Configuration for a single scorer model in multi-model grading."""
+
+    model_id: str = Field(..., description="Model ID for scoring")
+    force_override: bool = Field(True, description="Whether to force override bot's model")
+
+
+class AggregatorModelConfig(BaseModel):
+    """Configuration for the aggregator model in multi-model grading."""
+
+    model_id: str = Field(..., description="Model ID for aggregation")
+    force_override: bool = Field(True, description="Whether to force override bot's model")
+
+
+class MultiModelGradingConfig(BaseModel):
+    """Configuration for multi-model grading."""
+
+    scorer_team_id: int = Field(..., description="Team ID for scorer models")
+    aggregator_team_id: int = Field(..., description="Team ID for aggregator model")
+    scorer_models: List[ScorerModelConfig] = Field(..., description="List of scorer model configurations")
+    aggregator_model: AggregatorModelConfig = Field(..., description="Aggregator model configuration")
+    scorer_prompt_template: Optional[str] = Field(None, description="Prompt template for scorer models")
+    aggregator_prompt_template: Optional[str] = Field(None, description="Prompt template for aggregator model")
+
+
+# ============================================================================
 # Topic Schemas
 # ============================================================================
 
@@ -396,6 +426,28 @@ class GradingTaskExecuteRequest(BaseModel):
     team_id: Optional[int] = Field(
         None, description="Override team ID (uses topic config if not specified)"
     )
+    model_id: Optional[str] = Field(
+        None, description="Optional model ID to override bot's default model"
+    )
+    force_override_bot_model: bool = Field(
+        False, description="Whether to force override bot's model selection"
+    )
+    # Multi-model grading override fields
+    grading_mode: Optional[str] = Field(
+        None, description="Override grading mode: single or multi"
+    )
+    scorer_team_id: Optional[int] = Field(
+        None, description="Override scorer team ID for multi-model grading"
+    )
+    aggregator_team_id: Optional[int] = Field(
+        None, description="Override aggregator team ID for multi-model grading"
+    )
+    scorer_models: Optional[List[ScorerModelConfig]] = Field(
+        None, description="Override scorer model configurations"
+    )
+    aggregator_model: Optional[AggregatorModelConfig] = Field(
+        None, description="Override aggregator model configuration"
+    )
 
 
 class GradingTaskPublishRequest(BaseModel):
@@ -425,6 +477,7 @@ class GradingConfigUpdate(BaseModel):
     the default grading behavior for all answers in this topic.
     """
 
+    # Legacy single-model fields (kept for backward compatibility)
     team_id: Optional[int] = Field(
         None, description="Team ID for AI grading (must be Chat shell type)"
     )
@@ -438,6 +491,41 @@ class GradingConfigUpdate(BaseModel):
     )
     grading_timeout: int = Field(
         3600, description="Grading timeout in seconds", ge=60, le=7200
+    )
+    prompt_template: Optional[str] = Field(
+        None,
+        description="Custom prompt template for grading. "
+        "Available variables: {user_id}, {grading_task_id}, "
+        "{topic_id}, {question_id}, {question_title}",
+    )
+    model_id: Optional[str] = Field(
+        None, description="Optional model ID to override bot's default model"
+    )
+    force_override_bot_model: bool = Field(
+        False, description="Whether to force override bot's model selection"
+    )
+
+    # New multi-model grading fields
+    grading_mode: str = Field(
+        "single", description="Grading mode: single or multi"
+    )
+    scorer_team_id: Optional[int] = Field(
+        None, description="Team ID for scorer models (multi-model mode)"
+    )
+    aggregator_team_id: Optional[int] = Field(
+        None, description="Team ID for aggregator model (multi-model mode)"
+    )
+    scorer_models: List[ScorerModelConfig] = Field(
+        default_factory=list, description="List of scorer model configurations (3-5 models)"
+    )
+    aggregator_model: Optional[AggregatorModelConfig] = Field(
+        None, description="Aggregator model configuration"
+    )
+    scorer_prompt_template: Optional[str] = Field(
+        None, description="Prompt template for scorer models"
+    )
+    aggregator_prompt_template: Optional[str] = Field(
+        None, description="Prompt template for aggregator model"
     )
 
 

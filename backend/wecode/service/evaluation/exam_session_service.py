@@ -9,10 +9,10 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, attributes
 
 from wecode.exceptions import BusinessException
-from wecode.models.evaluation import EvalTopic
+from wecode.models.evaluation import EvalAnswer, EvalQuestion, EvalTopic
 from wecode.models.evaluation_exam_session import EvalExamSession
 from wecode.service.evaluation.text_conversion_service import TextConversionService
 
@@ -166,8 +166,6 @@ class ExamSessionService:
                     exam_started_at = int(now.timestamp())
                 extra["exam_started_at"] = exam_started_at
                 session.extra_data = extra
-                from sqlalchemy.orm import attributes
-
                 attributes.flag_modified(session, "extra_data")
 
             exam_end = datetime.fromtimestamp(
@@ -275,8 +273,6 @@ class ExamSessionService:
             session.extra_data = {}
         session.extra_data["selected_question_id"] = question_id
         # Mark the field as modified to ensure SQLAlchemy updates it
-        from sqlalchemy.orm import attributes
-
         attributes.flag_modified(session, "extra_data")
         db.commit()
 
@@ -355,8 +351,6 @@ class ExamSessionService:
             extra["review_started_at"] = now_ts
 
         session.extra_data = extra
-        from sqlalchemy.orm import attributes
-
         attributes.flag_modified(session, "extra_data")
         db.commit()
         db.refresh(session)
@@ -391,8 +385,6 @@ class ExamSessionService:
 
         session.current_phase = target_phase
         session.extra_data = extra
-        from sqlalchemy.orm import attributes
-
         attributes.flag_modified(session, "extra_data")
         db.commit()
         db.refresh(session)
@@ -410,8 +402,6 @@ class ExamSessionService:
         Reads from content_data.inputs.supplementaryNotes,
         converts to S3 file, and saves to content_data.attachments.supplementaryNotes.
         """
-        from wecode.models.evaluation import EvalAnswer, EvalQuestion
-
         logger.info(
             f"[ExamSession] _convert_supplementary_notes_if_needed called: "
             f"target_phase={target_phase}, session_id={session.id}"
@@ -509,8 +499,6 @@ class ExamSessionService:
         target_phase: str,
     ) -> EvalExamSession:
         """Advance exam phase with text conversion when entering review phase."""
-        from sqlalchemy.orm import attributes
-
         # Convert supplementary notes to S3 when entering review phase
         ExamSessionService._convert_supplementary_notes_if_needed(
             db, session, target_phase

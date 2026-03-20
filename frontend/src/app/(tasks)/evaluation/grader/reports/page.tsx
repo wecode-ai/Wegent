@@ -6,18 +6,8 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import {
-  FileText,
-  RefreshCw,
-  ArrowLeft,
-  Eye,
-  Download,
-  Calendar,
-  User,
-  BookOpen,
-} from 'lucide-react'
+import { FileText, Eye, Download, Calendar, User, BookOpen, ArrowRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Input } from '@/components/ui/input'
@@ -40,6 +30,7 @@ import { useTheme } from '@/features/theme/ThemeProvider'
 import { EvaluationPageLayout } from '@wecode/components/evaluation/common/EvaluationPageLayout'
 import { DataTable, type Column } from '@wecode/components/evaluation/common/DataTable'
 import { EnhancedMarkdown } from '@/components/common/EnhancedMarkdown'
+import { GraderHeader } from '@wecode/components/evaluation/grader'
 import {
   graderListReports,
   graderGetTask,
@@ -245,6 +236,7 @@ function GraderReportsContent() {
               size="sm"
               onClick={() => handleViewReport(report)}
               title={t('grading.view_report')}
+              className="h-8 w-8 p-0"
             >
               <Eye className="h-4 w-4" />
             </Button>
@@ -254,11 +246,18 @@ function GraderReportsContent() {
               onClick={() => handleDownloadReport(report.id)}
               disabled={downloading === report.id}
               title={t('common:actions.download')}
+              className="h-8 w-8 p-0"
             >
               <Download className="h-4 w-4" />
             </Button>
-            <Button variant="outline" size="sm" onClick={() => handleViewAnswer(report.answer_id)}>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => handleViewAnswer(report.answer_id)}
+              className="text-primary hover:text-primary/80"
+            >
               {t('answers.view')}
+              <ArrowRight className="ml-1 h-3 w-3" />
             </Button>
           </div>
         ),
@@ -269,95 +268,90 @@ function GraderReportsContent() {
 
   if (loading && reports.length === 0) {
     return (
-      <div className="container mx-auto max-w-6xl px-4 py-8">
-        <Skeleton className="mb-6 h-10 w-64" />
-        <Skeleton className="h-96 w-full" />
+      <div className="min-h-screen bg-[#fafbfc]">
+        <GraderHeader
+          title={t('grader.all_reports')}
+          backHref="/evaluation/grader"
+          isLoading={true}
+        />
+        <main className="max-w-7xl mx-auto px-4 sm:px-8 py-8">
+          <Skeleton className="h-96 rounded-2xl" />
+        </main>
       </div>
     )
   }
 
   return (
-    <div className="container mx-auto max-w-6xl px-4 py-8">
+    <div className="min-h-screen bg-[#fafbfc]">
       {/* Header */}
-      <div className="mb-6 flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <Button variant="ghost" size="sm" onClick={() => router.push('/evaluation/grader')}>
-            <ArrowLeft className="mr-2 h-4 w-4" />
-            {t('actions.back')}
-          </Button>
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
-              <FileText className="h-5 w-5 text-primary" />
-            </div>
-            <div>
-              <h1 className="text-xl font-semibold text-text-primary">{t('grader.all_reports')}</h1>
-              <p className="text-sm text-text-secondary">
-                {total} {t('grading.status.published').toLowerCase()}
-              </p>
+      <GraderHeader
+        title={t('grader.all_reports')}
+        description={`${total} ${t('grading.status.published').toLowerCase()}`}
+        backHref="/evaluation/grader"
+        onRefresh={handleRefresh}
+        isLoading={loading}
+      />
+
+      {/* Main Content */}
+      <main className="max-w-7xl mx-auto px-4 sm:px-8 py-8">
+        {/* Reports Card */}
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+          <div className="px-6 py-4 border-b border-gray-100">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-bold text-gray-900">{t('grading.my_reports')}</h2>
+                <p className="text-sm text-gray-500">{t('grader.publish_description')}</p>
+              </div>
             </div>
           </div>
-        </div>
-        <Button variant="outline" onClick={handleRefresh}>
-          <RefreshCw className="mr-2 h-4 w-4" />
-          {t('common:actions.refresh')}
-        </Button>
-      </div>
 
-      {/* Reports Card */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <BookOpen className="h-5 w-5" />
-            {t('grading.my_reports')}
-          </CardTitle>
-          <CardDescription>{t('grader.publish_description')}</CardDescription>
-        </CardHeader>
-        <CardContent>
-          {/* Filters */}
-          <div className="mb-4 flex flex-wrap items-center gap-2">
-            <Select value={topicFilter} onValueChange={setTopicFilter}>
-              <SelectTrigger className="w-48">
-                <SelectValue placeholder={t('topics.all_topics')} />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">{t('topics.all_topics')}</SelectItem>
-                {topics.map(topic => (
-                  <SelectItem key={topic.id} value={topic.id.toString()}>
-                    {topic.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Input
-              placeholder={t('topics.search_placeholder')}
-              value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
-              className="w-64"
+          <div className="p-6">
+            {/* Filters */}
+            <div className="mb-4 flex flex-wrap items-center gap-2">
+              <Select value={topicFilter} onValueChange={setTopicFilter}>
+                <SelectTrigger className="w-48 bg-white border-gray-200">
+                  <SelectValue placeholder={t('topics.all_topics')} />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">{t('topics.all_topics')}</SelectItem>
+                  {topics.map(topic => (
+                    <SelectItem key={topic.id} value={topic.id.toString()}>
+                      {topic.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Input
+                placeholder={t('topics.search_placeholder')}
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                className="w-64 bg-white border-gray-200"
+              />
+            </div>
+
+            {/* Reports table */}
+            <DataTable
+              columns={columns}
+              data={filteredReports}
+              total={searchQuery ? filteredReports.length : total}
+              page={page}
+              pageSize={REPORTS_PER_PAGE}
+              loading={loading}
+              emptyMessage={t('grading.no_tasks')}
+              emptyIcon={<FileText className="mx-auto mb-4 h-12 w-12 text-gray-300" />}
+              onPageChange={setPage}
+              previousText={t('common.previous')}
+              nextText={t('common.next')}
+              pageText={t('common.page')}
+              rowKey={(report: GradingTask) => report.id}
             />
           </div>
-
-          {/* Reports table */}
-          <DataTable
-            columns={columns}
-            data={filteredReports}
-            total={searchQuery ? filteredReports.length : total}
-            page={page}
-            pageSize={REPORTS_PER_PAGE}
-            loading={loading}
-            emptyMessage={t('grading.no_tasks')}
-            emptyIcon={<FileText className="mx-auto mb-4 h-12 w-12 text-text-muted" />}
-            onPageChange={setPage}
-            previousText={t('common.previous')}
-            nextText={t('common.next')}
-            pageText={t('common.page')}
-            rowKey={(report: GradingTask) => report.id}
-          />
-        </CardContent>
-      </Card>
+        </div>
+      </main>
 
       {/* Report Dialog */}
       <Dialog open={reportDialogOpen} onOpenChange={setReportDialogOpen}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-2xl bg-white rounded-2xl">
           <DialogHeader>
             <DialogTitle>{t('grading.report')}</DialogTitle>
             <DialogDescription>
@@ -382,7 +376,7 @@ function GraderReportsContent() {
                   )}
                 </div>
                 {/* Report content */}
-                <div className="rounded-lg bg-surface p-4">
+                <div className="rounded-xl bg-gray-50 p-4">
                   <EnhancedMarkdown
                     source={
                       typeof selectedReport.report_data === 'string'

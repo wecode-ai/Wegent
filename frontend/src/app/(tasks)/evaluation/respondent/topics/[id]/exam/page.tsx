@@ -2,37 +2,27 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { redirect } from 'next/navigation'
-import { ExamPage } from '@wecode/components/evaluation/exam/ExamPage'
+'use client'
 
-interface PageProps {
-  params: Promise<{ id: string }>
-}
+import { useParams } from 'next/navigation'
+import dynamic from 'next/dynamic'
+
+// Dynamically import ExamPage to avoid SSR issues
+const ExamPage = dynamic(
+  () => import('@wecode/components/evaluation/exam/ExamPage').then(mod => mod.ExamPage),
+  { ssr: false }
+)
 
 /**
- * Next.js route component for the exam page.
+ * Next.js route component for the exam page (New Format).
  *
  * Route: /evaluation/respondent/topics/[id]/exam
  *
- * This page redirects to /evaluation/ai-assessment-2026 only for topic id=1.
- * For other topics, it renders the exam page.
- *
- * @example
- * ```
- * Navigate to: /evaluation/respondent/topics/1/exam
- * Redirects to: /evaluation/ai-assessment-2026
- *
- * Navigate to: /evaluation/respondent/topics/123/exam
- * Renders: ExamPage
- * ```
+ * This page uses the new Markdown-based exam format.
  */
-export default async function ExamPageRoute({ params }: PageProps) {
-  const { id } = await params
+export default function ExamPageRoute() {
+  const params = useParams()
+  const topicId = parseInt(params.id as string)
 
-  // Redirect to ai-assessment-2026 only for topic id=1
-  if (id === '1') {
-    redirect('/evaluation/ai-assessment-2026')
-  }
-
-  return <ExamPage />
+  return <ExamPage topicId={topicId} />
 }

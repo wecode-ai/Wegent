@@ -4,3 +4,8 @@
 
 export { DashboardStats, type DashboardStatsData } from './DashboardStats'
 export { GradingTaskCard } from './GradingTaskCard'
+export { GraderHeader } from './GraderHeader'
+export { GraderStats } from './GraderStats'
+export { useGradingActions } from './useGradingActions'
+export { ModelSelectionDialog } from './ModelSelectionDialog'
+export { MultiStageRetryDialog } from './MultiStageRetryDialog'

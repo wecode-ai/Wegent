@@ -7,21 +7,18 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import {
-  ClipboardList,
+  FileText,
   CheckCircle,
   XCircle,
   Send,
   Clock,
-  RefreshCw,
   Loader2,
   Play,
   Eye,
   RotateCcw,
-  ArrowLeft,
-  Filter,
+  ArrowRight,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Input } from '@/components/ui/input'
@@ -44,6 +41,7 @@ import { useTheme } from '@/features/theme/ThemeProvider'
 import { EvaluationPageLayout } from '@wecode/components/evaluation/common/EvaluationPageLayout'
 import { DataTable, type Column } from '@wecode/components/evaluation/common/DataTable'
 import { EnhancedMarkdown } from '@/components/common/EnhancedMarkdown'
+import { GraderHeader } from '@wecode/components/evaluation/grader'
 import {
   graderListTasks,
   graderGetTask,
@@ -375,6 +373,7 @@ function GraderTasksContent() {
                 onClick={() => handleExecuteSingle(task.id)}
                 disabled={executing}
                 title={t('grading.execute')}
+                className="h-8 w-8 p-0"
               >
                 <Play className="h-4 w-4" />
               </Button>
@@ -389,6 +388,7 @@ function GraderTasksContent() {
                   onClick={() => handleRetrySingle(task.id)}
                   disabled={executing}
                   title={t('grading.retry')}
+                  className="h-8 w-8 p-0"
                 >
                   <RotateCcw className="h-4 w-4" />
                 </Button>
@@ -401,6 +401,7 @@ function GraderTasksContent() {
                   size="sm"
                   onClick={() => handleViewReport(task)}
                   title={t('grading.view_report')}
+                  className="h-8 w-8 p-0"
                 >
                   <Eye className="h-4 w-4" />
                 </Button>
@@ -411,14 +412,22 @@ function GraderTasksContent() {
                     onClick={() => handlePublishSingle(task.id)}
                     disabled={publishing}
                     title={t('grading.publish')}
+                    className="h-8 px-3"
                   >
-                    <Send className="h-4 w-4" />
+                    <Send className="mr-1 h-3 w-3" />
+                    {t('grading.publish')}
                   </Button>
                 )}
               </>
             )}
-            <Button variant="ghost" size="sm" onClick={() => handleViewAnswer(task.answer_id)}>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => handleViewAnswer(task.answer_id)}
+              className="text-primary hover:text-primary/80"
+            >
               {t('answers.view')}
+              <ArrowRight className="ml-1 h-3 w-3" />
             </Button>
           </div>
         ),
@@ -429,139 +438,130 @@ function GraderTasksContent() {
 
   if (loading && tasks.length === 0) {
     return (
-      <div className="container mx-auto max-w-6xl px-4 py-8">
-        <Skeleton className="mb-6 h-10 w-64" />
-        <Skeleton className="h-96 w-full" />
+      <div className="min-h-screen bg-[#fafbfc]">
+        <GraderHeader title={t('grading.tasks')} backHref="/evaluation/grader" isLoading={true} />
+        <main className="max-w-7xl mx-auto px-4 sm:px-8 py-8">
+          <Skeleton className="h-96 rounded-2xl" />
+        </main>
       </div>
     )
   }
 
   return (
-    <div className="container mx-auto max-w-6xl px-4 py-8">
+    <div className="min-h-screen bg-[#fafbfc]">
       {/* Header */}
-      <div className="mb-6 flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <Button variant="ghost" size="sm" onClick={() => router.push('/evaluation/grader')}>
-            <ArrowLeft className="mr-2 h-4 w-4" />
-            {t('actions.back')}
-          </Button>
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
-              <ClipboardList className="h-5 w-5 text-primary" />
+      <GraderHeader
+        title={t('grading.tasks')}
+        description={`${total} ${t('grading.tasks').toLowerCase()}`}
+        backHref="/evaluation/grader"
+        onRefresh={handleRefresh}
+        isLoading={loading}
+      />
+
+      {/* Main Content */}
+      <main className="max-w-7xl mx-auto px-4 sm:px-8 py-8">
+        {/* Tasks Card */}
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+          <div className="px-6 py-4 border-b border-gray-100">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-bold text-gray-900">{t('grading.tasks')}</h2>
+                <p className="text-sm text-gray-500">{t('grader.tasks_description')}</p>
+              </div>
             </div>
-            <div>
-              <h1 className="text-xl font-semibold text-text-primary">{t('grading.tasks')}</h1>
-              <p className="text-sm text-text-secondary">
-                {total} {t('grading.tasks').toLowerCase()}
-              </p>
+          </div>
+
+          <div className="p-6">
+            {/* Filters and batch actions */}
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <Select value={statusFilter} onValueChange={setStatusFilter}>
+                  <SelectTrigger className="w-40 bg-white border-gray-200">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">{t('common.all_status')}</SelectItem>
+                    <SelectItem value="0">{t('grading.status.pending')}</SelectItem>
+                    <SelectItem value="1">{t('grading.status.running')}</SelectItem>
+                    <SelectItem value="2">{t('grading.status.completed')}</SelectItem>
+                    <SelectItem value="3">{t('grading.status.failed')}</SelectItem>
+                    <SelectItem value="4">{t('grading.status.published')}</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Select value={topicFilter} onValueChange={setTopicFilter}>
+                  <SelectTrigger className="w-48 bg-white border-gray-200">
+                    <SelectValue placeholder={t('topics.all_topics')} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">{t('topics.all_topics')}</SelectItem>
+                    {topics.map(topic => (
+                      <SelectItem key={topic.id} value={topic.id.toString()}>
+                        {topic.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Input
+                  placeholder={t('topics.search_placeholder')}
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                  className="w-48 bg-white border-gray-200"
+                />
+              </div>
+              {selectedTasks.size > 0 && (
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-text-muted">
+                    {t('common.selected', { count: selectedTasks.size })}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleBatchExecute}
+                    disabled={executing}
+                  >
+                    <Play className="mr-2 h-4 w-4" />
+                    {t('grading.batch_execute')}
+                  </Button>
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    onClick={handleBatchPublish}
+                    disabled={publishing}
+                  >
+                    <Send className="mr-2 h-4 w-4" />
+                    {t('grading.batch_publish')}
+                  </Button>
+                </div>
+              )}
             </div>
+
+            {/* Tasks table */}
+            <DataTable
+              columns={columns}
+              data={tasks}
+              total={total}
+              page={page}
+              pageSize={TASKS_PER_PAGE}
+              loading={loading}
+              emptyMessage={t('grading.no_tasks')}
+              emptyIcon={<FileText className="mx-auto mb-4 h-12 w-12 text-gray-300" />}
+              onPageChange={setPage}
+              previousText={t('common.previous')}
+              nextText={t('common.next')}
+              pageText={t('common.page')}
+              rowKey={(task: GradingTask) => task.id}
+              selectable={true}
+              selectedIds={selectedTasks}
+              onSelectionChange={setSelectedTasks}
+              selectAllText={t('grader.select_all')}
+            />
           </div>
         </div>
-        <Button variant="outline" onClick={handleRefresh}>
-          <RefreshCw className="mr-2 h-4 w-4" />
-          {t('common:actions.refresh')}
-        </Button>
-      </div>
-
-      {/* Tasks Card */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Filter className="h-5 w-5" />
-            {t('grading.tasks')}
-          </CardTitle>
-          <CardDescription>{t('grader.tasks_description')}</CardDescription>
-        </CardHeader>
-        <CardContent>
-          {/* Filters and batch actions */}
-          <div className="mb-4 flex flex-wrap items-center justify-between gap-4">
-            <div className="flex flex-wrap items-center gap-2">
-              <Select value={statusFilter} onValueChange={setStatusFilter}>
-                <SelectTrigger className="w-40">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">{t('common.all_status')}</SelectItem>
-                  <SelectItem value="0">{t('grading.status.pending')}</SelectItem>
-                  <SelectItem value="1">{t('grading.status.running')}</SelectItem>
-                  <SelectItem value="2">{t('grading.status.completed')}</SelectItem>
-                  <SelectItem value="3">{t('grading.status.failed')}</SelectItem>
-                  <SelectItem value="4">{t('grading.status.published')}</SelectItem>
-                </SelectContent>
-              </Select>
-              <Select value={topicFilter} onValueChange={setTopicFilter}>
-                <SelectTrigger className="w-48">
-                  <SelectValue placeholder={t('topics.all_topics')} />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">{t('topics.all_topics')}</SelectItem>
-                  {topics.map(topic => (
-                    <SelectItem key={topic.id} value={topic.id.toString()}>
-                      {topic.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Input
-                placeholder={t('topics.search_placeholder')}
-                value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
-                className="w-48"
-              />
-            </div>
-            {selectedTasks.size > 0 && (
-              <div className="flex items-center gap-2">
-                <span className="text-sm text-text-muted">
-                  {t('common.selected', { count: selectedTasks.size })}
-                </span>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleBatchExecute}
-                  disabled={executing}
-                >
-                  <Play className="mr-2 h-4 w-4" />
-                  {t('grading.batch_execute')}
-                </Button>
-                <Button
-                  variant="primary"
-                  size="sm"
-                  onClick={handleBatchPublish}
-                  disabled={publishing}
-                >
-                  <Send className="mr-2 h-4 w-4" />
-                  {t('grading.batch_publish')}
-                </Button>
-              </div>
-            )}
-          </div>
-
-          {/* Tasks table */}
-          <DataTable
-            columns={columns}
-            data={tasks}
-            total={total}
-            page={page}
-            pageSize={TASKS_PER_PAGE}
-            loading={loading}
-            emptyMessage={t('grading.no_tasks')}
-            emptyIcon={<ClipboardList className="mx-auto mb-4 h-12 w-12 text-text-muted" />}
-            onPageChange={setPage}
-            previousText={t('common.previous')}
-            nextText={t('common.next')}
-            pageText={t('common.page')}
-            rowKey={(task: GradingTask) => task.id}
-            selectable={true}
-            selectedIds={selectedTasks}
-            onSelectionChange={setSelectedTasks}
-            selectAllText={t('common.select_all')}
-          />
-        </CardContent>
-      </Card>
+      </main>
 
       {/* Report Dialog */}
       <Dialog open={reportDialogOpen} onOpenChange={setReportDialogOpen}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-2xl bg-white rounded-2xl">
           <DialogHeader>
             <DialogTitle>{t('grading.report')}</DialogTitle>
             <DialogDescription>
@@ -573,7 +573,7 @@ function GraderTasksContent() {
             {loadingReport ? (
               <Skeleton className="h-48 w-full" />
             ) : selectedTask?.report_data && Object.keys(selectedTask.report_data).length > 0 ? (
-              <div className="rounded-lg bg-surface p-4">
+              <div className="rounded-xl bg-gray-50 p-4">
                 <EnhancedMarkdown
                   source={
                     typeof selectedTask.report_data === 'string'

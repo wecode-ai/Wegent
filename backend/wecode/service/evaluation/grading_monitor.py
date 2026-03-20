@@ -26,6 +26,7 @@ from app.models.subtask import Subtask
 from app.models.task import TaskResource
 from shared.models.db.enums import SubtaskRole, SubtaskStatus
 from wecode.models.evaluation import EvalGradingTask, GradingTaskStatus
+from wecode.service.evaluation.grading_service import GradingService
 
 logger = logging.getLogger(__name__)
 
@@ -151,7 +152,15 @@ class GradingTaskMonitor:
                 # Extract text content from result
                 result_data = assistant_subtask.result
                 if isinstance(result_data, dict):
-                    result_content = result_data.get("text", "")
+                    # Try multiple possible fields for the report content
+                    result_content = (
+                        result_data.get("text")
+                        or result_data.get("content")
+                        or result_data.get("result")
+                        or result_data.get("value")
+                        or result_data.get("message")
+                        or ""
+                    )
                 elif isinstance(result_data, str):
                     result_content = result_data
 
@@ -194,9 +203,6 @@ class GradingTaskMonitor:
                 f"[Evaluation Monitor] Wegent Task {grading_task.task_id} completed, "
                 f"recovering grading task {grading_task.id}"
             )
-
-            # Import grading service to properly complete the task
-            from wecode.service.evaluation.grading_service import GradingService
 
             grading_service = GradingService()
             grading_service.complete(
@@ -264,7 +270,15 @@ class GradingTaskMonitor:
                     # Subtask completed but Task not updated - extract result
                     result_data = assistant_subtask.result
                     if isinstance(result_data, dict):
-                        result_content = result_data.get("text", "")
+                        # Try multiple possible fields for the report content
+                        result_content = (
+                            result_data.get("text")
+                            or result_data.get("content")
+                            or result_data.get("result")
+                            or result_data.get("value")
+                            or result_data.get("message")
+                            or ""
+                        )
                     elif isinstance(result_data, str):
                         result_content = result_data
 
@@ -273,10 +287,6 @@ class GradingTaskMonitor:
                             f"[Evaluation Monitor] Subtask completed for grading task "
                             f"{grading_task.id}, recovering with result"
                         )
-                        from wecode.service.evaluation.grading_service import (
-                            GradingService,
-                        )
-
                         grading_service = GradingService()
                         grading_service.complete(
                             db,
@@ -344,9 +354,7 @@ class GradingTaskMonitor:
                 )
 
         if recovered_count > 0:
-            logger.info(
-                f"[Evaluation Monitor] Synced {recovered_count} grading tasks"
-            )
+            logger.info(f"[Evaluation Monitor] Synced {recovered_count} grading tasks")
 
         return recovered_count
 
