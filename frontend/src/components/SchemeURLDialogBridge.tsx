@@ -4,12 +4,13 @@
 
 'use client'
 
-import { useEffect, useCallback } from 'react'
+import { useEffect, useCallback, useState } from 'react'
 import { useRouter } from 'next/navigation'
 
 import { useToast } from '@/hooks/use-toast'
 import { paths } from '@/config/paths'
 import { taskApis } from '@/apis/tasks'
+import { McpProviderConfigDialog } from '@/features/settings/components/McpProviderConfigDialog'
 
 type OpenDialogDetail = {
   type?: string
@@ -27,6 +28,9 @@ type OpenDialogDetail = {
 export default function SchemeURLDialogBridge() {
   const router = useRouter()
   const { toast } = useToast()
+  const [isMcpProviderConfigOpen, setIsMcpProviderConfigOpen] = useState(false)
+  const [mcpProviderId, setMcpProviderId] = useState<string>('dingtalk')
+  const [mcpProviderServiceId, setMcpProviderServiceId] = useState<string>('docs')
 
   const handleOpenDialog = useCallback(
     (e: Event) => {
@@ -86,6 +90,17 @@ export default function SchemeURLDialogBridge() {
             })
           )
         }
+        return
+      }
+
+      if (dialogType === 'mcp-provider-config') {
+        const providerParam = params.provider
+        const serviceParam = params.service
+        const providerId = Array.isArray(providerParam) ? providerParam[0] : providerParam
+        const serviceId = Array.isArray(serviceParam) ? serviceParam[0] : serviceParam
+        setMcpProviderId(typeof providerId === 'string' && providerId ? providerId : 'dingtalk')
+        setMcpProviderServiceId(typeof serviceId === 'string' && serviceId ? serviceId : 'docs')
+        setIsMcpProviderConfigOpen(true)
         return
       }
 
@@ -253,5 +268,12 @@ export default function SchemeURLDialogBridge() {
     }
   }, [handleOpenDialog, handleExportEvent])
 
-  return null
+  return (
+    <McpProviderConfigDialog
+      open={isMcpProviderConfigOpen}
+      onOpenChange={setIsMcpProviderConfigOpen}
+      providerId={mcpProviderId}
+      serviceId={mcpProviderServiceId}
+    />
+  )
 }

@@ -32,14 +32,21 @@
     "description": "配置公司邮件令牌以启用邮件相关功能",
     "configured": "已配置",
     "reconfigure": "重新配置",
-    "input_placeholder": "请输入从钉钉机器人获取的 token",
-    "input_hint": "从钉钉机器人（IT机器人），发送连接邮件的命令获取 token",
+    "input_placeholder": "请输入邮件 Token",
+    "input_hint": "联系管理员获取邮件 Token",
     "save": "保存",
     "saving": "保存中...",
     "cancel": "取消",
     "save_success": "邮件令牌配置成功",
     "save_error": "邮件令牌配置失败",
     "delete_success": "邮件令牌已删除",
-    "delete_error": "删除邮件令牌失败"
+    "delete_error": "删除邮件令牌失败",
+    "apply": "绑定公司邮箱",
+    "applying": "申请中...",
+    "apply_hint": "点击按钮自动申请公司邮件 Token",
+    "apply_success": "邮件 Token 申请成功，请保存",
+    "apply_error": "邮件 Token 申请失败，请稍后重试",
+    "apply_failed_title": "申请失败",
+    "apply_failed_contact_admin": "您不在邮件 Token 白名单中，请联系管理员申请权限"
   }
 }

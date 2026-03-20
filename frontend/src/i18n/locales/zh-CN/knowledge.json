@@ -44,6 +44,11 @@
       "createdDesc": "点击上方按钮创建您的第一个知识库",
       "sharedDesc": "当其他用户分享知识库给您时，将显示在这里"
     },
+    "accessDenied": {
+      "title": "无法访问知识库",
+      "description": "您没有该知识库详细信息的访问权限。如有疑问，请联系知识库创建者或管理员。",
+      "backButton": "返回知识库列表"
+    },
     "noOrgKnowledgeBase": "暂无公司知识库",
     "noOrgKnowledgeBaseHint": "公司知识库由管理员创建和管理，所有成员可查看",
     "orgKnowledgeBaseReadOnly": "您没有管理权限，仅可查看",
@@ -307,10 +312,12 @@
         "Maintainer": "管理员",
         "Developer": "开发者",
         "Reporter": "使用者",
+        "RestrictedAnalyst": "盲分析师",
         "OwnerDescription": "创建者，拥有所有权限（仅创建者可拥有此角色）",
         "MaintainerDescription": "管理员，可以管理成员和编辑内容",
         "DeveloperDescription": "开发者，可以编辑内容",
-        "ReporterDescription": "使用者，仅可查看内容"
+        "ReporterDescription": "使用者，仅可查看内容",
+        "RestrictedAnalystDescription": "盲分析师，仅可使用部分内容"
       },
       "viewDescription": "仅可浏览知识库内容",
       "editDescription": "可添加、修改和删除文档",

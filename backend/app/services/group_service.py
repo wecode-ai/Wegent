@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.models.kind import Kind
 from app.models.namespace import Namespace
 from app.models.resource_member import MemberStatus, ResourceMember
+from app.schemas.base_role import has_permission
 from app.schemas.namespace import (
     GroupCreate,
     GroupLevel,
@@ -111,18 +112,9 @@ def create_group(
         # Check if user has permission to create subgroups (must be at least Maintainer)
         # Use effective role to support inheritance
         user_group_role = get_effective_role_in_group(db, owner_user_id, parent_name)
-        role_hierarchy = {
-            GroupRole.Owner: 0,
-            GroupRole.Maintainer: 1,
-            GroupRole.Developer: 2,
-            GroupRole.Reporter: 3,
-            GroupRole.RestrictedAnalyst: 4,
-        }
 
-        if (
-            user_group_role is None
-            or role_hierarchy.get(user_group_role, 999)
-            > role_hierarchy[GroupRole.Maintainer]
+        if user_group_role is None or not has_permission(
+            user_group_role, GroupRole.Maintainer
         ):
             raise HTTPException(
                 status_code=403,
@@ -149,7 +141,6 @@ def create_group(
         resource_id=new_group.id,
         user_id=owner_user_id,
         role=GroupRole.Owner.value,
-        permission_level="manage",
         status=MemberStatus.APPROVED.value,
         invited_by_user_id=owner_user_id,  # Self-invited
         share_link_id=0,
@@ -547,14 +538,6 @@ def remove_member(
     remover_role = get_user_role_in_group(db, removed_by_user_id, group_name)
     target_role = GroupRole(member.role)
 
-    role_hierarchy = {
-        GroupRole.Owner: 0,
-        GroupRole.Maintainer: 1,
-        GroupRole.Developer: 2,
-        GroupRole.Reporter: 3,
-        GroupRole.RestrictedAnalyst: 4,
-    }
-
     # Allow self-removal
     if removed_by_user_id != user_id:
         # Check if remover has sufficient permissions
@@ -564,7 +547,8 @@ def remove_member(
                 detail="You are not a member of this group",
             )
 
-        if role_hierarchy[remover_role] >= role_hierarchy[target_role]:
+        # Remover must have higher permission than target (not equal or lower)
+        if not has_permission(remover_role, target_role) or remover_role == target_role:
             raise HTTPException(
                 status_code=403,
                 detail="Insufficient permissions to remove this member",
@@ -650,16 +634,8 @@ def update_member_role(
                 detail="Cannot change role of the last owner. Add another owner first.",
             )
 
-    # Update role and permission_level
+    # Update role
     member.role = new_role.value
-    role_to_permission = {
-        GroupRole.Owner.value: "manage",
-        GroupRole.Maintainer.value: "manage",
-        GroupRole.Developer.value: "edit",
-        GroupRole.Reporter.value: "view",
-        GroupRole.RestrictedAnalyst.value: "view",
-    }
-    member.permission_level = role_to_permission.get(new_role.value, "view")
 
     db.commit()
     db.refresh(member)
@@ -736,14 +712,12 @@ def transfer_ownership(
     group.owner_user_id = new_owner_user_id
 
     # Update member roles
+    # Update member roles
     if current_owner_member:
         current_owner_member.role = GroupRole.Maintainer.value
-        current_owner_member.permission_level = "manage"
 
     if new_owner_member:
         new_owner_member.role = GroupRole.Owner.value
-        new_owner_member.permission_level = "manage"
-
     db.commit()
     db.refresh(group)
 
@@ -807,7 +781,6 @@ def invite_all_users(
                 resource_id=group.id,
                 user_id=user.id,
                 role=GroupRole.Reporter.value,
-                permission_level="view",
                 status=MemberStatus.APPROVED.value,
                 invited_by_user_id=invited_by_user_id,
                 share_link_id=0,

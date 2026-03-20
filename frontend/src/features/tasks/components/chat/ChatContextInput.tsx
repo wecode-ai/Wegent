@@ -4,7 +4,7 @@
 
 'use client'
 
-import React, { useState } from 'react'
+import React, { useState, useCallback } from 'react'
 import AddContextButton from './AddContextButton'
 import ContextSelector from './ContextSelector'
 import type { ContextItem } from '@/types/context'
@@ -32,13 +32,37 @@ export default function ChatContextInput({
 }: ChatContextInputProps) {
   const [selectorOpen, setSelectorOpen] = useState(false)
 
-  const handleSelect = (context: ContextItem) => {
-    onContextsChange([...selectedContexts, context])
-  }
+  const handleSelect = useCallback(
+    (context: ContextItem) => {
+      onContextsChange([...selectedContexts, context])
+    },
+    [selectedContexts, onContextsChange]
+  )
 
-  const handleDeselect = (id: number | string) => {
-    onContextsChange(selectedContexts.filter(ctx => ctx.id !== id))
-  }
+  const handleDeselect = useCallback(
+    (id: number | string) => {
+      onContextsChange(selectedContexts.filter(ctx => ctx.id !== id))
+    },
+    [selectedContexts, onContextsChange]
+  )
+
+  // Handle batch selection for group knowledge bases
+  // This is critical to avoid the closure problem when selecting multiple items
+  const handleSelectMultiple = useCallback(
+    (contextsToAdd: ContextItem[]) => {
+      onContextsChange([...selectedContexts, ...contextsToAdd])
+    },
+    [selectedContexts, onContextsChange]
+  )
+
+  // Handle batch deselection for group knowledge bases
+  const handleDeselectMultiple = useCallback(
+    (ids: (number | string)[]) => {
+      const idSet = new Set(ids)
+      onContextsChange(selectedContexts.filter(ctx => !idSet.has(ctx.id)))
+    },
+    [selectedContexts, onContextsChange]
+  )
 
   // If chat context feature is disabled, don't render anything
   if (!isChatContextEnabled()) {
@@ -52,6 +76,8 @@ export default function ChatContextInput({
       selectedContexts={selectedContexts}
       onSelect={handleSelect}
       onDeselect={handleDeselect}
+      onSelectMultiple={handleSelectMultiple}
+      onDeselectMultiple={handleDeselectMultiple}
       excludeKnowledgeBaseId={excludeKnowledgeBaseId}
     >
       <div>

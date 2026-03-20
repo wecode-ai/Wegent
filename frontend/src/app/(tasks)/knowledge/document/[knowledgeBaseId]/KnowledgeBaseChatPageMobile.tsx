@@ -33,7 +33,7 @@ import { BoundKnowledgeBaseSummary } from '@/features/tasks/components/group-cha
 import { taskKnowledgeBaseApi } from '@/apis/task-knowledge-base'
 import { listGroups } from '@/apis/groups'
 import type { Team } from '@/types/api'
-import type { GroupRole } from '@/types/group'
+import type { BaseRole } from '@/types/base-role'
 interface KnowledgeBaseChatPageMobileProps {
   /** Callback when knowledge base type is changed (notebook <-> classic) */
   onKbTypeChanged?: () => void
@@ -115,13 +115,13 @@ export function KnowledgeBaseChatPageMobile({ onKbTypeChanged }: KnowledgeBaseCh
   const [isSearchDialogOpen, setIsSearchDialogOpen] = useState(false)
 
   // Group role map for permission checking
-  const [groupRoleMap, setGroupRoleMap] = useState<Map<string, GroupRole>>(new Map())
+  const [groupRoleMap, setGroupRoleMap] = useState<Map<string, BaseRole>>(new Map())
 
   // Fetch all groups and build role map for permission checking
   useEffect(() => {
     listGroups()
       .then(response => {
-        const roleMap = new Map<string, GroupRole>()
+        const roleMap = new Map<string, BaseRole>()
         response.items.forEach(group => {
           if (group.my_role) {
             roleMap.set(group.name, group.my_role)

@@ -38,7 +38,7 @@ import { BoundKnowledgeBaseSummary } from '@/features/tasks/components/group-cha
 import { taskKnowledgeBaseApi } from '@/apis/task-knowledge-base'
 import { listGroups } from '@/apis/groups'
 import type { Team } from '@/types/api'
-import type { GroupRole } from '@/types/group'
+import type { BaseRole } from '@/types/base-role'
 
 interface KnowledgeBaseChatPageDesktopProps {
   /** Callback when knowledge base type is changed (notebook <-> classic) */
@@ -141,13 +141,13 @@ export function KnowledgeBaseChatPageDesktop({
   const [isCreatingKb, setIsCreatingKb] = useState(false)
 
   // Group role map for permission checking
-  const [groupRoleMap, setGroupRoleMap] = useState<Map<string, GroupRole>>(new Map())
+  const [groupRoleMap, setGroupRoleMap] = useState<Map<string, BaseRole>>(new Map())
 
   // Fetch all groups and build role map for permission checking
   useEffect(() => {
     listGroups()
       .then(response => {
-        const roleMap = new Map<string, GroupRole>()
+        const roleMap = new Map<string, BaseRole>()
         response.items.forEach(group => {
           if (group.my_role) {
             roleMap.set(group.name, group.my_role)
@@ -276,13 +276,13 @@ export function KnowledgeBaseChatPageDesktop({
     return groupRole === 'Owner' || groupRole === 'Maintainer' || groupRole === 'Developer'
   }, [knowledgeBase, user, groupRoleMap])
 
-  // Check if user can manage permissions (is creator or has manage permission)
+  // Check if user can manage permissions (is creator or has Maintainer/Owner role)
   const canManagePermissions = useMemo(() => {
     if (!knowledgeBase || !user) return false
     // Creator can always manage permissions
     if (knowledgeBase.user_id === user.id) return true
-    // User with manage permission can manage
-    if (myPermission?.permission_level === 'manage') return true
+    // User with Maintainer or Owner role can manage
+    if (myPermission?.role === 'Maintainer' || myPermission?.role === 'Owner') return true
     return false
   }, [knowledgeBase, user, myPermission])
 

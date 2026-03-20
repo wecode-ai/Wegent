@@ -99,6 +99,67 @@ install_dependencies() {
     print_success "Dependencies installed successfully!"
 }
 
+# Decode base64url to base64
+base64url_decode() {
+    local input="$1"
+    # Replace base64url chars with base64 chars
+    local base64=$(echo "$input" | tr '_-' '/+' | tr -d '\n')
+    # Add padding if needed
+    local len=${#base64}
+    local mod=$((len % 4))
+    if [ $mod -eq 2 ]; then
+        base64="${base64}=="
+    elif [ $mod -eq 3 ]; then
+        base64="${base64}="
+    fi
+    echo "$base64"
+}
+
+# Extract and validate JWT expiration time
+# Returns 0 if valid, 1 if expired or invalid
+validate_jwt_token() {
+    local auth_file="$1"
+
+    # Extract auth_token value from cookies array in JSON
+    # The format is: "cookies": [{ "name": "auth_token", "value": "..." }]
+    local token=$(grep -A2 '"name": "auth_token"' "$auth_file" | grep '"value"' | head -1 | sed 's/.*"value": "\([^"]*\)".*/\1/')
+
+    if [ -z "$token" ]; then
+        return 1
+    fi
+
+    # Extract payload (second part between dots)
+    local payload=$(echo "$token" | cut -d'.' -f2)
+
+    if [ -z "$payload" ]; then
+        return 1
+    fi
+
+    # Decode payload
+    local decoded=$(base64url_decode "$payload" | base64 -d 2>/dev/null)
+
+    if [ -z "$decoded" ]; then
+        return 1
+    fi
+
+    # Extract exp field
+    local exp=$(echo "$decoded" | grep -o '"exp":[0-9]*' | cut -d':' -f2)
+
+    if [ -z "$exp" ]; then
+        return 1
+    fi
+
+    # Get current timestamp
+    local now=$(date +%s)
+
+    # Check if expired (with 60 second buffer)
+    if [ "$now" -ge "$((exp - 60))" ]; then
+        return 1
+    fi
+
+    return 0
+}
+
 # Check if auth state exists and is valid for a specific URL
 check_auth() {
     local url="$1"
@@ -118,7 +179,13 @@ check_auth() {
         # Verify the auth file contains cookies for this domain
         local domain=$(echo "$url" | sed -E 's|https?://||' | sed -E 's|[:/].*||')
         if grep -q "$domain" "$auth_file" 2>/dev/null; then
-            return 0
+            # Validate JWT expiration time
+            if validate_jwt_token "$auth_file"; then
+                return 0
+            else
+                print_warning "Authentication token has expired or is invalid."
+                return 1
+            fi
         fi
     fi
 

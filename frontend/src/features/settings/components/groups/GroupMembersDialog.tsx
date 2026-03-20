@@ -27,6 +27,7 @@ import {
 import { toast } from 'sonner'
 import type { Group, GroupMember, GroupRole } from '@/types/group'
 import type { SearchUser } from '@/types/api'
+import { canManageMembers, canLeave, isOwner } from '@/types/base-role'
 import { UserPlusIcon, LogOutIcon } from 'lucide-react'
 import { UserSearchSelect } from '@/components/common/UserSearchSelect'
 
@@ -56,13 +57,13 @@ export function GroupMembersDialog({
   const myRole = group?.my_role
   const isPrivateGroup = group?.visibility === 'private'
 
-  // Permission checks
+  // Permission checks using utility functions
   // Private groups do not allow adding members
-  const canAddMember = (myRole === 'Owner' || myRole === 'Maintainer') && !isPrivateGroup
-  const canRemoveMember = myRole === 'Owner' || myRole === 'Maintainer'
-  const canUpdateRole = myRole === 'Owner' || myRole === 'Maintainer'
-  const canInviteAll = (myRole === 'Owner' || myRole === 'Maintainer') && !isPrivateGroup
-  const canLeave = myRole !== 'Owner'
+  const canAddMember = canManageMembers(myRole) && !isPrivateGroup
+  const canRemoveMember = canManageMembers(myRole)
+  const canUpdateRole = canManageMembers(myRole)
+  const canInviteAll = canManageMembers(myRole) && !isPrivateGroup
+  const canLeaveGroup = canLeave(myRole)
 
   useEffect(() => {
     if (isOpen && group) {
@@ -274,7 +275,7 @@ export function GroupMembersDialog({
               {t('groups:groups.actions.inviteAll')}
             </Button>
           )}
-          {canLeave && (
+          {canLeaveGroup && (
             <Button variant="outline" size="sm" onClick={handleLeaveGroup}>
               <LogOutIcon className="w-4 h-4 mr-2" />
               {t('groups:groups.actions.leave')}
@@ -301,7 +302,9 @@ export function GroupMembersDialog({
                   onValueChange={(value: GroupRole) => setSelectedRole(value)}
                 >
                   <SelectTrigger>
-                    <SelectValue />
+                    <SelectValue placeholder={t(`groups:groups.roles.${selectedRole}`)}>
+                      {t(`groups:groups.roles.${selectedRole}`)}
+                    </SelectValue>
                   </SelectTrigger>
                   <SelectContent>
                     {myRole === 'Owner' && (
@@ -468,7 +471,7 @@ export function GroupMembersDialog({
                 <tbody className="divide-y divide-border">
                   {members.map(member => {
                     const isMe = member.user_id === currentUserId
-                    const isOwner = member.role === 'Owner'
+                    const memberIsOwner = isOwner(member.role)
 
                     return (
                       <tr key={member.id} className="hover:bg-surface">
@@ -481,17 +484,17 @@ export function GroupMembersDialog({
                           )}
                         </td>
                         <td className="px-4 py-3 text-sm">
-                          {canUpdateRole && !isMe && !(myRole === 'Maintainer' && isOwner) ? (
+                          {canUpdateRole && !isMe && !(myRole === 'Maintainer' && memberIsOwner) ? (
                             <Select
                               value={member.role}
                               onValueChange={(value: GroupRole) =>
                                 handleUpdateRole(member.user_id, value)
                               }
                             >
-                              <SelectTrigger className="w-[140px]">
-                                <Badge variant={getRoleBadgeVariant(member.role)}>
+                              <SelectTrigger className="h-8 w-[180px]">
+                                <SelectValue placeholder={t(`groups:groups.roles.${member.role}`)}>
                                   {t(`groups:groups.roles.${member.role}`)}
-                                </Badge>
+                                </SelectValue>
                               </SelectTrigger>
                               <SelectContent>
                                 {myRole === 'Owner' && (
@@ -551,7 +554,7 @@ export function GroupMembersDialog({
                           {new Date(member.created_at).toLocaleDateString()}
                         </td>
                         <td className="px-4 py-3 text-sm text-right">
-                          {canRemoveMember && !isOwner && !isMe && (
+                          {canRemoveMember && !memberIsOwner && !isMe && (
                             <Button
                               variant="ghost"
                               size="sm"

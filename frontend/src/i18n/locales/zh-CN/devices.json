@@ -130,7 +130,8 @@
     "restarting": "重启中...",
     "success": "升级成功",
     "error": "升级出错",
-    "skipped": "已是最新版本"
+    "skipped": "已是最新版本",
+    "unsupportedVersion": "当前版本({{current}})不支持自动升级，请删除设备重建"
   },
   "version": {
     "current": "当前版本",

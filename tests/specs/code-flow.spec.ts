@@ -13,10 +13,13 @@ async function setupCodePage(page: any) {
   await page.goto('/code')
 
   // Set localStorage to mark onboarding as completed
+  // Also mark code feature onboarding as completed to skip the "Bug or feature?" page
   await page.evaluate(() => {
     localStorage.setItem('user_onboarding_completed', 'true')
     localStorage.setItem('onboarding_in_progress', '')
     localStorage.removeItem('onboarding_in_progress')
+    localStorage.setItem('code_onboarding_completed', 'true')
+    localStorage.setItem('code_feature_selected', 'cloud')
   })
 
   // Reload page - now onboarding should be skipped
@@ -47,6 +50,93 @@ async function setupCodePage(page: any) {
   // Wait for page to stabilize
   await page.waitForTimeout(1000)
 
+  // Handle "Bug or feature?" onboarding page if present
+  // This page appears for first-time code feature users
+  // Wait a bit longer for the page to fully render
+  await page.waitForTimeout(2000)
+
+  // Check for the onboarding page by looking for the characteristic heading
+  const onboardingHeading = page.locator('h2', { hasText: '选择最适合您的方式继续编码之旅' }).first()
+  const isOnboardingVisible = await onboardingHeading.isVisible({ timeout: 5000 }).catch(() => false)
+
+  if (isOnboardingVisible) {
+    console.log('✓ Code feature onboarding page detected, selecting cloud IDE option...')
+
+    // Click the "使用WeCode云IDE" (Use WeCode Cloud IDE) option
+    // Find by the h3 heading and click on its parent card
+    const cloudIdeHeading = page.locator('h3', { hasText: '使用WeCode云IDE' }).first()
+    const isCloudIdeVisible = await cloudIdeHeading.isVisible({ timeout: 3000 }).catch(() => false)
+
+    if (isCloudIdeVisible) {
+      // Strategy: Find the clickable parent element of the h3 heading
+      // Try multiple approaches to find the actual clickable card
+      let clicked = false
+
+      // Strategy 1: Try clicking the heading itself (it might have click handler)
+      try {
+        await cloudIdeHeading.click({ timeout: 2000 })
+        console.log('✓ Clicked: 使用WeCode云IDE (heading)')
+        clicked = true
+      } catch {
+        // Continue to next strategy
+      }
+
+      // Strategy 2: Use XPath to find parent button
+      if (!clicked) {
+        try {
+          const parentButton = page.locator('h3:has-text("使用WeCode云IDE") >> xpath=ancestor::button[1]')
+          if (await parentButton.isVisible({ timeout: 2000 })) {
+            await parentButton.click()
+            console.log('✓ Clicked: 使用WeCode云IDE (parent button)')
+            clicked = true
+          }
+        } catch {
+          // Continue to next strategy
+        }
+      }
+
+      // Strategy 3: Use XPath to find nearest div with border/card styling
+      if (!clicked) {
+        try {
+          const cardDiv = page.locator('h3:has-text("使用WeCode云IDE") >> xpath=ancestor::div[contains(@class, "border") or contains(@class, "cursor-pointer")][1]')
+          if (await cardDiv.isVisible({ timeout: 2000 })) {
+            await cardDiv.click()
+            console.log('✓ Clicked: 使用WeCode云IDE (card div)')
+            clicked = true
+          }
+        } catch {
+          // Continue to next strategy
+        }
+      }
+
+      // Strategy 4: Click any element with the text
+      if (!clicked) {
+        try {
+          await page.getByText('使用WeCode云IDE').first().click({ timeout: 2000 })
+          console.log('✓ Clicked: 使用WeCode云IDE (getByText)')
+          clicked = true
+        } catch {
+          console.log('✗ Failed to click Cloud IDE option')
+        }
+      }
+    } else {
+      // Fallback: try the first option (在IDE中使用WeCode)
+      try {
+        await page.getByText('在IDE中使用WeCode').first().click({ timeout: 2000 })
+        console.log('✓ Clicked: 在IDE中使用WeCode')
+      } catch {
+        console.log('✗ Could not click any onboarding option')
+      }
+    }
+
+    // Wait for the onboarding page to disappear
+    await page.waitForTimeout(3000)
+
+    console.log('✓ Onboarding completed, continuing with test...')
+  } else {
+    console.log('✓ No onboarding page detected, continuing...')
+  }
+
   // Step 1: Select dev-team agent
   console.log('Selecting dev-team agent...')
   const teamSelector = page.locator('[data-testid="team-selector"]').first()
@@ -54,56 +144,93 @@ async function setupCodePage(page: any) {
 
   // Click to open team selector dropdown
   await teamSelector.click()
-  await page.waitForTimeout(500)
+  await page.waitForTimeout(1000)
 
   // Search for dev-team
   const searchInput = page.locator('input[placeholder*="搜索"], input[placeholder*="Search"]').first()
   if (await searchInput.isVisible({ timeout: 3000 }).catch(() => false)) {
     await searchInput.fill('dev-team')
-    await page.waitForTimeout(500)
+    await page.waitForTimeout(1000)
+    console.log('Filled team search input')
   }
 
-  // Select dev-team from dropdown
+  // Select dev-team from dropdown - wait for it to appear
   const devTeamOption = page.locator('[data-testid="team-option-dev-team"]').first()
-  if (await devTeamOption.isVisible({ timeout: 3000 }).catch(() => false)) {
+  try {
+    await expect(devTeamOption).toBeVisible({ timeout: 5000 })
     await devTeamOption.click()
-  } else {
+    console.log('Selected dev-team agent')
+  } catch {
     // Try to find by text content
-    const teamOptions = page.locator('[data-testid^="team-option-"]').filter({ hasText: /dev-team/i })
-    if (await teamOptions.count() > 0) {
-      await teamOptions.first().click()
+    console.log('Could not find exact team option, trying fallback...')
+    const teamOptions = page.locator('[data-testid^="team-option-"]')
+    const count = await teamOptions.count()
+    console.log(`Found ${count} team options`)
+    if (count > 0) {
+      // Find first option containing dev-team
+      for (let i = 0; i < count; i++) {
+        const text = await teamOptions.nth(i).textContent()
+        console.log(`Team option ${i}: ${text}`)
+        if (text && text.toLowerCase().includes('dev-team')) {
+          await teamOptions.nth(i).click()
+          console.log('Selected dev-team by text match')
+          break
+        }
+      }
     }
   }
-  await page.waitForTimeout(500)
+  await page.waitForTimeout(1000)
 
-  // Step 2: Select repository wecode-ai/Wegent
+  // Step 2: Select repository weibo_rd/common/wecode/wegent
   console.log('Selecting repository...')
   const repoSelector = page.locator('[data-testid="repo-branch-selector"]').first()
   await expect(repoSelector).toBeVisible({ timeout: 10000 })
 
   // Click to open repository selector
   await repoSelector.click()
-  await page.waitForTimeout(500)
+  await page.waitForTimeout(1000)
+
+  // Wait for the repository dropdown to be visible
+  const repoDropdown = page.locator('[data-testid="repo-branch-selector-dropdown"]').first()
+  if (await repoDropdown.isVisible({ timeout: 5000 }).catch(() => false)) {
+    console.log('Repository dropdown opened')
+  }
 
   // Search for repository
   const repoSearchInput = page.locator('input[placeholder*="仓库"], input[placeholder*="repository"], input[placeholder*="搜索"]').first()
   if (await repoSearchInput.isVisible({ timeout: 3000 }).catch(() => false)) {
-    await repoSearchInput.fill('wecode-ai/Wegent')
-    await page.waitForTimeout(500)
+    await repoSearchInput.fill('wegent')
+    await page.waitForTimeout(1000)
+    console.log('Filled repository search input')
   }
 
-  // Select wecode-ai/Wegent repository
-  const wegentRepoOption = page.locator('[data-testid="repo-option-wecode-ai-Wegent"]').first()
-  if (await wegentRepoOption.isVisible({ timeout: 3000 }).catch(() => false)) {
+  // Select weibo_rd/common/wecode/wegent repository - wait for it to appear after search
+  // Note: data-testid replaces / with -
+  const wegentRepoOption = page.locator('[data-testid="repo-option-weibo_rd-common-wecode-wegent"]').first()
+  try {
+    await expect(wegentRepoOption).toBeVisible({ timeout: 5000 })
     await wegentRepoOption.click()
-  } else {
+    console.log('Selected weibo_rd/common/wecode/wegent repository')
+  } catch {
     // Try to find by text content
-    const repoOptions = page.locator('[data-testid^="repo-option-"]').filter({ hasText: /wecode-ai/i })
-    if (await repoOptions.count() > 0) {
-      await repoOptions.first().click()
+    console.log('Could not find exact repo option, trying fallback...')
+    const repoOptions = page.locator('[data-testid^="repo-option-"]')
+    const count = await repoOptions.count()
+    console.log(`Found ${count} repo options`)
+    if (count > 0) {
+      // Find first option containing wegent
+      for (let i = 0; i < count; i++) {
+        const text = await repoOptions.nth(i).textContent()
+        console.log(`Repo option ${i}: ${text}`)
+        if (text && text.includes('wegent')) {
+          await repoOptions.nth(i).click()
+          console.log('Selected repository by text match')
+          break
+        }
+      }
     }
   }
-  await page.waitForTimeout(500)
+  await page.waitForTimeout(1000)
 
   // Verify repository is selected by checking the selector text
   const repoSelectorText = await repoSelector.textContent()
@@ -113,31 +240,51 @@ async function setupCodePage(page: any) {
   console.log('Selecting branch...')
   // Click to open repo selector again to access branch selection
   await repoSelector.click()
-  await page.waitForTimeout(500)
+  await page.waitForTimeout(1000)
 
   // Search for main branch
   const branchSearchInput = page.locator('input[placeholder*="分支"], input[placeholder*="branch"]').first()
   if (await branchSearchInput.isVisible({ timeout: 3000 }).catch(() => false)) {
     await branchSearchInput.fill('main')
-    await page.waitForTimeout(500)
+    await page.waitForTimeout(1000)
+    console.log('Filled branch search input')
   }
 
-  // Select main branch
+  // Select main branch - wait for it to appear
   const mainBranchOption = page.locator('[data-testid="branch-option-main"]').first()
-  if (await mainBranchOption.isVisible({ timeout: 3000 }).catch(() => false)) {
+  try {
+    await expect(mainBranchOption).toBeVisible({ timeout: 5000 })
     await mainBranchOption.click()
-  } else {
+    console.log('Selected main branch')
+  } catch {
     // Try to find by text content
-    const branchOptions = page.locator('[data-testid^="branch-option-"]').filter({ hasText: /^main$/ })
-    if (await branchOptions.count() > 0) {
-      await branchOptions.first().click()
+    console.log('Could not find exact branch option, trying fallback...')
+    const branchOptions = page.locator('[data-testid^="branch-option-"]')
+    const count = await branchOptions.count()
+    console.log(`Found ${count} branch options`)
+    if (count > 0) {
+      // Find first option that is exactly "main"
+      for (let i = 0; i < count; i++) {
+        const text = await branchOptions.nth(i).textContent()
+        console.log(`Branch option ${i}: ${text}`)
+        if (text && text.trim() === 'main') {
+          await branchOptions.nth(i).click()
+          console.log('Selected main branch by text match')
+          break
+        }
+      }
     }
   }
-  await page.waitForTimeout(500)
+  await page.waitForTimeout(1000)
 
   // Verify repository and branch are selected
   const repoBranchText = await repoSelector.textContent()
   console.log('Repository/Branch selected:', repoBranchText)
+
+  // Verify that a repository is actually selected (not the placeholder)
+  if (!repoBranchText || repoBranchText.includes('请选择') || repoBranchText.includes('选择')) {
+    throw new Error('Repository was not properly selected. Selector text: ' + repoBranchText)
+  }
 
   // Step 4: Select model 公网:GLM-5
   console.log('Selecting model...')

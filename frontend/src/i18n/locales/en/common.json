@@ -377,7 +377,7 @@
     "bind_mode": "Bind Mode",
     "bind_mode_chat": "Chat",
     "bind_mode_code": "Code",
-    "bind_mode_task": "Task",
+    "bind_mode_task": "Device",
     "bind_mode_video": "Video",
     "bind_mode_image": "Image",
     "bind_mode_required": "Please select at least one bind mode",
@@ -409,6 +409,49 @@
     "delete": "Delete",
     "no_tokens": "No git tokens configured",
     "new_token": "New Token"
+  },
+  "dingtalk": {
+    "loading": "Loading DingTalk configuration...",
+    "url_label": "MCP URL",
+    "url_placeholder": "Paste the StreamableHttp URL here",
+    "url_hint": "Open the DingTalk MCP page, click \"Get MCP Server Config\", then copy the \"StreamableHttp URL\" value and paste it here. You do not need to paste the full JSON config. The URL is stored as a user-scoped encrypted credential.",
+    "open_link": "Get DingTalk URL",
+    "save": "Save",
+    "saving": "Saving",
+    "load_failed": "Failed to load DingTalk configuration",
+    "modal": {
+      "title": "Configure DingTalk MCP",
+      "description": "No usable {{service}} MCP is available in the current session. Get the StreamableHttp URL first, then save it here.",
+      "steps_intro": "Follow these steps:",
+      "step_open_home": "Open the DingTalk MCP page",
+      "step_choose_service": "Choose the MCP service related to \"{{service}}\"",
+      "step_get_config": "Click \"Get MCP Server Config\"",
+      "step_confirm": "If DingTalk shows a confirmation dialog, confirm the activation",
+      "step_copy_url": "Copy the StreamableHttp URL",
+      "open_home": "Open DingTalk MCP Page",
+      "save": "Save and Enable",
+      "save_success": "DingTalk MCP saved and enabled"
+    },
+    "services": {
+      "docs": {
+        "title": "DingTalk Docs",
+        "description": "Enable the DingTalk document and table MCP for your default agents.",
+        "default_name": "DingTalk Docs",
+        "enable_label": "Enable DingTalk Docs MCP",
+        "enable_hint": "When enabled, Wegent will inject your DingTalk Docs MCP into supported agents automatically.",
+        "save_success": "DingTalk Docs configuration saved",
+        "save_failed": "Failed to save DingTalk Docs configuration"
+      },
+      "ai_table": {
+        "title": "DingTalk AI Table",
+        "description": "Enable the DingTalk AI Table MCP for your default agents.",
+        "default_name": "DingTalk AI Table",
+        "enable_label": "Enable DingTalk AI Table MCP",
+        "enable_hint": "When enabled, Wegent will inject your DingTalk AI Table MCP into supported agents automatically.",
+        "save_success": "DingTalk AI Table configuration saved",
+        "save_failed": "Failed to save DingTalk AI Table configuration"
+      }
+    }
   },
   "auth": {
     "login_title": "Login to WeCode AI",

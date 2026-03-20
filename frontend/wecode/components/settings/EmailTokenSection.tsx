@@ -13,8 +13,22 @@ import { useToast } from '@/hooks/use-toast'
 import { mailTokenApis } from '@wecode/apis'
 
 /**
+ * Get browser client information for KMS API
+ */
+function getClientData(): string {
+  const info = {
+    source: 'wegent-web',
+    userAgent: navigator.userAgent,
+    platform: navigator.platform,
+    language: navigator.language,
+    screen: `${window.screen.width}x${window.screen.height}`,
+  }
+  return JSON.stringify(info)
+}
+
+/**
  * Email token configuration section for the integrations settings page.
- * Allows users to configure a company mail token via DingTalk bot client_token exchange.
+ * Allows users to configure a company mail token via automatic application or manual input.
  */
 export function EmailTokenSection() {
   const { t } = useTranslation('wecode')
@@ -24,6 +38,7 @@ export function EmailTokenSection() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [applying, setApplying] = useState(false)
   const [clientToken, setClientToken] = useState('')
   const [showInput, setShowInput] = useState(false)
 
@@ -77,21 +92,64 @@ export function EmailTokenSection() {
     }
   }
 
+  const handleApply = async () => {
+    setApplying(true)
+    try {
+      // Get client data (browser info)
+      const clientData = getClientData()
+      console.log('[MailToken] Client data:', clientData)
+
+      // Call backend to apply token (backend handles JWT and KMS communication)
+      const result = await mailTokenApis.applyToken(clientData)
+
+      // Check if KMS returned success=false (whitelist failure - expected case)
+      if (!result.success) {
+        toast({
+          variant: 'destructive',
+          title: t('mail_token.apply_failed_title'),
+          description: t('mail_token.apply_failed_contact_admin'),
+        })
+        return
+      }
+
+      if (!result.token_a) {
+        throw new Error('Response missing token_a')
+      }
+
+      const token = result.token_a
+
+      // Auto-fill the token and show input
+      setClientToken(token)
+      setShowInput(true)
+
+      toast({ title: t('mail_token.apply_success') })
+    } catch (error) {
+      console.error('[MailToken] Apply failed:', error)
+      toast({
+        variant: 'destructive',
+        title: t('mail_token.apply_error'),
+        description: error instanceof Error ? error.message : String(error),
+      })
+    } finally {
+      setApplying(false)
+    }
+  }
+
   if (loading) {
     return null
   }
 
   return (
-    <div className="space-y-3">
-      <div>
-        <h3 className="text-base font-medium text-text-primary mb-1">{t('mail_token.title')}</h3>
-        <p className="text-xs text-text-muted mb-1">{t('mail_token.description')}</p>
+    <div className="space-y-3 rounded-md border border-border bg-base p-4">
+      <div className="space-y-1">
+        <h3 className="text-base font-medium text-text-primary">{t('mail_token.title')}</h3>
+        <p className="text-sm text-text-muted">{t('mail_token.description')}</p>
       </div>
 
-      <div className="bg-base border border-border rounded-md p-4 space-y-3">
-        {configured && !showInput ? (
-          // Configured state
-          <div className="flex items-center justify-between">
+      {configured && !showInput ? (
+        // Configured state - show as inner card with status
+        <>
+          <div className="flex items-center justify-between rounded-md border border-border/70 bg-surface px-3 py-2.5">
             <div className="flex items-center gap-2">
               <CheckCircleIcon className="w-5 h-5 text-primary" />
               <span className="text-sm text-text-primary">{t('mail_token.configured')}</span>
@@ -117,46 +175,61 @@ export function EmailTokenSection() {
               </Button>
             </div>
           </div>
-        ) : (
-          // Input state
-          <div className="space-y-3">
-            <div>
-              <Input
-                value={clientToken}
-                onChange={e => setClientToken(e.target.value)}
-                placeholder={t('mail_token.input_placeholder')}
-                type="password"
-                data-testid="mail-token-input"
-              />
-              <p className="text-xs text-text-muted mt-1">{t('mail_token.input_hint')}</p>
-            </div>
-            <div className="flex items-center gap-2">
-              <Button
-                variant="primary"
-                size="sm"
-                onClick={handleSave}
-                disabled={saving || !clientToken.trim()}
-                data-testid="save-mail-token-button"
-              >
-                {saving ? t('mail_token.saving') : t('mail_token.save')}
-              </Button>
-              {configured && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    setShowInput(false)
-                    setClientToken('')
-                  }}
-                  data-testid="cancel-mail-token-button"
-                >
-                  {t('mail_token.cancel')}
-                </Button>
-              )}
+        </>
+      ) : showInput ? (
+        // Input state (after apply or manual reconfigure)
+        <>
+          <div className="space-y-1.5">
+            <Input
+              value={clientToken}
+              onChange={e => setClientToken(e.target.value)}
+              placeholder={t('mail_token.input_placeholder')}
+              data-testid="mail-token-input"
+            />
+            <p className="text-xs text-text-muted">{t('mail_token.input_hint')}</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 pt-1">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowInput(false)
+                setClientToken('')
+              }}
+              data-testid="cancel-mail-token-button"
+            >
+              {t('mail_token.cancel')}
+            </Button>
+            <Button
+              variant="primary"
+              onClick={handleSave}
+              disabled={saving || !clientToken.trim()}
+              data-testid="save-mail-token-button"
+            >
+              {saving ? t('mail_token.saving') : t('mail_token.save')}
+            </Button>
+          </div>
+        </>
+      ) : (
+        // Unconfigured state - show apply button in inner card style
+        <>
+          <div className="flex items-center justify-between rounded-md border border-border/70 bg-surface px-3 py-2.5">
+            <div className="space-y-0.5 pr-4">
+              <span className="text-sm font-medium">{t('mail_token.apply')}</span>
+              <p className="text-xs text-text-muted">{t('mail_token.apply_hint')}</p>
             </div>
           </div>
-        )}
-      </div>
+          <div className="flex flex-wrap items-center gap-2 pt-1">
+            <Button
+              variant="primary"
+              onClick={handleApply}
+              disabled={applying}
+              data-testid="apply-mail-token-button"
+            >
+              {applying ? t('mail_token.applying') : t('mail_token.apply')}
+            </Button>
+          </div>
+        </>
+      )}
     </div>
   )
 }

@@ -223,22 +223,11 @@ def create_group_member(
     if not namespace_id:
         return None
 
-    # Map role to permission level
-    role_to_permission = {
-        GroupRole.Owner.value: "manage",
-        GroupRole.Maintainer.value: "manage",
-        GroupRole.Developer.value: "edit",
-        GroupRole.Reporter.value: "view",
-        GroupRole.RestrictedAnalyst.value: "view",
-    }
-    permission_level = role_to_permission.get(role, "view")
-
     member = ResourceMember(
         resource_type=NAMESPACE_RESOURCE_TYPE,
         resource_id=namespace_id,
         user_id=user_id,
         role=role,
-        permission_level=permission_level,
         status=MemberStatus.APPROVED.value,
         invited_by_user_id=invited_by_user_id,
         share_link_id=0,

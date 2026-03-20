@@ -118,7 +118,7 @@ def send_share_request_notification(
     member_id: int,
     applicant_name: str,
     applicant_email: Optional[str],
-    permission_level: str,
+    role: str,
 ) -> bool:
     """
     Send webhook notification for share request to resource owner.
@@ -130,7 +130,7 @@ def send_share_request_notification(
         member_id: ResourceMember record ID
         applicant_name: Applicant username
         applicant_email: Applicant email
-        permission_level: Requested permission level
+        role: Requested role
 
     Returns:
         True if notification sent successfully
@@ -181,7 +181,7 @@ def send_share_request_notification(
             end_time=now.isoformat(),
             description=(
                 f"User {applicant_name} ({email_display}) "
-                f"requested {permission_level} permission for {resource_type_name} '{resource_name}'"
+                f"requested {role} role for {resource_type_name} '{resource_name}'"
             ),
             status="pending",
             detail_url=action_url,
@@ -204,7 +204,7 @@ def send_share_review_notification(
     resource_id: int,
     member_id: int,
     applicant_id: int,
-    permission_level: str,
+    role: str,
     status: str,
 ) -> bool:
     """
@@ -216,7 +216,7 @@ def send_share_review_notification(
         resource_id: Resource ID
         member_id: ResourceMember record ID
         applicant_id: Applicant user ID
-        permission_level: Permission level
+        role: Granted role
         status: Review status (approved/rejected)
 
     Returns:
@@ -258,7 +258,7 @@ def send_share_review_notification(
         }.get(resource_type, "resource")
 
         description = (
-            f"Your {permission_level} permission request for "
+            f"Your {role} role request for "
             f"{resource_type_name} '{resource_name}' has been {status_text}"
         )
 

@@ -27,12 +27,12 @@ import {
 } from '@/components/ui/alert-dialog'
 import { shellApis, UnifiedShell } from '@/apis/shells'
 import UnifiedAddButton from '@/components/common/UnifiedAddButton'
-import type { GroupRole } from '@/types/group'
+import type { BaseRole } from '@/types/base-role'
 
 interface ShellListProps {
   scope?: 'personal' | 'group' | 'all'
   groupName?: string
-  groupRoleMap?: Map<string, GroupRole>
+  groupRoleMap?: Map<string, BaseRole>
   onEditResource?: (namespace: string) => void
 }
 
