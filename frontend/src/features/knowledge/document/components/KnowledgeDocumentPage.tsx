@@ -232,6 +232,9 @@ export function KnowledgeDocumentPage() {
     retrieval_config?: Parameters<typeof personalKb.create>[0]['retrieval_config']
     summary_enabled?: boolean
     summary_model_ref?: Parameters<typeof personalKb.create>[0]['summary_model_ref'] | null
+    guided_questions?: string[]
+    max_calls_per_conversation: number
+    exempt_calls_before_check: number
   }) => {
     const kbService = createForOrganization ? organizationKb : personalKb
     // Use fetched organization namespace or fallback to 'organization'
@@ -245,6 +248,9 @@ export function KnowledgeDocumentPage() {
       retrieval_config: data.retrieval_config,
       summary_enabled: data.summary_enabled,
       summary_model_ref: data.summary_model_ref,
+      guided_questions: data.guided_questions,
+      max_calls_per_conversation: data.max_calls_per_conversation,
+      exempt_calls_before_check: data.exempt_calls_before_check,
       kb_type: createKbType,
     })
     // Save summary model to knowledge team's preference for notebook type
