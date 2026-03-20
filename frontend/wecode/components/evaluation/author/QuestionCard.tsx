@@ -94,15 +94,32 @@ function getContentPreview(
   contentData: Record<string, unknown>,
   t: (key: string) => string
 ): string {
+  // Check for exam mode short description
+  const display = contentData.display as Record<string, unknown> | undefined
+  if (display && typeof display.shortDesc === 'string' && display.shortDesc) {
+    return display.shortDesc.slice(0, 150)
+  }
+
+  // Check for exam mode content markdown
+  if (typeof contentData.contentMarkdown === 'string' && contentData.contentMarkdown) {
+    return contentData.contentMarkdown.slice(0, 150)
+  }
+
+  // Legacy text content
   if (typeof contentData.text === 'string' && contentData.text) {
     return contentData.text.slice(0, 150)
   }
+
+  // URL content
   if (typeof contentData.url === 'string' && contentData.url) {
     return contentData.url
   }
+
+  // Attachments
   if (Array.isArray(contentData.attachments) && contentData.attachments.length > 0) {
     return `${contentData.attachments.length} ${t('questions.attachments')}`
   }
+
   return t('questions.no_content')
 }
 

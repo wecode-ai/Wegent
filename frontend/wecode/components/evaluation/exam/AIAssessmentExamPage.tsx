@@ -20,25 +20,12 @@ import {
   advanceExamPhase,
 } from '@wecode/api/evaluation-exam'
 import { fetchFileContent } from '@wecode/api/evaluation-shared'
-import type {
-  ExamAttachment,
-  ExamSessionStatus,
-  ExamTopicConfig,
-  ExamQuestionContent,
-} from '@wecode/types/evaluation-exam'
-import {
-  isExamTopicConfig,
-  isExamQuestionContent,
-  DEFAULT_UPLOAD_SLOTS,
-  DEFAULT_BONUS_ITEMS,
-  DEFAULT_SCORING,
-  DEFAULT_TIME_NOTE,
-} from '@wecode/types/evaluation-exam'
-import type { Question } from '@wecode/types/evaluation'
+import type { ExamAttachment, ExamSessionStatus } from '@wecode/types/evaluation-exam'
 
 import {
   Icon,
   AIAssessmentTopicCard,
+  AIAssessmentTopicDetail,
   ExamHeader,
   ExamInfoSection,
   BonusItemsSection,
@@ -49,7 +36,6 @@ import {
   FinalConfirmModal,
   TimeWarningModal,
 } from './index'
-import { ExamTopicDetail } from './ExamTopicDetail'
 import type { PermissionState, QuestionDataMap } from './ai-assessment-types'
 import { createInitialQuestionDataMap } from './ai-assessment-types'
 import {
@@ -59,168 +45,58 @@ import {
 } from './ai-assessment-utils'
 import type { Topic } from './AIAssessmentTopicCard'
 
-interface ExamPageProps {
+export interface UploadSlotConfig {
+  key: string
+  label: string
+  hint: string
+  required?: boolean
+  maxFiles: number
+  accept: string
+  iconName: string
+  iconClass: string
+  showLinkInput?: boolean
+  linkLabel?: string
+  linkPlaceholder?: string
+}
+
+export interface ExamData {
+  title: string
+  year: string
+  duration: { intro: number; exam: number; review: number }
+  rules: Array<{ icon: string; label: string; text: string }>
+  examMethod: {
+    scoring: string
+    dimensions: string[]
+    bonus: string
+  }
+  timeNote: string
+  topics: Topic[]
+  bonusItems: Array<{
+    id: number
+    title: string
+    description: string
+    platforms: string
+    deliverables: string[]
+  }>
+}
+
+export interface AIAssessmentExamPageProps {
   topicId: number
+  examData: ExamData
+  uploadSlotsConfig: readonly UploadSlotConfig[]
+  pageTitle: string
+  gridCols?: 2 | 3
+  enableFileContentLoading?: boolean
 }
 
-// Transform ExamTopicConfig rules markdown to rules array
-function transformRules(
-  rulesMarkdown: string
-): Array<{ icon: string; label: string; text: string }> {
-  const rules: Array<{ icon: string; label: string; text: string }> = []
-  const lines = rulesMarkdown.split('\n')
-
-  for (const line of lines) {
-    const match = line.match(/^-\s*\*\*(.+?)\*\*\s*[:：]\s*(.+)$/)
-    if (match) {
-      const label = match[1].trim()
-      const text = match[2].trim()
-      let icon = 'file'
-      if (label.includes('时间')) icon = 'clock'
-      else if (label.includes('工具')) icon = 'tool'
-      else if (label.includes('提交')) icon = 'upload'
-      else if (label.includes('公平')) icon = 'shield'
-      rules.push({ icon, label, text })
-    }
-  }
-
-  return rules.length > 0
-    ? rules
-    : [
-        {
-          icon: 'clock',
-          label: '考试时间',
-          text: '5分钟考前介绍答疑+50分钟答题+5分钟提交结果初查',
-        },
-        {
-          icon: 'tool',
-          label: '工具不限',
-          text: '不限制应用模型或工具，公司内外部工具、国内/海外工具均可使用',
-        },
-        {
-          icon: 'upload',
-          label: '提交要求',
-          text: '请按要求提交作答说明、AI交互过程记录及产出报告/方案；如选答附加题，可补充提交 Agent或多模态交付物等相关材料',
-        },
-        {
-          icon: 'shield',
-          label: '公平原则',
-          text: '为确保公平性，现场不得直接使用过往工作产出作为结果提交',
-        },
-      ]
-}
-
-// Transform ExamQuestionContent to Topic format
-function transformQuestionToTopic(question: Question, _index: number): Topic {
-  const contentData = question.content_data as unknown as ExamQuestionContent | undefined
-
-  if (contentData && isExamQuestionContent(contentData)) {
-    return {
-      id: question.id,
-      title: question.title,
-      shortDesc: contentData.display.shortDesc,
-      icon: contentData.display.icon,
-      context: contentData.contentMarkdown,
-      tasks: [],
-      requirement: '',
-      deliverable: [],
-      bonusDeliverable: [],
-    }
-  }
-
-  return {
-    id: question.id,
-    title: question.title,
-    shortDesc: '',
-    icon: 'file',
-    context: (question.content_data?.content as string) || '',
-    tasks: [],
-    requirement: '',
-    deliverable: [],
-    bonusDeliverable: [],
-  }
-}
-
-// Build exam data from topic config and questions
-function buildExamData(
-  topicConfig: ExamTopicConfig | null,
-  questions: Question[],
-  topicName?: string
-) {
-  const config = topicConfig || {
-    title: topicName || 'AI应用能力考核',
-    year: new Date().getFullYear().toString(),
-    duration: { intro: 5, exam: 50, review: 5 },
-    rulesMarkdown: '',
-    scoring: DEFAULT_SCORING,
-    timeNote: DEFAULT_TIME_NOTE,
-    uploadSlots: DEFAULT_UPLOAD_SLOTS,
-    bonusItems: DEFAULT_BONUS_ITEMS,
-  }
-
-  const rules = transformRules(config.rulesMarkdown)
-
-  return {
-    title: config.title,
-    year: config.year,
-    duration: config.duration,
-    rules,
-    examMethod: {
-      scoring: config.scoring.description,
-      dimensions: config.scoring.dimensions,
-      bonus: config.scoring.bonusNote,
-    },
-    timeNote: config.timeNote,
-    topics: questions.map((q, i) => transformQuestionToTopic(q, i)),
-    bonusItems: config.bonusItems.map((item, i) => ({
-      id: i + 1,
-      title: item.title,
-      description: item.description,
-      platforms: item.platforms,
-      deliverables: item.deliverables,
-    })),
-  }
-}
-
-// Build upload slots config from topic config
-function buildUploadSlotsConfig(topicConfig: ExamTopicConfig | null) {
-  const slots = topicConfig?.uploadSlots || DEFAULT_UPLOAD_SLOTS
-
-  return slots.map(slot => {
-    let iconName = 'file'
-    let iconClass = 'text-gray-400'
-
-    if (slot.key === 'interaction') {
-      iconName = 'pen'
-      iconClass = 'text-gray-400'
-    } else if (slot.key === 'main') {
-      iconName = 'file'
-      iconClass = 'text-[#DF2029]'
-    } else if (slot.key === 'bonusAgent') {
-      iconName = 'workflow'
-      iconClass = 'text-indigo-500'
-    } else if (slot.key === 'bonusMultimodal') {
-      iconName = 'layers'
-      iconClass = 'text-rose-500'
-    }
-
-    return {
-      key: slot.key,
-      label: slot.label,
-      hint: slot.hint,
-      required: slot.required,
-      maxFiles: slot.maxFiles,
-      accept: slot.accept,
-      iconName,
-      iconClass,
-      showLinkInput: slot.showLinkInput,
-      linkLabel: slot.linkLabel,
-      linkPlaceholder: slot.linkPlaceholder,
-    }
-  })
-}
-
-export function ExamPage({ topicId }: ExamPageProps) {
+export function AIAssessmentExamPage({
+  topicId,
+  examData,
+  uploadSlotsConfig,
+  pageTitle,
+  gridCols = 3,
+  enableFileContentLoading = false,
+}: AIAssessmentExamPageProps) {
   const router = useRouter()
   const { user, isLoading: isUserLoading } = useUser()
   const { toast } = useToast()
@@ -233,24 +109,7 @@ export function ExamPage({ topicId }: ExamPageProps) {
   const [permissionState, setPermissionState] = useState<PermissionState>('checking')
   const participantName = user?.user_name || ''
 
-  // Topic configuration from server
-  const [topicConfig, setTopicConfig] = useState<ExamTopicConfig | null>(null)
-  const [questions, setQuestions] = useState<Question[]>([])
-  const [topicName, setTopicName] = useState<string>('')
-
-  const examData = useMemo(
-    () => buildExamData(topicConfig, questions, topicName),
-    [topicConfig, questions, topicName]
-  )
-  const uploadSlotsConfig = useMemo(() => buildUploadSlotsConfig(topicConfig), [topicConfig])
-
-  const questionIds = useMemo(() => questions.map(q => q.id), [questions])
-
-  // Memoize the selected topic to prevent unnecessary re-renders of ExamTopicDetail
-  const selectedTopicData = useMemo(() => {
-    if (selectedTopic === null || !examData.topics[selectedTopic]) return null
-    return examData.topics[selectedTopic]
-  }, [examData.topics, selectedTopic])
+  const questionIds = useMemo(() => examData.topics.map(t => t.id), [examData.topics])
 
   const {
     phase: examPhase,
@@ -263,7 +122,9 @@ export function ExamPage({ topicId }: ExamPageProps) {
     session: examSession,
   })
 
-  const [questionData, setQuestionData] = useState<QuestionDataMap>({})
+  const [questionData, setQuestionData] = useState<QuestionDataMap>(
+    createInitialQuestionDataMap(questionIds)
+  )
 
   const [showPreviewConfirmModal, setShowPreviewConfirmModal] = useState(false)
   const [showFinalConfirmModal, setShowFinalConfirmModal] = useState(false)
@@ -279,12 +140,7 @@ export function ExamPage({ topicId }: ExamPageProps) {
     [uploadSlotsConfig]
   )
 
-  useEffect(() => {
-    if (questionIds.length > 0) {
-      setQuestionData(createInitialQuestionDataMap(questionIds))
-    }
-  }, [questionIds])
-
+  // Check login status and permission
   useEffect(() => {
     if (isUserLoading) return
 
@@ -302,32 +158,12 @@ export function ExamPage({ topicId }: ExamPageProps) {
       try {
         const data = await getExamData(topicId)
         setExamSession(data.session)
-
-        // Set topic name from API response
-        if (data.topic?.name) {
-          setTopicName(data.topic.name)
-        }
-
-        // Parse topic configuration from extra_data
-        if (data.topic?.extra_data) {
-          if (isExamTopicConfig(data.topic.extra_data)) {
-            setTopicConfig(data.topic.extra_data)
-          } else {
-            // Use defaults if not in new format
-            setTopicConfig(null)
-          }
-        }
-
-        // Set questions
-        if (data.questions) {
-          setQuestions(data.questions)
-        }
-
         if (data.session?.selected_question_id) {
-          const questionIndex = data.questions.findIndex(
-            q => q.id === data.session.selected_question_id
+          const firstQuestionId = questionIds[0]
+          const questionIndex = data.session.selected_question_id - firstQuestionId
+          setSelectedTopic(
+            questionIndex >= 0 && questionIndex < questionIds.length ? questionIndex : null
           )
-          setSelectedTopic(questionIndex >= 0 ? questionIndex : null)
         }
         setPermissionState('granted')
       } catch (error: unknown) {
@@ -350,8 +186,9 @@ export function ExamPage({ topicId }: ExamPageProps) {
     }
 
     checkPermissionAndLoadData()
-  }, [user, isUserLoading, router, toast, t, topicId])
+  }, [user, isUserLoading, router, toast, t, topicId, questionIds])
 
+  // Sync with server when page becomes visible
   usePageVisibility({
     onVisible: () => {
       getExamData(topicId)
@@ -361,6 +198,7 @@ export function ExamPage({ topicId }: ExamPageProps) {
     minHiddenTime: 1000,
   })
 
+  // Show time warning when 5 minutes remaining
   useEffect(() => {
     if (
       examPhase === 'exam' &&
@@ -374,6 +212,7 @@ export function ExamPage({ topicId }: ExamPageProps) {
     }
   }, [examPhase, timeLeft, timeWarningShown, isCompleted])
 
+  // Fix sticky header by overriding body overflow
   useEffect(() => {
     const originalBodyOverflow = document.body.style.overflow
     const originalBodyOverflowX = document.body.style.overflowX
@@ -429,24 +268,27 @@ export function ExamPage({ topicId }: ExamPageProps) {
           }
         }
 
-        for (const [questionIdStr, qData] of Object.entries(loadedData)) {
-          const questionId = parseInt(questionIdStr, 10)
-          const hasText = qData.supplementaryNotes?.trim().length > 0
-          const hasFiles = qData.supplementaryNotesFiles?.length > 0
+        // Load supplementary notes content from attachments if no text content
+        if (enableFileContentLoading) {
+          for (const [questionIdStr, qData] of Object.entries(loadedData)) {
+            const questionId = parseInt(questionIdStr, 10)
+            const hasText = qData.supplementaryNotes?.trim().length > 0
+            const hasFiles = qData.supplementaryNotesFiles?.length > 0
 
-          if (!hasText && hasFiles) {
-            const file = qData.supplementaryNotesFiles![0]
-            try {
-              const content = await fetchFileContent(file.key)
-              setQuestionData(prev => ({
-                ...prev,
-                [questionId]: {
-                  ...prev[questionId],
-                  supplementaryNotes: content,
-                },
-              }))
-            } catch (e) {
-              console.error('Failed to load supplementary notes content:', e)
+            if (!hasText && hasFiles) {
+              const file = qData.supplementaryNotesFiles![0]
+              try {
+                const content = await fetchFileContent(file.key)
+                setQuestionData(prev => ({
+                  ...prev,
+                  [questionId]: {
+                    ...prev[questionId],
+                    supplementaryNotes: content,
+                  },
+                }))
+              } catch (e) {
+                console.error('Failed to load supplementary notes content:', e)
+              }
             }
           }
         }
@@ -456,8 +298,9 @@ export function ExamPage({ topicId }: ExamPageProps) {
       }
     }
     loadExistingAnswer()
-  }, [examSession, topicId])
+  }, [examSession, topicId, enableFileContentLoading])
 
+  // Auto-save hook for supplementary notes
   const {
     triggerSave: triggerNotesSave,
     flushSave: flushNotesSave,
@@ -487,39 +330,38 @@ export function ExamPage({ topicId }: ExamPageProps) {
     enabled: examPhase === 'exam' && selectedTopic !== null,
   })
 
+  // Warn user if they try to leave with unsaved changes
   useEffect(() => {
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
       if (notesSaveStatus === 'saving' || notesSaveStatus === 'error') {
         e.preventDefault()
-        e.returnValue = t('exam.modal.leave_description')
+        e.returnValue = '您有未保存的更改，确定要离开吗？'
         return e.returnValue
       }
     }
 
     window.addEventListener('beforeunload', handleBeforeUnload)
     return () => window.removeEventListener('beforeunload', handleBeforeUnload)
-  }, [notesSaveStatus, t])
+  }, [notesSaveStatus])
 
+  // Computed values
   const progressSteps = useMemo(() => {
     const anyQuestionSelected = selectedTopic !== null
     const currentQuestionId = selectedTopic !== null ? questionIds[selectedTopic] : null
     const currentData = currentQuestionId !== null ? questionData[currentQuestionId] : null
 
     return [
+      { label: '填写说明', done: anyQuestionSelected && hasSupplementaryNotes(currentData) },
       {
-        label: t('exam.progress.fill_notes'),
-        done: anyQuestionSelected && hasSupplementaryNotes(currentData),
-      },
-      {
-        label: t('exam.upload.interaction'),
+        label: '上传交互记录',
         done: anyQuestionSelected && (currentData?.attachments.interaction.length ?? 0) > 0,
       },
       {
-        label: t('exam.upload.main_report'),
+        label: '上传报告',
         done: anyQuestionSelected && (currentData?.attachments.main.length ?? 0) > 0,
       },
     ]
-  }, [selectedTopic, questionData, questionIds, t])
+  }, [selectedTopic, questionData, questionIds])
 
   const timerColor = useMemo(() => getTimerColorClass(timeLeft, isOvertime), [timeLeft, isOvertime])
 
@@ -537,6 +379,7 @@ export function ExamPage({ topicId }: ExamPageProps) {
     participantName.trim().length > 0 &&
     !isCompleted
 
+  // Handlers
   const startAnswering = async () => {
     if (isTransitioning) return
     setIsTransitioning(true)
@@ -546,8 +389,11 @@ export function ExamPage({ topicId }: ExamPageProps) {
         const data = await getExamData(topicId, true)
         setExamSession(data.session)
         if (data.session?.selected_question_id) {
-          const questionIndex = questions.findIndex(q => q.id === data.session.selected_question_id)
-          setSelectedTopic(questionIndex >= 0 ? questionIndex : null)
+          const firstQuestionId = questionIds[0]
+          const questionIndex = data.session.selected_question_id - firstQuestionId
+          setSelectedTopic(
+            questionIndex >= 0 && questionIndex < questionIds.length ? questionIndex : null
+          )
         }
       } else if (examPhase === 'intro') {
         const result = await advanceExamPhase(topicId, 'exam')
@@ -601,21 +447,23 @@ export function ExamPage({ topicId }: ExamPageProps) {
           }))
 
           // Load supplementary notes content from attachments if no text content
-          const hasText = questionState.supplementaryNotes?.trim().length > 0
-          const hasFiles = questionState.supplementaryNotesFiles?.length > 0
-          if (!hasText && hasFiles) {
-            const file = questionState.supplementaryNotesFiles![0]
-            try {
-              const fileContent = await fetchFileContent(file.key)
-              setQuestionData(prev => ({
-                ...prev,
-                [questionId]: {
-                  ...prev[questionId],
-                  supplementaryNotes: fileContent,
-                },
-              }))
-            } catch (e) {
-              console.error('Failed to load supplementary notes content:', e)
+          if (enableFileContentLoading) {
+            const hasText = questionState.supplementaryNotes?.trim().length > 0
+            const hasFiles = questionState.supplementaryNotesFiles?.length > 0
+            if (!hasText && hasFiles) {
+              const file = questionState.supplementaryNotesFiles![0]
+              try {
+                const fileContent = await fetchFileContent(file.key)
+                setQuestionData(prev => ({
+                  ...prev,
+                  [questionId]: {
+                    ...prev[questionId],
+                    supplementaryNotes: fileContent,
+                  },
+                }))
+              } catch (e) {
+                console.error('Failed to load supplementary notes content:', e)
+              }
             }
           }
         }
@@ -717,12 +565,16 @@ export function ExamPage({ topicId }: ExamPageProps) {
     )
   }
 
-  const gridClass = questions.length === 2 ? 'md:grid-cols-2' : 'md:grid-cols-3'
+  const gridClass = gridCols === 2 ? 'md:grid-cols-2' : 'md:grid-cols-3'
+  const topicSelectionText =
+    gridCols === 2
+      ? '考题二选一，如果多选，每个维度评分取多道题的高分'
+      : '考题三选一，如果多选，每个维度评分取多道题的高分'
 
   return (
     <div className="min-h-screen bg-[#fafbfc] overflow-visible">
       <ExamHeader
-        title={examData.title}
+        title={pageTitle}
         year={examData.year}
         progressSteps={progressSteps}
         timeLeft={timeLeft}
@@ -732,7 +584,7 @@ export function ExamPage({ topicId }: ExamPageProps) {
 
       <main className="max-w-7xl mx-auto px-4 sm:px-8 py-8 sm:py-10 space-y-10">
         <ExamInfoSection
-          title={examData.title}
+          title={pageTitle}
           year={examData.year}
           rules={examData.rules}
           examMethod={examData.examMethod}
@@ -752,8 +604,11 @@ export function ExamPage({ topicId }: ExamPageProps) {
             <div className="flex items-center gap-3 mb-6">
               <div className="w-1.5 h-7 bg-[#DF2029] rounded-full" />
               <h2 className="text-xl font-bold text-gray-900">
-                {examPhase === 'review' ? t('exam.topic.title_selected') : t('exam.topic.title')}
+                {examPhase === 'review' ? '已选考核题目' : '选择考核题目'}
               </h2>
+              {examPhase !== 'review' && (
+                <span className="text-[1rem] text-gray-400 ml-1">（{topicSelectionText}）</span>
+              )}
             </div>
             {examPhase === 'review' && selectedTopic !== null ? (
               <div className="mb-6">
@@ -770,11 +625,11 @@ export function ExamPage({ topicId }: ExamPageProps) {
                   ))}
                 </div>
                 <div className="mt-6">
-                  <ExamTopicDetail topic={selectedTopicData!} />
+                  <AIAssessmentTopicDetail topic={examData.topics[selectedTopic]} />
                 </div>
               </div>
             ) : examPhase === 'review' ? (
-              <div className="text-gray-500 py-4">{t('exam.confirm.not_selected_topic')}</div>
+              <div className="text-gray-500 py-4">未选择题目</div>
             ) : (
               <>
                 <div className={`grid grid-cols-1 ${gridClass} gap-5 mb-6`}>
@@ -793,8 +648,8 @@ export function ExamPage({ topicId }: ExamPageProps) {
                     />
                   ))}
                 </div>
-                {selectedTopic !== null && selectedTopicData && (
-                  <ExamTopicDetail topic={selectedTopicData} />
+                {selectedTopic !== null && (
+                  <AIAssessmentTopicDetail topic={examData.topics[selectedTopic]} />
                 )}
               </>
             )}
@@ -891,11 +746,7 @@ export function ExamPage({ topicId }: ExamPageProps) {
             totalFileLimit={20}
             currentTotalCount={currentQuestionData?.supplementaryNotesFiles?.length || 0}
             onLimitExceeded={() => {
-              toast({
-                title: t('errors.save_failed'),
-                description: t('exam.submit.file_limit', { count: 20 }),
-                variant: 'destructive',
-              })
+              alert('每道题目总附件数（包括作答说明文件）不能超过 20 个，请先删除一些附件')
             }}
           />
         )}
@@ -904,27 +755,15 @@ export function ExamPage({ topicId }: ExamPageProps) {
         {examPhase === 'exam' && selectedTopic !== null && !isCompleted && (
           <section className="animate-[slideDown_0.35s_ease-out]">
             <div className="bg-white rounded-3xl shadow-sm border border-gray-100 p-7 sm:p-9">
-              <h3 className="text-base font-bold text-gray-700 mb-5">{t('exam.submit.title')}</h3>
+              <h3 className="text-base font-bold text-gray-700 mb-5">提交检查</h3>
               <div className="grid grid-cols-3 gap-3 mb-5">
                 {[
-                  {
-                    label: t('exam.submit.check_item.notes_filled'),
-                    done: hasNotes,
-                    required: true,
-                  },
-                  {
-                    label: t('exam.submit.check_item.interaction_record'),
-                    done: hasInteractionRecord,
-                    required: true,
-                  },
-                  {
-                    label: t('exam.submit.check_item.report_uploaded'),
-                    done: hasMainReport,
-                    required: true,
-                  },
-                ].map((item, _index) => (
+                  { label: '已填写说明', done: hasNotes, required: true },
+                  { label: '已上传交互记录', done: hasInteractionRecord, required: true },
+                  { label: '已上传报告', done: hasMainReport, required: true },
+                ].map((item, index) => (
                   <div
-                    key={_index}
+                    key={index}
                     className={`flex items-center gap-2.5 px-4 py-3 rounded-xl text-sm font-medium ${
                       item.done
                         ? 'bg-green-50 text-green-700'
@@ -952,26 +791,26 @@ export function ExamPage({ topicId }: ExamPageProps) {
 
               <div className="text-sm text-gray-400 mb-5 text-center">
                 <p>
-                  {t('exam.submit.file_limit', {
-                    count: (() => {
-                      const currentData = questionData[currentQuestionId!]
-                      if (!currentData) return 0
-                      return (
-                        (currentData.attachments?.main?.length || 0) +
-                        (currentData.attachments?.interaction?.length || 0) +
-                        (currentData.attachments?.bonusAgent?.length || 0) +
-                        (currentData.attachments?.bonusMultimodal?.length || 0) +
-                        (currentData.supplementaryNotesFiles?.length || 0)
-                      )
-                    })(),
-                  })}
+                  每道题目总附件数不能超过 20 个，当前已上传{' '}
+                  {(() => {
+                    const currentData = questionData[currentQuestionId!]
+                    if (!currentData) return 0
+                    return (
+                      (currentData.attachments?.main?.length || 0) +
+                      (currentData.attachments?.interaction?.length || 0) +
+                      (currentData.attachments?.bonusAgent?.length || 0) +
+                      (currentData.attachments?.bonusMultimodal?.length || 0) +
+                      (currentData.supplementaryNotesFiles?.length || 0)
+                    )
+                  })()}{' '}
+                  个
                 </p>
               </div>
 
               <div className="flex flex-col items-center gap-4">
                 <div className="text-sm text-gray-500 text-center">
-                  <p>{t('exam.submit.confirm_description')}</p>
-                  <p className="text-xs text-gray-400 mt-1">{t('exam.submit.confirm_hint')}</p>
+                  <p>请确认所有材料已上传完毕</p>
+                  <p className="text-xs text-gray-400 mt-1">进入预览后仍可返回答题</p>
                 </div>
                 <button
                   onClick={() => setShowPreviewConfirmModal(true)}
@@ -982,13 +821,14 @@ export function ExamPage({ topicId }: ExamPageProps) {
                       : 'bg-gray-100 text-gray-400 cursor-not-allowed'
                   } ${isTransitioning ? 'opacity-50 cursor-not-allowed' : ''}`}
                 >
-                  {isTransitioning ? t('exam.loading') : t('exam.confirm.confirm')}
+                  {isTransitioning ? '加载中...' : '交卷预览'}
                 </button>
               </div>
             </div>
           </section>
         )}
 
+        {/* Review Phase Actions */}
         {examPhase === 'review' && (
           <section className="animate-[slideDown_0.35s_ease-out]">
             <div className="bg-white rounded-3xl shadow-sm border border-gray-100 p-7 sm:p-9">
@@ -998,14 +838,14 @@ export function ExamPage({ topicId }: ExamPageProps) {
                   disabled={isTransitioning}
                   className={`px-8 py-3.5 bg-gray-100 hover:bg-gray-200 text-gray-700 text-base font-bold rounded-2xl transition-all active:scale-[0.98] ${isTransitioning ? 'opacity-50 cursor-not-allowed' : ''}`}
                 >
-                  {isTransitioning ? t('exam.loading') : t('exam.confirm.back_to_exam')}
+                  {isTransitioning ? '加载中...' : '返回答题'}
                 </button>
                 <button
                   onClick={() => setShowFinalConfirmModal(true)}
                   disabled={isTransitioning}
                   className={`px-10 py-3.5 bg-emerald-500 hover:bg-emerald-600 text-white text-lg font-bold rounded-2xl shadow-lg shadow-emerald-200/50 transition-all hover:shadow-emerald-300/60 active:scale-[0.98] ${isTransitioning ? 'opacity-50 cursor-not-allowed' : ''}`}
                 >
-                  {isTransitioning ? t('exam.loading') : t('exam.confirm.final_submit')}
+                  {isTransitioning ? '加载中...' : '确认交卷'}
                 </button>
               </div>
             </div>

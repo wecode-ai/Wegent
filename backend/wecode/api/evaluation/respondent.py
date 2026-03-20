@@ -47,9 +47,14 @@ from wecode.schemas.evaluation import (
 from wecode.service.evaluation import (
     get_answer_service,
     get_exam_session_service,
+    get_grading_service,
     get_permission_service,
     get_question_service,
     get_topic_service,
+)
+from wecode.service.evaluation.grading_service import (
+    build_multi_model_config,
+    get_grading_team_id,
 )
 
 logger = logging.getLogger(__name__)
@@ -230,8 +235,6 @@ def get_my_progress(
     question_ids = [q.id for q in questions]
 
     # Count answered questions
-    from wecode.models.evaluation import EvalAnswer
-
     answered_count = 0
     if question_ids:
         answered_count = (
@@ -378,8 +381,6 @@ def get_question_detail(
 
     # Check if there's a newer version since user's last answer
     has_new_version = False
-    from wecode.models.evaluation import EvalAnswer
-
     latest_answer = (
         db.query(EvalAnswer)
         .filter(
@@ -508,8 +509,6 @@ def list_my_answer_history(
     List current user's answer history across all topics.
     """
     get_answer_service()
-    from wecode.models.evaluation import EvalAnswer
-
     query = db.query(EvalAnswer).filter(EvalAnswer.respondent_id == current_user.id)
 
     if topic_id:
@@ -1314,18 +1313,35 @@ def _create_grading_tasks_for_exam_completion(
             grading_config = topic.grading_team_config
             auto_trigger = grading_config.get("auto_trigger", False)
             trigger_condition = grading_config.get("trigger_condition", "manual")
-            team_id = grading_config.get("team_id")
+
+            # Get team_id based on grading mode (single or multi)
+            team_id = get_grading_team_id(grading_config)
+            grading_mode = grading_config.get("grading_mode", "single")
+
+            logger.info(
+                f"[Evaluation] Auto-trigger check for task {grading_task.id}: "
+                f"auto_trigger={auto_trigger}, trigger_condition={trigger_condition}, "
+                f"grading_mode={grading_mode}, team_id={team_id}"
+            )
 
             if auto_trigger and trigger_condition == "on_submit" and team_id:
                 try:
-                    from wecode.service.evaluation.grading_service import GradingService
+                    grading_service = get_grading_service()
 
-                    grading_service = GradingService()
+                    # Build multi-model config if in multi mode
+                    multi_model_config = build_multi_model_config(grading_config)
+                    if multi_model_config:
+                        logger.info(
+                            f"[Evaluation] Using multi-model grading for task "
+                            f"{grading_task.id} with {len(multi_model_config.scorer_models)} scorers"
+                        )
+
                     grading_service.execute(
                         db=db,
                         task=grading_task,
                         team_id=team_id,
                         user_id=topic.creator_id,
+                        multi_model_config=multi_model_config,
                     )
                     logger.info(
                         f"[Evaluation] Auto-triggered grading task {grading_task.id} "
@@ -1335,6 +1351,12 @@ def _create_grading_tasks_for_exam_completion(
                     logger.error(
                         f"[Evaluation] Failed to auto-trigger grading task {grading_task.id}: {e}"
                     )
+            else:
+                logger.info(
+                    f"[Evaluation] Auto-trigger skipped for task {grading_task.id}: "
+                    f"conditions not met (auto_trigger={auto_trigger}, "
+                    f"trigger_condition={trigger_condition}, team_id={team_id})"
+                )
 
     db.commit()
     logger.info(

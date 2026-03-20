@@ -12,7 +12,6 @@ import {
   Clock,
   FileText,
   Paperclip,
-  Download,
   CheckCircle,
   Circle,
   AlertCircle,
@@ -28,7 +27,11 @@ import {
   type ExamSessionDetail,
   type ExamSessionDetailQuestion,
 } from '@wecode/api/evaluation-author'
-import { downloadEvaluationFile } from '@wecode/api/evaluation-shared'
+import {
+  AttachmentList,
+  generateEvaluationPrefixedFilename,
+  type GenericAttachment,
+} from '@wecode/components/evaluation/common'
 
 interface Attachment {
   key: string
@@ -79,14 +82,6 @@ function formatDuration(seconds: number): string {
   }
 }
 
-function formatFileSize(bytes: number): string {
-  if (bytes === 0) return '0 B'
-  const k = 1024
-  const sizes = ['B', 'KB', 'MB', 'GB']
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
-}
-
 function getPhaseBadge(phase: string) {
   const option = PHASE_OPTIONS.find(p => p.value === phase) || PHASE_OPTIONS[0]
   const colorClasses: Record<string, string> = {
@@ -99,27 +94,60 @@ function getPhaseBadge(phase: string) {
   return <Badge className={`${colorClasses[option.color]} border`}>{option.label}</Badge>
 }
 
-function AttachmentItem({
-  file,
-  onDownload,
-}: {
-  file: Attachment
-  onDownload: (file: Attachment) => void
-}) {
+interface AttachmentSectionProps {
+  title: string
+  files: Attachment[]
+  userId: number
+  topicId: number
+  questionId: number
+  slot: string
+}
+
+function AttachmentSection({
+  title,
+  files,
+  userId,
+  topicId,
+  questionId,
+  slot,
+}: AttachmentSectionProps) {
+  const { toast } = useToast()
+
+  const handleDownloadSuccess = (file: GenericAttachment) => {
+    toast({
+      title: '下载成功',
+      description: file.filename,
+    })
+  }
+
+  const handleDownloadError = () => {
+    toast({
+      title: '下载失败',
+      description: '无法下载文件',
+      variant: 'destructive',
+    })
+  }
+
   return (
-    <div className="flex items-center justify-between p-3 bg-gray-50 rounded-xl border border-gray-100">
-      <div className="flex items-center gap-3 min-w-0">
-        <div className="w-10 h-10 rounded-lg bg-white flex items-center justify-center flex-shrink-0 border border-gray-100">
-          <Paperclip className="w-5 h-5 text-gray-400" />
-        </div>
-        <div className="min-w-0">
-          <p className="text-sm font-medium text-gray-900 truncate">{file.filename}</p>
-          {file.size && <p className="text-xs text-gray-500">{formatFileSize(file.size)}</p>}
-        </div>
-      </div>
-      <Button variant="ghost" size="sm" onClick={() => onDownload(file)} className="flex-shrink-0">
-        <Download className="w-4 h-4" />
-      </Button>
+    <div>
+      <h4 className="text-sm font-medium text-gray-700 mb-3 flex items-center gap-2">
+        <Paperclip className="w-4 h-4" />
+        {title}
+      </h4>
+      <AttachmentList
+        attachments={files}
+        generatePrefixedFilename={(file, index) =>
+          generateEvaluationPrefixedFilename(file, {
+            userId,
+            topicId,
+            questionId,
+            slot,
+            fileIndex: index,
+          })
+        }
+        onDownloadSuccess={handleDownloadSuccess}
+        onDownloadError={handleDownloadError}
+      />
     </div>
   )
 }
@@ -127,11 +155,13 @@ function AttachmentItem({
 function QuestionAnswerCard({
   question,
   answerContent,
-  onDownload,
+  userId,
+  topicId,
 }: {
   question: ExamSessionDetailQuestion
   answerContent?: AnswerContent
-  onDownload: (file: Attachment) => void
+  userId: number
+  topicId: number
 }) {
   const hasAnswer = !!answerContent
   const attachments = answerContent?.attachments
@@ -221,47 +251,38 @@ function QuestionAnswerCard({
 
             {/* Supplementary Notes Files */}
             {hasSupplementaryNotesFiles && (
-              <div>
-                <h4 className="text-sm font-medium text-gray-700 mb-3 flex items-center gap-2">
-                  <Paperclip className="w-4 h-4" />
-                  作答说明附件
-                </h4>
-                <div className="space-y-2">
-                  {attachments!.supplementaryNotes!.map((file, idx) => (
-                    <AttachmentItem key={idx} file={file} onDownload={onDownload} />
-                  ))}
-                </div>
-              </div>
+              <AttachmentSection
+                title="作答说明附件"
+                files={attachments!.supplementaryNotes!}
+                userId={userId}
+                topicId={topicId}
+                questionId={question.id}
+                slot="supplementaryNotes"
+              />
             )}
 
             {/* Interaction Records */}
             {hasInteractionFiles && (
-              <div>
-                <h4 className="text-sm font-medium text-gray-700 mb-3 flex items-center gap-2">
-                  <Paperclip className="w-4 h-4" />
-                  交互记录
-                </h4>
-                <div className="space-y-2">
-                  {attachments!.interaction!.map((file, idx) => (
-                    <AttachmentItem key={idx} file={file} onDownload={onDownload} />
-                  ))}
-                </div>
-              </div>
+              <AttachmentSection
+                title="交互记录"
+                files={attachments!.interaction!}
+                userId={userId}
+                topicId={topicId}
+                questionId={question.id}
+                slot="interaction"
+              />
             )}
 
             {/* Main Deliverables */}
             {hasMainFiles && (
-              <div>
-                <h4 className="text-sm font-medium text-gray-700 mb-3 flex items-center gap-2">
-                  <Paperclip className="w-4 h-4" />
-                  主要交付物
-                </h4>
-                <div className="space-y-2">
-                  {attachments!.main!.map((file, idx) => (
-                    <AttachmentItem key={idx} file={file} onDownload={onDownload} />
-                  ))}
-                </div>
-              </div>
+              <AttachmentSection
+                title="主要交付物"
+                files={attachments!.main!}
+                userId={userId}
+                topicId={topicId}
+                questionId={question.id}
+                slot="main"
+              />
             )}
 
             {/* Bonus Agent */}
@@ -285,28 +306,28 @@ function QuestionAnswerCard({
                   </div>
                 )}
                 {hasBonusAgentFiles && (
-                  <div className="space-y-2">
-                    {attachments!.bonusAgent!.files!.map((file, idx) => (
-                      <AttachmentItem key={idx} file={file} onDownload={onDownload} />
-                    ))}
-                  </div>
+                  <AttachmentSection
+                    title=""
+                    files={attachments!.bonusAgent!.files!}
+                    userId={userId}
+                    topicId={topicId}
+                    questionId={question.id}
+                    slot="bonusAgent"
+                  />
                 )}
               </div>
             )}
 
             {/* Bonus Multimodal */}
             {hasBonusMultimodalFiles && (
-              <div>
-                <h4 className="text-sm font-medium text-gray-700 mb-3 flex items-center gap-2">
-                  <Paperclip className="w-4 h-4" />
-                  多模态作品
-                </h4>
-                <div className="space-y-2">
-                  {attachments!.bonusMultimodal!.map((file, idx) => (
-                    <AttachmentItem key={idx} file={file} onDownload={onDownload} />
-                  ))}
-                </div>
-              </div>
+              <AttachmentSection
+                title="多模态作品"
+                files={attachments!.bonusMultimodal!}
+                userId={userId}
+                topicId={topicId}
+                questionId={question.id}
+                slot="bonusMultimodal"
+              />
             )}
           </div>
         )}
@@ -351,18 +372,6 @@ export default function ExamSessionDetailPage() {
   useEffect(() => {
     loadDetail()
   }, [loadDetail])
-
-  const handleDownload = async (file: Attachment) => {
-    try {
-      await downloadEvaluationFile(file.key, file.filename)
-    } catch (_error) {
-      toast({
-        title: '下载失败',
-        description: '无法下载文件',
-        variant: 'destructive',
-      })
-    }
-  }
 
   // Parse answer content from session_all_answers or question.answer
   const getAnswerContent = (question: ExamSessionDetailQuestion): AnswerContent | undefined => {
@@ -504,7 +513,8 @@ export default function ExamSessionDetailPage() {
                   key={question.id}
                   question={question}
                   answerContent={getAnswerContent(question)}
-                  onDownload={handleDownload}
+                  userId={userId}
+                  topicId={topicId}
                 />
               ))}
             </div>

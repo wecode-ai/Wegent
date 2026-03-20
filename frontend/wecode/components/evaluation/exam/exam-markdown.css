@@ -1,0 +1,161 @@
+/* New Exam Markdown Styles */
+
+.new-exam-markdown {
+  font-size: 1rem;
+}
+
+.new-exam-markdown p {
+  font-size: 1rem;
+  line-height: 1.8;
+  color: #4b5563;
+  margin-bottom: 0.75rem;
+}
+
+.new-exam-markdown p:last-child {
+  margin-bottom: 0;
+}
+
+.new-exam-markdown strong {
+  font-weight: 700;
+  color: #1f2937;
+}
+
+/* 有序列表 - 任务卡片样式 - 带灰色背景和圆角 */
+ol.new-exam-ol {
+  list-style: none;
+  padding: 1.5rem;
+  margin: 1rem 0;
+  background-color: #f9fafb;
+  border-radius: 1rem;
+  counter-reset: task-counter;
+}
+
+/* 使用 Grid 布局：第一列是序号，第二列是所有内容纵向排列 */
+ol.new-exam-ol > li.new-exam-li {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: auto;
+  column-gap: 1rem;
+  row-gap: 0;
+  align-items: start;
+  counter-increment: task-counter;
+  margin-bottom: 1rem;
+  font-size: 1rem;
+  margin-top: 0;
+}
+
+/* 序号伪元素放在第一列，跨所有行 */
+ol.new-exam-ol > li.new-exam-li::before {
+  grid-column: 1;
+  grid-row: 1 / -1;
+  content: counter(task-counter);
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: rgba(223, 32, 41, 0.1);
+  border-radius: 9999px;
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: #df2029;
+  margin-top: 2px;
+}
+
+/* 所有 p 元素放在第二列 */
+ol.new-exam-ol > li.new-exam-li > p {
+  grid-column: 2;
+}
+
+ol.new-exam-ol > li.new-exam-li:last-child {
+  margin-bottom: 0;
+}
+
+/* 段落之间无间距，只有列表项之间有间距 */
+ol.new-exam-ol > li.new-exam-li > p {
+  margin: 0;
+  line-height: 1.8;
+  color: #4b5563;
+  font-size: 1rem;
+}
+
+ol.new-exam-ol > li.new-exam-li > p:first-child {
+  font-weight: 700;
+  color: #1f2937;
+  line-height: 1.5;
+}
+
+/* 引用块 - 要求和交付内容样式 - 带左侧竖线 */
+blockquote.new-exam-blockquote {
+  margin: 1rem 0;
+  padding: 1.5rem 1.5rem 1.5rem 2.25rem;
+  background-color: #f9fafb;
+  border-radius: 1rem;
+  font-size: 1rem;
+  border-left: none;
+  position: relative;
+}
+
+/* 左侧竖线 */
+blockquote.new-exam-blockquote::before {
+  content: '';
+  position: absolute;
+  left: 1rem;
+  top: 1.5rem;
+  bottom: 1.5rem;
+  width: 6px;
+  background-color: #e5e7eb;
+  border-radius: 9999px;
+}
+
+blockquote.new-exam-blockquote > p {
+  margin: 0 0 1rem 0;
+  color: #4b5563;
+  line-height: 1.8;
+  font-size: 1rem;
+}
+
+blockquote.new-exam-blockquote > p:last-child {
+  margin-bottom: 0;
+}
+
+blockquote.new-exam-blockquote strong {
+  font-weight: 600;
+  color: #374151;
+}
+
+/* 引用块内的列表 */
+blockquote.new-exam-blockquote ul {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 1rem 0;
+}
+
+blockquote.new-exam-blockquote ul:last-child {
+  margin-bottom: 0;
+}
+
+blockquote.new-exam-blockquote ul > li {
+  position: relative;
+  padding-left: 1.25rem;
+  margin-bottom: 0.5rem;
+  color: #4b5563;
+  line-height: 1.8;
+  font-size: 1rem;
+}
+
+blockquote.new-exam-blockquote ul > li::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0.65rem;
+  width: 6px;
+  height: 6px;
+  background-color: #9ca3af;
+  border-radius: 50%;
+}
+
+blockquote.new-exam-blockquote ul > li:last-child {
+  margin-bottom: 0;
+}

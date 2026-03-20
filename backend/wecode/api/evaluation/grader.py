@@ -12,8 +12,10 @@ grading tasks, view answers, and publish reports.
 import logging
 from datetime import datetime
 from typing import List, Optional
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -24,9 +26,11 @@ from app.models.user import User
 from wecode.models.evaluation import (
     EvalAnswer,
     EvalGradingTask,
+    EvalPermission,
     EvalQuestion,
     EvalTopic,
     GradingTaskStatus,
+    PermissionRole,
 )
 from wecode.schemas.evaluation import (
     AnswerInDB,
@@ -35,6 +39,7 @@ from wecode.schemas.evaluation import (
     GradingTaskListResponse,
     GradingTaskPublishRequest,
     GradingTaskUpdateReportRequest,
+    MultiModelGradingConfig,
     QuestionInDB,
     TopicStatistics,
 )
@@ -45,6 +50,10 @@ from wecode.service.evaluation import (
     get_question_service,
     get_topic_service,
 )
+from wecode.service.evaluation.grading_service import (
+    build_multi_model_config as build_base_multi_model_config,
+)
+from wecode.service.evaluation.storage_service import EvalStorageService
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -153,8 +162,6 @@ def _get_topic_ids_with_grader_access(
     Grader permission includes both 'grader' and 'question_creator' roles,
     consistent with PermissionService.has_permission() logic.
     """
-    from wecode.models.evaluation import EvalPermission, PermissionRole
-
     # Topics where user is creator
     created_topics = (
         db.query(EvalTopic.id)
@@ -729,23 +736,63 @@ def get_grader_task(
     )
 
 
-@router.post("/tasks/{task_id}/execute", response_model=GradingTaskInDB)
-def execute_grader_task(
+def _validate_task_access(
+    db: Session,
+    task: EvalGradingTask,
+    current_user_id: int,
+    permission_service,
+    allowed_statuses: list | None = None,
+) -> EvalTopic:
+    """
+    Validate user has access to grading task.
+
+    Args:
+        task: The grading task to validate
+        allowed_statuses: Optional list of allowed statuses for the operation
+
+    Returns:
+        The topic associated with the task
+
+    Raises:
+        HTTPException: If validation fails
+    """
+    if allowed_statuses and task.status not in allowed_statuses:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Task cannot be executed in current status",
+        )
+
+    # Get question and topic
+    question = (
+        db.query(EvalQuestion).filter(EvalQuestion.id == task.question_id).first()
+    )
+    if not question:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Question not found",
+        )
+
+    topic = db.query(EvalTopic).filter(EvalTopic.id == question.topic_id).first()
+    if not topic:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Topic not found",
+        )
+
+    _check_grader_permission(db, topic, current_user_id, permission_service)
+
+    return topic
+
+
+def _get_task_for_grading(
+    db: Session,
     task_id: int,
-    request: GradingTaskExecuteRequest = None,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
-):
-    """
-    Execute AI grading for a task.
-
-    The task must be in PENDING or FAILED status.
-    """
-    topic_service = get_topic_service()
-    question_service = get_question_service()
-    grading_service = get_grading_service()
-    permission_service = get_permission_service()
-
+    grading_service,
+    permission_service,
+    current_user_id: int,
+    allowed_statuses: list,
+) -> tuple[EvalGradingTask, EvalTopic, int]:
+    """Get and validate grading task with all related entities."""
     task = grading_service.get(db, task_id)
     if not task:
         raise HTTPException(
@@ -753,42 +800,118 @@ def execute_grader_task(
             detail="Grading task not found",
         )
 
-    if task.status not in (GradingTaskStatus.PENDING, GradingTaskStatus.FAILED):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Task is already running or completed",
-        )
+    topic = _validate_task_access(
+        db, task, current_user_id, permission_service, allowed_statuses
+    )
 
-    question = question_service.get(db, task.question_id)
-    if not question:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Question not found",
-        )
-
-    topic = topic_service.get(db, question.topic_id)
-    if not topic:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Topic not found",
-        )
-
-    _check_grader_permission(db, topic, current_user.id, permission_service)
-
-    # Get team ID
-    team_id = None
-    if request and request.team_id:
-        team_id = request.team_id
-    elif topic.grading_team_config:
-        team_id = topic.grading_team_config.get("team_id")
-
+    # Get team ID from topic config
+    team_id = (
+        topic.grading_team_config.get("team_id") if topic.grading_team_config else None
+    )
     if not team_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="No grading team configured",
         )
 
-    task = grading_service.execute(db, task, team_id, current_user.id)
+    return task, topic, team_id
+
+
+def _build_multi_model_config(
+    topic: EvalTopic,
+    request: Optional[GradingTaskExecuteRequest],
+) -> Optional[MultiModelGradingConfig]:
+    """
+    Build multi-model grading config from topic config and request overrides.
+
+    This function:
+    1. Uses base config from topic.grading_team_config
+    2. Applies request overrides if provided (for manual retry with different settings)
+    """
+    config = topic.grading_team_config or {}
+
+    # Check if multi-model mode is enabled (from request or config)
+    grading_mode = (
+        request.grading_mode
+        if request and request.grading_mode
+        else config.get("grading_mode", "single")
+    )
+
+    if grading_mode != "multi":
+        return None
+
+    # Get base config from topic
+    base_config = build_base_multi_model_config(config)
+
+    # Apply request overrides if provided (for manual execution with custom settings)
+    if request:
+        scorer_team_id = request.scorer_team_id or (
+            base_config.scorer_team_id if base_config else None
+        )
+        aggregator_team_id = request.aggregator_team_id or (
+            base_config.aggregator_team_id if base_config else None
+        )
+        scorer_models = request.scorer_models or (
+            base_config.scorer_models if base_config else []
+        )
+        aggregator_model = request.aggregator_model or (
+            base_config.aggregator_model if base_config else None
+        )
+    else:
+        # No request, use base config directly
+        return base_config
+
+    # Validate required fields
+    if not all([scorer_team_id, aggregator_team_id, scorer_models, aggregator_model]):
+        return None
+
+    return MultiModelGradingConfig(
+        scorer_team_id=scorer_team_id,
+        aggregator_team_id=aggregator_team_id,
+        scorer_models=scorer_models,
+        aggregator_model=aggregator_model,
+        scorer_prompt_template=config.get("scorer_prompt_template"),
+        aggregator_prompt_template=config.get("aggregator_prompt_template"),
+    )
+
+
+@router.post("/tasks/{task_id}/execute", response_model=GradingTaskInDB)
+def execute_grader_task(
+    task_id: int,
+    request: GradingTaskExecuteRequest = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """Execute AI grading for a pending or failed task."""
+    grading_service = get_grading_service()
+
+    task, topic, team_id = _get_task_for_grading(
+        db,
+        task_id,
+        grading_service,
+        get_permission_service(),
+        current_user.id,
+        [GradingTaskStatus.PENDING, GradingTaskStatus.FAILED],
+    )
+
+    if request and request.team_id:
+        team_id = request.team_id
+
+    model_id = request.model_id if request else None
+    force_override = request.force_override_bot_model if request else False
+
+    # Check for multi-model grading configuration
+    multi_model_config = _build_multi_model_config(topic, request)
+
+    task = grading_service.execute(
+        db,
+        task,
+        team_id,
+        current_user.id,
+        model_id=model_id,
+        force_override_bot_model=force_override,
+        multi_model_config=multi_model_config,
+    )
     db.commit()
 
     return _convert_task_to_schema(task)
@@ -801,68 +924,37 @@ def retry_grader_task(
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
-    """
-    Retry a grading task to re-trigger AI grading.
-
-    The task can be in FAILED, RUNNING (stuck), or COMPLETED status.
-    For COMPLETED tasks, this allows re-running AI grading if the grader
-    wants a fresh evaluation.
-    """
-    topic_service = get_topic_service()
-    question_service = get_question_service()
+    """Retry AI grading for tasks in any status except non-existent."""
     grading_service = get_grading_service()
-    permission_service = get_permission_service()
 
-    task = grading_service.get(db, task_id)
-    if not task:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Grading task not found",
-        )
+    # Allow retry for all statuses - AI report is independent of publish status
+    task, topic, team_id = _get_task_for_grading(
+        db,
+        task_id,
+        grading_service,
+        get_permission_service(),
+        current_user.id,
+        None,  # Allow any status
+    )
 
-    # Allow retry for FAILED, RUNNING (stuck), and COMPLETED tasks
-    # COMPLETED tasks can be re-run to get a fresh AI evaluation
-    allowed_statuses = [
-        GradingTaskStatus.FAILED,
-        GradingTaskStatus.RUNNING,
-        GradingTaskStatus.COMPLETED,
-    ]
-    if task.status not in allowed_statuses:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Only failed, running (stuck), or completed tasks can be retried",
-        )
-
-    question = question_service.get(db, task.question_id)
-    if not question:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Question not found",
-        )
-
-    topic = topic_service.get(db, question.topic_id)
-    if not topic:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Topic not found",
-        )
-
-    _check_grader_permission(db, topic, current_user.id, permission_service)
-
-    # Get team ID
-    team_id = None
     if request and request.team_id:
         team_id = request.team_id
-    elif topic.grading_team_config:
-        team_id = topic.grading_team_config.get("team_id")
 
-    if not team_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No grading team configured",
-        )
+    model_id = request.model_id if request else None
+    force_override = request.force_override_bot_model if request else False
 
-    task = grading_service.execute(db, task, team_id, current_user.id)
+    # Check for multi-model grading configuration
+    multi_model_config = _build_multi_model_config(topic, request)
+
+    task = grading_service.execute(
+        db,
+        task,
+        team_id,
+        current_user.id,
+        model_id=model_id,
+        force_override_bot_model=force_override,
+        multi_model_config=multi_model_config,
+    )
     db.commit()
 
     return _convert_task_to_schema(task)
@@ -1062,8 +1154,6 @@ async def upload_report_file(
     The task must be in COMPLETED status.
     Use this to upload a file as the final report before publishing.
     """
-    from wecode.service.evaluation.storage_service import EvalStorageService
-
     topic_service = get_topic_service()
     question_service = get_question_service()
     grading_service = get_grading_service()
@@ -1122,8 +1212,6 @@ async def upload_report_file(
         )
 
     # Generate storage key
-    from datetime import datetime
-
     filename = file.filename or "report"
     content_type = file.content_type or "application/octet-stream"
     timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
@@ -1232,12 +1320,6 @@ def download_report_file(
     Returns:
         File content as StreamingResponse (streaming for better performance)
     """
-    from urllib.parse import quote
-
-    from fastapi.responses import StreamingResponse
-
-    from wecode.service.evaluation.storage_service import EvalStorageService
-
     topic_service = get_topic_service()
     question_service = get_question_service()
     grading_service = get_grading_service()
@@ -1365,6 +1447,12 @@ class BatchExecuteRequest(BaseModel):
 
     task_ids: List[int] = Field(..., description="List of task IDs to execute")
     team_id: Optional[int] = Field(None, description="Override team ID for grading")
+    model_id: Optional[str] = Field(
+        None, description="Optional model ID to override bot's default model"
+    )
+    force_override_bot_model: bool = Field(
+        False, description="Whether to force override bot's model selection"
+    )
 
 
 class BatchExecuteResponse(BaseModel):
@@ -1429,7 +1517,14 @@ def batch_execute_grader_tasks(
             continue
 
         try:
-            grading_service.execute(db, task, team_id, current_user.id)
+            grading_service.execute(
+                db,
+                task,
+                team_id,
+                current_user.id,
+                model_id=request.model_id,
+                force_override_bot_model=request.force_override_bot_model,
+            )
             executed_ids.append(task_id)
         except Exception as e:
             logger.warning(f"Failed to execute task {task_id}: {e}")

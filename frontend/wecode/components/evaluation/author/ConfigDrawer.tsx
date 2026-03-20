@@ -380,7 +380,7 @@ export function ConfigDrawer({ isOpen, topicId, onClose, onTopicUpdate }: Config
                     <div className="grid gap-4 md:grid-cols-3">
                       <div className="space-y-2">
                         <Label htmlFor="introMinutes">
-                          {t('grading:exam.intro_duration', 'Intro Duration (minutes)')}
+                          {t('evaluation:exam.intro_duration', 'Intro Duration (minutes)')}
                         </Label>
                         <Input
                           id="introMinutes"
@@ -391,12 +391,12 @@ export function ConfigDrawer({ isOpen, topicId, onClose, onTopicUpdate }: Config
                           disabled={saving}
                         />
                         <p className="text-xs text-gray-500">
-                          {t('grading:exam.intro_hint', 'Pre-exam introduction and Q&A')}
+                          {t('evaluation:exam.intro_hint', 'Pre-exam introduction and Q&A')}
                         </p>
                       </div>
                       <div className="space-y-2">
                         <Label htmlFor="examMinutes">
-                          {t('grading:exam.exam_duration', 'Exam Duration (minutes)')}
+                          {t('evaluation:exam.exam_duration', 'Exam Duration (minutes)')}
                         </Label>
                         <Input
                           id="examMinutes"
@@ -407,12 +407,12 @@ export function ConfigDrawer({ isOpen, topicId, onClose, onTopicUpdate }: Config
                           disabled={saving}
                         />
                         <p className="text-xs text-gray-500">
-                          {t('grading:exam.exam_hint', 'Main exam answering time')}
+                          {t('evaluation:exam.exam_hint', 'Main exam answering time')}
                         </p>
                       </div>
                       <div className="space-y-2">
                         <Label htmlFor="reviewMinutes">
-                          {t('grading:exam.review_duration', 'Review Duration (minutes)')}
+                          {t('evaluation:exam.review_duration', 'Review Duration (minutes)')}
                         </Label>
                         <Input
                           id="reviewMinutes"
@@ -423,7 +423,7 @@ export function ConfigDrawer({ isOpen, topicId, onClose, onTopicUpdate }: Config
                           disabled={saving}
                         />
                         <p className="text-xs text-gray-500">
-                          {t('grading:exam.review_hint', 'Final review and submission check')}
+                          {t('evaluation:exam.review_hint', 'Final review and submission check')}
                         </p>
                       </div>
                     </div>
@@ -432,7 +432,7 @@ export function ConfigDrawer({ isOpen, topicId, onClose, onTopicUpdate }: Config
                     <div className="space-y-2">
                       <div className="flex items-center justify-between">
                         <Label htmlFor="examInstructions">
-                          {t('grading:exam.instructions', 'Exam Instructions')}
+                          {t('evaluation:exam.instructions', 'Exam Instructions')}
                         </Label>
                         <Button
                           type="button"
@@ -465,7 +465,10 @@ export function ConfigDrawer({ isOpen, topicId, onClose, onTopicUpdate }: Config
                             />
                           ) : (
                             <p className="text-gray-400">
-                              {t('grading:exam.no_instructions', 'No exam instructions added yet')}
+                              {t(
+                                'evaluation:exam.no_instructions',
+                                'No exam instructions added yet'
+                              )}
                             </p>
                           )}
                         </div>
@@ -475,7 +478,7 @@ export function ConfigDrawer({ isOpen, topicId, onClose, onTopicUpdate }: Config
                           value={examInstructions}
                           onChange={e => setExamInstructions(e.target.value)}
                           placeholder={t(
-                            'grading:exam.instructions_placeholder',
+                            'evaluation:exam.instructions_placeholder',
                             'Enter exam instructions in Markdown format...'
                           )}
                           rows={12}
@@ -485,7 +488,7 @@ export function ConfigDrawer({ isOpen, topicId, onClose, onTopicUpdate }: Config
                       )}
                       <p className="text-xs text-gray-500">
                         {t(
-                          'grading:exam.instructions_hint',
+                          'evaluation:exam.instructions_hint',
                           'These instructions will be displayed to participants before the exam starts. Supports Markdown formatting.'
                         )}
                       </p>

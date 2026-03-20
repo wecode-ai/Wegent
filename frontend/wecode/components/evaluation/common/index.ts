@@ -14,3 +14,9 @@ export {
   calculateDisplayTime,
   checkIsOvertime,
 } from './exam-timer-utils'
+export {
+  AttachmentList,
+  formatFileSize,
+  generateEvaluationPrefixedFilename,
+} from './AttachmentList'
+export type { AttachmentListProps, GenericAttachment } from './AttachmentList'

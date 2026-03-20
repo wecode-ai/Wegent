@@ -21,6 +21,11 @@ from wecode.models.evaluation import (
     EvalTopic,
     GradingTaskStatus,
 )
+from wecode.service.evaluation.grading_service import (
+    GradingService,
+    build_multi_model_config,
+    get_grading_team_id,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -116,11 +121,15 @@ class AnswerService:
                 grading_config = topic.grading_team_config
                 auto_trigger = grading_config.get("auto_trigger", False)
                 trigger_condition = grading_config.get("trigger_condition", "manual")
-                team_id = grading_config.get("team_id")
+
+                # Get team_id and multi-model config using helper functions
+                team_id = get_grading_team_id(grading_config)
+                grading_mode = grading_config.get("grading_mode", "single")
 
                 logger.info(
                     f"[Evaluation] Topic {topic.id} grading config: "
-                    f"auto_trigger={auto_trigger}, trigger_condition={trigger_condition}, team_id={team_id}"
+                    f"auto_trigger={auto_trigger}, trigger_condition={trigger_condition}, "
+                    f"grading_mode={grading_mode}, team_id={team_id}"
                 )
 
                 # Auto-trigger grading if configured
@@ -130,11 +139,21 @@ class AnswerService:
                         f"with team {team_id} for answer {answer.id}"
                     )
                     try:
-                        from wecode.service.evaluation.grading_service import (
-                            GradingService,
+                        grading_service = GradingService()
+                        # Extract model override config from topic grading config
+                        model_id = grading_config.get("model_id")
+                        force_override = grading_config.get(
+                            "force_override_bot_model", False
                         )
 
-                        grading_service = GradingService()
+                        # Build multi-model config if in multi mode
+                        multi_model_config = build_multi_model_config(grading_config)
+                        if multi_model_config:
+                            logger.info(
+                                f"[Evaluation] Using multi-model grading for task "
+                                f"{grading_task.id} with {len(multi_model_config.scorer_models)} scorers"
+                            )
+
                         # For auto-triggered tasks, the task belongs to the topic creator
                         # So the grading task appears in the creator's chat task list
                         grading_service.execute(
@@ -142,6 +161,9 @@ class AnswerService:
                             task=grading_task,
                             team_id=team_id,
                             user_id=topic.creator_id,  # Use topic creator, not respondent
+                            model_id=model_id,
+                            force_override_bot_model=force_override,
+                            multi_model_config=multi_model_config,
                         )
                         logger.info(
                             f"[Evaluation] Successfully triggered grading task {grading_task.id}"

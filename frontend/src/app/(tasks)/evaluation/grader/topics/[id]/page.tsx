@@ -7,18 +7,18 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import {
-  ArrowLeft,
-  ClipboardCheck,
+  FileText,
   CheckCircle,
   Send,
   Clock,
-  RefreshCw,
+  Loader2,
   Play,
   Eye,
   RotateCcw,
+  ArrowRight,
+  BookOpen,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
@@ -40,6 +40,7 @@ import { useTheme } from '@/features/theme/ThemeProvider'
 import { EvaluationPageLayout } from '@wecode/components/evaluation/common/EvaluationPageLayout'
 import { DataTable, type Column } from '@wecode/components/evaluation/common/DataTable'
 import { EnhancedMarkdown } from '@/components/common/EnhancedMarkdown'
+import { GraderHeader } from '@wecode/components/evaluation/grader'
 import {
   graderGetTopic,
   graderGetTopicStatistics,
@@ -298,6 +299,11 @@ function TopicGradingContent() {
     loadTasks()
   }
 
+  const handleStatFilterChange = (filter: string) => {
+    setStatusFilter(filter)
+    setPage(1)
+  }
+
   // Define table columns
   const columns: Column<GradingTask>[] = useMemo(
     () => [
@@ -314,11 +320,27 @@ function TopicGradingContent() {
       {
         key: 'status',
         title: t('common.status'),
-        render: (task: GradingTask) => (
-          <Badge variant={getStatusBadgeVariant(task.status)}>
-            {getStatusLabel(task.status, 'grading', t)}
-          </Badge>
-        ),
+        render: (task: GradingTask) => {
+          const isRunning = task.status === GradingTaskStatus.RUNNING
+          const statusLabel = getStatusLabel(task.status, 'grading', t)
+
+          if (isRunning && task.task_id) {
+            return (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-auto px-2 py-1 text-xs"
+                onClick={() => router.push(`/chat?taskId=${task.task_id}`)}
+                title={t('grading.view_chat') || '点击查看聊天任务'}
+              >
+                <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                {statusLabel}
+              </Button>
+            )
+          }
+
+          return <Badge variant={getStatusBadgeVariant(task.status)}>{statusLabel}</Badge>
+        },
       },
       {
         key: 'submitted_at',
@@ -343,6 +365,7 @@ function TopicGradingContent() {
                 onClick={() => handleExecuteSingle(task.id)}
                 disabled={executing}
                 title={t('grading.execute')}
+                className="h-8 w-8 p-0"
               >
                 <Play className="h-4 w-4" />
               </Button>
@@ -357,6 +380,7 @@ function TopicGradingContent() {
                   onClick={() => handleRetrySingle(task.id)}
                   disabled={executing}
                   title={t('grading.retry')}
+                  className="h-8 w-8 p-0"
                 >
                   <RotateCcw className="h-4 w-4" />
                 </Button>
@@ -369,6 +393,7 @@ function TopicGradingContent() {
                   size="sm"
                   onClick={() => handleViewReport(task)}
                   title={t('grading.view_report')}
+                  className="h-8 w-8 p-0"
                 >
                   <Eye className="h-4 w-4" />
                 </Button>
@@ -379,14 +404,22 @@ function TopicGradingContent() {
                     onClick={() => handlePublishSingle(task.id)}
                     disabled={publishing}
                     title={t('grading.publish')}
+                    className="h-8 px-3"
                   >
-                    <Send className="h-4 w-4" />
+                    <Send className="mr-1 h-3 w-3" />
+                    {t('grading.publish')}
                   </Button>
                 )}
               </>
             )}
-            <Button variant="ghost" size="sm" onClick={() => handleViewAnswer(task.answer_id)}>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => handleViewAnswer(task.answer_id)}
+              className="text-primary hover:text-primary/80"
+            >
               {t('answers.view')}
+              <ArrowRight className="ml-1 h-3 w-3" />
             </Button>
           </div>
         ),
@@ -397,11 +430,13 @@ function TopicGradingContent() {
 
   if (loading) {
     return (
-      <div className="container mx-auto max-w-6xl px-4 py-8">
-        <Skeleton className="mb-6 h-10 w-32" />
-        <Skeleton className="mb-4 h-8 w-1/2" />
-        <Skeleton className="mb-8 h-4 w-3/4" />
-        <Skeleton className="h-96 w-full" />
+      <div className="min-h-screen bg-[#fafbfc]">
+        <GraderHeader title={t('grading.topic_tasks')} isLoading={true} />
+        <main className="max-w-7xl mx-auto px-4 sm:px-8 py-8">
+          <Skeleton className="h-8 w-1/2 mb-4" />
+          <Skeleton className="h-4 w-3/4 mb-8" />
+          <Skeleton className="h-96 rounded-2xl" />
+        </main>
       </div>
     )
   }
@@ -411,171 +446,187 @@ function TopicGradingContent() {
   }
 
   return (
-    <div className="container mx-auto max-w-6xl px-4 py-8">
+    <div className="min-h-screen bg-[#fafbfc]">
       {/* Header */}
-      <div className="mb-6 flex items-center justify-between">
-        <Button variant="ghost" onClick={() => router.push('/evaluation/grader')}>
-          <ArrowLeft className="mr-2 h-4 w-4" />
-          {t('actions.back')}
-        </Button>
-        <Button variant="outline" onClick={handleRefresh}>
-          <RefreshCw className="mr-2 h-4 w-4" />
-          {t('common:actions.refresh')}
-        </Button>
-      </div>
+      <GraderHeader
+        title={topic.name}
+        description={topic.description}
+        backHref="/evaluation/grader"
+        onRefresh={handleRefresh}
+        isLoading={loading}
+      />
 
-      {/* Topic Info */}
-      <div className="mb-8">
-        <div className="mb-2 flex items-center gap-3">
-          <ClipboardCheck className="h-6 w-6 text-primary" />
-          <h1 className="text-2xl font-semibold text-text-primary">{topic.name}</h1>
-        </div>
-        {topic.description && <p className="text-text-secondary">{topic.description}</p>}
-      </div>
-
-      {/* Statistics */}
-      {statistics && (
-        <div className="mb-8 grid gap-4 md:grid-cols-5">
-          <Card
-            className={`cursor-pointer transition-shadow hover:shadow-md ${statusFilter === '0' ? 'ring-2 ring-primary' : ''}`}
-            onClick={() => setStatusFilter(statusFilter === '0' ? 'all' : '0')}
-          >
-            <CardContent className="p-4">
+      {/* Main Content */}
+      <main className="max-w-7xl mx-auto px-4 sm:px-8 py-8 space-y-6">
+        {/* Statistics */}
+        {statistics && (
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
+            <div
+              onClick={() => handleStatFilterChange(statusFilter === '0' ? 'all' : '0')}
+              className={`bg-white rounded-2xl border border-gray-100 p-4 transition-all duration-200 hover:shadow-md hover:-translate-y-[2px] cursor-pointer ${statusFilter === '0' ? 'ring-2 ring-primary shadow-md' : 'shadow-sm'}`}
+            >
               <div className="flex items-center gap-3">
-                <Clock className="h-8 w-8 text-yellow-500" />
+                <div className="h-10 w-10 rounded-xl bg-amber-50 flex items-center justify-center">
+                  <Clock className="h-5 w-5 text-amber-600" />
+                </div>
                 <div>
-                  <div className="text-sm text-text-secondary">{t('grading.status.pending')}</div>
-                  <div className="text-2xl font-semibold">{statistics.grading_pending}</div>
+                  <div className="text-xs text-gray-500 font-medium">
+                    {t('grading.status.pending')}
+                  </div>
+                  <div className="text-xl font-bold text-gray-900">
+                    {statistics.grading_pending}
+                  </div>
                 </div>
               </div>
-            </CardContent>
-          </Card>
-
-          <Card
-            className={`cursor-pointer transition-shadow hover:shadow-md ${statusFilter === '2' ? 'ring-2 ring-primary' : ''}`}
-            onClick={() => setStatusFilter(statusFilter === '2' ? 'all' : '2')}
-          >
-            <CardContent className="p-4">
-              <div className="flex items-center gap-3">
-                <CheckCircle className="h-8 w-8 text-green-500" />
-                <div>
-                  <div className="text-sm text-text-secondary">{t('grading.status.completed')}</div>
-                  <div className="text-2xl font-semibold">{statistics.grading_completed}</div>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card
-            className={`cursor-pointer transition-shadow hover:shadow-md ${statusFilter === '4' ? 'ring-2 ring-primary' : ''}`}
-            onClick={() => setStatusFilter(statusFilter === '4' ? 'all' : '4')}
-          >
-            <CardContent className="p-4">
-              <div className="flex items-center gap-3">
-                <Send className="h-8 w-8 text-primary" />
-                <div>
-                  <div className="text-sm text-text-secondary">{t('grading.status.published')}</div>
-                  <div className="text-2xl font-semibold">{statistics.grading_published}</div>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardContent className="p-4">
-              <div className="text-sm text-text-secondary">{t('answers.title')}</div>
-              <div className="text-2xl font-semibold">{statistics.total_answers}</div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardContent className="p-4">
-              <div className="text-sm text-text-secondary">{t('questions.title')}</div>
-              <div className="text-2xl font-semibold">{statistics.total_questions}</div>
-            </CardContent>
-          </Card>
-        </div>
-      )}
-
-      {/* Tasks Card */}
-      <Card>
-        <CardHeader>
-          <CardTitle>{t('grading.tasks')}</CardTitle>
-          <CardDescription>
-            {total} {t('grading.tasks').toLowerCase()}
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {/* Filters and batch actions */}
-          <div className="mb-4 flex flex-wrap items-center justify-between gap-4">
-            <div className="flex items-center gap-2">
-              <Select value={statusFilter} onValueChange={setStatusFilter}>
-                <SelectTrigger className="w-40">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">{t('common.all_status')}</SelectItem>
-                  <SelectItem value="0">{t('grading.status.pending')}</SelectItem>
-                  <SelectItem value="1">{t('grading.status.running')}</SelectItem>
-                  <SelectItem value="2">{t('grading.status.completed')}</SelectItem>
-                  <SelectItem value="3">{t('grading.status.failed')}</SelectItem>
-                  <SelectItem value="4">{t('grading.status.published')}</SelectItem>
-                </SelectContent>
-              </Select>
             </div>
-            {selectedTasks.size > 0 && (
-              <div className="flex items-center gap-2">
-                <span className="text-sm text-text-muted">
-                  {t('common.selected', { count: selectedTasks.size })}
-                </span>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleBatchExecute}
-                  disabled={executing}
-                >
-                  <Play className="mr-2 h-4 w-4" />
-                  {t('grading.batch_execute')}
-                </Button>
-                <Button
-                  variant="primary"
-                  size="sm"
-                  onClick={handleBatchPublish}
-                  disabled={publishing}
-                >
-                  <Send className="mr-2 h-4 w-4" />
-                  {t('grading.batch_publish')}
-                </Button>
+            <div
+              onClick={() => handleStatFilterChange(statusFilter === '2' ? 'all' : '2')}
+              className={`bg-white rounded-2xl border border-gray-100 p-4 transition-all duration-200 hover:shadow-md hover:-translate-y-[2px] cursor-pointer ${statusFilter === '2' ? 'ring-2 ring-primary shadow-md' : 'shadow-sm'}`}
+            >
+              <div className="flex items-center gap-3">
+                <div className="h-10 w-10 rounded-xl bg-emerald-50 flex items-center justify-center">
+                  <CheckCircle className="h-5 w-5 text-emerald-600" />
+                </div>
+                <div>
+                  <div className="text-xs text-gray-500 font-medium">
+                    {t('grading.status.completed')}
+                  </div>
+                  <div className="text-xl font-bold text-gray-900">
+                    {statistics.grading_completed}
+                  </div>
+                </div>
               </div>
-            )}
+            </div>
+            <div
+              onClick={() => handleStatFilterChange(statusFilter === '4' ? 'all' : '4')}
+              className={`bg-white rounded-2xl border border-gray-100 p-4 transition-all duration-200 hover:shadow-md hover:-translate-y-[2px] cursor-pointer ${statusFilter === '4' ? 'ring-2 ring-primary shadow-md' : 'shadow-sm'}`}
+            >
+              <div className="flex items-center gap-3">
+                <div className="h-10 w-10 rounded-xl bg-teal-50 flex items-center justify-center">
+                  <Send className="h-5 w-5 text-teal-600" />
+                </div>
+                <div>
+                  <div className="text-xs text-gray-500 font-medium">
+                    {t('grading.status.published')}
+                  </div>
+                  <div className="text-xl font-bold text-gray-900">
+                    {statistics.grading_published}
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div className="bg-white rounded-2xl border border-gray-100 p-4 shadow-sm">
+              <div className="flex items-center gap-3">
+                <div className="h-10 w-10 rounded-xl bg-blue-50 flex items-center justify-center">
+                  <FileText className="h-5 w-5 text-blue-600" />
+                </div>
+                <div>
+                  <div className="text-xs text-gray-500 font-medium">{t('answers.title')}</div>
+                  <div className="text-xl font-bold text-gray-900">{statistics.total_answers}</div>
+                </div>
+              </div>
+            </div>
+            <div className="bg-white rounded-2xl border border-gray-100 p-4 shadow-sm">
+              <div className="flex items-center gap-3">
+                <div className="h-10 w-10 rounded-xl bg-purple-50 flex items-center justify-center">
+                  <BookOpen className="h-5 w-5 text-purple-600" />
+                </div>
+                <div>
+                  <div className="text-xs text-gray-500 font-medium">{t('questions.title')}</div>
+                  <div className="text-xl font-bold text-gray-900">
+                    {statistics.total_questions}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Tasks Card */}
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+          <div className="px-6 py-4 border-b border-gray-100">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-bold text-gray-900">{t('grading.tasks')}</h2>
+                <p className="text-sm text-gray-500">
+                  {total} {t('grading.tasks').toLowerCase()}
+                </p>
+              </div>
+            </div>
           </div>
 
-          {/* Tasks table */}
-          <DataTable
-            columns={columns}
-            data={tasks}
-            total={total}
-            page={page}
-            pageSize={TASKS_PER_PAGE}
-            loading={loading}
-            emptyMessage={t('grading.no_tasks')}
-            emptyIcon={<ClipboardCheck className="mx-auto mb-4 h-12 w-12 text-text-muted" />}
-            onPageChange={setPage}
-            previousText={t('common.previous')}
-            nextText={t('common.next')}
-            pageText={t('common.page')}
-            rowKey={(task: GradingTask) => task.id}
-            selectable={true}
-            selectedIds={selectedTasks}
-            onSelectionChange={setSelectedTasks}
-            selectAllText={t('common.select_all')}
-          />
-        </CardContent>
-      </Card>
+          <div className="p-6">
+            {/* Filters and batch actions */}
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-4">
+              <div className="flex items-center gap-2">
+                <Select value={statusFilter} onValueChange={setStatusFilter}>
+                  <SelectTrigger className="w-40 bg-white border-gray-200">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">{t('common.all_status')}</SelectItem>
+                    <SelectItem value="0">{t('grading.status.pending')}</SelectItem>
+                    <SelectItem value="1">{t('grading.status.running')}</SelectItem>
+                    <SelectItem value="2">{t('grading.status.completed')}</SelectItem>
+                    <SelectItem value="3">{t('grading.status.failed')}</SelectItem>
+                    <SelectItem value="4">{t('grading.status.published')}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              {selectedTasks.size > 0 && (
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-text-muted">
+                    {t('common.selected', { count: selectedTasks.size })}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleBatchExecute}
+                    disabled={executing}
+                  >
+                    <Play className="mr-2 h-4 w-4" />
+                    {t('grading.batch_execute')}
+                  </Button>
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    onClick={handleBatchPublish}
+                    disabled={publishing}
+                  >
+                    <Send className="mr-2 h-4 w-4" />
+                    {t('grading.batch_publish')}
+                  </Button>
+                </div>
+              )}
+            </div>
+
+            {/* Tasks table */}
+            <DataTable
+              columns={columns}
+              data={tasks}
+              total={total}
+              page={page}
+              pageSize={TASKS_PER_PAGE}
+              loading={loading}
+              emptyMessage={t('grading.no_tasks')}
+              emptyIcon={<FileText className="mx-auto mb-4 h-12 w-12 text-gray-300" />}
+              onPageChange={setPage}
+              previousText={t('common.previous')}
+              nextText={t('common.next')}
+              pageText={t('common.page')}
+              rowKey={(task: GradingTask) => task.id}
+              selectable={true}
+              selectedIds={selectedTasks}
+              onSelectionChange={setSelectedTasks}
+              selectAllText={t('grader.select_all')}
+            />
+          </div>
+        </div>
+      </main>
 
       {/* Report Dialog */}
       <Dialog open={reportDialogOpen} onOpenChange={setReportDialogOpen}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-2xl bg-white rounded-2xl">
           <DialogHeader>
             <DialogTitle>{t('grading.report')}</DialogTitle>
             <DialogDescription>
@@ -586,7 +637,7 @@ function TopicGradingContent() {
             {loadingReport ? (
               <Skeleton className="h-48 w-full" />
             ) : selectedTask?.report_data && Object.keys(selectedTask.report_data).length > 0 ? (
-              <div className="rounded-lg bg-surface p-4">
+              <div className="rounded-xl bg-gray-50 p-4">
                 <EnhancedMarkdown
                   source={
                     typeof selectedTask.report_data === 'string'

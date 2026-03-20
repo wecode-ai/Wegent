@@ -17,8 +17,17 @@ from enum import Enum
 from typing import Optional
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
-from fastapi.responses import StreamingResponse
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    UploadFile,
+    status,
+)
+from fastapi.responses import PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -163,8 +172,12 @@ async def upload_file(
     file: UploadFile = File(..., description="File to upload"),
     file_type: FileType = Form(..., description="Type of file being uploaded"),
     topic_id: int = Form(..., description="Topic ID for the file"),
-    question_id: Optional[int] = Form(None, description="Question ID (required for question files)"),
-    slot: Optional[str] = Form(None, description="Slot identifier for exam attachments"),
+    question_id: Optional[int] = Form(
+        None, description="Question ID (required for question files)"
+    ),
+    slot: Optional[str] = Form(
+        None, description="Slot identifier for exam attachments"
+    ),
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
@@ -282,7 +295,9 @@ class TextUploadRequest(BaseModel):
     file_type: FileType = Field(..., description="Type of file")
     topic_id: int = Field(..., description="Topic ID")
     question_id: Optional[int] = Field(None, description="Question ID")
-    slot: Optional[str] = Field(None, description="Slot identifier for exam attachments")
+    slot: Optional[str] = Field(
+        None, description="Slot identifier for exam attachments"
+    )
 
 
 @router.post("/files/upload-text", response_model=FileUploadResponse)
@@ -581,3 +596,71 @@ def download_file(
             "Content-Length": str(file_info.get("size", 0)),
         },
     )
+
+
+# ============================================================================
+# File content endpoint (for reading text files)
+# ============================================================================
+
+
+@router.get("/files/content", response_class=PlainTextResponse)
+def get_file_content(
+    s3_path: str = Query(..., description="S3 storage path of the file"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Get file content as text through backend proxy (no S3 URL exposure).
+
+    This endpoint is specifically designed for reading text file content
+    (like supplementary notes) back into the UI for editing.
+
+    Permission is verified based on the S3 path pattern (same as download).
+
+    Returns the file content as plain text (no JSON wrapping).
+    """
+    storage_service = get_storage_service()
+
+    # Verify permission (same as download)
+    if not _verify_download_permission(s3_path, current_user, db):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You don't have permission to access this file",
+        )
+
+    # Get file info first to check existence
+    file_info = storage_service.get_file_info(s3_path)
+    if file_info is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="File not found",
+        )
+
+    # Get file stream
+    file_stream = storage_service.get_stream(s3_path)
+    if file_stream is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="File not found",
+        )
+
+    # Read file content
+    try:
+        content_bytes = b"".join(file_stream)
+        # Try to decode as UTF-8
+        content = content_bytes.decode("utf-8")
+    except UnicodeDecodeError:
+        # If not valid UTF-8, return as base64 or raise error
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File is not a valid text file",
+        )
+    except Exception as e:
+        logger.error(f"[Evaluation] Failed to read file content: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to read file content",
+        )
+
+    # Return content as plain text (no JSON wrapping)
+    return PlainTextResponse(content=content)
