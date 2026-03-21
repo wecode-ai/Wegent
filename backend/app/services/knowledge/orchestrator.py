@@ -667,6 +667,9 @@ class KnowledgeOrchestrator:
         retrieval_config: Optional[Dict[str, Any]] = None,
         summary_enabled: Optional[bool] = None,
         summary_model_ref: Optional[Dict[str, str]] = None,
+        guided_questions: Optional[List[str]] = None,
+        max_calls_per_conversation: Optional[int] = None,
+        exempt_calls_before_check: Optional[int] = None,
     ) -> KnowledgeBaseResponse:
         """
         Update a knowledge base.
@@ -680,6 +683,9 @@ class KnowledgeOrchestrator:
             retrieval_config: New retrieval config (optional)
             summary_enabled: New summary enabled flag (optional)
             summary_model_ref: New summary model reference (optional)
+            guided_questions: New guided questions list (optional)
+            max_calls_per_conversation: Max calls per conversation (optional)
+            exempt_calls_before_check: Exempt calls before check (optional)
 
         Returns:
             KnowledgeBaseResponse
@@ -689,14 +695,27 @@ class KnowledgeOrchestrator:
         """
         from app.schemas.knowledge import KnowledgeBaseUpdate
 
-        # Build update data with only provided fields
-        update_data = KnowledgeBaseUpdate(
-            name=name,
-            description=description,
-            retrieval_config=retrieval_config,
-            summary_enabled=summary_enabled,
-            summary_model_ref=summary_model_ref,
-        )
+        # Build update data with only provided fields to preserve unset-vs-clear semantics
+        # Only include fields that were explicitly provided (not None)
+        update_fields = {}
+        if name is not None:
+            update_fields["name"] = name
+        if description is not None:
+            update_fields["description"] = description
+        if retrieval_config is not None:
+            update_fields["retrieval_config"] = retrieval_config
+        if summary_enabled is not None:
+            update_fields["summary_enabled"] = summary_enabled
+        if summary_model_ref is not None:
+            update_fields["summary_model_ref"] = summary_model_ref
+        if guided_questions is not None:
+            update_fields["guided_questions"] = guided_questions
+        if max_calls_per_conversation is not None:
+            update_fields["max_calls_per_conversation"] = max_calls_per_conversation
+        if exempt_calls_before_check is not None:
+            update_fields["exempt_calls_before_check"] = exempt_calls_before_check
+
+        update_data = KnowledgeBaseUpdate(**update_fields)
 
         knowledge_base = KnowledgeService.update_knowledge_base(
             db=db,

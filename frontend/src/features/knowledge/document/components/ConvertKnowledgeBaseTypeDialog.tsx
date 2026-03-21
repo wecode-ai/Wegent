@@ -5,7 +5,7 @@
 'use client'
 
 import { useState } from 'react'
-import { BookOpen, FolderOpen } from 'lucide-react'
+import { BookOpen, Database } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
@@ -86,7 +86,7 @@ export function ConvertKnowledgeBaseTypeDialog({
               {currentType === 'notebook' ? (
                 <BookOpen className="w-4 h-4 text-primary" />
               ) : (
-                <FolderOpen className="w-4 h-4 text-text-secondary" />
+                <Database className="w-4 h-4 text-text-secondary" />
               )}
               <span className="text-sm font-medium">
                 {currentType === 'notebook'
@@ -101,7 +101,7 @@ export function ConvertKnowledgeBaseTypeDialog({
               {targetType === 'notebook' ? (
                 <BookOpen className="w-4 h-4 text-primary" />
               ) : (
-                <FolderOpen className="w-4 h-4 text-text-secondary" />
+                <Database className="w-4 h-4 text-text-secondary" />
               )}
               <span className="text-sm font-medium text-primary">
                 {targetType === 'notebook'

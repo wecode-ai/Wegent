@@ -25,10 +25,16 @@ from app.schemas.kind import KnowledgeBaseSpec, ObjectMeta
 from app.schemas.knowledge import (
     AccessibleKnowledgeBase,
     AccessibleKnowledgeResponse,
+    AllGroupedKnowledgeResponse,
+    AllGroupedOrganization,
+    AllGroupedPersonal,
+    AllGroupedSummary,
+    AllGroupedTeamGroup,
     BatchOperationResult,
     KnowledgeBaseCreate,
     KnowledgeBaseResponse,
     KnowledgeBaseUpdate,
+    KnowledgeBaseWithGroupInfo,
     KnowledgeDocumentCreate,
     KnowledgeDocumentUpdate,
     ResourceScope,
@@ -200,6 +206,10 @@ class KnowledgeService:
         # Add summaryModelRef if provided
         if data.summary_model_ref:
             spec_kwargs["summaryModelRef"] = data.summary_model_ref
+
+        # Add guidedQuestions if provided
+        if data.guided_questions:
+            spec_kwargs["guidedQuestions"] = data.guided_questions
 
         kb_crd = KnowledgeBaseCRD(
             apiVersion="agent.wecode.io/v1",
@@ -562,6 +572,10 @@ class KnowledgeService:
         # Use model_fields_set to detect if the field was explicitly passed
         if "summary_model_ref" in data.model_fields_set:
             spec["summaryModelRef"] = data.summary_model_ref
+
+        # Update guided_questions if explicitly provided (including null to clear)
+        if "guided_questions" in data.model_fields_set:
+            spec["guidedQuestions"] = data.guided_questions
 
         # Update call limit configuration if provided
         if data.max_calls_per_conversation is not None:
@@ -1639,6 +1653,225 @@ class KnowledgeService:
             "created_by_me": created_by_me,
             "shared_with_me": shared_with_me,
         }
+
+    @staticmethod
+    def get_all_knowledge_bases_grouped(
+        db: Session,
+        user_id: int,
+    ) -> AllGroupedKnowledgeResponse:
+        """
+        Get all knowledge bases accessible to the user, grouped by scope.
+
+        This method optimizes the N+1 query problem by:
+        1. Fetching all accessible group names in one query
+        2. Fetching all knowledge bases in those groups in one query
+        3. Grouping results in memory
+
+        Args:
+            db: Database session
+            user_id: Current user ID
+
+        Returns:
+            AllGroupedKnowledgeResponse with personal, groups, organization, and summary sections
+        """
+        from app.models.resource_member import MemberStatus, ResourceMember
+        from app.models.share_link import ResourceType
+
+        # 1. Get personal knowledge bases created by user (single query)
+        personal_created = (
+            db.query(Kind)
+            .filter(
+                Kind.kind == "KnowledgeBase",
+                Kind.is_active == True,
+                Kind.namespace == "default",
+                Kind.user_id == user_id,
+            )
+            .order_by(Kind.updated_at.desc())
+            .all()
+        )
+
+        # 2. Get shared knowledge bases (single query)
+        shared_kb_ids = (
+            db.query(ResourceMember.resource_id)
+            .filter(
+                ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
+                ResourceMember.user_id == user_id,
+                ResourceMember.status == MemberStatus.APPROVED.value,
+            )
+            .all()
+        )
+        shared_kb_ids = [p[0] for p in shared_kb_ids]
+
+        personal_shared = []
+        if shared_kb_ids:
+            personal_shared = (
+                db.query(Kind)
+                .filter(
+                    Kind.kind == "KnowledgeBase",
+                    Kind.is_active == True,
+                    Kind.id.in_(shared_kb_ids),
+                    Kind.user_id != user_id,
+                )
+                .order_by(Kind.updated_at.desc())
+                .all()
+            )
+
+        # 3. Get all accessible groups (single query)
+        accessible_groups = get_user_groups(db, user_id)
+
+        # 4. Get ALL group knowledge bases in ONE query (key optimization)
+        group_kbs = []
+        if accessible_groups:
+            group_kbs = (
+                db.query(Kind)
+                .filter(
+                    Kind.kind == "KnowledgeBase",
+                    Kind.is_active == True,
+                    Kind.namespace.in_(accessible_groups),
+                )
+                .order_by(Kind.updated_at.desc())
+                .all()
+            )
+
+        # 5. Get organization knowledge bases (single query)
+        org_kbs = (
+            db.query(Kind)
+            .join(Namespace, Kind.namespace == Namespace.name)
+            .filter(
+                Kind.kind == "KnowledgeBase",
+                Kind.is_active == True,
+                Namespace.level == GroupLevel.organization.value,
+                Namespace.is_active == True,
+            )
+            .order_by(Kind.updated_at.desc())
+            .all()
+        )
+
+        # Get organization namespace info
+        org_namespace = (
+            db.query(Namespace)
+            .filter(
+                Namespace.level == GroupLevel.organization.value,
+                Namespace.is_active == True,
+            )
+            .first()
+        )
+
+        # 6. Batch fetch document counts (single query)
+        all_kb_ids = (
+            [kb.id for kb in personal_created]
+            + [kb.id for kb in personal_shared]
+            + [kb.id for kb in group_kbs]
+            + [kb.id for kb in org_kbs]
+        )
+        document_counts = KnowledgeService.get_active_document_counts(db, all_kb_ids)
+
+        # 7. Batch fetch namespace display names for groups
+        namespace_display_names = {}
+        if accessible_groups:
+            namespaces = (
+                db.query(Namespace)
+                .filter(
+                    Namespace.name.in_(accessible_groups),
+                    Namespace.is_active == True,
+                )
+                .all()
+            )
+            namespace_display_names = {ns.name: ns.display_name for ns in namespaces}
+
+        # Helper function to convert Kind to KnowledgeBaseWithGroupInfo
+        def kb_to_response(
+            kb: Kind, group_id: str, group_name: str, group_type: str
+        ) -> KnowledgeBaseWithGroupInfo:
+            spec = kb.json.get("spec", {})
+            return KnowledgeBaseWithGroupInfo(
+                id=kb.id,
+                name=spec.get("name", ""),
+                description=spec.get("description") or None,
+                kb_type=spec.get("kbType", "notebook"),
+                namespace=kb.namespace,
+                document_count=document_counts.get(kb.id, 0),
+                updated_at=kb.updated_at,
+                created_at=kb.created_at,
+                user_id=kb.user_id,
+                group_id=group_id,
+                group_name=group_name,
+                group_type=group_type,
+            )
+
+        # Build personal section
+        # Use stable English identifiers for group_name - frontend handles localization
+        created_by_me = [
+            kb_to_response(kb, "default", "personal", "personal")
+            for kb in personal_created
+        ]
+        shared_with_me = [
+            kb_to_response(kb, "default", "personal-shared", "personal-shared")
+            for kb in personal_shared
+        ]
+
+        # Build groups section - group KBs by namespace in memory
+        groups_map: dict[str, list[Kind]] = {}
+        for kb in group_kbs:
+            if kb.namespace not in groups_map:
+                groups_map[kb.namespace] = []
+            groups_map[kb.namespace].append(kb)
+
+        # Build groups list - include ALL accessible groups, even those without KBs
+        groups = []
+        for ns_name in accessible_groups:
+            display_name = namespace_display_names.get(ns_name, ns_name)
+            kbs = groups_map.get(ns_name, [])
+            groups.append(
+                AllGroupedTeamGroup(
+                    group_name=ns_name,
+                    group_display_name=display_name or ns_name,
+                    kb_count=len(kbs),
+                    knowledge_bases=[
+                        kb_to_response(kb, ns_name, display_name or ns_name, "group")
+                        for kb in kbs
+                    ],
+                )
+            )
+
+        # Build organization section
+        # Use stable English identifier for fallback - frontend handles localization
+        org_display_name = (
+            org_namespace.display_name if org_namespace else "organization"
+        )
+        org_ns_name = org_namespace.name if org_namespace else None
+        organization = AllGroupedOrganization(
+            namespace=org_ns_name,
+            display_name=org_display_name,
+            kb_count=len(org_kbs),
+            knowledge_bases=[
+                kb_to_response(
+                    kb, org_ns_name or "organization", org_display_name, "organization"
+                )
+                for kb in org_kbs
+            ],
+        )
+
+        # Build summary
+        summary = AllGroupedSummary(
+            total_count=len(personal_created)
+            + len(personal_shared)
+            + len(group_kbs)
+            + len(org_kbs),
+            personal_count=len(personal_created) + len(personal_shared),
+            group_count=len(group_kbs),
+            organization_count=len(org_kbs),
+        )
+
+        return AllGroupedKnowledgeResponse(
+            personal=AllGroupedPersonal(
+                created_by_me=created_by_me,
+                shared_with_me=shared_with_me,
+            ),
+            groups=groups,
+            organization=organization,
+            summary=summary,
+        )
 
     @staticmethod
     def can_manage_knowledge_base(

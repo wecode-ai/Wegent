@@ -30,11 +30,6 @@ import { DocumentList } from '@/features/knowledge/document/components'
 import { PermissionManagementTab } from '@/features/knowledge/permission/components/PermissionManagementTab'
 import { listGroups } from '@/apis/groups'
 import type { BaseRole } from '@/types/base-role'
-interface KnowledgeBaseClassicPageDesktopProps {
-  /** Callback when knowledge base type is changed (notebook <-> classic) */
-  onKbTypeChanged?: () => void
-}
-
 /**
  * Desktop-specific implementation of Knowledge Base Classic Page
  *
@@ -42,9 +37,7 @@ interface KnowledgeBaseClassicPageDesktopProps {
  * - Left: TaskSidebar (resizable)
  * - Center: Document list with full management capabilities
  */
-export function KnowledgeBaseClassicPageDesktop({
-  onKbTypeChanged,
-}: KnowledgeBaseClassicPageDesktopProps) {
+export function KnowledgeBaseClassicPageDesktop() {
   const { t } = useTranslation('knowledge')
   const router = useRouter()
   const params = useParams()
@@ -272,10 +265,6 @@ export function KnowledgeBaseClassicPageDesktop({
                   knowledgeBase={knowledgeBase}
                   onBack={handleBack}
                   canManage={canManageKb}
-                  onTypeConverted={() => {
-                    // Notify parent page.tsx to refresh and re-route based on new kb_type
-                    onKbTypeChanged?.()
-                  }}
                 />
               </TabsContent>
               <TabsContent value="permissions" className="flex-1 mt-0">
@@ -287,10 +276,6 @@ export function KnowledgeBaseClassicPageDesktop({
               knowledgeBase={knowledgeBase}
               onBack={handleBack}
               canManage={canManageKb}
-              onTypeConverted={() => {
-                // Notify parent page.tsx to refresh and re-route based on new kb_type
-                onKbTypeChanged?.()
-              }}
             />
           )}
         </div>

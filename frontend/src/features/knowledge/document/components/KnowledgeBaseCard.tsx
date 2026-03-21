@@ -11,7 +11,7 @@ import {
   ArrowRight,
   Clock,
   BookOpen,
-  FolderOpen,
+  Database,
   Share2,
   MessageSquarePlus,
 } from 'lucide-react'
@@ -80,11 +80,7 @@ export function KnowledgeBaseCard({
               : t('knowledge:document.knowledgeBase.typeClassic')
           }
         >
-          {isNotebook ? (
-            <BookOpen className="w-3.5 h-3.5" />
-          ) : (
-            <FolderOpen className="w-3.5 h-3.5" />
-          )}
+          {isNotebook ? <BookOpen className="w-3.5 h-3.5" /> : <Database className="w-3.5 h-3.5" />}
         </div>
         <h3 className="font-medium text-sm leading-relaxed line-clamp-2 flex-1">
           <span className="font-semibold">{knowledgeBase.name}</span>

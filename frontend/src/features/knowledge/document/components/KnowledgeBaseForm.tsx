@@ -10,13 +10,14 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Switch } from '@/components/ui/switch'
 import { Slider } from '@/components/ui/slider'
+import { Button } from '@/components/ui/button'
 import {
   Accordion,
   AccordionContent,
   AccordionItem,
   AccordionTrigger,
 } from '@/components/ui/accordion'
-import { ChevronDown, ChevronRight } from 'lucide-react'
+import { ChevronDown, ChevronRight, Plus, X } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { KnowledgeResourceScope, RetrievalConfig, SummaryModelRef } from '@/types/knowledge'
 import { RetrievalSettingsSection } from './RetrievalSettingsSection'
@@ -50,6 +51,12 @@ interface KnowledgeBaseFormProps {
   retrievalGroupName?: string
   retrievalReadOnly?: boolean
   retrievalPartialReadOnly?: boolean
+  /** Whether to show guided questions section (only for notebook type) */
+  showGuidedQuestions?: boolean
+  /** Guided questions list (max 3) */
+  guidedQuestions?: string[]
+  /** Handler for guided questions change */
+  onGuidedQuestionsChange?: (questions: string[]) => void
 }
 
 export function KnowledgeBaseForm({
@@ -77,6 +84,9 @@ export function KnowledgeBaseForm({
   retrievalGroupName,
   retrievalReadOnly,
   retrievalPartialReadOnly,
+  showGuidedQuestions = false,
+  guidedQuestions = [],
+  onGuidedQuestionsChange,
 }: KnowledgeBaseFormProps) {
   const { t } = useTranslation()
 
@@ -87,6 +97,31 @@ export function KnowledgeBaseForm({
 
   const handleExemptCallsChange = (value: number) => {
     onCallLimitsChange({ maxCalls: callLimits.maxCalls, exemptCalls: value })
+  }
+
+  // Guided questions handlers
+  const MAX_GUIDED_QUESTIONS = 3
+  const MAX_QUESTION_LENGTH = 200
+
+  const handleAddGuidedQuestion = () => {
+    if (guidedQuestions.length < MAX_GUIDED_QUESTIONS && onGuidedQuestionsChange) {
+      onGuidedQuestionsChange([...guidedQuestions, ''])
+    }
+  }
+
+  const handleUpdateGuidedQuestion = (index: number, value: string) => {
+    if (onGuidedQuestionsChange) {
+      const newQuestions = [...guidedQuestions]
+      newQuestions[index] = value.slice(0, MAX_QUESTION_LENGTH)
+      onGuidedQuestionsChange(newQuestions)
+    }
+  }
+
+  const handleRemoveGuidedQuestion = (index: number) => {
+    if (onGuidedQuestionsChange) {
+      const newQuestions = guidedQuestions.filter((_, i) => i !== index)
+      onGuidedQuestionsChange(newQuestions)
+    }
   }
 
   const advancedContent = (
@@ -213,6 +248,59 @@ export function KnowledgeBaseForm({
           </div>
         )}
       </div>
+
+      {showGuidedQuestions && (
+        <div className="space-y-3 border-b border-border pb-4">
+          <div className="space-y-0.5">
+            <Label>{t('knowledge:document.guidedQuestions.label')}</Label>
+            <p className="text-xs text-text-muted">
+              {t('knowledge:document.guidedQuestions.helpText')}
+            </p>
+          </div>
+          <div className="space-y-2">
+            {guidedQuestions.map((question, index) => (
+              <div key={index} className="flex items-center gap-2">
+                <Input
+                  value={question}
+                  onChange={e => handleUpdateGuidedQuestion(index, e.target.value)}
+                  placeholder={t('knowledge:document.guidedQuestions.placeholder')}
+                  maxLength={MAX_QUESTION_LENGTH}
+                  data-testid={`guided-question-input-${index}`}
+                  aria-label={`${t('knowledge:document.guidedQuestions.label')} ${index + 1}`}
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => handleRemoveGuidedQuestion(index)}
+                  className="h-9 w-9 flex-shrink-0"
+                  data-testid={`remove-guided-question-${index}`}
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+            ))}
+            {guidedQuestions.length < MAX_GUIDED_QUESTIONS && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={handleAddGuidedQuestion}
+                className="mt-2"
+                data-testid="add-guided-question"
+              >
+                <Plus className="h-4 w-4 mr-1" />
+                {t('knowledge:document.guidedQuestions.addButton')}
+              </Button>
+            )}
+            {guidedQuestions.length >= MAX_GUIDED_QUESTIONS && (
+              <p className="text-xs text-text-muted">
+                {t('knowledge:document.guidedQuestions.maxReached')}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
 
       {advancedVariant === 'accordion' ? (
         <Accordion

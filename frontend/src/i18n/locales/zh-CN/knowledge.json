@@ -44,6 +44,78 @@
       "createdDesc": "点击上方按钮创建您的第一个知识库",
       "sharedDesc": "当其他用户分享知识库给您时，将显示在这里"
     },
+    "tree": {
+      "title": "知识库",
+      "myKnowledge": "我的知识",
+      "groupKnowledge": "组知识",
+      "orgKnowledge": "公司知识",
+      "searchPlaceholder": "搜索知识库...",
+      "emptyState": "请从左侧选择一个知识库",
+      "emptyStateHint": "浏览并选择一个知识库以查看详情",
+      "noResults": "未找到匹配的知识库",
+      "collapse": "收起",
+      "collapseTree": "收起列表",
+      "expandTree": "列表",
+      "docCount": "{{count}} 篇",
+      "loadingKbs": "加载知识库中..."
+    },
+    "sidebar": {
+      "searchPlaceholder": "搜索知识库...",
+      "favorites": "收藏",
+      "recent": "最近",
+      "groups": "分组",
+      "navigation": "导航",
+      "all": "全部",
+      "noGroups": "暂无分组",
+      "noFavorites": "暂无收藏的知识库",
+      "noRecent": "暂无最近访问记录",
+      "clearRecent": "清除记录",
+      "personal": "个人",
+      "organization": "公司",
+      "groupSettings": "组设置",
+      "justNow": "刚刚",
+      "minutesAgo": "{{count}}分钟前",
+      "hoursAgo": "{{count}}小时前",
+      "yesterday": "昨天",
+      "daysAgo": "{{count}}天前"
+    },
+    "allKnowledgeBases": "全部知识库",
+    "groupFilter": {
+      "all": "全部分组"
+    },
+    "table": {
+      "name": "名称",
+      "group": "归属小组",
+      "lastAccess": "最近访问",
+      "actions": "操作",
+      "edit": "编辑",
+      "delete": "删除",
+      "minutesAgo": "分钟前",
+      "daysAgo": "天前"
+    },
+    "groupList": {
+      "back": "返回",
+      "create": "新建知识库",
+      "searchPlaceholder": "搜索知识库...",
+      "sortUpdated": "最近更新",
+      "sortCreated": "创建时间",
+      "sortName": "名称",
+      "empty": "暂无知识库",
+      "emptyHint": "点击上方按钮创建第一个知识库",
+      "loadMore": "加载更多",
+      "documentCount": "{{count}}个文档",
+      "updatedAt": "更新于 {{time}}"
+    },
+    "search": {
+      "placeholder": "搜索知识库...",
+      "recentSearches": "最近搜索",
+      "allResults": "所有结果",
+      "knowledgeBases": "知识库",
+      "groupsLabel": "分组",
+      "noResults": "未找到相关知识库",
+      "searching": "搜索中...",
+      "kbCount": "{{count}} 个知识库"
+    },
     "accessDenied": {
       "title": "无法访问知识库",
       "description": "您没有该知识库详细信息的访问权限。如有疑问，请联系知识库创建者或管理员。",
@@ -79,13 +151,16 @@
       "search": "搜索知识库...",
       "noResults": "没有匹配的知识库",
       "convertType": "转换类型",
+      "currentType": "当前类型",
       "convertToNotebook": "转为笔记本",
       "convertToClassic": "转为知识库",
       "convertToNotebookDisabled": "文档数超过 50 个限制，无法转为笔记本模式",
       "convertToClassicConfirm": "转换后将不再支持笔记本内直接对话功能，但文档数量将不受限制。确定转换吗？",
       "convertToNotebookConfirm": "转换为笔记本后，可直接在知识库内上传文件并开启对话，但文档数量将限制为最多 50 个。确定转换吗？",
       "convertSuccess": "知识库类型转换成功",
-      "convertFailed": "知识库类型转换失败"
+      "convertFailed": "知识库类型转换失败",
+      "targetGroup": "归属分组",
+      "selectGroup": "选择分组"
     },
     "document": {
       "title": "文档",
@@ -415,6 +490,13 @@
       "exemptCallsHint": "豁免 token 检查的调用次数 (必须小于最大调用次数)",
       "validationError": "豁免次数必须小于最大调用次数"
     },
+    "guidedQuestions": {
+      "label": "引导问题（可选）",
+      "placeholder": "输入引导问题",
+      "addButton": "添加问题",
+      "helpText": "配置后将在新对话时显示在输入框上方，帮助用户快速提问",
+      "maxReached": "最多配置 3 个引导问题"
+    },
     "retrievalTest": {
       "button": "召回测试",
       "title": "召回测试",
@@ -432,6 +514,7 @@
       "modified": "已修改"
     },
     "goToSettings": "前往设置",
+    "groupSettings": "组设置",
     "groupChat": {
       "create": "创建群聊",
       "createForGroup": "为组创建群聊",
@@ -519,6 +602,9 @@
     "summaryFailedHint": "点击重试按钮重新生成摘要",
     "summaryRetry": "重试",
     "summaryRetrying": "重试中...",
+    "guidedQuestions": {
+      "hint": "试试这些问题："
+    },
     "accessDenied": {
       "title": "无法访问知识库",
       "description": "您没有该知识库详细信息的访问权限。如有疑问，请联系知识库创建者或管理员。",

@@ -27,23 +27,12 @@ import { ChatArea } from '@/features/tasks/components/chat'
 import { useTeamContext } from '@/contexts/TeamContext'
 import { useKnowledgeBaseDetail } from '@/features/knowledge/document/hooks'
 import { useKnowledgePermissions } from '@/features/knowledge/permission/hooks/useKnowledgePermissions'
-import {
-  DocumentPanel,
-  KnowledgeBaseSummaryCard,
-  CreateKnowledgeBaseDialog,
-} from '@/features/knowledge/document/components'
-import { createKnowledgeBase } from '@/apis/knowledge'
-import type { KnowledgeBaseType, SummaryModelRef } from '@/types/knowledge'
+import { DocumentPanel, KnowledgeBaseSummaryCard } from '@/features/knowledge/document/components'
 import { BoundKnowledgeBaseSummary } from '@/features/tasks/components/group-chat'
 import { taskKnowledgeBaseApi } from '@/apis/task-knowledge-base'
 import { listGroups } from '@/apis/groups'
 import type { Team } from '@/types/api'
 import type { BaseRole } from '@/types/base-role'
-
-interface KnowledgeBaseChatPageDesktopProps {
-  /** Callback when knowledge base type is changed (notebook <-> classic) */
-  onKbTypeChanged?: () => void
-}
 
 /**
  * Desktop-specific implementation of Knowledge Base Chat Page
@@ -53,9 +42,7 @@ interface KnowledgeBaseChatPageDesktopProps {
  * - Center: Chat area with KB summary
  * - Right: Document management panel (resizable, collapsible)
  */
-export function KnowledgeBaseChatPageDesktop({
-  onKbTypeChanged,
-}: KnowledgeBaseChatPageDesktopProps) {
+export function KnowledgeBaseChatPageDesktop() {
   const { t } = useTranslation('knowledge')
   const router = useRouter()
   const params = useParams()
@@ -135,10 +122,6 @@ export function KnowledgeBaseChatPageDesktop({
 
   // Search dialog state
   const [isSearchDialogOpen, setIsSearchDialogOpen] = useState(false)
-
-  // Create knowledge base dialog state
-  const [showCreateKbDialog, setShowCreateKbDialog] = useState(false)
-  const [isCreatingKb, setIsCreatingKb] = useState(false)
 
   // Group role map for permission checking
   const [groupRoleMap, setGroupRoleMap] = useState<Map<string, BaseRole>>(new Map())
@@ -220,38 +203,6 @@ export function KnowledgeBaseChatPageDesktop({
     Promise.all(streamingIds.map(id => stopStream(id))).catch(error => {
       console.error('Failed to stop streams:', error)
     })
-  }
-
-  // Handle creating new notebook knowledge base
-  const handleCreateNotebook = async (data: {
-    name: string
-    description?: string
-    retrieval_config?: Record<string, unknown>
-    summary_enabled?: boolean
-    summary_model_ref?: SummaryModelRef | null
-    max_calls_per_conversation: number
-    exempt_calls_before_check: number
-  }) => {
-    setIsCreatingKb(true)
-    try {
-      const response = await createKnowledgeBase({
-        name: data.name,
-        description: data.description,
-        kb_type: 'notebook' as KnowledgeBaseType,
-        retrieval_config: data.retrieval_config,
-        summary_enabled: data.summary_enabled,
-        summary_model_ref: data.summary_model_ref,
-        max_calls_per_conversation: data.max_calls_per_conversation,
-        exempt_calls_before_check: data.exempt_calls_before_check,
-      })
-      // Navigate to the new knowledge base
-      router.push(`/knowledge/document/${response.id}`)
-    } catch (error) {
-      console.error('Failed to create knowledge base:', error)
-      throw error
-    } finally {
-      setIsCreatingKb(false)
-    }
   }
 
   // Handle back to knowledge list
@@ -357,12 +308,6 @@ export function KnowledgeBaseChatPageDesktop({
         <div className="flex-1 flex min-h-0">
           {/* Chat area */}
           <div className="flex-1 flex flex-col min-w-0">
-            {/* KB Summary Card - shown when no task is selected */}
-            {!hasOpenTask && (
-              <div className="px-4 sm:px-6 pt-6">
-                <KnowledgeBaseSummaryCard knowledgeBase={knowledgeBase} />
-              </div>
-            )}
             <ChatArea
               teams={filteredTeams}
               isTeamsLoading={isTeamsLoading}
@@ -378,6 +323,9 @@ export function KnowledgeBaseChatPageDesktop({
                 document_count: knowledgeBase.document_count,
               }}
               selectedDocumentIds={selectedDocumentIds}
+              guidedQuestions={knowledgeBase.guided_questions}
+              inputAlwaysAtBottom={true}
+              emptyStateContent={<KnowledgeBaseSummaryCard knowledgeBase={knowledgeBase} />}
               onTaskCreated={async (taskId: number) => {
                 // Bind the knowledge base to the newly created task
                 try {
@@ -399,11 +347,7 @@ export function KnowledgeBaseChatPageDesktop({
             canManage={canManageKb}
             canManagePermissions={canManagePermissions}
             onDocumentSelectionChange={setSelectedDocumentIds}
-            onNewChat={() => setShowCreateKbDialog(true)}
-            onTypeConverted={() => {
-              // Notify parent page.tsx to refresh and re-route based on new kb_type
-              onKbTypeChanged?.()
-            }}
+            onNewChat={hasOpenTask ? handleNewTask : undefined}
             onCollapsedChange={setIsDocumentPanelCollapsed}
           />
         </div>
@@ -415,15 +359,6 @@ export function KnowledgeBaseChatPageDesktop({
         onOpenChange={setIsSearchDialogOpen}
         shortcutDisplayText={shortcutDisplayText}
         pageType="chat"
-      />
-
-      {/* Create Knowledge Base Dialog */}
-      <CreateKnowledgeBaseDialog
-        open={showCreateKbDialog}
-        onOpenChange={setShowCreateKbDialog}
-        onSubmit={handleCreateNotebook}
-        loading={isCreatingKb}
-        kbType="notebook"
       />
     </div>
   )
