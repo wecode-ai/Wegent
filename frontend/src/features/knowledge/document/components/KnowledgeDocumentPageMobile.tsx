@@ -121,11 +121,14 @@ export function KnowledgeDocumentPageMobile() {
 
   // Handle KB created
   const handleCreate = useCallback(
-    async (data: Omit<KnowledgeBaseCreate, 'namespace' | 'kb_type'>) => {
+    async (data: Omit<KnowledgeBaseCreate, 'namespace'>) => {
       const namespace =
         createScope === 'organization'
           ? (tree.orgNamespace ?? 'organization')
           : createGroupName || 'default'
+
+      // Use kb_type from dialog (user can change it in the dialog)
+      const kbType = data.kb_type || createKbType
 
       const { createKnowledgeBase } = await import('@/apis/knowledge')
       await createKnowledgeBase({
@@ -135,10 +138,10 @@ export function KnowledgeDocumentPageMobile() {
         retrieval_config: data.retrieval_config,
         summary_enabled: data.summary_enabled,
         summary_model_ref: data.summary_model_ref,
-        kb_type: createKbType,
+        kb_type: kbType,
       })
 
-      if (createKbType === 'notebook' && data.summary_enabled && data.summary_model_ref) {
+      if (kbType === 'notebook' && data.summary_enabled && data.summary_model_ref) {
         saveSummaryModelToPreference(data.summary_model_ref)
       }
 

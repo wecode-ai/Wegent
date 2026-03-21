@@ -17,7 +17,7 @@ import {
   Users,
   Building2,
   BookOpen,
-  FolderOpen,
+  Database,
   Plus,
   Search,
   UserCircle,
@@ -196,13 +196,13 @@ function getCategoryIcon(icon?: string, className = 'w-4 h-4') {
 }
 
 // KB type icon
+// KB type icon
 function getKbIcon(icon?: string, className = 'w-3.5 h-3.5') {
   if (icon === 'folder') {
-    return <FolderOpen className={`${className} text-text-secondary`} />
+    return <Database className={`${className} text-text-secondary`} />
   }
   return <BookOpen className={`${className} text-primary`} />
 }
-
 // Sub-category icon
 function getSubCategoryIcon(nodeId: string, className = 'w-3.5 h-3.5') {
   if (nodeId.includes('created')) {
@@ -264,7 +264,7 @@ function CreateKbButton({
           }}
           className="flex items-start gap-3 py-2"
         >
-          <FolderOpen className="w-4 h-4 text-text-secondary mt-0.5 flex-shrink-0" />
+          <Database className="w-4 h-4 text-text-secondary mt-0.5 flex-shrink-0" />
           <div>
             <div className="font-medium text-sm">{t('document.knowledgeBase.typeClassic')}</div>
             <div className="text-xs text-text-muted">{t('document.knowledgeBase.classicDesc')}</div>

@@ -5,7 +5,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { BookOpen, FolderOpen, User, Building2, Users } from 'lucide-react'
+import { BookOpen, Database, User, Building2, Users } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
@@ -48,6 +48,8 @@ interface CreateKnowledgeBaseDialogProps {
     exempt_calls_before_check: number
     /** Selected group ID for creating the KB */
     selectedGroupId?: string
+    /** Knowledge base type selected by user */
+    kb_type: KnowledgeBaseType
   }) => Promise<void>
   loading?: boolean
   scope?: 'personal' | 'group' | 'organization' | 'all'
@@ -84,7 +86,7 @@ export function CreateKnowledgeBaseDialog({
   loading,
   scope,
   groupName,
-  kbType = 'notebook',
+  kbType: initialKbType = 'notebook',
   knowledgeDefaultTeamId,
   availableGroups,
   defaultGroupId,
@@ -93,8 +95,10 @@ export function CreateKnowledgeBaseDialog({
   const { t } = useTranslation()
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
+  // Selected KB type (can be changed by user)
+  const [selectedKbType, setSelectedKbType] = useState<KnowledgeBaseType>(initialKbType)
   // Default enable summary for notebook type, disable for classic type
-  const [summaryEnabled, setSummaryEnabled] = useState(kbType === 'notebook')
+  const [summaryEnabled, setSummaryEnabled] = useState(initialKbType === 'notebook')
   const [summaryModelRef, setSummaryModelRef] = useState<SummaryModelRef | null>(null)
   const [summaryModelError, setSummaryModelError] = useState('')
   const [retrievalConfig, setRetrievalConfig] = useState<Partial<RetrievalConfig>>({
@@ -113,13 +117,20 @@ export function CreateKnowledgeBaseDialog({
   // Selected group for creating KB (used when showGroupSelector is true)
   const [selectedGroupId, setSelectedGroupId] = useState<string>(defaultGroupId || 'personal')
 
-  // Reset summaryEnabled and selectedGroupId when dialog opens
+  // Reset summaryEnabled, selectedKbType and selectedGroupId when dialog opens
   useEffect(() => {
     if (open) {
-      setSummaryEnabled(kbType === 'notebook')
+      setSelectedKbType(initialKbType)
+      setSummaryEnabled(initialKbType === 'notebook')
       setSelectedGroupId(defaultGroupId || 'personal')
     }
-  }, [open, kbType, defaultGroupId])
+  }, [open, initialKbType, defaultGroupId])
+
+  // Update summaryEnabled when KB type changes
+  const handleKbTypeChange = (newType: KnowledgeBaseType) => {
+    setSelectedKbType(newType)
+    setSummaryEnabled(newType === 'notebook')
+  }
 
   // Note: Auto-selection of retriever and embedding model is handled by RetrievalSettingsSection
 
@@ -163,11 +174,13 @@ export function CreateKnowledgeBaseDialog({
         max_calls_per_conversation: maxCalls,
         exempt_calls_before_check: exemptCalls,
         selectedGroupId: showGroupSelector ? selectedGroupId : undefined,
+        kb_type: selectedKbType,
       })
       setName('')
       setDescription('')
-      // Reset summaryEnabled based on kbType: enabled for notebook, disabled for classic
-      setSummaryEnabled(kbType === 'notebook')
+      // Reset selectedKbType and summaryEnabled based on initialKbType
+      setSelectedKbType(initialKbType)
+      setSummaryEnabled(initialKbType === 'notebook')
       setSummaryModelRef(null)
       setRetrievalConfig({
         retrieval_mode: 'vector',
@@ -189,8 +202,9 @@ export function CreateKnowledgeBaseDialog({
     if (!newOpen) {
       setName('')
       setDescription('')
-      // Reset summaryEnabled based on kbType: enabled for notebook, disabled for classic
-      setSummaryEnabled(kbType === 'notebook')
+      // Reset selectedKbType and summaryEnabled based on initialKbType
+      setSelectedKbType(initialKbType)
+      setSummaryEnabled(initialKbType === 'notebook')
       setSummaryModelRef(null)
       setSummaryModelError('')
       setRetrievalConfig({
@@ -220,7 +234,7 @@ export function CreateKnowledgeBaseDialog({
       : groupName
 
   // Determine if this is a notebook type
-  const isNotebook = kbType === 'notebook'
+  const isNotebook = selectedKbType === 'notebook'
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
@@ -235,9 +249,21 @@ export function CreateKnowledgeBaseDialog({
           <KnowledgeBaseForm
             typeSection={
               <>
-                {/* KB Type display */}
+                {/* KB Type selector - subtle style */}
                 <div className="space-y-2">
-                  <Label>{t('knowledge:document.knowledgeBase.type')}</Label>
+                  <div className="flex items-center justify-between">
+                    <Label>{t('knowledge:document.knowledgeBase.type')}</Label>
+                    <button
+                      type="button"
+                      onClick={() => handleKbTypeChange(isNotebook ? 'classic' : 'notebook')}
+                      className="text-xs text-text-muted hover:text-primary transition-colors"
+                      data-testid="switch-kb-type"
+                    >
+                      {isNotebook
+                        ? t('knowledge:document.knowledgeBase.convertToClassic')
+                        : t('knowledge:document.knowledgeBase.convertToNotebook')}
+                    </button>
+                  </div>
                   <div
                     className={`flex items-center gap-3 p-3 rounded-md border ${
                       isNotebook ? 'bg-primary/5 border-primary/20' : 'bg-muted border-border'
@@ -251,7 +277,7 @@ export function CreateKnowledgeBaseDialog({
                       {isNotebook ? (
                         <BookOpen className="w-4 h-4" />
                       ) : (
-                        <FolderOpen className="w-4 h-4" />
+                        <Database className="w-4 h-4" />
                       )}
                     </div>
                     <div>
@@ -268,7 +294,6 @@ export function CreateKnowledgeBaseDialog({
                     </div>
                   </div>
                 </div>
-
                 {/* Group selector - only show when showGroupSelector is true */}
                 {showGroupSelector && availableGroups && availableGroups.length > 0 && (
                   <div className="space-y-2 mt-4">

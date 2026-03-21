@@ -1807,9 +1807,11 @@ class KnowledgeService:
                 groups_map[kb.namespace] = []
             groups_map[kb.namespace].append(kb)
 
+        # Build groups list - include ALL accessible groups, even those without KBs
         groups = []
-        for ns_name, kbs in groups_map.items():
+        for ns_name in accessible_groups:
             display_name = namespace_display_names.get(ns_name, ns_name)
+            kbs = groups_map.get(ns_name, [])
             groups.append(
                 AllGroupedTeamGroup(
                     group_name=ns_name,

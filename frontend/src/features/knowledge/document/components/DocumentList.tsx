@@ -13,7 +13,7 @@ import {
   ChevronUp,
   ChevronDown,
   BookOpen,
-  FolderOpen,
+  Database,
   Trash2,
   Target,
   FileUp,
@@ -436,7 +436,7 @@ export function DocumentList({
         {isNotebook ? (
           <BookOpen className="w-5 h-5 text-primary flex-shrink-0" />
         ) : (
-          <FolderOpen className="w-5 h-5 text-text-secondary flex-shrink-0" />
+          <Database className="w-5 h-5 text-text-secondary flex-shrink-0" />
         )}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5">

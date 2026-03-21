@@ -11,7 +11,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import { Search, BookOpen, FolderOpen, Users } from 'lucide-react'
+import { Search, BookOpen, Database, Users } from 'lucide-react'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Spinner } from '@/components/ui/spinner'
@@ -202,7 +202,7 @@ export function CommandPalette({
                           data-testid={`search-result-kb-${kb.id}`}
                         >
                           {kb.kb_type === 'classic' ? (
-                            <FolderOpen className="w-4 h-4 text-text-secondary flex-shrink-0" />
+                            <Database className="w-4 h-4 text-text-secondary flex-shrink-0" />
                           ) : (
                             <BookOpen className="w-4 h-4 text-primary flex-shrink-0" />
                           )}

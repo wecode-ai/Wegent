@@ -231,13 +231,16 @@ export function KnowledgeBaseChatPageDesktop({
     summary_model_ref?: SummaryModelRef | null
     max_calls_per_conversation: number
     exempt_calls_before_check: number
+    kb_type: KnowledgeBaseType
   }) => {
     setIsCreatingKb(true)
     try {
+      // Use kb_type from dialog (user can change it in the dialog)
+      const kbType = data.kb_type || 'notebook'
       const response = await createKnowledgeBase({
         name: data.name,
         description: data.description,
-        kb_type: 'notebook' as KnowledgeBaseType,
+        kb_type: kbType,
         retrieval_config: data.retrieval_config,
         summary_enabled: data.summary_enabled,
         summary_model_ref: data.summary_model_ref,

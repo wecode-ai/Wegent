@@ -10,7 +10,7 @@
 
 'use client'
 
-import { BookOpen, FolderOpen, X } from 'lucide-react'
+import { BookOpen, Database, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { KnowledgeBase } from '@/types/knowledge'
 
@@ -51,7 +51,7 @@ export function KbItem({
       {/* Icon */}
       <span className="flex-shrink-0">
         {isClassic ? (
-          <FolderOpen className="w-3.5 h-3.5 text-text-secondary" />
+          <Database className="w-3.5 h-3.5 text-text-secondary" />
         ) : (
           <BookOpen className="w-3.5 h-3.5 text-primary" />
         )}

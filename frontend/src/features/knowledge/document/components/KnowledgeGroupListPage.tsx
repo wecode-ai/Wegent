@@ -18,6 +18,7 @@ import {
   ArrowLeft,
   Plus,
   BookOpen,
+  Database,
   FolderOpen,
   Star,
   ChevronDown,
@@ -26,12 +27,6 @@ import {
   Trash2,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown'
 import { Spinner } from '@/components/ui/spinner'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
@@ -129,14 +124,14 @@ function formatRelativeTime(
 }
 
 /** Get icon for KB type */
+/** Get icon for KB type */
 function KbTypeIcon({ kbType, className }: { kbType?: string; className?: string }) {
   const isClassic = kbType === 'classic'
   if (isClassic) {
-    return <FolderOpen className={cn('text-text-secondary', className)} />
+    return <Database className={cn('text-text-secondary', className)} />
   }
   return <BookOpen className={cn('text-primary', className)} />
 }
-
 export function KnowledgeGroupListPage({
   groupId: _groupId,
   groupName,
@@ -153,8 +148,8 @@ export function KnowledgeGroupListPage({
   getKbGroupInfo,
   isAllMode = false,
   filterGroupId,
-  onFilterGroupChange,
-  availableGroups,
+  onFilterGroupChange: _onFilterGroupChange,
+  availableGroups: _availableGroups,
 }: KnowledgeGroupListPageProps) {
   const { t } = useTranslation('knowledge')
   const [sortBy, setSortBy] = useState<SortBy>('updated')
@@ -304,38 +299,13 @@ export function KnowledgeGroupListPage({
                 </th>
                 {isAllMode && (
                   <th className="px-6 py-3 font-medium w-[25%]">
-                    <div className="flex items-center">
-                      <button
-                        className="flex items-center hover:text-text-primary transition-colors"
-                        onClick={() => handleSort('group')}
-                      >
-                        {t('document.table.group', '归属小组')}
-                        <SortIcon column="group" />
-                      </button>
-                      {/* Group filter dropdown */}
-                      {availableGroups && onFilterGroupChange && (
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <button className="ml-1 p-0.5 hover:bg-muted rounded">
-                              <ChevronDown className="w-3.5 h-3.5" />
-                            </button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="start">
-                            <DropdownMenuItem onClick={() => onFilterGroupChange(null)}>
-                              {t('document.groupFilter.all', '全部分组')}
-                            </DropdownMenuItem>
-                            {availableGroups.map(group => (
-                              <DropdownMenuItem
-                                key={group.id}
-                                onClick={() => onFilterGroupChange(group.id)}
-                              >
-                                {group.displayName}
-                              </DropdownMenuItem>
-                            ))}
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      )}
-                    </div>
+                    <button
+                      className="flex items-center hover:text-text-primary transition-colors"
+                      onClick={() => handleSort('group')}
+                    >
+                      {t('document.table.group', '归属小组')}
+                      <SortIcon column="group" />
+                    </button>
                   </th>
                 )}
                 <th className="px-6 py-3 font-medium w-[20%]">

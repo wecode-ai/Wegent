@@ -292,10 +292,9 @@ export function KnowledgeDocumentPageDesktop() {
   )
 
   // Handle KB created
+  // Handle KB created
   const handleCreate = useCallback(
-    async (
-      data: Omit<KnowledgeBaseCreate, 'namespace' | 'kb_type'> & { selectedGroupId?: string }
-    ) => {
+    async (data: Omit<KnowledgeBaseCreate, 'namespace'> & { selectedGroupId?: string }) => {
       // Determine namespace based on scope or selectedGroupId
       let namespace = 'default'
 
@@ -319,6 +318,9 @@ export function KnowledgeDocumentPageDesktop() {
         namespace = createGroupName
       }
 
+      // Use kb_type from dialog (user can change it in the dialog)
+      const kbType = data.kb_type || createKbType
+
       // Use the appropriate API based on scope
       const { createKnowledgeBase } = await import('@/apis/knowledge')
       await createKnowledgeBase({
@@ -328,14 +330,13 @@ export function KnowledgeDocumentPageDesktop() {
         retrieval_config: data.retrieval_config,
         summary_enabled: data.summary_enabled,
         summary_model_ref: data.summary_model_ref,
-        kb_type: createKbType,
+        kb_type: kbType,
       })
 
       // Save model preference for notebook type
-      if (createKbType === 'notebook' && data.summary_enabled && data.summary_model_ref) {
+      if (kbType === 'notebook' && data.summary_enabled && data.summary_model_ref) {
         saveSummaryModelToPreference(data.summary_model_ref)
       }
-
       setShowCreateDialog(false)
 
       // Refresh sidebar data
