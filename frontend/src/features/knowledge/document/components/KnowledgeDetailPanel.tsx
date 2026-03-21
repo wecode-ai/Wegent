@@ -183,6 +183,7 @@ export function KnowledgeDetailPanel({
               document_count: selectedKb.document_count,
             }}
             selectedDocumentIds={selectedDocumentIds}
+            guidedQuestions={selectedKb.guided_questions}
             inputAlwaysAtBottom={true}
             emptyStateContent={<KnowledgeBaseSummaryCard knowledgeBase={selectedKb} />}
             onTaskCreated={async (taskId: number) => {

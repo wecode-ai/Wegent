@@ -527,6 +527,18 @@ function ChatAreaContent({
       return true
     }
 
+    // In inputAlwaysAtBottom mode (knowledge notebook), only consider actual messages
+    // not just the presence of selectedTaskDetail
+    if (inputAlwaysAtBottom) {
+      return Boolean(
+        streamHandlers.hasPendingUserMessage ||
+        streamHandlers.isStreaming ||
+        hasNewTaskStream ||
+        hasLocalPending ||
+        hasUnifiedMessages
+      )
+    }
+
     return Boolean(
       hasSelectedTask ||
       streamHandlers.hasPendingUserMessage ||
@@ -542,6 +554,7 @@ function ChatAreaContent({
     streamHandlers.pendingTaskId,
     streamHandlers.localPendingMessage,
     taskState?.messages,
+    inputAlwaysAtBottom,
   ])
 
   // Note: Team selection is now handled by useTeamSelection hook in TeamSelector component
@@ -1139,8 +1152,8 @@ function ChatAreaContent({
           </div>
         )}
         {/* Empty state content for inputAlwaysAtBottom mode (e.g., KnowledgeBaseSummaryCard in notebook mode) */}
-        {!hasMessages && inputAlwaysAtBottom && emptyStateContent && (
-          <div className="flex-1 flex items-center justify-center w-full px-4 sm:px-6">
+        {!hasMessages && inputAlwaysAtBottom && (
+          <div className="flex-1 flex flex-col items-center justify-center w-full px-4 sm:px-6">
             {emptyStateContent}
           </div>
         )}
@@ -1176,6 +1189,20 @@ function ChatAreaContent({
                 />
               </div>
             )}
+            {/* Guided questions for knowledge notebook mode - displayed above input card */}
+            {/* pb-10 provides enough space to avoid overlap with DeviceSelectorTab (-top-[29px]) */}
+            {!hasMessages &&
+              inputAlwaysAtBottom &&
+              taskType === 'knowledge' &&
+              guidedQuestions &&
+              guidedQuestions.length > 0 && (
+                <div className="w-full max-w-[820px] mx-auto px-4 sm:px-6 pb-10">
+                  <GuidedQuestions
+                    questions={guidedQuestions}
+                    onQuestionClick={question => chatState.setTaskInputMessage(question)}
+                  />
+                </div>
+              )}
             <div className="relative w-full max-w-[820px] mx-auto px-4 sm:px-6">
               <div className="py-4 bg-base">
                 <ChatInputCard

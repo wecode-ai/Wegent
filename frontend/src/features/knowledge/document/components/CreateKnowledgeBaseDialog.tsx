@@ -176,7 +176,7 @@ export function CreateKnowledgeBaseDialog({
         summary_enabled: summaryEnabled,
         summary_model_ref: summaryEnabled ? summaryModelRef : null,
         guided_questions:
-          kbType === 'notebook' && validGuidedQuestions.length > 0
+          selectedKbType === 'notebook' && validGuidedQuestions.length > 0
             ? validGuidedQuestions
             : undefined,
         max_calls_per_conversation: maxCalls,

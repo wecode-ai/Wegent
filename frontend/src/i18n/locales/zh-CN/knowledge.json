@@ -151,6 +151,7 @@
       "search": "搜索知识库...",
       "noResults": "没有匹配的知识库",
       "convertType": "转换类型",
+      "currentType": "当前类型",
       "convertToNotebook": "转为笔记本",
       "convertToClassic": "转为知识库",
       "convertToNotebookDisabled": "文档数超过 50 个限制，无法转为笔记本模式",

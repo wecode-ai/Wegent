@@ -42,7 +42,7 @@ export default function TopNavigation({
   onMembersChanged,
   isSidebarCollapsed = false,
   hideGroupChatOptions = false,
-  isRightPanelCollapsed = false,
+  isRightPanelCollapsed: _isRightPanelCollapsed = false,
 }: TopNavigationProps) {
   const { t } = useTranslation()
   const isMobile = useIsMobile()
@@ -56,7 +56,8 @@ export default function TopNavigation({
 
   // Compute padding classes separately to avoid conflicts
   const leftPaddingClass = isSidebarCollapsed && isDesktop ? 'pl-24' : 'pl-4 sm:pl-6'
-  const rightPaddingClass = isRightPanelCollapsed && isDesktop ? 'pr-20' : 'pr-4 sm:pr-6'
+  // Right padding is always the same - the expand button is fixed positioned and doesn't need reserved space
+  const rightPaddingClass = 'pr-4 sm:pr-6'
 
   return (
     <div

@@ -11,6 +11,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { knowledgeBaseApi } from '@/apis/knowledge-base'
+import { getKnowledgeBase } from '@/apis/knowledge'
 import { useUser } from '@/features/common/UserContext'
 import type {
   KnowledgeBase,
@@ -380,6 +381,18 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
       setSelectedGroupId(null)
       setViewMode('kb')
       addRecentAccess(kb)
+
+      // For notebook type, fetch full KB data to get guided_questions
+      if (kb.kb_type === 'notebook') {
+        getKnowledgeBase(kb.id)
+          .then(fullKb => {
+            // Only update if still selected (avoid race condition)
+            setSelectedKb(prev => (prev?.id === kb.id ? fullKb : prev))
+          })
+          .catch(error => {
+            console.error('Failed to fetch full knowledge base data:', error)
+          })
+      }
     },
     [addRecentAccess]
   )

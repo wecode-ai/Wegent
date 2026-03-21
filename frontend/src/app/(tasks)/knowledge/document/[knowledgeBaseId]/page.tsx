@@ -99,13 +99,7 @@ export default function KnowledgeBaseChatPage() {
 
   // Fetch knowledge base details to determine type
   // This hook is the single source of truth for kb_type routing
-  const {
-    knowledgeBase,
-    loading,
-    error,
-    accessDenied,
-    refresh: refreshKnowledgeBase,
-  } = useKnowledgeBaseDetail({
+  const { knowledgeBase, loading, error, accessDenied } = useKnowledgeBaseDetail({
     knowledgeBaseId: knowledgeBaseId || 0,
     autoLoad: !!knowledgeBaseId,
   })
@@ -172,6 +166,7 @@ export default function KnowledgeBaseChatPage() {
   const kbType = knowledgeBase.kb_type || 'notebook'
 
   // Route to appropriate component based on type and screen size
+  // Route to appropriate component based on type and screen size
   if (kbType === 'classic') {
     return (
       <>
@@ -179,11 +174,7 @@ export default function KnowledgeBaseChatPage() {
         <Suspense>
           <TaskParamSync />
         </Suspense>
-        {isMobile ? (
-          <KnowledgeBaseClassicPageMobile onKbTypeChanged={refreshKnowledgeBase} />
-        ) : (
-          <KnowledgeBaseClassicPageDesktop onKbTypeChanged={refreshKnowledgeBase} />
-        )}
+        {isMobile ? <KnowledgeBaseClassicPageMobile /> : <KnowledgeBaseClassicPageDesktop />}
       </>
     )
   }
@@ -195,11 +186,7 @@ export default function KnowledgeBaseChatPage() {
       <Suspense>
         <TaskParamSync />
       </Suspense>
-      {isMobile ? (
-        <KnowledgeBaseChatPageMobile onKbTypeChanged={refreshKnowledgeBase} />
-      ) : (
-        <KnowledgeBaseChatPageDesktop onKbTypeChanged={refreshKnowledgeBase} />
-      )}
+      {isMobile ? <KnowledgeBaseChatPageMobile /> : <KnowledgeBaseChatPageDesktop />}
     </>
   )
 }

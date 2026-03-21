@@ -328,6 +328,9 @@ def update_knowledge_base(
             ),
             summary_enabled=data.summary_enabled,
             summary_model_ref=data.summary_model_ref,
+            guided_questions=data.guided_questions,
+            max_calls_per_conversation=data.max_calls_per_conversation,
+            exempt_calls_before_check=data.exempt_calls_before_check,
         )
         add_span_event(
             "knowledge.base.updated",

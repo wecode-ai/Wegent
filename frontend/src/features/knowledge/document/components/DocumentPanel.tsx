@@ -5,7 +5,7 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { PanelRightClose, PanelRightOpen, FileText, Shield } from 'lucide-react'
+import { PanelRightClose, PanelRightOpen, FileText, Shield, Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { DocumentList, type KbGroupInfo } from './DocumentList'
@@ -59,8 +59,6 @@ interface DocumentPanelProps {
   onDocumentSelectionChange?: (documentIds: number[]) => void
   /** Callback when new chat button is clicked */
   onNewChat?: () => void
-  /** Callback when knowledge base type is converted */
-  onTypeConverted?: (updatedKb: KnowledgeBase) => void
   /** Callback when collapsed state changes */
   onCollapsedChange?: (collapsed: boolean) => void
   /** Group info for breadcrumb display */
@@ -89,13 +87,13 @@ export function DocumentPanel({
   canManage = true,
   canManagePermissions = false,
   onDocumentSelectionChange,
-  onNewChat: _onNewChat,
-  onTypeConverted,
+  onNewChat,
   onCollapsedChange,
   groupInfo,
   onGroupClick,
 }: DocumentPanelProps) {
   const { t } = useTranslation('knowledge')
+  const { t: tCommon } = useTranslation('common')
 
   // Tab state
   const [activeTab, setActiveTab] = useState<'documents' | 'permissions'>('documents')
@@ -194,29 +192,33 @@ export function DocumentPanel({
     }
   }, [isResizing, saveWidth])
 
-  // When collapsed, show a floating button to expand
+  // When collapsed, return null (the expand button is rendered as a portal-like fixed element)
+  // This ensures the collapsed state doesn't affect the parent flex layout
   if (isCollapsed) {
     return (
-      <div className="fixed top-16 right-4 z-40">
-        <TooltipProvider>
-          <Tooltip delayDuration={300}>
-            <TooltipTrigger asChild>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={toggleCollapsed}
-                className="h-8 w-8 p-0 rounded-full shadow-md"
-                aria-label={t('chatPage.showDocuments')}
-              >
-                <PanelRightOpen className="h-4 w-4" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="left">
-              <p>{t('chatPage.showDocuments')}</p>
-            </TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
-      </div>
+      <>
+        {/* Fixed expand button - positioned outside the flex flow */}
+        <div className="fixed top-16 right-4 z-40">
+          <TooltipProvider>
+            <Tooltip delayDuration={300}>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={toggleCollapsed}
+                  className="h-8 w-8 p-0 rounded-full shadow-md bg-base"
+                  aria-label={t('chatPage.showDocuments')}
+                >
+                  <PanelRightOpen className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="left">
+                <p>{t('chatPage.showDocuments')}</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        </div>
+      </>
     )
   }
 
@@ -241,7 +243,7 @@ export function DocumentPanel({
           onValueChange={value => setActiveTab(value as 'documents' | 'permissions')}
           className="flex-1 flex flex-col overflow-hidden"
         >
-          {/* Header row with tabs and collapse button */}
+          {/* Header row with tabs and action buttons */}
           <div className="flex items-center justify-between px-4 pt-3">
             <TabsList className="grid w-auto grid-cols-2">
               <TabsTrigger value="documents" className="gap-1.5">
@@ -253,16 +255,39 @@ export function DocumentPanel({
                 {t('document.permission.management')}
               </TabsTrigger>
             </TabsList>
-            {/* Collapse button */}
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={toggleCollapsed}
-              className="h-8 w-8 p-0"
-              title={t('chatPage.hideDocuments')}
-            >
-              <PanelRightClose className="w-4 h-4" />
-            </Button>
+            <div className="flex items-center gap-1">
+              {/* New chat button */}
+              {onNewChat && (
+                <TooltipProvider>
+                  <Tooltip delayDuration={300}>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={onNewChat}
+                        className="h-8 w-8 p-0"
+                        data-testid="new-chat-button"
+                      >
+                        <Plus className="w-4 h-4" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">
+                      <p>{tCommon('tasks.new_conversation')}</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              )}
+              {/* Collapse button */}
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={toggleCollapsed}
+                className="h-8 w-8 p-0"
+                title={t('chatPage.hideDocuments')}
+              >
+                <PanelRightClose className="w-4 h-4" />
+              </Button>
+            </div>
           </div>
           <TabsContent value="documents" className="flex-1 overflow-auto p-4 mt-0">
             <DocumentList
@@ -270,7 +295,6 @@ export function DocumentPanel({
               canManage={canManage}
               compact={true}
               onSelectionChange={onDocumentSelectionChange}
-              onTypeConverted={onTypeConverted}
               groupInfo={groupInfo}
               onGroupClick={onGroupClick}
             />
@@ -282,8 +306,30 @@ export function DocumentPanel({
       ) : (
         /* Document List only - no permission management */
         <div className="flex-1 flex flex-col overflow-hidden">
-          {/* Header row with collapse button */}
-          <div className="flex items-center justify-end px-4 pt-3">
+          {/* Header row with action buttons */}
+          <div className="flex items-center justify-end px-4 pt-3 gap-1">
+            {/* New chat button */}
+            {onNewChat && (
+              <TooltipProvider>
+                <Tooltip delayDuration={300}>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={onNewChat}
+                      className="h-8 w-8 p-0"
+                      data-testid="new-chat-button"
+                    >
+                      <Plus className="w-4 h-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">
+                    <p>{tCommon('tasks.new_conversation')}</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            )}
+            {/* Collapse button */}
             <Button
               variant="ghost"
               size="sm"
@@ -300,7 +346,6 @@ export function DocumentPanel({
               canManage={canManage}
               compact={true}
               onSelectionChange={onDocumentSelectionChange}
-              onTypeConverted={onTypeConverted}
               groupInfo={groupInfo}
               onGroupClick={onGroupClick}
             />

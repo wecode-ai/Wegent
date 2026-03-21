@@ -151,6 +151,7 @@
       "search": "Search knowledge bases...",
       "noResults": "No matching knowledge bases",
       "convertType": "Convert Type",
+      "currentType": "Current Type",
       "convertToNotebook": "Convert to Notebook",
       "convertToClassic": "Convert to Knowledge Base",
       "convertToNotebookDisabled": "Document count exceeds 50 file limit, cannot convert to notebook mode",

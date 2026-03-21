@@ -667,6 +667,9 @@ class KnowledgeOrchestrator:
         retrieval_config: Optional[Dict[str, Any]] = None,
         summary_enabled: Optional[bool] = None,
         summary_model_ref: Optional[Dict[str, str]] = None,
+        guided_questions: Optional[List[str]] = None,
+        max_calls_per_conversation: Optional[int] = None,
+        exempt_calls_before_check: Optional[int] = None,
     ) -> KnowledgeBaseResponse:
         """
         Update a knowledge base.
@@ -680,6 +683,9 @@ class KnowledgeOrchestrator:
             retrieval_config: New retrieval config (optional)
             summary_enabled: New summary enabled flag (optional)
             summary_model_ref: New summary model reference (optional)
+            guided_questions: New guided questions list (optional)
+            max_calls_per_conversation: Max calls per conversation (optional)
+            exempt_calls_before_check: Exempt calls before check (optional)
 
         Returns:
             KnowledgeBaseResponse
@@ -696,6 +702,9 @@ class KnowledgeOrchestrator:
             retrieval_config=retrieval_config,
             summary_enabled=summary_enabled,
             summary_model_ref=summary_model_ref,
+            guided_questions=guided_questions,
+            max_calls_per_conversation=max_calls_per_conversation,
+            exempt_calls_before_check=exempt_calls_before_check,
         )
 
         knowledge_base = KnowledgeService.update_knowledge_base(

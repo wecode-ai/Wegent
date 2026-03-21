@@ -22,7 +22,6 @@ import {
   CheckSquare,
   Square,
   AlertTriangle,
-  ArrowRightLeft,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
@@ -34,16 +33,12 @@ import { DocumentUpload, type TableDocument } from './DocumentUpload'
 import { DeleteDocumentDialog } from './DeleteDocumentDialog'
 import { EditDocumentDialog } from './EditDocumentDialog'
 import { RetrievalTestDialog } from './RetrievalTestDialog'
-import { ConvertKnowledgeBaseTypeDialog } from './ConvertKnowledgeBaseTypeDialog'
 import { useDocuments } from '../hooks/useDocuments'
 import { useColumnResize } from '../hooks/useColumnResize'
 import { refreshKnowledgeBaseSummary } from '@/apis/knowledge'
 import { toast } from '@/hooks/use-toast'
 import type { KnowledgeBase, KnowledgeDocument, SplitterConfig } from '@/types/knowledge'
 import { useTranslation } from '@/hooks/useTranslation'
-
-// Maximum documents allowed for notebook type
-const NOTEBOOK_MAX_DOCUMENTS = 50
 
 /** Group info for breadcrumb display */
 export interface KbGroupInfo {
@@ -62,8 +57,6 @@ interface DocumentListProps {
   onSelectionChange?: (documentIds: number[]) => void
   /** Callback to refresh knowledge base details (used after summary retry) */
   onRefreshKnowledgeBase?: () => void
-  /** Callback when knowledge base type is converted */
-  onTypeConverted?: (updatedKb: KnowledgeBase) => void
   /** Optional header actions to display next to the title (e.g., tabs) */
   headerActions?: React.ReactNode
   /** Group info for breadcrumb display */
@@ -82,7 +75,6 @@ export function DocumentList({
   compact = false,
   onSelectionChange,
   onRefreshKnowledgeBase,
-  onTypeConverted,
   headerActions,
   groupInfo,
   onGroupClick,
@@ -98,7 +90,6 @@ export function DocumentList({
 
   const [showUpload, setShowUpload] = useState(false)
   const [showRetrievalTest, setShowRetrievalTest] = useState(false)
-  const [showConvertDialog, setShowConvertDialog] = useState(false)
   const [viewingDoc, setViewingDoc] = useState<KnowledgeDocument | null>(null)
   const [editingDoc, setEditingDoc] = useState<KnowledgeDocument | null>(null)
   const [deletingDoc, setDeletingDoc] = useState<KnowledgeDocument | null>(null)
@@ -419,10 +410,7 @@ export function DocumentList({
   const longSummary = knowledgeBase.summary?.long_summary
 
   // Knowledge base type info
-  const kbType = knowledgeBase.kb_type || 'notebook'
-  const isNotebook = kbType === 'notebook'
-  // Check if can convert to notebook (document count must be <= 50)
-  const canConvertToNotebook = documents.length <= NOTEBOOK_MAX_DOCUMENTS
+  const isNotebook = (knowledgeBase.kb_type || 'notebook') === 'notebook'
   // Check if RAG is configured (has retriever and embedding model)
   const ragConfigured = !!(
     knowledgeBase.retrieval_config?.retriever_name &&
@@ -514,35 +502,8 @@ export function DocumentList({
             <p className="text-xs text-text-muted truncate">{knowledgeBase.description}</p>
           )}
         </div>
-        {/* Header actions (e.g., tabs) - displayed between title and convert button */}
+        {/* Header actions (e.g., tabs) */}
         {headerActions}
-        {/* Convert type button - only shown when canManage is true */}
-        {canManage && (
-          <TooltipProvider>
-            <Tooltip delayDuration={200}>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setShowConvertDialog(true)}
-                  disabled={!isNotebook && !canConvertToNotebook}
-                  className="flex items-center gap-1.5"
-                >
-                  <ArrowRightLeft className="w-4 h-4" />
-                  {isNotebook
-                    ? t('document.knowledgeBase.convertToClassic')
-                    : t('document.knowledgeBase.convertToNotebook')}
-                </Button>
-              </TooltipTrigger>
-              {/* Only show tooltip when button is disabled */}
-              {!isNotebook && !canConvertToNotebook && (
-                <TooltipContent side="bottom" className="max-w-xs">
-                  <p className="text-sm">{t('document.knowledgeBase.convertToNotebookDisabled')}</p>
-                </TooltipContent>
-              )}
-            </Tooltip>
-          </TooltipProvider>
-        )}
       </div>
 
       {/* Search bar and action buttons */}
@@ -863,13 +824,6 @@ export function DocumentList({
         open={showRetrievalTest}
         onOpenChange={setShowRetrievalTest}
         knowledgeBase={knowledgeBase}
-      />
-
-      <ConvertKnowledgeBaseTypeDialog
-        open={showConvertDialog}
-        onOpenChange={setShowConvertDialog}
-        knowledgeBase={knowledgeBase}
-        onSuccess={onTypeConverted}
       />
     </div>
   )
