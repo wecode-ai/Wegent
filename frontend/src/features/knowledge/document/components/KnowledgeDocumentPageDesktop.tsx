@@ -187,7 +187,36 @@ export function KnowledgeDocumentPageDesktop() {
     }
   }, [searchParams, sidebar.allKnowledgeBases, sidebar.selectedKbId, sidebar.selectKb])
 
-  // Load group KBs when a group is selected
+  // Helper function to convert KnowledgeBaseWithGroupInfo to KnowledgeBase
+  const toKnowledgeBase = useCallback(
+    (kb: {
+      id: number
+      name: string
+      description: string | null
+      user_id: number
+      namespace: string
+      document_count: number
+      kb_type?: string
+      created_at: string
+      updated_at: string
+    }): KnowledgeBase => ({
+      id: kb.id,
+      name: kb.name,
+      description: kb.description,
+      user_id: kb.user_id,
+      namespace: kb.namespace,
+      document_count: kb.document_count,
+      is_active: true,
+      summary_enabled: false,
+      kb_type: (kb.kb_type as KnowledgeBaseType) || 'notebook',
+      max_calls_per_conversation: 10,
+      exempt_calls_before_check: 5,
+      created_at: kb.created_at,
+      updated_at: kb.updated_at,
+    }),
+    []
+  )
+
   // Load group KBs when a group is selected
   useEffect(() => {
     if (!sidebar.selectedGroupId) {
@@ -206,8 +235,10 @@ export function KnowledgeDocumentPageDesktop() {
 
         let kbs: KnowledgeBase[] = []
         if (selectedGroup.type === 'personal') {
-          // Personal KBs are already in allKnowledgeBases
-          kbs = sidebar.allKnowledgeBases.filter(kb => kb.namespace === 'default' || !kb.namespace)
+          // Use the pre-grouped personal KBs from the sidebar hook
+          // This includes both created_by_me and shared_with_me KBs
+          const personalKbs = [...sidebar.personalCreatedByMe, ...sidebar.personalSharedWithMe]
+          kbs = personalKbs.map(toKnowledgeBase)
         } else if (selectedGroup.type === 'organization') {
           const res = await listKnowledgeBases('organization')
           kbs = res.items || []
@@ -238,7 +269,13 @@ export function KnowledgeDocumentPageDesktop() {
     return () => {
       isCancelled = true
     }
-  }, [sidebar.selectedGroupId, sidebar.groups, sidebar.allKnowledgeBases])
+  }, [
+    sidebar.selectedGroupId,
+    sidebar.groups,
+    sidebar.personalCreatedByMe,
+    sidebar.personalSharedWithMe,
+    toKnowledgeBase,
+  ])
   // Auto-collapse sidebar when a notebook KB is selected
   useEffect(() => {
     if (sidebar.selectedKb) {
@@ -564,6 +601,9 @@ export function KnowledgeDocumentPageDesktop() {
 
     // If a group is selected, show group list
     if (selectedGroup) {
+      // Check if this is personal mode
+      const isPersonalMode = selectedGroup.type === 'personal'
+
       return (
         <KnowledgeGroupListPage
           groupId={selectedGroup.id}
@@ -574,15 +614,23 @@ export function KnowledgeDocumentPageDesktop() {
           onSelectKb={handleSelectKb}
           onCreateKb={handleCreateKbFromGroup}
           onEditKb={kb => {
-            const fullKb = groupKbs.find(k => k.id === kb.id)
+            const fullKb =
+              sidebar.allKnowledgeBases.find(k => k.id === kb.id) ||
+              groupKbs.find(k => k.id === kb.id)
             if (fullKb) setEditingKb(fullKb)
           }}
           onDeleteKb={kb => {
-            const fullKb = groupKbs.find(k => k.id === kb.id)
+            const fullKb =
+              sidebar.allKnowledgeBases.find(k => k.id === kb.id) ||
+              groupKbs.find(k => k.id === kb.id)
             if (fullKb) setDeletingKb(fullKb)
           }}
           onToggleFavorite={handleToggleFavorite}
           isFavorite={isFavorite}
+          isPersonalMode={isPersonalMode}
+          personalCreatedByMe={isPersonalMode ? sidebar.personalCreatedByMe : undefined}
+          personalSharedWithMe={isPersonalMode ? sidebar.personalSharedWithMe : undefined}
+          getKbGroupInfo={isPersonalMode ? sidebar.getKbGroupInfo : undefined}
         />
       )
     }
