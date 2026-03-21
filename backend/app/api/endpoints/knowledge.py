@@ -171,7 +171,6 @@ def get_all_knowledge_bases_grouped(
 
 
 @router.get("/config")
-@router.get("/config")
 @trace_sync("get_knowledge_config", "knowledge.api")
 def get_knowledge_config():
     """

@@ -41,6 +41,7 @@ export function KnowledgeDocumentPageMobile() {
   const [createScope, setCreateScope] = useState<'personal' | 'group' | 'organization'>('personal')
   const [createGroupName, setCreateGroupName] = useState<string | undefined>(undefined)
   const [createKbType, setCreateKbType] = useState<KnowledgeBaseType>('notebook')
+  const [isCreating, setIsCreating] = useState(false)
 
   // Default teams config for saving model preference
   const [defaultTeamsConfig, setDefaultTeamsConfig] = useState<DefaultTeamsResponse | null>(null)
@@ -122,42 +123,50 @@ export function KnowledgeDocumentPageMobile() {
   // Handle KB created
   const handleCreate = useCallback(
     async (data: Omit<KnowledgeBaseCreate, 'namespace'>) => {
-      const namespace =
-        createScope === 'organization'
-          ? (tree.orgNamespace ?? 'organization')
-          : createGroupName || 'default'
+      setIsCreating(true)
+      try {
+        const namespace =
+          createScope === 'organization'
+            ? (tree.orgNamespace ?? 'organization')
+            : createGroupName || 'default'
 
-      // Use kb_type from dialog (user can change it in the dialog)
-      const kbType = data.kb_type || createKbType
+        // Use kb_type from dialog (user can change it in the dialog)
+        const kbType = data.kb_type || createKbType
 
-      const { createKnowledgeBase } = await import('@/apis/knowledge')
-      await createKnowledgeBase({
-        name: data.name,
-        description: data.description,
-        namespace,
-        retrieval_config: data.retrieval_config,
-        summary_enabled: data.summary_enabled,
-        summary_model_ref: data.summary_model_ref,
-        kb_type: kbType,
-      })
+        const { createKnowledgeBase } = await import('@/apis/knowledge')
+        await createKnowledgeBase({
+          name: data.name,
+          description: data.description,
+          namespace,
+          retrieval_config: data.retrieval_config,
+          summary_enabled: data.summary_enabled,
+          summary_model_ref: data.summary_model_ref,
+          kb_type: kbType,
+          guided_questions: data.guided_questions,
+          max_calls_per_conversation: data.max_calls_per_conversation,
+          exempt_calls_before_check: data.exempt_calls_before_check,
+        })
 
-      if (kbType === 'notebook' && data.summary_enabled && data.summary_model_ref) {
-        saveSummaryModelToPreference(data.summary_model_ref)
+        if (kbType === 'notebook' && data.summary_enabled && data.summary_model_ref) {
+          saveSummaryModelToPreference(data.summary_model_ref)
+        }
+
+        setShowCreateDialog(false)
+
+        if (createScope === 'organization') {
+          await tree.refreshOrg()
+        } else if (createGroupName) {
+          await tree.refreshGroup(createGroupName)
+        } else {
+          await tree.refreshPersonal()
+        }
+
+        setCreateGroupName(undefined)
+        setCreateScope('personal')
+        setCreateKbType('notebook')
+      } finally {
+        setIsCreating(false)
       }
-
-      setShowCreateDialog(false)
-
-      if (createScope === 'organization') {
-        await tree.refreshOrg()
-      } else if (createGroupName) {
-        await tree.refreshGroup(createGroupName)
-      } else {
-        await tree.refreshPersonal()
-      }
-
-      setCreateGroupName(undefined)
-      setCreateScope('personal')
-      setCreateKbType('notebook')
     },
     [createScope, createGroupName, createKbType, tree, saveSummaryModelToPreference]
   )
@@ -184,18 +193,21 @@ export function KnowledgeDocumentPageMobile() {
       />
 
       {/* Dialogs */}
+      {/* Dialogs */}
       <CreateKnowledgeBaseDialog
         open={showCreateDialog}
         onOpenChange={open => {
-          setShowCreateDialog(open)
-          if (!open) {
-            setCreateGroupName(undefined)
-            setCreateScope('personal')
-            setCreateKbType('notebook')
+          if (!isCreating) {
+            setShowCreateDialog(open)
+            if (!open) {
+              setCreateGroupName(undefined)
+              setCreateScope('personal')
+              setCreateKbType('notebook')
+            }
           }
         }}
         onSubmit={handleCreate}
-        loading={false}
+        loading={isCreating}
         scope={createScope}
         groupName={createGroupName}
         kbType={createKbType}

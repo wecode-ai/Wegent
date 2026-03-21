@@ -1800,11 +1800,13 @@ class KnowledgeService:
             )
 
         # Build personal section
+        # Use stable English identifiers for group_name - frontend handles localization
         created_by_me = [
-            kb_to_response(kb, "default", "个人", "personal") for kb in personal_created
+            kb_to_response(kb, "default", "personal", "personal")
+            for kb in personal_created
         ]
         shared_with_me = [
-            kb_to_response(kb, "default", "个人(共享)", "personal-shared")
+            kb_to_response(kb, "default", "personal-shared", "personal-shared")
             for kb in personal_shared
         ]
 
@@ -1833,7 +1835,10 @@ class KnowledgeService:
             )
 
         # Build organization section
-        org_display_name = org_namespace.display_name if org_namespace else "公司"
+        # Use stable English identifier for fallback - frontend handles localization
+        org_display_name = (
+            org_namespace.display_name if org_namespace else "organization"
+        )
         org_ns_name = org_namespace.name if org_namespace else None
         organization = AllGroupedOrganization(
             namespace=org_ns_name,

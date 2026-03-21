@@ -695,17 +695,27 @@ class KnowledgeOrchestrator:
         """
         from app.schemas.knowledge import KnowledgeBaseUpdate
 
-        # Build update data with only provided fields
-        update_data = KnowledgeBaseUpdate(
-            name=name,
-            description=description,
-            retrieval_config=retrieval_config,
-            summary_enabled=summary_enabled,
-            summary_model_ref=summary_model_ref,
-            guided_questions=guided_questions,
-            max_calls_per_conversation=max_calls_per_conversation,
-            exempt_calls_before_check=exempt_calls_before_check,
-        )
+        # Build update data with only provided fields to preserve unset-vs-clear semantics
+        # Only include fields that were explicitly provided (not None)
+        update_fields = {}
+        if name is not None:
+            update_fields["name"] = name
+        if description is not None:
+            update_fields["description"] = description
+        if retrieval_config is not None:
+            update_fields["retrieval_config"] = retrieval_config
+        if summary_enabled is not None:
+            update_fields["summary_enabled"] = summary_enabled
+        if summary_model_ref is not None:
+            update_fields["summary_model_ref"] = summary_model_ref
+        if guided_questions is not None:
+            update_fields["guided_questions"] = guided_questions
+        if max_calls_per_conversation is not None:
+            update_fields["max_calls_per_conversation"] = max_calls_per_conversation
+        if exempt_calls_before_check is not None:
+            update_fields["exempt_calls_before_check"] = exempt_calls_before_check
+
+        update_data = KnowledgeBaseUpdate(**update_fields)
 
         knowledge_base = KnowledgeService.update_knowledge_base(
             db=db,

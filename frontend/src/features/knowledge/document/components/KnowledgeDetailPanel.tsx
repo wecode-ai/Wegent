@@ -20,7 +20,6 @@ import { useUser } from '@/features/common/UserContext'
 import { useTeamContext } from '@/contexts/TeamContext'
 import { useTaskContext } from '@/features/tasks/contexts/taskContext'
 import { listGroups } from '@/apis/groups'
-import { taskKnowledgeBaseApi } from '@/apis/task-knowledge-base'
 import { ChatArea } from '@/features/tasks/components/chat'
 import { DocumentList, type KbGroupInfo } from './DocumentList'
 import { DocumentPanel } from './DocumentPanel'
@@ -186,18 +185,10 @@ export function KnowledgeDetailPanel({
             guidedQuestions={selectedKb.guided_questions}
             inputAlwaysAtBottom={true}
             emptyStateContent={<KnowledgeBaseSummaryCard knowledgeBase={selectedKb} />}
-            onTaskCreated={async (taskId: number) => {
-              // Bind the knowledge base to the newly created task
-              try {
-                await taskKnowledgeBaseApi.bindKnowledgeBase(
-                  taskId,
-                  selectedKb.name,
-                  selectedKb.namespace
-                )
-              } catch (error) {
-                console.error('Failed to bind knowledge base to task:', error)
-              }
-            }}
+            // Note: Knowledge base binding is handled by the backend when creating the task
+            // via the knowledge_base_id parameter in the chat request. No need to call
+            // bindKnowledgeBase API here as it would either fail (not a group chat) or
+            // be redundant (already bound).
           />
         </div>
 

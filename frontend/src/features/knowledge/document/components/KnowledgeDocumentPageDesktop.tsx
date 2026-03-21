@@ -115,6 +115,11 @@ export function KnowledgeDocumentPageDesktop() {
   const [deletingKb, setDeletingKb] = useState<KnowledgeBase | null>(null)
   const [sharingKb, setSharingKb] = useState<KnowledgeBase | null>(null)
 
+  // Loading states for dialogs
+  const [isCreating, setIsCreating] = useState(false)
+  const [isUpdating, setIsUpdating] = useState(false)
+  const [isDeleting, setIsDeleting] = useState(false)
+
   // Default teams config for saving model preference
   const [defaultTeamsConfig, setDefaultTeamsConfig] = useState<DefaultTeamsResponse | null>(null)
   const [teams, setTeams] = useState<Team[]>([])
@@ -183,11 +188,15 @@ export function KnowledgeDocumentPageDesktop() {
   }, [searchParams, sidebar.allKnowledgeBases, sidebar.selectedKbId, sidebar.selectKb])
 
   // Load group KBs when a group is selected
+  // Load group KBs when a group is selected
   useEffect(() => {
     if (!sidebar.selectedGroupId) {
       setGroupKbs([])
       return
     }
+
+    // Track current request to handle race conditions
+    let isCancelled = false
 
     const loadGroupKbs = async () => {
       setIsGroupKbsLoading(true)
@@ -206,18 +215,30 @@ export function KnowledgeDocumentPageDesktop() {
           const res = await listKnowledgeBases('group', selectedGroup.name)
           kbs = res.items || []
         }
-        setGroupKbs(kbs)
+
+        // Only update state if this request wasn't cancelled
+        if (!isCancelled) {
+          setGroupKbs(kbs)
+        }
       } catch (error) {
-        console.error('Failed to load group KBs:', error)
-        setGroupKbs([])
+        if (!isCancelled) {
+          console.error('Failed to load group KBs:', error)
+          setGroupKbs([])
+        }
       } finally {
-        setIsGroupKbsLoading(false)
+        if (!isCancelled) {
+          setIsGroupKbsLoading(false)
+        }
       }
     }
 
     loadGroupKbs()
-  }, [sidebar.selectedGroupId, sidebar.groups, sidebar.allKnowledgeBases])
 
+    // Cleanup function to cancel stale requests
+    return () => {
+      isCancelled = true
+    }
+  }, [sidebar.selectedGroupId, sidebar.groups, sidebar.allKnowledgeBases])
   // Auto-collapse sidebar when a notebook KB is selected
   useEffect(() => {
     if (sidebar.selectedKb) {
@@ -293,94 +314,107 @@ export function KnowledgeDocumentPageDesktop() {
 
   // Handle KB created
   // Handle KB created
+  // Handle KB created
   const handleCreate = useCallback(
     async (data: Omit<KnowledgeBaseCreate, 'namespace'> & { selectedGroupId?: string }) => {
-      // Determine namespace based on scope or selectedGroupId
-      let namespace = 'default'
+      setIsCreating(true)
+      try {
+        // Determine namespace based on scope or selectedGroupId
+        let namespace = 'default'
 
-      // If selectedGroupId is provided (from group selector), use it to determine namespace
-      if (data.selectedGroupId) {
-        const selectedGroup = sidebar.groups.find(g => g.id === data.selectedGroupId)
-        if (selectedGroup) {
-          if (selectedGroup.type === 'personal') {
-            namespace = 'default'
-          } else if (selectedGroup.type === 'organization') {
-            namespace = selectedGroup.name
-          } else {
-            namespace = selectedGroup.name
+        // If selectedGroupId is provided (from group selector), use it to determine namespace
+        if (data.selectedGroupId) {
+          const selectedGroup = sidebar.groups.find(g => g.id === data.selectedGroupId)
+          if (selectedGroup) {
+            if (selectedGroup.type === 'personal') {
+              namespace = 'default'
+            } else if (selectedGroup.type === 'organization') {
+              namespace = selectedGroup.name
+            } else {
+              namespace = selectedGroup.name
+            }
+          }
+        } else if (createScope === 'organization') {
+          // Get org namespace from groups
+          const orgGroup = sidebar.groups.find(g => g.type === 'organization')
+          namespace = orgGroup?.name || 'organization'
+        } else if (createGroupName) {
+          namespace = createGroupName
+        }
+
+        // Use kb_type from dialog (user can change it in the dialog)
+        const kbType = data.kb_type || createKbType
+
+        // Use the appropriate API based on scope
+        const { createKnowledgeBase } = await import('@/apis/knowledge')
+        await createKnowledgeBase({
+          name: data.name,
+          description: data.description,
+          namespace,
+          retrieval_config: data.retrieval_config,
+          summary_enabled: data.summary_enabled,
+          summary_model_ref: data.summary_model_ref,
+          kb_type: kbType,
+          guided_questions: data.guided_questions,
+          max_calls_per_conversation: data.max_calls_per_conversation,
+          exempt_calls_before_check: data.exempt_calls_before_check,
+        })
+
+        // Save model preference for notebook type
+        if (kbType === 'notebook' && data.summary_enabled && data.summary_model_ref) {
+          saveSummaryModelToPreference(data.summary_model_ref)
+        }
+        setShowCreateDialog(false)
+
+        // Refresh sidebar data
+        await sidebar.refreshAll()
+
+        // Reload group KBs if a group is selected
+        if (sidebar.selectedGroupId) {
+          const selectedGroup = sidebar.groups.find(g => g.id === sidebar.selectedGroupId)
+          if (selectedGroup) {
+            let kbs: KnowledgeBase[] = []
+            if (selectedGroup.type === 'organization') {
+              const res = await listKnowledgeBases('organization')
+              kbs = res.items || []
+            } else if (selectedGroup.type === 'group' && selectedGroup.name) {
+              const res = await listKnowledgeBases('group', selectedGroup.name)
+              kbs = res.items || []
+            }
+            setGroupKbs(kbs)
           }
         }
-      } else if (createScope === 'organization') {
-        // Get org namespace from groups
-        const orgGroup = sidebar.groups.find(g => g.type === 'organization')
-        namespace = orgGroup?.name || 'organization'
-      } else if (createGroupName) {
-        namespace = createGroupName
+
+        setCreateGroupName(undefined)
+        setCreateScope('personal')
+        setCreateKbType('notebook')
+      } finally {
+        setIsCreating(false)
       }
-
-      // Use kb_type from dialog (user can change it in the dialog)
-      const kbType = data.kb_type || createKbType
-
-      // Use the appropriate API based on scope
-      const { createKnowledgeBase } = await import('@/apis/knowledge')
-      await createKnowledgeBase({
-        name: data.name,
-        description: data.description,
-        namespace,
-        retrieval_config: data.retrieval_config,
-        summary_enabled: data.summary_enabled,
-        summary_model_ref: data.summary_model_ref,
-        kb_type: kbType,
-      })
-
-      // Save model preference for notebook type
-      if (kbType === 'notebook' && data.summary_enabled && data.summary_model_ref) {
-        saveSummaryModelToPreference(data.summary_model_ref)
-      }
-      setShowCreateDialog(false)
-
-      // Refresh sidebar data
-      await sidebar.refreshAll()
-
-      // Reload group KBs if a group is selected
-      if (sidebar.selectedGroupId) {
-        const selectedGroup = sidebar.groups.find(g => g.id === sidebar.selectedGroupId)
-        if (selectedGroup) {
-          let kbs: KnowledgeBase[] = []
-          if (selectedGroup.type === 'organization') {
-            const res = await listKnowledgeBases('organization')
-            kbs = res.items || []
-          } else if (selectedGroup.type === 'group' && selectedGroup.name) {
-            const res = await listKnowledgeBases('group', selectedGroup.name)
-            kbs = res.items || []
-          }
-          setGroupKbs(kbs)
-        }
-      }
-
-      setCreateGroupName(undefined)
-      setCreateScope('personal')
-      setCreateKbType('notebook')
     },
     [createScope, createGroupName, createKbType, sidebar, saveSummaryModelToPreference]
   )
-
   // Handle KB updated
   const handleUpdate = useCallback(
     async (data: KnowledgeBaseUpdate) => {
       if (!editingKb) return
 
-      const { updateKnowledgeBase } = await import('@/apis/knowledge')
-      await updateKnowledgeBase(editingKb.id, data)
+      setIsUpdating(true)
+      try {
+        const { updateKnowledgeBase } = await import('@/apis/knowledge')
+        await updateKnowledgeBase(editingKb.id, data)
 
-      if (editingKb.kb_type === 'notebook' && data.summary_enabled && data.summary_model_ref) {
-        saveSummaryModelToPreference(data.summary_model_ref)
+        if (editingKb.kb_type === 'notebook' && data.summary_enabled && data.summary_model_ref) {
+          saveSummaryModelToPreference(data.summary_model_ref)
+        }
+
+        // Refresh sidebar data
+        await sidebar.refreshAll()
+
+        setEditingKb(null)
+      } finally {
+        setIsUpdating(false)
       }
-
-      // Refresh sidebar data
-      await sidebar.refreshAll()
-
-      setEditingKb(null)
     },
     [editingKb, sidebar, saveSummaryModelToPreference]
   )
@@ -389,20 +423,24 @@ export function KnowledgeDocumentPageDesktop() {
   const handleDelete = useCallback(async () => {
     if (!deletingKb) return
 
-    const { deleteKnowledgeBase } = await import('@/apis/knowledge')
-    await deleteKnowledgeBase(deletingKb.id)
+    setIsDeleting(true)
+    try {
+      const { deleteKnowledgeBase } = await import('@/apis/knowledge')
+      await deleteKnowledgeBase(deletingKb.id)
 
-    // Refresh sidebar data
-    await sidebar.refreshAll()
+      // Refresh sidebar data
+      await sidebar.refreshAll()
 
-    // Clear selection if deleted KB was selected
-    if (deletingKb.id === sidebar.selectedKbId) {
-      sidebar.clearSelection()
+      // Clear selection if deleted KB was selected
+      if (deletingKb.id === sidebar.selectedKbId) {
+        sidebar.clearSelection()
+      }
+
+      setDeletingKb(null)
+    } finally {
+      setIsDeleting(false)
     }
-
-    setDeletingKb(null)
   }, [deletingKb, sidebar])
-
   // Check if KB is favorite
   const isFavorite = useCallback(
     (kbId: number) => {
@@ -598,16 +636,18 @@ export function KnowledgeDocumentPageDesktop() {
       <CreateKnowledgeBaseDialog
         open={showCreateDialog}
         onOpenChange={open => {
-          setShowCreateDialog(open)
-          if (!open) {
-            setCreateGroupName(undefined)
-            setCreateScope('personal')
-            setCreateKbType('notebook')
-            setShowGroupSelector(false)
+          if (!isCreating) {
+            setShowCreateDialog(open)
+            if (!open) {
+              setCreateGroupName(undefined)
+              setCreateScope('personal')
+              setCreateKbType('notebook')
+              setShowGroupSelector(false)
+            }
           }
         }}
         onSubmit={handleCreate}
-        loading={false}
+        loading={isCreating}
         scope={createScope}
         groupName={createGroupName}
         kbType={createKbType}
@@ -618,19 +658,19 @@ export function KnowledgeDocumentPageDesktop() {
       />
       <EditKnowledgeBaseDialog
         open={!!editingKb}
-        onOpenChange={open => !open && setEditingKb(null)}
+        onOpenChange={open => !isUpdating && !open && setEditingKb(null)}
         knowledgeBase={editingKb}
         onSubmit={handleUpdate}
-        loading={false}
+        loading={isUpdating}
         knowledgeDefaultTeamId={knowledgeDefaultTeamId}
       />
 
       <DeleteKnowledgeBaseDialog
         open={!!deletingKb}
-        onOpenChange={open => !open && setDeletingKb(null)}
+        onOpenChange={open => !isDeleting && !open && setDeletingKb(null)}
         knowledgeBase={deletingKb}
         onConfirm={handleDelete}
-        loading={false}
+        loading={isDeleting}
       />
 
       <ShareLinkDialog

@@ -145,7 +145,9 @@ export function EditKnowledgeBaseDialog({
       // Build update data
       // Filter out empty guided questions
       const validGuidedQuestions = guidedQuestions.filter(q => q.trim().length > 0)
-      const isNotebook = knowledgeBase?.kb_type === 'notebook'
+      // Use fullKnowledgeBase for accurate data, fallback to initial prop
+      const kb = fullKnowledgeBase || knowledgeBase
+      const isNotebook = kb?.kb_type === 'notebook'
       const updateData: KnowledgeBaseUpdate = {
         name: name.trim(),
         description: description.trim(), // Allow empty string to clear description
@@ -157,7 +159,7 @@ export function EditKnowledgeBaseDialog({
       }
 
       // Add retrieval config update if advanced settings were modified
-      if (knowledgeBase?.retrieval_config && retrievalConfig) {
+      if (kb?.retrieval_config && retrievalConfig) {
         const retrievalConfigUpdate: RetrievalConfigUpdate = {}
 
         // Only include fields that can be updated (exclude retriever and embedding_config)
@@ -194,8 +196,9 @@ export function EditKnowledgeBaseDialog({
     onOpenChange(newOpen)
   }
 
-  // Knowledge base type info
-  const kbType = knowledgeBase?.kb_type || 'notebook'
+  // Knowledge base type info - use fullKnowledgeBase for accurate data
+  const kb = fullKnowledgeBase || knowledgeBase
+  const kbType = kb?.kb_type || 'notebook'
   const isNotebook = kbType === 'notebook'
   // Check if can convert to notebook (document count must be <= 50)
   const canConvertToNotebook =
@@ -236,9 +239,7 @@ export function EditKnowledgeBaseDialog({
                 setSummaryModelRef(value)
                 setSummaryModelError('')
               }}
-              knowledgeDefaultTeamId={
-                !knowledgeBase?.summary_model_ref ? knowledgeDefaultTeamId : undefined
-              }
+              knowledgeDefaultTeamId={!kb?.summary_model_ref ? knowledgeDefaultTeamId : undefined}
               callLimits={{ maxCalls, exemptCalls }}
               onCallLimitsChange={({ maxCalls: nextMax, exemptCalls: nextExempt }) => {
                 setMaxCalls(nextMax)
@@ -247,12 +248,12 @@ export function EditKnowledgeBaseDialog({
               advancedVariant="collapsible"
               advancedOpen={showAdvanced}
               onAdvancedOpenChange={setShowAdvanced}
-              showRetrievalSection={!!knowledgeBase?.retrieval_config}
+              showRetrievalSection={!!kb?.retrieval_config}
               retrievalConfig={retrievalConfig}
               onRetrievalConfigChange={handleRetrievalConfigChange}
               retrievalReadOnly={false}
               retrievalPartialReadOnly={true}
-              showGuidedQuestions={knowledgeBase?.kb_type === 'notebook'}
+              showGuidedQuestions={kb?.kb_type === 'notebook'}
               guidedQuestions={guidedQuestions}
               onGuidedQuestionsChange={setGuidedQuestions}
             />

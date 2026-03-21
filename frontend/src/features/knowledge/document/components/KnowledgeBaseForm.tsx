@@ -266,6 +266,7 @@ export function KnowledgeBaseForm({
                   placeholder={t('knowledge:document.guidedQuestions.placeholder')}
                   maxLength={MAX_QUESTION_LENGTH}
                   data-testid={`guided-question-input-${index}`}
+                  aria-label={`${t('knowledge:document.guidedQuestions.label')} ${index + 1}`}
                 />
                 <Button
                   type="button"

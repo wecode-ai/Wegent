@@ -14,7 +14,6 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import { Search, BookOpen, Database, Users } from 'lucide-react'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import { Spinner } from '@/components/ui/spinner'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type { KnowledgeBase } from '@/types/knowledge'
@@ -62,7 +61,6 @@ export function CommandPalette({
 }: CommandPaletteProps) {
   const { t } = useTranslation('knowledge')
   const [query, setQuery] = useState('')
-  const [isSearching, _setIsSearching] = useState(false)
   const [selectedIndex, setSelectedIndex] = useState(0)
 
   // Reset state when dialog opens/closes
@@ -105,6 +103,15 @@ export function CommandPalette({
 
     return [...kbResults, ...groupResults]
   }, [query, allKnowledgeBases, allGroups])
+
+  // Reset selectedIndex when results change to prevent out-of-bounds
+  useEffect(() => {
+    if (selectedIndex >= results.length && results.length > 0) {
+      setSelectedIndex(results.length - 1)
+    } else if (results.length === 0) {
+      setSelectedIndex(0)
+    }
+  }, [results.length, selectedIndex])
 
   // Handle keyboard navigation
   const handleKeyDown = useCallback(
@@ -167,14 +174,7 @@ export function CommandPalette({
 
         {/* Results */}
         <div className="max-h-80 overflow-y-auto">
-          {isSearching ? (
-            <div className="flex items-center justify-center py-8">
-              <Spinner size="sm" />
-              <span className="ml-2 text-sm text-text-muted">
-                {t('document.sidebar.searching', '搜索中...')}
-              </span>
-            </div>
-          ) : query && results.length === 0 ? (
+          {query && results.length === 0 ? (
             <div className="py-8 text-center text-sm text-text-muted">
               {t('document.sidebar.noSearchResults', '未找到相关知识库')}
             </div>
@@ -208,7 +208,9 @@ export function CommandPalette({
                           )}
                           <span className="flex-1 text-left truncate">{kb.name}</span>
                           <span className="text-xs text-text-muted truncate max-w-32">
-                            {kb.namespace === 'default' ? '个人' : kb.namespace}
+                            {kb.namespace === 'default'
+                              ? t('document.sidebar.personal')
+                              : kb.namespace}
                           </span>
                         </button>
                       )
