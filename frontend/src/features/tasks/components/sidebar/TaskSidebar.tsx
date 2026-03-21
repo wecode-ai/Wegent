@@ -117,11 +117,21 @@ export default function TaskSidebar({
   const handleOpenSearchDialog = () => {
     setIsSearchDialogOpen(true)
   }
-
   // Navigation buttons - show evaluation only for admin users
   const isAdmin = user?.role === 'admin'
-  const navigationButtons = useMemo(() => {
-    const buttons = [
+  // Define type explicitly to include all possible buttonPageType values
+  type ButtonPageType = 'chat' | 'code' | 'flow' | 'knowledge' | 'devices' | 'evaluation'
+  interface NavigationButton {
+    label: string
+    icon: typeof Workflow
+    path: string
+    isActive: boolean
+    tooltip?: string
+    buttonPageType: ButtonPageType
+  }
+
+  const navigationButtons: NavigationButton[] = useMemo(() => {
+    const buttons: NavigationButton[] = [
       {
         label: t('common:navigation.flow'),
         icon: Workflow,
@@ -159,6 +169,8 @@ export default function TaskSidebar({
         icon: ClipboardCheck,
         path: paths.evaluation.getHref(),
         isActive: pageType === 'evaluation',
+        tooltip: undefined,
+        buttonPageType: 'evaluation' as const,
       })
     }
     return buttons
