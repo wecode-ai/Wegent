@@ -174,7 +174,8 @@ export default function TaskListSection({
       let targetPath = paths.chat.getHref() // default to chat
 
       if (task.task_type === 'knowledge' && task.knowledge_base_id) {
-        // Knowledge type tasks navigate to the knowledge base page
+        // Knowledge type tasks navigate to the dedicated KB chat page
+        // This ensures full task functionality (follow-up questions, link sharing, etc.)
         targetPath = `/knowledge/document/${task.knowledge_base_id}`
       } else if (task.task_type === 'task') {
         // Task type tasks navigate to device chat page

@@ -44,6 +44,78 @@
       "createdDesc": "Click the button above to create your first knowledge base",
       "sharedDesc": "Knowledge bases shared by other users will appear here"
     },
+    "tree": {
+      "title": "Knowledge Base",
+      "myKnowledge": "My Knowledge",
+      "groupKnowledge": "Group Knowledge",
+      "orgKnowledge": "Organization Knowledge",
+      "searchPlaceholder": "Search knowledge bases...",
+      "emptyState": "Select a knowledge base from the left panel",
+      "emptyStateHint": "Browse and select a knowledge base to view its details",
+      "noResults": "No matching knowledge bases found",
+      "collapse": "Collapse",
+      "collapseTree": "Collapse list",
+      "expandTree": "List",
+      "docCount": "{{count}} docs",
+      "loadingKbs": "Loading knowledge bases..."
+    },
+    "sidebar": {
+      "searchPlaceholder": "Search knowledge bases...",
+      "favorites": "Favorites",
+      "recent": "Recent",
+      "groups": "Groups",
+      "navigation": "Navigation",
+      "all": "All",
+      "noGroups": "No groups",
+      "noFavorites": "No favorite knowledge bases",
+      "noRecent": "No recent access history",
+      "clearRecent": "Clear history",
+      "personal": "Personal",
+      "organization": "Organization",
+      "groupSettings": "Group Settings",
+      "justNow": "Just now",
+      "minutesAgo": "{{count}} min ago",
+      "hoursAgo": "{{count}} hr ago",
+      "yesterday": "Yesterday",
+      "daysAgo": "{{count}} days ago"
+    },
+    "allKnowledgeBases": "All Knowledge Bases",
+    "groupFilter": {
+      "all": "All Groups"
+    },
+    "table": {
+      "name": "Name",
+      "group": "Group",
+      "lastAccess": "Last Access",
+      "actions": "Actions",
+      "edit": "Edit",
+      "delete": "Delete",
+      "minutesAgo": "min ago",
+      "daysAgo": "days ago"
+    },
+    "groupList": {
+      "back": "Back",
+      "create": "New Knowledge Base",
+      "searchPlaceholder": "Search knowledge bases...",
+      "sortUpdated": "Recently Updated",
+      "sortCreated": "Date Created",
+      "sortName": "Name",
+      "empty": "No knowledge bases",
+      "emptyHint": "Click the button above to create your first knowledge base",
+      "loadMore": "Load More",
+      "documentCount": "{{count}} documents",
+      "updatedAt": "Updated {{time}}"
+    },
+    "search": {
+      "placeholder": "Search knowledge bases...",
+      "recentSearches": "Recent Searches",
+      "allResults": "All Results",
+      "knowledgeBases": "Knowledge Bases",
+      "groupsLabel": "Groups",
+      "noResults": "No matching knowledge bases found",
+      "searching": "Searching...",
+      "kbCount": "{{count}} knowledge bases"
+    },
     "accessDenied": {
       "title": "Access Denied",
       "description": "You don't have permission to access this knowledge base. Please contact the knowledge base creator or administrator if you have questions.",
@@ -79,13 +151,16 @@
       "search": "Search knowledge bases...",
       "noResults": "No matching knowledge bases",
       "convertType": "Convert Type",
+      "currentType": "Current Type",
       "convertToNotebook": "Convert to Notebook",
       "convertToClassic": "Convert to Knowledge Base",
       "convertToNotebookDisabled": "Document count exceeds 50 file limit, cannot convert to notebook mode",
       "convertToClassicConfirm": "After conversion, you will no longer be able to chat directly in the knowledge base, but there will be no document limit. Are you sure you want to convert?",
       "convertToNotebookConfirm": "After conversion to notebook, you can upload files and chat directly in the knowledge base, but the document limit will be 50 files. Are you sure you want to convert?",
       "convertSuccess": "Knowledge base type converted successfully",
-      "convertFailed": "Failed to convert knowledge base type"
+      "convertFailed": "Failed to convert knowledge base type",
+      "targetGroup": "Target Group",
+      "selectGroup": "Select Group"
     },
     "document": {
       "title": "Documents",
@@ -415,6 +490,13 @@
       "exemptCallsHint": "Number of calls exempt from token checking (must be less than maximum calls)",
       "validationError": "Exempt calls must be less than maximum calls"
     },
+    "guidedQuestions": {
+      "label": "Guided Questions (Optional)",
+      "placeholder": "Enter a guided question",
+      "addButton": "Add Question",
+      "helpText": "Will be displayed above the input when starting a new conversation",
+      "maxReached": "Maximum 3 guided questions allowed"
+    },
     "retrievalTest": {
       "button": "Retrieval Test",
       "title": "Retrieval Test",
@@ -432,6 +514,7 @@
       "modified": "Modified"
     },
     "goToSettings": "Go to Settings",
+    "groupSettings": "Group Settings",
     "groupChat": {
       "create": "Create Group Chat",
       "createForGroup": "Create group chat for group",
@@ -519,6 +602,9 @@
     "summaryFailedHint": "Click retry to regenerate summary",
     "summaryRetry": "Retry",
     "summaryRetrying": "Retrying...",
+    "guidedQuestions": {
+      "hint": "Try these questions:"
+    },
     "accessDenied": {
       "title": "Cannot Access Knowledge Base",
       "description": "You do not have permission to access this knowledge base. If you have any questions, please contact the knowledge base creator or administrator.",

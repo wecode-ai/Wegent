@@ -86,7 +86,7 @@ export function KnowledgeBaseSummaryCard({
   }
 
   return (
-    <div className="w-full max-w-3xl mx-auto mb-6">
+    <div className="w-full max-w-3xl mx-auto mb-6 pt-6">
       <div className="bg-surface/50 border border-border rounded-xl p-5 space-y-4">
         {/* Header with icon and name */}
         <div className="flex items-start gap-3">

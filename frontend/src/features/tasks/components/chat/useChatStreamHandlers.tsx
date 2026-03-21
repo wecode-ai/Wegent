@@ -603,9 +603,15 @@ export function useChatStreamHandlers({
               }
 
               if (completedTaskId && !selectedTaskDetail?.id) {
-                const params = new URLSearchParams(Array.from(searchParams.entries()))
-                params.set('taskId', String(completedTaskId))
-                router.push(`?${params.toString()}`)
+                // For knowledge type tasks on /knowledge page, navigate to the dedicated KB chat page
+                // This ensures full task functionality (follow-up questions, link sharing, etc.)
+                if (taskType === 'knowledge' && knowledgeBaseId && pathname === '/knowledge') {
+                  router.push(`/knowledge/document/${knowledgeBaseId}?taskId=${completedTaskId}`)
+                } else {
+                  const params = new URLSearchParams(Array.from(searchParams.entries()))
+                  params.set('taskId', String(completedTaskId))
+                  router.push(`?${params.toString()}`)
+                }
                 refreshTasks()
               }
 
