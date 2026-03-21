@@ -82,6 +82,12 @@ export interface KnowledgeGroupListPageProps {
   onFilterGroupChange?: (groupId: string | null) => void
   /** Available groups for filter (for "All" mode) */
   availableGroups?: Array<{ id: string; name: string; displayName: string }>
+  /** Whether this is "Personal" mode (to show created/shared sections) */
+  isPersonalMode?: boolean
+  /** Knowledge bases created by current user (for personal mode) */
+  personalCreatedByMe?: KnowledgeBaseWithGroupInfo[]
+  /** Knowledge bases shared with current user (for personal mode) */
+  personalSharedWithMe?: KnowledgeBaseWithGroupInfo[]
 }
 
 type SortBy = 'name' | 'updated' | 'group'
@@ -150,6 +156,9 @@ export function KnowledgeGroupListPage({
   filterGroupId,
   onFilterGroupChange: _onFilterGroupChange,
   availableGroups: _availableGroups,
+  isPersonalMode = false,
+  personalCreatedByMe = [],
+  personalSharedWithMe = [],
 }: KnowledgeGroupListPageProps) {
   const { t } = useTranslation('knowledge')
   const [sortBy, setSortBy] = useState<SortBy>('updated')
@@ -162,6 +171,35 @@ export function KnowledgeGroupListPage({
     }
     return knowledgeBases
   }, [isAllMode, knowledgeBasesWithGroupInfo, knowledgeBases])
+
+  // Sort function for knowledge bases
+  const sortKbs = useCallback(
+    (kbs: KbDataItem[]) => {
+      return [...kbs].sort((a, b) => {
+        let comparison = 0
+        switch (sortBy) {
+          case 'name':
+            comparison = a.name.localeCompare(b.name)
+            break
+          case 'updated':
+            comparison =
+              new Date(b.updated_at || 0).getTime() - new Date(a.updated_at || 0).getTime()
+            break
+          case 'group':
+            if (getKbGroupInfo) {
+              const groupA = getKbGroupInfo(a).groupName
+              const groupB = getKbGroupInfo(b).groupName
+              comparison = groupA.localeCompare(groupB)
+            }
+            break
+          default:
+            comparison = 0
+        }
+        return sortOrder === 'asc' ? comparison : -comparison
+      })
+    },
+    [sortBy, sortOrder, getKbGroupInfo]
+  )
 
   // Filter and sort knowledge bases
   const filteredKbs = useMemo(() => {
@@ -178,31 +216,18 @@ export function KnowledgeGroupListPage({
       })
     }
 
-    // Sort
-    result.sort((a, b) => {
-      let comparison = 0
-      switch (sortBy) {
-        case 'name':
-          comparison = a.name.localeCompare(b.name)
-          break
-        case 'updated':
-          comparison = new Date(b.updated_at || 0).getTime() - new Date(a.updated_at || 0).getTime()
-          break
-        case 'group':
-          if (getKbGroupInfo) {
-            const groupA = getKbGroupInfo(a).groupName
-            const groupB = getKbGroupInfo(b).groupName
-            comparison = groupA.localeCompare(groupB)
-          }
-          break
-        default:
-          comparison = 0
-      }
-      return sortOrder === 'asc' ? comparison : -comparison
-    })
+    return sortKbs(result)
+  }, [dataSource, isAllMode, filterGroupId, getKbGroupInfo, sortKbs])
 
-    return result
-  }, [dataSource, sortBy, sortOrder, isAllMode, filterGroupId, getKbGroupInfo])
+  // Sorted personal KBs for personal mode
+  const sortedCreatedByMe = useMemo(
+    () => sortKbs(personalCreatedByMe),
+    [personalCreatedByMe, sortKbs]
+  )
+  const sortedSharedWithMe = useMemo(
+    () => sortKbs(personalSharedWithMe),
+    [personalSharedWithMe, sortKbs]
+  )
 
   const handleToggleFavorite = useCallback(
     (e: React.MouseEvent, kb: KbDataItem) => {
@@ -232,6 +257,135 @@ export function KnowledgeGroupListPage({
       <ChevronUp className="w-3.5 h-3.5 ml-1" />
     ) : (
       <ChevronDown className="w-3.5 h-3.5 ml-1" />
+    )
+  }
+
+  // Render table header
+  const renderTableHeader = (showGroupColumn: boolean) => (
+    <thead className="sticky top-0 bg-surface border-b border-border">
+      <tr className="text-left text-sm text-text-secondary">
+        <th className="px-6 py-3 font-medium w-[40%]">
+          <button
+            className="flex items-center hover:text-text-primary transition-colors"
+            onClick={() => handleSort('name')}
+          >
+            {t('document.table.name', '名称')}
+            <SortIcon column="name" />
+          </button>
+        </th>
+        {showGroupColumn && (
+          <th className="px-6 py-3 font-medium w-[25%]">
+            <button
+              className="flex items-center hover:text-text-primary transition-colors"
+              onClick={() => handleSort('group')}
+            >
+              {t('document.table.group', '归属小组')}
+              <SortIcon column="group" />
+            </button>
+          </th>
+        )}
+        <th className="px-6 py-3 font-medium w-[20%]">
+          <button
+            className="flex items-center hover:text-text-primary transition-colors"
+            onClick={() => handleSort('updated')}
+          >
+            {t('document.table.lastAccess', '最近访问')}
+            <SortIcon column="updated" />
+          </button>
+        </th>
+        <th className="px-6 py-3 font-medium w-[15%] text-right">
+          {t('document.table.actions', '操作')}
+        </th>
+      </tr>
+    </thead>
+  )
+
+  // Render table rows
+  const renderTableRows = (kbs: KbDataItem[], showGroupColumn: boolean) => (
+    <tbody>
+      {kbs.map(kb => (
+        <KnowledgeBaseRow
+          key={kb.id}
+          kb={kb}
+          onClick={() => onSelectKb(kb)}
+          onEdit={onEditKb ? () => onEditKb(kb) : undefined}
+          onDelete={onDeleteKb ? () => onDeleteKb(kb) : undefined}
+          onToggleFavorite={onToggleFavorite ? e => handleToggleFavorite(e, kb) : undefined}
+          isFavorite={isFavorite?.(kb.id)}
+          showGroupInfo={showGroupColumn}
+          groupInfo={getKbGroupInfo?.(kb)}
+          tFunc={t}
+        />
+      ))}
+    </tbody>
+  )
+
+  // Render personal mode content with separate sections
+  const renderPersonalModeContent = () => {
+    const hasCreated = sortedCreatedByMe.length > 0
+    const hasShared = sortedSharedWithMe.length > 0
+
+    if (!hasCreated && !hasShared) {
+      return (
+        <div className="flex flex-col items-center justify-center py-12 text-center">
+          <FolderOpen className="w-12 h-12 text-text-muted mb-4" />
+          <h3 className="text-lg font-medium text-text-primary mb-2">
+            {t('document.knowledgeBase.empty', '暂无知识库')}
+          </h3>
+          <p className="text-sm text-text-muted mb-4">
+            {t('document.knowledgeBase.createDesc', '点击上方按钮创建第一个知识库')}
+          </p>
+        </div>
+      )
+    }
+
+    return (
+      <div className="space-y-6">
+        {/* Created by me section */}
+        <div>
+          <h3 className="px-6 py-3 text-sm font-medium text-text-secondary bg-surface-hover border-b border-border">
+            {t('document.personalGroups.createdByMe', '我创建的')}
+            <span className="ml-2 text-text-muted">({sortedCreatedByMe.length})</span>
+          </h3>
+          {hasCreated ? (
+            <table className="w-full table-fixed min-w-0">
+              {renderTableHeader(false)}
+              {renderTableRows(sortedCreatedByMe, false)}
+            </table>
+          ) : (
+            <div className="px-6 py-8 text-center text-text-muted">
+              <p>{t('document.personalGroups.noCreated', '您还没有创建任何知识库')}</p>
+              <p className="text-sm mt-1">
+                {t('document.personalGroups.createdDesc', '点击上方按钮创建您的第一个知识库')}
+              </p>
+            </div>
+          )}
+        </div>
+
+        {/* Shared with me section */}
+        <div>
+          <h3 className="px-6 py-3 text-sm font-medium text-text-secondary bg-surface-hover border-b border-border">
+            {t('document.personalGroups.sharedWithMe', '分享给我的')}
+            <span className="ml-2 text-text-muted">({sortedSharedWithMe.length})</span>
+          </h3>
+          {hasShared ? (
+            <table className="w-full table-fixed min-w-0">
+              {renderTableHeader(true)}
+              {renderTableRows(sortedSharedWithMe, true)}
+            </table>
+          ) : (
+            <div className="px-6 py-8 text-center text-text-muted">
+              <p>{t('document.personalGroups.noShared', '暂没有分享给您的知识库')}</p>
+              <p className="text-sm mt-1">
+                {t(
+                  'document.personalGroups.sharedDesc',
+                  '当其他用户分享知识库给您时，将显示在这里'
+                )}
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
     )
   }
 
@@ -268,12 +422,15 @@ export function KnowledgeGroupListPage({
         </Button>
       </div>
 
-      {/* Table */}
+      {/* Content */}
       <div className="flex-1 overflow-y-auto overflow-x-hidden min-w-0">
         {isLoading ? (
           <div className="flex items-center justify-center py-12">
             <Spinner />
           </div>
+        ) : isPersonalMode ? (
+          // Personal mode: show separate sections for created and shared
+          renderPersonalModeContent()
         ) : filteredKbs.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-12 text-center">
             <FolderOpen className="w-12 h-12 text-text-muted mb-4" />
@@ -286,58 +443,8 @@ export function KnowledgeGroupListPage({
           </div>
         ) : (
           <table className="w-full table-fixed min-w-0">
-            <thead className="sticky top-0 bg-surface border-b border-border">
-              <tr className="text-left text-sm text-text-secondary">
-                <th className="px-6 py-3 font-medium w-[40%]">
-                  <button
-                    className="flex items-center hover:text-text-primary transition-colors"
-                    onClick={() => handleSort('name')}
-                  >
-                    {t('document.table.name', '名称')}
-                    <SortIcon column="name" />
-                  </button>
-                </th>
-                {isAllMode && (
-                  <th className="px-6 py-3 font-medium w-[25%]">
-                    <button
-                      className="flex items-center hover:text-text-primary transition-colors"
-                      onClick={() => handleSort('group')}
-                    >
-                      {t('document.table.group', '归属小组')}
-                      <SortIcon column="group" />
-                    </button>
-                  </th>
-                )}
-                <th className="px-6 py-3 font-medium w-[20%]">
-                  <button
-                    className="flex items-center hover:text-text-primary transition-colors"
-                    onClick={() => handleSort('updated')}
-                  >
-                    {t('document.table.lastAccess', '最近访问')}
-                    <SortIcon column="updated" />
-                  </button>
-                </th>
-                <th className="px-6 py-3 font-medium w-[15%] text-right">
-                  {t('document.table.actions', '操作')}
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredKbs.map(kb => (
-                <KnowledgeBaseRow
-                  key={kb.id}
-                  kb={kb}
-                  onClick={() => onSelectKb(kb)}
-                  onEdit={onEditKb ? () => onEditKb(kb) : undefined}
-                  onDelete={onDeleteKb ? () => onDeleteKb(kb) : undefined}
-                  onToggleFavorite={onToggleFavorite ? e => handleToggleFavorite(e, kb) : undefined}
-                  isFavorite={isFavorite?.(kb.id)}
-                  showGroupInfo={isAllMode}
-                  groupInfo={getKbGroupInfo?.(kb)}
-                  tFunc={t}
-                />
-              ))}
-            </tbody>
+            {renderTableHeader(isAllMode)}
+            {renderTableRows(filteredKbs, isAllMode)}
           </table>
         )}
       </div>

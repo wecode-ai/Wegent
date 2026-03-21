@@ -90,6 +90,10 @@ export interface UseKnowledgeSidebarReturn {
   allKnowledgeBases: KnowledgeBase[]
   allKnowledgeBasesWithGroupInfo: KnowledgeBaseWithGroupInfo[]
 
+  // Personal KBs grouped by ownership (for "Personal" group display)
+  personalCreatedByMe: KnowledgeBaseWithGroupInfo[]
+  personalSharedWithMe: KnowledgeBaseWithGroupInfo[]
+
   // Get group info for a KB (accepts both KnowledgeBase and KnowledgeBaseWithGroupInfo)
   getKbGroupInfo: (kb: KbDataItem) => KbGroupInfo
 
@@ -426,6 +430,15 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
     await loadInitialData()
   }, [loadInitialData])
 
+  // Personal KBs grouped by ownership
+  const personalCreatedByMe = useMemo((): KnowledgeBaseWithGroupInfo[] => {
+    return allGroupedData?.personal.created_by_me || []
+  }, [allGroupedData])
+
+  const personalSharedWithMe = useMemo((): KnowledgeBaseWithGroupInfo[] => {
+    return allGroupedData?.personal.shared_with_me || []
+  }, [allGroupedData])
+
   return {
     // Favorites
     favorites,
@@ -460,6 +473,10 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
     // All KBs for search and display
     allKnowledgeBases,
     allKnowledgeBasesWithGroupInfo,
+
+    // Personal KBs grouped by ownership
+    personalCreatedByMe,
+    personalSharedWithMe,
 
     // Get group info for a KB
     getKbGroupInfo,
