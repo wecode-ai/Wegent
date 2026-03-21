@@ -7,6 +7,7 @@
 import { useState, useCallback } from 'react'
 import { knowledgePermissionApi } from '@/apis/knowledge-permission'
 import type {
+  BatchPermissionAddResponse,
   KBShareInfo,
   MemberRole,
   MyPermissionResponse,
@@ -43,6 +44,9 @@ interface UseKnowledgePermissionsReturn {
     role?: MemberRole
   ) => Promise<PermissionReviewResponse>
   addPermission: (userName: string, role: MemberRole) => Promise<PermissionResponse>
+  batchAddPermission: (
+    users: { user_id: number; role: MemberRole }[]
+  ) => Promise<BatchPermissionAddResponse>
   updatePermission: (permissionId: number, role: MemberRole) => Promise<PermissionResponse>
   deletePermission: (permissionId: number) => Promise<void>
   clearError: () => void
@@ -176,6 +180,28 @@ export function useKnowledgePermissions({
     [kbId, fetchPermissions]
   )
 
+  const batchAddPermission = useCallback(
+    async (users: { user_id: number; role: MemberRole }[]): Promise<BatchPermissionAddResponse> => {
+      setLoading(true)
+      setError(null)
+      try {
+        const result = await knowledgePermissionApi.batchAddPermission(kbId, {
+          members: users,
+        })
+        // Refresh permissions after batch adding
+        await fetchPermissions()
+        return result
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Failed to batch add permissions'
+        setError(message)
+        throw err
+      } finally {
+        setLoading(false)
+      }
+    },
+    [kbId, fetchPermissions]
+  )
+
   const updatePermission = useCallback(
     async (permissionId: number, role: MemberRole): Promise<PermissionResponse> => {
       setLoading(true)
@@ -233,6 +259,7 @@ export function useKnowledgePermissions({
     applyPermission,
     reviewPermission,
     addPermission,
+    batchAddPermission,
     updatePermission,
     deletePermission,
     clearError,

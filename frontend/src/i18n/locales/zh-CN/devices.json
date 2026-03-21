@@ -137,6 +137,7 @@
     "current": "当前版本",
     "latest": "最新版本",
     "updateAvailable": "有新版本可用",
-    "clickToUpgrade": "点击升级"
+    "clickToUpgrade": "点击升级",
+    "openclawNotSupported": "OpenClaw 设备不支持自动升级"
   }
 }

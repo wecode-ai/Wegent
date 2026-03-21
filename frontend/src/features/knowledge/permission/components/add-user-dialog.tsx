@@ -5,7 +5,7 @@
 'use client'
 
 import { useState, FormEvent } from 'react'
-import { UserPlus } from 'lucide-react'
+import { UserPlus, XCircle } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
@@ -18,8 +18,11 @@ import { Spinner } from '@/components/ui/spinner'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useKnowledgePermissions } from '../hooks/useKnowledgePermissions'
 import { AddUserForm } from './add-user-form'
-import type { MemberRole } from '@/types/knowledge'
+import type { MemberRole, BatchPermissionAddResponse } from '@/types/knowledge'
 import type { SearchUser } from '@/types/api'
+
+/** Maximum number of users that can be added in a single batch */
+const MAX_BATCH_SIZE = 10
 
 interface AddUserDialogProps {
   open: boolean
@@ -33,40 +36,72 @@ export function AddUserDialog({ open, onOpenChange, kbId, onSuccess }: AddUserDi
   const [selectedUsers, setSelectedUsers] = useState<SearchUser[]>([])
   const [role, setRole] = useState<MemberRole>('Reporter')
   const [localError, setLocalError] = useState<string | null>(null)
+  const [batchResult, setBatchResult] = useState<BatchPermissionAddResponse | null>(null)
 
-  const { addPermission, loading, error } = useKnowledgePermissions({ kbId })
+  const { batchAddPermission, loading, error } = useKnowledgePermissions({ kbId })
+
+  // Build a user_id -> user_name map from selectedUsers for result display
+  const userNameMap = new Map(selectedUsers.map(u => [u.id, u.user_name]))
+
+  const handleSelectedUsersChange = (users: SearchUser[]) => {
+    if (users.length > MAX_BATCH_SIZE) {
+      setLocalError(t('document.permission.maxUsersExceeded', { max: MAX_BATCH_SIZE }))
+      return
+    }
+    // Clear errors when user changes selection
+    setLocalError(null)
+    setBatchResult(null)
+    setSelectedUsers(users)
+  }
 
   const handleSubmit = async (e?: FormEvent) => {
     e?.preventDefault()
     setLocalError(null)
+    setBatchResult(null)
 
     if (selectedUsers.length === 0) {
       setLocalError(t('document.permission.selectUser'))
       return
     }
 
-    const userName = selectedUsers[0].user_name
-    if (!userName.trim()) {
+    const validUsers = selectedUsers.filter(u => u.user_name.trim())
+    if (validUsers.length === 0) {
       setLocalError(t('document.permission.invalidUserName'))
       return
     }
 
+    if (validUsers.length > MAX_BATCH_SIZE) {
+      setLocalError(t('document.permission.maxUsersExceeded', { max: MAX_BATCH_SIZE }))
+      return
+    }
+
     try {
-      await addPermission(userName, role)
-      onSuccess?.()
-      onOpenChange(false)
-      // Reset form
-      setSelectedUsers([])
-      setRole('Reporter')
+      const members = validUsers.map(u => ({ user_id: u.id, role }))
+      const result = await batchAddPermission(members)
+
+      if (result.failed.length === 0) {
+        // All succeeded — close dialog and reset
+        onSuccess?.()
+        onOpenChange(false)
+        resetForm()
+      } else {
+        // Partial or full failure — show result details, keep dialog open
+        setBatchResult(result)
+      }
     } catch (_err) {
-      // Error is displayed from hook
+      // Network/server error is displayed from hook via `error` state
     }
   }
 
-  const handleClose = () => {
+  const resetForm = () => {
     setSelectedUsers([])
     setRole('Reporter')
     setLocalError(null)
+    setBatchResult(null)
+  }
+
+  const handleClose = () => {
+    resetForm()
     onOpenChange(false)
   }
 
@@ -88,11 +123,27 @@ export function AddUserDialog({ open, onOpenChange, kbId, onSuccess }: AddUserDi
         <AddUserForm
           selectedUsers={selectedUsers}
           role={role}
-          onSelectedUsersChange={setSelectedUsers}
+          onSelectedUsersChange={handleSelectedUsersChange}
           onRoleChange={setRole}
           onSubmit={handleSubmit}
           error={displayError}
         />
+
+        {/* Batch result details — shown when partial failure occurs */}
+        {batchResult && batchResult.failed.length > 0 && (
+          <div className="text-sm text-error bg-error/10 px-3 py-2 rounded-lg space-y-1">
+            {batchResult.failed.map(f => (
+              <div key={f.user_id} className="flex items-center gap-1.5">
+                <XCircle className="w-3.5 h-3.5 flex-shrink-0" />
+                <span>
+                  {userNameMap.get(f.user_id) || `User ${f.user_id}`}{' '}
+                  {t('document.permission.batchAddFailed')}: {f.error}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+
         <DialogFooter>
           <Button type="button" variant="outline" onClick={handleClose}>
             {t('common:actions.cancel')}

@@ -229,6 +229,7 @@ export function KnowledgeBaseChatPageDesktop({
     retrieval_config?: Record<string, unknown>
     summary_enabled?: boolean
     summary_model_ref?: SummaryModelRef | null
+    guided_questions?: string[]
     max_calls_per_conversation: number
     exempt_calls_before_check: number
     kb_type: KnowledgeBaseType
@@ -244,6 +245,7 @@ export function KnowledgeBaseChatPageDesktop({
         retrieval_config: data.retrieval_config,
         summary_enabled: data.summary_enabled,
         summary_model_ref: data.summary_model_ref,
+        guided_questions: data.guided_questions,
         max_calls_per_conversation: data.max_calls_per_conversation,
         exempt_calls_before_check: data.exempt_calls_before_check,
       })
@@ -381,6 +383,7 @@ export function KnowledgeBaseChatPageDesktop({
                 document_count: knowledgeBase.document_count,
               }}
               selectedDocumentIds={selectedDocumentIds}
+              guidedQuestions={knowledgeBase.guided_questions}
               onTaskCreated={async (taskId: number) => {
                 // Bind the knowledge base to the newly created task
                 try {

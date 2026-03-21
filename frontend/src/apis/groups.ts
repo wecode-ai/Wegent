@@ -13,6 +13,8 @@ import type {
   GroupUpdate,
   GroupListResponse,
   GroupMember,
+  GroupMemberBatchUpdateRequest,
+  GroupMemberBatchUpdateResponse,
   GroupMemberCreate,
   GroupMemberUpdate,
   GroupMemberListResponse,
@@ -102,6 +104,19 @@ export const updateGroupMemberRole = async (
 ): Promise<GroupMember> => {
   return await apiClient.put<GroupMember>(
     `/groups/${encodeURIComponent(groupName)}/members/${userId}`,
+    data
+  )
+}
+
+/**
+ * Batch update member roles
+ */
+export const batchUpdateGroupMemberRoles = async (
+  groupName: string,
+  data: GroupMemberBatchUpdateRequest
+): Promise<GroupMemberBatchUpdateResponse> => {
+  return await apiClient.put<GroupMemberBatchUpdateResponse>(
+    `/groups/${encodeURIComponent(groupName)}/members/batch/roles`,
     data
   )
 }

@@ -184,6 +184,7 @@
       "reindexSuccess": "已开始重新索引",
       "reindexFailed": "启动重新索引失败",
       "openLink": "打开链接",
+      "download": "下载",
       "columns": {
         "name": "名称",
         "type": "类型",
@@ -266,7 +267,8 @@
         "viewChunks": "查看分段",
         "splitterType": "分段类型",
         "splitterSubtype": "分段子类型"
-      }
+      },
+      "downloadFailed": "下载文件失败"
     },
     "upload": {
       "dropzoneHint": "一次最多选择 {{max}} 个文件",
@@ -406,6 +408,8 @@
       "searchUserPlaceholder": "搜索用户名或邮箱...",
       "selectUser": "请选择用户",
       "invalidUserName": "请输入有效的用户名",
+      "maxUsersExceeded": "最多同时添加 {{max}} 个用户",
+      "batchAddFailed": "添加失败",
       "invalidShareLink": "分享链接无效或已过期",
       "noLinkToCopy": "没有可复制的链接",
       "copyFailedManual": "链接已选中，请按 Ctrl+C 复制"
@@ -484,6 +488,13 @@
       "exemptCalls": "豁免检查次数",
       "exemptCallsHint": "豁免 token 检查的调用次数 (必须小于最大调用次数)",
       "validationError": "豁免次数必须小于最大调用次数"
+    },
+    "guidedQuestions": {
+      "label": "引导问题（可选）",
+      "placeholder": "输入引导问题",
+      "addButton": "添加问题",
+      "helpText": "配置后将在新对话时显示在输入框上方，帮助用户快速提问",
+      "maxReached": "最多配置 3 个引导问题"
     },
     "retrievalTest": {
       "button": "召回测试",
@@ -590,6 +601,9 @@
     "summaryFailedHint": "点击重试按钮重新生成摘要",
     "summaryRetry": "重试",
     "summaryRetrying": "重试中...",
+    "guidedQuestions": {
+      "hint": "试试这些问题："
+    },
     "accessDenied": {
       "title": "无法访问知识库",
       "description": "您没有该知识库详细信息的访问权限。如有疑问，请联系知识库创建者或管理员。",

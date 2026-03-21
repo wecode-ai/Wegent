@@ -14,6 +14,7 @@ import { ChatInputCard } from '../input/ChatInputCard'
 import PipelineStageIndicator from './PipelineStageIndicator'
 import { ScrollToBottomIndicator } from './ScrollToBottomIndicator'
 import { ScrollbarMarkers } from './ScrollbarMarkers'
+import { GuidedQuestions } from '@/features/knowledge/document/components/GuidedQuestions'
 import type { PipelineStageInfo } from '@/apis/tasks'
 import { useChatAreaState } from './useChatAreaState'
 import { useChatStreamHandlers } from './useChatStreamHandlers'
@@ -70,6 +71,8 @@ interface ChatAreaProps {
   hideSelectors?: boolean
   /** Callback when user switches between video and image mode (only used in generate page) */
   onGenerateModeChange?: (mode: GenerateMode) => void
+  /** Guided questions to display when starting a new conversation (for notebook mode) */
+  guidedQuestions?: string[]
   /** When true, input is always positioned at bottom even when there are no messages (used in knowledge notebook mode) */
   inputAlwaysAtBottom?: boolean
   /** Custom content to display when there are no messages (used in knowledge notebook mode for KnowledgeBaseSummaryCard) */
@@ -95,6 +98,7 @@ function ChatAreaContent({
   disabledReason,
   hideSelectors,
   onGenerateModeChange,
+  guidedQuestions,
   inputAlwaysAtBottom,
   emptyStateContent,
 }: ChatAreaProps) {
@@ -1106,6 +1110,12 @@ function ChatAreaContent({
           >
             <div ref={floatingInputRef} className="w-full max-w-4xl mx-auto px-4 sm:px-6">
               {taskType !== 'knowledge' && <SloganDisplay slogan={chatState.randomSlogan} />}
+              {taskType === 'knowledge' && guidedQuestions && guidedQuestions.length > 0 && (
+                <GuidedQuestions
+                  questions={guidedQuestions}
+                  onQuestionClick={question => chatState.setTaskInputMessage(question)}
+                />
+              )}
               <ChatInputCard
                 {...inputCardProps}
                 autoFocus={!hasMessages}

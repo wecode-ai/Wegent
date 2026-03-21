@@ -50,6 +50,7 @@ export function EditKnowledgeBaseDialog({
   const [error, setError] = useState('')
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [retrievalConfig, setRetrievalConfig] = useState<Partial<RetrievalConfig>>({})
+  const [guidedQuestions, setGuidedQuestions] = useState<string[]>([])
 
   // Call limit configuration state
   const [maxCalls, setMaxCalls] = useState(10)
@@ -69,6 +70,8 @@ export function EditKnowledgeBaseDialog({
       // Initialize call limits from knowledge base
       setMaxCalls(knowledgeBase.max_calls_per_conversation)
       setExemptCalls(knowledgeBase.exempt_calls_before_check)
+      // Initialize guided questions from knowledge base
+      setGuidedQuestions(knowledgeBase.guided_questions || [])
     }
   }, [knowledgeBase])
 
@@ -104,11 +107,15 @@ export function EditKnowledgeBaseDialog({
 
     try {
       // Build update data
+      // Filter out empty guided questions
+      const validGuidedQuestions = guidedQuestions.filter(q => q.trim().length > 0)
+      const isNotebook = knowledgeBase?.kb_type === 'notebook'
       const updateData: KnowledgeBaseUpdate = {
         name: name.trim(),
         description: description.trim(), // Allow empty string to clear description
         summary_enabled: summaryEnabled,
         summary_model_ref: summaryEnabled ? summaryModelRef : null,
+        guided_questions: isNotebook ? validGuidedQuestions : undefined,
         max_calls_per_conversation: maxCalls,
         exempt_calls_before_check: exemptCalls,
       }
@@ -193,6 +200,9 @@ export function EditKnowledgeBaseDialog({
             onRetrievalConfigChange={handleRetrievalConfigChange}
             retrievalReadOnly={false}
             retrievalPartialReadOnly={true}
+            showGuidedQuestions={knowledgeBase?.kb_type === 'notebook'}
+            guidedQuestions={guidedQuestions}
+            onGuidedQuestionsChange={setGuidedQuestions}
           />
 
           {error && <p className="text-sm text-error">{error}</p>}

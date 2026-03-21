@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type {
+  BatchPermissionAddRequest,
+  BatchPermissionAddResponse,
   JoinByLinkRequest,
   JoinByLinkResponse,
   KBShareInfo,
@@ -166,6 +168,20 @@ export const knowledgePermissionApi = {
       user_id: user.id,
       role: request.role,
     })
+    return response
+  },
+
+  /**
+   * Batch add permissions for multiple users in a single request
+   */
+  batchAddPermission: async (
+    kbId: number,
+    request: BatchPermissionAddRequest
+  ): Promise<BatchPermissionAddResponse> => {
+    const response = await client.post<BatchPermissionAddResponse>(
+      `/share/KnowledgeBase/${kbId}/members/batch`,
+      request
+    )
     return response
   },
 

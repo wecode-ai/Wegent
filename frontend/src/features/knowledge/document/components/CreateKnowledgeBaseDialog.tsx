@@ -44,6 +44,7 @@ interface CreateKnowledgeBaseDialogProps {
     retrieval_config?: Partial<RetrievalConfig>
     summary_enabled?: boolean
     summary_model_ref?: SummaryModelRef | null
+    guided_questions?: string[]
     max_calls_per_conversation: number
     exempt_calls_before_check: number
     /** Selected group ID for creating the KB */
@@ -101,6 +102,7 @@ export function CreateKnowledgeBaseDialog({
   const [summaryEnabled, setSummaryEnabled] = useState(initialKbType === 'notebook')
   const [summaryModelRef, setSummaryModelRef] = useState<SummaryModelRef | null>(null)
   const [summaryModelError, setSummaryModelError] = useState('')
+  const [guidedQuestions, setGuidedQuestions] = useState<string[]>([])
   const [retrievalConfig, setRetrievalConfig] = useState<Partial<RetrievalConfig>>({
     retrieval_mode: 'vector',
     top_k: 5,
@@ -165,12 +167,18 @@ export function CreateKnowledgeBaseDialog({
     // AI will use kb_ls/kb_head tools to explore documents instead of RAG search
 
     try {
+      // Filter out empty guided questions
+      const validGuidedQuestions = guidedQuestions.filter(q => q.trim().length > 0)
       await onSubmit({
         name: name.trim(),
         description: description.trim() || undefined,
         retrieval_config: retrievalConfig,
         summary_enabled: summaryEnabled,
         summary_model_ref: summaryEnabled ? summaryModelRef : null,
+        guided_questions:
+          kbType === 'notebook' && validGuidedQuestions.length > 0
+            ? validGuidedQuestions
+            : undefined,
         max_calls_per_conversation: maxCalls,
         exempt_calls_before_check: exemptCalls,
         selectedGroupId: showGroupSelector ? selectedGroupId : undefined,
@@ -182,6 +190,7 @@ export function CreateKnowledgeBaseDialog({
       setSelectedKbType(initialKbType)
       setSummaryEnabled(initialKbType === 'notebook')
       setSummaryModelRef(null)
+      setGuidedQuestions([])
       setRetrievalConfig({
         retrieval_mode: 'vector',
         top_k: 5,
@@ -207,6 +216,7 @@ export function CreateKnowledgeBaseDialog({
       setSummaryEnabled(initialKbType === 'notebook')
       setSummaryModelRef(null)
       setSummaryModelError('')
+      setGuidedQuestions([])
       setRetrievalConfig({
         retrieval_mode: 'vector',
         top_k: 5,
@@ -357,6 +367,9 @@ export function CreateKnowledgeBaseDialog({
             onRetrievalConfigChange={setRetrievalConfig}
             retrievalScope={effectiveScope}
             retrievalGroupName={effectiveGroupName}
+            showGuidedQuestions={isNotebook}
+            guidedQuestions={guidedQuestions}
+            onGuidedQuestionsChange={setGuidedQuestions}
           />
 
           {error && <p className="text-sm text-error">{error}</p>}

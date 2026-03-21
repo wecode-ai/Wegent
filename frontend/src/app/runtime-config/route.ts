@@ -23,6 +23,7 @@
  */
 
 import { NextResponse } from 'next/server'
+import { DEFAULT_BIND_GROUP_STEPS } from '@/lib/runtime-config'
 
 export async function GET() {
   // Helper to parse boolean env vars
@@ -112,5 +113,16 @@ export async function GET() {
       process.env.RUNTIME_OTEL_COLLECTOR_ENDPOINT ||
       process.env.NEXT_PUBLIC_OTEL_COLLECTOR_ENDPOINT ||
       'http://localhost:4318',
+
+    // Bind group description text (supports multiple paragraphs separated by |)
+    bindGroupDesc:
+      process.env.RUNTIME_BIND_GROUP_DESC || process.env.NEXT_PUBLIC_BIND_GROUP_DESC || '',
+
+    // Bind group steps configuration (JSON with variables and steps)
+    // Example: {"variables":{"botName":"机器人","featureName":"机器人"},"steps":[{"title":"添加{{botName}}","hint":"打开{{featureName}}..."}]}
+    bindGroupSteps:
+      process.env.RUNTIME_BIND_GROUP_STEPS ||
+      process.env.NEXT_PUBLIC_BIND_GROUP_STEPS ||
+      DEFAULT_BIND_GROUP_STEPS,
   })
 }

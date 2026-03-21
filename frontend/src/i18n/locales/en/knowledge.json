@@ -184,6 +184,7 @@
       "reindexSuccess": "Reindex started",
       "reindexFailed": "Failed to start reindex",
       "openLink": "Open Link",
+      "download": "Download",
       "columns": {
         "name": "Name",
         "type": "Type",
@@ -266,7 +267,8 @@
         "viewChunks": "View Chunks",
         "splitterType": "Splitter Type",
         "splitterSubtype": "Splitter Subtype"
-      }
+      },
+      "downloadFailed": "Failed to download file"
     },
     "upload": {
       "dropzoneHint": "Select up to {{max}} files at once",
@@ -406,6 +408,8 @@
       "searchUserPlaceholder": "Search username or email...",
       "selectUser": "Please select a user",
       "invalidUserName": "Please enter a valid username",
+      "maxUsersExceeded": "Maximum {{max}} users can be added at once",
+      "batchAddFailed": "failed to add",
       "invalidShareLink": "Share link is invalid or expired",
       "noLinkToCopy": "No link to copy",
       "copyFailedManual": "Link selected. Press Ctrl+C to copy."
@@ -484,6 +488,13 @@
       "exemptCalls": "Exempt Calls",
       "exemptCallsHint": "Number of calls exempt from token checking (must be less than maximum calls)",
       "validationError": "Exempt calls must be less than maximum calls"
+    },
+    "guidedQuestions": {
+      "label": "Guided Questions (Optional)",
+      "placeholder": "Enter a guided question",
+      "addButton": "Add Question",
+      "helpText": "Will be displayed above the input when starting a new conversation",
+      "maxReached": "Maximum 3 guided questions allowed"
     },
     "retrievalTest": {
       "button": "Retrieval Test",
@@ -590,6 +601,9 @@
     "summaryFailedHint": "Click retry to regenerate summary",
     "summaryRetry": "Retry",
     "summaryRetrying": "Retrying...",
+    "guidedQuestions": {
+      "hint": "Try these questions:"
+    },
     "accessDenied": {
       "title": "Cannot Access Knowledge Base",
       "description": "You do not have permission to access this knowledge base. If you have any questions, please contact the knowledge base creator or administrator.",

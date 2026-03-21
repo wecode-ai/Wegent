@@ -70,6 +70,7 @@
     "noGroups": "暂无群组",
     "editGroup": "编辑群组",
     "manageMembers": "管理成员",
+    "viewMembers": "查看成员",
     "deleteGroup": "删除群组",
     "enterGroup": "进入群组"
   },
@@ -121,12 +122,22 @@
     "userAlreadyMember": "该用户已经是群组成员",
     "addByUsernameNotSupported": "暂不支持通过用户名添加成员，请联系管理员使用\"邀请所有用户\"功能",
     "searchPlaceholder": "搜索用户名或邮箱...",
+    "searchMembersPlaceholder": "搜索成员用户名、邀请人或角色...",
     "selectedUsers": "已选择 {{count}} 个用户",
     "addMembersSuccess": "成功添加 {{count}} 个成员",
     "alreadyMembers": "{{count}} 个用户已是成员",
     "adding": "添加中...",
     "addCount": "添加 ({{count}})",
+    "pendingChange": "未保存",
+    "pendingChangesCount": "已修改 {{count}} 项",
+    "visibleMembersCount": "显示 {{count}} 位成员",
+    "confirmDiscardRoleChanges": "您有未保存的角色变更，确定要放弃吗？",
+    "saveRoleChangesSuccess": "已保存 {{count}} 个角色变更",
+    "noMembersFound": "没有找到匹配的成员",
     "rolePermissions": "角色权限说明",
+    "errors": {
+      "currentOwnerRoleChangeRequiresTransfer": "当前群组 Owner 不能直接修改角色，请先转让所有权"
+    },
     "roleDescriptions": {
       "Reporter": "只能查看群组资源，无法进行任何修改操作，可离开群组",
       "Developer": "可查看、创建、编辑群组资源，可离开群组，但无法删除资源或管理成员",
