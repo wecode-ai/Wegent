@@ -3,20 +3,21 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * KnowledgeTreePanel wraps the KnowledgeTree with collapse/expand/popover behavior.
+ * KnowledgeTreePanel wraps the KnowledgeTree with collapse/expand behavior.
  *
  * - Initially shows as a sidebar (280px width)
- * - When a KB is selected, collapses to a narrow strip (44px)
- * - Clicking the narrow strip opens a popover overlay showing the tree
- * - Selecting a different KB in the popover closes it and updates the selection
+ * - When a KB is selected, the tree stays open until mouse leaves the panel
+ * - Mouse leaving the panel area triggers collapse with animation
  */
 
 'use client'
 
-import { useState, useEffect, useRef, useCallback } from 'react'
-import { PanelLeft } from 'lucide-react'
-import { useTranslation } from '@/hooks/useTranslation'
+import { useCallback, useState, useRef, useEffect } from 'react'
+import { PanelLeftClose } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 import { KnowledgeTree } from './KnowledgeTree'
+import { useTranslation } from '@/hooks/useTranslation'
+import { cn } from '@/lib/utils'
 import type { TreeNode } from '../hooks/useKnowledgeTree'
 import type { KnowledgeBase, KnowledgeBaseType } from '@/types/knowledge'
 import type { Group } from '@/types/group'
@@ -40,12 +41,10 @@ interface KnowledgeTreePanelProps {
     kbType: KnowledgeBaseType,
     groupName?: string
   ) => void
-  /** Create group chat handler */
-  onCreateGroupChat?: (
-    group: Group,
-    kbInfo?: { name: string; namespace: string },
-    allKbs?: KnowledgeBase[]
-  ) => void
+  /** Open group settings handler */
+  onOpenGroupSettings?: (group: Group) => void
+  /** Edit knowledge base handler */
+  onEditKb?: (kb: KnowledgeBase) => void
   /** Whether user is admin */
   isAdmin: boolean
   /** Whether tree should be collapsed (when a KB is selected) */
@@ -62,141 +61,130 @@ export function KnowledgeTreePanel({
   onToggleExpand,
   onSelectKb,
   onCreateKb,
-  onCreateGroupChat,
+  onOpenGroupSettings,
+  onEditKb,
   isAdmin,
   isCollapsed,
   onCollapsedChange,
 }: KnowledgeTreePanelProps) {
   const { t } = useTranslation('knowledge')
-  const [isPopoverOpen, setIsPopoverOpen] = useState(false)
-  const popoverRef = useRef<HTMLDivElement>(null)
-  const triggerRef = useRef<HTMLButtonElement>(null)
+  // Track if a KB was just selected (pending collapse on mouse leave)
+  const [pendingCollapse, setPendingCollapse] = useState(false)
+  const collapseTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  // Track animation state: 'expanded' | 'collapsing' | 'collapsed' | 'expanding'
+  const [animationState, setAnimationState] = useState<
+    'expanded' | 'collapsing' | 'collapsed' | 'expanding'
+  >(isCollapsed ? 'collapsed' : 'expanded')
 
-  // Close popover when clicking outside
+  // Sync animation state with isCollapsed prop
   useEffect(() => {
-    if (!isPopoverOpen) return
-
-    const handleClickOutside = (e: MouseEvent) => {
-      if (
-        popoverRef.current &&
-        !popoverRef.current.contains(e.target as Node) &&
-        triggerRef.current &&
-        !triggerRef.current.contains(e.target as Node)
-      ) {
-        setIsPopoverOpen(false)
-      }
+    if (isCollapsed && animationState === 'expanded') {
+      // Start collapse animation
+      setAnimationState('collapsing')
+    } else if (!isCollapsed && animationState === 'collapsed') {
+      // Start expand animation - first render with w-0, then animate to w-72
+      setAnimationState('expanding')
+      // Use requestAnimationFrame to ensure the initial state is rendered before animating
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          setAnimationState('expanded')
+        })
+      })
     }
+  }, [isCollapsed, animationState])
 
-    // Use setTimeout to avoid immediate close from the click that opened it
-    const timer = setTimeout(() => {
-      document.addEventListener('mousedown', handleClickOutside)
-    }, 0)
-
-    return () => {
-      clearTimeout(timer)
-      document.removeEventListener('mousedown', handleClickOutside)
+  // Handle animation end
+  const handleTransitionEnd = useCallback(() => {
+    if (animationState === 'collapsing') {
+      setAnimationState('collapsed')
     }
-  }, [isPopoverOpen])
+  }, [animationState])
 
-  // Close popover on Escape
-  useEffect(() => {
-    if (!isPopoverOpen) return
-
-    const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        setIsPopoverOpen(false)
-      }
-    }
-
-    document.addEventListener('keydown', handleEscape)
-    return () => document.removeEventListener('keydown', handleEscape)
-  }, [isPopoverOpen])
-
-  // Handle KB selection in popover - close popover after selection
-  const handleSelectKbInPopover = useCallback(
+  // Handle KB selection in tree sidebar - mark for collapse on mouse leave
+  const handleSelectKbInTree = useCallback(
     (kb: KnowledgeBase) => {
       onSelectKb(kb)
-      setIsPopoverOpen(false)
+      // Mark that we should collapse when mouse leaves
+      setPendingCollapse(true)
     },
     [onSelectKb]
   )
 
-  // Handle KB selection in tree sidebar - collapse after selection
-  const handleSelectKbInTree = useCallback(
-    (kb: KnowledgeBase) => {
-      onSelectKb(kb)
-      onCollapsedChange(true)
-    },
-    [onSelectKb, onCollapsedChange]
-  )
+  // Handle collapse button click
+  const handleCollapse = useCallback(() => {
+    setPendingCollapse(false)
+    onCollapsedChange(true)
+  }, [onCollapsedChange])
 
-  // Collapsed state: narrow strip with expand button
-  if (isCollapsed) {
-    return (
-      <div className="relative flex-shrink-0">
-        {/* Narrow collapsed strip */}
-        <div
-          className="w-11 h-full border-r border-border bg-base flex flex-col items-center pt-3"
-          data-testid="knowledge-tree-collapsed"
-        >
-          <button
-            ref={triggerRef}
-            className="w-9 h-9 flex items-center justify-center rounded-md hover:bg-muted text-text-secondary hover:text-primary transition-colors"
-            onClick={() => setIsPopoverOpen(!isPopoverOpen)}
-            title={t('document.tree.expandTree')}
-            data-testid="knowledge-tree-expand-button"
-          >
-            <PanelLeft className="w-5 h-5" />
-          </button>
-        </div>
+  // Handle mouse leave - collapse if a KB was selected
+  const handleMouseLeave = useCallback(() => {
+    if (pendingCollapse) {
+      // Add a small delay to prevent accidental collapse
+      collapseTimeoutRef.current = setTimeout(() => {
+        setPendingCollapse(false)
+        onCollapsedChange(true)
+      }, 150)
+    }
+  }, [pendingCollapse, onCollapsedChange])
 
-        {/* Popover overlay */}
-        {isPopoverOpen && (
-          <>
-            {/* Backdrop */}
-            <div className="fixed inset-0 z-40" onClick={() => setIsPopoverOpen(false)} />
+  // Handle mouse enter - cancel pending collapse
+  const handleMouseEnter = useCallback(() => {
+    if (collapseTimeoutRef.current) {
+      clearTimeout(collapseTimeoutRef.current)
+      collapseTimeoutRef.current = null
+    }
+  }, [])
 
-            {/* Popover panel */}
-            <div
-              ref={popoverRef}
-              className="absolute left-11 top-0 z-50 w-72 h-full bg-base border-r border-border shadow-lg animate-in slide-in-from-left-2 duration-200"
-              data-testid="knowledge-tree-popover"
-            >
-              <KnowledgeTree
-                nodes={nodes}
-                selectedKbId={selectedKbId}
-                loading={loading}
-                expandState={expandState}
-                onToggleExpand={onToggleExpand}
-                onSelectKb={handleSelectKbInPopover}
-                onCreateKb={onCreateKb}
-                onCreateGroupChat={onCreateGroupChat}
-                isAdmin={isAdmin}
-              />
-            </div>
-          </>
-        )}
-      </div>
-    )
+  // Fully collapsed state: render nothing
+  if (animationState === 'collapsed') {
+    return null
   }
 
-  // Expanded state: full tree sidebar
+  // Determine width and opacity based on animation state
+  const isCollapsedOrExpanding = animationState === 'collapsing' || animationState === 'expanding'
+
+  // Expanded, expanding, or collapsing state: render with animation
   return (
     <div
-      className="flex-shrink-0 w-72 h-full border-r border-border bg-base"
+      className={cn(
+        'flex-shrink-0 h-full border-r border-border bg-base flex flex-col overflow-hidden transition-all duration-200 ease-out',
+        isCollapsedOrExpanding ? 'w-0 opacity-0 border-r-0' : 'w-72 opacity-100'
+      )}
       data-testid="knowledge-tree-sidebar"
+      onMouseLeave={handleMouseLeave}
+      onMouseEnter={handleMouseEnter}
+      onTransitionEnd={handleTransitionEnd}
     >
-      <KnowledgeTree
-        nodes={nodes}
-        selectedKbId={selectedKbId}
-        loading={loading}
-        expandState={expandState}
-        onToggleExpand={onToggleExpand}
-        onSelectKb={handleSelectKbInTree}
-        onCreateKb={onCreateKb}
-        onCreateGroupChat={onCreateGroupChat}
-        isAdmin={isAdmin}
-      />
+      {/* Header with collapse button */}
+      <div className="flex items-center justify-between px-3 py-2 border-b border-border">
+        <span className="text-sm font-medium text-text-primary">{t('document.tree.title')}</span>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7"
+          onClick={handleCollapse}
+          title={t('document.tree.collapse')}
+          data-testid="collapse-tree-button"
+        >
+          <PanelLeftClose className="h-4 w-4" />
+        </Button>
+      </div>
+
+      {/* Tree content */}
+      <div className="flex-1 overflow-hidden">
+        <KnowledgeTree
+          nodes={nodes}
+          selectedKbId={selectedKbId}
+          loading={loading}
+          expandState={expandState}
+          onToggleExpand={onToggleExpand}
+          onSelectKb={handleSelectKbInTree}
+          onCreateKb={onCreateKb}
+          onOpenGroupSettings={onOpenGroupSettings}
+          onEditKb={onEditKb}
+          isAdmin={isAdmin}
+        />
+      </div>
     </div>
   )
 }

@@ -11,13 +11,14 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { useIsMobile, useIsDesktop } from './hooks/useMediaQuery'
 import TaskTitleDropdown from './TaskTitleDropdown'
 import { TaskDetail } from '@/types/api'
-
 type TopNavigationProps = {
   activePage?: 'chat' | 'code' | 'wiki' | 'dashboard' | 'devices'
   variant?: 'with-sidebar' | 'standalone'
   showLogo?: boolean
   title?: string
   titleSuffix?: React.ReactNode // Content to render after the title (e.g., bound knowledge base badge)
+  /** Content to render in the center area (e.g., tabs for knowledge page) */
+  centerContent?: React.ReactNode
   taskDetail?: TaskDetail | null
   children?: React.ReactNode
   onMobileSidebarToggle?: () => void
@@ -33,6 +34,7 @@ export default function TopNavigation({
   showLogo = false,
   title,
   titleSuffix,
+  centerContent,
   taskDetail,
   children,
   onMobileSidebarToggle,
@@ -105,6 +107,9 @@ export default function TopNavigation({
 
         {/* Title suffix - content rendered after the title (e.g., bound knowledge base badge) */}
         {titleSuffix}
+
+        {/* Center content - content rendered in the center area (e.g., tabs) */}
+        {centerContent}
       </div>
 
       {/* Right side - User menu and other controls */}

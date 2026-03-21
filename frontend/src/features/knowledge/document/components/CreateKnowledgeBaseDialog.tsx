@@ -5,7 +5,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { BookOpen, FolderOpen } from 'lucide-react'
+import { BookOpen, FolderOpen, User, Building2, Users } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
@@ -15,9 +15,25 @@ import {
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { SummaryModelRef, KnowledgeBaseType, RetrievalConfig } from '@/types/knowledge'
 import { KnowledgeBaseForm } from './KnowledgeBaseForm'
+
+/** Available group for selection */
+export interface AvailableGroup {
+  id: string
+  name: string
+  displayName: string
+  type: 'personal' | 'group' | 'organization'
+  canCreate: boolean
+}
 
 interface CreateKnowledgeBaseDialogProps {
   open: boolean
@@ -30,6 +46,8 @@ interface CreateKnowledgeBaseDialogProps {
     summary_model_ref?: SummaryModelRef | null
     max_calls_per_conversation: number
     exempt_calls_before_check: number
+    /** Selected group ID for creating the KB */
+    selectedGroupId?: string
   }) => Promise<void>
   loading?: boolean
   scope?: 'personal' | 'group' | 'organization' | 'all'
@@ -38,6 +56,25 @@ interface CreateKnowledgeBaseDialogProps {
   kbType?: KnowledgeBaseType
   /** Optional team ID for reading cached model preference */
   knowledgeDefaultTeamId?: number | null
+  /** Available groups for selection (for "All" mode) */
+  availableGroups?: AvailableGroup[]
+  /** Default selected group ID */
+  defaultGroupId?: string
+  /** Whether to show group selector (true when creating from "All" page) */
+  showGroupSelector?: boolean
+}
+
+/** Get icon for group type */
+function GroupTypeIcon({ type }: { type: 'personal' | 'group' | 'organization' }) {
+  switch (type) {
+    case 'personal':
+      return <User className="w-4 h-4" />
+    case 'organization':
+      return <Building2 className="w-4 h-4" />
+    case 'group':
+    default:
+      return <Users className="w-4 h-4" />
+  }
 }
 
 export function CreateKnowledgeBaseDialog({
@@ -49,6 +86,9 @@ export function CreateKnowledgeBaseDialog({
   groupName,
   kbType = 'notebook',
   knowledgeDefaultTeamId,
+  availableGroups,
+  defaultGroupId,
+  showGroupSelector = false,
 }: CreateKnowledgeBaseDialogProps) {
   const { t } = useTranslation()
   const [name, setName] = useState('')
@@ -70,15 +110,16 @@ export function CreateKnowledgeBaseDialog({
   const [accordionValue, setAccordionValue] = useState<string>('')
   const [maxCalls, setMaxCalls] = useState(10)
   const [exemptCalls, setExemptCalls] = useState(5)
+  // Selected group for creating KB (used when showGroupSelector is true)
+  const [selectedGroupId, setSelectedGroupId] = useState<string>(defaultGroupId || 'personal')
 
-  // Reset summaryEnabled when dialog opens based on kbType
-  // This is necessary because useState initial value only applies on first mount,
-  // but the dialog component persists and kbType can change between opens
+  // Reset summaryEnabled and selectedGroupId when dialog opens
   useEffect(() => {
     if (open) {
       setSummaryEnabled(kbType === 'notebook')
+      setSelectedGroupId(defaultGroupId || 'personal')
     }
-  }, [open, kbType])
+  }, [open, kbType, defaultGroupId])
 
   // Note: Auto-selection of retriever and embedding model is handled by RetrievalSettingsSection
 
@@ -121,6 +162,7 @@ export function CreateKnowledgeBaseDialog({
         summary_model_ref: summaryEnabled ? summaryModelRef : null,
         max_calls_per_conversation: maxCalls,
         exempt_calls_before_check: exemptCalls,
+        selectedGroupId: showGroupSelector ? selectedGroupId : undefined,
       })
       setName('')
       setDescription('')
@@ -164,9 +206,18 @@ export function CreateKnowledgeBaseDialog({
       setExemptCalls(5)
       setError('')
       setAccordionValue('')
+      setSelectedGroupId(defaultGroupId || 'personal')
     }
     onOpenChange(newOpen)
   }
+
+  // Get the selected group for retrieval scope
+  const selectedGroup = availableGroups?.find(g => g.id === selectedGroupId)
+  const effectiveScope = showGroupSelector && selectedGroup ? selectedGroup.type : scope
+  const effectiveGroupName =
+    showGroupSelector && selectedGroup && selectedGroup.type === 'group'
+      ? selectedGroup.name
+      : groupName
 
   // Determine if this is a notebook type
   const isNotebook = kbType === 'notebook'
@@ -183,38 +234,70 @@ export function CreateKnowledgeBaseDialog({
         <div className="flex-1 overflow-y-auto space-y-4 py-4">
           <KnowledgeBaseForm
             typeSection={
-              <div className="space-y-2">
-                <Label>{t('knowledge:document.knowledgeBase.type')}</Label>
-                <div
-                  className={`flex items-center gap-3 p-3 rounded-md border ${
-                    isNotebook ? 'bg-primary/5 border-primary/20' : 'bg-muted border-border'
-                  }`}
-                >
+              <>
+                {/* KB Type display */}
+                <div className="space-y-2">
+                  <Label>{t('knowledge:document.knowledgeBase.type')}</Label>
                   <div
-                    className={`flex-shrink-0 w-8 h-8 rounded-md flex items-center justify-center ${
-                      isNotebook ? 'bg-primary/10 text-primary' : 'bg-surface text-text-secondary'
+                    className={`flex items-center gap-3 p-3 rounded-md border ${
+                      isNotebook ? 'bg-primary/5 border-primary/20' : 'bg-muted border-border'
                     }`}
                   >
-                    {isNotebook ? (
-                      <BookOpen className="w-4 h-4" />
-                    ) : (
-                      <FolderOpen className="w-4 h-4" />
-                    )}
-                  </div>
-                  <div>
-                    <div className="font-medium text-sm">
-                      {isNotebook
-                        ? t('knowledge:document.knowledgeBase.typeNotebook')
-                        : t('knowledge:document.knowledgeBase.typeClassic')}
+                    <div
+                      className={`flex-shrink-0 w-8 h-8 rounded-md flex items-center justify-center ${
+                        isNotebook ? 'bg-primary/10 text-primary' : 'bg-surface text-text-secondary'
+                      }`}
+                    >
+                      {isNotebook ? (
+                        <BookOpen className="w-4 h-4" />
+                      ) : (
+                        <FolderOpen className="w-4 h-4" />
+                      )}
                     </div>
-                    <div className="text-xs text-text-muted">
-                      {isNotebook
-                        ? t('knowledge:document.knowledgeBase.notebookDesc')
-                        : t('knowledge:document.knowledgeBase.classicDesc')}
+                    <div>
+                      <div className="font-medium text-sm">
+                        {isNotebook
+                          ? t('knowledge:document.knowledgeBase.typeNotebook')
+                          : t('knowledge:document.knowledgeBase.typeClassic')}
+                      </div>
+                      <div className="text-xs text-text-muted">
+                        {isNotebook
+                          ? t('knowledge:document.knowledgeBase.notebookDesc')
+                          : t('knowledge:document.knowledgeBase.classicDesc')}
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
+
+                {/* Group selector - only show when showGroupSelector is true */}
+                {showGroupSelector && availableGroups && availableGroups.length > 0 && (
+                  <div className="space-y-2 mt-4">
+                    <Label>{t('knowledge:document.knowledgeBase.targetGroup', '归属分组')} *</Label>
+                    <Select value={selectedGroupId} onValueChange={setSelectedGroupId}>
+                      <SelectTrigger data-testid="group-selector">
+                        <SelectValue
+                          placeholder={t(
+                            'knowledge:document.knowledgeBase.selectGroup',
+                            '选择分组'
+                          )}
+                        />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {availableGroups
+                          .filter(g => g.canCreate)
+                          .map(group => (
+                            <SelectItem key={group.id} value={group.id}>
+                              <div className="flex items-center gap-2">
+                                <GroupTypeIcon type={group.type} />
+                                <span>{group.displayName}</span>
+                              </div>
+                            </SelectItem>
+                          ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+              </>
             }
             name={name}
             description={description}
@@ -247,8 +330,8 @@ export function CreateKnowledgeBaseDialog({
             showRetrievalSection={true}
             retrievalConfig={retrievalConfig}
             onRetrievalConfigChange={setRetrievalConfig}
-            retrievalScope={scope}
-            retrievalGroupName={groupName}
+            retrievalScope={effectiveScope}
+            retrievalGroupName={effectiveGroupName}
           />
 
           {error && <p className="text-sm text-error">{error}</p>}

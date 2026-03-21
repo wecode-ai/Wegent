@@ -43,7 +43,6 @@ const COLLAPSE_SELECTORS_THRESHOLD = 420
 
 /** Generation mode type - video or image */
 type GenerateMode = 'video' | 'image'
-
 interface ChatAreaProps {
   teams: Team[]
   isTeamsLoading: boolean
@@ -71,6 +70,10 @@ interface ChatAreaProps {
   hideSelectors?: boolean
   /** Callback when user switches between video and image mode (only used in generate page) */
   onGenerateModeChange?: (mode: GenerateMode) => void
+  /** When true, input is always positioned at bottom even when there are no messages (used in knowledge notebook mode) */
+  inputAlwaysAtBottom?: boolean
+  /** Custom content to display when there are no messages (used in knowledge notebook mode for KnowledgeBaseSummaryCard) */
+  emptyStateContent?: React.ReactNode
 }
 
 /**
@@ -92,6 +95,8 @@ function ChatAreaContent({
   disabledReason,
   hideSelectors,
   onGenerateModeChange,
+  inputAlwaysAtBottom,
+  emptyStateContent,
 }: ChatAreaProps) {
   const { t } = useTranslation()
   const router = useRouter()
@@ -1090,16 +1095,14 @@ function ChatAreaContent({
       </div>
 
       {/* Main Content Area */}
-      <div className={hasMessages ? 'w-full' : 'flex-1 flex flex-col w-full'}>
-        {/* Center area for input when no messages */}
-        {!hasMessages && (
+      <div
+        className={hasMessages || inputAlwaysAtBottom ? 'w-full' : 'flex-1 flex flex-col w-full'}
+      >
+        {/* Center area for input when no messages (and not in inputAlwaysAtBottom mode) */}
+        {!hasMessages && !inputAlwaysAtBottom && (
           <div
-            className={
-              taskType === 'knowledge'
-                ? 'flex-1 flex items-end justify-center w-full pb-10'
-                : 'flex-1 flex items-center justify-center w-full'
-            }
-            style={taskType === 'knowledge' ? undefined : { marginBottom: '12vh' }}
+            className="flex-1 flex items-center justify-center w-full"
+            style={{ marginBottom: '12vh' }}
           >
             <div ref={floatingInputRef} className="w-full max-w-4xl mx-auto px-4 sm:px-6">
               {taskType !== 'knowledge' && <SloganDisplay slogan={chatState.randomSlogan} />}
@@ -1125,9 +1128,15 @@ function ChatAreaContent({
             </div>
           </div>
         )}
+        {/* Empty state content for inputAlwaysAtBottom mode (e.g., KnowledgeBaseSummaryCard in notebook mode) */}
+        {!hasMessages && inputAlwaysAtBottom && emptyStateContent && (
+          <div className="flex-1 flex items-center justify-center w-full px-4 sm:px-6">
+            {emptyStateContent}
+          </div>
+        )}
 
-        {/* Floating Input Area for messages view */}
-        {hasMessages && (
+        {/* Floating Input Area for messages view or inputAlwaysAtBottom mode */}
+        {(hasMessages || inputAlwaysAtBottom) && (
           <div
             ref={floatingInputRef}
             className="fixed bottom-0 z-50"
@@ -1137,25 +1146,32 @@ function ChatAreaContent({
             }}
           >
             {/* Bottom gradient fade effect - text fades as it approaches the input, limited width to avoid overlapping scrollbar */}
-            <div
-              className="absolute top-0 h-8 -translate-y-full pointer-events-none"
-              style={{
-                left: '18px',
-                width: 'calc(100% - 36px)',
-                background:
-                  'linear-gradient(to top, rgb(var(--color-bg-base)) 0%, rgb(var(--color-bg-base) / 0.6) 50%, rgb(var(--color-bg-base) / 0) 100%)',
-              }}
-            />
-            {/* Scroll to bottom indicator */}
-            <div className="absolute -top-2 left-1/2 -translate-x-1/2 -translate-y-full pointer-events-auto">
-              <ScrollToBottomIndicator
-                visible={showScrollIndicator}
-                onClick={() => scrollToBottom(true)}
+            {hasMessages && (
+              <div
+                className="absolute top-0 h-8 -translate-y-full pointer-events-none"
+                style={{
+                  left: '18px',
+                  width: 'calc(100% - 36px)',
+                  background:
+                    'linear-gradient(to top, rgb(var(--color-bg-base)) 0%, rgb(var(--color-bg-base) / 0.6) 50%, rgb(var(--color-bg-base) / 0) 100%)',
+                }}
               />
-            </div>
+            )}
+            {/* Scroll to bottom indicator */}
+            {hasMessages && (
+              <div className="absolute -top-2 left-1/2 -translate-x-1/2 -translate-y-full pointer-events-auto">
+                <ScrollToBottomIndicator
+                  visible={showScrollIndicator}
+                  onClick={() => scrollToBottom(true)}
+                />
+              </div>
+            )}
             <div className="relative w-full max-w-[820px] mx-auto px-4 sm:px-6">
               <div className="py-4 bg-base">
-                <ChatInputCard {...inputCardProps} />
+                <ChatInputCard
+                  {...inputCardProps}
+                  autoFocus={!hasMessages && inputAlwaysAtBottom}
+                />
               </div>
             </div>
           </div>

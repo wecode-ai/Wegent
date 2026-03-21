@@ -45,6 +45,7 @@
       "sharedDesc": "Knowledge bases shared by other users will appear here"
     },
     "tree": {
+      "title": "Knowledge Base",
       "myKnowledge": "My Knowledge",
       "groupKnowledge": "Group Knowledge",
       "orgKnowledge": "Organization Knowledge",
@@ -52,10 +53,68 @@
       "emptyState": "Select a knowledge base from the left panel",
       "emptyStateHint": "Browse and select a knowledge base to view its details",
       "noResults": "No matching knowledge bases found",
-      "collapseTree": "Collapse tree",
-      "expandTree": "Expand tree",
+      "collapse": "Collapse",
+      "collapseTree": "Collapse list",
+      "expandTree": "List",
       "docCount": "{{count}} docs",
       "loadingKbs": "Loading knowledge bases..."
+    },
+    "sidebar": {
+      "searchPlaceholder": "Search knowledge bases...",
+      "favorites": "Favorites",
+      "recent": "Recent",
+      "groups": "Groups",
+      "navigation": "Navigation",
+      "all": "All",
+      "noGroups": "No groups",
+      "noFavorites": "No favorite knowledge bases",
+      "noRecent": "No recent access history",
+      "clearRecent": "Clear history",
+      "personal": "Personal",
+      "organization": "Organization",
+      "groupSettings": "Group Settings",
+      "justNow": "Just now",
+      "minutesAgo": "{{count}} min ago",
+      "hoursAgo": "{{count}} hr ago",
+      "yesterday": "Yesterday",
+      "daysAgo": "{{count}} days ago"
+    },
+    "allKnowledgeBases": "All Knowledge Bases",
+    "groupFilter": {
+      "all": "All Groups"
+    },
+    "table": {
+      "name": "Name",
+      "group": "Group",
+      "lastAccess": "Last Access",
+      "actions": "Actions",
+      "edit": "Edit",
+      "delete": "Delete",
+      "minutesAgo": "min ago",
+      "daysAgo": "days ago"
+    },
+    "groupList": {
+      "back": "Back",
+      "create": "New Knowledge Base",
+      "searchPlaceholder": "Search knowledge bases...",
+      "sortUpdated": "Recently Updated",
+      "sortCreated": "Date Created",
+      "sortName": "Name",
+      "empty": "No knowledge bases",
+      "emptyHint": "Click the button above to create your first knowledge base",
+      "loadMore": "Load More",
+      "documentCount": "{{count}} documents",
+      "updatedAt": "Updated {{time}}"
+    },
+    "search": {
+      "placeholder": "Search knowledge bases...",
+      "recentSearches": "Recent Searches",
+      "allResults": "All Results",
+      "knowledgeBases": "Knowledge Bases",
+      "groupsLabel": "Groups",
+      "noResults": "No matching knowledge bases found",
+      "searching": "Searching...",
+      "kbCount": "{{count}} knowledge bases"
     },
     "accessDenied": {
       "title": "Access Denied",
@@ -98,7 +157,9 @@
       "convertToClassicConfirm": "After conversion, you will no longer be able to chat directly in the knowledge base, but there will be no document limit. Are you sure you want to convert?",
       "convertToNotebookConfirm": "After conversion to notebook, you can upload files and chat directly in the knowledge base, but the document limit will be 50 files. Are you sure you want to convert?",
       "convertSuccess": "Knowledge base type converted successfully",
-      "convertFailed": "Failed to convert knowledge base type"
+      "convertFailed": "Failed to convert knowledge base type",
+      "targetGroup": "Target Group",
+      "selectGroup": "Select Group"
     },
     "document": {
       "title": "Documents",
@@ -441,6 +502,7 @@
       "modified": "Modified"
     },
     "goToSettings": "Go to Settings",
+    "groupSettings": "Group Settings",
     "groupChat": {
       "create": "Create Group Chat",
       "createForGroup": "Create group chat for group",

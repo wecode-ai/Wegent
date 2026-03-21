@@ -201,6 +201,19 @@ export function useKnowledgeTree(): UseKnowledgeTreeReturn {
     }
   }, [])
 
+  // Load KBs for groups that are already expanded (from persisted state)
+  useEffect(() => {
+    if (groups.length > 0) {
+      groups.forEach(group => {
+        const nodeId = `group-${group.name}`
+        // If the group is expanded in persisted state and KBs haven't been loaded yet
+        if (expandState[nodeId] && !groupKbMap[group.name] && !groupKbLoading[group.name]) {
+          loadGroupKbs(group.name)
+        }
+      })
+    }
+  }, [groups, expandState, groupKbMap, groupKbLoading, loadGroupKbs])
+
   // Toggle expand/collapse
   const toggleExpand = useCallback(
     (nodeId: string) => {
@@ -351,8 +364,17 @@ export function useKnowledgeTree(): UseKnowledgeTreeReturn {
       scope: 'personal',
     })
 
-    // 2. Group Knowledge
-    const groupChildren: TreeNode[] = groups.map(group => {
+    // 2. Group Knowledge - Build hierarchical structure based on name path
+    // Group names use path format: "parent/child" indicates child is under parent
+    // Helper function to extract parent name from group name path
+    const getParentNameFromPath = (groupName: string): string | null => {
+      const lastSlashIndex = groupName.lastIndexOf('/')
+      if (lastSlashIndex === -1) return null
+      return groupName.substring(0, lastSlashIndex)
+    }
+
+    // Helper function to create a group tree node
+    const createGroupNode = (group: Group): TreeNode => {
       const groupName = group.name
       const kbs = groupKbMap[groupName] || []
       const isLoadingGroup = groupKbLoading[groupName] || false
@@ -377,13 +399,48 @@ export function useKnowledgeTree(): UseKnowledgeTreeReturn {
         type: 'group-item' as TreeNodeType,
         label: group.display_name || group.name,
         group,
-        children: kbChildren,
+        children: kbChildren, // Will be populated with child groups later
         loading: isLoadingGroup,
         expanded: expandState[`group-${groupName}`] ?? false,
         scope: 'group' as const,
         groupName,
         canCreate,
         canCreateGroupChat,
+      }
+    }
+
+    // Build group hierarchy
+    const groupNodeMap = new Map<string, TreeNode>()
+    const rootGroups: TreeNode[] = []
+
+    // First pass: create all group nodes
+    groups.forEach(group => {
+      const node = createGroupNode(group)
+      groupNodeMap.set(group.name, node)
+    })
+
+    // Second pass: build parent-child relationships based on name path
+    // Sort groups by name length to process parents before children
+    const sortedGroups = [...groups].sort((a, b) => a.name.length - b.name.length)
+
+    sortedGroups.forEach(group => {
+      const node = groupNodeMap.get(group.name)
+      if (!node) return
+
+      // Check for parent using path format (e.g., "parent/child" -> parent is "parent")
+      const parentName = group.parent_name || getParentNameFromPath(group.name)
+
+      if (parentName && groupNodeMap.has(parentName)) {
+        // This group has a parent, add it as a child of the parent
+        const parentNode = groupNodeMap.get(parentName)!
+        // Insert child groups before KB children (at the beginning)
+        const existingChildren = parentNode.children || []
+        const childGroups = existingChildren.filter(c => c.type === 'group-item')
+        const kbLeaves = existingChildren.filter(c => c.type === 'kb-leaf')
+        parentNode.children = [...childGroups, node, ...kbLeaves]
+      } else {
+        // This is a root-level group (no parent or parent not in list)
+        rootGroups.push(node)
       }
     })
 
@@ -392,8 +449,8 @@ export function useKnowledgeTree(): UseKnowledgeTreeReturn {
       type: 'category-root',
       label: 'document.tree.groupKnowledge',
       icon: 'users',
-      children: groupChildren,
-      expanded: expandState['group'] ?? false,
+      children: rootGroups,
+      expanded: expandState['group'] ?? true,
     })
 
     // 3. Organization Knowledge

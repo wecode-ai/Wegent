@@ -6,6 +6,8 @@
 
 import { useTranslation } from '@/hooks/useTranslation'
 import { CodeBracketIcon, DocumentTextIcon } from '@heroicons/react/24/outline'
+import { ListTree } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 
 export type KnowledgeTabType = 'code' | 'document'
 
@@ -20,6 +22,10 @@ interface KnowledgeTabItem {
 interface KnowledgeTabsProps {
   activeTab: KnowledgeTabType
   onTabChange: (tab: KnowledgeTabType) => void
+  /** Whether the knowledge sidebar is collapsed */
+  isKnowledgeSidebarCollapsed?: boolean
+  /** Callback when expand button is clicked */
+  onExpandClick?: () => void
 }
 
 const tabs: KnowledgeTabItem[] = [
@@ -38,12 +44,34 @@ const tabs: KnowledgeTabItem[] = [
 /**
  * Knowledge page tab navigation component
  * Displays tabs for different knowledge types (Code Knowledge, Document Knowledge, etc.)
+ * Shows expand button for knowledge sidebar when collapsed (in document tab)
+ * Collapse button is in the sidebar itself, not in TopNavigation
  */
-export function KnowledgeTabs({ activeTab, onTabChange }: KnowledgeTabsProps) {
+export function KnowledgeTabs({
+  activeTab,
+  onTabChange,
+  isKnowledgeSidebarCollapsed,
+  onExpandClick,
+}: KnowledgeTabsProps) {
   const { t } = useTranslation()
 
   return (
-    <div className="flex items-center gap-1 px-4 py-2 border-t border-border bg-base">
+    <div className="flex items-center gap-1">
+      {/* Expand button - only shown when document tab is active AND sidebar is collapsed */}
+      {activeTab === 'document' && isKnowledgeSidebarCollapsed && (
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={onExpandClick}
+          className="h-8 px-2 gap-1.5 mr-2"
+          title={t('knowledge:title')}
+          data-testid="knowledge-list-expand-button"
+        >
+          <ListTree className="w-4 h-4" />
+          <span className="text-xs">{t('knowledge:title')}</span>
+        </Button>
+      )}
+
       {tabs.map(tab => {
         const isActive = activeTab === tab.id
         const Icon = tab.icon

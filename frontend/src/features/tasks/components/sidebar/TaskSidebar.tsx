@@ -122,6 +122,7 @@ export default function TaskSidebar({
       icon: Workflow,
       path: paths.feed.getHref(),
       isActive: pageType === 'flow',
+      buttonPageType: 'flow' as const,
     },
     {
       label: t('common:navigation.code'),
@@ -129,18 +130,21 @@ export default function TaskSidebar({
       path: paths.code.getHref(),
       isActive: pageType === 'code',
       tooltip: pageType === 'code' ? t('common:tasks.new_task') : undefined,
+      buttonPageType: 'code' as const,
     },
     {
       label: t('common:navigation.wiki'),
       icon: BookOpen,
       path: paths.wiki.getHref(),
       isActive: pageType === 'knowledge',
+      buttonPageType: 'knowledge' as const,
     },
     {
       label: t('devices:my_devices'),
       icon: Monitor,
       path: paths.devices.getHref(),
       isActive: pageType === 'devices',
+      buttonPageType: 'devices' as const,
     },
   ]
 
@@ -162,13 +166,19 @@ export default function TaskSidebar({
   }
 
   // Handle navigation button click - for code mode, clear streams to create new task
-  const handleNavigationClick = (path: string, isActive: boolean) => {
+  const handleNavigationClick = (path: string, isActive: boolean, buttonPageType?: string) => {
     if (isActive) {
       // IMPORTANT: Clear selected task FIRST to ensure UI state is reset immediately
       setSelectedTask(null)
 
       // If already on this page, clear streams to create new task
       clearAllStreams()
+
+      // For knowledge page, dispatch event to clear selected KB and return to homepage
+      if (buttonPageType === 'knowledge' && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('knowledge-clear-selection'))
+      }
+
       router.replace(path)
     } else {
       router.push(path)
@@ -330,7 +340,7 @@ export default function TaskSidebar({
               <div key={btn.path} className="relative group">
                 <Button
                   variant="ghost"
-                  onClick={() => handleNavigationClick(btn.path, btn.isActive)}
+                  onClick={() => handleNavigationClick(btn.path, btn.isActive, btn.buttonPageType)}
                   className={`w-full justify-start px-3 h-9 text-sm rounded-md transition-all duration-200 ${
                     btn.isActive
                       ? 'bg-primary/10 text-primary font-medium hover:bg-primary/15'
@@ -360,7 +370,7 @@ export default function TaskSidebar({
                           <button
                             onClick={e => {
                               e.stopPropagation()
-                              handleNavigationClick(btn.path, btn.isActive)
+                              handleNavigationClick(btn.path, btn.isActive, btn.buttonPageType)
                             }}
                             className="flex items-center gap-1 px-1.5 py-0.5 text-xs bg-primary text-white rounded-md hover:bg-primary/90 transition-colors"
                           >

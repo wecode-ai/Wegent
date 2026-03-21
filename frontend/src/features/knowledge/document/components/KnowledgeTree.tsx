@@ -22,7 +22,7 @@ import {
   Search,
   UserCircle,
   Share2,
-  MessageSquarePlus,
+  Settings,
 } from 'lucide-react'
 import { Spinner } from '@/components/ui/spinner'
 import {
@@ -55,12 +55,10 @@ interface KnowledgeTreeProps {
     kbType: KnowledgeBaseType,
     groupName?: string
   ) => void
-  /** Create group chat handler */
-  onCreateGroupChat?: (
-    group: Group,
-    kbInfo?: { name: string; namespace: string },
-    allKbs?: KnowledgeBase[]
-  ) => void
+  /** Open group settings handler */
+  onOpenGroupSettings?: (group: Group) => void
+  /** Edit knowledge base handler */
+  onEditKb?: (kb: KnowledgeBase) => void
   /** Whether user is admin */
   isAdmin: boolean
 }
@@ -73,7 +71,8 @@ export function KnowledgeTree({
   onToggleExpand,
   onSelectKb,
   onCreateKb,
-  onCreateGroupChat,
+  onOpenGroupSettings,
+  onEditKb,
   isAdmin,
 }: KnowledgeTreeProps) {
   const { t } = useTranslation('knowledge')
@@ -153,7 +152,8 @@ export function KnowledgeTree({
               onToggleExpand={onToggleExpand}
               onSelectKb={onSelectKb}
               onCreateKb={onCreateKb}
-              onCreateGroupChat={onCreateGroupChat}
+              onOpenGroupSettings={onOpenGroupSettings}
+              onEditKb={onEditKb}
               isAdmin={isAdmin}
             />
           ))
@@ -289,11 +289,8 @@ interface TreeNodeItemProps {
     kbType: KnowledgeBaseType,
     groupName?: string
   ) => void
-  onCreateGroupChat?: (
-    group: Group,
-    kbInfo?: { name: string; namespace: string },
-    allKbs?: KnowledgeBase[]
-  ) => void
+  onOpenGroupSettings?: (group: Group) => void
+  onEditKb?: (kb: KnowledgeBase) => void
   isAdmin: boolean
 }
 
@@ -306,7 +303,8 @@ function TreeNodeItem({
   onToggleExpand,
   onSelectKb,
   onCreateKb,
-  onCreateGroupChat,
+  onOpenGroupSettings,
+  onEditKb,
   isAdmin,
 }: TreeNodeItemProps) {
   const { t } = useTranslation('knowledge')
@@ -336,15 +334,26 @@ function TreeNodeItem({
     }
   }, [isLeaf, node, onSelectKb, onToggleExpand])
 
-  // Handle group chat for group-item nodes
-  const handleGroupChat = useCallback(
+  // Handle group settings for group-item nodes
+  const handleGroupSettings = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation()
-      if (node.group && onCreateGroupChat) {
-        onCreateGroupChat(node.group)
+      if (node.group && onOpenGroupSettings) {
+        onOpenGroupSettings(node.group)
       }
     },
-    [node.group, onCreateGroupChat]
+    [node.group, onOpenGroupSettings]
+  )
+
+  // Handle KB settings for leaf nodes
+  const handleKbSettings = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation()
+      if (node.knowledgeBase && onEditKb) {
+        onEditKb(node.knowledgeBase)
+      }
+    },
+    [node.knowledgeBase, onEditKb]
   )
 
   // Render icon
@@ -422,14 +431,27 @@ function TreeNodeItem({
             />
           )}
 
-          {/* Group chat button for group nodes */}
-          {node.type === 'group-item' && node.canCreateGroupChat && onCreateGroupChat && (
+          {/* Group settings button for group nodes */}
+          {node.type === 'group-item' && node.group && onOpenGroupSettings && (
             <button
               className="p-0.5 rounded hover:bg-muted text-text-muted hover:text-primary transition-colors"
-              onClick={handleGroupChat}
-              title={t('document.groupChat.create')}
+              onClick={handleGroupSettings}
+              title={t('document.groupSettings')}
+              data-testid={`group-settings-${node.group.id}`}
             >
-              <MessageSquarePlus className="w-3.5 h-3.5" />
+              <Settings className="w-3.5 h-3.5" />
+            </button>
+          )}
+
+          {/* KB settings button for notebook leaf nodes */}
+          {isLeaf && node.knowledgeBase && onEditKb && (
+            <button
+              className="p-0.5 rounded hover:bg-muted text-text-muted hover:text-primary transition-colors"
+              onClick={handleKbSettings}
+              title={t('document.knowledgeBase.edit')}
+              data-testid={`kb-settings-${node.knowledgeBase.id}`}
+            >
+              <Settings className="w-3.5 h-3.5" />
             </button>
           )}
         </span>
@@ -438,21 +460,28 @@ function TreeNodeItem({
       {/* Children */}
       {isExpanded && hasChildren && (
         <div>
-          {node.children!.map(child => (
-            <TreeNodeItem
-              key={child.id}
-              node={child}
-              depth={depth + 1}
-              selectedKbId={selectedKbId}
-              expandState={expandState}
-              searchQuery={searchQuery}
-              onToggleExpand={onToggleExpand}
-              onSelectKb={onSelectKb}
-              onCreateKb={onCreateKb}
-              onCreateGroupChat={onCreateGroupChat}
-              isAdmin={isAdmin}
-            />
-          ))}
+          {node.children!.map(child => {
+            // For group-item nodes: KB leaves should align with the parent group (same depth)
+            // Child groups should be indented (depth + 1)
+            const childDepth =
+              node.type === 'group-item' && child.type === 'kb-leaf' ? depth : depth + 1
+            return (
+              <TreeNodeItem
+                key={child.id}
+                node={child}
+                depth={childDepth}
+                selectedKbId={selectedKbId}
+                expandState={expandState}
+                searchQuery={searchQuery}
+                onToggleExpand={onToggleExpand}
+                onSelectKb={onSelectKb}
+                onCreateKb={onCreateKb}
+                onOpenGroupSettings={onOpenGroupSettings}
+                onEditKb={onEditKb}
+                isAdmin={isAdmin}
+              />
+            )
+          })}
         </div>
       )}
 

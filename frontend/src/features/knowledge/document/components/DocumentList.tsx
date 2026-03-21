@@ -44,6 +44,13 @@ import { useTranslation } from '@/hooks/useTranslation'
 // Maximum documents allowed for notebook type
 const NOTEBOOK_MAX_DOCUMENTS = 50
 
+/** Group info for breadcrumb display */
+export interface KbGroupInfo {
+  groupId: string
+  groupName: string
+  groupType: 'personal' | 'personal-shared' | 'group' | 'organization'
+}
+
 interface DocumentListProps {
   knowledgeBase: KnowledgeBase
   onBack?: () => void
@@ -56,6 +63,12 @@ interface DocumentListProps {
   onRefreshKnowledgeBase?: () => void
   /** Callback when knowledge base type is converted */
   onTypeConverted?: (updatedKb: KnowledgeBase) => void
+  /** Optional header actions to display next to the title (e.g., tabs) */
+  headerActions?: React.ReactNode
+  /** Group info for breadcrumb display */
+  groupInfo?: KbGroupInfo
+  /** Callback when group name is clicked */
+  onGroupClick?: (groupId: string, groupType?: string) => void
 }
 
 type SortField = 'name' | 'size' | 'date'
@@ -69,6 +82,9 @@ export function DocumentList({
   onSelectionChange,
   onRefreshKnowledgeBase,
   onTypeConverted,
+  headerActions,
+  groupInfo,
+  onGroupClick,
 }: DocumentListProps) {
   const { t } = useTranslation('knowledge')
   const { documents, loading, error, create, remove, refresh, batchDelete } = useDocuments({
@@ -424,6 +440,19 @@ export function DocumentList({
         )}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5">
+            {/* Group name prefix with click handler */}
+            {groupInfo && (
+              <>
+                <button
+                  onClick={() => onGroupClick?.(groupInfo.groupId, groupInfo.groupType)}
+                  className="text-base font-medium text-text-secondary hover:text-primary transition-colors truncate max-w-[120px]"
+                  title={groupInfo.groupName}
+                >
+                  {groupInfo.groupName}
+                </button>
+                <span className="text-text-muted">/</span>
+              </>
+            )}
             <h2 className="text-base font-medium text-text-primary truncate">
               {knowledgeBase.name}
             </h2>
@@ -476,6 +505,8 @@ export function DocumentList({
             <p className="text-xs text-text-muted truncate">{knowledgeBase.description}</p>
           )}
         </div>
+        {/* Header actions (e.g., tabs) - displayed between title and convert button */}
+        {headerActions}
         {/* Convert type button - only shown when canManage is true */}
         {canManage && (
           <TooltipProvider>

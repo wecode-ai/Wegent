@@ -383,6 +383,75 @@ class AccessibleKnowledgeResponse(BaseModel):
     team: list[TeamKnowledgeGroup]
 
 
+# ============== All Grouped Knowledge Schemas ==============
+
+
+class KnowledgeBaseWithGroupInfo(BaseModel):
+    """Schema for knowledge base with group info for all-grouped response."""
+
+    id: int
+    name: str
+    description: Optional[str] = None
+    kb_type: Optional[str] = "notebook"
+    namespace: str
+    document_count: int = 0
+    updated_at: datetime
+    created_at: datetime
+    user_id: int
+    # Group info for display
+    group_id: str  # namespace or 'default'
+    group_name: str  # Display name
+    group_type: str  # 'personal' | 'personal-shared' | 'group' | 'organization'
+
+
+class AllGroupedPersonal(BaseModel):
+    """Schema for personal knowledge bases in all-grouped response."""
+
+    created_by_me: list[KnowledgeBaseWithGroupInfo]
+    shared_with_me: list[KnowledgeBaseWithGroupInfo]
+
+
+class AllGroupedTeamGroup(BaseModel):
+    """Schema for a team group in all-grouped response."""
+
+    group_name: str
+    group_display_name: str
+    kb_count: int
+    knowledge_bases: list[KnowledgeBaseWithGroupInfo]
+
+
+class AllGroupedOrganization(BaseModel):
+    """Schema for organization knowledge bases in all-grouped response."""
+
+    namespace: Optional[str] = None
+    display_name: Optional[str] = None
+    kb_count: int = 0
+    knowledge_bases: list[KnowledgeBaseWithGroupInfo]
+
+
+class AllGroupedSummary(BaseModel):
+    """Schema for summary in all-grouped response."""
+
+    total_count: int
+    personal_count: int
+    group_count: int
+    organization_count: int
+
+
+class AllGroupedKnowledgeResponse(BaseModel):
+    """Schema for all knowledge bases grouped response.
+
+    This is the response for GET /api/v1/knowledge-bases/all-grouped
+    which returns all knowledge bases accessible to the user in a single request,
+    solving the N+1 query problem.
+    """
+
+    personal: AllGroupedPersonal
+    groups: list[AllGroupedTeamGroup]
+    organization: AllGroupedOrganization
+    summary: AllGroupedSummary
+
+
 class PersonalKnowledgeBaseGroup(BaseModel):
     """Schema for personal knowledge base group (created by me vs shared with me)."""
 

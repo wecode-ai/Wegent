@@ -21,7 +21,6 @@ import { saveGlobalModelPreference, type ModelPreference } from '@/utils/modelPr
 import { useKnowledgeTree } from '../hooks/useKnowledgeTree'
 import { KnowledgeTree } from './KnowledgeTree'
 import { CreateKnowledgeBaseDialog } from './CreateKnowledgeBaseDialog'
-import { CreateGroupChatFromKnowledgeDialog } from './CreateGroupChatFromKnowledgeDialog'
 import type {
   KnowledgeBase,
   KnowledgeBaseCreate,
@@ -42,15 +41,6 @@ export function KnowledgeDocumentPageMobile() {
   const [createScope, setCreateScope] = useState<'personal' | 'group' | 'organization'>('personal')
   const [createGroupName, setCreateGroupName] = useState<string | undefined>(undefined)
   const [createKbType, setCreateKbType] = useState<KnowledgeBaseType>('notebook')
-
-  // Group chat dialog
-  const [showGroupChatDialog, setShowGroupChatDialog] = useState(false)
-  const [groupChatContext, setGroupChatContext] = useState<{
-    group: Group
-    knowledgeBaseName?: string
-    knowledgeBaseNamespace?: string
-    knowledgeBases?: KnowledgeBase[]
-  } | null>(null)
 
   // Default teams config for saving model preference
   const [defaultTeamsConfig, setDefaultTeamsConfig] = useState<DefaultTeamsResponse | null>(null)
@@ -169,19 +159,11 @@ export function KnowledgeDocumentPageMobile() {
     [createScope, createGroupName, createKbType, tree, saveSummaryModelToPreference]
   )
 
-  // Handle group chat creation
-  const handleCreateGroupChat = useCallback(
-    (group: Group, kbInfo?: { name: string; namespace: string }, allKbs?: KnowledgeBase[]) => {
-      setGroupChatContext({
-        group,
-        knowledgeBaseName: kbInfo?.name,
-        knowledgeBaseNamespace: kbInfo?.namespace,
-        knowledgeBases: allKbs,
-      })
-      setShowGroupChatDialog(true)
-    },
-    []
-  )
+  // Handle open group settings
+  const handleOpenGroupSettings = useCallback((group: Group) => {
+    // Navigate to group settings page
+    window.location.href = `/settings?section=groups&tab=group-team&group=${encodeURIComponent(group.name)}`
+  }, [])
 
   return (
     <div className="flex flex-col h-full" data-testid="knowledge-document-page-mobile">
@@ -194,7 +176,7 @@ export function KnowledgeDocumentPageMobile() {
         onToggleExpand={tree.toggleExpand}
         onSelectKb={handleSelectKb}
         onCreateKb={handleCreateKb}
-        onCreateGroupChat={handleCreateGroupChat}
+        onOpenGroupSettings={handleOpenGroupSettings}
         isAdmin={tree.isAdmin}
       />
 
@@ -216,22 +198,6 @@ export function KnowledgeDocumentPageMobile() {
         kbType={createKbType}
         knowledgeDefaultTeamId={knowledgeDefaultTeamId}
       />
-
-      {groupChatContext && (
-        <CreateGroupChatFromKnowledgeDialog
-          open={showGroupChatDialog}
-          onOpenChange={open => {
-            setShowGroupChatDialog(open)
-            if (!open) {
-              setGroupChatContext(null)
-            }
-          }}
-          group={groupChatContext.group}
-          knowledgeBaseName={groupChatContext.knowledgeBaseName}
-          knowledgeBaseNamespace={groupChatContext.knowledgeBaseNamespace}
-          knowledgeBases={groupChatContext.knowledgeBases}
-        />
-      )}
     </div>
   )
 }
