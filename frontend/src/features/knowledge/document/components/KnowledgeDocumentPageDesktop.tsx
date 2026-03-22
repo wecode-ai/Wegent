@@ -13,7 +13,7 @@
 'use client'
 
 import { useState, useEffect, useMemo, useCallback } from 'react'
-import { useSearchParams } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { FolderOpen } from 'lucide-react'
 import { userApis } from '@/apis/user'
 import { teamService } from '@/features/tasks/service/teamService'
@@ -42,6 +42,7 @@ const SIDEBAR_WIDTH = 280
 
 export function KnowledgeDocumentPageDesktop() {
   const { t } = useTranslation('knowledge')
+  const router = useRouter()
   const searchParams = useSearchParams()
 
   // Knowledge sidebar hook
@@ -187,6 +188,28 @@ export function KnowledgeDocumentPageDesktop() {
     }
   }, [searchParams, sidebar.allKnowledgeBases, sidebar.selectedKbId, sidebar.selectKb])
 
+  // Sync selected group from URL parameter
+  useEffect(() => {
+    const groupParam = searchParams.get('group')
+    if (groupParam && groupParam !== sidebar.selectedGroupId) {
+      // Check if the group exists
+      const groupExists = sidebar.groups.some(g => g.id === groupParam)
+      if (groupExists) {
+        sidebar.selectGroup(groupParam)
+      }
+    } else if (!groupParam && sidebar.selectedGroupId && sidebar.viewMode === 'group') {
+      // URL has no group param but sidebar has group selected - sync to "all" view
+      sidebar.selectAll()
+    }
+  }, [
+    searchParams,
+    sidebar.groups,
+    sidebar.selectedGroupId,
+    sidebar.viewMode,
+    sidebar.selectGroup,
+    sidebar.selectAll,
+  ])
+
   // Helper function to convert KnowledgeBaseWithGroupInfo to KnowledgeBase
   const toKnowledgeBase = useCallback(
     (kb: {
@@ -305,28 +328,44 @@ export function KnowledgeDocumentPageDesktop() {
       const fullKb = sidebar.allKnowledgeBases.find(k => k.id === kb.id)
       if (fullKb) {
         sidebar.selectKb(fullKb)
+        // Save current group selection before navigating to KB detail
+        if (sidebar.selectedGroupId) {
+          localStorage.setItem('knowledge-last-group', sidebar.selectedGroupId)
+        } else if (sidebar.viewMode === 'all' && sidebar.filterGroupId) {
+          localStorage.setItem('knowledge-last-group', sidebar.filterGroupId)
+        } else {
+          localStorage.removeItem('knowledge-last-group')
+        }
+        // Navigate to KB detail page (consistent with mobile)
+        router.push(`/knowledge/document/${fullKb.id}`)
       }
     },
-    [sidebar]
+    [sidebar, router]
   )
 
   // Handle "All" selection
   const handleSelectAll = useCallback(() => {
     sidebar.selectAll()
-  }, [sidebar])
+    // Clear group parameter from URL
+    router.replace('/knowledge?type=document')
+  }, [sidebar, router])
 
   // Handle group selection
   const handleSelectGroup = useCallback(
     (groupId: string) => {
       sidebar.selectGroup(groupId)
+      // Update URL with group parameter
+      router.replace(`/knowledge?type=document&group=${encodeURIComponent(groupId)}`)
     },
-    [sidebar]
+    [sidebar, router]
   )
 
   // Handle back from group list
   const handleBackFromGroup = useCallback(() => {
     sidebar.clearSelection()
-  }, [sidebar])
+    // Clear group parameter from URL
+    router.replace('/knowledge?type=document')
+  }, [sidebar, router])
 
   // Handle create KB from group list
   const handleCreateKbFromGroup = useCallback(
@@ -549,8 +588,10 @@ export function KnowledgeDocumentPageDesktop() {
         sidebarGroupId = `group-${groupId}`
       }
       sidebar.selectGroup(sidebarGroupId)
+      // Update URL with group parameter
+      router.replace(`/knowledge?type=document&group=${encodeURIComponent(sidebarGroupId)}`)
     },
-    [sidebar]
+    [sidebar, router]
   )
 
   // Render main content area

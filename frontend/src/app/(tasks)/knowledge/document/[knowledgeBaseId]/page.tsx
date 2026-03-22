@@ -105,9 +105,18 @@ export default function KnowledgeBaseChatPage() {
   })
 
   // Handle back navigation with fallback to knowledge list
+  // Restores previous group selection if available
   const handleBack = () => {
-    // Check if there's history to go back to
-    if (typeof window !== 'undefined' && window.history.length > 1) {
+    // Check if there was a previous group selection
+    const lastGroup =
+      typeof window !== 'undefined' ? localStorage.getItem('knowledge-last-group') : null
+
+    if (lastGroup) {
+      // Navigate back to the group view
+      router.push(`/knowledge?type=document&group=${encodeURIComponent(lastGroup)}`)
+      localStorage.removeItem('knowledge-last-group')
+    } else if (typeof window !== 'undefined' && window.history.length > 1) {
+      // Try browser history
       router.back()
     } else {
       // Fallback to knowledge list when no history available
