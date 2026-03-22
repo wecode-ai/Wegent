@@ -428,15 +428,22 @@ export function NavigationSection({
         isExpanded={isGroupsExpanded}
         onToggleExpand={() => setIsGroupsExpanded(!isGroupsExpanded)}
         actionButton={
-          <button
-            type="button"
+          <span
+            role="button"
+            tabIndex={0}
             onClick={handleGroupsSettingsClick}
-            className="p-1 hover:bg-muted rounded transition-colors"
+            onKeyDown={e => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault()
+                handleGroupsSettingsClick()
+              }
+            }}
+            className="p-1 hover:bg-muted rounded transition-colors cursor-pointer"
             title={t('document.sidebar.groupSettings', '组设置')}
             data-testid="nav-groups-settings"
           >
             <Settings className="w-3.5 h-3.5 text-text-muted hover:text-text-primary" />
-          </button>
+          </span>
         }
       >
         {/* Sub-groups tree - hierarchical structure */}

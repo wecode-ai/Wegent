@@ -61,6 +61,7 @@
     },
     "sidebar": {
       "searchPlaceholder": "搜索知识库...",
+      "typeToSearch": "输入关键词搜索知识库",
       "favorites": "收藏",
       "recent": "最近",
       "groups": "分组",
