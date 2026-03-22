@@ -479,7 +479,6 @@ class RetrievalService:
         db: Session,
         max_chunks: int = 10000,
         query: Optional[str] = None,
-        user_id: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         """
         Get all chunks from a knowledge base without permission check.
@@ -492,7 +491,6 @@ class RetrievalService:
             db: Database session
             max_chunks: Maximum number of chunks to retrieve (safety limit)
             query: Optional query string for logging purposes
-            user_id: Optional user ID for Restricted Analyst check
 
         Returns:
             List of chunk dicts with content, title, chunk_id, doc_ref, metadata
@@ -515,21 +513,6 @@ class RetrievalService:
 
         if not kb:
             raise ValueError(f"Knowledge base {knowledge_base_id} not found")
-
-        # Check if user is a Restricted Analyst in the knowledge base's group
-        # This check is optional (user_id can be None for internal calls)
-        if user_id is not None and kb.namespace != "default":
-            from app.services.group_permission import is_restricted_analyst
-
-            if is_restricted_analyst(db, user_id, kb.namespace):
-                logger.warning(
-                    f"[RetrievalService] User {user_id} is Restricted Analyst in group "
-                    f"'{kb.namespace}', blocking get_all_chunks from KB {knowledge_base_id}"
-                )
-                raise ValueError(
-                    f"Access denied: You have Restricted Analyst permissions in group "
-                    f"'{kb.namespace}'. You cannot retrieve content from this knowledge base."
-                )
 
         # Extract retrieval configuration from knowledge base spec
         kb_json = kb.json or {}
@@ -566,6 +549,39 @@ class RetrievalService:
 
         # Use knowledge base ID as knowledge_id
         knowledge_id = str(kb.id)
+        backend_name = storage_backend.__class__.__name__
+        index_name = ""
+        try:
+            index_name = storage_backend.get_index_name(
+                knowledge_id, user_id=kb.user_id
+            )
+        except Exception as e:
+            logger.warning(
+                "[RAG] Failed to precompute index name for get_all_chunks: kb_id=%s, "
+                "knowledge_id=%s, backend=%s, error=%s",
+                knowledge_base_id,
+                knowledge_id,
+                backend_name,
+                e,
+            )
+
+        query_log = f", query={query[:50]}..." if query else ""
+        logger.info(
+            "[RAG] get_all_chunks start: kb_id=%s, kb_name=%s, knowledge_id=%s, "
+            "namespace=%s, backend=%s, retriever=%s/%s, index_name=%s, max_chunks=%s, "
+            "kb_owner_id=%s%s",
+            knowledge_base_id,
+            kb.name,
+            knowledge_id,
+            kb.namespace,
+            backend_name,
+            retriever_namespace,
+            retriever_name,
+            index_name or "<unknown>",
+            max_chunks,
+            kb.user_id,
+            query_log,
+        )
 
         # Get all chunks from storage backend
         # Run in thread pool to avoid event loop conflicts
@@ -576,11 +592,28 @@ class RetrievalService:
             user_id=kb.user_id,
         )
 
-        # Format query for logging
-        query_log = f", query={query[:50]}..." if query else ""
-
         logger.info(
-            f"[RAG] Retrieved {len(chunks)} total chunks from KB {knowledge_base_id} (name={kb.name}){query_log}"
+            "[RAG] get_all_chunks completed: kb_id=%s, kb_name=%s, chunk_count=%s, "
+            "backend=%s, index_name=%s%s",
+            knowledge_base_id,
+            kb.name,
+            len(chunks),
+            backend_name,
+            index_name or "<unknown>",
+            query_log,
         )
+        if not chunks:
+            logger.warning(
+                "[RAG] get_all_chunks returned empty result: kb_id=%s, kb_name=%s, "
+                "knowledge_id=%s, backend=%s, index_name=%s, retriever=%s/%s%s",
+                knowledge_base_id,
+                kb.name,
+                knowledge_id,
+                backend_name,
+                index_name or "<unknown>",
+                retriever_namespace,
+                retriever_name,
+                query_log,
+            )
 
         return chunks

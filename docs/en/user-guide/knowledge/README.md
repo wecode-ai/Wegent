@@ -94,6 +94,7 @@ Flexible document chunking options:
 | [Document Management](./document-management.md) | Adding and managing documents |
 | [Chunking Strategies](./chunking-strategies.md) | Document chunking strategies |
 | [Configuring Retrievers](./configuring-retrievers.md) | Retrieval strategy and parameter configuration |
+| [Retrieval And Direct Injection](./retrieval-and-direct-injection.md) | When to use `retrieve` vs `all-chunks`, and how their permissions should align |
 
 ---
 

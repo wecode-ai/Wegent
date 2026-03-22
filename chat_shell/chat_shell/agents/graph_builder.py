@@ -14,10 +14,8 @@ This module provides a simplified LangGraph agent implementation using:
 
 import asyncio
 import logging
-import os
 import time
 from collections.abc import AsyncGenerator
-from pathlib import Path
 from typing import Any, Callable, Optional
 
 from langchain_core.language_models import BaseChatModel
@@ -34,6 +32,11 @@ from opentelemetry import trace as otel_trace
 from shared.telemetry.decorators import add_span_event, trace_sync
 
 from ..core.config import settings
+from ..llm_logging import env_bool as _env_bool
+from ..llm_logging import log_direct_llm_request as _log_direct_llm_request
+from ..llm_logging import log_direct_llm_response as _log_direct_llm_response
+from ..llm_logging import log_llm_request_event as _log_llm_request_event
+from ..llm_logging import log_llm_response_event as _log_llm_response_event
 from ..tools.base import ToolRegistry
 from ..tools.builtin.silent_exit import SilentExitException
 from ..tools.builtin.web_search import WebSearchTool
@@ -103,152 +106,6 @@ The research results are now available in the conversation above.
 DO NOT request more research. DO NOT call any tools again. Just provide your final answer based on the research results above."""
 
 
-def _env_bool(name: str, default: bool = False) -> bool:
-    """Read a boolean value from environment variables."""
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    return raw.strip().lower() in {"1", "true", "yes", "y", "on"}
-
-
-def _truncate_str(text: str, max_len: int) -> str:
-    """Truncate a string for safe logging."""
-    if max_len <= 0:
-        return ""
-    if len(text) <= max_len:
-        return text
-    return text[:max_len] + f"...<truncated:{len(text) - max_len}>"
-
-
-def _to_jsonable(obj: Any, *, max_str_len: int = 200000) -> Any:
-    """Convert LangChain/LangGraph event payload to a JSON-serializable structure.
-
-    This is a best-effort serializer for logging the *logical* LLM request payload
-    (messages + invocation params). It intentionally avoids raising exceptions.
-    """
-    try:
-        # Primitive types
-        if obj is None or isinstance(obj, (bool, int, float)):
-            return obj
-        if isinstance(obj, str):
-            return _truncate_str(obj, max_str_len)
-
-        # Bytes-like
-        if isinstance(obj, (bytes, bytearray, memoryview)):
-            b = bytes(obj)
-            prefix = b[:64]
-            return {
-                "__type__": type(obj).__name__,
-                "len": len(b),
-                "prefix_base64": __import__("base64").b64encode(prefix).decode("ascii"),
-            }
-
-        # Dict / list
-        if isinstance(obj, dict):
-            return {
-                str(k): _to_jsonable(v, max_str_len=max_str_len) for k, v in obj.items()
-            }
-        if isinstance(obj, (list, tuple)):
-            return [_to_jsonable(v, max_str_len=max_str_len) for v in obj]
-
-        # LangChain message objects
-        # Import lazily to avoid import cycles at module import time.
-        try:
-            from langchain_core.messages import BaseMessage  # type: ignore
-        except Exception:
-            BaseMessage = None  # type: ignore
-
-        if BaseMessage is not None and isinstance(obj, BaseMessage):
-            # BaseMessage in LC has: type/content/additional_kwargs/response_metadata/name/id
-            data: dict[str, Any] = {
-                "type": getattr(obj, "type", type(obj).__name__),
-                "content": _to_jsonable(
-                    getattr(obj, "content", None), max_str_len=max_str_len
-                ),
-            }
-            additional = getattr(obj, "additional_kwargs", None)
-            if additional:
-                data["additional_kwargs"] = _to_jsonable(
-                    additional, max_str_len=max_str_len
-                )
-            response_meta = getattr(obj, "response_metadata", None)
-            if response_meta:
-                data["response_metadata"] = _to_jsonable(
-                    response_meta, max_str_len=max_str_len
-                )
-            name = getattr(obj, "name", None)
-            if name:
-                data["name"] = name
-            msg_id = getattr(obj, "id", None)
-            if msg_id:
-                data["id"] = msg_id
-            tool_calls = getattr(obj, "tool_calls", None)
-            if tool_calls:
-                data["tool_calls"] = _to_jsonable(tool_calls, max_str_len=max_str_len)
-            return data
-
-        # Pydantic models
-        if hasattr(obj, "model_dump") and callable(getattr(obj, "model_dump")):
-            return _to_jsonable(obj.model_dump(), max_str_len=max_str_len)
-
-        # Fallback
-        return {
-            "__type__": type(obj).__name__,
-            "repr": _truncate_str(repr(obj), 20000),
-        }
-    except Exception as e:
-        return {
-            "__error__": "serialization_failed",
-            "exception": type(e).__name__,
-            "message": _truncate_str(str(e), 2000),
-            "obj_type": type(obj).__name__,
-        }
-
-
-def _log_llm_request_event(
-    event: dict[str, Any], tool_names: list[str] | None = None
-) -> None:
-    """Log the JSON-like LLM request payload from LangGraph/LangChain callbacks.
-
-    Enable via env:
-      - CHAT_SHELL_LOG_LLM_REQUESTS=1
-      - Optional: CHAT_SHELL_LOG_LLM_REQUESTS_FILE=/path/to/llm_requests.jsonl
-    """
-    if not _env_bool("CHAT_SHELL_LOG_LLM_REQUESTS", default=False):
-        return
-
-    import json
-
-    data = event.get("data") or {}
-
-    # LangChain event payload usually contains:
-    # - input: { messages: [...] }
-    # - invocation_params: {...}
-    # The exact shape varies across providers, so we log best-effort.
-    payload = {
-        "event": event.get("event"),
-        "name": event.get("name"),
-        "run_id": event.get("run_id"),
-        "tags": event.get("tags"),
-        "metadata": event.get("metadata"),
-        "tool_names": tool_names or [],
-        "data": data,
-    }
-
-    json_payload = json.dumps(_to_jsonable(payload), ensure_ascii=False, indent=2)
-    logger.info("[LLM_REQUEST] %s", json_payload)
-
-    file_path = os.getenv("CHAT_SHELL_LOG_LLM_REQUESTS_FILE", "").strip()
-    if file_path:
-        try:
-            p = Path(file_path)
-            p.parent.mkdir(parents=True, exist_ok=True)
-            with p.open("a", encoding="utf-8") as f:
-                f.write(json_payload + "\n")
-        except Exception:
-            logger.exception("[LLM_REQUEST] Failed to write request log file")
-
-
 class LangGraphAgentBuilder:
     """Builder for LangGraph-based agent workflows using prebuilt ReAct agent."""
 
@@ -293,6 +150,147 @@ class LangGraphAgentBuilder:
 
         # Automatically detect PromptModifierTool instances from registered tools
         self._prompt_modifier_tools = self._find_prompt_modifier_tools()
+
+    async def _collect_final_state_from_events(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        config: dict[str, Any] | None = None,
+        cancel_event: asyncio.Event | None = None,
+        on_tool_event: Callable[[str, dict], None] | None = None,
+        collect_all_events: bool = True,
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        """Execute via astream_events and capture final state plus optional events."""
+
+        agent = self._build_agent()
+        lc_messages = convert_to_messages(messages)
+        exec_config = {"configurable": config} if config else None
+
+        all_events: list[dict[str, Any]] = []
+        final_state: dict[str, Any] = {}
+
+        try:
+            async for event in agent.astream_events(
+                {"messages": lc_messages},
+                config={
+                    **(exec_config or {}),
+                    "recursion_limit": self.max_iterations * 2 + 1,
+                },
+                version="v2",
+            ):
+                if cancel_event and cancel_event.is_set():
+                    logger.info("Streaming cancelled by user")
+                    break
+
+                if collect_all_events:
+                    all_events.append(event)
+
+                kind = event.get("event", "")
+
+                if kind == "on_chat_model_start":
+                    _log_llm_request_event(
+                        event,
+                        tool_names=[
+                            t.name for t in getattr(self, "all_tools", []) or []
+                        ],
+                    )
+                elif kind == "on_chat_model_end":
+                    _log_llm_response_event(
+                        event,
+                        tool_names=[
+                            t.name for t in getattr(self, "all_tools", []) or []
+                        ],
+                    )
+
+                if kind == "on_tool_start":
+                    tool_name = event.get("name", "unknown")
+                    run_id = event.get("run_id", "")
+                    if on_tool_event:
+                        on_tool_event(
+                            "tool_start",
+                            {
+                                "name": tool_name,
+                                "run_id": run_id,
+                                "data": event.get("data", {}),
+                            },
+                        )
+
+                elif kind == "on_tool_end":
+                    tool_name = event.get("name", "unknown")
+                    run_id = event.get("run_id", "")
+                    if on_tool_event:
+                        on_tool_event(
+                            "tool_end",
+                            {
+                                "name": tool_name,
+                                "run_id": run_id,
+                                "data": event.get("data", {}),
+                            },
+                        )
+
+                elif kind == "on_chain_end" and event.get("name") == "LangGraph":
+                    data = event.get("data", {})
+                    output = data.get("output", {})
+                    if output:
+                        final_state = output
+
+            return final_state, all_events
+
+        except SilentExitException:
+            logger.info(
+                "[collect_final_state_from_events] SilentExitException caught, re-raising for caller to handle"
+            )
+            raise
+
+        except GraphRecursionError:
+            logger.warning(
+                "[collect_final_state_from_events] GraphRecursionError: Tool call limit reached (max_iterations=%d). "
+                "Asking model to provide final response.",
+                self.max_iterations,
+            )
+
+            limit_messages = list(lc_messages) + [
+                HumanMessage(content=TOOL_LIMIT_REACHED_MESSAGE)
+            ]
+
+            try:
+                _log_direct_llm_request(
+                    messages=limit_messages,
+                    tool_names=[t.name for t in getattr(self, "all_tools", []) or []],
+                    request_name="tool_limit_recovery",
+                )
+                response = await self.llm.ainvoke(limit_messages)
+                _log_direct_llm_response(
+                    response=response,
+                    request_name="tool_limit_recovery",
+                    tool_names=[t.name for t in getattr(self, "all_tools", []) or []],
+                )
+                final_content = ""
+                if hasattr(response, "content"):
+                    if isinstance(response.content, str):
+                        final_content = response.content
+                    elif isinstance(response.content, list):
+                        text_parts = []
+                        for part in response.content:
+                            if isinstance(part, str):
+                                text_parts.append(part)
+                            elif isinstance(part, dict) and part.get("type") == "text":
+                                text_parts.append(part.get("text", ""))
+                        final_content = "".join(text_parts)
+
+                final_state = {
+                    "messages": list(lc_messages) + [AIMessage(content=final_content)]
+                }
+                return final_state, all_events
+            except Exception:
+                logger.exception(
+                    "Error generating final response after tool limit reached"
+                )
+                raise
+
+        except Exception:
+            logger.exception("Error while collecting final state from events")
+            raise
 
     def _find_prompt_modifier_tools(self) -> list[Any]:
         """Find all tools that implement the PromptModifierTool protocol.
@@ -739,22 +737,12 @@ class LangGraphAgentBuilder:
         Returns:
             Final agent state with response
         """
-        agent = self._build_agent()
-
-        # Use LangChain's built-in convert_to_messages
-        lc_messages = convert_to_messages(messages)
-
-        exec_config = {"configurable": config} if config else None
-
-        # Execute with recursion limit for max iterations
-        result = await agent.ainvoke(
-            {"messages": lc_messages},
-            config={
-                **(exec_config or {}),
-                "recursion_limit": self.max_iterations * 2 + 1,
-            },
+        result, _events = await self._collect_final_state_from_events(
+            messages=messages,
+            config=config,
+            cancel_event=cancel_event,
+            collect_all_events=False,
         )
-
         return result
 
     async def stream_execute(
@@ -777,6 +765,12 @@ class LangGraphAgentBuilder:
         lc_messages = convert_to_messages(messages)
 
         exec_config = {"configurable": config} if config else None
+
+        _log_direct_llm_request(
+            messages=lc_messages,
+            tool_names=[t.name for t in getattr(self, "all_tools", []) or []],
+            request_name="stream_execute",
+        )
 
         async for event in agent.astream(
             {"messages": lc_messages},
@@ -1009,6 +1003,12 @@ class LangGraphAgentBuilder:
                             truncation_reason = finish_reason
 
                 elif kind == "on_chat_model_end":
+                    _log_llm_response_event(
+                        event,
+                        tool_names=[
+                            t.name for t in getattr(self, "all_tools", []) or []
+                        ],
+                    )
                     # Track LLM request completion
                     if llm_request_start_time is not None:
                         total_llm_time_ms = (
@@ -1316,6 +1316,11 @@ class LangGraphAgentBuilder:
 
             # Call the LLM directly (without tools) to get final response
             try:
+                _log_direct_llm_request(
+                    messages=limit_messages,
+                    tool_names=[t.name for t in getattr(self, "all_tools", []) or []],
+                    request_name="tool_limit_recovery_stream",
+                )
                 async for chunk in self.llm.astream(limit_messages):
                     if hasattr(chunk, "content"):
                         content = chunk.content
@@ -1412,125 +1417,15 @@ class LangGraphAgentBuilder:
         Returns:
             Tuple of (final_state, all_events)
         """
-        agent = self._build_agent()
-        lc_messages = convert_to_messages(messages)
-
-        exec_config = {"configurable": config} if config else None
-
-        all_events: list[dict[str, Any]] = []
-        final_state: dict[str, Any] = {}
-
-        try:
-            async for event in agent.astream_events(
-                {"messages": lc_messages},
-                config={
-                    **(exec_config or {}),
-                    "recursion_limit": self.max_iterations * 2 + 1,
-                },
-                version="v2",
-            ):
-                # Check cancellation
-                if cancel_event and cancel_event.is_set():
-                    logger.info("Streaming cancelled by user")
-                    break
-
-                all_events.append(event)
-                kind = event.get("event", "")
-
-                # Handle tool events
-                if kind == "on_tool_start":
-                    tool_name = event.get("name", "unknown")
-                    run_id = event.get("run_id", "")
-                    if on_tool_event:
-                        on_tool_event(
-                            "tool_start",
-                            {
-                                "name": tool_name,
-                                "run_id": run_id,
-                                "data": event.get("data", {}),
-                            },
-                        )
-
-                elif kind == "on_tool_end":
-                    tool_name = event.get("name", "unknown")
-                    run_id = event.get("run_id", "")
-                    if on_tool_event:
-                        on_tool_event(
-                            "tool_end",
-                            {
-                                "name": tool_name,
-                                "run_id": run_id,
-                                "data": event.get("data", {}),
-                            },
-                        )
-
-                # Capture final state from LangGraph chain end
-                elif kind == "on_chain_end" and event.get("name") == "LangGraph":
-                    data = event.get("data", {})
-                    output = data.get("output", {})
-                    if output:
-                        final_state = output
-
-            logger.debug(
-                "[stream_events_with_state] Completed: total_events=%d",
-                len(all_events),
-            )
-
-            return final_state, all_events
-
-        except SilentExitException:
-            # Silent exit requested by tool - re-raise to be handled by caller
-            # This is not an error, just a signal to terminate silently
-            logger.info(
-                "[stream_events_with_state] SilentExitException caught, re-raising for caller to handle"
-            )
-            raise
-
-        except GraphRecursionError:
-            # Tool call limit reached - ask model to provide final response
-            logger.warning(
-                "[stream_events_with_state] GraphRecursionError: Tool call limit reached (max_iterations=%d). "
-                "Asking model to provide final response.",
-                self.max_iterations,
-            )
-
-            # Build messages with the limit reached notice
-            limit_messages = list(lc_messages) + [
-                HumanMessage(content=TOOL_LIMIT_REACHED_MESSAGE)
-            ]
-
-            # Call the LLM directly (without tools) to get final response
-            try:
-                response = await self.llm.ainvoke(limit_messages)
-                final_content = ""
-                if hasattr(response, "content"):
-                    if isinstance(response.content, str):
-                        final_content = response.content
-                    elif isinstance(response.content, list):
-                        text_parts = []
-                        for part in response.content:
-                            if isinstance(part, str):
-                                text_parts.append(part)
-                            elif isinstance(part, dict) and part.get("type") == "text":
-                                text_parts.append(part.get("text", ""))
-                        final_content = "".join(text_parts)
-
-                # Create a final state with the response
-                final_state = {
-                    "messages": list(lc_messages) + [AIMessage(content=final_content)]
-                }
-
-                logger.debug(
-                    "[stream_events_with_state] Final response generated after tool limit reached"
-                )
-                return final_state, all_events
-
-            except Exception:
-                logger.exception(
-                    "Error generating final response after tool limit reached"
-                )
-                raise
-
-        except Exception:
-            logger.exception("Error in stream_events_with_state")
-            raise
+        final_state, all_events = await self._collect_final_state_from_events(
+            messages=messages,
+            config=config,
+            cancel_event=cancel_event,
+            on_tool_event=on_tool_event,
+            collect_all_events=True,
+        )
+        logger.debug(
+            "[stream_events_with_state] Completed: total_events=%d",
+            len(all_events),
+        )
+        return final_state, all_events

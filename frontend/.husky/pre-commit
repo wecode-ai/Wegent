@@ -29,20 +29,44 @@ format_python_module() {
     ABSOLUTE_FILES="$ABSOLUTE_FILES $PROJECT_ROOT/$file"
   done
 
-  # Run black to auto-fix staged Python files
-  if uv run black --version >/dev/null 2>&1; then
+  MODULE_VENV_BIN="$MODULE_DIR/.venv/bin"
+  FALLBACK_VENV_BIN="$PROJECT_ROOT/backend/.venv/bin"
+
+  BLACK_CMD=""
+  ISORT_CMD=""
+
+  if [ -x "$MODULE_VENV_BIN/black" ]; then
+    BLACK_CMD="$MODULE_VENV_BIN/black"
+  elif [ -x "$FALLBACK_VENV_BIN/black" ]; then
+    BLACK_CMD="$FALLBACK_VENV_BIN/black"
+  fi
+
+  if [ -x "$MODULE_VENV_BIN/isort" ]; then
+    ISORT_CMD="$MODULE_VENV_BIN/isort"
+  elif [ -x "$FALLBACK_VENV_BIN/isort" ]; then
+    ISORT_CMD="$FALLBACK_VENV_BIN/isort"
+  fi
+
+  # Prefer already-installed formatter binaries to avoid uv environment
+  # resolution during git hooks. Fall back to uv only when needed.
+  if [ -n "$BLACK_CMD" ]; then
+    echo "$ABSOLUTE_FILES" | xargs "$BLACK_CMD" 2>/dev/null
+    echo "    ✅ Black formatting applied for $MODULE_NAME"
+  elif uv run black --version >/dev/null 2>&1; then
     echo "$ABSOLUTE_FILES" | xargs uv run black 2>/dev/null
     echo "    ✅ Black formatting applied for $MODULE_NAME"
   else
-    echo "    ⚠️ Black not available via uv in $MODULE_NAME. Skipping."
+    echo "    ⚠️ Black not available for $MODULE_NAME. Skipping."
   fi
 
-  # Run isort to auto-fix staged Python files
-  if uv run isort --version >/dev/null 2>&1; then
+  if [ -n "$ISORT_CMD" ]; then
+    echo "$ABSOLUTE_FILES" | xargs "$ISORT_CMD" 2>/dev/null
+    echo "    ✅ isort formatting applied for $MODULE_NAME"
+  elif uv run isort --version >/dev/null 2>&1; then
     echo "$ABSOLUTE_FILES" | xargs uv run isort 2>/dev/null
     echo "    ✅ isort formatting applied for $MODULE_NAME"
   else
-    echo "    ⚠️ isort not available via uv in $MODULE_NAME. Skipping."
+    echo "    ⚠️ isort not available for $MODULE_NAME. Skipping."
   fi
 
   cd "$PROJECT_ROOT"

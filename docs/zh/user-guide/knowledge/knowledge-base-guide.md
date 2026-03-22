@@ -17,6 +17,7 @@ sidebar_position: 6
 - [文档管理](./document-management.md) - 上传、编辑、批量操作
 - [分块策略](./chunking-strategies.md) - 智能分块、句子分块、语义分块
 - [检索配置](#-检索配置)
+- [检索与直注入](./retrieval-and-direct-injection.md) - `retrieve` 与 `all-chunks` 的使用边界
 - [检索测试](#-检索测试)
 - [与智能体集成](#-与智能体集成)
 - [引用机制](#-引用机制)
@@ -145,6 +146,12 @@ sequenceDiagram
 ### 无 RAG 模式
 
 您可以在不配置检索器的情况下创建和使用知识库。在此模式下，AI 使用浏览工具（`kb_ls`、`kb_head`）来查看文档内容，而不是语义搜索。
+
+### 直注入补充路径
+
+对于内容规模较小的知识库，系统可能会使用 `all-chunks` 路径直接读取整库 chunks，再交给模型处理。这条路径主要用于补足向量检索在部分场景下召回不稳定的问题，尤其适合需要整体归纳、诊断、总结的提问。
+
+更多说明见 [检索与直注入](./retrieval-and-direct-injection.md)。
 
 ---
 

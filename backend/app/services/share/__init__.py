@@ -11,6 +11,7 @@ Provides base share service and resource-specific implementations.
 from app.services.share.base_service import UnifiedShareService
 from app.services.share.knowledge_share_service import (
     KnowledgeShareService,
+    get_knowledge_base_tool_access_mode_by_ids,
     knowledge_share_service,
 )
 from app.services.share.share_webhook import (
@@ -27,6 +28,7 @@ __all__ = [
     "TaskShareService",
     "task_share_service",
     "KnowledgeShareService",
+    "get_knowledge_base_tool_access_mode_by_ids",
     "knowledge_share_service",
     "send_share_request_notification",
     "send_share_review_notification",
