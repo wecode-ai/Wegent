@@ -344,8 +344,11 @@ class ChatContext:
             document_ids=self._request.document_ids,
             model_id=model_id,
             context_window=context_window,
+            model_config=self._request.model_config,
             skip_prompt_enhancement=skip_prompt_enhancement,
             user_name=self._request.user_name,
+            auth_token=self._request.auth_token,
+            kb_tool_access_mode=self._request.kb_tool_access_mode,
         )
         add_span_event("kb_tools_prepared", {"tools_count": len(result.extra_tools)})
         return result

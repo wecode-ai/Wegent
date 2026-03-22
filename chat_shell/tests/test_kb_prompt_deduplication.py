@@ -164,7 +164,7 @@ class TestKBPromptMarkdownLevel:
         # Should start with ## (H2) not # (H1)
         assert "## Knowledge Base Available" in KB_PROMPT_RELAXED
         # Sub-sections should use ### (H3)
-        assert "### Recommended Workflow:" in KB_PROMPT_RELAXED
+        assert "### Intent Routing (DO THIS FIRST)" in KB_PROMPT_RELAXED
         assert "### Guidelines:" in KB_PROMPT_RELAXED
 
 
@@ -222,6 +222,52 @@ class TestKnowledgeFactoryDynamicContext:
             )
 
             assert "{kb_meta_list}" not in result.enhanced_system_prompt
+
+    @pytest.mark.asyncio
+    async def test_restricted_mode_creates_search_only_tool(self):
+        """Restricted mode should only expose knowledge_base_search."""
+        from chat_shell.tools.knowledge_factory import prepare_knowledge_base_tools
+
+        with (
+            patch("chat_shell.tools.builtin.KnowledgeBaseTool") as mock_kb_tool_class,
+            patch("chat_shell.tools.builtin.KbLsTool") as mock_kb_ls_class,
+            patch("chat_shell.tools.builtin.KbHeadTool") as mock_kb_head_class,
+            patch(
+                "chat_shell.tools.knowledge_factory._check_any_kb_has_rag_enabled",
+                return_value=True,
+            ) as mock_check_rag_enabled,
+        ):
+            mock_kb_tool_class.return_value = MagicMock()
+            test_auth_token = "jwt-token"
+
+            result = await prepare_knowledge_base_tools(
+                knowledge_base_ids=[1],
+                user_id=1,
+                db=MagicMock(),
+                base_system_prompt="Base",
+                model_id="claude-3-5-sonnet",
+                model_config={"model_id": "claude-3-5-sonnet", "api_key": "k"},
+                skip_prompt_enhancement=False,
+                is_user_selected=True,
+                auth_token=test_auth_token,
+                kb_tool_access_mode="restricted_search_only",
+            )
+
+            mock_kb_tool_class.assert_called_once()
+            call_kwargs = mock_kb_tool_class.call_args.kwargs
+            assert call_kwargs["injection_mode"] == "hybrid"
+            assert call_kwargs["tool_access_mode"] == "restricted_search_only"
+            assert call_kwargs["auth_token"] == test_auth_token
+            assert call_kwargs["summarizer_model_config"] == {
+                "model_id": "claude-3-5-sonnet",
+                "api_key": "k",
+            }
+            mock_check_rag_enabled.assert_not_called()
+            mock_kb_ls_class.assert_not_called()
+            mock_kb_head_class.assert_not_called()
+            assert len(result.extra_tools) == 1
+            assert "Knowledge Base Restricted Analysis" in result.enhanced_system_prompt
+            assert result.kb_tool_access_mode == "restricted_search_only"
 
     @pytest.mark.asyncio
     async def test_skip_prompt_enhancement_returns_base_prompt(self):

@@ -21,6 +21,8 @@ from typing import Any, Optional, Union
 
 from dacite import Config, from_dict
 
+from .knowledge import KnowledgeBaseToolAccessMode
+
 
 class EventType(str, Enum):
     """Unified execution event types.
@@ -113,6 +115,7 @@ class ExecutionRequest:
     document_ids: Optional[list] = None
     table_contexts: list = field(default_factory=list)
     is_user_selected_kb: bool = True
+    kb_tool_access_mode: str = KnowledgeBaseToolAccessMode.FULL
 
     # === Workspace Configuration ===
     workspace: dict = field(default_factory=dict)

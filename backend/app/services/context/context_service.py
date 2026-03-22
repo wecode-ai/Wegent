@@ -753,6 +753,7 @@ class ContextService:
         injection_mode: str,
         query: str,
         chunks_count: int,
+        restricted_mode: bool = False,
     ) -> Optional[SubtaskContext]:
         """
         Update knowledge base context with RAG retrieval results.
@@ -769,6 +770,7 @@ class ContextService:
             injection_mode: "direct_injection" or "rag_retrieval"
             query: Original search query
             chunks_count: Number of chunks retrieved/injected
+            restricted_mode: Whether this result came from Restricted Analyst mode
 
         Returns:
             Updated SubtaskContext or None if not found
@@ -813,6 +815,7 @@ class ContextService:
             "query": query,
             "chunks_count": chunks_count,
             "retrieval_count": retrieval_count,
+            "restricted_mode": restricted_mode,
         }
 
         # Preserve existing fields (like kb_head_result) and update rag_result
@@ -1011,6 +1014,7 @@ class ContextService:
                 "query": result_data.get("query", ""),
                 "chunks_count": result_data.get("chunks_count", 0),
                 "retrieval_count": 1,
+                "restricted_mode": result_data.get("restricted_mode", False),
             }
             type_data["rag_result"] = rag_result
             # Note: Flat fields removed to avoid duplication - use rag_result sub-object

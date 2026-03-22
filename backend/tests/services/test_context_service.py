@@ -67,6 +67,48 @@ class TestContextServiceKnowledgeBaseRetrieval:
         assert result.type_data["rag_result"]["query"] == "test query"
         assert result.type_data["rag_result"]["chunks_count"] == 5
         assert result.type_data["rag_result"]["sources"] == sources
+        assert result.type_data["rag_result"]["restricted_mode"] is False
+
+    def test_update_knowledge_base_retrieval_result_restricted_mode_sets_flag(
+        self,
+    ) -> None:
+        """Restricted KB retrieval should be marked for history suppression."""
+        from app.models.subtask_context import (
+            ContextStatus,
+            ContextType,
+            SubtaskContext,
+        )
+        from app.services.context import context_service
+
+        mock_db = Mock()
+        context = SubtaskContext(
+            subtask_id=100,
+            user_id=1,
+            context_type=ContextType.KNOWLEDGE_BASE.value,
+            name="Test KB",
+            status=ContextStatus.PENDING.value,
+            type_data={"knowledge_id": 123},
+        )
+        context.id = 1
+
+        mock_query = Mock()
+        mock_db.query.return_value = mock_query
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = context
+
+        result = context_service.update_knowledge_base_retrieval_result(
+            db=mock_db,
+            context_id=1,
+            extracted_text="",
+            sources=[],
+            injection_mode="rag_retrieval",
+            query="diagnose",
+            chunks_count=1,
+            restricted_mode=True,
+        )
+
+        assert result is not None
+        assert result.type_data["rag_result"]["restricted_mode"] is True
 
     def test_update_knowledge_base_retrieval_result_direct_injection_mode(self) -> None:
         """Test updating context with direct injection results - extracted_text should be empty."""
@@ -1354,6 +1396,40 @@ class TestContextServiceCreateKnowledgeBaseContextWithResult:
         assert (
             added_context.type_data["rag_result"]["injection_mode"] == "rag_retrieval"
         )
+        assert added_context.type_data["rag_result"]["restricted_mode"] is False
+
+    def test_create_knowledge_base_context_with_restricted_rag_result(self) -> None:
+        """Restricted KB contexts should persist the restricted_mode flag."""
+        from app.services.context import context_service
+
+        mock_db = Mock()
+        mock_kind = Mock()
+        mock_kind.name = "Test KB"
+
+        mock_query = Mock()
+        mock_db.query.return_value = mock_query
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = mock_kind
+
+        result = context_service.create_knowledge_base_context_with_result(
+            db=mock_db,
+            subtask_id=100,
+            knowledge_id=123,
+            user_id=1,
+            tool_type="rag",
+            result_data={
+                "extracted_text": "",
+                "sources": [],
+                "injection_mode": "rag_retrieval",
+                "query": "diagnose",
+                "chunks_count": 2,
+                "restricted_mode": True,
+            },
+        )
+
+        added_context = mock_db.add.call_args[0][0]
+        assert result is not None
+        assert added_context.type_data["rag_result"]["restricted_mode"] is True
 
     def test_create_knowledge_base_context_with_kb_head_result(self) -> None:
         """Test creating KB context with kb_head result in one operation."""

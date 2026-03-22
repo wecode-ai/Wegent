@@ -11,6 +11,7 @@ Supported retrieval modes:
 - hybrid: Combined vector + BM25 search with configurable weights
 """
 
+import logging
 from typing import Any, ClassVar, Dict, List, Optional
 
 from elasticsearch import Elasticsearch
@@ -31,6 +32,8 @@ from app.services.rag.retrieval.filters import parse_metadata_filters
 from app.services.rag.storage.base import BaseStorageBackend
 from app.services.rag.storage.chunk_metadata import ChunkMetadata
 from shared.telemetry.decorators import add_span_event
+
+logger = logging.getLogger(__name__)
 
 
 class ElasticsearchBackend(BaseStorageBackend):
@@ -555,6 +558,7 @@ class ElasticsearchBackend(BaseStorageBackend):
         """
         index_name = self.get_index_name(knowledge_id, **kwargs)
         es_client = Elasticsearch(self.url, **self.es_kwargs)
+        user_id = kwargs.get("user_id")
 
         # Query all chunks for this knowledge base
         search_body = {
@@ -600,11 +604,12 @@ class ElasticsearchBackend(BaseStorageBackend):
             return chunks
 
         except Exception as e:
-            # Log error but return empty list to allow fallback to RAG
-            import logging
-
-            logger = logging.getLogger(__name__)
             logger.warning(
-                f"[Elasticsearch] Failed to get all chunks for KB {knowledge_id}: {e}"
+                "[Elasticsearch] Failed to get all chunks: knowledge_id=%s, "
+                "index_name=%s, search_body=%s, error=%s",
+                knowledge_id,
+                index_name,
+                search_body,
+                e,
             )
             return []

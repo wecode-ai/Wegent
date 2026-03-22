@@ -32,13 +32,70 @@ SchemaMemberRole = BaseRole
 from app.schemas.namespace import GroupRole
 from app.services.group_permission import (
     get_effective_role_in_group,
+    get_restricted_analyst_groups,
     is_restricted_analyst,
 )
 from app.services.knowledge.knowledge_service import _is_organization_namespace
 from app.services.share.base_service import UnifiedShareService
+from shared.models.knowledge import KnowledgeBaseToolAccessMode
 from shared.telemetry.decorators import add_span_event, set_span_attribute, trace_sync
 
 logger = logging.getLogger(__name__)
+
+
+def get_knowledge_base_tool_access_mode_by_ids(
+    db: Session,
+    user_id: int,
+    knowledge_base_ids: list[int],
+) -> tuple[str, str]:
+    """Resolve KB tool exposure mode from KB-specific and group permissions."""
+    if not knowledge_base_ids:
+        return KnowledgeBaseToolAccessMode.FULL, ""
+
+    kbs = (
+        db.query(Kind)
+        .filter(
+            Kind.id.in_(knowledge_base_ids),
+            Kind.kind == "KnowledgeBase",
+            Kind.is_active,
+        )
+        .all()
+    )
+    if not kbs:
+        return KnowledgeBaseToolAccessMode.FULL, ""
+
+    explicit_restricted_member = (
+        db.query(ResourceMember.resource_id)
+        .filter(
+            ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
+            ResourceMember.resource_id.in_([kb.id for kb in kbs]),
+            ResourceMember.user_id == user_id,
+            ResourceMember.status == MemberStatus.APPROVED.value,
+            ResourceMember.role == ResourceRole.RestrictedAnalyst.value,
+        )
+        .first()
+    )
+    if explicit_restricted_member is not None:
+        return (
+            KnowledgeBaseToolAccessMode.RESTRICTED_SEARCH_ONLY,
+            "Restricted Analysts may use knowledge base search only for high-level "
+            "analysis. Document browsing remains blocked.",
+        )
+
+    group_names = [
+        kb.namespace
+        for kb in kbs
+        if kb.namespace != "default"
+        and not _is_organization_namespace(db, kb.namespace)
+    ]
+    if get_restricted_analyst_groups(db, user_id, group_names):
+        return (
+            KnowledgeBaseToolAccessMode.RESTRICTED_SEARCH_ONLY,
+            "Restricted Analysts may use knowledge base search only for high-level "
+            "analysis. Document browsing remains blocked.",
+        )
+
+    return KnowledgeBaseToolAccessMode.FULL, ""
 
 
 class KnowledgeShareService(UnifiedShareService):
