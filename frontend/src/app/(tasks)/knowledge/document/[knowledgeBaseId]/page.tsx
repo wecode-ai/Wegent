@@ -108,13 +108,22 @@ export default function KnowledgeBaseChatPage() {
   // Restores previous group selection if available
   const handleBack = () => {
     // Check if there was a previous group selection
-    const lastGroup =
-      typeof window !== 'undefined' ? localStorage.getItem('knowledge-last-group') : null
+    let lastGroup: string | null = null
+    try {
+      lastGroup =
+        typeof window !== 'undefined' ? localStorage.getItem('knowledge-last-group') : null
+    } catch {
+      // Non-blocking: localStorage access may fail in some browsers
+    }
 
     if (lastGroup) {
       // Navigate back to the group view
       router.push(`/knowledge?type=document&group=${encodeURIComponent(lastGroup)}`)
-      localStorage.removeItem('knowledge-last-group')
+      try {
+        localStorage.removeItem('knowledge-last-group')
+      } catch {
+        // Non-blocking: cleanup failure is acceptable
+      }
     } else if (typeof window !== 'undefined' && window.history.length > 1) {
       // Try browser history
       router.back()

@@ -196,6 +196,9 @@ export function KnowledgeDocumentPageDesktop() {
       const groupExists = sidebar.groups.some(g => g.id === groupParam)
       if (groupExists) {
         sidebar.selectGroup(groupParam)
+      } else {
+        // Invalid group param - fall back to "all" view
+        sidebar.selectAll()
       }
     } else if (!groupParam && sidebar.selectedGroupId && sidebar.viewMode === 'group') {
       // URL has no group param but sidebar has group selected - sync to "all" view
@@ -329,12 +332,16 @@ export function KnowledgeDocumentPageDesktop() {
       if (fullKb) {
         sidebar.selectKb(fullKb)
         // Save current group selection before navigating to KB detail
-        if (sidebar.selectedGroupId) {
-          localStorage.setItem('knowledge-last-group', sidebar.selectedGroupId)
-        } else if (sidebar.viewMode === 'all' && sidebar.filterGroupId) {
-          localStorage.setItem('knowledge-last-group', sidebar.filterGroupId)
-        } else {
-          localStorage.removeItem('knowledge-last-group')
+        try {
+          if (sidebar.selectedGroupId) {
+            localStorage.setItem('knowledge-last-group', sidebar.selectedGroupId)
+          } else if (sidebar.viewMode === 'all' && sidebar.filterGroupId) {
+            localStorage.setItem('knowledge-last-group', sidebar.filterGroupId)
+          } else {
+            localStorage.removeItem('knowledge-last-group')
+          }
+        } catch {
+          // Non-blocking: navigation should still proceed even if localStorage fails
         }
         // Navigate to KB detail page (consistent with mobile)
         router.push(`/knowledge/document/${fullKb.id}`)
