@@ -34,6 +34,7 @@ from app.services.git_skill.providers import (
     get_provider_by_type,
 )
 from shared.utils.crypto import decrypt_git_token
+from shared.utils.url_util import domains_match
 
 logger = logging.getLogger(__name__)
 
@@ -184,7 +185,7 @@ def get_user_git_info(
     for git_info in user.git_info:
         info_domain = _normalize_git_domain(git_info.get("git_domain"))
         encrypted_token = git_info.get("git_token")
-        if info_domain == normalized_domain and encrypted_token:
+        if domains_match(info_domain, normalized_domain) and encrypted_token:
             return {
                 "type": git_info.get("type"),
                 "token": decrypt_git_token(encrypted_token),

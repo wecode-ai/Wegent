@@ -554,11 +554,13 @@ class SessionManager:
         """
         try:
             key = self._get_task_streaming_key(task_id)
+            now_iso = datetime.now().isoformat()
             value = {
                 "subtask_id": subtask_id,
                 "user_id": user_id,
                 "username": username,
-                "started_at": datetime.now().isoformat(),
+                "started_at": now_iso,
+                "last_activity_at": now_iso,
             }
             logger.info(
                 f"[SessionManager] set_task_streaming_status: key={key}, "
@@ -571,6 +573,38 @@ class SessionManager:
         except Exception as e:
             logger.error(
                 f"Error setting task streaming status for task {task_id}: {e}",
+                exc_info=True,
+            )
+            return False
+
+    async def touch_task_streaming_activity(self, task_id: int) -> bool:
+        """
+        Refresh task-level streaming last activity timestamp.
+
+        Args:
+            task_id: Task ID
+
+        Returns:
+            bool: True if updated successfully, False otherwise
+        """
+        try:
+            key = self._get_task_streaming_key(task_id)
+            status = await self._cache.get(key)
+            if not status:
+                return False
+
+            if not isinstance(status, dict):
+                logger.warning(
+                    "[SessionManager] Invalid task streaming status format for task_id=%s",
+                    task_id,
+                )
+                return False
+
+            status["last_activity_at"] = datetime.now().isoformat()
+            return await self._cache.set(key, status, expire=STREAMING_TTL)
+        except Exception as e:
+            logger.error(
+                f"Error touching task streaming activity for task {task_id}: {e}",
                 exc_info=True,
             )
             return False

@@ -18,6 +18,7 @@ from app.repository.gitea_provider import GiteaProvider
 from app.repository.gitee_provider import GiteeProvider
 from app.repository.github_provider import GitHubProvider
 from app.repository.gitlab_provider import GitLabProvider
+from shared.utils.url_util import domains_match
 
 
 class RepositoryService:
@@ -114,7 +115,9 @@ class RepositoryService:
             Branch list
         """
         for info in user.git_info:
-            if info.get("type") == type and info.get("git_domain") == git_domain:
+            if info.get("type") == type and domains_match(
+                info.get("git_domain", ""), git_domain
+            ):
                 provider = self.providers[type]
                 try:
                     return await provider.get_branches(user, repo_name, git_domain)
@@ -196,7 +199,9 @@ class RepositoryService:
         """
         for info in user.git_info:
             logging.info(f"info: {info}, type: {type}, git_domain: {git_domain}")
-            if info.get("type") == type and info.get("git_domain") == git_domain:
+            if info.get("type") == type and domains_match(
+                info.get("git_domain", ""), git_domain
+            ):
                 provider = self.providers[type]
                 try:
                     return await provider.get_branch_diff(
