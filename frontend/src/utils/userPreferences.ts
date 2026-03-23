@@ -14,7 +14,15 @@ const STORAGE_KEYS = {
   LAST_TEAM_ID_KNOWLEDGE: 'wegent_last_team_id_knowledge',
   LAST_REPO_ID: 'wegent_last_repo_id',
   LAST_REPO_NAME: 'wegent_last_repo_name',
+  DEFAULT_EXECUTION_TARGET: 'wegent_default_execution_target',
 } as const
+
+/**
+ * Execution target type for chat input
+ * - 'cloud': Use cloud mode (no device)
+ * - device_id string: Use specific device
+ */
+export type ExecutionTargetPreference = 'cloud' | string
 
 export type TabType = 'chat' | 'code' | 'wiki' | 'devices'
 

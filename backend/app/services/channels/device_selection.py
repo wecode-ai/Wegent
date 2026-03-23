@@ -12,6 +12,10 @@ allowing users to route messages to different execution environments:
 - Cloud Executor: Execute on cloud Docker container
 
 This is channel-agnostic and works across all IM integrations.
+
+When a user hasn't explicitly selected a device via /use command in IM,
+the system will use the user's default_execution_target from their
+preferences (set via PC/Web frontend).
 """
 
 import logging
@@ -77,9 +81,90 @@ class DeviceSelectionManager:
         return f"{CHANNEL_USER_DEVICE_PREFIX}{user_id}"
 
     @staticmethod
+    async def get_selection_from_user_preference(
+        user_id: int,
+    ) -> Optional[DeviceSelection]:
+        """
+        Get device selection from user's default_execution_target preference.
+
+        This is used when there's no explicit IM device selection in Redis.
+        The user's preference is set via PC/Web frontend.
+
+        Args:
+            user_id: Wegent user ID
+
+        Returns:
+            DeviceSelection based on user preference, or None if not set
+        """
+        from app.db.session import SessionLocal
+        from app.models.user import User
+
+        db = SessionLocal()
+        try:
+            user = db.query(User).filter(User.id == user_id).first()
+            if not user or not user.preferences:
+                return None
+
+            default_target = user.preferences.get("default_execution_target")
+            if not default_target:
+                return None
+
+            # 'cloud' means cloud executor mode
+            if default_target == "cloud":
+                logger.info(
+                    "[DeviceSelection] Using user preference for user %d: cloud mode",
+                    user_id,
+                )
+                return DeviceSelection(device_type=DeviceType.CLOUD)
+
+            # Otherwise it's a device_id for local device
+            # We need to get the device name from device service
+            from app.services.device_service import device_service
+
+            device_info = await device_service.get_device_online_info(
+                user_id, default_target
+            )
+            if device_info:
+                logger.info(
+                    "[DeviceSelection] Using user preference for user %d: "
+                    "local device %s (%s)",
+                    user_id,
+                    default_target,
+                    device_info.get("name", "Unknown"),
+                )
+                return DeviceSelection(
+                    device_type=DeviceType.LOCAL,
+                    device_id=default_target,
+                    device_name=device_info.get("name"),
+                )
+            else:
+                # Device is offline or not found, fall back to default
+                logger.info(
+                    "[DeviceSelection] User preference device %s is offline/not found "
+                    "for user %d, falling back to default",
+                    default_target,
+                    user_id,
+                )
+                return None
+        except Exception as e:
+            logger.warning(
+                "[DeviceSelection] Failed to get user preference for user %d: %s",
+                user_id,
+                e,
+            )
+            return None
+        finally:
+            db.close()
+
+    @staticmethod
     async def get_selection(user_id: int) -> DeviceSelection:
         """
         Get user's current device selection.
+
+        Priority:
+        1. Explicit IM selection from Redis (set via /use command)
+        2. User's default_execution_target preference (set via PC/Web)
+        3. Default to Chat mode
 
         Args:
             user_id: Wegent user ID
@@ -99,6 +184,13 @@ class DeviceSelectionManager:
                     user_id,
                     e,
                 )
+
+        # No explicit IM selection, try user's default preference
+        preference_selection = (
+            await DeviceSelectionManager.get_selection_from_user_preference(user_id)
+        )
+        if preference_selection:
+            return preference_selection
 
         return DeviceSelection.default()
 

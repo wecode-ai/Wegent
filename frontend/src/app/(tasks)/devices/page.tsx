@@ -32,6 +32,7 @@ import {
   DevicesPageHeader,
   DeviceSection,
   DeviceSetupGuide,
+  EditDeviceAliasDialog,
 } from '@/features/devices/components'
 import { useDeviceHandlers } from '@/features/devices/hooks'
 
@@ -85,6 +86,16 @@ export default function DevicesPage() {
 
   // Guide visibility state
   const [showSetupGuide, setShowSetupGuide] = useState(false)
+
+  // Edit alias dialog state
+  const [editAliasDevice, setEditAliasDevice] = useState<DeviceInfo | null>(null)
+  const [isEditAliasDialogOpen, setIsEditAliasDialogOpen] = useState(false)
+
+  // Handle opening edit alias dialog
+  const handleOpenEditAliasDialog = useCallback((device: DeviceInfo) => {
+    setEditAliasDevice(device)
+    setIsEditAliasDialogOpen(true)
+  }, [])
 
   // Load collapsed state from localStorage
   useEffect(() => {
@@ -199,6 +210,7 @@ export default function DevicesPage() {
                       onDelete={handlers.handleDeleteDevice}
                       onCancelTask={handlers.handleCancelTask}
                       onUpgrade={handlers.handleUpgradeDevice}
+                      onEditAlias={handleOpenEditAliasDialog}
                       isUpgrading={isDeviceUpgrading(device.device_id)}
                       upgradeStatus={getUpgradeStatus(device.device_id)}
                     />
@@ -221,6 +233,7 @@ export default function DevicesPage() {
                       onDelete={handlers.handleDeleteDevice}
                       onCancelTask={handlers.handleCancelTask}
                       onUpgrade={handlers.handleUpgradeDevice}
+                      onEditAlias={handleOpenEditAliasDialog}
                       isUpgrading={isDeviceUpgrading(device.device_id)}
                       upgradeStatus={getUpgradeStatus(device.device_id)}
                     />
@@ -231,6 +244,14 @@ export default function DevicesPage() {
           </div>
         </div>
       </div>
+
+      {/* Edit Device Alias Dialog */}
+      <EditDeviceAliasDialog
+        device={editAliasDevice}
+        open={isEditAliasDialogOpen}
+        onOpenChange={setIsEditAliasDialogOpen}
+        onSave={handlers.handleEditAlias}
+      />
     </div>
   )
 }

@@ -145,4 +145,17 @@ export const deviceApis = {
   ): Promise<UpgradeDeviceResponse> {
     return apiClient.post(`/devices/${encodeURIComponent(deviceId)}/upgrade`, options || {})
   },
+
+  /**
+   * Update a device's display name (alias).
+   *
+   * @param deviceId - Device unique identifier
+   * @param alias - New display name for the device
+   */
+  async updateDeviceAlias(
+    deviceId: string,
+    alias: string
+  ): Promise<{ message: string; alias: string }> {
+    return apiClient.put(`/devices/${encodeURIComponent(deviceId)}/alias`, { alias })
+  },
 }

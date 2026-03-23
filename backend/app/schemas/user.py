@@ -30,6 +30,8 @@ class UserPreferences(BaseModel):
     search_key: Literal["cmd_k", "cmd_f", "disabled"] = "cmd_k"
     memory_enabled: bool = False
     mcp_provider_keys: Optional[MCPProviderKeys] = None
+    # Default execution target: 'cloud' for cloud mode, or device_id for a specific device
+    default_execution_target: Optional[str] = None
 
 
 class Token(BaseModel):

@@ -17,6 +17,8 @@ interface UserContextType {
   logout: () => void
   refresh: () => Promise<void>
   login: (data: { user_name: string; password: string }) => Promise<void>
+  /** Update user preferences (partial update) */
+  updatePreferences: (preferences: Partial<User['preferences']>) => Promise<void>
 }
 const UserContext = createContext<UserContextType>({
   user: null,
@@ -24,6 +26,7 @@ const UserContext = createContext<UserContextType>({
   logout: () => {},
   refresh: async () => {},
   login: async () => {},
+  updatePreferences: async () => {},
 })
 export const UserProvider = ({ children }: { children: ReactNode }) => {
   const { toast } = useToast()
@@ -140,8 +143,28 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
     }
   }
 
+  const updatePreferences = async (preferences: Partial<User['preferences']>) => {
+    if (!user) return
+
+    try {
+      // Merge with existing preferences, ensuring required fields have defaults
+      const mergedPreferences = {
+        send_key: user.preferences?.send_key || 'enter',
+        ...user.preferences,
+        ...preferences,
+      } as NonNullable<User['preferences']>
+      const updatedUser = await userApis.updateUser({ preferences: mergedPreferences })
+      setUser(updatedUser)
+    } catch (error) {
+      console.error('UserContext: Failed to update preferences:', error)
+      throw error
+    }
+  }
+
   return (
-    <UserContext.Provider value={{ user, isLoading, logout, refresh: fetchUser, login }}>
+    <UserContext.Provider
+      value={{ user, isLoading, logout, refresh: fetchUser, login, updatePreferences }}
+    >
       {children}
     </UserContext.Provider>
   )
