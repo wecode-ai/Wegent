@@ -36,6 +36,7 @@ from wecode.api.apikey import router as apikey_router
 from wecode.api.auth import router as auth_router
 from wecode.api.cloud_devices import router as cloud_devices_router
 from wecode.api.evaluation import router as evaluation_router
+from wecode.api.himalaya_mail_devices import router as himalaya_mail_devices_router
 from wecode.api.mail_token import router as mail_token_router
 
 api_router.include_router(apikey_router, prefix="/internal/apikey", tags=["internal"])
@@ -44,4 +45,7 @@ api_router.include_router(
     cloud_devices_router, prefix="/cloud-devices", tags=["cloud-devices"]
 )
 api_router.include_router(evaluation_router, tags=["evaluation"])
+api_router.include_router(
+    himalaya_mail_devices_router, prefix="/devices", tags=["devices"]
+)
 api_router.include_router(mail_token_router, prefix="/wecode", tags=["wecode"])
