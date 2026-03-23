@@ -534,9 +534,9 @@ class TestHistoryTruncationStrategy:
         # No system messages after the first one (truncation notice must not be system)
         for i, msg in enumerate(compressed):
             if i > 0:
-                assert msg["role"] != "system", (
-                    f"Found system message at index {i}: {msg['content'][:50]}"
-                )
+                assert (
+                    msg["role"] != "system"
+                ), f"Found system message at index {i}: {msg['content'][:50]}"
 
         # Verify user/assistant alternation in non-system messages
         non_system = [m for m in compressed if m["role"] != "system"]
@@ -547,9 +547,7 @@ class TestHistoryTruncationStrategy:
             )
 
         # Truncation notice should be present somewhere in the compressed messages
-        notice_found = any(
-            "SYSTEM NOTICE" in m.get("content", "") for m in compressed
-        )
+        notice_found = any("SYSTEM NOTICE" in m.get("content", "") for m in compressed)
         assert notice_found
 
     def test_truncation_notice_bridges_odd_removal_anthropic(self):
@@ -564,7 +562,10 @@ class TestHistoryTruncationStrategy:
         messages = [
             {"role": "system", "content": "System prompt."},
             {"role": "user", "content": "User 0"},
-            {"role": "assistant", "content": "Assistant 0 " * 50},  # large to trigger removal
+            {
+                "role": "assistant",
+                "content": "Assistant 0 " * 50,
+            },  # large to trigger removal
             {"role": "user", "content": "User 1 " * 50},
             {"role": "assistant", "content": "Assistant 1 " * 50},
             {"role": "user", "content": "User 2"},
@@ -617,6 +618,62 @@ class TestHistoryTruncationStrategy:
             # Truncation notice text should still be present (merged into a message)
             notice_found = any(
                 "SYSTEM NOTICE" in m.get("content", "") for m in compressed
+            )
+            assert notice_found
+
+    def test_truncation_notice_merged_with_list_content_anthropic(self):
+        """Test notice merging when next message has list content (e.g., time blocks)."""
+        strategy = HistoryTruncationStrategy()
+        counter = TokenCounter(model_id="claude-3-5-sonnet")
+        config = CompressionConfig(first_messages_to_keep=1, last_messages_to_keep=1)
+
+        # Build a conversation where the kept middle/last message has list content
+        # (typical for user messages with datetime injection).
+        # first_messages keeps user_0, last_messages keeps user_2 (list content)
+        messages = [
+            {"role": "system", "content": "System prompt."},
+            {"role": "user", "content": "User 0"},
+            {"role": "assistant", "content": "Assistant 0 " * 80},
+            {"role": "user", "content": "User 1 " * 80},
+            {"role": "assistant", "content": "Assistant 1 " * 80},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "User 2"},
+                    {
+                        "type": "text",
+                        "text": "<system-reminder><CurrentTime>2026-03-20</CurrentTime></system-reminder>",
+                    },
+                ],
+            },
+        ]
+
+        compressed, details = strategy.compress(messages, counter, 300, config)
+
+        if details["messages_removed"] > 0:
+            # Verify no TypeError — content must remain a list
+            last_msg = compressed[-1]
+            assert isinstance(last_msg["content"], list)
+
+            # Verify alternation
+            non_system = [m for m in compressed if m["role"] != "system"]
+            for i in range(1, len(non_system)):
+                assert non_system[i]["role"] != non_system[i - 1]["role"]
+
+            # Truncation notice should be present somewhere
+            def _contains_notice(content):
+                if isinstance(content, str):
+                    return "SYSTEM NOTICE" in content
+                if isinstance(content, list):
+                    return any(
+                        "SYSTEM NOTICE" in b.get("text", "")
+                        for b in content
+                        if isinstance(b, dict)
+                    )
+                return False
+
+            notice_found = any(
+                _contains_notice(m.get("content", "")) for m in compressed
             )
             assert notice_found
 

@@ -98,6 +98,8 @@ export interface DisplayMessage {
   isIncomplete?: boolean
   /** Reasoning/thinking content from DeepSeek R1 and similar models */
   reasoningContent?: string
+  /** Whether reasoning content is actively streaming */
+  isReasoningStreaming?: boolean
 }
 
 interface UseUnifiedMessagesOptions {
@@ -175,6 +177,7 @@ function toDisplayMessage(
     isCurrentUser: msg.type === 'user' && (msg.senderUserId === currentUserId || !msg.senderUserId),
     showSender: isGroupChat && msg.type === 'user',
     reasoningContent: msg.reasoningContent || msg.result?.reasoning_content,
+    isReasoningStreaming: msg.isReasoningStreaming,
   }
 }
 

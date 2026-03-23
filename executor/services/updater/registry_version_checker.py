@@ -11,9 +11,8 @@ import logging
 import platform
 from typing import Optional
 
-from shared.utils.http_client import traced_session
-
 from executor.services.updater.version_checker import UpdateInfo, VersionChecker
+from shared.utils.http_client import traced_session
 
 logger = logging.getLogger(__name__)
 

@@ -144,7 +144,7 @@ class WeGentToResponseAdapter:
 
         return {
             "model_config": model_config,
-            "temperature": agent_config.get("temperature", 0.7),
+            "temperature": agent_config.get("temperature"),
             "max_tokens": agent_config.get("max_tokens", 32768),
             "input": input_config,
             "session_id": wegent_request.session_id,
@@ -287,7 +287,7 @@ class WeGentToResponseAdapter:
         return AgentConfig(
             model_config=request_dict["model_config"],
             system_prompt=request_dict.get("system"),
-            temperature=request_dict.get("temperature", 0.7),
+            temperature=request_dict.get("temperature"),
             max_tokens=request_dict.get("max_tokens", 32768),
             tools_config=request_dict.get("tools"),
             tool_choice=request_dict.get("tool_choice", "auto"),

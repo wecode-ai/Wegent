@@ -19,6 +19,7 @@ import uuid
 from typing import List, Optional
 
 from shared.models import EventType, ExecutionEvent, ExecutionRequest
+from shared.prompts.constants import USER_QUESTION_MARKER, extract_user_question
 
 from ...emitters import ResultEmitter
 from ..base import PollingAgent
@@ -292,11 +293,11 @@ class ImageAgent(PollingAgent):
         - If text contains our context wrapper, prefer the actual user question part
         """
         if isinstance(prompt, str):
-            return self._extract_user_question(prompt), []
+            return extract_user_question(prompt), []
 
         if not isinstance(prompt, list):
             # Defensive fallback
-            return self._extract_user_question(str(prompt)), []
+            return extract_user_question(str(prompt)), []
 
         text_parts: list[str] = []
         images: list[str] = []
@@ -316,27 +317,8 @@ class ImageAgent(PollingAgent):
                     images.append(image_url)
 
         combined_text = "\n".join(text_parts).strip()
-        combined_text = self._extract_user_question(combined_text)
+        combined_text = extract_user_question(combined_text)
         return combined_text, images
-
-    def _extract_user_question(self, text: str) -> str:
-        """Extract user-visible question from a context-wrapped prompt.
-
-        The chat context preprocessor may build prompts like:
-        "<attachment>...metadata...</attachment>\n\n[User Question]:\n<message>"
-
-        Seedream applies sensitive-text filters; passing attachment metadata (URLs, paths)
-        increases false positives. Prefer only the real user question if the marker exists.
-        """
-        if not isinstance(text, str):
-            return str(text)
-
-        marker = "[User Question]:"
-        if marker in text:
-            after = text.split(marker, 1)[1]
-            return after.lstrip("\n").strip()
-
-        return text.strip()
 
     async def _analyze_intent(self, request: ExecutionRequest) -> ImageIntentResult:
         """Run ImageIntentAnalyzer for multi-turn follow-up detection.

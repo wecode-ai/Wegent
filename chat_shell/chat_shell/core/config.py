@@ -69,7 +69,6 @@ class Settings(BaseSettings):
 
     # ========== Default Model Configuration ==========
     DEFAULT_MODEL: str = "claude-3-5-sonnet-20241022"
-    DEFAULT_TEMPERATURE: float = 0.7
     DEFAULT_MAX_TOKENS: int = 4096
 
     # ========== Chat Configuration ==========

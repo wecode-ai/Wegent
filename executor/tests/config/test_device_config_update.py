@@ -30,7 +30,7 @@ class TestUpdateConfig:
         """Test UpdateConfig with custom values."""
         config = UpdateConfig(
             registry="https://example.com/ai-tool-box",
-            registry_token="my_registry_token"
+            registry_token="my_registry_token",
         )
         assert config.registry == "https://example.com/ai-tool-box"
         assert config.registry_token == "my_registry_token"
@@ -38,8 +38,7 @@ class TestUpdateConfig:
     def test_to_dict(self):
         """Test UpdateConfig serialization to dict."""
         config = UpdateConfig(
-            registry="https://example.com/registry",
-            registry_token="my_token"
+            registry="https://example.com/registry", registry_token="my_token"
         )
         data = config.to_dict()
 
@@ -50,7 +49,7 @@ class TestUpdateConfig:
         """Test UpdateConfig deserialization from dict."""
         data = {
             "registry": "https://example.com/registry",
-            "registry_token": "my_token"
+            "registry_token": "my_token",
         }
         config = UpdateConfig.from_dict(data)
 
@@ -74,10 +73,7 @@ class TestUpdateConfig:
 
     def test_from_dict_backward_compat_url(self):
         """Test backward compatibility: old 'url' field maps to 'registry'."""
-        data = {
-            "url": "https://example.com/registry",
-            "token": "my_token"
-        }
+        data = {"url": "https://example.com/registry", "token": "my_token"}
         config = UpdateConfig.from_dict(data)
 
         assert config.registry == "https://example.com/registry"
@@ -89,7 +85,7 @@ class TestUpdateConfig:
             "registry": "https://new.com/registry",
             "url": "https://old.com/registry",
             "registry_token": "new_token",
-            "token": "old_token"
+            "token": "old_token",
         }
         config = UpdateConfig.from_dict(data)
 
@@ -181,8 +177,8 @@ class TestDeviceConfigWithUpdate:
             "device_id": "test-id",
             "update": {
                 "registry": "https://example.com/registry",
-                "registry_token": "my_token"
-            }
+                "registry_token": "my_token",
+            },
         }
         config = DeviceConfig.from_dict(data)
 
@@ -191,10 +187,7 @@ class TestDeviceConfigWithUpdate:
 
     def test_from_dict_missing_update(self):
         """Test DeviceConfig from dict without update uses defaults."""
-        data = {
-            "mode": "local",
-            "device_id": "test-id"
-        }
+        data = {"mode": "local", "device_id": "test-id"}
         config = DeviceConfig.from_dict(data)
 
         assert isinstance(config.update, UpdateConfig)
@@ -206,10 +199,7 @@ class TestDeviceConfigWithUpdate:
         data = {
             "mode": "local",
             "device_id": "test-id",
-            "update": {
-                "url": "https://example.com/registry",
-                "token": "my_token"
-            }
+            "update": {"url": "https://example.com/registry", "token": "my_token"},
         }
         config = DeviceConfig.from_dict(data)
 
@@ -274,7 +264,7 @@ class TestEnvOverridesForUpdate:
 
         env_vars = {
             "REGISTRY": "https://example.com/ai-tool-box",
-            "REGISTRY_TOKEN": "my_registry_token"
+            "REGISTRY_TOKEN": "my_registry_token",
         }
 
         with patch.dict(os.environ, env_vars):

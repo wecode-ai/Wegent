@@ -13,6 +13,7 @@ Authentication:
 - In production, should be protected by network-level security
 """
 
+import json
 import logging
 from typing import Any, Optional
 
@@ -31,6 +32,7 @@ from app.models.subtask_context import (
     SubtaskContext,
 )
 from app.models.user import User
+from shared.prompts.constants import parse_prompt_blocks
 from shared.telemetry.decorators import trace_sync
 
 logger = logging.getLogger(__name__)
@@ -89,6 +91,7 @@ class MessageResponse(BaseModel):
     name: Optional[str] = None
     tool_call_id: Optional[str] = None
     tool_calls: Optional[list] = None
+    reasoning_content: Any | None = None
     created_at: Optional[str] = None
     loaded_skills: Optional[list[str]] = None  # Skills loaded in this message turn
 
@@ -187,10 +190,14 @@ def parse_session_id(session_id: str) -> tuple[str, int]:
     return session_type, session_id_int
 
 
-def subtask_to_message(
+def subtask_to_messages(
     subtask: Subtask, db: Session, is_group_chat: bool = False
-) -> MessageResponse:
-    """Convert Subtask ORM object to MessageResponse with full context loading.
+) -> list[MessageResponse]:
+    """Convert Subtask ORM object to a list of MessageResponse objects.
+
+    Returns a list because a single assistant subtask may expand into multiple
+    messages when ``messages_chain`` is present (intermediate tool call / tool
+    result messages from a single agent turn).
 
     For user messages, this function:
     1. Loads all contexts (attachments and knowledge_base) in one query
@@ -201,10 +208,6 @@ def subtask_to_message(
     For assistant messages, this function also extracts:
     - loaded_skills: List of skills loaded via load_skill tool in this turn
     """
-    role = "user" if subtask.role == SubtaskRole.USER else "assistant"
-    loaded_skills = None
-
-    # Extract content based on role
     if subtask.role == SubtaskRole.USER:
         # Get sender username for group chat
         sender_username = None
@@ -217,22 +220,62 @@ def subtask_to_message(
         content = _build_user_message_content(
             db, subtask, sender_username, is_group_chat
         )
-    else:
-        # For assistant, content is in result.value
-        if subtask.result and isinstance(subtask.result, dict):
-            content = subtask.result.get("value", "")
-            # Extract loaded_skills for skill state restoration across conversation turns
-            loaded_skills = subtask.result.get("loaded_skills")
-        else:
-            content = ""
+        return [
+            MessageResponse(
+                id=str(subtask.id),
+                role="user",
+                content=content,
+                created_at=(
+                    subtask.created_at.isoformat() if subtask.created_at else None
+                ),
+            )
+        ]
 
-    return MessageResponse(
-        id=str(subtask.id),
-        role=role,
-        content=content,
-        created_at=subtask.created_at.isoformat() if subtask.created_at else None,
-        loaded_skills=loaded_skills,
-    )
+    # Assistant messages ---------------------------------------------------
+    result = subtask.result if isinstance(subtask.result, dict) else {}
+    created_at = subtask.created_at.isoformat() if subtask.created_at else None
+
+    # If messages_chain is available, expand to individual MessageResponse objects
+    messages_chain = result.get("messages_chain")
+    if messages_chain and isinstance(messages_chain, list):
+        loaded_skills = result.get("loaded_skills")
+        responses: list[MessageResponse] = []
+        for idx, msg in enumerate(messages_chain):
+            msg_id = f"{subtask.id}-{idx}"
+            role = msg.get("role", "assistant")
+            resp = MessageResponse(
+                id=msg_id,
+                role=role,
+                content=msg.get("content", ""),
+                name=msg.get("name"),
+                tool_call_id=msg.get("tool_call_id"),
+                tool_calls=msg.get("tool_calls"),
+                reasoning_content=msg.get("reasoning_content"),
+                created_at=created_at,
+            )
+            responses.append(resp)
+        # Attach loaded_skills to the last *assistant* message in the chain,
+        # mirroring the package-mode backward scan so that skill state is
+        # restored even when the chain ends with a tool message.
+        if loaded_skills:
+            for resp in reversed(responses):
+                if resp.role == "assistant":
+                    resp.loaded_skills = loaded_skills
+                    break
+        return responses
+
+    # Fallback for legacy data without messages_chain
+    content = result.get("value", "")
+    loaded_skills = result.get("loaded_skills")
+    return [
+        MessageResponse(
+            id=str(subtask.id),
+            role="assistant",
+            content=content,
+            created_at=created_at,
+            loaded_skills=loaded_skills,
+        )
+    ]
 
 
 def _build_user_message_content(
@@ -249,10 +292,21 @@ def _build_user_message_content(
 
     from app.services.context import context_service
 
-    # Build text content
-    text_content = subtask.prompt or ""
+    # Build text content, handling both plain-text and JSON-array prompt formats.
+    raw_prompt = subtask.prompt or ""
+    text_content, extra_blocks = parse_prompt_blocks(raw_prompt)
+    # Detect structured prompts: the prompt was a stored JSON array even when
+    # extra_blocks is empty (e.g. a single-block array after image stripping).
+    is_structured_prompt = bool(extra_blocks) or text_content != raw_prompt
+
+    # For group chat, prefix is already embedded by build_messages when the
+    # message was first sent.  However legacy structured prompts (JSON arrays
+    # stored before the prefix-baking change) may lack the prefix.  Check the
+    # actual text content instead of relying solely on the format flag.
     if is_group_chat and sender_username:
-        text_content = f"User[{sender_username}]: {text_content}"
+        expected_prefix = f"User[{sender_username}]:"
+        if not text_content.lstrip().startswith(expected_prefix):
+            text_content = f"User[{sender_username}]: {text_content}"
 
     # Load all contexts in one query and separate by type
     all_contexts = (
@@ -269,6 +323,10 @@ def _build_user_message_content(
     )
 
     if not all_contexts:
+        if extra_blocks:
+            # New format: include stored system-reminder (carries time info
+            # and any context metadata from the original send).
+            return [{"type": "text", "text": text_content}, *extra_blocks]
         return text_content
 
     # Separate contexts by type
@@ -412,38 +470,57 @@ def _build_user_message_content(
                     )
                 break
 
-    # Combine text parts with proper XML tags
-    # For vision parts (images), attachment_text_parts contains image metadata headers
-    # which need to be wrapped in <attachment> tags for consistency with first upload
-    if vision_parts:
-        # Image attachments: wrap metadata headers in <attachment> tag
-        combined_prefix = ""
-        if attachment_text_parts:
-            headers_text = "\n\n".join(attachment_text_parts)
-            combined_prefix += f"<attachment>\n\n{headers_text}\n</attachment>\n\n"
-        if kb_text_parts:
-            combined_prefix += (
-                "<knowledge_base>\n\n"
-                + "\n\n".join(kb_text_parts)
-                + "</knowledge_base>\n\n"
-            )
-        if combined_prefix:
-            text_content = f"{combined_prefix}{text_content}"
-        return [{"type": "text", "text": text_content}, *vision_parts]
+    # Output assembly.
+    #
+    # This internal API serves chat_shell HTTP mode which sends the result
+    # directly to the LLM.  The format must match what the LLM expects:
+    #   [user_msg_block, image_blocks..., system_reminder_block]
+    #
+    # When extra_blocks is present (new format), the stored system-reminder
+    # already contains all context metadata + time.  Pass it through as-is
+    # to avoid duplication (the DB contexts are only needed for image base64).
+    #
+    # When extra_blocks is empty (old format), rebuild a system-reminder
+    # from the DB context records.
+    if extra_blocks:
+        if vision_parts:
+            return [
+                {"type": "text", "text": text_content},
+                *vision_parts,
+                *extra_blocks,
+            ]
+        return [{"type": "text", "text": text_content}, *extra_blocks]
 
-    # Non-image attachments: wrap in <attachment> tag, knowledge bases in <knowledge_base> tag
-    combined_prefix = ""
+    # Old format fallback: rebuild system-reminder from DB context records.
+    context_parts: list[str] = []
     if attachment_text_parts:
-        combined_prefix += (
-            "<attachment>" + "\n\n".join(attachment_text_parts) + "</attachment>\n\n"
+        context_parts.append(
+            "<attachment>" + "".join(attachment_text_parts) + "</attachment>"
         )
     if kb_text_parts:
-        combined_prefix += (
-            "<knowledge_base>" + "\n\n".join(kb_text_parts) + "</knowledge_base>\n\n"
+        context_parts.append(
+            "<knowledge_base>" + "".join(kb_text_parts) + "</knowledge_base>"
         )
-    if combined_prefix:
-        text_content = f"{combined_prefix}{text_content}"
 
+    if context_parts:
+        inner = "".join(context_parts)
+        reminder_block = {
+            "type": "text",
+            "text": f"<system-reminder>{inner}</system-reminder>",
+        }
+        if vision_parts:
+            return [
+                {"type": "text", "text": text_content},
+                *vision_parts,
+                reminder_block,
+            ]
+        return [{"type": "text", "text": text_content}, reminder_block]
+
+    # No context at all
+    if vision_parts:
+        return [{"type": "text", "text": text_content}, *vision_parts]
+    if is_structured_prompt:
+        return [{"type": "text", "text": text_content}]
     return text_content
 
 
@@ -689,7 +766,9 @@ async def get_chat_history(
         subtasks = query.order_by(Subtask.message_id.asc()).all()
 
     # Convert to message format with full context loading
-    messages = [subtask_to_message(st, db, is_group_chat) for st in subtasks]
+    messages = [
+        msg for st in subtasks for msg in subtask_to_messages(st, db, is_group_chat)
+    ]
 
     logger.debug(
         "get_chat_history: session_id=%s, count=%d, is_group_chat=%s, limit=%s",
@@ -761,14 +840,14 @@ async def append_message(
         subtask.prompt = (
             message.content
             if isinstance(message.content, str)
-            else str(message.content)
+            else json.dumps(message.content, ensure_ascii=False)
         )
     else:
         subtask.result = {
             "value": (
                 message.content
                 if isinstance(message.content, str)
-                else str(message.content)
+                else json.dumps(message.content, ensure_ascii=False)
             )
         }
 
@@ -841,14 +920,14 @@ async def append_messages_batch(
             subtask.prompt = (
                 message.content
                 if isinstance(message.content, str)
-                else str(message.content)
+                else json.dumps(message.content, ensure_ascii=False)
             )
         else:
             subtask.result = {
                 "value": (
                     message.content
                     if isinstance(message.content, str)
-                    else str(message.content)
+                    else json.dumps(message.content, ensure_ascii=False)
                 )
             }
 
@@ -892,14 +971,16 @@ async def update_message(
     # Update content based on role
     if subtask.role == SubtaskRole.USER:
         subtask.prompt = (
-            update.content if isinstance(update.content, str) else str(update.content)
+            update.content
+            if isinstance(update.content, str)
+            else json.dumps(update.content, ensure_ascii=False)
         )
     else:
         subtask.result = {
             "value": (
                 update.content
                 if isinstance(update.content, str)
-                else str(update.content)
+                else json.dumps(update.content, ensure_ascii=False)
             )
         }
 

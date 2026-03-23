@@ -345,10 +345,10 @@ class TestKnowledgeOrchestrator:
                     source_type="invalid",
                 )
 
-    def test_create_document_from_attachment_skips_excel_indexing(
+    def test_create_document_from_attachment_skips_large_excel_indexing(
         self, orchestrator, mock_db, mock_user
     ):
-        """Test Excel documents are created without scheduling RAG indexing."""
+        """Test large Excel documents (>2MB) are created without scheduling RAG indexing."""
         mock_kb = MagicMock()
         mock_kb.id = 1
         mock_kb.json = {"spec": {}}
@@ -357,11 +357,14 @@ class TestKnowledgeOrchestrator:
         mock_doc.id = 99
         mock_doc.attachment_id = 123
 
+        # File size > 2MB (3MB)
+        large_file_size = 3 * 1024 * 1024
+
         data = KnowledgeDocumentCreate(
             attachment_id=123,
             name="report.xlsx",
             file_extension="xlsx",
-            file_size=1024,
+            file_size=large_file_size,
             source_type=DocumentSourceType.FILE,
         )
 
@@ -390,23 +393,22 @@ class TestKnowledgeOrchestrator:
 
         mock_schedule.assert_not_called()
 
-    def test_reindex_document_raises_for_excel_document(
+    def test_reindex_document_raises_for_large_excel_document(
         self, orchestrator, mock_db, mock_user
     ):
-        """Test Excel documents cannot be reindexed."""
+        """Test large Excel documents (>2MB) cannot be reindexed."""
         mock_document = MagicMock()
         mock_document.id = 1
         mock_document.source_type = DocumentSourceType.FILE.value
         mock_document.file_extension = "xlsx"
+        mock_document.file_size = 3 * 1024 * 1024  # 3MB
 
         with patch.object(mock_db, "query") as mock_query:
             mock_query.return_value.filter.return_value.first.return_value = (
                 mock_document
             )
 
-            with pytest.raises(
-                ValueError, match="Excel documents \\(.xlsx\\) are excluded"
-            ):
+            with pytest.raises(ValueError, match="EXCEL_FILE_SIZE_EXCEEDED"):
                 orchestrator.reindex_document(
                     db=mock_db,
                     user=mock_user,
@@ -417,11 +419,11 @@ class TestKnowledgeOrchestrator:
 class TestIndexingPolicy:
     """Tests for knowledge indexing skip policy."""
 
-    def test_excel_documents_are_skipped(self):
-        """Test Excel extensions are excluded from RAG indexing."""
+    def test_excel_documents_within_size_limit_are_allowed(self):
+        """Test Excel extensions within 2MB size limit are allowed for RAG indexing."""
         reason = get_rag_indexing_skip_reason("file", "xlsx")
 
-        assert reason == "Excel documents (.xlsx) are excluded from RAG indexing"
+        assert reason is None
 
     def test_table_documents_are_skipped(self):
         """Test table source types are excluded from RAG indexing."""

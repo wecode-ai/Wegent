@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session, load_only, subqueryload, undefer
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.schemas.subtask import SubtaskCreate, SubtaskUpdate
 from app.services.base import BaseService
+from app.utils.prompt_utils import extract_display_prompt
 from shared.models.db.enums import ContextType
 from shared.models.db.subtask_context import SubtaskContext
 
@@ -339,7 +340,7 @@ class SubtaskService(BaseService[Subtask, SubtaskCreate, SubtaskUpdate]):
                 "title": subtask.title,
                 "bot_ids": subtask.bot_ids if subtask.bot_ids else [],
                 "role": subtask.role.value if subtask.role else None,
-                "prompt": subtask.prompt,
+                "prompt": extract_display_prompt(subtask.prompt),
                 "executor_namespace": subtask.executor_namespace,
                 "executor_name": subtask.executor_name,
                 "message_id": subtask.message_id,

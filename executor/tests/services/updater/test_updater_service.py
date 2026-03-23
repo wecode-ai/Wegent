@@ -25,10 +25,7 @@ def default_update_config():
 @pytest.fixture
 def registry_update_config():
     """Fixture for registry UpdateConfig."""
-    return UpdateConfig(
-        registry="https://example.com/ai-tool-box",
-        registry_token=""
-    )
+    return UpdateConfig(registry="https://example.com/ai-tool-box", registry_token="")
 
 
 class TestUpdaterService:
@@ -56,12 +53,10 @@ class TestUpdaterService:
         # Create an async mock for check_for_updates
         async_mock = AsyncMock(return_value=None)
 
-        with patch(
-            "executor.version.get_version", return_value="1.0.0"
-        ), patch.object(
-            service.version_checker, "check_for_updates", async_mock
-        ), patch(
-            "builtins.print"
+        with (
+            patch("executor.version.get_version", return_value="1.0.0"),
+            patch.object(service.version_checker, "check_for_updates", async_mock),
+            patch("builtins.print"),
         ):
 
             result = await service.check_and_update()
@@ -71,7 +66,9 @@ class TestUpdaterService:
             assert result.old_version == "1.0.0"
 
     @pytest.mark.asyncio
-    async def test_check_and_update_update_available_user_confirms(self, default_update_config):
+    async def test_check_and_update_update_available_user_confirms(
+        self, default_update_config
+    ):
         """Test successful update when user confirms."""
         service = UpdaterService(update_config=default_update_config)
 
@@ -84,21 +81,21 @@ class TestUpdaterService:
         mock_replacer.download_binary.return_value = Path("/tmp/new-binary")
         mock_replacer.replace_binary.return_value = True
 
-        with patch(
-            "executor.version.get_version", return_value="1.0.0"
-        ), patch.object(
-            service.version_checker, "check_for_updates", async_mock
-        ), patch.object(
-            service, "_confirm_update", return_value=True
-        ), patch.object(
-            service, "_check_disk_space", return_value=True
-        ), patch.object(
-            service, "_get_current_binary_path", return_value=Path("/bin/wegent-executor")
-        ), patch(
-            "executor.services.updater.updater_service.BinaryReplacer",
-            return_value=mock_replacer,
-        ), patch(
-            "builtins.print"
+        with (
+            patch("executor.version.get_version", return_value="1.0.0"),
+            patch.object(service.version_checker, "check_for_updates", async_mock),
+            patch.object(service, "_confirm_update", return_value=True),
+            patch.object(service, "_check_disk_space", return_value=True),
+            patch.object(
+                service,
+                "_get_current_binary_path",
+                return_value=Path("/bin/wegent-executor"),
+            ),
+            patch(
+                "executor.services.updater.updater_service.BinaryReplacer",
+                return_value=mock_replacer,
+            ),
+            patch("builtins.print"),
         ):
 
             result = await service.check_and_update()
@@ -123,19 +120,20 @@ class TestUpdaterService:
         mock_replacer.download_binary.return_value = Path("/tmp/new-binary")
         mock_replacer.replace_binary.return_value = True
 
-        with patch(
-            "executor.version.get_version", return_value="1.0.0"
-        ), patch.object(
-            service.version_checker, "check_for_updates", async_mock
-        ), patch.object(
-            service, "_check_disk_space", return_value=True
-        ), patch.object(
-            service, "_get_current_binary_path", return_value=Path("/bin/wegent-executor")
-        ), patch(
-            "executor.services.updater.updater_service.BinaryReplacer",
-            return_value=mock_replacer,
-        ), patch(
-            "builtins.print"
+        with (
+            patch("executor.version.get_version", return_value="1.0.0"),
+            patch.object(service.version_checker, "check_for_updates", async_mock),
+            patch.object(service, "_check_disk_space", return_value=True),
+            patch.object(
+                service,
+                "_get_current_binary_path",
+                return_value=Path("/bin/wegent-executor"),
+            ),
+            patch(
+                "executor.services.updater.updater_service.BinaryReplacer",
+                return_value=mock_replacer,
+            ),
+            patch("builtins.print"),
         ):
             # _confirm_update should NOT be called when auto_confirm=True
             with patch.object(service, "_confirm_update") as mock_confirm:
@@ -156,16 +154,12 @@ class TestUpdaterService:
         # Create an async mock for check_for_updates
         async_mock = AsyncMock(return_value=update_info)
 
-        with patch(
-            "executor.version.get_version", return_value="1.0.0"
-        ), patch.object(
-            service.version_checker, "check_for_updates", async_mock
-        ), patch.object(
-            service, "_confirm_update", return_value=False
-        ), patch.object(
-            service, "_check_disk_space", return_value=True
-        ), patch(
-            "builtins.print"
+        with (
+            patch("executor.version.get_version", return_value="1.0.0"),
+            patch.object(service.version_checker, "check_for_updates", async_mock),
+            patch.object(service, "_confirm_update", return_value=False),
+            patch.object(service, "_check_disk_space", return_value=True),
+            patch("builtins.print"),
         ):
 
             result = await service.check_and_update()
@@ -174,7 +168,9 @@ class TestUpdaterService:
             assert "cancelled by user" in result.error
 
     @pytest.mark.asyncio
-    async def test_check_and_update_insufficient_disk_space(self, default_update_config):
+    async def test_check_and_update_insufficient_disk_space(
+        self, default_update_config
+    ):
         """Test update when disk space is insufficient."""
         service = UpdaterService(update_config=default_update_config)
 
@@ -183,14 +179,11 @@ class TestUpdaterService:
         # Create an async mock for check_for_updates
         async_mock = AsyncMock(return_value=update_info)
 
-        with patch(
-            "executor.version.get_version", return_value="1.0.0"
-        ), patch.object(
-            service.version_checker, "check_for_updates", async_mock
-        ), patch.object(
-            service, "_check_disk_space", return_value=False
-        ), patch(
-            "builtins.print"
+        with (
+            patch("executor.version.get_version", return_value="1.0.0"),
+            patch.object(service.version_checker, "check_for_updates", async_mock),
+            patch.object(service, "_check_disk_space", return_value=False),
+            patch("builtins.print"),
         ):
 
             result = await service.check_and_update()
@@ -211,19 +204,16 @@ class TestUpdaterService:
         mock_replacer = Mock()
         mock_replacer.download_binary.side_effect = RuntimeError("Network error")
 
-        with patch(
-            "executor.version.get_version", return_value="1.0.0"
-        ), patch.object(
-            service.version_checker, "check_for_updates", async_mock
-        ), patch.object(
-            service, "_confirm_update", return_value=True
-        ), patch.object(
-            service, "_check_disk_space", return_value=True
-        ), patch(
-            "executor.services.updater.updater_service.BinaryReplacer",
-            return_value=mock_replacer,
-        ), patch(
-            "builtins.print"
+        with (
+            patch("executor.version.get_version", return_value="1.0.0"),
+            patch.object(service.version_checker, "check_for_updates", async_mock),
+            patch.object(service, "_confirm_update", return_value=True),
+            patch.object(service, "_check_disk_space", return_value=True),
+            patch(
+                "executor.services.updater.updater_service.BinaryReplacer",
+                return_value=mock_replacer,
+            ),
+            patch("builtins.print"),
         ):
 
             result = await service.check_and_update()
@@ -245,21 +235,21 @@ class TestUpdaterService:
         mock_replacer.download_binary.return_value = Path("/tmp/new-binary")
         mock_replacer.replace_binary.return_value = False
 
-        with patch(
-            "executor.version.get_version", return_value="1.0.0"
-        ), patch.object(
-            service.version_checker, "check_for_updates", async_mock
-        ), patch.object(
-            service, "_confirm_update", return_value=True
-        ), patch.object(
-            service, "_check_disk_space", return_value=True
-        ), patch.object(
-            service, "_get_current_binary_path", return_value=Path("/bin/wegent-executor")
-        ), patch(
-            "executor.services.updater.updater_service.BinaryReplacer",
-            return_value=mock_replacer,
-        ), patch(
-            "builtins.print"
+        with (
+            patch("executor.version.get_version", return_value="1.0.0"),
+            patch.object(service.version_checker, "check_for_updates", async_mock),
+            patch.object(service, "_confirm_update", return_value=True),
+            patch.object(service, "_check_disk_space", return_value=True),
+            patch.object(
+                service,
+                "_get_current_binary_path",
+                return_value=Path("/bin/wegent-executor"),
+            ),
+            patch(
+                "executor.services.updater.updater_service.BinaryReplacer",
+                return_value=mock_replacer,
+            ),
+            patch("builtins.print"),
         ):
 
             result = await service.check_and_update()
@@ -325,8 +315,9 @@ class TestUpdaterService:
         mock_usage = Mock()
         mock_usage.free = 50 * 1024 * 1024  # 50 MB
 
-        with patch.object(shutil, "disk_usage", return_value=mock_usage), patch(
-            "builtins.print"
+        with (
+            patch.object(shutil, "disk_usage", return_value=mock_usage),
+            patch("builtins.print"),
         ):
             result = service._check_disk_space()
             assert result is False
@@ -335,8 +326,9 @@ class TestUpdaterService:
         """Test getting binary path when running as frozen binary."""
         service = UpdaterService(update_config=default_update_config)
 
-        with patch.object(sys, "frozen", True, create=True), patch.object(
-            sys, "executable", "/usr/local/bin/wegent-executor"
+        with (
+            patch.object(sys, "frozen", True, create=True),
+            patch.object(sys, "executable", "/usr/local/bin/wegent-executor"),
         ):
             result = service._get_current_binary_path()
             assert result == Path("/usr/local/bin/wegent-executor").resolve()
@@ -345,8 +337,9 @@ class TestUpdaterService:
         """Test getting binary path when running as script."""
         service = UpdaterService(update_config=default_update_config)
 
-        with patch.object(sys, "frozen", False, create=True), patch.object(
-            sys, "argv", ["/path/to/executor/main.py"]
+        with (
+            patch.object(sys, "frozen", False, create=True),
+            patch.object(sys, "argv", ["/path/to/executor/main.py"]),
         ):
             result = service._get_current_binary_path()
             assert result == Path("/path/to/executor/main.py").resolve()
@@ -359,7 +352,9 @@ class TestUpdaterService:
 
         # Mock the static method on BinaryReplacer class
         with patch.object(
-            BinaryReplacer, "format_progress_bar", return_value="[====>] 50% (25 MB / 50 MB)"
+            BinaryReplacer,
+            "format_progress_bar",
+            return_value="[====>] 50% (25 MB / 50 MB)",
         ) as mock_format:
             # Set up the service with a mock replacer
             mock_replacer = Mock()

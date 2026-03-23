@@ -49,6 +49,35 @@ from .router import CommunicationMode, ExecutionRouter, ExecutionTarget
 logger = logging.getLogger(__name__)
 
 
+def extract_completed_result(response_data: dict) -> dict:
+    """Build a result dict from a ``response.completed`` payload.
+
+    Shared by :class:`ResponsesAPIEventParser` and
+    :class:`EmitterBridgeTransport` so the field list is maintained in one
+    place.
+    """
+    # Extract text content from response output
+    value = ""
+    for item in response_data.get("output", []):
+        if isinstance(item, dict):
+            for content_block in item.get("content", []):
+                if isinstance(content_block, dict) and content_block.get("text"):
+                    value += content_block["text"]
+
+    return {
+        "value": value,
+        "usage": response_data.get("usage"),
+        "sources": response_data.get("sources"),
+        "blocks": response_data.get("blocks"),
+        "silent_exit": response_data.get("silent_exit"),
+        "silent_exit_reason": response_data.get("silent_exit_reason"),
+        "loaded_skills": response_data.get("loaded_skills"),
+        "stop_reason": response_data.get("stop_reason"),
+        "messages_chain": response_data.get("messages_chain"),
+        "reasoning_content": response_data.get("reasoning_content"),
+    }
+
+
 class ResponsesAPIEventParser:
     """Parser for OpenAI Responses API format events.
 
@@ -97,34 +126,12 @@ class ResponsesAPIEventParser:
         elif event_type == ResponsesAPIStreamEvents.RESPONSE_COMPLETED.value:
             # response.completed -> DONE
             response_data = data.get("response", {})
-            usage = response_data.get("usage")
-
-            # Extract text content from response output
-            value = ""
-            output_items = response_data.get("output", [])
-            for item in output_items:
-                if isinstance(item, dict):
-                    for content_block in item.get("content", []):
-                        if isinstance(content_block, dict) and content_block.get(
-                            "text"
-                        ):
-                            value += content_block["text"]
-
             return ExecutionEvent(
                 type=EventType.DONE,
                 task_id=task_id,
                 subtask_id=subtask_id,
                 content="",
-                result={
-                    "value": value,
-                    "usage": usage,
-                    "sources": response_data.get("sources"),
-                    "blocks": response_data.get("blocks"),
-                    "silent_exit": response_data.get("silent_exit"),
-                    "silent_exit_reason": response_data.get("silent_exit_reason"),
-                    "loaded_skills": response_data.get("loaded_skills"),
-                    "stop_reason": response_data.get("stop_reason"),
-                },
+                result=extract_completed_result(response_data),
                 message_id=message_id,
             )
 

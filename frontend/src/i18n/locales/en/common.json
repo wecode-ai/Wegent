@@ -1039,6 +1039,8 @@
     "context_window_hint": "Maximum context window size in tokens. Used for message compression.",
     "max_output_tokens": "Max Output Tokens",
     "max_output_tokens_hint": "Maximum output tokens the model can generate per response.",
+    "thinking_config": "Thinking Config",
+    "thinking_config_hint": "Provider-native thinking/reasoning JSON config. Passed through to the LLM API as-is. Leave empty to disable.",
     "fetch_models": "Load Models",
     "fetching_models": "Loading...",
     "fetch_success": "Successfully loaded {{count}} models",
@@ -1062,7 +1064,9 @@
       "custom_headers_invalid": "Custom headers format is invalid",
       "custom_headers_invalid_json": "Please enter valid JSON format",
       "custom_headers_invalid_object": "Custom headers must be an object",
-      "custom_headers_values_must_be_strings": "All header values must be strings"
+      "custom_headers_values_must_be_strings": "All header values must be strings",
+      "thinking_config_invalid_json": "Thinking config must be valid JSON",
+      "thinking_config_invalid_object": "Thinking config must be a JSON object"
     }
   },
   "task_submit": {

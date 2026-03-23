@@ -185,6 +185,7 @@
       "reindexing": "Reindexing...",
       "reindexSuccess": "Reindex started",
       "reindexFailed": "Failed to start reindex",
+      "excelFileSizeExceeded": "File size exceeds the limit: Excel files ({{extension}}) must be {{limit}}MB or smaller for indexing. Current file size: {{size}}MB. Please reduce the file size or split into smaller files.",
       "openLink": "Open Link",
       "download": "Download",
       "columns": {

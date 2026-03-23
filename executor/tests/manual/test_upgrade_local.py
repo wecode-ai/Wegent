@@ -17,9 +17,9 @@ from pathlib import Path
 # 添加项目根目录到路径 (executor 的父目录)
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
-from executor.services.updater.updater_service import UpdaterService
-from executor.services.updater.github_version_checker import GithubVersionChecker
 from executor.config.device_config import UpdateConfig
+from executor.services.updater.github_version_checker import GithubVersionChecker
+from executor.services.updater.updater_service import UpdaterService
 
 
 async def test_version_check():
@@ -45,7 +45,7 @@ async def test_version_check():
     print("\n版本比较测试:")
     for current, latest in test_cases:
         result = checker.compare_versions(current, latest)
-        status = { -1: "需要更新", 0: "相同版本", 1: "当前更新" }[result]
+        status = {-1: "需要更新", 0: "相同版本", 1: "当前更新"}[result]
         print(f"  {current} vs {latest}: {status}")
 
 
@@ -73,6 +73,7 @@ async def test_update_flow():
     except Exception as e:
         print(f"测试出错: {e}")
         import traceback
+
         traceback.print_exc()
 
 
@@ -111,8 +112,7 @@ def main():
     """主测试函数"""
     parser = argparse.ArgumentParser(description="测试执行器自更新功能")
     parser.add_argument(
-        "--full", action="store_true",
-        help="运行完整更新流程测试（会调用API）"
+        "--full", action="store_true", help="运行完整更新流程测试（会调用API）"
     )
     args = parser.parse_args()
 

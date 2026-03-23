@@ -87,6 +87,8 @@ export interface ModelCRD {
         api_key: string
         base_url?: string
         custom_headers?: Record<string, string> // Custom HTTP headers to override defaults
+        thinking_config?: Record<string, unknown> // Provider-native thinking/reasoning config
+        thinkingConfig?: Record<string, unknown> // Legacy camelCase alias
       }
     }
     protocol?: string

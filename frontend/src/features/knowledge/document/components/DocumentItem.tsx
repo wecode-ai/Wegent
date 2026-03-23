@@ -145,6 +145,11 @@ export function DocumentItem({
   // Check document source type
   const isTable = document.source_type === 'table'
   const isWeb = document.source_type === 'web'
+
+  // Check if Excel file exceeds size limit (2MB)
+  const EXCEL_FILE_SIZE_LIMIT = 2 * 1024 * 1024 // 2MB
+  const isExcel = ['xls', 'xlsx'].includes(document.file_extension?.toLowerCase() || '')
+  const isExcelExceedingSizeLimit = isExcel && document.file_size > EXCEL_FILE_SIZE_LIMIT
   // URL for table or web documents
   const sourceUrl =
     (isTable || isWeb) &&
@@ -239,15 +244,15 @@ export function DocumentItem({
                 className="w-1 h-1 rounded-full flex-shrink-0 bg-green-500"
                 title={t('knowledge:document.document.indexStatus.available')}
               />
-            ) : !ragConfigured ? (
+            ) : isReindexing ? (
               <TooltipProvider>
                 <Tooltip delayDuration={200}>
                   <TooltipTrigger asChild>
-                    <span className="w-1 h-1 rounded-full flex-shrink-0 bg-yellow-500 cursor-help" />
+                    <span className="w-1 h-1 rounded-full flex-shrink-0 bg-blue-500 cursor-help animate-pulse" />
                   </TooltipTrigger>
                   <TooltipContent side="top" className="max-w-xs">
                     <p className="text-xs">
-                      {t('knowledge:document.document.indexStatus.unavailableHint')}
+                      {t('knowledge:document.document.indexStatus.indexingHint')}
                     </p>
                   </TooltipContent>
                 </Tooltip>
@@ -260,7 +265,15 @@ export function DocumentItem({
                   </TooltipTrigger>
                   <TooltipContent side="top" className="max-w-xs">
                     <p className="text-xs">
-                      {t('knowledge:document.document.indexStatus.indexingHint')}
+                      {isExcelExceedingSizeLimit
+                        ? t('knowledge:document.document.excelFileSizeExceeded', {
+                            extension: document.file_extension,
+                            limit: 2,
+                            size: (document.file_size / (1024 * 1024)).toFixed(2),
+                          })
+                        : !ragConfigured
+                          ? t('knowledge:document.document.indexStatus.unavailableHint')
+                          : t('knowledge:document.document.indexStatus.unavailableHint')}
                     </p>
                   </TooltipContent>
                 </Tooltip>
@@ -445,19 +458,23 @@ export function DocumentItem({
           <Badge variant="success" size="sm" className="whitespace-nowrap">
             {t('knowledge:document.document.indexStatus.available')}
           </Badge>
-        ) : !ragConfigured ? (
+        ) : isReindexing ? (
           <TooltipProvider>
             <Tooltip delayDuration={200}>
               <TooltipTrigger asChild>
                 <span>
-                  <Badge variant="warning" size="sm" className="whitespace-nowrap cursor-help">
-                    {t('knowledge:document.document.indexStatus.unavailable')}
+                  <Badge
+                    variant="default"
+                    size="sm"
+                    className="whitespace-nowrap cursor-help bg-blue-500/10 text-blue-600 border-blue-500/20"
+                  >
+                    {t('knowledge:document.document.indexStatus.indexing')}
                   </Badge>
                 </span>
               </TooltipTrigger>
               <TooltipContent side="top" className="max-w-xs">
                 <p className="text-xs">
-                  {t('knowledge:document.document.indexStatus.unavailableHint')}
+                  {t('knowledge:document.document.indexStatus.indexingHint')}
                 </p>
               </TooltipContent>
             </Tooltip>
@@ -474,7 +491,15 @@ export function DocumentItem({
               </TooltipTrigger>
               <TooltipContent side="top" className="max-w-xs">
                 <p className="text-xs">
-                  {t('knowledge:document.document.indexStatus.indexingHint')}
+                  {isExcelExceedingSizeLimit
+                    ? t('knowledge:document.document.excelFileSizeExceeded', {
+                        extension: document.file_extension,
+                        limit: 2,
+                        size: (document.file_size / (1024 * 1024)).toFixed(2),
+                      })
+                    : !ragConfigured
+                      ? t('knowledge:document.document.indexStatus.unavailableHint')
+                      : t('knowledge:document.document.indexStatus.unavailableHint')}
                 </p>
               </TooltipContent>
             </Tooltip>

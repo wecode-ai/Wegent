@@ -46,6 +46,7 @@ from app.services.openapi.helpers import (
     wegent_status_to_openai_status,
 )
 from app.services.readers.kinds import KindType, kindReader
+from app.utils.prompt_utils import extract_display_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +81,9 @@ def _task_to_response_object(
                 msg = OutputMessage(
                     id=f"msg_{subtask.id}",
                     status=subtask_status_to_message_status(subtask.status.value),
-                    content=[OutputTextContent(text=subtask.prompt)],
+                    content=[
+                        OutputTextContent(text=extract_display_prompt(subtask.prompt))
+                    ],
                     role="user",
                 )
                 output.append(msg)
@@ -494,7 +497,11 @@ async def _create_non_streaming_response_unified(
                     OutputMessage(
                         id=f"msg_{subtask.id}",
                         status="completed",
-                        content=[OutputTextContent(text=subtask.prompt)],
+                        content=[
+                            OutputTextContent(
+                                text=extract_display_prompt(subtask.prompt)
+                            )
+                        ],
                         role="user",
                     )
                 )

@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Set, Tuple
 from sqlalchemy.orm import Session
 
 from app.schemas.kind import Bot, Shell
+from app.utils.prompt_utils import extract_display_prompt
 
 
 def get_bots_for_subtasks(
@@ -125,7 +126,7 @@ def convert_subtasks_to_dict(
                 "title": subtask.title,
                 "bot_ids": subtask.bot_ids,
                 "role": subtask.role,
-                "prompt": subtask.prompt,
+                "prompt": extract_display_prompt(subtask.prompt),
                 "executor_namespace": subtask.executor_namespace,
                 "executor_name": subtask.executor_name,
                 "message_id": subtask.message_id,
