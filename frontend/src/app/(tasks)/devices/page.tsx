@@ -28,7 +28,12 @@ import { DeviceInfo } from '@/apis/devices'
 import { getToken } from '@/apis/user'
 import { Monitor, Loader2 } from 'lucide-react'
 import { getSocketUrl } from '@/lib/runtime-config'
-import { DeviceCard, DevicesPageHeader, DeviceSection } from '@/features/devices/components'
+import {
+  DeviceCard,
+  DevicesPageHeader,
+  DeviceSection,
+  EditDeviceAliasDialog,
+} from '@/features/devices/components'
 import { useDeviceHandlers } from '@/features/devices/hooks'
 import { CloudDeviceSection } from '@wecode/components/devices/CloudDeviceSection'
 import { DeviceSetupGuide } from '@wecode/components/devices/DeviceSetupGuide'
@@ -83,6 +88,16 @@ export default function DevicesPage() {
 
   // Guide visibility state
   const [showSetupGuide, setShowSetupGuide] = useState(false)
+
+  // Edit alias dialog state
+  const [editAliasDevice, setEditAliasDevice] = useState<DeviceInfo | null>(null)
+  const [isEditAliasDialogOpen, setIsEditAliasDialogOpen] = useState(false)
+
+  // Handle opening edit alias dialog
+  const handleOpenEditAliasDialog = useCallback((device: DeviceInfo) => {
+    setEditAliasDevice(device)
+    setIsEditAliasDialogOpen(true)
+  }, [])
 
   // Load collapsed state from localStorage
   useEffect(() => {
@@ -212,6 +227,7 @@ export default function DevicesPage() {
                       onDelete={handlers.handleDeleteDevice}
                       onCancelTask={handlers.handleCancelTask}
                       onUpgrade={handlers.handleUpgradeDevice}
+                      onEditAlias={handleOpenEditAliasDialog}
                       isUpgrading={isDeviceUpgrading(device.device_id)}
                       upgradeStatus={getUpgradeStatus(device.device_id)}
                     />
@@ -230,6 +246,7 @@ export default function DevicesPage() {
                     const device = sortedDevices.find(d => d.device_id === deviceId)
                     if (device) handlers.handleUpgradeDevice(device)
                   }}
+                  onEditAlias={handleOpenEditAliasDialog}
                   isDeviceUpgrading={isDeviceUpgrading}
                   getUpgradeStatus={getUpgradeStatus}
                 />
@@ -238,6 +255,14 @@ export default function DevicesPage() {
           </div>
         </div>
       </div>
+
+      {/* Edit Device Alias Dialog */}
+      <EditDeviceAliasDialog
+        device={editAliasDevice}
+        open={isEditAliasDialogOpen}
+        onOpenChange={setIsEditAliasDialogOpen}
+        onSave={handlers.handleEditAlias}
+      />
     </div>
   )
 }

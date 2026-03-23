@@ -65,12 +65,8 @@ export function RemoteWorkspaceDialog({
   const [pathInputError, setPathInputError] = useState<string | null>(null)
   const [isPreviewDialogOpen, setIsPreviewDialogOpen] = useState(false)
 
-  const [textContent, setTextContent] = useState('')
-  const [isTextLoading, setIsTextLoading] = useState(false)
-  const [textError, setTextError] = useState<string | null>(null)
-
-  // Blob URL for image/pdf preview (to support authenticated file access)
-  const [previewBlobUrl, setPreviewBlobUrl] = useState<string>('')
+  // Blob for file preview (to support authenticated file access)
+  const [previewBlob, setPreviewBlob] = useState<Blob | null>(null)
   const [_isPreviewLoading, setIsPreviewLoading] = useState(false)
   const [_previewError, setPreviewError] = useState<string | null>(null)
 
@@ -139,35 +135,6 @@ export function RemoteWorkspaceDialog({
     [expandPathToDirectory, t, taskId]
   )
 
-  // Fetch file content with authentication (for images/pdfs that can't use direct URL)
-  const fetchFileBlob = useCallback(
-    async (path: string, disposition: 'inline' | 'attachment') => {
-      setIsPreviewLoading(true)
-      setPreviewError(null)
-
-      try {
-        const token = getToken()
-        const url = remoteWorkspaceApis.getFileUrl(taskId, path, disposition)
-        const response = await fetch(url, {
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
-        })
-
-        if (!response.ok) {
-          throw new Error('fetch failed')
-        }
-
-        const blob = await response.blob()
-        const blobUrl = URL.createObjectURL(blob)
-        setPreviewBlobUrl(blobUrl)
-      } catch {
-        setPreviewError(t('remote_workspace.preview.load_failed', 'Failed to load preview'))
-      } finally {
-        setIsPreviewLoading(false)
-      }
-    },
-    [taskId, t]
-  )
-
   // Handle file download with authentication
   const handleDownloadFile = useCallback(
     async (entry: RemoteWorkspaceTreeEntry) => {
@@ -217,8 +184,6 @@ export function RemoteWorkspaceDialog({
     setPathInputError(null)
     setSelectedPaths([])
     setIsPreviewDialogOpen(false)
-    setTextContent('')
-    setTextError(null)
     void loadDirectory(rootPath, {
       setAsCurrent: true,
       clearSelection: true,
@@ -291,89 +256,54 @@ export function RemoteWorkspaceDialog({
   }, [previewEntry, taskId])
 
   useEffect(() => {
-    const shouldLoadTextPreview = isMobile || isPreviewDialogOpen
-    if (!open || !shouldLoadTextPreview || previewKind !== 'text' || !inlineUrl) {
-      setTextContent('')
-      setTextError(null)
-      setIsTextLoading(false)
-      return
-    }
-
-    let isCancelled = false
-    setIsTextLoading(true)
-    setTextError(null)
-
-    const token = getToken()
-    fetch(inlineUrl, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-    })
-      .then(response => {
-        if (!response.ok) {
-          throw new Error('fetch failed')
-        }
-        return response.text()
-      })
-      .then(content => {
-        if (!isCancelled) {
-          setTextContent(content)
-        }
-      })
-      .catch(() => {
-        if (!isCancelled) {
-          setTextError(t('remote_workspace.preview.load_failed', 'Failed to load preview'))
-        }
-      })
-      .finally(() => {
-        if (!isCancelled) {
-          setIsTextLoading(false)
-        }
-      })
-
-    return () => {
-      isCancelled = true
-    }
-  }, [inlineUrl, isMobile, isPreviewDialogOpen, open, previewKind, t])
-
-  useEffect(() => {
     if (!previewEntry && isPreviewDialogOpen) {
       setIsPreviewDialogOpen(false)
     }
   }, [isPreviewDialogOpen, previewEntry])
 
-  // Effect to load blob URL for image/pdf previews
+  // Effect to load blob for previews
   useEffect(() => {
-    const shouldLoadPreview = isMobile || isPreviewDialogOpen
-    if (!open || !shouldLoadPreview || !previewEntry) {
-      // Clean up previous blob URL
-      if (previewBlobUrl) {
-        URL.revokeObjectURL(previewBlobUrl)
-        setPreviewBlobUrl('')
+    if (!isPreviewDialogOpen || !previewEntry) {
+      setPreviewBlob(null)
+      return
+    }
+
+    // Load blob for all previewable types (image, pdf, excel, text)
+    if (previewKind === 'unsupported' || previewKind === 'none') {
+      return
+    }
+
+    // Load blob directly to avoid dependency issues
+    const loadBlob = async () => {
+      setIsPreviewLoading(true)
+      setPreviewError(null)
+
+      try {
+        const token = getToken()
+        const url = remoteWorkspaceApis.getFileUrl(taskId, previewEntry.path, 'inline')
+        const response = await fetch(url, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        })
+
+        if (!response.ok) {
+          throw new Error('fetch failed')
+        }
+
+        const blob = await response.blob()
+        setPreviewBlob(blob)
+      } catch {
+        setPreviewError(t('remote_workspace.preview.load_failed', 'Failed to load preview'))
+      } finally {
+        setIsPreviewLoading(false)
       }
-      return
     }
 
-    // Only load blob for image and pdf previews
-    if (previewKind !== 'image' && previewKind !== 'pdf') {
-      return
-    }
-
-    void fetchFileBlob(previewEntry.path, 'inline')
+    void loadBlob()
 
     return () => {
-      if (previewBlobUrl) {
-        URL.revokeObjectURL(previewBlobUrl)
-      }
+      setPreviewBlob(null)
     }
-  }, [
-    fetchFileBlob,
-    inlineUrl,
-    isMobile,
-    isPreviewDialogOpen,
-    open,
-    previewEntry,
-    previewKind,
-    previewBlobUrl,
-  ])
+  }, [isPreviewDialogOpen, previewEntry, previewKind, taskId, t])
 
   const canGoParent = Boolean(getParentPath(rootPath, currentPath))
   const breadcrumbs = useMemo(
@@ -569,12 +499,7 @@ export function RemoteWorkspaceDialog({
             selectedPaths={selectedPathSet}
             selectedEntries={selectedEntries}
             previewKind={previewKind}
-            inlineUrl={
-              previewKind === 'image' || previewKind === 'pdf' ? previewBlobUrl : inlineUrl
-            }
-            textContent={textContent}
-            isTextLoading={isTextLoading}
-            textError={textError}
+            inlineUrl={inlineUrl}
             searchKeyword={searchKeyword}
             sortOption={sortOption}
             canGoParent={canGoParent}
@@ -612,12 +537,7 @@ export function RemoteWorkspaceDialog({
             selectedEntries={selectedEntries}
             previewEntry={previewEntry}
             previewKind={previewKind}
-            inlineUrl={
-              previewKind === 'image' || previewKind === 'pdf' ? previewBlobUrl : inlineUrl
-            }
-            textContent={textContent}
-            isTextLoading={isTextLoading}
-            textError={textError}
+            previewBlob={previewBlob}
             searchKeyword={searchKeyword}
             sortOption={sortOption}
             pathInputValue={pathInputValue}

@@ -4,7 +4,7 @@
 
 import { type RemoteWorkspaceTreeEntry } from '@/apis/remoteWorkspace'
 
-export type PreviewKind = 'none' | 'text' | 'image' | 'pdf' | 'unsupported'
+export type PreviewKind = 'none' | 'text' | 'image' | 'pdf' | 'excel' | 'unsupported'
 export type SortOption = 'name_asc' | 'name_desc' | 'size_desc' | 'modified_desc'
 
 const TEXT_EXTENSIONS = new Set([
@@ -36,6 +36,8 @@ const TEXT_EXTENSIONS = new Set([
 
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg'])
 
+const EXCEL_EXTENSIONS = new Set(['xlsx', 'xls', 'csv'])
+
 function getFileExtension(fileName: string): string {
   const lastDot = fileName.lastIndexOf('.')
   if (lastDot < 0) {
@@ -56,6 +58,9 @@ export function resolvePreviewKind(fileName: string): PreviewKind {
   }
   if (IMAGE_EXTENSIONS.has(extension)) {
     return 'image'
+  }
+  if (EXCEL_EXTENSIONS.has(extension)) {
+    return 'excel'
   }
   if (TEXT_EXTENSIONS.has(extension)) {
     return 'text'

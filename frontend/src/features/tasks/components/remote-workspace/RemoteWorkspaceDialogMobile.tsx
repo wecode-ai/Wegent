@@ -32,9 +32,6 @@ type RemoteWorkspaceDialogMobileProps = {
   selectedEntries: RemoteWorkspaceTreeEntry[]
   previewKind: PreviewKind
   inlineUrl: string
-  textContent: string
-  isTextLoading: boolean
-  textError: string | null
   searchKeyword: string
   sortOption: SortOption
   canGoParent: boolean
@@ -81,9 +78,6 @@ export function RemoteWorkspaceDialogMobile({
   selectedEntries,
   previewKind,
   inlineUrl,
-  textContent,
-  isTextLoading,
-  textError,
   searchKeyword,
   sortOption,
   canGoParent,
@@ -269,21 +263,9 @@ export function RemoteWorkspaceDialogMobile({
                     />
                   )}
                   {previewKind === 'text' && (
-                    <>
-                      {isTextLoading && (
-                        <p className="text-sm text-text-muted">
-                          {t('remote_workspace.preview.loading')}
-                        </p>
-                      )}
-                      {!isTextLoading && textError && (
-                        <p className="text-sm text-error">{textError}</p>
-                      )}
-                      {!isTextLoading && !textError && (
-                        <pre className="whitespace-pre-wrap break-words text-xs text-text-primary">
-                          {textContent}
-                        </pre>
-                      )}
-                    </>
+                    <p className="text-sm text-text-muted">
+                      {t('remote_workspace.preview.unsupported')}
+                    </p>
                   )}
                   {previewKind === 'unsupported' && (
                     <p className="text-sm text-text-muted">

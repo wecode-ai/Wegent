@@ -4,6 +4,7 @@
 
 import asyncio
 import json
+import logging
 import threading
 import uuid
 from typing import Any, Dict, List, Optional
@@ -19,6 +20,8 @@ from app.services.base import BaseService
 from app.services.k_batch import apply_default_resources_async
 from app.services.readers.users import userReader
 from shared.utils.crypto import decrypt_git_token, encrypt_git_token, is_token_encrypted
+
+logger = logging.getLogger(__name__)
 
 
 class UserService(BaseService[User, UserUpdate, UserUpdate]):
@@ -263,10 +266,19 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
         if obj_in.password:
             user.password_hash = security.get_password_hash(obj_in.password)
 
+        # Track if default_execution_target changed for IM notification
+        old_default_target = None
+        new_default_target = None
+
         if obj_in.preferences is not None:
             # Merge with existing preferences or set new ones
             existing_prefs = json.loads(user.preferences) if user.preferences else {}
             new_prefs = obj_in.preferences.model_dump()
+
+            # Check if default_execution_target is changing
+            old_default_target = existing_prefs.get("default_execution_target")
+            new_default_target = new_prefs.get("default_execution_target")
+
             # Create a new dict and serialize to JSON string
             merged_prefs = {**existing_prefs, **new_prefs}
             user.preferences = json.dumps(merged_prefs)
@@ -274,7 +286,96 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
         db.add(user)
         db.commit()
         db.refresh(user)
+
+        # Send IM notification if default_execution_target changed
+        if new_default_target is not None and old_default_target != new_default_target:
+            self._send_default_device_notification_async(db, user, new_default_target)
+
         return user
+
+    def _send_default_device_notification_async(
+        self,
+        db: Session,
+        user: User,
+        new_target: str,
+    ) -> None:
+        """
+        Send IM notification about default device change and clear IM device cache.
+
+        When user changes default_execution_target via PC/Web, we need to:
+        1. Clear the IM device selection cache in Redis so IM will use the new default
+        2. Send notification to user's bound IM channels
+
+        Args:
+            db: Database session
+            user: User who changed the default device
+            new_target: New default execution target ('cloud' or device_id)
+        """
+        from app.services.device_service import device_service
+
+        def run_notification():
+            from app.db.session import SessionLocal
+            from app.services.channels.device_notification import (
+                send_default_device_notification,
+            )
+            from app.services.channels.device_selection import (
+                device_selection_manager,
+            )
+
+            # Create a new db session for the background task
+            notification_db = SessionLocal()
+            try:
+                # Clear IM device selection cache so IM will use the new default
+                # This ensures the user's IM channel uses the new default_execution_target
+                asyncio.run(device_selection_manager.clear_selection(user.id))
+                logger.info(
+                    "[UserService] Cleared IM device selection cache for user %d "
+                    "due to default_execution_target change",
+                    user.id,
+                )
+
+                # Determine target type and device name
+                if new_target == "cloud":
+                    target_type = "cloud"
+                    device_name = None
+                else:
+                    target_type = "device"
+                    # Try to get device name
+                    device_name = None
+                    try:
+                        # Get device info synchronously
+                        devices = asyncio.run(
+                            device_service.get_all_devices(notification_db, user.id)
+                        )
+                        for device in devices:
+                            if device.get("device_id") == new_target:
+                                device_name = device.get("name")
+                                break
+                    except Exception as e:
+                        logger.warning(
+                            "[UserService] Failed to get device name for notification: %s",
+                            e,
+                        )
+
+                # Send notification
+                asyncio.run(
+                    send_default_device_notification(
+                        notification_db,
+                        user,
+                        target_type,
+                        device_name,
+                    )
+                )
+            except Exception as e:
+                logger.exception(
+                    "[UserService] Failed to send default device notification: %s", e
+                )
+            finally:
+                notification_db.close()
+
+        # Run in background thread to not block the API response
+        thread = threading.Thread(target=run_notification, daemon=True)
+        thread.start()
 
     def delete_git_token(
         self,

@@ -15,6 +15,8 @@ export interface UserPreferences {
   search_key?: 'cmd_k' | 'cmd_f' | 'disabled'
   quick_access?: QuickAccessConfig
   memory_enabled?: boolean
+  /** Default execution target: 'cloud' for cloud mode, or device_id for a specific device */
+  default_execution_target?: string | null
 }
 
 // User Types
