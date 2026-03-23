@@ -26,8 +26,8 @@ from typing import Any, Dict, Optional
 
 from executor.config import config
 from executor.config.device_config import DeviceConfig
-from executor.modes.local.events import ChatEvents, TaskEvents
-from executor.modes.local.handlers import TaskHandler, UpgradeHandler
+from executor.modes.local.events import ChatEvents, SandboxEvents, TaskEvents
+from executor.modes.local.handlers import SandboxHandler, TaskHandler, UpgradeHandler
 from executor.modes.local.heartbeat import LocalHeartbeatService
 from executor.modes.local.websocket_client import WebSocketClient
 from executor.services.updater.process_manager import ProcessManager
@@ -78,6 +78,7 @@ class LocalRunner:
         # Event handlers
         self.task_handler = TaskHandler(self)
         self.upgrade_handler = UpgradeHandler(self)
+        self.sandbox_handler = SandboxHandler(self)
 
         # Task queue for execution
         self.task_queue: asyncio.Queue = asyncio.Queue()
@@ -233,6 +234,7 @@ class LocalRunner:
         self.websocket_client.on(
             "device:upgrade", self.upgrade_handler.handle_upgrade_command
         )
+        self.websocket_client.on(SandboxEvents.EXEC, self.sandbox_handler.handle_exec)
 
         logger.info("WebSocket event handlers registered")
 

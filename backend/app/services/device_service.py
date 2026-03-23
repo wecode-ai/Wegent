@@ -270,6 +270,7 @@ class DeviceService:
         client_ip: Optional[str] = None,
         device_type: Optional[str] = None,
         bind_shell: Optional[str] = None,
+        capabilities: Optional[List[str]] = None,
     ) -> Kind:
         """Create or update a Device CRD record.
 
@@ -287,6 +288,7 @@ class DeviceService:
             bind_shell: Shell runtime binding ('claudecode' or 'openclaw').
                         If None, defaults to 'claudecode' for new devices or
                         preserves existing value.
+            capabilities: Optional capability tags persisted in spec.capabilities.
 
         Returns:
             Kind model instance for the device
@@ -320,6 +322,8 @@ class DeviceService:
             # Update client IP if provided
             if client_ip is not None:
                 device_json["spec"]["clientIp"] = client_ip
+            if capabilities is not None:
+                device_json["spec"]["capabilities"] = capabilities
             # Update bind_shell if provided, otherwise preserve existing value
             if bind_shell is not None:
                 device_json["spec"]["bindShell"] = bind_shell
@@ -374,7 +378,7 @@ class DeviceService:
                     "connectionMode": "websocket",
                     "bindShell": resolved_bind_shell,
                     "isDefault": is_first_device,
-                    "capabilities": None,
+                    "capabilities": capabilities,
                     "clientIp": client_ip,
                 },
                 "status": {

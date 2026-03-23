@@ -9,6 +9,7 @@ registration and lookup of tool providers, as well as dynamic
 loading of providers from skill packages.
 """
 
+import importlib.machinery
 import importlib.util
 import logging
 import threading
@@ -20,6 +21,24 @@ from .context import SkillToolContext
 from .provider import SkillToolProvider
 
 logger = logging.getLogger(__name__)
+
+
+def _module_execution_priority(module_name: str) -> tuple[int, str]:
+    """Return execution priority for dynamically loaded skill modules.
+
+    Skill packages are loaded from ZIP bytes without a real filesystem-backed
+    importer. Modules that depend on shared package state, such as ``_base.py``,
+    must execute before tool modules that import them. ``__init__.py`` is
+    executed last because it commonly re-exports submodules.
+    """
+
+    if module_name == "_base":
+        return (0, module_name)
+    if module_name == "provider":
+        return (1, module_name)
+    if module_name == "__init__":
+        return (3, module_name)
+    return (2, module_name)
 
 
 class SkillToolRegistry:
@@ -288,21 +307,37 @@ class SkillToolRegistry:
                     )
                     return None
 
-                # Create the package module if it doesn't exist
+                # Create the package module if it doesn't exist.
+                # The explicit package spec makes relative imports work reliably
+                # for dynamically executed modules from in-memory ZIP content.
                 if package_name not in sys.modules:
                     package_module = types.ModuleType(package_name)
+                    package_spec = importlib.machinery.ModuleSpec(
+                        package_name,
+                        loader=None,
+                        is_package=True,
+                    )
+                    package_spec.submodule_search_locations = []
                     package_module.__path__ = []
                     package_module.__package__ = package_name
+                    package_module.__spec__ = package_spec
                     sys.modules[package_name] = package_module
 
-                # Load all Python modules in the skill package
+                module_sources: dict[str, str] = {}
+
+                # Pre-register all module objects before execution so intra-package
+                # imports resolve consistently during module initialization.
                 for py_mod_name, file_path in python_files.items():
                     full_module_name = f"{package_name}.{py_mod_name}"
 
                     if full_module_name in sys.modules:
+                        module_sources[py_mod_name] = zip_file.read(file_path).decode(
+                            "utf-8"
+                        )
                         continue
 
                     module_code = zip_file.read(file_path).decode("utf-8")
+                    module_sources[py_mod_name] = module_code
 
                     spec = importlib.util.spec_from_loader(
                         full_module_name,
@@ -320,8 +355,24 @@ class SkillToolRegistry:
                     module.__package__ = package_name
                     sys.modules[full_module_name] = module
 
+                # Execute modules in dependency-aware order. This avoids cases like
+                # command_tool importing ._base before _base.py has been executed.
+                for py_mod_name in sorted(
+                    python_files.keys(), key=_module_execution_priority
+                ):
+                    full_module_name = f"{package_name}.{py_mod_name}"
+                    module = sys.modules.get(full_module_name)
+                    if module is None:
+                        continue
+
+                    if getattr(module, "__skill_loaded__", False):
+                        continue
+
+                    module_code = module_sources[py_mod_name]
+
                     try:
                         exec(module_code, module.__dict__)
+                        module.__skill_loaded__ = True
                     except Exception as e:
                         logger.error(
                             f"[SkillToolRegistry] Failed to execute module "

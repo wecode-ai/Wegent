@@ -61,6 +61,42 @@ class DeviceUpgradeResponse(BaseModel):
     message: str = Field(..., description="Human-readable status message")
 
 
+class DeviceSandboxExecRequest(BaseModel):
+    """Request model for executing a command on a user device."""
+
+    command: str = Field(..., min_length=1, description="Command to execute")
+    working_dir: str = Field(
+        default="/home/user",
+        description="Working directory for command execution",
+    )
+    timeout_seconds: int = Field(
+        default=300,
+        ge=1,
+        le=1800,
+        description="Command timeout in seconds",
+    )
+    required_capability: Optional[str] = Field(
+        default=None,
+        description="Optional device capability required for routing",
+    )
+    device_id: Optional[str] = Field(
+        default=None,
+        description="Optional explicit device ID override",
+    )
+
+
+class DeviceSandboxExecResponse(BaseModel):
+    """Response model for a device-backed command execution."""
+
+    success: bool = Field(..., description="Whether the command succeeded")
+    stdout: str = Field(default="", description="Standard output")
+    stderr: str = Field(default="", description="Standard error")
+    exit_code: int = Field(..., description="Process exit code")
+    execution_time: float = Field(..., description="Execution time in seconds")
+    device_id: str = Field(..., description="Device that executed the command")
+    backend: str = Field(default="device", description="Execution backend identifier")
+
+
 @router.get("", response_model=DeviceListResponse)
 async def get_all_devices(
     db: Session = Depends(get_db),
@@ -160,6 +196,47 @@ async def delete_device(
             detail=f"Device '{device_id}' not found",
         )
     return {"message": f"Device '{device_id}' deleted"}
+
+
+@router.post("/sandbox/exec", response_model=DeviceSandboxExecResponse)
+async def execute_device_sandbox_command(
+    request: DeviceSandboxExecRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+) -> DeviceSandboxExecResponse:
+    """
+    Execute a command on an online user device through the existing device channel.
+
+    The backend selects a compatible online device, forwards the command over
+    `/local-executor`, and returns the device's execution result.
+    """
+    from app.services.device_sandbox_service import (
+        DeviceSandboxError,
+        device_sandbox_service,
+    )
+
+    try:
+        result = await device_sandbox_service.execute_command(
+            db=db,
+            user_id=current_user.id,
+            command=request.command,
+            working_dir=request.working_dir,
+            timeout_seconds=request.timeout_seconds,
+            required_capability=request.required_capability,
+            device_id=request.device_id,
+        )
+    except DeviceSandboxError as exc:
+        logger.warning(
+            "[Device Sandbox] Command rejected: user_id=%s, error=%s",
+            current_user.id,
+            exc,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+    return DeviceSandboxExecResponse(**result)
 
 
 @router.post("/{device_id}/upgrade", response_model=DeviceUpgradeResponse)

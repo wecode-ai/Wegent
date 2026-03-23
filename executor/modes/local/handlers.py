@@ -9,7 +9,10 @@ This module implements handlers for events received from the Backend server.
 """
 
 import asyncio
+import os
+import subprocess
 import threading
+import time
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from shared.logger import setup_logger
@@ -369,9 +372,98 @@ class UpgradeHandler:
             pm = ProcessManager()
             success = pm.restart_executor()
             if success:
-                logger.info("[UpgradeHandler] New executor started, exiting current process")
+                logger.info(
+                    "[UpgradeHandler] New executor started, exiting current process"
+                )
                 import sys
+
                 sys.exit(0)
 
         # Schedule the restart without awaiting it
         asyncio.create_task(delayed_restart())
+
+
+class SandboxHandler:
+    """Handler for lightweight sandbox-style device commands."""
+
+    def __init__(self, runner: "LocalRunner"):
+        """Initialize the sandbox handler."""
+        self.runner = runner
+
+    async def handle_exec(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Execute a shell command on the device and return an ack payload."""
+        command = str(data.get("command", "")).strip()
+        if not command:
+            return {
+                "success": False,
+                "stdout": "",
+                "stderr": "Command is required",
+                "exit_code": -1,
+                "execution_time": 0.0,
+            }
+
+        working_dir = str(data.get("working_dir") or os.path.expanduser("~"))
+        timeout_seconds = int(data.get("timeout_seconds") or 300)
+
+        logger.info(
+            "[SandboxHandler] Executing device command: cwd=%s, timeout=%ss, command=%s",
+            working_dir,
+            timeout_seconds,
+            command[:200],
+        )
+
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None,
+            self._execute_command_sync,
+            command,
+            working_dir,
+            timeout_seconds,
+        )
+
+    def _execute_command_sync(
+        self,
+        command: str,
+        working_dir: str,
+        timeout_seconds: int,
+    ) -> Dict[str, Any]:
+        """Execute a command synchronously in a worker thread."""
+        started_at = time.monotonic()
+
+        try:
+            result = subprocess.run(
+                command,
+                shell=True,
+                capture_output=True,
+                text=True,
+                cwd=working_dir,
+                timeout=timeout_seconds,
+                encoding="utf-8",
+                errors="replace",
+            )
+        except subprocess.TimeoutExpired as exc:
+            return {
+                "success": False,
+                "stdout": exc.stdout or "",
+                "stderr": (exc.stderr or "")
+                + f"\nCommand timed out after {timeout_seconds}s",
+                "exit_code": -1,
+                "execution_time": time.monotonic() - started_at,
+            }
+        except Exception as exc:
+            logger.error("[SandboxHandler] Device command failed: %s", exc)
+            return {
+                "success": False,
+                "stdout": "",
+                "stderr": str(exc),
+                "exit_code": -1,
+                "execution_time": time.monotonic() - started_at,
+            }
+
+        return {
+            "success": result.returncode == 0,
+            "stdout": result.stdout or "",
+            "stderr": result.stderr or "",
+            "exit_code": result.returncode,
+            "execution_time": time.monotonic() - started_at,
+        }

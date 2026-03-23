@@ -18,13 +18,21 @@ E2B SDK behavior.
 import asyncio
 import logging
 import os
+import re
 from typing import Any, Optional
+
+import httpx
 
 logger = logging.getLogger(__name__)
 
 # Default configuration
 DEFAULT_EXECUTOR_MANAGER_URL = "http://localhost:8001"
+DEFAULT_BACKEND_API_URL = "http://localhost:8000"
 DEFAULT_SANDBOX_TIMEOUT = 1800  # 30 minutes
+DEVICE_EXEC_ENDPOINT = "/api/internal/devices/sandbox/exec"
+HIMALAYA_COMMAND_PATTERN = re.compile(
+    r"(^|\s)(himalaya|command\s+-v\s+himalaya|which\s+himalaya)(\s|$)"
+)
 
 # E2B SDK patching - must be done before any e2b imports
 # Setup environment variables first
@@ -369,6 +377,66 @@ class SandboxManager:
             None (sandboxes are not cached)
         """
         return None
+
+    def should_use_device_backend_for_command(self, command: str) -> bool:
+        """Return True when a command should prefer the device-backed executor."""
+        return bool(HIMALAYA_COMMAND_PATTERN.search(command))
+
+    async def execute_command_via_device(
+        self,
+        command: str,
+        working_dir: Optional[str] = "/home/user",
+        timeout_seconds: int = 300,
+        required_capability: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """Execute a command through the backend's device sandbox bridge."""
+        backend_url = _get_backend_api_url()
+        headers = {"Content-Type": "application/json"}
+        if self.auth_token:
+            headers["Authorization"] = f"Bearer {self.auth_token}"
+
+        payload = {
+            "user_id": self.user_id,
+            "command": command,
+            "working_dir": working_dir or "/home/user",
+            "timeout_seconds": timeout_seconds,
+            "required_capability": required_capability,
+        }
+
+        logger.info(
+            "[SandboxManager] Executing command via device backend: backend_url=%s, "
+            "working_dir=%s, timeout=%ss, required_capability=%s",
+            backend_url,
+            payload["working_dir"],
+            timeout_seconds,
+            required_capability,
+        )
+
+        async with httpx.AsyncClient(timeout=max(timeout_seconds + 10, 60)) as client:
+            response = await client.post(
+                f"{backend_url}{DEVICE_EXEC_ENDPOINT}",
+                json=payload,
+                headers=headers,
+            )
+            response.raise_for_status()
+            return response.json()
+
+
+def _get_backend_api_url() -> str:
+    """Resolve backend API base URL for chat_shell-side HTTP calls."""
+    explicit_url = os.getenv("BACKEND_API_URL")
+    if explicit_url:
+        return explicit_url.rstrip("/")
+
+    remote_storage_url = os.getenv("CHAT_SHELL_REMOTE_STORAGE_URL", "").rstrip("/")
+    if remote_storage_url:
+        if remote_storage_url.endswith("/api/internal"):
+            return remote_storage_url[: -len("/api/internal")]
+        if remote_storage_url.endswith("/api"):
+            return remote_storage_url[: -len("/api")]
+        return remote_storage_url
+
+    return DEFAULT_BACKEND_API_URL
 
 
 # Patch E2B SDK at module load time

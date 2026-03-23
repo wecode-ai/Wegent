@@ -22,6 +22,7 @@ This allows backend's DeviceNamespace to route them correctly.
 from executor.modes.local.events import (
     ChatEvents,
     DeviceEvents,
+    SandboxEvents,
     TaskEvents,
 )
 from executor.modes.local.runner import LocalRunner
@@ -31,5 +32,6 @@ __all__ = [
     # Event classes
     "DeviceEvents",
     "TaskEvents",
+    "SandboxEvents",
     "ChatEvents",
 ]

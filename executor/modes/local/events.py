@@ -34,6 +34,12 @@ class TaskEvents:
     CLOSE_SESSION = "task:close-session"
 
 
+class SandboxEvents:
+    """Sandbox helper events for lightweight device-side execution."""
+
+    EXEC = "sandbox:exec"
+
+
 class ChatEvents:
     """Chat streaming events using OpenAI Responses API event types.
 

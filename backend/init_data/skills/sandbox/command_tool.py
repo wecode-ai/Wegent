@@ -163,6 +163,7 @@ Example:
         """
         start_time = time.time()
         effective_timeout = timeout_seconds or self.default_command_timeout
+        raw_command = command
 
         # Wrap command with bash -c if it contains shell operators
         # This ensures operators like &&, ||, |, ;, >, < are properly interpreted
@@ -193,6 +194,31 @@ Example:
         try:
             # Get sandbox manager from base class
             sandbox_manager = self._get_sandbox_manager()
+
+            if sandbox_manager.should_use_device_backend_for_command(raw_command):
+                logger.info(
+                    "[SandboxCommandTool] Routing command to device backend: %s",
+                    raw_command[:100],
+                )
+                response = await sandbox_manager.execute_command_via_device(
+                    command=raw_command,
+                    working_dir=working_dir,
+                    timeout_seconds=effective_timeout,
+                    required_capability="himalaya_mail",
+                )
+
+                if response.get("success"):
+                    await self._emit_tool_status(
+                        "completed", "Command executed successfully", response
+                    )
+                else:
+                    await self._emit_tool_status(
+                        "failed",
+                        f"Command failed with exit code {response.get('exit_code', -1)}",
+                        response,
+                    )
+
+                return json.dumps(response, ensure_ascii=False, indent=2)
 
             # Get or create sandbox
             logger.info(f"[SandboxCommandTool] Getting or creating sandbox...")
