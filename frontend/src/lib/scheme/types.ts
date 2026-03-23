@@ -78,5 +78,6 @@ export type ModalSchemeURL =
   | `wegent://modal/mcp-provider-config?provider=${string}&service=${string}`
   | 'wegent://modal/dingtalk-mcp-config'
   | `wegent://modal/dingtalk-mcp-config?service=${string}`
+  | `wegent://modal/${string}`
 
 export type SchemeURL = OpenSchemeURL | FormSchemeURL | ActionSchemeURL | ModalSchemeURL

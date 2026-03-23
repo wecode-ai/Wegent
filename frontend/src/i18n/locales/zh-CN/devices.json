@@ -26,6 +26,7 @@
   "system_windows": "Windows",
   "cloud_executor": "云端 Executor",
   "cloud_tab": "云端",
+  "cloud_mode": "云端模式",
   "device_tab": "设备",
   "no_devices_available": "暂无可用设备",
   "select_device": "选择执行设备",

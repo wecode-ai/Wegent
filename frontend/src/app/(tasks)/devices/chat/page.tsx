@@ -30,6 +30,7 @@ import { TaskParamSync, DeviceTaskSync, DeviceParamSync } from '@/features/tasks
 import { isOpenClawDevice } from '@/features/devices/utils/device-status'
 import { CloudDeviceVncPanel, DeviceVncPanel } from '@wecode/components/cloud-device'
 import { useDeviceVncState } from '@wecode/hooks'
+import { getPreferredExecutionDevice } from '@/features/devices/utils/execution-target'
 
 export default function DeviceChatPage() {
   const { t } = useTranslation('devices')
@@ -79,13 +80,13 @@ export default function DeviceChatPage() {
     saveLastTab('devices')
   }, [])
 
-  // Auto-select first online device if none selected and no URL param
+  // Auto-select preferred device if none selected and no URL param
   useEffect(() => {
     if (hasDeviceIdParam) return
     if (!selectedDeviceId && devices.length > 0) {
-      const onlineDevice = devices.find(d => d.status === 'online')
-      if (onlineDevice) {
-        setSelectedDeviceId(onlineDevice.device_id)
+      const preferredDevice = getPreferredExecutionDevice(devices)
+      if (preferredDevice) {
+        setSelectedDeviceId(preferredDevice.device_id)
       }
     }
   }, [devices, selectedDeviceId, setSelectedDeviceId, hasDeviceIdParam])
