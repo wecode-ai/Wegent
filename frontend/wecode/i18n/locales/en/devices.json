@@ -82,6 +82,25 @@
     "load_devices_failed": "Failed to load devices",
     "load_user_failed": "Failed to load account information"
   },
+  "mail_access_guide": {
+    "title": "Switch Mail Device",
+    "description_with_devices": "Mail access must run on an online device. Switch to an available device first, then retry the previous mail request.",
+    "description_without_devices": "No device is currently available. Create a cloud device first, then retry the mail request after it starts.",
+    "loading_devices": "Loading available devices...",
+    "available_devices": "Available Devices",
+    "device_help": "Selecting a device switches the current session execution target immediately.",
+    "switch_action": "Switch to This Device",
+    "refresh_action": "Refresh Device Status",
+    "switch_success": "Switched to device \"{{deviceName}}\"",
+    "switch_success_description": "A device session is now open. Retry the previous mail action there.",
+    "retry_hint": "Please retry the previous mail action.",
+    "device_type_local": "Local device",
+    "device_type_cloud": "Cloud device",
+    "waiting_title": "Waiting for cloud device startup",
+    "no_devices_title": "No device available",
+    "no_devices_description": "Create a cloud device first, wait for it to come online, then come back to handle mail.",
+    "load_devices_failed": "Failed to load devices"
+  },
   "upgrade": {
     "cloud_version_not_supported": "Current version does not support auto-upgrade. Please delete and recreate the device."
   }

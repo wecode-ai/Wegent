@@ -8,7 +8,25 @@ import { getScheme } from '@/lib/scheme'
 import { getRegisteredModal, registerModal } from '@/lib/scheme/modal-registry'
 import { registerModalScheme } from '@/lib/scheme/modals'
 
+import { HimalayaAccessGuideDialog } from '@wecode/components/devices/HimalayaAccessGuideDialog'
 import { HimalayaMailConfigDialog } from '@wecode/components/devices/HimalayaMailConfigDialog'
+
+if (!getRegisteredModal('himalaya-access-guide')) {
+  registerModal({
+    id: 'himalaya-access-guide',
+    component: HimalayaAccessGuideDialog,
+  })
+}
+
+if (!getScheme('modal-himalaya-access-guide')) {
+  registerModalScheme({
+    schemeId: 'modal-himalaya-access-guide',
+    modalType: 'himalaya-access-guide',
+    pattern: 'wegent://modal/himalaya-access-guide',
+    description: 'Open Himalaya device access guide dialog',
+    examples: ['wegent://modal/himalaya-access-guide'],
+  })
+}
 
 if (!getRegisteredModal('himalaya-mail-config')) {
   registerModal({

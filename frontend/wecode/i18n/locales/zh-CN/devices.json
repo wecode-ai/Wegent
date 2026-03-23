@@ -82,6 +82,25 @@
     "load_devices_failed": "加载设备失败",
     "load_user_failed": "加载账户信息失败"
   },
+  "mail_access_guide": {
+    "title": "切换邮件设备",
+    "description_with_devices": "访问邮件需要在在线设备上执行。请先切换到一个可用设备，再继续刚才的邮件请求。",
+    "description_without_devices": "当前没有可用设备。请先创建一个云设备，启动完成后再继续邮件请求。",
+    "loading_devices": "正在加载可用设备...",
+    "available_devices": "可用设备",
+    "device_help": "选择后会直接切换当前会话的执行设备。",
+    "switch_action": "切换到此设备",
+    "refresh_action": "刷新设备状态",
+    "switch_success": "已切换到设备「{{deviceName}}」",
+    "switch_success_description": "已打开设备会话，请在新会话里重新执行刚才的邮件操作。",
+    "retry_hint": "请重新执行刚才的邮件操作。",
+    "device_type_local": "本地设备",
+    "device_type_cloud": "云设备",
+    "waiting_title": "正在等待云设备启动",
+    "no_devices_title": "暂无可用设备",
+    "no_devices_description": "建议先创建一个云设备，等待启动完成后再回来处理邮件。",
+    "load_devices_failed": "加载设备失败"
+  },
   "upgrade": {
     "cloud_version_not_supported": "当前版本不支持自动升级，请删除设备重建"
   }
