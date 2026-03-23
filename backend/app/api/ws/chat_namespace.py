@@ -386,6 +386,8 @@ class ChatNamespace(socketio.AsyncNamespace):
                     "offset": offset,
                     "cached_content": cached_content or "",
                     "blocks": blocks,
+                    "started_at": streaming_info.get("started_at"),
+                    "last_activity_at": streaming_info.get("last_activity_at"),
                 },
                 "subtasks": subtasks_dict,
             }
@@ -1044,11 +1046,16 @@ class ChatNamespace(socketio.AsyncNamespace):
                 # Even if cancel request failed, we should still return success
                 # The executor may have already completed or the connection may be lost
 
-            # Note: Database updates and WebSocket events are handled by StatusUpdatingEmitter
-            # when the executor sends response.incomplete event through the dispatcher chain.
-            # This ensures unified status update logic across all execution modes.
+            # Force update database state immediately after sending cancel request.
+            # Keep this simple and deterministic even if no event consumer is available.
+            await run_sync_in_executor(
+                _mark_subtask_and_task_cancelled,
+                payload.subtask_id,
+                payload.partial_content,
+            )
             logger.info(
-                f"[WS] chat:cancel Cancel request sent, status updates will be handled by StatusUpdatingEmitter"
+                f"[WS] chat:cancel Cancel request sent and status force-updated to CANCELLED "
+                f"for subtask_id={payload.subtask_id}"
             )
             return {"success": True}
 
@@ -1642,6 +1649,45 @@ def _get_subtask_for_cancel(subtask_id: int) -> Optional[dict]:
             "status": subtask.status,
             "executor_name": subtask.executor_name,
         }
+
+
+def _mark_subtask_and_task_cancelled(
+    subtask_id: int, partial_content: Optional[str] = None
+) -> None:
+    """Force mark subtask and task as CANCELLED."""
+    from sqlalchemy.orm.attributes import flag_modified
+
+    with get_db_session() as db:
+        subtask = db.query(Subtask).filter(Subtask.id == subtask_id).first()
+        if not subtask:
+            return
+
+        # Force subtask to CANCELLED
+        update_subtask_on_cancel(db, subtask, partial_content)
+
+        # Force task to CANCELLED
+        task = (
+            db.query(TaskResource)
+            .filter(
+                TaskResource.id == subtask.task_id,
+                TaskResource.kind == "Task",
+                TaskResource.is_active == TaskResource.STATE_ACTIVE,
+            )
+            .first()
+        )
+        if not task or not task.json:
+            return
+
+        task_crd = Task.model_validate(task.json)
+        if task_crd.status:
+            task_crd.status.status = "CANCELLED"
+            task_crd.status.errorMessage = ""
+            task_crd.status.updatedAt = datetime.now()
+            task_crd.status.completedAt = datetime.now()
+
+        task.json = task_crd.model_dump(mode="json")
+        task.updated_at = datetime.now()
+        flag_modified(task, "json")
 
 
 def _get_device_info_for_close_session(task_id: int) -> Optional[dict]:

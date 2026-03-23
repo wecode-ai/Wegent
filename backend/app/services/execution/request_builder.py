@@ -25,6 +25,7 @@ from app.services.mcp_provider_registry import list_mcp_providers
 from app.services.user_mcp_service import user_mcp_service
 from shared.models import ExecutionRequest
 from shared.models.db import Kind, User
+from shared.utils.url_util import domains_match
 
 logger = logging.getLogger(__name__)
 
@@ -1799,7 +1800,7 @@ class TaskRequestBuilder:
         matched_git_info = None
         if git_domain:
             for git_info in git_info_list:
-                if git_info.get("git_domain") == git_domain:
+                if domains_match(git_info.get("git_domain", ""), git_domain):
                     matched_git_info = git_info
                     break
 

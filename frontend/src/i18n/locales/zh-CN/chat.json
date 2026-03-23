@@ -322,7 +322,9 @@
     "thinking": "正在思考",
     "analyzing": "正在深入分析",
     "generating_response": "请稍候，正在生成回复",
-    "longer_than_usual": "响应时间较长，请耐心等待"
+    "longer_than_usual": "响应时间较长，请耐心等待",
+    "stale_update_10m": "任务仍在运行，但已超过 10 分钟没有新的流更新，建议停止后重试",
+    "started_over_20m": "任务已运行超过 20 分钟，请关注执行状态，建议停止后重试"
   },
   "groupChat": {
     "mentionHint": "在群聊中，请使用 @ 提及智能体来获取 AI 回复",

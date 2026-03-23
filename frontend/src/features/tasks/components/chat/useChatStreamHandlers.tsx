@@ -18,6 +18,7 @@ import { isChatShell, teamRequiresWorkspace } from '../../service/messageService
 import { Button } from '@/components/ui/button'
 import { DEFAULT_MODEL_NAME } from '../selector/ModelSelector'
 import { useTaskStateMachine } from '../../hooks/useTaskStateMachine'
+import { getStreamingJoinWarningKey } from './streamingJoinWarning'
 import type { Model } from '../selector/ModelSelector'
 import type {
   Team,
@@ -237,6 +238,7 @@ export function useChatStreamHandlers({
   const previousTaskIdRef = useRef<number | null | undefined>(undefined)
   const prevTaskIdForModelRef = useRef<number | null | undefined>(undefined)
   const prevClearVersionRef = useRef(clearVersion)
+  const lastJoinWarningRef = useRef<string | null>(null)
 
   // Unified function to reset streaming-related state
   const resetStreamingState = useCallback(() => {
@@ -346,6 +348,48 @@ export function useChatStreamHandlers({
 
     previousTaskIdRef.current = currentTaskId
   }, [selectedTaskDetail?.id, resetStreamingState])
+
+  // Show join-time warning for long-running streaming tasks recovered from WebSocket join
+  useEffect(() => {
+    const streamingInfo = taskState?.streamingInfo
+    if (!streamingInfo || taskState?.status !== 'streaming') {
+      lastJoinWarningRef.current = null
+      return
+    }
+
+    const warningKey = getStreamingJoinWarningKey({
+      started_at: streamingInfo.started_at,
+      last_activity_at: streamingInfo.last_activity_at,
+    })
+
+    const nowMs = Date.now()
+    const startedAtMs = streamingInfo.started_at ? Date.parse(streamingInfo.started_at) : NaN
+    const lastActivityAtMs = streamingInfo.last_activity_at
+      ? Date.parse(streamingInfo.last_activity_at)
+      : NaN
+    console.info('[StreamingJoinDebug] warning evaluation', {
+      taskId: selectedTaskDetail?.id || pendingTaskId || 0,
+      status: taskState?.status,
+      subtaskId: streamingInfo.subtask_id,
+      startedAt: streamingInfo.started_at,
+      lastActivityAt: streamingInfo.last_activity_at,
+      startedAgeMs: Number.isNaN(startedAtMs) ? null : nowMs - startedAtMs,
+      lastActivityAgeMs: Number.isNaN(lastActivityAtMs) ? null : nowMs - lastActivityAtMs,
+      warningKey,
+    })
+
+    if (!warningKey) return
+
+    const taskId = selectedTaskDetail?.id || pendingTaskId || 0
+    const dedupeKey = `${taskId}:${warningKey}`
+    if (lastJoinWarningRef.current === dedupeKey) return
+
+    lastJoinWarningRef.current = dedupeKey
+    toast({
+      title: t(warningKey),
+      variant: 'destructive',
+    })
+  }, [pendingTaskId, selectedTaskDetail?.id, t, taskState?.status, taskState?.streamingInfo, toast])
 
   // Note: Stream recovery is now handled by TaskStateMachine via useUnifiedMessages
   // The state machine automatically recovers streaming state when:

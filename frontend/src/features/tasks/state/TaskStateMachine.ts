@@ -104,6 +104,8 @@ export interface StreamingInfo {
   subtask_id: number
   offset: number
   cached_content: string
+  started_at?: string
+  last_activity_at?: string
   /** Blocks from Redis for page refresh recovery (tool blocks and text blocks) */
   blocks?: MessageBlock[]
 }

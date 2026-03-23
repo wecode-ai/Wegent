@@ -796,15 +796,13 @@ class TaskOperationsMixin:
             self.update_task(
                 db=db,
                 task_id=task_id,
-                obj_in=TaskUpdate(status="CANCELLING"),
+                obj_in=TaskUpdate(status="CANCELLED"),
                 user_id=user_id,
             )
-            logger.info(
-                f"Task {task_id} status updated to CANCELLING by user {user_id}"
-            )
+            logger.info(f"Task {task_id} status updated to CANCELLED by user {user_id}")
         except Exception as e:
             logger.error(
-                f"Failed to update task {task_id} status to CANCELLING: {str(e)}"
+                f"Failed to update task {task_id} status to CANCELLED: {str(e)}"
             )
             raise HTTPException(
                 status_code=500, detail=f"Failed to update task status: {str(e)}"
@@ -813,7 +811,7 @@ class TaskOperationsMixin:
         if background_task_runner:
             background_task_runner(self._call_executor_cancel, task_id)
 
-        return {"message": "Cancel request accepted", "status": "CANCELLING"}
+        return {"message": "Cancel request accepted", "status": "CANCELLED"}
 
     async def _call_executor_cancel(self, task_id: int):
         """Background task to call executor_manager cancel API."""
