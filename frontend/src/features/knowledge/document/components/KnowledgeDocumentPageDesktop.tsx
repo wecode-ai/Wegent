@@ -12,8 +12,8 @@
 
 'use client'
 
-import { useState, useEffect, useMemo, useCallback } from 'react'
-import { useSearchParams } from 'next/navigation'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
+import { useSearchParams, useRouter } from 'next/navigation'
 import { FolderOpen } from 'lucide-react'
 import { userApis } from '@/apis/user'
 import { teamService } from '@/features/tasks/service/teamService'
@@ -42,6 +42,7 @@ const SIDEBAR_WIDTH = 280
 
 export function KnowledgeDocumentPageDesktop() {
   const { t } = useTranslation('knowledge')
+  const router = useRouter()
   const searchParams = useSearchParams()
 
   // Knowledge sidebar hook
@@ -173,19 +174,75 @@ export function KnowledgeDocumentPageDesktop() {
     [knowledgeDefaultTeamId]
   )
 
-  // Sync selected KB from URL parameter
+  // Track if initial URL sync has been done
+  const initialUrlSyncDone = useRef(false)
+
+  // Sync selected KB or group from URL parameter on initial load only
+  // This effect only runs once when allKnowledgeBases is loaded
   useEffect(() => {
+    // Skip if already synced or no data loaded yet
+    if (initialUrlSyncDone.current || sidebar.allKnowledgeBases.length === 0) {
+      return
+    }
+
     const kbParam = searchParams.get('kb')
+    const groupParam = searchParams.get('group')
+
     if (kbParam) {
       const kbId = parseInt(kbParam, 10)
-      if (!isNaN(kbId) && kbId !== sidebar.selectedKbId) {
+      if (!isNaN(kbId)) {
         const found = sidebar.allKnowledgeBases.find(kb => kb.id === kbId)
         if (found) {
           sidebar.selectKb(found)
+          initialUrlSyncDone.current = true
         }
       }
+    } else if (groupParam) {
+      // Restore group selection from URL
+      sidebar.selectGroup(groupParam)
+      initialUrlSyncDone.current = true
+    } else {
+      // No URL params, mark as synced
+      initialUrlSyncDone.current = true
     }
-  }, [searchParams, sidebar.allKnowledgeBases, sidebar.selectedKbId, sidebar.selectKb])
+  }, [searchParams, sidebar.allKnowledgeBases, sidebar.selectKb, sidebar.selectGroup])
+
+  // Helper function to update URL parameters
+  const updateUrlParams = useCallback(
+    (params: { kb?: number | null; group?: string | null }) => {
+      const newSearchParams = new URLSearchParams(searchParams.toString())
+
+      // Always preserve type=document
+      newSearchParams.set('type', 'document')
+
+      if (params.kb !== undefined) {
+        if (params.kb === null) {
+          newSearchParams.delete('kb')
+        } else {
+          newSearchParams.set('kb', String(params.kb))
+        }
+      }
+
+      if (params.group !== undefined) {
+        if (params.group === null) {
+          newSearchParams.delete('group')
+        } else {
+          newSearchParams.set('group', params.group)
+        }
+      }
+
+      // When selecting a KB, remove group param; when selecting a group, remove kb param
+      if (params.kb !== undefined && params.kb !== null) {
+        newSearchParams.delete('group')
+      }
+      if (params.group !== undefined && params.group !== null) {
+        newSearchParams.delete('kb')
+      }
+
+      router.replace(`?${newSearchParams.toString()}`, { scroll: false })
+    },
+    [router, searchParams]
+  )
 
   // Helper function to convert KnowledgeBaseWithGroupInfo to KnowledgeBase
   const toKnowledgeBase = useCallback(
@@ -305,28 +362,36 @@ export function KnowledgeDocumentPageDesktop() {
       const fullKb = sidebar.allKnowledgeBases.find(k => k.id === kb.id)
       if (fullKb) {
         sidebar.selectKb(fullKb)
+        // Update URL with kb parameter
+        updateUrlParams({ kb: fullKb.id, group: null })
       }
     },
-    [sidebar]
+    [sidebar, updateUrlParams]
   )
 
   // Handle "All" selection
   const handleSelectAll = useCallback(() => {
     sidebar.selectAll()
-  }, [sidebar])
+    // Clear kb and group params from URL
+    updateUrlParams({ kb: null, group: null })
+  }, [sidebar, updateUrlParams])
 
   // Handle group selection
   const handleSelectGroup = useCallback(
     (groupId: string) => {
       sidebar.selectGroup(groupId)
+      // Update URL with group parameter
+      updateUrlParams({ group: groupId, kb: null })
     },
-    [sidebar]
+    [sidebar, updateUrlParams]
   )
 
   // Handle back from group list
   const handleBackFromGroup = useCallback(() => {
     sidebar.clearSelection()
-  }, [sidebar])
+    // Clear kb and group params from URL
+    updateUrlParams({ kb: null, group: null })
+  }, [sidebar, updateUrlParams])
 
   // Handle create KB from group list
   const handleCreateKbFromGroup = useCallback(
@@ -549,8 +614,10 @@ export function KnowledgeDocumentPageDesktop() {
         sidebarGroupId = `group-${groupId}`
       }
       sidebar.selectGroup(sidebarGroupId)
+      // Update URL with group parameter
+      updateUrlParams({ group: sidebarGroupId, kb: null })
     },
-    [sidebar]
+    [sidebar, updateUrlParams]
   )
 
   // Render main content area
