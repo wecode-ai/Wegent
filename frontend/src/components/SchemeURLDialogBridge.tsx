@@ -10,12 +10,12 @@ import { useRouter } from 'next/navigation'
 import { useToast } from '@/hooks/use-toast'
 import { paths } from '@/config/paths'
 import { taskApis } from '@/apis/tasks'
+import { getRegisteredModal } from '@/lib/scheme/modal-registry'
 import { McpProviderConfigDialog } from '@/features/settings/components/McpProviderConfigDialog'
 
 type OpenDialogDetail = {
   type?: string
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  params?: Record<string, any>
+  params?: Record<string, unknown>
 }
 
 /**
@@ -31,6 +31,22 @@ export default function SchemeURLDialogBridge() {
   const [isMcpProviderConfigOpen, setIsMcpProviderConfigOpen] = useState(false)
   const [mcpProviderId, setMcpProviderId] = useState<string>('dingtalk')
   const [mcpProviderServiceId, setMcpProviderServiceId] = useState<string>('docs')
+  const [activeModal, setActiveModal] = useState<OpenDialogDetail | null>(null)
+
+  const getCurrentTaskId = useCallback((): number | null => {
+    if (typeof window === 'undefined') return null
+
+    const pathname = window.location.pathname
+    const match = pathname.match(/^\/(chat|code)$/)
+    if (!match) return null
+
+    const searchParams = new URLSearchParams(window.location.search)
+    const taskIdStr = searchParams.get('taskId')
+    if (!taskIdStr) return null
+
+    const taskId = Number(taskIdStr)
+    return isNaN(taskId) ? null : taskId
+  }, [])
 
   const handleOpenDialog = useCallback(
     (e: Event) => {
@@ -38,7 +54,6 @@ export default function SchemeURLDialogBridge() {
       const dialogType = detail?.type
       const params = detail?.params || {}
 
-      // Forms - redirect to appropriate pages
       if (dialogType === 'create-team') {
         router.push(paths.settings.team.getHref())
         return
@@ -55,7 +70,6 @@ export default function SchemeURLDialogBridge() {
       }
 
       if (dialogType === 'create-task') {
-        // Redirect to code page if team is specified
         if (params.team) {
           router.push(`${paths.code.getHref()}?team=${params.team}`)
         } else {
@@ -65,12 +79,9 @@ export default function SchemeURLDialogBridge() {
       }
 
       if (dialogType === 'create-subscription') {
-        // Redirect to feed page where SubscriptionPage will handle opening the dialog
         const currentPath = window.location.pathname
 
         if (currentPath === paths.feed.getHref()) {
-          // Already on feed page, re-dispatch the event after a short delay
-          // to ensure SubscriptionPage listener is ready
           setTimeout(() => {
             const event = new CustomEvent('wegent:open-dialog', {
               detail: { type: 'create-subscription', params },
@@ -78,10 +89,7 @@ export default function SchemeURLDialogBridge() {
             window.dispatchEvent(event)
           }, 100)
         } else {
-          // Navigate to feed page first, then the event will be handled by SubscriptionPage
           router.push(paths.feed.getHref())
-          // The event will need to be re-dispatched after navigation
-          // Store it in sessionStorage to trigger after page load
           sessionStorage.setItem(
             'wegent:pending-dialog',
             JSON.stringify({
@@ -104,15 +112,19 @@ export default function SchemeURLDialogBridge() {
         return
       }
 
-      // Actions requiring dialogs
+      if (dialogType && getRegisteredModal(dialogType)) {
+        setActiveModal({
+          type: dialogType,
+          params,
+        })
+        return
+      }
+
       if (dialogType === 'share') {
         const shareType = params.shareType as string
         let shareId = params.shareId as string
-
-        // If no type specified, default to 'task'
         const effectiveType = shareType || 'task'
 
-        // For task sharing, allow getting ID from current URL if not provided
         if (effectiveType === 'task') {
           if (!shareId) {
             const currentTaskId = getCurrentTaskId()
@@ -159,7 +171,6 @@ export default function SchemeURLDialogBridge() {
           return
         }
 
-        // For other types, ID is required
         if (!shareId) {
           toast({
             variant: 'destructive',
@@ -169,7 +180,6 @@ export default function SchemeURLDialogBridge() {
           return
         }
 
-        // For other types, show a message
         toast({
           title: `Share ${effectiveType} not yet implemented`,
           description: `Sharing ${effectiveType} with ID ${shareId} is not yet supported`,
@@ -179,29 +189,8 @@ export default function SchemeURLDialogBridge() {
 
       toast({ title: `Scheme dialog not implemented: ${dialogType || 'unknown'}` })
     },
-    [router, toast]
+    [getCurrentTaskId, router, toast]
   )
-
-  /**
-   * Get current task ID from URL path
-   * Supports both /chat and /code pages
-   */
-  const getCurrentTaskId = useCallback((): number | null => {
-    if (typeof window === 'undefined') return null
-
-    const pathname = window.location.pathname
-    // Match /chat or /code routes
-    const match = pathname.match(/^\/(chat|code)$/)
-    if (!match) return null
-
-    // Get taskId from URL search params
-    const searchParams = new URLSearchParams(window.location.search)
-    const taskIdStr = searchParams.get('taskId')
-    if (!taskIdStr) return null
-
-    const taskId = Number(taskIdStr)
-    return isNaN(taskId) ? null : taskId
-  }, [])
 
   const handleExportEvent = useCallback(
     async (e: Event) => {
@@ -209,7 +198,6 @@ export default function SchemeURLDialogBridge() {
         | { type: string; taskId?: string; fileId?: string }
         | undefined
 
-      // Get taskId from event detail or current URL
       let taskId: number | null = null
       if (detail?.taskId) {
         taskId = Number(detail.taskId)
@@ -221,7 +209,6 @@ export default function SchemeURLDialogBridge() {
           return
         }
       } else {
-        // Try to get from current URL
         taskId = getCurrentTaskId()
         if (!taskId) {
           toast({
@@ -234,19 +221,13 @@ export default function SchemeURLDialogBridge() {
       }
 
       try {
-        // Generate share link for the task
         const response = await taskApis.shareTask(taskId)
-
-        // Copy share link to clipboard
         await navigator.clipboard.writeText(response.share_url)
 
         toast({
           title: 'Share link copied!',
           description: 'You can share this link to export or view the task.',
         })
-
-        // Optionally open the share link in a new tab for immediate access
-        // window.open(response.share_url, '_blank')
       } catch (error) {
         console.error('Failed to generate share link:', error)
         toast({
@@ -268,12 +249,28 @@ export default function SchemeURLDialogBridge() {
     }
   }, [handleOpenDialog, handleExportEvent])
 
+  const registeredModal = activeModal?.type ? getRegisteredModal(activeModal.type) : undefined
+  const RegisteredModalComponent = registeredModal?.component
+
   return (
-    <McpProviderConfigDialog
-      open={isMcpProviderConfigOpen}
-      onOpenChange={setIsMcpProviderConfigOpen}
-      providerId={mcpProviderId}
-      serviceId={mcpProviderServiceId}
-    />
+    <>
+      <McpProviderConfigDialog
+        open={isMcpProviderConfigOpen}
+        onOpenChange={setIsMcpProviderConfigOpen}
+        providerId={mcpProviderId}
+        serviceId={mcpProviderServiceId}
+      />
+      {RegisteredModalComponent ? (
+        <RegisteredModalComponent
+          open={true}
+          onOpenChange={open => {
+            if (!open) {
+              setActiveModal(null)
+            }
+          }}
+          params={activeModal?.params}
+        />
+      ) : null}
+    </>
   )
 }

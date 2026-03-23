@@ -74,7 +74,7 @@ interface DeviceProviderProps {
 export function DeviceProvider({ children }: DeviceProviderProps) {
   const [devices, setDevices] = useState<DeviceInfo[]>([])
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null)
-  const [isLoading, setIsLoading] = useState(false)
+  const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [upgradingDevices, setUpgradingDevices] = useState<Record<string, DeviceUpgradeState>>({})
   const { socket, isConnected } = useSocket()
@@ -263,7 +263,7 @@ export function DeviceProvider({ children }: DeviceProviderProps) {
       socket.off(ServerEvents.DEVICE_SLOT_UPDATE, handleDeviceSlotUpdate)
       socket.off(ServerEvents.DEVICE_UPGRADE_STATUS, handleDeviceUpgradeStatus)
     }
-  }, [socket, isConnected, selectedDeviceId])
+  }, [socket, isConnected, selectedDeviceId, refreshDevices])
 
   const value: DeviceContextType = {
     devices,

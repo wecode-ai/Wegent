@@ -26,6 +26,7 @@
   "system_windows": "Windows",
   "cloud_executor": "Cloud Executor",
   "cloud_tab": "Cloud",
+  "cloud_mode": "Cloud Mode",
   "device_tab": "Device",
   "no_devices_available": "No devices available",
   "select_device": "Select Device",
