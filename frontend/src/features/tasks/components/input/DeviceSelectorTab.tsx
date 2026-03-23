@@ -398,6 +398,10 @@ export function DeviceSelectorTab({
     const totalDevices = selectableDevices.length
 
     if (selectedDevice) {
+      const devicePrefix =
+        selectedDevice.device_type === 'cloud' ? t('cloud_device_prefix') : t('local_device_prefix')
+      const displayName = `${devicePrefix}${selectedDevice.name}`
+
       return (
         <>
           {selectedDevice.device_type === 'cloud' ? (
@@ -407,10 +411,10 @@ export function DeviceSelectorTab({
           )}
           <Tooltip>
             <TooltipTrigger asChild>
-              <span className="max-w-[200px] truncate">{selectedDevice.name}</span>
+              <span className="max-w-[200px] truncate">{displayName}</span>
             </TooltipTrigger>
             <TooltipContent side="top" className="max-w-[300px]">
-              <p className="break-all">{selectedDevice.name}</p>
+              <p className="break-all">{displayName}</p>
             </TooltipContent>
           </Tooltip>
           <span
@@ -462,7 +466,12 @@ export function DeviceSelectorTab({
                   ) : (
                     <Monitor className="w-3.5 h-3.5" />
                   )}
-                  <span className="truncate max-w-[160px]">{selectedDevice.name}</span>
+                  <span className="truncate max-w-[160px]">
+                    {selectedDevice.device_type === 'cloud'
+                      ? t('cloud_device_prefix')
+                      : t('local_device_prefix')}
+                    {selectedDevice.name}
+                  </span>
                   <span
                     className={cn(
                       'w-1.5 h-1.5 rounded-full',

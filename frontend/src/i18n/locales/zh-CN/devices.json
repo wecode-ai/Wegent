@@ -118,6 +118,8 @@
   "creating": "创建中...",
   "local_devices_section": "个人设备",
   "cloud_devices_section": "云端设备",
+  "local_device_prefix": "个人设备：",
+  "cloud_device_prefix": "云主机：",
   "no_local_devices": "暂无个人设备连接。请点击上方添加设备按钮。",
   "cloud_devices_coming_soon": "云端设备支持即将推出。",
   "clear_default": "清除默认",

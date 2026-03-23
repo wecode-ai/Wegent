@@ -118,6 +118,8 @@
   "creating": "Creating...",
   "local_devices_section": "Personal Devices",
   "cloud_devices_section": "Cloud Devices",
+  "local_device_prefix": "Personal: ",
+  "cloud_device_prefix": "Cloud: ",
   "no_local_devices": "No personal devices connected. Add a device using the button above.",
   "cloud_devices_coming_soon": "Cloud device support coming soon.",
   "clear_default": "Clear Default",
