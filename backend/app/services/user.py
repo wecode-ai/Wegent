@@ -313,6 +313,10 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
         """
         from app.services.device_service import device_service
 
+        # Extract user_id before starting background thread to avoid
+        # accessing ORM object after session is closed
+        user_id = user.id
+
         def run_notification():
             from app.db.session import SessionLocal
             from app.services.channels.device_notification import (
@@ -327,11 +331,11 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
             try:
                 # Clear IM device selection cache so IM will use the new default
                 # This ensures the user's IM channel uses the new default_execution_target
-                asyncio.run(device_selection_manager.clear_selection(user.id))
+                asyncio.run(device_selection_manager.clear_selection(user_id))
                 logger.info(
                     "[UserService] Cleared IM device selection cache for user %d "
                     "due to default_execution_target change",
-                    user.id,
+                    user_id,
                 )
 
                 # Determine target type and device name
@@ -345,7 +349,7 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
                     try:
                         # Get device info synchronously
                         devices = asyncio.run(
-                            device_service.get_all_devices(notification_db, user.id)
+                            device_service.get_all_devices(notification_db, user_id)
                         )
                         for device in devices:
                             if device.get("device_id") == new_target:
@@ -357,11 +361,11 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
                             e,
                         )
 
-                # Send notification
+                # Send notification using user_id instead of user object
                 asyncio.run(
                     send_default_device_notification(
                         notification_db,
-                        user,
+                        user_id,
                         target_type,
                         device_name,
                     )

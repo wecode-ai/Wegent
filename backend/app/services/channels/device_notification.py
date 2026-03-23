@@ -9,14 +9,12 @@ This module provides functionality to send notifications to users via IM channel
 when their default execution target is changed from the PC/Web interface.
 """
 
-import json
 import logging
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
-from app.models.user import User
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +25,7 @@ MESSAGER_USER_ID = 0
 
 async def send_default_device_notification(
     db: Session,
-    user: User,
+    user_id: int,
     target_type: str,
     device_name: Optional[str] = None,
 ) -> Dict[str, Any]:
@@ -36,7 +34,7 @@ async def send_default_device_notification(
 
     Args:
         db: Database session
-        user: User who changed the default device
+        user_id: ID of the user who changed the default device
         target_type: Type of target - 'cloud' or 'device'
         device_name: Device name (only for device type)
 
@@ -50,13 +48,13 @@ async def send_default_device_notification(
 
     # Get user's IM channel bindings
     user_bindings = subscription_notification_service.get_user_im_bindings(
-        db, user_id=user.id
+        db, user_id=user_id
     )
 
     if not user_bindings:
         logger.debug(
             "[DeviceNotification] User %d has no IM channel bindings, skipping notification",
-            user.id,
+            user_id,
         )
         return {"success": True, "sent": 0, "message": "No IM channels bound"}
 
