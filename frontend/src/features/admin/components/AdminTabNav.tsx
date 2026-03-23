@@ -28,6 +28,7 @@ import {
   Terminal,
   Activity,
   MessageSquare,
+  Monitor,
 } from 'lucide-react'
 
 export type AdminTabId =
@@ -43,6 +44,7 @@ export type AdminTabId =
   | 'system-config'
   | 'im-channels'
   | 'monitor'
+  | 'device-monitor'
 
 interface AdminTabNavProps {
   activeTab: AdminTabId
@@ -76,6 +78,7 @@ export function AdminTabNav({ activeTab, onTabChange }: AdminTabNavProps) {
     { id: 'system-config', label: t('admin:tabs.system_config'), icon: Settings },
     { id: 'im-channels', label: t('admin:tabs.im_channels'), icon: MessageSquare },
     { id: 'monitor', label: t('admin:tabs.monitor'), icon: Activity },
+    { id: 'device-monitor', label: t('admin:tabs.device_monitor'), icon: Monitor },
   ]
 
   // Update the indicator position when the active tab changes

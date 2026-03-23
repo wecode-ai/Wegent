@@ -13,7 +13,8 @@
     "api_keys": "密钥管理",
     "system_config": "系统配置",
     "im_channels": "IM 渠道",
-    "monitor": "监控"
+    "monitor": "监控",
+    "device_monitor": "设备监控"
   },
   "stats": {
     "total_users": "总用户数",
@@ -793,6 +794,54 @@
       "team_required": "必须选择一个默认智能体",
       "model_required_for_team": "所选智能体没有配置模型，必须选择一个默认模型",
       "target_user_required": "使用指定用户模式时必须选择一个目标用户"
+    }
+  },
+  "device_monitor": {
+    "title": "设备监控",
+    "description": "查看所有用户注册的设备在线状态和运行情况",
+    "loading": "加载设备中...",
+    "no_devices": "暂无设备",
+    "search_placeholder": "搜索设备名称、ID 或用户名...",
+    "filters": {
+      "all_status": "全部状态",
+      "all_device_type": "全部类型",
+      "all_bind_shell": "全部 Shell"
+    },
+    "status": {
+      "online": "在线",
+      "offline": "离线",
+      "busy": "忙碌"
+    },
+    "device_type": {
+      "local": "本地设备",
+      "cloud": "云设备"
+    },
+    "bind_shell": {
+      "claudecode": "Claude Code",
+      "openclaw": "OpenClaw"
+    },
+    "stats": {
+      "total": "总设备数",
+      "user_count": "用户数量",
+      "online": "在线",
+      "offline": "离线",
+      "busy": "忙碌",
+      "local": "本地设备",
+      "cloud": "云设备"
+    },
+    "columns": {
+      "name": "设备名称",
+      "device_id": "设备 ID",
+      "device_type": "设备类型",
+      "bind_shell": "Shell",
+      "status": "状态",
+      "user": "所属用户",
+      "version": "版本",
+      "ip": "IP 地址"
+    },
+    "errors": {
+      "load_failed": "加载设备列表失败",
+      "load_stats_failed": "加载统计数据失败"
     }
   }
 }

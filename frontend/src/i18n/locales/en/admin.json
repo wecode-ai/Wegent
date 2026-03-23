@@ -13,7 +13,8 @@
     "api_keys": "API Keys",
     "system_config": "System Config",
     "im_channels": "IM Channels",
-    "monitor": "Monitor"
+    "monitor": "Monitor",
+    "device_monitor": "Device Monitor"
   },
   "stats": {
     "total_users": "Total Users",
@@ -793,6 +794,54 @@
       "team_required": "A default agent must be selected",
       "model_required_for_team": "The selected agent has no model configured. You must select a default model.",
       "target_user_required": "A target user must be selected when using Specific User mode"
+    }
+  },
+  "device_monitor": {
+    "title": "Device Monitor",
+    "description": "View online status and running state of all registered devices",
+    "loading": "Loading devices...",
+    "no_devices": "No devices found",
+    "search_placeholder": "Search device name, ID, or username...",
+    "filters": {
+      "all_status": "All Status",
+      "all_device_type": "All Types",
+      "all_bind_shell": "All Shells"
+    },
+    "status": {
+      "online": "Online",
+      "offline": "Offline",
+      "busy": "Busy"
+    },
+    "device_type": {
+      "local": "Local Device",
+      "cloud": "Cloud Device"
+    },
+    "bind_shell": {
+      "claudecode": "Claude Code",
+      "openclaw": "OpenClaw"
+    },
+    "stats": {
+      "total": "Total Devices",
+      "user_count": "Users",
+      "online": "Online",
+      "offline": "Offline",
+      "busy": "Busy",
+      "local": "Local Devices",
+      "cloud": "Cloud Devices"
+    },
+    "columns": {
+      "name": "Device Name",
+      "device_id": "Device ID",
+      "device_type": "Device Type",
+      "bind_shell": "Shell",
+      "status": "Status",
+      "user": "Owner",
+      "version": "Version",
+      "ip": "IP Address"
+    },
+    "errors": {
+      "load_failed": "Failed to load device list",
+      "load_stats_failed": "Failed to load statistics"
     }
   }
 }
