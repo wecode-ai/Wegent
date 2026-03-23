@@ -61,6 +61,7 @@
     },
     "sidebar": {
       "searchPlaceholder": "Search knowledge bases...",
+      "typeToSearch": "Type to search knowledge bases",
       "favorites": "Favorites",
       "recent": "Recent",
       "groups": "Groups",
