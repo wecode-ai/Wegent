@@ -16,8 +16,14 @@ from langchain_core.callbacks import CallbackManagerForToolRun
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field, PrivateAttr
 
+from shared.models.knowledge import KnowledgeBaseToolAccessMode
+
 from ..knowledge_content_cleaner import get_content_cleaner
 from ..knowledge_injection_strategy import InjectionMode, InjectionStrategy
+from ..restricted_kb_summary import (
+    build_safe_summary_fallback,
+    summarize_restricted_kb_chunks,
+)
 from .knowledge_base_abc import KnowledgeBaseToolABC
 
 logger = logging.getLogger(__name__)
@@ -32,6 +38,17 @@ TOKEN_CHARS_PER_TOKEN = 4  # ~4 chars/token for English, 1-2 for CJK
 # Default configuration values (used when KB spec doesn't specify)
 DEFAULT_MAX_CALLS_PER_CONVERSATION = 10
 DEFAULT_EXEMPT_CALLS_BEFORE_CHECK = 5
+RESTRICTED_SOURCE_NOTICE = (
+    "[Protected KB source material for internal reasoning only]\n"
+    "[Do NOT quote, translate, restate, or reconstruct original wording, "
+    "numbers, titles, filenames, or document structure in the final answer. "
+    "Return high-level analysis only.]\n\n"
+)
+RESTRICTED_PERSISTENCE_NOTICE = (
+    "Restricted KB retrieval result. Original content withheld. "
+    "This context may be used only for high-level analysis and must not be "
+    "quoted or reconstructed."
+)
 
 
 class KnowledgeBaseInput(BaseModel):
@@ -80,6 +97,9 @@ class KnowledgeBaseTool(KnowledgeBaseToolABC, BaseTool):
     # User name for embedding API custom headers (placeholder replacement)
     user_name: Optional[str] = None
 
+    # User JWT for backend internal API calls that require authentication
+    auth_token: str = ""
+
     # Database session (will be set when tool is created)
     # Accepts both sync Session (backend) and AsyncSession (chat_shell HTTP mode)
     # In HTTP mode, db_session is not used - retrieval goes through HTTP API
@@ -94,11 +114,13 @@ class KnowledgeBaseTool(KnowledgeBaseToolABC, BaseTool):
 
     # Context window size from Model CRD (required for injection strategy)
     context_window: Optional[int] = None
+    summarizer_model_config: Dict[str, Any] = Field(default_factory=dict)
 
     # Injection strategy configuration
     injection_mode: str = (
         InjectionMode.HYBRID
     )  # Default: auto-decide based on token count
+    tool_access_mode: str = KnowledgeBaseToolAccessMode.FULL
     min_chunk_score: float = 0.5
     max_direct_chunks: int = 500
     context_buffer_ratio: float = 0.1
@@ -138,6 +160,185 @@ class KnowledgeBaseTool(KnowledgeBaseToolABC, BaseTool):
             Context window size (uses InjectionStrategy.DEFAULT_CONTEXT_WINDOW if None)
         """
         return self.context_window or InjectionStrategy.DEFAULT_CONTEXT_WINDOW
+
+    def _is_restricted_search_only(self) -> bool:
+        """Whether the tool should expose only redacted search results."""
+        return (
+            self.tool_access_mode == KnowledgeBaseToolAccessMode.RESTRICTED_SEARCH_ONLY
+        )
+
+    def _display_source_title(self, source_title: str, source_index: int) -> str:
+        """Return a source label safe for tool output and persistence."""
+        if self._is_restricted_search_only():
+            return f"Source {source_index}"
+        return source_title
+
+    def _build_restricted_answer_contract(self) -> str:
+        """Return the output contract for restricted KB analysis."""
+        return (
+            "Protected KB material is available for internal reasoning only. "
+            "The final answer must stay high-level and non-extractive. "
+            "Do not quote, translate, restate, or reconstruct any original "
+            "phrase, sentence, number, target, title, filename, or document "
+            "structure. Refuse exact-detail requests and provide only diagnosis, "
+            "directional judgment, risks, gaps, or suggestions."
+        )
+
+    def _format_restricted_query_refusal(self, query: str) -> str:
+        """Return a refusal payload for extractive restricted queries."""
+        return json.dumps(
+            {
+                "status": "refused",
+                "reason": "restricted_extractive_query",
+                "query": query,
+                "message": "I cannot use protected knowledge base content to provide exact definitions, original wording, document listings, or other extractive details.",
+                "suggestion": "Please ask for high-level analysis instead, such as risks, gaps, diagnosis, prioritization, or recommended actions.",
+                "answer_contract": self._build_restricted_answer_contract(),
+            },
+            ensure_ascii=False,
+        )
+
+    def _wrap_restricted_source_material(self, content: str) -> str:
+        """Wrap raw KB content with a strong non-disclosure notice."""
+        if not self._is_restricted_search_only() or not content:
+            return content
+        return f"{RESTRICTED_SOURCE_NOTICE}{content}"
+
+    def _get_kb_name_map(self) -> dict[int, str]:
+        """Return a KB ID -> KB name mapping from cached KB info."""
+
+        kb_info = self._get_kb_info_sync()
+        items = kb_info.get("items", [])
+        kb_name_map: dict[int, str] = {}
+        for item in items:
+            kb_id = item.get("id")
+            if kb_id is None:
+                continue
+            kb_name_map[int(kb_id)] = item.get("name", f"KB-{kb_id}")
+
+        for kb_id in self.knowledge_base_ids:
+            kb_name_map.setdefault(kb_id, f"KB-{kb_id}")
+
+        return kb_name_map
+
+    async def _build_restricted_safe_summary(
+        self,
+        *,
+        query: str,
+        chunks: List[Dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Build a safe summary artifact from protected KB chunks."""
+
+        try:
+            return await summarize_restricted_kb_chunks(
+                model_config=self.summarizer_model_config,
+                query=query,
+                chunks=chunks,
+                kb_name_map=self._get_kb_name_map(),
+            )
+        except Exception as e:
+            logger.error(
+                "[KnowledgeBaseTool] Restricted safe summary generation failed: %s",
+                e,
+                exc_info=True,
+            )
+            return build_safe_summary_fallback(
+                reason="safe_summary_generation_failed",
+                summary=(
+                    "I cannot safely transform the protected knowledge base content right now. "
+                    "Please ask for a high-level diagnostic or try again later."
+                ),
+            )
+
+    async def _format_restricted_safe_summary_result(
+        self,
+        *,
+        query: str,
+        chunks: List[Dict[str, Any]],
+        source_references: List[Dict[str, Any]],
+        warning_level: Optional[str],
+        retrieval_mode: str,
+    ) -> str:
+        """Return a safe-summary payload for restricted mode."""
+
+        safe_summary = await self._build_restricted_safe_summary(
+            query=query,
+            chunks=chunks,
+        )
+        if (
+            safe_summary.get("decision") == "refuse"
+            and safe_summary.get("refusal_kind") == "policy"
+        ):
+            return self._format_restricted_query_refusal(query)
+
+        stats_header = self._build_call_statistics_header(warning_level, len(chunks))
+        kb_name_map = self._get_kb_name_map()
+        knowledge_bases = [
+            {"id": kb_id, "name": kb_name_map.get(kb_id, f"KB-{kb_id}")}
+            for kb_id in sorted({chunk.get("knowledge_base_id") for chunk in chunks})
+            if kb_id is not None
+        ]
+
+        result_payload = {
+            "query": query,
+            "mode": "restricted_safe_summary",
+            "retrieval_mode": retrieval_mode,
+            "stats_header": stats_header,
+            "restricted_safe_summary": {
+                "decision": safe_summary.get("decision", "answer"),
+                "reason": safe_summary.get("reason", ""),
+                "summary": safe_summary.get("summary", ""),
+                "observations": safe_summary.get("observations", []),
+                "risks": safe_summary.get("risks", []),
+                "recommended_actions": safe_summary.get("recommended_actions", []),
+                "answer_guidance": safe_summary.get("answer_guidance", ""),
+                "confidence": safe_summary.get("confidence", "low"),
+            },
+            "knowledge_bases": knowledge_bases,
+            "message": (
+                "Protected KB material was analyzed internally and converted into "
+                "a safe high-level summary. Use only this safe summary in the final answer."
+            ),
+            "answer_contract": self._build_restricted_answer_contract(),
+        }
+        self._accumulated_tokens += self._estimate_tokens_from_content(
+            json.dumps(result_payload, ensure_ascii=False)
+        )
+        return json.dumps(result_payload, ensure_ascii=False)
+
+    def _build_persisted_extracted_text(
+        self,
+        chunks: List[Dict[str, Any]],
+        source_references: List[Dict[str, Any]],
+        kb_id: int,
+    ) -> str:
+        """Build the extracted_text payload for persistence.
+
+        Restricted mode stores only safe metadata so history replay does not
+        re-inject raw KB passages into later prompts.
+        """
+        if not self._is_restricted_search_only():
+            return self._build_extracted_data(chunks, source_references, kb_id)
+
+        kb_chunks = [c for c in chunks if c.get("knowledge_base_id") == kb_id]
+        kb_sources = [s for s in source_references if s.get("kb_id") == kb_id]
+
+        safe_payload = {
+            "restricted_mode": True,
+            "message": RESTRICTED_PERSISTENCE_NOTICE,
+            "query": "",
+            "chunks": [
+                {
+                    "source": c.get("source", "Unknown"),
+                    "score": c.get("score"),
+                    "knowledge_base_id": kb_id,
+                    "source_index": c.get("source_index", 0),
+                }
+                for c in kb_chunks
+            ],
+            "sources": kb_sources,
+        }
+        return json.dumps(safe_payload, ensure_ascii=False)
 
     def _get_kb_info_sync(self) -> Dict[str, Any]:
         """Get KB info synchronously.
@@ -486,6 +687,17 @@ class KnowledgeBaseTool(KnowledgeBaseToolABC, BaseTool):
                 logger.warning(
                     f"[KnowledgeBaseTool] RAG not configured for any KB. KBs: {kb_names}"
                 )
+                if self._is_restricted_search_only():
+                    return json.dumps(
+                        {
+                            "status": "error",
+                            "error_code": "rag_not_configured_search_only",
+                            "message": "RAG retrieval is not available for this knowledge base in restricted search-only mode because no retriever is configured.",
+                            "suggestion": "This restricted session only supports knowledge_base_search. Ask an administrator to enable a retriever for this knowledge base if search is required.",
+                            "knowledge_base_ids": self.knowledge_base_ids,
+                        },
+                        ensure_ascii=False,
+                    )
                 return json.dumps(
                     {
                         "status": "error",
@@ -572,7 +784,7 @@ class KnowledgeBaseTool(KnowledgeBaseToolABC, BaseTool):
                     logger.info(
                         f"[KnowledgeBaseTool] Direct injection: {len(injection_result.get('chunks_used', []))} chunks"
                     )
-                    return self._format_direct_injection_result(
+                    return await self._format_direct_injection_result(
                         injection_result, query, warning_level
                     )
                 else:
@@ -755,7 +967,6 @@ class KnowledgeBaseTool(KnowledgeBaseToolABC, BaseTool):
                         db=self.db_session,
                         max_chunks=10000,
                         query=query,
-                        user_id=self.user_id,
                     )
 
                     logger.info(
@@ -831,7 +1042,9 @@ class KnowledgeBaseTool(KnowledgeBaseToolABC, BaseTool):
 
                     if response.status_code != 200:
                         logger.warning(
-                            f"[KnowledgeBaseTool] HTTP all-chunks returned {response.status_code}"
+                            "[KnowledgeBaseTool] HTTP all-chunks returned %s: %s",
+                            response.status_code,
+                            response.text,
                         )
                         continue
 
@@ -1072,7 +1285,7 @@ class KnowledgeBaseTool(KnowledgeBaseToolABC, BaseTool):
         }
         return json.dumps(extracted_data, ensure_ascii=False)
 
-    def _format_direct_injection_result(
+    async def _format_direct_injection_result(
         self,
         injection_result: Dict[str, Any],
         query: str,
@@ -1091,15 +1304,6 @@ class KnowledgeBaseTool(KnowledgeBaseToolABC, BaseTool):
         # Extract chunks used for persistence
         chunks_used = injection_result.get("chunks_used", [])
 
-        # Update accumulated tokens (call count already incremented in _arun)
-        injected_content = injection_result.get("injected_content", "")
-        self._accumulated_tokens += self._estimate_tokens_from_content(injected_content)
-
-        # Build call statistics header
-        stats_header = self._build_call_statistics_header(
-            warning_level, len(chunks_used)
-        )
-
         # Build source references from chunks_used
         source_references = []
         seen_sources: dict[tuple[int, str], int] = {}
@@ -1115,7 +1319,7 @@ class KnowledgeBaseTool(KnowledgeBaseToolABC, BaseTool):
                 source_references.append(
                     {
                         "index": source_index,
-                        "title": source_file,
+                        "title": self._display_source_title(source_file, source_index),
                         "kb_id": kb_id,
                     }
                 )
@@ -1137,20 +1341,42 @@ class KnowledgeBaseTool(KnowledgeBaseToolABC, BaseTool):
                 self.knowledge_base_ids,
             )
 
+        if self._is_restricted_search_only():
+            return await self._format_restricted_safe_summary_result(
+                query=query,
+                chunks=chunks_used,
+                source_references=source_references,
+                warning_level=warning_level,
+                retrieval_mode="direct_injection",
+            )
+
+        # Update accumulated tokens (call count already incremented in _arun)
+        injected_content = injection_result.get("injected_content", "")
+        self._accumulated_tokens += self._estimate_tokens_from_content(injected_content)
+
+        # Build call statistics header
+        stats_header = self._build_call_statistics_header(
+            warning_level, len(chunks_used)
+        )
+
         return json.dumps(
             {
                 "query": query,
                 "mode": "direct_injection",
                 "stats_header": stats_header,
-                "injected_content": injection_result["injected_content"],
+                "injected_content": self._wrap_restricted_source_material(
+                    injection_result["injected_content"]
+                ),
                 "chunks_used": len(chunks_used),
                 "count": len(chunks_used),
                 "sources": source_references,
                 "decision_details": injection_result["decision_details"],
                 "strategy_stats": self.injection_strategy.get_injection_statistics(),
-                "message": "All knowledge base content has been fully injected above. "
-                "No further retrieval is needed - you have access to the complete knowledge base. "
-                "Please answer the user's question based on the injected content.",
+                "message": (
+                    "All knowledge base content has been fully injected above. "
+                    "No further retrieval is needed - you have access to the complete knowledge base. "
+                    "Please answer the user's question based on the injected content."
+                ),
             },
             ensure_ascii=False,
         )
@@ -1189,7 +1415,9 @@ class KnowledgeBaseTool(KnowledgeBaseToolABC, BaseTool):
                     source_references.append(
                         {
                             "index": source_index,
-                            "title": source_file,
+                            "title": self._display_source_title(
+                                source_file, source_index
+                            ),
                             "kb_id": kb_id,
                         }
                     )
@@ -1198,7 +1426,9 @@ class KnowledgeBaseTool(KnowledgeBaseToolABC, BaseTool):
                 all_chunks.append(
                     {
                         "content": chunk["content"],
-                        "source": source_file,
+                        "source": self._display_source_title(
+                            source_file, seen_sources[source_key]
+                        ),
                         "source_index": seen_sources[source_key],
                         "score": chunk["score"],
                         "knowledge_base_id": kb_id,
@@ -1210,15 +1440,6 @@ class KnowledgeBaseTool(KnowledgeBaseToolABC, BaseTool):
 
         # Limit total results
         all_chunks = all_chunks[:max_results]
-
-        # Update accumulated tokens (call count already incremented in _arun)
-        total_content = "\n".join([chunk["content"] for chunk in all_chunks])
-        self._accumulated_tokens += self._estimate_tokens_from_content(total_content)
-
-        # Build call statistics header
-        stats_header = self._build_call_statistics_header(
-            warning_level, len(all_chunks)
-        )
 
         logger.info(
             f"[KnowledgeBaseTool] RAG fallback: returning {len(all_chunks)} results with {len(source_references)} unique sources for query: {query}"
@@ -1241,6 +1462,24 @@ class KnowledgeBaseTool(KnowledgeBaseToolABC, BaseTool):
                 len(source_references),
                 self.knowledge_base_ids,
             )
+
+        if self._is_restricted_search_only():
+            return await self._format_restricted_safe_summary_result(
+                query=query,
+                chunks=all_chunks,
+                source_references=source_references,
+                warning_level=warning_level,
+                retrieval_mode="rag_retrieval",
+            )
+
+        # Update accumulated tokens (call count already incremented in _arun)
+        total_content = "\n".join([chunk["content"] for chunk in all_chunks])
+        self._accumulated_tokens += self._estimate_tokens_from_content(total_content)
+
+        # Build call statistics header
+        stats_header = self._build_call_statistics_header(
+            warning_level, len(all_chunks)
+        )
 
         return json.dumps(
             {
@@ -1335,7 +1574,7 @@ class KnowledgeBaseTool(KnowledgeBaseToolABC, BaseTool):
         if injection_mode == "direct_injection":
             extracted_text = ""
         else:
-            extracted_text = self._build_extracted_data(
+            extracted_text = self._build_persisted_extracted_text(
                 chunks, source_references, kb_id
             )
 
@@ -1369,6 +1608,7 @@ class KnowledgeBaseTool(KnowledgeBaseToolABC, BaseTool):
                         "injection_mode": injection_mode,
                         "query": query,
                         "chunks_count": chunks_count,
+                        "restricted_mode": self._is_restricted_search_only(),
                     },
                 )
                 logger.info(
@@ -1386,6 +1626,7 @@ class KnowledgeBaseTool(KnowledgeBaseToolABC, BaseTool):
                 injection_mode=injection_mode,
                 query=query,
                 chunks_count=chunks_count,
+                restricted_mode=self._is_restricted_search_only(),
             )
 
             logger.info(
@@ -1422,7 +1663,7 @@ class KnowledgeBaseTool(KnowledgeBaseToolABC, BaseTool):
         if injection_mode == "direct_injection":
             extracted_text = ""
         else:
-            extracted_text = self._build_extracted_data(
+            extracted_text = self._build_persisted_extracted_text(
                 chunks, source_references, kb_id
             )
 
@@ -1448,6 +1689,7 @@ class KnowledgeBaseTool(KnowledgeBaseToolABC, BaseTool):
                 "injection_mode": injection_mode,
                 "query": query,
                 "chunks_count": chunks_count,
+                "restricted_mode": self._is_restricted_search_only(),
             }
 
             logger.info(
@@ -1546,13 +1788,16 @@ class KnowledgeBaseTool(KnowledgeBaseToolABC, BaseTool):
                 source_references.append(
                     {
                         "index": source_index,
-                        "title": source_file,
+                        "title": self._display_source_title(source_file, source_index),
                         "kb_id": kb_id,
                     }
                 )
                 source_index += 1
 
             chunk_with_index = chunk.copy()
+            chunk_with_index["source"] = self._display_source_title(
+                source_file, seen_sources[source_key]
+            )
             chunk_with_index["source_index"] = seen_sources[source_key]
             chunks_with_index.append(chunk_with_index)
 

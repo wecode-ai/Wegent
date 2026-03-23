@@ -24,7 +24,11 @@ from sqlalchemy.orm import Session
 from app.models.knowledge import KnowledgeDocument
 from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
 from app.services.context import context_service
-from shared.models.knowledge import ChatContextsResult, KnowledgeBaseToolsResult
+from shared.models.knowledge import (
+    ChatContextsResult,
+    KnowledgeBaseToolAccessMode,
+    KnowledgeBaseToolsResult,
+)
 from shared.prompts import (
     KB_PROMPT_RELAXED,
     KB_PROMPT_RESTRICTED_ANALYST,
@@ -812,6 +816,7 @@ async def prepare_contexts_for_chat(
     base_system_prompt: str,
     task_id: Optional[int] = None,
     context_window: Optional[int] = None,
+    model_config: Optional[dict[str, Any]] = None,
 ) -> ChatContextsResult:
     """
     Unified context processing based on user_subtask_id.
@@ -834,6 +839,7 @@ async def prepare_contexts_for_chat(
         context_window: Optional model context window size from Model spec.
             Used for selected_documents injection threshold calculation.
             If None, uses default value (128000).
+        model_config: Optional model configuration used by restricted KB safe summary.
 
     Returns:
         ChatContextsResult with processed message, table info, and KB results.
@@ -888,6 +894,7 @@ async def prepare_contexts_for_chat(
         base_system_prompt=base_system_prompt,
         task_id=task_id,
         user_subtask_id=user_subtask_id,
+        model_config=model_config,
     )
 
     extra_tools = kb_result.extra_tools
@@ -983,6 +990,7 @@ async def prepare_contexts_for_chat(
         knowledge_base_ids=kb_result.knowledge_base_ids,
         is_user_selected_kb=kb_result.is_user_selected_kb,
         document_ids=kb_result.document_ids,
+        kb_tool_access_mode=kb_result.kb_tool_access_mode,
     )
     return ChatContextsResult(
         final_message=final_message,
@@ -1047,15 +1055,15 @@ async def _process_attachment_contexts_for_message(
     return message
 
 
-def _check_user_kb_access(
+def _get_user_kb_tool_access_mode(
     db: Session,
     user_id: int,
     knowledge_base_ids: List[int],
-) -> tuple[bool, str]:
-    """Check if user has access to knowledge base content.
+) -> tuple[str, str]:
+    """Get KB tool exposure mode for the current user.
 
-    For Restricted Analysts in a group, they cannot access knowledge base content
-    even if the KB is in a group they belong to.
+    Restricted Analysts in a group are downgraded to search-only KB usage.
+    Direct document access remains blocked in other permission checks.
 
     Args:
         db: Database session
@@ -1063,17 +1071,11 @@ def _check_user_kb_access(
         knowledge_base_ids: List of knowledge base IDs to check
 
     Returns:
-        Tuple of (has_access, reason)
-        - has_access: True if user can access KB content
-        - reason: Explanation if access is denied
+        Tuple of (access_mode, reason)
     """
-    from app.services.group_permission import (
-        check_knowledge_base_access_for_restricted_analyst_by_ids,
-    )
+    from app.services.share import get_knowledge_base_tool_access_mode_by_ids
 
-    return check_knowledge_base_access_for_restricted_analyst_by_ids(
-        db, user_id, knowledge_base_ids
-    )
+    return get_knowledge_base_tool_access_mode_by_ids(db, user_id, knowledge_base_ids)
 
 
 def _prepare_kb_tools_from_contexts(
@@ -1083,6 +1085,7 @@ def _prepare_kb_tools_from_contexts(
     base_system_prompt: str,
     task_id: Optional[int] = None,
     user_subtask_id: Optional[int] = None,
+    model_config: Optional[dict[str, Any]] = None,
 ) -> KnowledgeBaseToolsResult:
     """Prepare knowledge base tools from context records.
 
@@ -1122,26 +1125,6 @@ def _prepare_kb_tools_from_contexts(
     else:
         knowledge_base_ids = []
 
-    # Check if user is a Restricted Analyst for any of the knowledge bases
-    # If so, block access to all KB content
-    has_access, _denial_reason = _check_user_kb_access(db, user_id, knowledge_base_ids)
-
-    if not has_access:
-        logger.warning(
-            f"[_prepare_kb_tools_from_contexts] User {user_id} is Restricted Analyst, "
-            f"blocking access to knowledge bases: {knowledge_base_ids}, "
-            f"reason: {_denial_reason}"
-        )
-        # Return result with no tools and restricted analyst prompt
-        return KnowledgeBaseToolsResult(
-            extra_tools=[],  # No KB tools for restricted analysts
-            enhanced_system_prompt=f"{base_system_prompt}{KB_PROMPT_RESTRICTED_ANALYST}",
-            kb_meta_prompt="",  # No KB metadata for restricted analysts
-            knowledge_base_ids=[],  # Don't expose KB IDs
-            is_user_selected_kb=False,
-            document_ids=[],
-        )
-
     # Extract document_ids from subtask KB contexts (no extra DB query needed).
     # Normalize to int, skip invalid values, and deduplicate while preserving order.
     document_ids: List[int] = []
@@ -1174,6 +1157,23 @@ def _prepare_kb_tools_from_contexts(
             knowledge_base_ids=[],
             is_user_selected_kb=False,
             document_ids=[],
+            kb_tool_access_mode=KnowledgeBaseToolAccessMode.FULL,
+        )
+
+    kb_tool_access_mode, access_reason = _get_user_kb_tool_access_mode(
+        db, user_id, knowledge_base_ids
+    )
+    is_restricted_search_only = (
+        kb_tool_access_mode == KnowledgeBaseToolAccessMode.RESTRICTED_SEARCH_ONLY
+    )
+
+    if is_restricted_search_only:
+        logger.warning(
+            "[_prepare_kb_tools_from_contexts] User %s downgraded to restricted "
+            "search-only KB mode for knowledge bases %s, reason: %s",
+            user_id,
+            knowledge_base_ids,
+            access_reason,
         )
 
     logger.info(
@@ -1188,32 +1188,44 @@ def _prepare_kb_tools_from_contexts(
     # KB configs (max_calls, exempt_calls, name) are now fetched from Backend API
     kb_tool = KnowledgeBaseTool(
         knowledge_base_ids=knowledge_base_ids,
+        document_ids=document_ids or [],
         user_id=user_id,
         db_session=db,
         user_subtask_id=user_subtask_id,
+        summarizer_model_config=model_config or {},
+        injection_mode="hybrid",
+        tool_access_mode=kb_tool_access_mode,
     )
     extra_tools.append(kb_tool)
 
-    # Build KB meta prompt for dynamic_context injection.
-    # This is based on the resolved KB IDs of the CURRENT request (no DB scanning by task).
-    kb_meta_prompt = _build_kb_meta_prompt(db, knowledge_base_ids)
-
-    # Choose prompt template based on whether KB is user-selected or inherited from task.
-    # Keep KB prompt templates fully static (no kb_meta_list placeholder).
-    if is_user_selected_kb:
-        # Strict mode: User explicitly selected KB for this message
-        kb_instruction = KB_PROMPT_STRICT
+    if is_restricted_search_only:
+        kb_instruction = KB_PROMPT_RESTRICTED_ANALYST
+        kb_meta_prompt = _build_kb_meta_prompt(db, knowledge_base_ids, restricted=True)
         logger.info(
-            "[_prepare_kb_tools_from_contexts] Using STRICT mode prompt "
-            "(user explicitly selected KB)"
+            "[_prepare_kb_tools_from_contexts] Using RESTRICTED_ANALYST mode prompt "
+            "(search-only KB access)"
         )
     else:
-        # Relaxed mode: KB inherited from task, AI can use general knowledge as fallback
-        kb_instruction = KB_PROMPT_RELAXED
-        logger.info(
-            "[_prepare_kb_tools_from_contexts] Using RELAXED mode prompt "
-            "(KB inherited from task)"
-        )
+        # Build KB meta prompt for dynamic_context injection.
+        # This is based on the resolved KB IDs of the CURRENT request (no DB scanning by task).
+        kb_meta_prompt = _build_kb_meta_prompt(db, knowledge_base_ids)
+
+        # Choose prompt template based on whether KB is user-selected or inherited from task.
+        # Keep KB prompt templates fully static (no kb_meta_list placeholder).
+        if is_user_selected_kb:
+            # Strict mode: User explicitly selected KB for this message
+            kb_instruction = KB_PROMPT_STRICT
+            logger.info(
+                "[_prepare_kb_tools_from_contexts] Using STRICT mode prompt "
+                "(user explicitly selected KB)"
+            )
+        else:
+            # Relaxed mode: KB inherited from task, AI can use general knowledge as fallback
+            kb_instruction = KB_PROMPT_RELAXED
+            logger.info(
+                "[_prepare_kb_tools_from_contexts] Using RELAXED mode prompt "
+                "(KB inherited from task)"
+            )
 
     enhanced_system_prompt = f"{base_system_prompt}{kb_instruction}"
 
@@ -1224,6 +1236,7 @@ def _prepare_kb_tools_from_contexts(
         knowledge_base_ids=knowledge_base_ids,
         is_user_selected_kb=is_user_selected_kb,
         document_ids=document_ids,
+        kb_tool_access_mode=kb_tool_access_mode,
     )
 
 
@@ -1265,7 +1278,11 @@ def _get_bound_knowledge_base_ids(db: Session, task_id: int) -> List[int]:
         return []
 
 
-def _build_kb_meta_prompt(db: Session, knowledge_base_ids: List[int]) -> str:
+def _build_kb_meta_prompt(
+    db: Session,
+    knowledge_base_ids: List[int],
+    restricted: bool = False,
+) -> str:
     """Build KB meta prompt for dynamic_context injection.
 
     IMPORTANT:
@@ -1286,6 +1303,7 @@ def _build_kb_meta_prompt(db: Session, knowledge_base_ids: List[int]) -> str:
     try:
         from app.services.chat.preprocessing.kb_meta import (
             format_kb_meta_prompt,
+            format_restricted_kb_meta_prompt,
             select_kb_summary_text,
         )
         from app.services.knowledge.task_knowledge_base_service import (
@@ -1343,6 +1361,8 @@ def _build_kb_meta_prompt(db: Session, knowledge_base_ids: List[int]) -> str:
                 }
             )
 
+        if restricted:
+            return format_restricted_kb_meta_prompt(kb_meta_list)
         return format_kb_meta_prompt(kb_meta_list)
     except Exception as e:
         logger.warning(

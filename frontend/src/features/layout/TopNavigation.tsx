@@ -11,13 +11,14 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { useIsMobile, useIsDesktop } from './hooks/useMediaQuery'
 import TaskTitleDropdown from './TaskTitleDropdown'
 import { TaskDetail } from '@/types/api'
-
 type TopNavigationProps = {
   activePage?: 'chat' | 'code' | 'wiki' | 'dashboard' | 'devices' | 'evaluation'
   variant?: 'with-sidebar' | 'standalone'
   showLogo?: boolean
   title?: string
   titleSuffix?: React.ReactNode // Content to render after the title (e.g., bound knowledge base badge)
+  /** Content to render in the center area (e.g., tabs for knowledge page) */
+  centerContent?: React.ReactNode
   taskDetail?: TaskDetail | null
   children?: React.ReactNode
   onMobileSidebarToggle?: () => void
@@ -33,6 +34,7 @@ export default function TopNavigation({
   showLogo = false,
   title,
   titleSuffix,
+  centerContent,
   taskDetail,
   children,
   onMobileSidebarToggle,
@@ -40,7 +42,7 @@ export default function TopNavigation({
   onMembersChanged,
   isSidebarCollapsed = false,
   hideGroupChatOptions = false,
-  isRightPanelCollapsed = false,
+  isRightPanelCollapsed: _isRightPanelCollapsed = false,
 }: TopNavigationProps) {
   const { t } = useTranslation()
   const isMobile = useIsMobile()
@@ -54,7 +56,8 @@ export default function TopNavigation({
 
   // Compute padding classes separately to avoid conflicts
   const leftPaddingClass = isSidebarCollapsed && isDesktop ? 'pl-24' : 'pl-4 sm:pl-6'
-  const rightPaddingClass = isRightPanelCollapsed && isDesktop ? 'pr-20' : 'pr-4 sm:pr-6'
+  // Right padding is always the same - the expand button is fixed positioned and doesn't need reserved space
+  const rightPaddingClass = 'pr-4 sm:pr-6'
 
   return (
     <div
@@ -105,6 +108,9 @@ export default function TopNavigation({
 
         {/* Title suffix - content rendered after the title (e.g., bound knowledge base badge) */}
         {titleSuffix}
+
+        {/* Center content - content rendered in the center area (e.g., tabs) */}
+        {centerContent}
       </div>
 
       {/* Right side - User menu and other controls */}

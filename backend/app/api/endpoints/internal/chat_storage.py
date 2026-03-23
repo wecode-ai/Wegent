@@ -41,6 +41,13 @@ router = APIRouter(prefix="/chat", tags=["internal-chat"])
 INJECTION_MODE_KB_HEAD = "kb_head"
 
 
+def _is_restricted_kb_context(kb_ctx: SubtaskContext) -> bool:
+    """Whether a KB history context should be suppressed for restricted mode."""
+    type_data = kb_ctx.type_data or {}
+    rag_result = type_data.get("rag_result") or {}
+    return bool(rag_result.get("restricted_mode") or type_data.get("restricted_mode"))
+
+
 # ==================== Request/Response Schemas ====================
 
 
@@ -334,6 +341,14 @@ def _build_user_message_content(
         if remaining_space <= 0:
             logger.debug(f"No remaining space for knowledge base context {kb_ctx.id}")
             break
+
+        if _is_restricted_kb_context(kb_ctx):
+            logger.info(
+                "[history] Skipping restricted knowledge base context: id=%s, kb_id=%s",
+                kb_ctx.id,
+                kb_ctx.knowledge_id,
+            )
+            continue
 
         # Get content from extracted_text or fetch from documents for injection modes
         kb_content = kb_ctx.extracted_text

@@ -34,11 +34,6 @@ import { taskKnowledgeBaseApi } from '@/apis/task-knowledge-base'
 import { listGroups } from '@/apis/groups'
 import type { Team } from '@/types/api'
 import type { BaseRole } from '@/types/base-role'
-interface KnowledgeBaseChatPageMobileProps {
-  /** Callback when knowledge base type is changed (notebook <-> classic) */
-  onKbTypeChanged?: () => void
-}
-
 /**
  * Mobile-specific implementation of Knowledge Base Chat Page
  *
@@ -48,7 +43,7 @@ interface KnowledgeBaseChatPageMobileProps {
  * - Touch-friendly controls (min 44px targets)
  * - Full-screen chat area
  */
-export function KnowledgeBaseChatPageMobile({ onKbTypeChanged }: KnowledgeBaseChatPageMobileProps) {
+export function KnowledgeBaseChatPageMobile() {
   const { t } = useTranslation('knowledge')
   const router = useRouter()
   const params = useParams()
@@ -267,12 +262,6 @@ export function KnowledgeBaseChatPageMobile({ onKbTypeChanged }: KnowledgeBaseCh
 
         {/* Chat area with KB summary */}
         <div className="flex-1 flex flex-col min-h-0">
-          {/* KB Summary Card - shown when no task is selected */}
-          {!hasOpenTask && (
-            <div className="px-4 pt-4">
-              <KnowledgeBaseSummaryCard knowledgeBase={knowledgeBase} />
-            </div>
-          )}
           <ChatArea
             teams={filteredTeams}
             isTeamsLoading={isTeamsLoading}
@@ -287,6 +276,9 @@ export function KnowledgeBaseChatPageMobile({ onKbTypeChanged }: KnowledgeBaseCh
               namespace: knowledgeBase.namespace,
               document_count: knowledgeBase.document_count,
             }}
+            guidedQuestions={knowledgeBase.guided_questions}
+            inputAlwaysAtBottom={true}
+            emptyStateContent={<KnowledgeBaseSummaryCard knowledgeBase={knowledgeBase} />}
             onTaskCreated={async (taskId: number) => {
               // Bind the knowledge base to the newly created task
               try {
@@ -318,14 +310,7 @@ export function KnowledgeBaseChatPageMobile({ onKbTypeChanged }: KnowledgeBaseCh
             </DrawerClose>
           </DrawerHeader>
           <div className="p-4 overflow-auto flex-1">
-            <DocumentList
-              knowledgeBase={knowledgeBase}
-              canManage={canManageKb}
-              onTypeConverted={() => {
-                // Notify parent page.tsx to refresh and re-route based on new kb_type
-                onKbTypeChanged?.()
-              }}
-            />
+            <DocumentList knowledgeBase={knowledgeBase} canManage={canManageKb} />
           </div>
         </DrawerContent>
       </Drawer>

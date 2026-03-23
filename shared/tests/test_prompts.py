@@ -58,13 +58,14 @@ class TestKBPromptConstants:
         assert KB_PROMPT_STRICT != KB_PROMPT_RELAXED
 
     def test_prompts_module_all_export(self):
-        """shared.prompts module should export KB_PROMPT_STRICT, KB_PROMPT_RELAXED and KB_PROMPT_NO_RAG in __all__."""
+        """shared.prompts module should export all KB prompt variants in __all__."""
         from shared import prompts
 
         assert hasattr(prompts, "__all__")
         assert "KB_PROMPT_STRICT" in prompts.__all__
         assert "KB_PROMPT_RELAXED" in prompts.__all__
         assert "KB_PROMPT_NO_RAG" in prompts.__all__
+        assert "KB_PROMPT_RESTRICTED_ANALYST" in prompts.__all__
 
     def test_kb_prompt_no_rag_importable(self):
         """Should be able to import KB_PROMPT_NO_RAG from shared.prompts."""
@@ -84,3 +85,32 @@ class TestKBPromptConstants:
         assert "kb_head" in KB_PROMPT_NO_RAG
         assert "RAG retrieval is NOT configured" in KB_PROMPT_NO_RAG
         assert "Intent Routing" in KB_PROMPT_NO_RAG
+
+    def test_kb_prompt_restricted_analyst_importable(self):
+        """Should be able to import KB_PROMPT_RESTRICTED_ANALYST from shared.prompts."""
+        from shared.prompts import KB_PROMPT_RESTRICTED_ANALYST
+
+        assert KB_PROMPT_RESTRICTED_ANALYST is not None
+        assert isinstance(KB_PROMPT_RESTRICTED_ANALYST, str)
+        assert len(KB_PROMPT_RESTRICTED_ANALYST) > 0
+
+    def test_kb_prompt_restricted_analyst_contains_required_content(self):
+        """Restricted Analyst prompt should allow safe search-only analysis."""
+        from shared.prompts import KB_PROMPT_RESTRICTED_ANALYST
+
+        assert "knowledge_base_search" in KB_PROMPT_RESTRICTED_ANALYST
+        assert "MUST NOT use `kb_ls` or `kb_head`" in KB_PROMPT_RESTRICTED_ANALYST
+        assert "exact numbers" in KB_PROMPT_RESTRICTED_ANALYST
+        assert "high-level" in KB_PROMPT_RESTRICTED_ANALYST
+        assert "protected source material" in KB_PROMPT_RESTRICTED_ANALYST
+        assert "MUST NOT quote, translate, restate" in KB_PROMPT_RESTRICTED_ANALYST
+        assert "safe summary artifact" in KB_PROMPT_RESTRICTED_ANALYST
+        assert "restricted_safe_summary" in KB_PROMPT_RESTRICTED_ANALYST
+        assert "protected in the knowledge base" in KB_PROMPT_RESTRICTED_ANALYST
+        assert "Intent Routing (DO THIS FIRST)" in KB_PROMPT_RESTRICTED_ANALYST
+        assert "Before calling `knowledge_base_search`" in KB_PROMPT_RESTRICTED_ANALYST
+        assert "What is in the current knowledge base?" in KB_PROMPT_RESTRICTED_ANALYST
+        assert "DO NOT call `knowledge_base_search`" in KB_PROMPT_RESTRICTED_ANALYST
+        assert "MUST NOT enumerate or explain the protected-content policy itself" in (
+            KB_PROMPT_RESTRICTED_ANALYST
+        )

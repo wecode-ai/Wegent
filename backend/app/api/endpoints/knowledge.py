@@ -25,6 +25,7 @@ from app.db.session import SessionLocal
 from app.models.user import User
 from app.schemas.knowledge import (
     AccessibleKnowledgeResponse,
+    AllGroupedKnowledgeResponse,
     BatchDocumentIds,
     BatchOperationResult,
     DocumentContentUpdate,
@@ -140,6 +141,30 @@ def get_personal_knowledge_bases_grouped(
     - **shared_with_me**: Knowledge bases shared with the current user by others
     """
     return KnowledgeService.get_personal_knowledge_bases_grouped(
+        db=db,
+        user_id=current_user.id,
+    )
+
+
+@router.get("/all-grouped", response_model=AllGroupedKnowledgeResponse)
+@trace_sync("get_all_knowledge_bases_grouped", "knowledge.api")
+def get_all_knowledge_bases_grouped(
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Get all knowledge bases accessible to the user, grouped by scope.
+
+    This endpoint returns all knowledge bases in a single request, solving the N+1 query problem.
+    The response is organized into:
+    - **personal**: Knowledge bases created by the user and shared with the user
+    - **groups**: Knowledge bases from team groups the user has access to
+    - **organization**: Organization-level knowledge bases (visible to all)
+    - **summary**: Counts for each category
+
+    This is the recommended endpoint for the knowledge base navigation sidebar.
+    """
+    return KnowledgeService.get_all_knowledge_bases_grouped(
         db=db,
         user_id=current_user.id,
     )
@@ -302,6 +327,9 @@ def update_knowledge_base(
             ),
             summary_enabled=data.summary_enabled,
             summary_model_ref=data.summary_model_ref,
+            guided_questions=data.guided_questions,
+            max_calls_per_conversation=data.max_calls_per_conversation,
+            exempt_calls_before_check=data.exempt_calls_before_check,
         )
         add_span_event(
             "knowledge.base.updated",

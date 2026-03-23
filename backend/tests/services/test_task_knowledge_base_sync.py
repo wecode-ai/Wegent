@@ -240,8 +240,8 @@ class TestKBPriorityLogic:
                 mock_kb_tool.return_value = Mock()
 
                 with patch(
-                    "app.services.chat.preprocessing.contexts._check_user_kb_access",
-                    return_value=(True, ""),
+                    "app.services.chat.preprocessing.contexts._get_user_kb_tool_access_mode",
+                    return_value=("full", ""),
                 ):
                     kb_result = _prepare_kb_tools_from_contexts(
                         kb_contexts=[kb_context],
@@ -274,8 +274,8 @@ class TestKBPriorityLogic:
                 mock_kb_tool.return_value = Mock()
 
                 with patch(
-                    "app.services.chat.preprocessing.contexts._check_user_kb_access",
-                    return_value=(True, ""),
+                    "app.services.chat.preprocessing.contexts._get_user_kb_tool_access_mode",
+                    return_value=("full", ""),
                 ):
                     kb_result = _prepare_kb_tools_from_contexts(
                         kb_contexts=[],  # No subtask KB
@@ -291,6 +291,65 @@ class TestKBPriorityLogic:
                     call_args = mock_kb_tool.call_args
                     assert set(call_args[1]["knowledge_base_ids"]) == {20, 30}
                     assert len(kb_result.extra_tools) == 1
+
+    def test_restricted_analyst_uses_search_only_mode(self, mock_db):
+        """Restricted Analysts should get search-only KB access instead of full denial."""
+        from app.services.chat.preprocessing.contexts import (
+            _prepare_kb_tools_from_contexts,
+        )
+
+        kb_context = Mock(spec=SubtaskContext)
+        kb_context.knowledge_id = 10
+        kb_context.type_data = None
+
+        with patch(
+            "app.services.chat.preprocessing.contexts._get_bound_knowledge_base_ids"
+        ) as mock_get_bound:
+            mock_get_bound.return_value = []
+
+            with patch("chat_shell.tools.builtin.KnowledgeBaseTool") as mock_kb_tool:
+                mock_kb_tool.return_value = Mock()
+
+                with patch(
+                    "app.services.chat.preprocessing.contexts._get_user_kb_tool_access_mode",
+                    return_value=("restricted_search_only", "test reason"),
+                ):
+                    with patch(
+                        "app.services.chat.preprocessing.contexts._build_kb_meta_prompt",
+                        return_value=(
+                            "Restricted Knowledge Bases In Scope:\n"
+                            "- KB Name: Test KB, KB ID: 10"
+                        ),
+                    ):
+                        kb_result = _prepare_kb_tools_from_contexts(
+                            kb_contexts=[kb_context],
+                            user_id=1,
+                            db=mock_db,
+                            base_system_prompt="Base prompt",
+                            task_id=100,
+                            user_subtask_id=1,
+                            model_config={"model_id": "gpt-test"},
+                        )
+
+                    mock_kb_tool.assert_called_once()
+                    call_args = mock_kb_tool.call_args
+                    assert call_args[1]["knowledge_base_ids"] == [10]
+                    assert call_args[1]["injection_mode"] == "hybrid"
+                    assert call_args[1]["tool_access_mode"] == "restricted_search_only"
+                    assert call_args[1]["summarizer_model_config"] == {
+                        "model_id": "gpt-test"
+                    }
+                    assert len(kb_result.extra_tools) == 1
+                    assert kb_result.knowledge_base_ids == [10]
+                    assert "Restricted Knowledge Bases In Scope" in (
+                        kb_result.kb_meta_prompt
+                    )
+                    assert "KB ID: 10" in kb_result.kb_meta_prompt
+                    assert "Summary:" not in kb_result.kb_meta_prompt
+                    assert kb_result.kb_tool_access_mode == "restricted_search_only"
+                    assert "Knowledge Base Restricted Analysis" in (
+                        kb_result.enhanced_system_prompt
+                    )
 
     def test_no_kb_when_both_empty(self, mock_db):
         """Test that no KB tool is created when both levels have no KB"""
@@ -320,6 +379,7 @@ class TestKBPriorityLogic:
             assert kb_result.knowledge_base_ids == []
             assert kb_result.is_user_selected_kb is False
             assert kb_result.document_ids == []
+            assert kb_result.kb_tool_access_mode == "full"
 
 
 @pytest.mark.unit

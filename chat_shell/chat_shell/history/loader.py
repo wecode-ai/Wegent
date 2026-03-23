@@ -676,6 +676,16 @@ def _build_knowledge_base_text_prefix(context) -> str:
     Note: This returns raw content. The caller is responsible for wrapping
     multiple knowledge base contents in a single <knowledge_base> XML tag.
     """
+    type_data = getattr(context, "type_data", None) or {}
+    rag_result = type_data.get("rag_result") or {}
+    if rag_result.get("restricted_mode") or type_data.get("restricted_mode"):
+        logger.info(
+            "[history] Skipping restricted knowledge base context: id=%s, kb_id=%s",
+            getattr(context, "id", None),
+            getattr(context, "knowledge_id", None),
+        )
+        return ""
+
     if not context.extracted_text:
         return ""
 

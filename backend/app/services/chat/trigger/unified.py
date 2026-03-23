@@ -319,6 +319,7 @@ async def _process_contexts(
         base_system_prompt=request.system_prompt,
         task_id=request.task_id,
         context_window=model_context_window,
+        model_config=request.model_config,
     )
 
     # Update request with all processed context results.
@@ -332,6 +333,7 @@ async def _process_contexts(
     if ctx.kb.knowledge_base_ids:
         request.knowledge_base_ids = ctx.kb.knowledge_base_ids
         request.is_user_selected_kb = ctx.kb.is_user_selected_kb
+        request.kb_tool_access_mode = ctx.kb.kb_tool_access_mode
         if ctx.kb.document_ids:
             request.document_ids = ctx.kb.document_ids
 

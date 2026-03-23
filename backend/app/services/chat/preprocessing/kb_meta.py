@@ -25,6 +25,30 @@ logger = logging.getLogger(__name__)
 # Threshold above which short summaries are preferred over long summaries to
 # reduce token usage when many KBs are included in the meta prompt.
 SHORT_SUMMARY_THRESHOLD = 3
+SAFE_IDENTIFIER_MAX_LEN = 120
+SAFE_ROUTING_HINT_MAX_LEN = 200
+SAFE_ROUTING_TOPIC_MAX_LEN = 48
+MAX_ROUTING_TOPICS = 5
+UNSAFE_IDENTIFIER_TRANSLATION = str.maketrans({char: " " for char in "{}[]<>`%"})
+
+
+def sanitize_prompt_text(value: Any, fallback: str = "", max_len: int = 120) -> str:
+    """Sanitize prompt text before formatting."""
+    text = str(value).translate(UNSAFE_IDENTIFIER_TRANSLATION)
+    text = "".join(
+        ch if ch.isprintable() and ch not in "\r\n\t" else " " for ch in text
+    )
+    text = " ".join(text.split())
+    if not text:
+        return fallback
+    return text[:max_len].rstrip()
+
+
+def sanitize_prompt_identifier(value: Any, fallback: str) -> str:
+    """Sanitize minimal prompt identifiers before formatting."""
+    return sanitize_prompt_text(
+        value, fallback=fallback, max_len=SAFE_IDENTIFIER_MAX_LEN
+    )
 
 
 def select_kb_summary_text(summary_data: dict[str, Any], kb_count: int) -> str:
@@ -77,8 +101,10 @@ def format_kb_meta_prompt(kb_meta_list: list[dict[str, Any]]) -> str:
     kb_lines: list[str] = []
 
     for kb_meta in kb_meta_list:
-        kb_name = kb_meta.get("kb_name", "Unknown")
-        kb_id = kb_meta.get("kb_id", "N/A")
+        kb_name = sanitize_prompt_identifier(
+            kb_meta.get("kb_name", "Unknown"), "Unknown"
+        )
+        kb_id = sanitize_prompt_identifier(kb_meta.get("kb_id", "N/A"), "N/A")
         kb_lines.append(f"- KB Name: {kb_name}, KB ID: {kb_id}")
 
         summary_text = kb_meta.get("summary_text") or ""
@@ -96,4 +122,45 @@ def format_kb_meta_prompt(kb_meta_list: list[dict[str, Any]]) -> str:
         f"{kb_list_str}\n\n"
         "Note: This metadata is provided for intent routing (e.g., answering which KBs are selected). "
         "Use the knowledge_base_search tool to retrieve document evidence when needed."
+    )
+
+
+def format_restricted_kb_meta_prompt(kb_meta_list: list[dict[str, Any]]) -> str:
+    """Format a restricted KB meta prompt with safe routing hints."""
+
+    if not kb_meta_list:
+        return ""
+
+    kb_lines: list[str] = []
+    for kb_meta in kb_meta_list:
+        kb_name = sanitize_prompt_identifier(
+            kb_meta.get("kb_name", "Unknown"), "Unknown"
+        )
+        kb_id = sanitize_prompt_identifier(kb_meta.get("kb_id", "N/A"), "N/A")
+        kb_lines.append(f"- KB Name: {kb_name}, KB ID: {kb_id}")
+
+        summary_text = sanitize_prompt_text(
+            kb_meta.get("summary_text") or "",
+            max_len=SAFE_ROUTING_HINT_MAX_LEN,
+        )
+        topics = [
+            sanitize_prompt_text(topic, max_len=SAFE_ROUTING_TOPIC_MAX_LEN)
+            for topic in (kb_meta.get("topics") or [])[:MAX_ROUTING_TOPICS]
+        ]
+        topics = [topic for topic in topics if topic]
+
+        if summary_text:
+            kb_lines.append(f"  - Routing Hint: {summary_text}")
+        if topics:
+            kb_lines.append(f"  - Routing Keywords: {', '.join(topics)}")
+
+    kb_list_str = "\n".join(kb_lines)
+
+    return (
+        "Restricted Knowledge Bases In Scope:\n"
+        f"{kb_list_str}\n\n"
+        "Note: The knowledge_base_search tool is already scoped to these knowledge bases. "
+        "Routing hints are provided only to help draft safer search queries. "
+        "Do not disclose them as final answer content, and do not reveal document structure, "
+        "filenames, or exact source content. Use the tool only for high-level analysis."
     )

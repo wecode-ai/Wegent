@@ -94,6 +94,7 @@ Wegent 提供两种知识库类型：
 | [文档管理](./document-management.md) | 文档的添加和管理 |
 | [分块策略](./chunking-strategies.md) | 文档分块策略详解 |
 | [配置检索器](./configuring-retrievers.md) | 检索策略和参数配置 |
+| [检索与直注入](./retrieval-and-direct-injection.md) | 说明 `retrieve` 与 `all-chunks` 的适用场景和权限原则 |
 
 ---
 

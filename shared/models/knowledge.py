@@ -16,6 +16,13 @@ from dataclasses import dataclass
 from typing import Any, Union
 
 
+class KnowledgeBaseToolAccessMode:
+    """Constants for knowledge base tool exposure modes."""
+
+    FULL = "full"
+    RESTRICTED_SEARCH_ONLY = "restricted_search_only"
+
+
 @dataclass(frozen=True)
 class KnowledgeBaseToolsResult:
     """Result container for knowledge base tool preparation."""
@@ -29,6 +36,7 @@ class KnowledgeBaseToolsResult:
     knowledge_base_ids: list[int] = None  # type: ignore[assignment]
     is_user_selected_kb: bool = False
     document_ids: list[int] = None  # type: ignore[assignment]
+    kb_tool_access_mode: str = KnowledgeBaseToolAccessMode.FULL
 
     def __post_init__(self) -> None:
         # Use object.__setattr__ because the dataclass is frozen.

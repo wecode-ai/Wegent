@@ -297,6 +297,13 @@ docker compose up -d     # 启动
         </a>
     </td>
     <td align="center">
+        <a href="https://github.com/parabala">
+            <img src="https://avatars.githubusercontent.com/u/115564000?v=4" width="80;" alt="parabala"/>
+            <br />
+            <sub><b>Parabala</b></sub>
+        </a>
+    </td>
+    <td align="center">
         <a href="https://github.com/icycrystal4">
             <img src="https://avatars.githubusercontent.com/u/946207?v=4" width="80;" alt="icycrystal4"/>
             <br />
@@ -311,17 +318,17 @@ docker compose up -d     # 启动
         </a>
     </td>
     <td align="center">
-        <a href="https://github.com/parabala">
-            <img src="https://avatars.githubusercontent.com/u/115564000?v=4" width="80;" alt="parabala"/>
-            <br />
-            <sub><b>Parabala</b></sub>
-        </a>
-    </td>
-    <td align="center">
         <a href="https://github.com/2561056571">
             <img src="https://avatars.githubusercontent.com/u/112464849?v=4" width="80;" alt="2561056571"/>
             <br />
             <sub><b>Xuemin</b></sub>
+        </a>
+    </td>
+    <td align="center">
+        <a href="https://github.com/fengkuizhi">
+            <img src="https://avatars.githubusercontent.com/u/3616484?v=4" width="80;" alt="fengkuizhi"/>
+            <br />
+            <sub><b>Fengkuizhi</b></sub>
         </a>
     </td>
     <td align="center">
@@ -337,20 +344,13 @@ docker compose up -d     # 启动
             <br />
             <sub><b>Just Quan</b></sub>
         </a>
-    </td>
+    </td></tr>
+<tr>
     <td align="center">
         <a href="https://github.com/junbaor">
             <img src="https://avatars.githubusercontent.com/u/10198622?v=4" width="80;" alt="junbaor"/>
             <br />
             <sub><b>Junbaor</b></sub>
-        </a>
-    </td></tr>
-<tr>
-    <td align="center">
-        <a href="https://github.com/fengkuizhi">
-            <img src="https://avatars.githubusercontent.com/u/3616484?v=4" width="80;" alt="fengkuizhi"/>
-            <br />
-            <sub><b>Fengkuizhi</b></sub>
         </a>
     </td>
     <td align="center">
@@ -450,6 +450,13 @@ docker compose up -d     # 启动
             <img src="https://avatars.githubusercontent.com/u/43851000?v=4" width="80;" alt="salt-hai"/>
             <br />
             <sub><b>Salt-hai</b></sub>
+        </a>
+    </td>
+    <td align="center">
+        <a href="https://github.com/wxcfox">
+            <img src="https://avatars.githubusercontent.com/u/33141411?v=4" width="80;" alt="wxcfox"/>
+            <br />
+            <sub><b>wxcfox</b></sub>
         </a>
     </td></tr>
 </table>
