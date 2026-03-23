@@ -39,6 +39,7 @@ class KindType(str, Enum):
     RETRIEVER = "Retriever"
     SHELL = "Shell"
     SKILL = "Skill"
+    SUBSCRIPTION = "Subscription"
     TEAM = "Team"
 
 
