@@ -84,7 +84,9 @@ class BinaryReplacer:
             try:
                 downloaded = 0
                 with open(temp_file, "wb") as f:
-                    for chunk in response.iter_content(chunk_size=self.DOWNLOAD_CHUNK_SIZE):
+                    for chunk in response.iter_content(
+                        chunk_size=self.DOWNLOAD_CHUNK_SIZE
+                    ):
                         if chunk:
                             f.write(chunk)
                             downloaded += len(chunk)
@@ -131,7 +133,14 @@ class BinaryReplacer:
 
             # Set executable permissions on new binary
             # 0o755 = rwxr-xr-x (owner can read/write/execute, group/others can read/execute)
-            os.chmod(new_binary, stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP | stat.S_IROTH | stat.S_IXOTH)
+            os.chmod(
+                new_binary,
+                stat.S_IRWXU
+                | stat.S_IRGRP
+                | stat.S_IXGRP
+                | stat.S_IROTH
+                | stat.S_IXOTH,
+            )
 
             # Atomic replace: new_binary -> current_binary
             # On POSIX, os.replace is atomic. On Windows, it may fail if binary is in use.
@@ -198,7 +207,9 @@ class BinaryReplacer:
             return False
 
     @staticmethod
-    def format_progress_bar(downloaded: int, total: Optional[int], width: int = 40) -> str:
+    def format_progress_bar(
+        downloaded: int, total: Optional[int], width: int = 40
+    ) -> str:
         """Format a progress bar for terminal display.
 
         Args:
@@ -213,7 +224,9 @@ class BinaryReplacer:
             percent = min(100, int(100 * downloaded / total))
             filled = int(width * percent / 100)
             bar = "=" * filled + ">" + " " * (width - filled - 1)
-            size_str = f"({downloaded // (1024 * 1024)} MB / {total // (1024 * 1024)} MB)"
+            size_str = (
+                f"({downloaded // (1024 * 1024)} MB / {total // (1024 * 1024)} MB)"
+            )
             return f"[{bar}] {percent}% {size_str}"
         else:
             # Unknown total size

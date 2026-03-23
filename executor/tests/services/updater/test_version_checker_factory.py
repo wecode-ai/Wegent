@@ -28,8 +28,7 @@ class TestVersionCheckerFactory:
     def test_create_registry_checker_with_registry(self):
         """Test factory creates RegistryVersionChecker when registry is set."""
         config = UpdateConfig(
-            registry="https://example.com/ai-tool-box",
-            registry_token=""
+            registry="https://example.com/ai-tool-box", registry_token=""
         )
         checker = create_version_checker(config)
 
@@ -41,7 +40,7 @@ class TestVersionCheckerFactory:
         """Test factory creates RegistryVersionChecker with auth token."""
         config = UpdateConfig(
             registry="https://example.com/ai-tool-box",
-            registry_token="my_registry_token"
+            registry_token="my_registry_token",
         )
         checker = create_version_checker(config)
 
@@ -61,7 +60,9 @@ class TestVersionCheckerFactory:
 
     def test_create_registry_checker_with_token_from_env(self):
         """Test factory uses token from REGISTRY_TOKEN env var."""
-        config = UpdateConfig(registry="https://example.com/registry", registry_token="")
+        config = UpdateConfig(
+            registry="https://example.com/registry", registry_token=""
+        )
 
         with patch.dict("os.environ", {"REGISTRY_TOKEN": "env_token"}):
             checker = create_version_checker(config)
@@ -80,10 +81,7 @@ class TestVersionCheckerFactory:
 
     def test_registry_takes_precedence_over_env(self):
         """Test config registry takes precedence over env var."""
-        config = UpdateConfig(
-            registry="https://config.com/registry",
-            registry_token=""
-        )
+        config = UpdateConfig(registry="https://config.com/registry", registry_token="")
 
         with patch.dict("os.environ", {"REGISTRY": "https://env.com/registry"}):
             checker = create_version_checker(config)
@@ -97,8 +95,8 @@ class TestVersionCheckerFactory:
 
         # Mock is_registry to return True but get_registry_url to return None
         # This shouldn't happen in practice, but tests the error message
-        with patch.object(config, 'is_registry', return_value=True):
-            with patch.object(config, 'get_registry_url', return_value=None):
+        with patch.object(config, "is_registry", return_value=True):
+            with patch.object(config, "get_registry_url", return_value=None):
                 with pytest.raises(ValueError) as exc_info:
                     create_version_checker(config)
 

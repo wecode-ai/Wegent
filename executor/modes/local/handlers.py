@@ -369,8 +369,11 @@ class UpgradeHandler:
             pm = ProcessManager()
             success = pm.restart_executor()
             if success:
-                logger.info("[UpgradeHandler] New executor started, exiting current process")
+                logger.info(
+                    "[UpgradeHandler] New executor started, exiting current process"
+                )
                 import sys
+
                 sys.exit(0)
 
         # Schedule the restart without awaiting it

@@ -84,9 +84,13 @@ class TestPlatformSpecificBinaryNames:
 
         with mock.patch("platform.system", return_value="Darwin"):
             with mock.patch("platform.machine", return_value="arm64"):
-                assert GithubVersionChecker.get_binary_name() == "wegent-executor-macos-arm64"
                 assert (
-                    RegistryVersionChecker.get_binary_name() == "wegent-executor-macos-arm64"
+                    GithubVersionChecker.get_binary_name()
+                    == "wegent-executor-macos-arm64"
+                )
+                assert (
+                    RegistryVersionChecker.get_binary_name()
+                    == "wegent-executor-macos-arm64"
                 )
 
     def test_get_binary_name_darwin_x86_64(self):
@@ -100,9 +104,13 @@ class TestPlatformSpecificBinaryNames:
 
         with mock.patch("platform.system", return_value="Darwin"):
             with mock.patch("platform.machine", return_value="x86_64"):
-                assert GithubVersionChecker.get_binary_name() == "wegent-executor-macos-amd64"
                 assert (
-                    RegistryVersionChecker.get_binary_name() == "wegent-executor-macos-amd64"
+                    GithubVersionChecker.get_binary_name()
+                    == "wegent-executor-macos-amd64"
+                )
+                assert (
+                    RegistryVersionChecker.get_binary_name()
+                    == "wegent-executor-macos-amd64"
                 )
 
     def test_get_binary_name_linux_arm64(self):
@@ -116,9 +124,13 @@ class TestPlatformSpecificBinaryNames:
 
         with mock.patch("platform.system", return_value="Linux"):
             with mock.patch("platform.machine", return_value="arm64"):
-                assert GithubVersionChecker.get_binary_name() == "wegent-executor-linux-arm64"
                 assert (
-                    RegistryVersionChecker.get_binary_name() == "wegent-executor-linux-arm64"
+                    GithubVersionChecker.get_binary_name()
+                    == "wegent-executor-linux-arm64"
+                )
+                assert (
+                    RegistryVersionChecker.get_binary_name()
+                    == "wegent-executor-linux-arm64"
                 )
 
     def test_get_binary_name_linux_amd64(self):
@@ -132,9 +144,13 @@ class TestPlatformSpecificBinaryNames:
 
         with mock.patch("platform.system", return_value="Linux"):
             with mock.patch("platform.machine", return_value="x86_64"):
-                assert GithubVersionChecker.get_binary_name() == "wegent-executor-linux-amd64"
                 assert (
-                    RegistryVersionChecker.get_binary_name() == "wegent-executor-linux-amd64"
+                    GithubVersionChecker.get_binary_name()
+                    == "wegent-executor-linux-amd64"
+                )
+                assert (
+                    RegistryVersionChecker.get_binary_name()
+                    == "wegent-executor-linux-amd64"
                 )
 
     def test_get_binary_name_windows(self):
@@ -149,7 +165,8 @@ class TestPlatformSpecificBinaryNames:
         with mock.patch("platform.system", return_value="Windows"):
             with mock.patch("platform.machine", return_value="AMD64"):
                 assert (
-                    GithubVersionChecker.get_binary_name() == "wegent-executor-windows-amd64"
+                    GithubVersionChecker.get_binary_name()
+                    == "wegent-executor-windows-amd64"
                 )
                 assert (
                     RegistryVersionChecker.get_binary_name()
@@ -157,6 +174,7 @@ class TestPlatformSpecificBinaryNames:
                 )
 
 
+from unittest import mock
+
 # Import for patch references
 import pytest
-from unittest import mock

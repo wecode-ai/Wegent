@@ -31,8 +31,7 @@ def create_version_checker(config: UpdateConfig) -> VersionChecker:
                 "set REGISTRY environment variable."
             )
         return RegistryVersionChecker(
-            registry_url=registry_url,
-            auth_token=config.get_token()
+            registry_url=registry_url, auth_token=config.get_token()
         )
     else:
         # Default: GitHub (no token needed for public repo)

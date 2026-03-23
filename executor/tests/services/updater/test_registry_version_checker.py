@@ -24,8 +24,7 @@ class TestRegistryVersionCheckerInit:
     def test_init_with_custom_token(self):
         """Test initialization with custom auth token."""
         checker = RegistryVersionChecker(
-            registry_url="https://example.com/ai-tool-box",
-            auth_token="custom_token"
+            registry_url="https://example.com/ai-tool-box", auth_token="custom_token"
         )
         assert checker.registry_url == "https://example.com/ai-tool-box"
         assert checker.auth_token == "custom_token"
@@ -33,8 +32,7 @@ class TestRegistryVersionCheckerInit:
     def test_init_with_none_token_explicit(self):
         """Test initialization with explicitly None auth token."""
         checker = RegistryVersionChecker(
-            registry_url="https://example.com/ai-tool-box",
-            auth_token=None
+            registry_url="https://example.com/ai-tool-box", auth_token=None
         )
         assert checker.registry_url == "https://example.com/ai-tool-box"
         assert checker.auth_token is None
@@ -85,7 +83,7 @@ class TestRegistryVersionCheckerCheckForUpdates:
         """Fixture for mock registry API response."""
         return {
             "version": "1.6.6",
-            "url": "https://example.com/ai-tool-box/wegent-executor-macos-arm64/download"
+            "url": "https://example.com/ai-tool-box/wegent-executor-macos-arm64/download",
         }
 
     @pytest.mark.asyncio
@@ -97,9 +95,13 @@ class TestRegistryVersionCheckerCheckForUpdates:
         mock_response.json.return_value = mock_registry_response
         mock_response.raise_for_status.return_value = None
 
-        with patch("executor.services.updater.registry_version_checker.traced_session") as mock_session:
+        with patch(
+            "executor.services.updater.registry_version_checker.traced_session"
+        ) as mock_session:
             mock_session.return_value.get.return_value = mock_response
-            with patch.object(checker, "get_binary_name", return_value="wegent-executor-macos-arm64"):
+            with patch.object(
+                checker, "get_binary_name", return_value="wegent-executor-macos-arm64"
+            ):
                 result = await checker.check_for_updates("1.0.0")
 
                 assert isinstance(result, UpdateInfo)
@@ -115,9 +117,13 @@ class TestRegistryVersionCheckerCheckForUpdates:
         mock_response.json.return_value = mock_registry_response
         mock_response.raise_for_status.return_value = None
 
-        with patch("executor.services.updater.registry_version_checker.traced_session") as mock_session:
+        with patch(
+            "executor.services.updater.registry_version_checker.traced_session"
+        ) as mock_session:
             mock_session.return_value.get.return_value = mock_response
-            with patch.object(checker, "get_binary_name", return_value="wegent-executor-macos-arm64"):
+            with patch.object(
+                checker, "get_binary_name", return_value="wegent-executor-macos-arm64"
+            ):
                 result = await checker.check_for_updates("1.6.6")
 
                 assert result is None
@@ -131,9 +137,13 @@ class TestRegistryVersionCheckerCheckForUpdates:
         mock_response.json.return_value = mock_registry_response
         mock_response.raise_for_status.return_value = None
 
-        with patch("executor.services.updater.registry_version_checker.traced_session") as mock_session:
+        with patch(
+            "executor.services.updater.registry_version_checker.traced_session"
+        ) as mock_session:
             mock_session.return_value.get.return_value = mock_response
-            with patch.object(checker, "get_binary_name", return_value="wegent-executor-macos-arm64"):
+            with patch.object(
+                checker, "get_binary_name", return_value="wegent-executor-macos-arm64"
+            ):
                 result = await checker.check_for_updates("2.0.0")
 
                 assert result is None
@@ -144,12 +154,18 @@ class TestRegistryVersionCheckerCheckForUpdates:
         checker = RegistryVersionChecker(registry_url=registry_url)
 
         mock_response = Mock()
-        mock_response.json.return_value = {"url": "https://example.com/download"}  # Missing version
+        mock_response.json.return_value = {
+            "url": "https://example.com/download"
+        }  # Missing version
         mock_response.raise_for_status.return_value = None
 
-        with patch("executor.services.updater.registry_version_checker.traced_session") as mock_session:
+        with patch(
+            "executor.services.updater.registry_version_checker.traced_session"
+        ) as mock_session:
             mock_session.return_value.get.return_value = mock_response
-            with patch.object(checker, "get_binary_name", return_value="wegent-executor-macos-arm64"):
+            with patch.object(
+                checker, "get_binary_name", return_value="wegent-executor-macos-arm64"
+            ):
                 result = await checker.check_for_updates("1.0.0")
 
                 assert result is None
@@ -163,9 +179,13 @@ class TestRegistryVersionCheckerCheckForUpdates:
         mock_response.json.return_value = {"version": "1.6.6"}  # Missing url
         mock_response.raise_for_status.return_value = None
 
-        with patch("executor.services.updater.registry_version_checker.traced_session") as mock_session:
+        with patch(
+            "executor.services.updater.registry_version_checker.traced_session"
+        ) as mock_session:
             mock_session.return_value.get.return_value = mock_response
-            with patch.object(checker, "get_binary_name", return_value="wegent-executor-macos-arm64"):
+            with patch.object(
+                checker, "get_binary_name", return_value="wegent-executor-macos-arm64"
+            ):
                 result = await checker.check_for_updates("1.0.0")
 
                 assert result is None
@@ -176,11 +196,17 @@ class TestRegistryVersionCheckerCheckForUpdates:
         checker = RegistryVersionChecker(registry_url=registry_url)
 
         mock_response = Mock()
-        mock_response.raise_for_status.side_effect = Exception("SSL certificate verify failed")
+        mock_response.raise_for_status.side_effect = Exception(
+            "SSL certificate verify failed"
+        )
 
-        with patch("executor.services.updater.registry_version_checker.traced_session") as mock_session:
+        with patch(
+            "executor.services.updater.registry_version_checker.traced_session"
+        ) as mock_session:
             mock_session.return_value.get.return_value = mock_response
-            with patch.object(checker, "get_binary_name", return_value="wegent-executor-macos-arm64"):
+            with patch.object(
+                checker, "get_binary_name", return_value="wegent-executor-macos-arm64"
+            ):
                 result = await checker.check_for_updates("1.0.0")
 
                 assert result is None
@@ -190,9 +216,13 @@ class TestRegistryVersionCheckerCheckForUpdates:
         """Test handling of connection errors."""
         checker = RegistryVersionChecker(registry_url=registry_url)
 
-        with patch("executor.services.updater.registry_version_checker.traced_session") as mock_session:
+        with patch(
+            "executor.services.updater.registry_version_checker.traced_session"
+        ) as mock_session:
             mock_session.return_value.get.side_effect = Exception("Connection refused")
-            with patch.object(checker, "get_binary_name", return_value="wegent-executor-macos-arm64"):
+            with patch.object(
+                checker, "get_binary_name", return_value="wegent-executor-macos-arm64"
+            ):
                 result = await checker.check_for_updates("1.0.0")
 
                 assert result is None
@@ -202,9 +232,13 @@ class TestRegistryVersionCheckerCheckForUpdates:
         """Test handling of timeout errors."""
         checker = RegistryVersionChecker(registry_url=registry_url)
 
-        with patch("executor.services.updater.registry_version_checker.traced_session") as mock_session:
+        with patch(
+            "executor.services.updater.registry_version_checker.traced_session"
+        ) as mock_session:
             mock_session.return_value.get.side_effect = Exception("Request timeout")
-            with patch.object(checker, "get_binary_name", return_value="wegent-executor-macos-arm64"):
+            with patch.object(
+                checker, "get_binary_name", return_value="wegent-executor-macos-arm64"
+            ):
                 result = await checker.check_for_updates("1.0.0")
 
                 assert result is None
@@ -217,17 +251,27 @@ class TestRegistryVersionCheckerBuildApiUrl:
         """Test URL building with base registry URL."""
         checker = RegistryVersionChecker(registry_url="https://example.com/registry")
 
-        with patch.object(checker, "get_binary_name", return_value="wegent-executor-macos-arm64"):
+        with patch.object(
+            checker, "get_binary_name", return_value="wegent-executor-macos-arm64"
+        ):
             url = checker._build_api_url()
-            assert url == "https://example.com/registry/wegent-executor-macos-arm64/update.json"
+            assert (
+                url
+                == "https://example.com/registry/wegent-executor-macos-arm64/update.json"
+            )
 
     def test_build_api_url_with_trailing_slash(self):
         """Test URL building with trailing slash."""
         checker = RegistryVersionChecker(registry_url="https://example.com/registry/")
 
-        with patch.object(checker, "get_binary_name", return_value="wegent-executor-linux-amd64"):
+        with patch.object(
+            checker, "get_binary_name", return_value="wegent-executor-linux-amd64"
+        ):
             url = checker._build_api_url()
-            assert url == "https://example.com/registry/wegent-executor-linux-amd64/update.json"
+            assert (
+                url
+                == "https://example.com/registry/wegent-executor-linux-amd64/update.json"
+            )
 
     def test_build_api_url_with_already_complete_path(self):
         """Test URL building when URL already contains platform path (backward compat)."""
@@ -236,7 +280,10 @@ class TestRegistryVersionCheckerBuildApiUrl:
         )
         url = checker._build_api_url()
         # Should use as-is, not append another binary name
-        assert url == "https://example.com/registry/wegent-executor-linux-amd64/update.json"
+        assert (
+            url
+            == "https://example.com/registry/wegent-executor-linux-amd64/update.json"
+        )
 
     def test_build_api_url_ends_with_update_json(self):
         """Test URL building when URL ends with /update.json."""
@@ -251,9 +298,18 @@ class TestRegistryVersionCheckerBuildApiUrl:
         checker = RegistryVersionChecker(registry_url="https://example.com/registry")
 
         platforms = [
-            ("wegent-executor-macos-arm64", "https://example.com/registry/wegent-executor-macos-arm64/update.json"),
-            ("wegent-executor-linux-amd64", "https://example.com/registry/wegent-executor-linux-amd64/update.json"),
-            ("wegent-executor-linux-arm64", "https://example.com/registry/wegent-executor-linux-arm64/update.json"),
+            (
+                "wegent-executor-macos-arm64",
+                "https://example.com/registry/wegent-executor-macos-arm64/update.json",
+            ),
+            (
+                "wegent-executor-linux-amd64",
+                "https://example.com/registry/wegent-executor-linux-amd64/update.json",
+            ),
+            (
+                "wegent-executor-linux-arm64",
+                "https://example.com/registry/wegent-executor-linux-arm64/update.json",
+            ),
         ]
 
         for binary_name, expected_url in platforms:
@@ -269,15 +325,24 @@ class TestRegistryVersionCheckerHeaders:
     async def test_request_includes_private_token_header_when_token_provided(self):
         """Test that request includes PRIVATE-TOKEN header when token is provided."""
         registry_url = "https://example.com/ai-tool-box"
-        checker = RegistryVersionChecker(registry_url=registry_url, auth_token="my_token")
+        checker = RegistryVersionChecker(
+            registry_url=registry_url, auth_token="my_token"
+        )
 
         mock_response = Mock()
-        mock_response.json.return_value = {"version": "1.0.0", "url": "https://example.com/download"}
+        mock_response.json.return_value = {
+            "version": "1.0.0",
+            "url": "https://example.com/download",
+        }
         mock_response.raise_for_status.return_value = None
 
-        with patch("executor.services.updater.registry_version_checker.traced_session") as mock_session:
+        with patch(
+            "executor.services.updater.registry_version_checker.traced_session"
+        ) as mock_session:
             mock_session.return_value.get.return_value = mock_response
-            with patch.object(checker, "get_binary_name", return_value="wegent-executor-macos-arm64"):
+            with patch.object(
+                checker, "get_binary_name", return_value="wegent-executor-macos-arm64"
+            ):
                 await checker.check_for_updates("0.9.0")
 
                 call_kwargs = mock_session.return_value.get.call_args.kwargs
@@ -292,12 +357,19 @@ class TestRegistryVersionCheckerHeaders:
         checker = RegistryVersionChecker(registry_url=registry_url, auth_token=None)
 
         mock_response = Mock()
-        mock_response.json.return_value = {"version": "1.0.0", "url": "https://example.com/download"}
+        mock_response.json.return_value = {
+            "version": "1.0.0",
+            "url": "https://example.com/download",
+        }
         mock_response.raise_for_status.return_value = None
 
-        with patch("executor.services.updater.registry_version_checker.traced_session") as mock_session:
+        with patch(
+            "executor.services.updater.registry_version_checker.traced_session"
+        ) as mock_session:
             mock_session.return_value.get.return_value = mock_response
-            with patch.object(checker, "get_binary_name", return_value="wegent-executor-macos-arm64"):
+            with patch.object(
+                checker, "get_binary_name", return_value="wegent-executor-macos-arm64"
+            ):
                 await checker.check_for_updates("0.9.0")
 
                 call_kwargs = mock_session.return_value.get.call_args.kwargs

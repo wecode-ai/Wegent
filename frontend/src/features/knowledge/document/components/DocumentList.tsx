@@ -395,10 +395,30 @@ export function DocumentList({
           refresh()
         }
       }, 2000)
-    } catch {
+    } catch (err) {
+      // Use ApiError.errorCode for structured error handling
+      let errorMessage = t('document.document.reindexFailed')
+      if (err instanceof Error) {
+        // Check if it's an ApiError with errorCode for structured error handling
+        const apiError = err as { errorCode?: string; message: string }
+        if (apiError.errorCode === 'EXCEL_FILE_SIZE_EXCEEDED') {
+          // Format: EXCEL_FILE_SIZE_EXCEEDED|extension|limit|size
+          const parts = apiError.message.split('|')
+          if (parts.length === 4) {
+            errorMessage = t('document.document.excelFileSizeExceeded', {
+              extension: parts[1],
+              limit: parts[2],
+              size: parts[3],
+            })
+          }
+        } else {
+          // Use the original error message for other errors
+          errorMessage = apiError.message
+        }
+      }
       toast({
         variant: 'destructive',
-        description: t('document.document.reindexFailed'),
+        description: errorMessage,
       })
     } finally {
       if (isMountedRef.current) {

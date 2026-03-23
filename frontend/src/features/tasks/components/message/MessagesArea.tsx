@@ -132,6 +132,9 @@ function StreamingMessageBubble({
     result: message.result,
     // Pass sources for RAG knowledge base citations
     sources: message.sources,
+    // Pass reasoning content and streaming state
+    reasoningContent: message.reasoningContent,
+    isReasoningStreaming: message.isReasoningStreaming,
   }
 
   return (
@@ -1078,6 +1081,7 @@ function MessagesArea({
         status: msg.status,
         error: msg.error,
         reasoningContent: msg.reasoningContent, // DeepSeek R1 reasoning content
+        isReasoningStreaming: msg.isReasoningStreaming,
       }
     },
     [appliedCorrections]

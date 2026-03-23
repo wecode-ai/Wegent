@@ -65,6 +65,7 @@ from app.services.chat.operations import (
 from app.services.chat.rag import process_context_and_rag
 from app.services.chat.storage import session_manager
 from app.services.chat.storage.db import get_db_session, run_sync_in_executor
+from app.utils.prompt_utils import extract_display_prompt
 from shared.telemetry.context import (
     set_request_context,
     set_user_context,
@@ -1290,10 +1291,17 @@ class ChatNamespace(socketio.AsyncNamespace):
                         )
                         break
 
+            # Extract original user text from stored prompt.
+            # After deep-thinking persistence, user_subtask.prompt may be a
+            # JSON-serialized content array (e.g. '[{"type":"text","text":"hello"}, ...]').
+            # Passing that string as-is would cause MessageConverter.build_messages
+            # to treat it as plain text and wrap it again, producing double-layered nesting.
+            user_message = extract_display_prompt(user_subtask.prompt) or ""
+
             retry_payload = ChatSendPayload(
                 task_id=payload.task_id,
                 team_id=team.id,
-                message=user_subtask.prompt or "",
+                message=user_message,
                 attachment_id=attachment_id,
                 force_override_bot_model=model_id,
                 force_override_bot_model_type=model_type,
@@ -1308,7 +1316,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                 assistant_subtask=failed_ai_subtask,  # Reuse the same subtask
                 team=team,
                 user=user,
-                message=user_subtask.prompt or "",
+                message=user_message,
                 payload=retry_payload,
                 task_room=task_room,
                 device_id=device_id,
@@ -1572,7 +1580,7 @@ def _fetch_subtasks_for_task_join(
                     "id": st.id,
                     "message_id": st.message_id,
                     "role": st.role.value,
-                    "prompt": st.prompt,
+                    "prompt": extract_display_prompt(st.prompt),
                     "result": st.result,
                     "status": st.status.value,
                     "progress": st.progress,
@@ -1710,7 +1718,7 @@ def _fetch_history_messages(task_id: int, after_message_id: int) -> list:
                 "message_id": st.message_id,
                 "role": st.role.value,
                 "content": (
-                    st.prompt
+                    extract_display_prompt(st.prompt)
                     if st.role == SubtaskRole.USER
                     else (st.result.get("value", "") if st.result else "")
                 ),

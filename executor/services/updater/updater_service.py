@@ -56,12 +56,12 @@ def setup_upgrade_logging(verbose: bool = False) -> logging.Logger:
             log_dir / "upgrade.log",
             maxBytes=10 * 1024 * 1024,
             backupCount=5,
-            encoding="utf-8"
+            encoding="utf-8",
         )
         file_handler.setLevel(logging.DEBUG)
-        file_handler.setFormatter(logging.Formatter(
-            "%(asctime)s - %(levelname)s - %(message)s"
-        ))
+        file_handler.setFormatter(
+            logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+        )
         logger.addHandler(file_handler)
         logger.setLevel(logging.DEBUG)
     else:
@@ -99,7 +99,12 @@ class UpdaterService:
     # Minimum free disk space required (100 MB with 50% safety margin = 150 MB)
     MIN_FREE_SPACE = 150 * 1024 * 1024
 
-    def __init__(self, update_config: UpdateConfig, auto_confirm: bool = False, verbose: bool = False):
+    def __init__(
+        self,
+        update_config: UpdateConfig,
+        auto_confirm: bool = False,
+        verbose: bool = False,
+    ):
         """Initialize the updater service.
 
         Args:
@@ -142,10 +147,15 @@ class UpdaterService:
             logger.info(f"Update source: registry ({registry_url})")
             print(f"  Source: registry ({registry_url})")
         else:
-            from executor.services.updater.github_version_checker import GithubVersionChecker
+            from executor.services.updater.github_version_checker import (
+                GithubVersionChecker,
+            )
 
             # Get the embedded or default GitHub repo
-            github_repo = GithubVersionChecker._EMBEDDED_GITHUB_REPO or GithubVersionChecker.DEFAULT_GITHUB_REPO
+            github_repo = (
+                GithubVersionChecker._EMBEDDED_GITHUB_REPO
+                or GithubVersionChecker.DEFAULT_GITHUB_REPO
+            )
             logger.info(f"Update source: GitHub ({github_repo})")
             print(f"  Source: GitHub ({github_repo})")
         update_info = await self.version_checker.check_for_updates(current_version)
@@ -222,7 +232,9 @@ class UpdaterService:
             success = self.binary_replacer.replace_binary(new_binary, current_binary)
 
             if not success:
-                logger.error("Failed to replace binary (permission denied or file in use)")
+                logger.error(
+                    "Failed to replace binary (permission denied or file in use)"
+                )
                 return UpdateResult(
                     success=False,
                     error="Failed to replace binary (permission denied or file in use)",
@@ -294,7 +306,9 @@ class UpdaterService:
             if stat.free < self.MIN_FREE_SPACE:
                 free_mb = stat.free // (1024 * 1024)
                 required_mb = self.MIN_FREE_SPACE // (1024 * 1024)
-                print(f"✗ Insufficient disk space: {free_mb} MB free, {required_mb} MB required")
+                print(
+                    f"✗ Insufficient disk space: {free_mb} MB free, {required_mb} MB required"
+                )
                 return False
             return True
         except Exception as e:

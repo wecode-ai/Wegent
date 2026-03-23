@@ -46,9 +46,9 @@ def _infer_model_type(model: str) -> str:
 @click.option(
     "--temperature",
     "-t",
-    default=0.7,
+    default=None,
     type=float,
-    help="Sampling temperature (0.0-2.0)",
+    help="Sampling temperature (0.0-2.0, default: provider default)",
 )
 @click.option(
     "--max-tokens",
@@ -107,7 +107,7 @@ async def _chat_interactive(
     session: str,
     system: str,
     storage: str,
-    temperature: float,
+    temperature: float | None,
     max_tokens: int,
     show_thinking: bool,
 ):
@@ -180,16 +180,15 @@ async def _chat_interactive(
         "api_key": api_key,
         "base_url": config.get("base_urls", {}).get(model_type),
         "default_headers": {},
+        "temperature": temperature,
+        "max_tokens": max_tokens,
     }
 
     # Create agent config
     agent_config = AgentConfig(
         model_config=model_config,
         system_prompt=system or config.get("default_system_prompt"),
-        temperature=temperature,
-        max_tokens=max_tokens,
         enable_deep_thinking=show_thinking,
-        enable_message_compression=True,
     )
 
     # Create agent

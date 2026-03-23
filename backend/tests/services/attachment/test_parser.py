@@ -282,13 +282,19 @@ if __name__ == "__main__":
 
     def test_detect_mime_type_binary(self):
         """Test MIME detection for binary content."""
-        # Create content with PNG header (more reliably detected as binary)
-        # PNG magic bytes: 89 50 4E 47 0D 0A 1A 0A
-        png_header = bytes([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
-        content = png_header + bytes(100)
-        mime_type = self.parser.detect_mime_type(content)
-        # The incomplete PNG data will be detected as binary (not text)
-        # Could be application/octet-stream or image/png depending on libmagic version
+        # Create a minimal valid GIF87a image that libmagic reliably detects as binary
+        # GIF87a magic bytes followed by minimal valid header
+        gif_data = (
+            b"GIF87a"  # GIF magic + version
+            b"\x01\x00\x01\x00"  # width=1, height=1
+            b"\x80\x00\x00"  # GCT flag, background, aspect ratio
+            b"\xff\xff\xff\x00\x00\x00"  # 2-color GCT
+            b",\x00\x00\x00\x00\x01\x00\x01\x00\x00"  # image descriptor
+            b"\x02\x02\x44\x01\x00"  # LZW min code size + data
+            b"\x3b"  # trailer
+        )
+        mime_type = self.parser.detect_mime_type(gif_data)
+        # GIF data is reliably detected as image/gif across libmagic versions
         assert not mime_type.startswith("text/")
 
     def test_is_text_mime_type_text_family(self):

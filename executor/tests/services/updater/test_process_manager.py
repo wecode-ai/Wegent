@@ -189,7 +189,9 @@ class TestProcessManager:
             with patch.object(sys, "executable", "/usr/bin/wegent-executor"):
                 with patch("subprocess.Popen", return_value=mock_proc) as mock_popen:
                     with patch.object(Path, "exists", return_value=True):
-                        with patch.object(process_manager, "_is_process_alive", return_value=True):
+                        with patch.object(
+                            process_manager, "_is_process_alive", return_value=True
+                        ):
                             result = process_manager.restart_executor()
                             assert result is True
                             mock_popen.assert_called_once()
@@ -203,7 +205,9 @@ class TestProcessManager:
         with patch.object(sys, "frozen", False, create=True):
             with patch.object(sys, "executable", sys.executable):
                 with patch("subprocess.Popen", return_value=mock_proc) as mock_popen:
-                    with patch.object(process_manager, "_is_process_alive", return_value=True):
+                    with patch.object(
+                        process_manager, "_is_process_alive", return_value=True
+                    ):
                         result = process_manager.restart_executor()
                         assert result is True
                         mock_popen.assert_called_once()

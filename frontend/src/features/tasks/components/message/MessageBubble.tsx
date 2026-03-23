@@ -127,6 +127,8 @@ export interface Message {
   sources?: SourceReference[]
   /** Reasoning/thinking content from DeepSeek R1 and similar models */
   reasoningContent?: string
+  /** Whether reasoning content is actively streaming */
+  isReasoningStreaming?: boolean
 }
 
 /** Configuration for paragraph-level action button */
@@ -1372,7 +1374,7 @@ const MessageBubble = memo(
               {!isUserTypeMessage && (msg.reasoningContent || msg.result?.reasoning_content) && (
                 <ReasoningDisplay
                   reasoningContent={msg.reasoningContent || msg.result?.reasoning_content || ''}
-                  isStreaming={msg.subtaskStatus === 'RUNNING' || msg.status === 'streaming'}
+                  isStreaming={!!msg.isReasoningStreaming}
                 />
               )}
               {/* Show tool blocks for messages with thinking but no blocks */}

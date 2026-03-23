@@ -17,6 +17,8 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from app.utils.prompt_utils import extract_display_prompt
+
 logger = logging.getLogger(__name__)
 
 
@@ -185,8 +187,9 @@ async def _dispatch_task_async(task_id: int) -> None:
                 subtask.status = SubtaskStatus.RUNNING
                 db.commit()
 
-                # Get message from subtask
-                message = subtask.prompt or ""
+                # Extract original user text from stored prompt to prevent
+                # double-wrapping of already-formatted content arrays.
+                message = extract_display_prompt(subtask.prompt) or ""
 
                 # Build ExecutionRequest
                 request = builder.build(

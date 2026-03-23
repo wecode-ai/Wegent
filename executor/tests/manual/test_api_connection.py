@@ -10,8 +10,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
-import requests
 from urllib.parse import urljoin
+
+import requests
 
 from executor.services.updater.github_version_checker import GithubVersionChecker
 
@@ -108,6 +109,7 @@ def test_api_connection():
     print("=" * 60)
 
     import socket
+
     try:
         hostname = "api.github.com"
         ip = socket.gethostbyname(hostname)

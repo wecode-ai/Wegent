@@ -358,11 +358,14 @@ def _inject_documents_directly(
 
     # Inject into message
     if isinstance(message, list):
-        # OpenAI Responses API format - prepend to first input_text block
-        final_message = _prepend_to_responses_api_content(message, documents_text)
+        # OpenAI Responses API format - insert context block before user message
+        final_message = _insert_context_block(message, documents_text)
     else:
-        # String message - prepend documents
-        final_message = documents_text + f"\n\n[User Question]:\n{message}"
+        # String message - convert to list format with separate context block
+        final_message = [
+            {"type": "input_text", "text": documents_text},
+            {"type": "input_text", "text": message},
+        ]
 
     logger.info(
         f"[_inject_documents_directly] Injected {len(documents_content)} documents "
@@ -372,40 +375,40 @@ def _inject_documents_directly(
     return final_message, base_system_prompt, extra_tools
 
 
-def _prepend_to_responses_api_content(
+def _insert_context_block(
     content_blocks: list[dict[str, Any]],
-    prefix_text: str,
+    context_text: str,
 ) -> list[dict[str, Any]]:
     """
-    Prepend text to the first input_text block in OpenAI Responses API format.
+    Insert a context text block before the last input_text (user message) block.
+
+    Convention: the last input_text block is always the user's message;
+    all preceding input_text blocks are system context.  This inserts a new
+    context block right before the user message.
 
     Args:
         content_blocks: List of content blocks in Responses API format
-        prefix_text: Text to prepend
+        context_text: Context text to insert
 
     Returns:
-        Modified content blocks with prefix prepended to first text block
+        New content blocks list with context block inserted
     """
-    result = []
-    prefix_added = False
+    result = list(content_blocks)
+    context_block = {"type": "input_text", "text": context_text}
 
-    for block in content_blocks:
-        if block.get("type") == "input_text" and not prefix_added:
-            # Prepend to first input_text block
-            original_text = block.get("text", "")
-            result.append(
-                {
-                    "type": "input_text",
-                    "text": prefix_text + "\n\n" + original_text,
-                }
-            )
-            prefix_added = True
-        else:
-            result.append(block)
+    # Find the last input_text index (the user message)
+    last_text_idx = None
+    for i in range(len(result) - 1, -1, -1):
+        if result[i].get("type") == "input_text":
+            last_text_idx = i
+            break
 
-    # If no input_text block found, add one at the beginning
-    if not prefix_added:
-        result.insert(0, {"type": "input_text", "text": prefix_text})
+    if last_text_idx is not None:
+        # Insert context block just before the user message
+        result.insert(last_text_idx, context_block)
+    else:
+        # No text blocks at all — insert at beginning
+        result.insert(0, context_block)
 
     return result
 

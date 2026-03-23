@@ -28,6 +28,7 @@ from shared.models import (
 from shared.models.responses_api import ResponsesAPIStreamEvents
 from shared.models.responses_api_emitter import EventTransport
 
+from .dispatcher import extract_completed_result
 from .emitters import ResultEmitter
 
 logger = logging.getLogger(__name__)
@@ -128,34 +129,12 @@ class EmitterBridgeTransport(EventTransport):
         # response.completed -> DONE
         elif event_type == ResponsesAPIStreamEvents.RESPONSE_COMPLETED.value:
             response_data = data.get("response", {})
-            usage = response_data.get("usage")
-
-            # Extract text content from response output
-            value = ""
-            output_items = response_data.get("output", [])
-            for item in output_items:
-                if isinstance(item, dict):
-                    for content_block in item.get("content", []):
-                        if isinstance(content_block, dict) and content_block.get(
-                            "text"
-                        ):
-                            value += content_block["text"]
-
             return ExecutionEvent(
                 type=EventType.DONE.value,
                 task_id=self.task_id,
                 subtask_id=self.subtask_id,
                 content="",
-                result={
-                    "value": value,
-                    "usage": usage,
-                    "sources": response_data.get("sources"),
-                    "blocks": response_data.get("blocks"),
-                    "silent_exit": response_data.get("silent_exit"),
-                    "silent_exit_reason": response_data.get("silent_exit_reason"),
-                    "loaded_skills": response_data.get("loaded_skills"),
-                    "stop_reason": response_data.get("stop_reason"),
-                },
+                result=extract_completed_result(response_data),
                 message_id=message_id,
             )
 

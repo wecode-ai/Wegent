@@ -80,16 +80,23 @@ def _parse_args() -> argparse.Namespace:
         "--version", "-v", action="store_true", help="Print version and exit"
     )
     parser.add_argument(
-        "--upgrade", action="store_true", help="Check for updates and upgrade if available"
+        "--upgrade",
+        action="store_true",
+        help="Check for updates and upgrade if available",
     )
     parser.add_argument(
-        "--yes", "-y", action="store_true", help="Auto-confirm upgrade without prompting"
+        "--yes",
+        "-y",
+        action="store_true",
+        help="Auto-confirm upgrade without prompting",
     )
     parser.add_argument(
         "--verbose", action="store_true", help="Enable verbose logging for upgrade"
     )
     parser.add_argument(
-        "--config", type=str, help="Path to config file (default: ~/.wegent-executor/device-config.json)"
+        "--config",
+        type=str,
+        help="Path to config file (default: ~/.wegent-executor/device-config.json)",
     )
     parser.add_argument(
         "-h", "--help", action="store_true", help="Show this help message and exit"

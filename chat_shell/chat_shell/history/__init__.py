@@ -11,9 +11,14 @@ Supports two modes:
 - HTTP mode: Remote API call via /internal/chat/history (session_id: "task-{task_id}")
 """
 
-from .loader import close_remote_history_store, get_chat_history
+from .loader import (
+    close_remote_history_store,
+    get_chat_history,
+    update_user_message_content,
+)
 
 __all__ = [
     "get_chat_history",
     "close_remote_history_store",
+    "update_user_message_content",
 ]

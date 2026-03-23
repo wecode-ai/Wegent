@@ -152,7 +152,9 @@ class ProcessManager:
                 import ctypes
 
                 kernel32 = ctypes.windll.kernel32
-                handle = kernel32.OpenProcess(1, False, info.pid)  # PROCESS_TERMINATE = 1
+                handle = kernel32.OpenProcess(
+                    1, False, info.pid
+                )  # PROCESS_TERMINATE = 1
                 if handle:
                     kernel32.CloseHandle(handle)
                     return True
@@ -226,7 +228,9 @@ class ProcessManager:
                 time.sleep(0.5)
 
             # Force kill if still running
-            logger.warning(f"Process pid={pid} did not terminate gracefully, force killing")
+            logger.warning(
+                f"Process pid={pid} did not terminate gracefully, force killing"
+            )
             if self._signal_handler.terminate_forcefully(pid):
                 # Wait a bit for force kill to take effect
                 time.sleep(1)
@@ -293,7 +297,12 @@ class ProcessManager:
                 del env[key]
 
         # Log SSL certificate related variables for debugging
-        ssl_vars = ["SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "OPENSSL_CONF"]
+        ssl_vars = [
+            "SSL_CERT_FILE",
+            "REQUESTS_CA_BUNDLE",
+            "CURL_CA_BUNDLE",
+            "OPENSSL_CONF",
+        ]
         logger.info("SSL/Certificate environment variables:")
         for var in ssl_vars:
             if var in env:
