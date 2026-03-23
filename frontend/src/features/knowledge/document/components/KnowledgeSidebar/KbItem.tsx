@@ -58,7 +58,7 @@ export function KbItem({
       </span>
 
       {/* Name */}
-      <span className="flex-1 truncate text-xs">{kb.name}</span>
+      <span className="flex-1 truncate text-sm">{kb.name}</span>
 
       {/* Secondary text (e.g., time ago) */}
       {secondaryText && (
