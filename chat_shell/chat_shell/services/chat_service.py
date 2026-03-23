@@ -288,6 +288,31 @@ class ChatService(ChatInterface):
             )
             add_span_event("messages_built", {"message_count": len(messages)})
 
+            # Persist the formatted user message (with system-reminder time block) to
+            # the DB so that future turns load the same exact content, enabling
+            # prefix-cache hits.  We do this only when datetime was injected
+            # (enable_deep_thinking=True) and the user subtask ID is known.
+            # This is best-effort: a transient failure should not abort streaming.
+            if request.enable_deep_thinking and request.user_subtask_id:
+                last_msg_content = messages[-1].get("content") if messages else None
+                if isinstance(last_msg_content, list):
+                    try:
+                        from chat_shell.history import update_user_message_content
+
+                        await update_user_message_content(
+                            task_id=request.task_id,
+                            user_subtask_id=request.user_subtask_id,
+                            content=last_msg_content,
+                        )
+                    except Exception:
+                        logger.warning(
+                            "Failed to persist formatted user message for "
+                            "prefix-cache optimization (task_id=%s, subtask_id=%s)",
+                            request.task_id,
+                            request.user_subtask_id,
+                            exc_info=True,
+                        )
+
             # Create tool event handler
             add_span_event("creating_tool_event_handler")
             t2 = time.perf_counter()
@@ -336,6 +361,11 @@ class ChatService(ChatInterface):
                 )
                 state.is_silent_exit = True
                 state.silent_exit_reason = e.reason
+
+            # Transfer messages chain from agent builder to streaming state
+            messages_chain = getattr(agent_builder, "_last_messages_chain", None)
+            if messages_chain:
+                state.messages_chain = messages_chain
 
             # Finalize if not cancelled
             if not core.is_cancelled():

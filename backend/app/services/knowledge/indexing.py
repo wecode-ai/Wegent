@@ -41,7 +41,9 @@ from shared.telemetry import add_span_event
 
 logger = logging.getLogger(__name__)
 
-RAG_INDEXING_DISABLED_EXTENSIONS = frozenset({".xls", ".xlsx"})
+# Excel file size limit for RAG indexing (2MB)
+EXCEL_FILE_SIZE_LIMIT = 2 * 1024 * 1024  # 2MB in bytes
+EXCEL_EXTENSIONS = frozenset({".xls", ".xlsx"})
 
 
 @dataclass
@@ -86,8 +88,18 @@ def normalize_document_extension(file_extension: Optional[str]) -> str:
 def get_rag_indexing_skip_reason(
     source_type: Optional[str],
     file_extension: Optional[str],
+    file_size: Optional[int] = None,
 ) -> Optional[str]:
-    """Return the reason why a document should skip RAG indexing, if any."""
+    """Return the reason why a document should skip RAG indexing, if any.
+
+    Args:
+        source_type: The source type of the document (e.g., "file", "table")
+        file_extension: The file extension (e.g., ".xlsx", "pdf")
+        file_size: The file size in bytes (optional, used for Excel file size check)
+
+    Returns:
+        A string describing the reason to skip indexing, or None if indexing is allowed
+    """
     normalized_source_type = (source_type or "").strip().lower()
     normalized_extension = normalize_document_extension(file_extension)
 
@@ -96,10 +108,14 @@ def get_rag_indexing_skip_reason(
             "Table documents are queried in real-time and do not support RAG indexing"
         )
 
-    if normalized_extension in RAG_INDEXING_DISABLED_EXTENSIONS:
-        return (
-            f"Excel documents ({normalized_extension}) are excluded from RAG indexing"
-        )
+    # Check Excel file size limit (2MB)
+    if normalized_extension in EXCEL_EXTENSIONS:
+        if file_size is not None and file_size > EXCEL_FILE_SIZE_LIMIT:
+            size_mb = file_size / (1024 * 1024)
+            limit_mb = EXCEL_FILE_SIZE_LIMIT / (1024 * 1024)
+            # Return error code with parameters for i18n support
+            # Format: EXCEL_FILE_SIZE_EXCEEDED|extension|limit|size
+            return f"EXCEL_FILE_SIZE_EXCEEDED|{normalized_extension}|{limit_mb:.0f}|{size_mb:.2f}"
 
     return None
 
@@ -476,6 +492,7 @@ def run_document_indexing(
         document = None
         file_extension = None
         source_type = None
+        file_size = None
 
         if document_id is not None:
             from app.models.knowledge import KnowledgeDocument
@@ -488,6 +505,7 @@ def run_document_indexing(
             if document:
                 file_extension = document.file_extension
                 source_type = document.source_type
+                file_size = document.file_size
         elif attachment_id:
             attachment = (
                 db.query(SubtaskContext)
@@ -499,8 +517,11 @@ def run_document_indexing(
             )
             if attachment:
                 file_extension = attachment.file_extension
+                file_size = attachment.file_size
 
-        skip_reason = get_rag_indexing_skip_reason(source_type, file_extension)
+        skip_reason = get_rag_indexing_skip_reason(
+            source_type, file_extension, file_size
+        )
         if skip_reason:
             logger.info(
                 f"[Indexing] Skipping: kb_id={knowledge_base_id}, "

@@ -27,7 +27,9 @@ class TestBinaryReplacer:
     @patch("executor.services.updater.binary_replacer.traced_session")
     @patch("tempfile.mkstemp")
     @patch("os.close")
-    def test_download_binary_success(self, mock_close, mock_mkstemp, mock_session_class):
+    def test_download_binary_success(
+        self, mock_close, mock_mkstemp, mock_session_class
+    ):
         """Test successful binary download."""
         mock_response = Mock()
         mock_response.headers = {"content-length": "1024"}
@@ -104,14 +106,20 @@ class TestBinaryReplacer:
             mock_copy2.assert_called_once()
             mock_chmod.assert_called_once_with(
                 new_binary,
-                stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP | stat.S_IROTH | stat.S_IXOTH,
+                stat.S_IRWXU
+                | stat.S_IRGRP
+                | stat.S_IXGRP
+                | stat.S_IROTH
+                | stat.S_IXOTH,
             )
             mock_replace.assert_called_once_with(new_binary, current_binary)
 
     @patch("shutil.copy2")
     @patch("os.chmod")
     @patch("os.replace")
-    def test_replace_binary_permission_error(self, mock_replace, mock_chmod, mock_copy2):
+    def test_replace_binary_permission_error(
+        self, mock_replace, mock_chmod, mock_copy2
+    ):
         """Test handling permission error during replacement."""
         new_binary = Path("/tmp/new-binary")
         current_binary = Path("/usr/local/bin/wegent-executor")

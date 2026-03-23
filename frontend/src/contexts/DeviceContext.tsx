@@ -85,9 +85,12 @@ export function DeviceProvider({ children }: DeviceProviderProps) {
    * @param deviceId - Device unique identifier
    * @returns True if the device is upgrading
    */
-  const isDeviceUpgrading = useCallback((deviceId: string): boolean => {
-    return !!upgradingDevices[deviceId]
-  }, [upgradingDevices])
+  const isDeviceUpgrading = useCallback(
+    (deviceId: string): boolean => {
+      return !!upgradingDevices[deviceId]
+    },
+    [upgradingDevices]
+  )
 
   /**
    * Get upgrade status for a device.
@@ -95,9 +98,12 @@ export function DeviceProvider({ children }: DeviceProviderProps) {
    * @param deviceId - Device unique identifier
    * @returns Upgrade state or undefined if not upgrading
    */
-  const getUpgradeStatus = useCallback((deviceId: string): DeviceUpgradeState | undefined => {
-    return upgradingDevices[deviceId]
-  }, [upgradingDevices])
+  const getUpgradeStatus = useCallback(
+    (deviceId: string): DeviceUpgradeState | undefined => {
+      return upgradingDevices[deviceId]
+    },
+    [upgradingDevices]
+  )
 
   // Fetch all devices (including offline)
   const refreshDevices = useCallback(async () => {
@@ -165,7 +171,7 @@ export function DeviceProvider({ children }: DeviceProviderProps) {
       setDevices(prev => {
         refreshDevices()
         const exists = prev.find(d => d.device_id === data.device_id)
-        if (exists) {          
+        if (exists) {
           // Update status immediately for better UX while refresh is in progress
           return prev.map(d =>
             d.device_id === data.device_id

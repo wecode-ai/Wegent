@@ -33,6 +33,7 @@ from app.schemas.device import (
     DeviceType,
 )
 from app.services.device.base_provider import BaseDeviceProvider
+from app.services.device.version_service import executor_version_service
 from wecode.config.nevis_config import nevis_settings
 from wecode.service.cloud_device_script import generate_simple_startup_script
 from wecode.service.nevis_client import NevisClient, NevisClientError, nevis_client
@@ -619,7 +620,10 @@ class CloudDeviceProvider(BaseDeviceProvider):
 
         # Get version info
         executor_version = online_info.get("executor_version") if online_info else None
-        latest_version = settings.EXECUTOR_LATEST_VERSION
+        latest_version = (
+            await executor_version_service.get_latest_version()
+            or settings.EXECUTOR_LATEST_VERSION
+        )
         update_available = self._is_update_available(executor_version, latest_version)
 
         return {
@@ -713,7 +717,10 @@ class CloudDeviceProvider(BaseDeviceProvider):
             executor_version = (
                 online_info.get("executor_version") if online_info else None
             )
-            latest_version = settings.EXECUTOR_LATEST_VERSION
+            latest_version = (
+                await executor_version_service.get_latest_version()
+                or settings.EXECUTOR_LATEST_VERSION
+            )
             update_available = self._is_update_available(
                 executor_version, latest_version
             )

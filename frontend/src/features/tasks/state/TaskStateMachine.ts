@@ -66,6 +66,8 @@ export interface UnifiedMessage {
   shouldShowSender?: boolean
   subtaskStatus?: string
   reasoningContent?: string
+  /** Whether reasoning content is actively streaming (reasoning chunks arriving, no content yet) */
+  isReasoningStreaming?: boolean
   result?: {
     value?: string
     thinking?: unknown[]
@@ -695,11 +697,16 @@ export class TaskStateMachine {
       if (chunk.result?.reasoning_chunk) {
         updatedMessage.reasoningContent =
           (existingMessage.reasoningContent || '') + chunk.result.reasoning_chunk
+        updatedMessage.isReasoningStreaming = true
       } else if (chunk.result?.reasoning_content) {
         updatedMessage.reasoningContent = chunk.result.reasoning_content
       }
 
-      // Handle blocks
+      // When normal content arrives, reasoning phase is over
+      if (chunk.content) {
+        updatedMessage.isReasoningStreaming = false
+      }
+
       // Handle blocks
       // CRITICAL: Always call mergeBlocksFromPendingChunk and update result.blocks
       // This ensures text blocks are created for ClaudeCode executor
@@ -1104,8 +1111,14 @@ export class TaskStateMachine {
     if (event.result?.reasoning_chunk) {
       updatedMessage.reasoningContent =
         (existingMessage.reasoningContent || '') + event.result.reasoning_chunk
+      updatedMessage.isReasoningStreaming = true
     } else if (event.result?.reasoning_content) {
       updatedMessage.reasoningContent = event.result.reasoning_content
+    }
+
+    // When normal content arrives, reasoning phase is over
+    if (event.content) {
+      updatedMessage.isReasoningStreaming = false
     }
 
     // Handle blocks
@@ -1296,6 +1309,7 @@ export class TaskStateMachine {
       status: finalStatus,
       subtaskStatus: finalSubtaskStatus,
       content: finalContent,
+      isReasoningStreaming: false,
       error: event.hasError ? event.errorMessage : existingMessage.error,
       // CRITICAL FIX: Only update messageId if event.messageId is defined
       // Otherwise preserve the existing messageId from chat:start

@@ -1039,6 +1039,8 @@
     "context_window_hint": "最大上下文窗口大小（token 数）。用于消息压缩。",
     "max_output_tokens": "最大输出 Token",
     "max_output_tokens_hint": "模型每次响应可生成的最大 token 数。",
+    "thinking_config": "思考配置",
+    "thinking_config_hint": "供应商原生的思考/推理 JSON 配置，将原样传递给 LLM API。留空则不启用。",
     "fetch_models": "加载模型",
     "fetching_models": "加载中...",
     "fetch_success": "成功加载 {{count}} 个模型",
@@ -1062,7 +1064,9 @@
       "custom_headers_invalid": "自定义 Headers 格式无效",
       "custom_headers_invalid_json": "请输入有效的 JSON 格式",
       "custom_headers_invalid_object": "自定义 Headers 必须是一个对象",
-      "custom_headers_values_must_be_strings": "所有 Header 值必须是字符串"
+      "custom_headers_values_must_be_strings": "所有 Header 值必须是字符串",
+      "thinking_config_invalid_json": "思考配置必须是有效的 JSON",
+      "thinking_config_invalid_object": "思考配置必须是 JSON 对象"
     }
   },
   "task_submit": {

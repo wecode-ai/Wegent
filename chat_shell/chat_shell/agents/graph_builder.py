@@ -13,13 +13,20 @@ This module provides a simplified LangGraph agent implementation using:
 """
 
 import asyncio
+import json
 import logging
 import time
 from collections.abc import AsyncGenerator
 from typing import Any, Callable, Optional
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import (
+    AIMessage,
+    BaseMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
 from langchain_core.messages.utils import convert_to_messages
 from langchain_core.runnables import Runnable
 from langchain_core.tools.base import BaseTool
@@ -88,6 +95,59 @@ class ToolCallTruncatedError(Exception):
         super().__init__(f"Tool call truncated: {reason}")
 
 
+def _serialize_messages_chain(messages: list[BaseMessage]) -> list[dict[str, Any]]:
+    """Serialize LangChain messages to OpenAI-compatible dicts for history persistence.
+
+    Converts AIMessage and ToolMessage objects produced during a single agent turn
+    into a list of dicts that can be:
+    1. Stored in ``subtask.result.messages_chain``
+    2. Loaded back via ``langchain_core.messages.utils.convert_to_messages``
+
+    Preserves tool_calls, tool results, and reasoning_content.
+    """
+    chain: list[dict[str, Any]] = []
+    for msg in messages:
+        if isinstance(msg, AIMessage):
+            entry: dict[str, Any] = {"role": "assistant", "content": msg.content}
+            if msg.tool_calls:
+                entry["tool_calls"] = [
+                    {
+                        "id": tc.get("id", ""),
+                        "type": "function",
+                        "function": {
+                            "name": tc.get("name", ""),
+                            "arguments": (
+                                json.dumps(tc.get("args", {}))
+                                if isinstance(tc.get("args"), dict)
+                                else str(tc.get("args", ""))
+                            ),
+                        },
+                    }
+                    for tc in msg.tool_calls
+                ]
+            # Preserve reasoning content (DeepSeek R1 and similar models)
+            reasoning = msg.additional_kwargs.get("reasoning_content")
+            if reasoning:
+                entry.setdefault("additional_kwargs", {})[
+                    "reasoning_content"
+                ] = reasoning
+            chain.append(entry)
+        elif isinstance(msg, ToolMessage):
+            entry = {
+                "role": "tool",
+                "content": (
+                    msg.content
+                    if isinstance(msg.content, str)
+                    else json.dumps(msg.content)
+                ),
+                "tool_call_id": msg.tool_call_id or "",
+            }
+            if msg.name:
+                entry["name"] = msg.name
+            chain.append(entry)
+    return chain
+
+
 # SystemMessage content to inject after gemini_search has been called
 # This strongly instructs the model to stop calling tools and provide a final answer
 GEMINI_SEARCH_COMPLETE_INSTRUCTION = """[SYSTEM INSTRUCTION - RESEARCH COMPLETE]
@@ -147,6 +207,9 @@ class LangGraphAgentBuilder:
 
         # Initialize all_tools (will be updated during agent build to include skill tools)
         self.all_tools: list[BaseTool] = self.tools
+
+        # Messages chain produced by the last stream_tokens() call
+        self._last_messages_chain: list[dict[str, Any]] = []
 
         # Automatically detect PromptModifierTool instances from registered tools
         self._prompt_modifier_tools = self._find_prompt_modifier_tools()
@@ -352,21 +415,35 @@ class LangGraphAgentBuilder:
 
             for msg in messages:
                 if isinstance(msg, SystemMessage) and not system_updated:
-                    # Append modifications to existing system message
-                    original_content = (
-                        msg.content
-                        if isinstance(msg.content, str)
-                        else str(msg.content)
-                    )
-                    updated_content = original_content + combined_modification
+                    # Append modifications to existing system message.
+                    # Content may be a string or a list of content blocks
+                    # (e.g., when Anthropic cache_control breakpoints are set).
+                    # Preserve the original format to keep cache markers intact.
+                    if isinstance(msg.content, list):
+                        # List of content blocks — append modification as a new
+                        # text block so existing cache_control markers stay valid.
+                        updated_content = msg.content + [
+                            {"type": "text", "text": combined_modification}
+                        ]
+                    else:
+                        updated_content = msg.content + combined_modification
                     new_messages.append(SystemMessage(content=updated_content))
                     system_updated = True
 
                     # Log the final system prompt metadata at INFO level
                     # Full content is only logged at DEBUG level to avoid leaking sensitive data
+                    content_len = (
+                        sum(
+                            len(b.get("text", ""))
+                            for b in updated_content
+                            if isinstance(b, dict)
+                        )
+                        if isinstance(updated_content, list)
+                        else len(updated_content)
+                    )
                     logger.info(
                         "[prompt_modifier] Final system prompt (len=%d)",
-                        len(updated_content),
+                        content_len,
                     )
                     # logger.debug(
                     #     "[prompt_modifier] Final system prompt content:\n%s",
@@ -830,6 +907,9 @@ class LangGraphAgentBuilder:
         truncation_detected = False
         truncation_reason = ""
 
+        # Collect the complete LangGraph state messages for history persistence
+        _collected_state_messages: list[BaseMessage] = []
+
         # TTFT tracking variables
         first_token_received = False
         llm_request_start_time: float | None = None
@@ -945,7 +1025,8 @@ class LangGraphAgentBuilder:
                             streamed_content = True
                             yield content
                         elif isinstance(content, list):
-                            # Handle list content (e.g., multimodal or tool calls)
+                            # Handle list content (e.g., multimodal, tool calls,
+                            # or Claude thinking blocks)
                             for part in content:
                                 if isinstance(part, str) and part:
                                     logger.debug(
@@ -955,15 +1036,50 @@ class LangGraphAgentBuilder:
                                     streamed_content = True
                                     yield part
                                 elif isinstance(part, dict):
-                                    # Extract text from dict format
-                                    text = part.get("text", "")
-                                    if text:
-                                        logger.debug(
-                                            "[stream_tokens] Yielding dict text: %s...",
-                                            text[:50] if len(text) > 50 else text,
-                                        )
-                                        streamed_content = True
-                                        yield text
+                                    part_type = part.get("type", "")
+                                    # Claude thinking blocks: route through
+                                    # reasoning markers for frontend display
+                                    if part_type == "thinking":
+                                        thinking_text = part.get("thinking", "")
+                                        if thinking_text:
+                                            logger.debug(
+                                                "[stream_tokens] Yielding Claude thinking: %s...",
+                                                (
+                                                    thinking_text[:50]
+                                                    if len(thinking_text) > 50
+                                                    else thinking_text
+                                                ),
+                                            )
+                                            yield f"__REASONING__{thinking_text}__END_REASONING__"
+                                    elif part_type == "reasoning":
+                                        # OpenAI Responses API reasoning blocks:
+                                        # {"type": "reasoning", "summary": [{"type": "summary_text", "text": "..."}]}
+                                        for item in part.get("summary") or []:
+                                            if (
+                                                isinstance(item, dict)
+                                                and item.get("type") == "summary_text"
+                                            ):
+                                                summary_text = item.get("text", "")
+                                                if summary_text:
+                                                    logger.debug(
+                                                        "[stream_tokens] Yielding Responses API reasoning: %s...",
+                                                        (
+                                                            summary_text[:50]
+                                                            if len(summary_text) > 50
+                                                            else summary_text
+                                                        ),
+                                                    )
+                                                    yield f"__REASONING__{summary_text}__END_REASONING__"
+                                    else:
+                                        # Extract text from dict format
+                                        text = part.get("text", "")
+                                        if text:
+                                            logger.debug(
+                                                "[stream_tokens] Yielding dict text: %s...",
+                                                text[:50] if len(text) > 50 else text,
+                                            )
+                                            streamed_content = True
+                                            yield text
                         # Log when content is empty or unexpected type
                         elif content:
                             logger.debug(
@@ -1121,6 +1237,10 @@ class LangGraphAgentBuilder:
                     messages_output = output.get("messages", [])
 
                     if messages_output:
+                        # Capture the most complete messages list for history
+                        if len(messages_output) >= len(_collected_state_messages):
+                            _collected_state_messages = list(messages_output)
+
                         # Get the last AI message
                         for msg in reversed(messages_output):
                             if isinstance(msg, AIMessage):
@@ -1228,10 +1348,19 @@ class LangGraphAgentBuilder:
                 )
                 yield final_content
 
+            # Serialize collected messages chain for history persistence
+            # Only keep new messages generated in this turn (skip input messages)
+            if _collected_state_messages:
+                new_msgs = _collected_state_messages[len(lc_messages) :]
+                self._last_messages_chain = _serialize_messages_chain(new_msgs)
+            else:
+                self._last_messages_chain = []
+
             logger.debug(
-                "[stream_tokens] Streaming completed: total_events=%d, streamed=%s",
+                "[stream_tokens] Streaming completed: total_events=%d, streamed=%s, messages_chain_len=%d",
                 event_count,
                 streamed_content,
+                len(self._last_messages_chain),
             )
 
         except ToolCallTruncatedError as e:
@@ -1298,6 +1427,10 @@ class LangGraphAgentBuilder:
             logger.info(
                 "[stream_tokens] SilentExitException caught, re-raising for caller to handle"
             )
+            # Persist partial messages chain before re-raising
+            if _collected_state_messages:
+                new_msgs = _collected_state_messages[len(lc_messages) :]
+                self._last_messages_chain = _serialize_messages_chain(new_msgs)
             raise
 
         except GraphRecursionError as e:
@@ -1307,6 +1440,11 @@ class LangGraphAgentBuilder:
                 "Asking model to provide final response.",
                 self.max_iterations,
             )
+
+            # Persist messages chain from iterations before the limit
+            if _collected_state_messages:
+                new_msgs = _collected_state_messages[len(lc_messages) :]
+                self._last_messages_chain = _serialize_messages_chain(new_msgs)
 
             # Build messages with the limit reached notice
             # Add a human message to prompt the model to provide final response

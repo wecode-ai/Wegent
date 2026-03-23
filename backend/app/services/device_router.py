@@ -24,6 +24,7 @@ from app.models.subtask import Subtask, SubtaskStatus
 from app.models.task import TaskResource
 from app.models.user import User
 from app.services.device_service import device_service
+from app.utils.prompt_utils import extract_display_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -124,8 +125,11 @@ async def route_task_to_device(
             f"modelId={override_model_name}, forceOverrideBotModel=true"
         )
 
-    # Build unified execution request
+    # Build unified execution request.
+    # Extract original user text from stored prompt to prevent double-wrapping:
+    # after deep-thinking persistence, the prompt may be a JSON content array.
     builder = TaskRequestBuilder(db)
+    fallback_prompt = user_subtask.prompt if user_subtask else local_subtask.prompt
     request = builder.build(
         subtask=local_subtask,
         task=task,
@@ -134,7 +138,7 @@ async def route_task_to_device(
         message=(
             message
             if message is not None
-            else (user_subtask.prompt if user_subtask else local_subtask.prompt or "")
+            else extract_display_prompt(fallback_prompt) or ""
         ),
         override_model_name=override_model_name,
         force_override=force_override,

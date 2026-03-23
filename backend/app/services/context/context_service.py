@@ -659,40 +659,6 @@ class ContextService:
         # Wrap in <attachment> XML tags
         return prefix
 
-    def build_message_with_attachment(
-        self,
-        message: str,
-        context: SubtaskContext,
-    ) -> Union[str, Dict[str, Any]]:
-        """
-        Build a message with attachment content.
-
-        For image attachments, returns a vision-compatible message structure.
-        For text documents, returns combined text message.
-
-        Args:
-            message: User's original message
-            context: SubtaskContext with extracted text or image data
-
-        Returns:
-            For images: Dict with vision content structure
-            For documents: String with combined text
-        """
-        if self.is_image_context(context) and context.image_base64:
-            return {
-                "type": "vision",
-                "text": message,
-                "image_base64": context.image_base64,
-                "mime_type": context.mime_type,
-                "filename": context.original_filename,
-            }
-
-        doc_prefix = self.build_document_text_prefix(context)
-        if doc_prefix:
-            return f"{doc_prefix}[User Question]:\n{message}"
-
-        return message
-
     # ==================== Knowledge Base Operations ====================
 
     def create_knowledge_base_context(

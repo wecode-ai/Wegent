@@ -1137,6 +1137,7 @@ class KnowledgeOrchestrator:
                 else DocumentSourceType.FILE.value
             ),
             data.file_extension,
+            data.file_size,
         )
 
         if trigger_indexing and not skip_reason:
@@ -1385,7 +1386,7 @@ class KnowledgeOrchestrator:
             raise ValueError("Document not found")
 
         skip_reason = get_rag_indexing_skip_reason(
-            document.source_type, document.file_extension
+            document.source_type, document.file_extension, document.file_size
         )
         if skip_reason:
             raise ValueError(skip_reason)

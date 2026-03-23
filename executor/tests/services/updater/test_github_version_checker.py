@@ -78,13 +78,13 @@ class TestGithubVersionCheckerCheckForUpdates:
             "assets": [
                 {
                     "name": "wegent-executor-macos-arm64",
-                    "browser_download_url": "https://github.com/wecode-ai/Wegent/releases/download/v1.6.6/wegent-executor-macos-arm64"
+                    "browser_download_url": "https://github.com/wecode-ai/Wegent/releases/download/v1.6.6/wegent-executor-macos-arm64",
                 },
                 {
                     "name": "wegent-executor-linux-amd64",
-                    "browser_download_url": "https://github.com/wecode-ai/Wegent/releases/download/v1.6.6/wegent-executor-linux-amd64"
-                }
-            ]
+                    "browser_download_url": "https://github.com/wecode-ai/Wegent/releases/download/v1.6.6/wegent-executor-linux-amd64",
+                },
+            ],
         }
 
     @pytest.mark.asyncio
@@ -96,9 +96,13 @@ class TestGithubVersionCheckerCheckForUpdates:
         mock_response.json.return_value = mock_release_response
         mock_response.raise_for_status.return_value = None
 
-        with patch("executor.services.updater.github_version_checker.traced_session") as mock_session:
+        with patch(
+            "executor.services.updater.github_version_checker.traced_session"
+        ) as mock_session:
             mock_session.return_value.get.return_value = mock_response
-            with patch.object(checker, "get_binary_name", return_value="wegent-executor-macos-arm64"):
+            with patch.object(
+                checker, "get_binary_name", return_value="wegent-executor-macos-arm64"
+            ):
                 result = await checker.check_for_updates("1.0.0")
 
                 assert isinstance(result, UpdateInfo)
@@ -114,9 +118,13 @@ class TestGithubVersionCheckerCheckForUpdates:
         mock_response.json.return_value = mock_release_response
         mock_response.raise_for_status.return_value = None
 
-        with patch("executor.services.updater.github_version_checker.traced_session") as mock_session:
+        with patch(
+            "executor.services.updater.github_version_checker.traced_session"
+        ) as mock_session:
             mock_session.return_value.get.return_value = mock_response
-            with patch.object(checker, "get_binary_name", return_value="wegent-executor-macos-arm64"):
+            with patch.object(
+                checker, "get_binary_name", return_value="wegent-executor-macos-arm64"
+            ):
                 result = await checker.check_for_updates("1.6.6")
 
                 assert result is None
@@ -130,9 +138,13 @@ class TestGithubVersionCheckerCheckForUpdates:
         mock_response.json.return_value = mock_release_response
         mock_response.raise_for_status.return_value = None
 
-        with patch("executor.services.updater.github_version_checker.traced_session") as mock_session:
+        with patch(
+            "executor.services.updater.github_version_checker.traced_session"
+        ) as mock_session:
             mock_session.return_value.get.return_value = mock_response
-            with patch.object(checker, "get_binary_name", return_value="wegent-executor-macos-arm64"):
+            with patch.object(
+                checker, "get_binary_name", return_value="wegent-executor-macos-arm64"
+            ):
                 result = await checker.check_for_updates("2.0.0")
 
                 assert result is None
@@ -148,15 +160,19 @@ class TestGithubVersionCheckerCheckForUpdates:
             "assets": [
                 {
                     "name": "wegent-executor-macos-arm64",
-                    "browser_download_url": "https://example.com/download"
+                    "browser_download_url": "https://example.com/download",
                 }
-            ]
+            ],
         }
         mock_response.raise_for_status.return_value = None
 
-        with patch("executor.services.updater.github_version_checker.traced_session") as mock_session:
+        with patch(
+            "executor.services.updater.github_version_checker.traced_session"
+        ) as mock_session:
             mock_session.return_value.get.return_value = mock_response
-            with patch.object(checker, "get_binary_name", return_value="wegent-executor-macos-arm64"):
+            with patch.object(
+                checker, "get_binary_name", return_value="wegent-executor-macos-arm64"
+            ):
                 result = await checker.check_for_updates("1.0.0")
 
                 assert result.version == "1.6.6"
@@ -170,10 +186,14 @@ class TestGithubVersionCheckerCheckForUpdates:
         mock_response.json.return_value = mock_release_response
         mock_response.raise_for_status.return_value = None
 
-        with patch("executor.services.updater.github_version_checker.traced_session") as mock_session:
+        with patch(
+            "executor.services.updater.github_version_checker.traced_session"
+        ) as mock_session:
             mock_session.return_value.get.return_value = mock_response
             # Simulate a platform not in the release assets
-            with patch.object(checker, "get_binary_name", return_value="wegent-executor-freebsd-amd64"):
+            with patch.object(
+                checker, "get_binary_name", return_value="wegent-executor-freebsd-amd64"
+            ):
                 result = await checker.check_for_updates("1.0.0")
 
                 assert result is None
@@ -184,9 +204,13 @@ class TestGithubVersionCheckerCheckForUpdates:
         checker = GithubVersionChecker()
 
         mock_response = Mock()
-        mock_response.raise_for_status.side_effect = Exception("403 Client Error: rate limit exceeded")
+        mock_response.raise_for_status.side_effect = Exception(
+            "403 Client Error: rate limit exceeded"
+        )
 
-        with patch("executor.services.updater.github_version_checker.traced_session") as mock_session:
+        with patch(
+            "executor.services.updater.github_version_checker.traced_session"
+        ) as mock_session:
             mock_session.return_value.get.return_value = mock_response
             with patch("builtins.print"):
                 result = await checker.check_for_updates("1.0.0")
@@ -199,9 +223,13 @@ class TestGithubVersionCheckerCheckForUpdates:
         checker = GithubVersionChecker()
 
         mock_response = Mock()
-        mock_response.raise_for_status.side_effect = Exception("404 Client Error: Not Found")
+        mock_response.raise_for_status.side_effect = Exception(
+            "404 Client Error: Not Found"
+        )
 
-        with patch("executor.services.updater.github_version_checker.traced_session") as mock_session:
+        with patch(
+            "executor.services.updater.github_version_checker.traced_session"
+        ) as mock_session:
             mock_session.return_value.get.return_value = mock_response
             with patch("builtins.print"):
                 result = await checker.check_for_updates("1.0.0")
@@ -213,7 +241,9 @@ class TestGithubVersionCheckerCheckForUpdates:
         """Test handling of network errors."""
         checker = GithubVersionChecker()
 
-        with patch("executor.services.updater.github_version_checker.traced_session") as mock_session:
+        with patch(
+            "executor.services.updater.github_version_checker.traced_session"
+        ) as mock_session:
             mock_session.return_value.get.side_effect = Exception("Connection timeout")
             with patch("builtins.print"):
                 result = await checker.check_for_updates("1.0.0")
@@ -233,9 +263,13 @@ class TestGithubVersionCheckerHeaders:
         mock_response.json.return_value = {"tag_name": "v1.0.0", "assets": []}
         mock_response.raise_for_status.return_value = None
 
-        with patch("executor.services.updater.github_version_checker.traced_session") as mock_session:
+        with patch(
+            "executor.services.updater.github_version_checker.traced_session"
+        ) as mock_session:
             mock_session.return_value.get.return_value = mock_response
-            with patch.object(checker, "get_binary_name", return_value="wegent-executor-macos-arm64"):
+            with patch.object(
+                checker, "get_binary_name", return_value="wegent-executor-macos-arm64"
+            ):
                 await checker.check_for_updates("1.0.0")
 
                 call_kwargs = mock_session.return_value.get.call_args.kwargs
@@ -253,9 +287,13 @@ class TestGithubVersionCheckerHeaders:
         mock_response.json.return_value = {"tag_name": "v1.0.0", "assets": []}
         mock_response.raise_for_status.return_value = None
 
-        with patch("executor.services.updater.github_version_checker.traced_session") as mock_session:
+        with patch(
+            "executor.services.updater.github_version_checker.traced_session"
+        ) as mock_session:
             mock_session.return_value.get.return_value = mock_response
-            with patch.object(checker, "get_binary_name", return_value="wegent-executor-macos-arm64"):
+            with patch.object(
+                checker, "get_binary_name", return_value="wegent-executor-macos-arm64"
+            ):
                 await checker.check_for_updates("1.0.0")
 
                 call_kwargs = mock_session.return_value.get.call_args.kwargs

@@ -750,17 +750,24 @@ class TestContextServiceUpload:
         # Arrange
         parser = DocumentParser()
         filename = "test.bin"
-        # Use actual binary data (PNG header) that MIME detection will identify as binary
-        # The parser will reject this because .bin is not a known extension and
-        # the content is binary (not text-based)
-        png_header = bytes([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
-        binary_data = png_header + bytes(100)
+        # Use a minimal valid GIF image that libmagic reliably detects as binary
+        # across all platforms (including macOS where PNG header + null bytes
+        # may be misdetected as text/plain)
+        gif_data = (
+            b"GIF87a"
+            b"\x01\x00\x01\x00"
+            b"\x80\x00\x00"
+            b"\xff\xff\xff\x00\x00\x00"
+            b",\x00\x00\x00\x00\x01\x00\x01\x00\x00"
+            b"\x02\x02\x44\x01\x00"
+            b"\x3b"
+        )
 
         # Act & Assert
         # The parser now allows unknown extensions but uses MIME detection to validate
         # Binary files without matching parsers will raise DocumentParseError
         with pytest.raises(DocumentParseError) as exc_info:
-            parser.parse(binary_data, ".bin")
+            parser.parse(gif_data, ".bin")
         assert exc_info.value.error_code == DocumentParseError.UNRECOGNIZED_TYPE
 
     def test_upload_file_too_large(self):
@@ -1187,82 +1194,6 @@ class TestContextServiceFormatting:
         assert "Size: 5.0 MB" in prefix
         assert "URL: /api/attachments/100/download" in prefix
         assert "truncated" in prefix.lower()
-
-    def test_build_message_with_image_attachment(self):
-        """Test building message with image attachment"""
-        from app.models.subtask_context import (
-            ContextStatus,
-            ContextType,
-            SubtaskContext,
-        )
-        from app.services.context import context_service
-
-        # Arrange
-        context = SubtaskContext(
-            subtask_id=0,
-            user_id=1,
-            context_type=ContextType.ATTACHMENT.value,
-            name="test.jpg",
-            status=ContextStatus.READY.value,
-            image_base64="base64data",
-            type_data={
-                "file_extension": ".jpg",
-                "mime_type": "image/jpeg",
-                "original_filename": "test.jpg",
-            },
-        )
-        message = "What's in this image?"
-
-        # Act
-        result = context_service.build_message_with_attachment(message, context)
-
-        # Assert
-        assert isinstance(result, dict)
-        assert result["type"] == "vision"
-        assert result["text"] == message
-        assert result["image_base64"] == "base64data"
-
-    def test_build_message_with_document_attachment(self):
-        """Test building message with document attachment"""
-        from app.models.subtask_context import (
-            ContextStatus,
-            ContextType,
-            SubtaskContext,
-        )
-        from app.services.context import context_service
-
-        # Arrange
-        context = SubtaskContext(
-            subtask_id=0,
-            user_id=1,
-            context_type=ContextType.ATTACHMENT.value,
-            name="test.pdf",
-            status=ContextStatus.READY.value,
-            extracted_text="PDF content here",
-            text_length=16,  # Add text_length to avoid None comparison error
-            type_data={
-                "file_extension": ".pdf",
-                "original_filename": "test.pdf",
-                "mime_type": "application/pdf",
-                "file_size": 1024,  # 1 KB
-            },
-        )
-        context.id = 123
-        message = "Summarize this document"
-
-        # Act
-        result = context_service.build_message_with_attachment(message, context)
-
-        # Assert
-        assert isinstance(result, str)
-        assert "[Attachment: test.pdf |" in result
-        assert "ID: 123" in result
-        assert "Type: application/pdf" in result
-        assert "Size: 1.0 KB" in result
-        assert "URL: /api/attachments/123/download" in result
-        assert "PDF content here" in result
-        assert "[User Question]:" in result
-        assert "Summarize this document" in result
 
 
 class TestContextServiceOverwrite:

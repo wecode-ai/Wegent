@@ -119,6 +119,17 @@ class WebSocketResultEmitter(BaseResultEmitter):
             # Emit chat:block_updated event for tool result
             await self._emit_block_updated(event, webpage_ws_emitter)
 
+        elif event.type == EventType.THINKING.value:
+            # Emit reasoning content as a chat:chunk with reasoning_chunk in result
+            # This allows the frontend to display incremental reasoning content
+            await webpage_ws_emitter.emit_chat_chunk(
+                task_id=event.task_id,
+                subtask_id=event.subtask_id,
+                content="",
+                offset=event.offset,
+                result={"reasoning_chunk": event.content},
+            )
+
         elif event.type == EventType.DONE.value:
             await webpage_ws_emitter.emit_chat_done(
                 task_id=event.task_id,

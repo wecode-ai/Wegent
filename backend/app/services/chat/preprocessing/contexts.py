@@ -171,12 +171,14 @@ def _build_vision_structure(
     """
     Build OpenAI Responses API format vision content for image contexts.
 
-    This function generates content in OpenAI Responses API format:
-    [
-        {"type": "input_text", "text": "..."},
-        {"type": "input_image", "image_url": "data:image/jpeg;base64,..."},
-        ...
-    ]
+    The returned block order is:
+      1. [optional] <attachment> text block — metadata headers for images and
+         extracted text from any accompanying document attachments.
+      2. One ``input_image`` block per image.
+      3. The user's own message as a standalone ``input_text`` block.
+
+    Separating the user message into its own block keeps it stable across turns
+    (good for prefix caching) and makes the intent unambiguous to the model.
 
     Args:
         text_contents: List of text content strings (attachment contents without XML tags)
@@ -189,7 +191,7 @@ def _build_vision_structure(
     content: list[dict[str, Any]] = []
 
     # Collect all attachment content parts (text documents and image headers)
-    all_attachment_parts = []
+    all_attachment_parts: list[str] = []
 
     # Add text attachment contents
     if text_contents:
@@ -200,19 +202,14 @@ def _build_vision_structure(
         if "image_header" in img:
             all_attachment_parts.append(img["image_header"])
 
-    # Build combined text with all attachments wrapped in a single <attachment> tag
-    combined_text = ""
+    # 1. Attachment metadata block (only when there is something to show)
     if all_attachment_parts:
-        combined_text = (
-            "<attachment>\n" + "\n\n".join(all_attachment_parts) + "\n</attachment>\n\n"
+        attachment_text = (
+            "<attachment>" + "".join(all_attachment_parts) + "</attachment>"
         )
+        content.append({"type": "input_text", "text": attachment_text})
 
-    combined_text += f"[User Question]:\n{message}"
-
-    # Add text content block
-    content.append({"type": "input_text", "text": combined_text})
-
-    # Add image content blocks
+    # 2. Image blocks
     for img in image_contents:
         image_base64 = img.get("image_base64", "")
         mime_type = img.get("mime_type", "image/jpeg")
@@ -224,25 +221,36 @@ def _build_vision_structure(
                 }
             )
 
+    # 3. User message as its own text block — keeps it isolated from attachment
+    #    metadata so the model sees the question without extra noise, and so the
+    #    exact user text is preserved for prefix-cache stability.
+    content.append({"type": "input_text", "text": message})
+
     return content
 
 
-def _combine_text_contents(text_contents: List[str], message: str) -> str:
-    """
-    Combine text contents with user message.
+def _combine_text_contents(
+    text_contents: List[str], message: str
+) -> list[dict[str, Any]]:
+    """Combine text contents with user message.
+
+    Returns a list of content blocks in OpenAI Responses API format so that
+    the downstream converter can cleanly separate the user message from
+    system context (attachment metadata) and wrap them in ``<system-reminder>``.
 
     Args:
         text_contents: List of text content strings (attachment contents without XML tags)
         message: Original user message
 
     Returns:
-        Combined message string with all attachments wrapped in a single <attachment> XML tag
+        List of content blocks: attachment metadata block(s) followed by the
+        user message block (always last).
     """
-    # Wrap all attachment contents in a single <attachment> XML tag
-    combined_contents = (
-        "<attachment>\n" + "\n\n".join(text_contents) + "\n</attachment>\n\n"
-    )
-    return f"{combined_contents}[User Question]:\n{message}"
+    attachment_text = "<attachment>" + "".join(text_contents) + "</attachment>"
+    return [
+        {"type": "input_text", "text": attachment_text},
+        {"type": "input_text", "text": message},
+    ]
 
 
 def _process_attachment_context(
@@ -1043,13 +1051,13 @@ async def _process_attachment_contexts_for_message(
     if image_contents:
         return _build_vision_structure(text_contents, image_contents, message)
 
-    # If only text contents, combine them with <attachment> XML tag
+    # If only text contents, combine them as list format
     if text_contents:
-        # Wrap all attachment contents in a single <attachment> XML tag
-        combined_contents = (
-            "<attachment>\n" + "\n\n".join(text_contents) + "\n</attachment>\n\n"
-        )
-        return f"{combined_contents}[User Question]:\n{message}"
+        attachment_text = "<attachment>" + "".join(text_contents) + "</attachment>"
+        return [
+            {"type": "input_text", "text": attachment_text},
+            {"type": "input_text", "text": message},
+        ]
 
     # Return original message if no attachment contents were processed
     return message
