@@ -5,11 +5,12 @@
 'use client'
 
 import React, { useEffect, useState } from 'react'
-import { Download, Loader2 } from 'lucide-react'
+import { Download, Loader2, Eye } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { downloadAttachment, getAttachment, getFileIcon } from '@/apis/attachments'
 import type { AttachmentDetailResponse } from '@/apis/attachments'
 import { useShareToken } from '@/contexts/ShareTokenContext'
+import { FilePreviewDialog } from '@/components/common/FilePreview'
 
 // Global cache for attachment details to avoid redundant API calls
 const attachmentCache = new Map<number, AttachmentDetailResponse>()
@@ -26,7 +27,7 @@ interface AttachmentCardProps {
  * - Fetches attachment details from API (with caching)
  * - File icon based on extension
  * - Filename and type label
- * - Preview button (opens in new tab)
+ * - Preview button (opens dialog)
  * - Download button (downloads with authentication)
  */
 export function AttachmentCard({ attachmentId }: AttachmentCardProps) {
@@ -34,6 +35,7 @@ export function AttachmentCard({ attachmentId }: AttachmentCardProps) {
   const [attachment, setAttachment] = useState<AttachmentDetailResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [previewOpen, setPreviewOpen] = useState(false)
 
   // Fetch attachment details on mount (with caching)
   useEffect(() => {
@@ -66,11 +68,20 @@ export function AttachmentCard({ attachmentId }: AttachmentCardProps) {
 
   const handleDownload = async (e: React.MouseEvent) => {
     e.preventDefault()
+    e.stopPropagation()
     try {
       await downloadAttachment(attachmentId, attachment?.filename, shareToken)
     } catch (error) {
       console.error('Failed to download attachment:', error)
     }
+  }
+
+  const handlePreview = () => {
+    setPreviewOpen(true)
+  }
+
+  const handleClosePreview = () => {
+    setPreviewOpen(false)
   }
 
   // Loading state
@@ -111,51 +122,117 @@ export function AttachmentCard({ attachmentId }: AttachmentCardProps) {
   // Get file type label
   const fileTypeLabel = getFileTypeLabel(attachment.file_extension)
 
+  // Check if file is previewable
+  const isPreviewable = isFilePreviewable(attachment.mime_type, attachment.file_extension)
+
   return (
-    <div className="flex items-center gap-4 p-4 rounded-xl border border-border bg-surface hover:bg-surface-hover transition-colors">
-      {/* File Icon */}
-      <div className="flex-shrink-0 w-16 h-16 flex items-center justify-center bg-base rounded-lg border border-border">
-        <span className="text-3xl">{fileIcon}</span>
+    <>
+      <div
+        className="flex items-center gap-4 p-4 rounded-xl border border-border bg-surface hover:bg-surface-hover transition-colors cursor-pointer"
+        onClick={isPreviewable ? handlePreview : undefined}
+      >
+        {/* File Icon */}
+        <div className="flex-shrink-0 w-16 h-16 flex items-center justify-center bg-base rounded-lg border border-border">
+          <span className="text-3xl">{fileIcon}</span>
+        </div>
+
+        {/* File Info */}
+        <div className="flex-1 min-w-0">
+          <h3
+            className="text-base font-medium text-text-primary truncate"
+            title={attachment.filename}
+          >
+            {attachment.filename}
+          </h3>
+          <p className="text-sm text-text-secondary">
+            {fileTypeLabel} · {attachment.file_extension.replace('.', '').toUpperCase()}
+          </p>
+        </div>
+
+        {/* Action Buttons */}
+        <div className="flex items-center gap-2 flex-shrink-0">
+          {/* Preview Button */}
+          {isPreviewable && (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={e => {
+                e.stopPropagation()
+                handlePreview()
+              }}
+              className="h-10 w-10 rounded-lg hover:bg-primary/10"
+              title="预览"
+            >
+              <Eye className="h-5 w-5 text-text-secondary" />
+            </Button>
+          )}
+
+          {/* Download Button */}
+          <Button
+            variant="outline"
+            onClick={handleDownload}
+            className="h-10 px-4 rounded-lg hover:bg-primary/10"
+          >
+            <Download className="h-4 w-4 mr-2" />
+            Download
+          </Button>
+        </div>
       </div>
 
-      {/* File Info */}
-      <div className="flex-1 min-w-0">
-        <h3
-          className="text-base font-medium text-text-primary truncate"
-          title={attachment.filename}
-        >
-          {attachment.filename}
-        </h3>
-        <p className="text-sm text-text-secondary">
-          {fileTypeLabel} · {attachment.file_extension.replace('.', '').toUpperCase()}
-        </p>
-      </div>
-
-      {/* Action Buttons */}
-      <div className="flex items-center gap-2 flex-shrink-0">
-        {/* Preview Button */}
-        {/* <Button
-          variant="ghost"
-          size="icon"
-          onClick={handlePreview}
-          className="h-10 w-10 rounded-lg hover:bg-primary/10"
-          title="Preview"
-        >
-          <ExternalLink className="h-5 w-5 text-text-secondary" />
-        </Button> */}
-
-        {/* Download Button */}
-        <Button
-          variant="outline"
-          onClick={handleDownload}
-          className="h-10 px-4 rounded-lg hover:bg-primary/10"
-        >
-          <Download className="h-4 w-4 mr-2" />
-          Download
-        </Button>
-      </div>
-    </div>
+      {/* Preview Dialog */}
+      {isPreviewable && (
+        <FilePreviewDialog
+          open={previewOpen}
+          onClose={handleClosePreview}
+          attachmentId={attachmentId}
+          filename={attachment.filename}
+          mimeType={attachment.mime_type}
+          fileSize={attachment.file_size}
+          shareToken={shareToken}
+        />
+      )}
+    </>
   )
+}
+
+/**
+ * Check if file type is previewable
+ */
+function isFilePreviewable(mimeType: string, extension: string): boolean {
+  // Image types
+  if (mimeType.startsWith('image/')) return true
+  // PDF
+  if (mimeType === 'application/pdf') return true
+  // Video
+  if (mimeType.startsWith('video/')) return true
+  // Audio
+  if (mimeType.startsWith('audio/')) return true
+  // Text files
+  if (
+    mimeType.startsWith('text/') ||
+    mimeType === 'application/json' ||
+    mimeType === 'application/javascript' ||
+    mimeType === 'application/xml' ||
+    extension.match(
+      /\.(txt|md|json|js|ts|jsx|tsx|py|java|go|rs|cpp|c|h|hpp|css|scss|less|html|htm|xml|yaml|yml|sh|bash|zsh|ps1|sql|log)$/i
+    )
+  ) {
+    return true
+  }
+  // Office documents - check MIME type or extension
+  if (
+    mimeType.includes('officedocument') ||
+    mimeType.includes('msword') ||
+    mimeType.includes('ms-excel') ||
+    mimeType.includes('ms-powerpoint') ||
+    mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+    mimeType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+    mimeType === 'application/vnd.openxmlformats-officedocument.presentationml.presentation' ||
+    extension.match(/\.(xlsx|xls|csv|docx|doc|pptx|ppt)$/i)
+  ) {
+    return true
+  }
+  return false
 }
 
 /**
@@ -175,7 +252,7 @@ function getFileTypeLabel(extension: string): string {
   if (['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp'].includes(ext)) return 'Image'
 
   // Code types
-  if (['js', 'ts', 'jsx', 'tsx', 'py', 'java', 'c', 'cpp'].includes(ext)) return 'Code'
+  if (['js', 'ts', 'jsx', 'tsx', 'py', 'java', 'go', 'rs', 'cpp', 'c'].includes(ext)) return 'Code'
 
   // Config types
   if (['json', 'yaml', 'yml', 'xml', 'toml'].includes(ext)) return 'Configuration'

@@ -27,7 +27,18 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-# ==================== Request/Response Schemas for Upgrade ====================
+# ==================== Request/Response Schemas ====================
+
+
+class DeviceUpdateAliasRequest(BaseModel):
+    """Request model for updating device alias (display name)."""
+
+    alias: str = Field(
+        ...,
+        min_length=1,
+        max_length=100,
+        description="New display name (alias) for the device",
+    )
 
 
 class DeviceUpgradeRequest(BaseModel):
@@ -160,6 +171,47 @@ async def delete_device(
             detail=f"Device '{device_id}' not found",
         )
     return {"message": f"Device '{device_id}' deleted"}
+
+
+@router.put("/{device_id}/alias")
+async def update_device_alias(
+    device_id: str,
+    request: DeviceUpdateAliasRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Update a device's display name (alias).
+
+    The alias is used for display purposes in the UI and does not affect
+    the device's unique identifier (device_id).
+
+    Args:
+        device_id: Device unique identifier
+        request: Request containing the new alias
+
+    Returns:
+        Success message with the new alias
+
+    Raises:
+        HTTPException 404: If device not found
+    """
+    success = device_service.update_device_alias(
+        db, current_user.id, device_id, request.alias
+    )
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Device '{device_id}' not found",
+        )
+    logger.info(
+        f"[Device Alias] Updated alias: user_id={current_user.id}, "
+        f"device_id={device_id}, alias={request.alias}"
+    )
+    return {
+        "message": f"Device alias updated to '{request.alias}'",
+        "alias": request.alias,
+    }
 
 
 @router.post("/{device_id}/upgrade", response_model=DeviceUpgradeResponse)

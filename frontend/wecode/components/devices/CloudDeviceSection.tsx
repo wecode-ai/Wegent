@@ -26,7 +26,16 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import { Cloud, Loader2, Trash2, Play, Star, MoreVertical, ExternalLink } from 'lucide-react'
+import {
+  Cloud,
+  Loader2,
+  Trash2,
+  Play,
+  Star,
+  MoreVertical,
+  ExternalLink,
+  Pencil,
+} from 'lucide-react'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -74,6 +83,7 @@ interface CloudDeviceSectionProps {
   onStartTask: (deviceId: string) => void
   onCancelTask: (taskId: number) => Promise<void>
   onUpgradeDevice?: (deviceId: string) => void
+  onEditAlias?: (device: DeviceInfo) => void
   isDeviceUpgrading?: (deviceId: string) => boolean
   getUpgradeStatus?: (deviceId: string) => DeviceUpgradeState | undefined
 }
@@ -86,6 +96,7 @@ export function CloudDeviceSection({
   onStartTask,
   onCancelTask,
   onUpgradeDevice,
+  onEditAlias,
   isDeviceUpgrading,
   getUpgradeStatus,
 }: CloudDeviceSectionProps) {
@@ -183,6 +194,7 @@ export function CloudDeviceSection({
               onDelete={device => setDeviceToDelete(device)}
               onCancelTask={onCancelTask}
               onUpgradeDevice={onUpgradeDevice}
+              onEditAlias={onEditAlias}
               isDeviceUpgrading={isDeviceUpgrading}
               getUpgradeStatus={getUpgradeStatus}
               t={t}
@@ -226,6 +238,7 @@ interface CloudMachineCardProps {
   onDelete: (device: DeviceInfo) => void
   onCancelTask: (taskId: number) => Promise<void>
   onUpgradeDevice?: (deviceId: string) => void
+  onEditAlias?: (device: DeviceInfo) => void
   isDeviceUpgrading?: (deviceId: string) => boolean
   getUpgradeStatus?: (deviceId: string) => DeviceUpgradeState | undefined
   t: (key: string, options?: Record<string, unknown>) => string
@@ -245,6 +258,7 @@ function CloudMachineCard({
   onDelete,
   onCancelTask,
   onUpgradeDevice,
+  onEditAlias,
   isDeviceUpgrading,
   getUpgradeStatus,
   t,
@@ -353,6 +367,12 @@ function CloudMachineCard({
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
+              {onEditAlias && (
+                <DropdownMenuItem onClick={() => onEditAlias(primaryDevice)}>
+                  <Pencil className="w-4 h-4 mr-2" />
+                  {t('devices:edit_alias')}
+                </DropdownMenuItem>
+              )}
               {!primaryDevice.is_default && (
                 <DropdownMenuItem onClick={() => onSetDefault(primaryDevice)}>
                   <Star className="w-4 h-4 mr-2" />

@@ -4,18 +4,12 @@
 
 'use client'
 
-import Image from 'next/image'
+import { Download, X } from 'lucide-react'
 
 import { type RemoteWorkspaceTreeEntry } from '@/apis/remoteWorkspace'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
+import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 
 import { TFunction } from 'i18next'
@@ -28,6 +22,7 @@ import {
   type PreviewKind,
   type SortOption,
 } from './remote-workspace-utils'
+import { FilePreview } from '@/components/common/FilePreview'
 import {
   type RemoteWorkspaceDirectoryCache,
   RemoteWorkspaceDirectoryTree,
@@ -47,10 +42,7 @@ type RemoteWorkspaceDialogDesktopProps = {
   selectedEntries: RemoteWorkspaceTreeEntry[]
   previewEntry: RemoteWorkspaceTreeEntry | null
   previewKind: PreviewKind
-  inlineUrl: string
-  textContent: string
-  isTextLoading: boolean
-  textError: string | null
+  previewBlob: Blob | null
   searchKeyword: string
   sortOption: SortOption
   pathInputValue: string
@@ -94,6 +86,9 @@ function resolveTypeLabel(
   if (previewKind === 'pdf') {
     return t('remote_workspace.types.pdf', 'PDF')
   }
+  if (previewKind === 'excel') {
+    return t('remote_workspace.types.excel', 'Excel')
+  }
   if (previewKind === 'text') {
     return t('remote_workspace.types.text', 'Text')
   }
@@ -115,10 +110,7 @@ export function RemoteWorkspaceDialogDesktop({
   selectedEntries,
   previewEntry,
   previewKind,
-  inlineUrl,
-  textContent,
-  isTextLoading,
-  textError,
+  previewBlob,
   searchKeyword,
   sortOption,
   pathInputValue,
@@ -453,66 +445,121 @@ export function RemoteWorkspaceDialogDesktop({
         open={isPreviewDialogOpen && Boolean(previewEntry)}
         onOpenChange={onPreviewDialogOpenChange}
       >
-        <DialogContent className="!flex !h-[85vh] !w-[92vw] !max-w-[1200px] !flex-col gap-0 overflow-hidden p-0">
-          <DialogHeader className="shrink-0 border-b border-border px-6 py-4">
-            <DialogTitle>{t('remote_workspace.preview.title', 'Preview')}</DialogTitle>
-            <DialogDescription className="sr-only">
-              {previewEntry?.path || t('remote_workspace.preview.title', 'Preview')}
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-surface p-4">
-            {previewEntry && (
-              <p className="mb-3 truncate text-xs text-text-muted">{previewEntry.path}</p>
-            )}
-
-            <div className="min-h-0 flex-1 overflow-auto rounded-md border border-border bg-base p-3">
-              {previewKind === 'image' && inlineUrl && previewEntry && (
-                <div className="flex h-full items-center justify-center">
-                  <Image
-                    src={inlineUrl}
-                    alt={previewEntry.name}
-                    width={1600}
-                    height={1200}
-                    unoptimized
-                    className="max-h-full max-w-full object-contain"
-                  />
-                </div>
-              )}
-
-              {previewKind === 'pdf' && inlineUrl && previewEntry && (
-                <iframe
-                  title={previewEntry.name}
-                  src={inlineUrl}
-                  className="h-full min-h-[520px] w-full rounded-md border border-border"
-                />
-              )}
-
-              {previewKind === 'text' && (
-                <>
-                  {isTextLoading && (
-                    <p className="text-sm text-text-muted">
-                      {t('remote_workspace.preview.loading')}
+        <DialogContent
+          className="!flex !h-[90vh] !w-[96vw] !max-w-[1400px] !flex-col gap-0 overflow-hidden p-0"
+          aria-label="Preview"
+          hideCloseButton
+        >
+          {previewEntry && (
+            <>
+              {/* Header - Same style as FilePreviewPage */}
+              <header className="flex items-center justify-between px-4 py-3 border-b border-border dark:border-gray-700 bg-white dark:bg-gray-900 shrink-0">
+                <div className="flex items-center gap-3 min-w-0">
+                  <span className="text-2xl">{getFileIcon(previewKind)}</span>
+                  <div className="min-w-0">
+                    <h1 className="font-medium text-text-primary truncate max-w-[200px] sm:max-w-[300px] md:max-w-[500px]">
+                      {previewEntry.name}
+                    </h1>
+                    <p className="text-xs text-text-secondary truncate max-w-[200px] sm:max-w-[300px] md:max-w-[500px]">
+                      {previewEntry.path}
                     </p>
-                  )}
-                  {!isTextLoading && textError && <p className="text-sm text-error">{textError}</p>}
-                  {!isTextLoading && !textError && (
-                    <pre className="whitespace-pre-wrap break-words text-xs text-text-primary">
-                      {textContent}
-                    </pre>
-                  )}
-                </>
-              )}
+                  </div>
+                </div>
 
-              {previewKind === 'unsupported' && (
-                <p className="text-sm text-text-muted">
-                  {t('remote_workspace.preview.unsupported')}
-                </p>
-              )}
-            </div>
-          </div>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <Button variant="primary" size="sm" onClick={() => onDownload(previewEntry)}>
+                    <Download className="w-4 h-4 mr-2" />
+                    {t('remote_workspace.actions.download')}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => onPreviewDialogOpenChange(false)}
+                    title={t('remote_workspace.actions.close', 'Close')}
+                  >
+                    <X className="w-5 h-5" />
+                  </Button>
+                </div>
+              </header>
+
+              {/* Preview Content */}
+              <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-surface">
+                <div className="min-h-0 flex-1 overflow-hidden">
+                  {previewKind === 'unsupported' ? (
+                    <div className="flex h-full items-center justify-center">
+                      <p className="text-sm text-text-muted">
+                        {t('remote_workspace.preview.unsupported')}
+                      </p>
+                    </div>
+                  ) : previewEntry && previewBlob ? (
+                    <FilePreview
+                      fileBlob={previewBlob || undefined}
+                      filename={previewEntry.name}
+                      mimeType={getMimeTypeFromPreviewKind(previewKind, previewEntry.name)}
+                      fileSize={previewEntry.size}
+                      showToolbar={previewKind === 'image'}
+                      onDownload={() => onDownload(previewEntry)}
+                      onClose={() => onPreviewDialogOpenChange(false)}
+                    />
+                  ) : (
+                    <div className="flex h-full items-center justify-center">
+                      <p className="text-sm text-text-muted">
+                        {t('remote_workspace.preview.loading')}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </>
+          )}
         </DialogContent>
       </Dialog>
     </div>
   )
+}
+
+/**
+ * Get file icon based on preview kind
+ */
+function getFileIcon(previewKind: PreviewKind): string {
+  switch (previewKind) {
+    case 'image':
+      return '🖼️'
+    case 'pdf':
+      return '📄'
+    case 'excel':
+      return '📊'
+    case 'text':
+      return '📃'
+    default:
+      return '📎'
+  }
+}
+
+/**
+ * Convert preview kind to MIME type
+ */
+function getMimeTypeFromPreviewKind(previewKind: PreviewKind, filename: string): string {
+  switch (previewKind) {
+    case 'image':
+      return 'image/png'
+    case 'pdf':
+      return 'application/pdf'
+    case 'excel':
+      return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    case 'text':
+      // Return appropriate mime type based on file extension
+      if (filename.endsWith('.py')) return 'text/x-python'
+      if (filename.endsWith('.js')) return 'application/javascript'
+      if (filename.endsWith('.ts')) return 'application/typescript'
+      if (filename.endsWith('.json')) return 'application/json'
+      if (filename.endsWith('.md')) return 'text/markdown'
+      if (filename.endsWith('.html') || filename.endsWith('.htm')) return 'text/html'
+      if (filename.endsWith('.css')) return 'text/css'
+      if (filename.endsWith('.xml')) return 'application/xml'
+      if (filename.endsWith('.yaml') || filename.endsWith('.yml')) return 'application/yaml'
+      return 'text/plain'
+    default:
+      return 'application/octet-stream'
+  }
 }
