@@ -297,6 +297,7 @@ class StreamingStatus(BaseModel):
     started_by_username: Optional[str] = None
     current_content: Optional[str] = None
     started_at: Optional[datetime] = None
+    last_activity_at: Optional[datetime] = None
 
 
 class SubtaskExecutorUpdate(BaseModel):

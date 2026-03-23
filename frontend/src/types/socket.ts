@@ -566,6 +566,8 @@ export interface TaskJoinAck {
     subtask_id: number
     offset: number
     cached_content: string
+    started_at?: string
+    last_activity_at?: string
   }
   /** Subtasks data for immediate message sync (same format as task detail API) */
   subtasks?: Array<Record<string, unknown>>

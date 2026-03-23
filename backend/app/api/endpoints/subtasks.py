@@ -243,6 +243,11 @@ async def get_streaming_status(
             if streaming_status.get("started_at")
             else None
         ),
+        last_activity_at=(
+            datetime.fromisoformat(streaming_status.get("last_activity_at"))
+            if streaming_status.get("last_activity_at")
+            else None
+        ),
     )
 
 

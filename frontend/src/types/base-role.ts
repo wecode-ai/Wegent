@@ -100,7 +100,7 @@ export const ROLE_DISPLAY_NAMES: Record<BaseRole, string> = {
   Maintainer: '管理员',
   Developer: '开发者',
   Reporter: '使用者',
-  RestrictedAnalyst: '盲分析师',
+  RestrictedAnalyst: '访客',
 }
 
 /**

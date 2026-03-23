@@ -1116,7 +1116,13 @@ function ChatAreaContent({
 
       {/* Main Content Area */}
       <div
-        className={hasMessages || inputAlwaysAtBottom ? 'w-full' : 'flex-1 flex flex-col w-full'}
+        className={
+          hasMessages
+            ? 'w-full'
+            : inputAlwaysAtBottom
+              ? 'w-full flex-1 relative'
+              : 'flex-1 flex flex-col w-full'
+        }
       >
         {/* Center area for input when no messages (and not in inputAlwaysAtBottom mode) */}
         {!hasMessages && !inputAlwaysAtBottom && (
@@ -1166,8 +1172,16 @@ function ChatAreaContent({
           </div>
         )}
         {/* Empty state content for inputAlwaysAtBottom mode (e.g., KnowledgeBaseSummaryCard in notebook mode) */}
+        {/* Uses absolute positioning with inset to create a scrollable area that respects the floating input */}
         {!hasMessages && inputAlwaysAtBottom && (
-          <div className="flex-1 flex flex-col items-center justify-center w-full px-4 sm:px-6">
+          <div
+            className="absolute inset-0 flex flex-col items-center w-full px-4 sm:px-6 overflow-y-auto pt-4"
+            style={{
+              // Reserve space for: GuidedQuestions (~200px max) + ChatInputCard (~120px) + padding (32px)
+              // This prevents overlap between summary card and guided questions on smaller screens
+              paddingBottom: guidedQuestions && guidedQuestions.length > 0 ? '352px' : '152px',
+            }}
+          >
             {emptyStateContent}
           </div>
         )}
@@ -1176,27 +1190,29 @@ function ChatAreaContent({
         {!hasMessages && taskType === 'chat' && <PoweredByFooter />}
 
         {/* Floating Input Area for messages view or inputAlwaysAtBottom mode */}
+        {/* Width is reduced by 12px to avoid overlapping the scrollbar */}
         {(hasMessages || inputAlwaysAtBottom) && (
           <div
             ref={floatingInputRef}
-            className="fixed bottom-0 z-50"
+            className="fixed bottom-0 z-50 bg-base"
             style={{
               left: floatingMetrics.left,
-              width: floatingMetrics.width,
+              width:
+                floatingMetrics.width > 14 ? floatingMetrics.width - 14 : floatingMetrics.width,
             }}
           >
-            {/* Bottom gradient fade effect - text fades as it approaches the input, limited width to avoid overlapping scrollbar */}
-            {hasMessages && (
-              <div
-                className="absolute top-0 h-8 -translate-y-full pointer-events-none"
-                style={{
-                  left: '18px',
-                  width: 'calc(100% - 36px)',
-                  background:
-                    'linear-gradient(to top, rgb(var(--color-bg-base)) 0%, rgb(var(--color-bg-base) / 0.6) 50%, rgb(var(--color-bg-base) / 0) 100%)',
-                }}
-              />
-            )}
+            {/* Top gradient fade effect - creates smooth transition from content to floating input area */}
+            {/* For inputAlwaysAtBottom mode without messages, this prevents hard edge with summary card */}
+            {/* Width is limited to avoid overlapping the scrollbar (12px reserved for scrollbar) */}
+            <div
+              className="absolute top-0 h-8 -translate-y-full pointer-events-none"
+              style={{
+                left: 0,
+                width: 'calc(100% - 12px)',
+                background:
+                  'linear-gradient(to top, rgb(var(--color-bg-base)) 0%, rgb(var(--color-bg-base) / 0.6) 50%, rgb(var(--color-bg-base) / 0) 100%)',
+              }}
+            />
             {/* Scroll to bottom indicator */}
             {hasMessages && (
               <div className="absolute -top-2 left-1/2 -translate-x-1/2 -translate-y-full pointer-events-auto">
@@ -1207,13 +1223,12 @@ function ChatAreaContent({
               </div>
             )}
             {/* Guided questions for knowledge notebook mode - displayed above input card */}
-            {/* pb-10 provides enough space to avoid overlap with DeviceSelectorTab (-top-[29px]) */}
             {!hasMessages &&
               inputAlwaysAtBottom &&
               taskType === 'knowledge' &&
               guidedQuestions &&
               guidedQuestions.length > 0 && (
-                <div className="w-full max-w-[820px] mx-auto px-4 sm:px-6 pb-10">
+                <div className="w-full max-w-[820px] mx-auto px-4 sm:px-6 pt-4 pb-6">
                   <GuidedQuestions
                     questions={guidedQuestions}
                     onQuestionClick={question => chatState.setTaskInputMessage(question)}
@@ -1221,7 +1236,7 @@ function ChatAreaContent({
                 </div>
               )}
             <div className="relative w-full max-w-[820px] mx-auto px-4 sm:px-6">
-              <div className="py-4 bg-base">
+              <div className="py-4">
                 <ChatInputCard
                   {...inputCardProps}
                   autoFocus={!hasMessages && inputAlwaysAtBottom}

@@ -21,7 +21,7 @@
   "maintainer_role_desc": "可以管理此知识库的成员和设置",
   "developer_role_desc": "可以查看和编辑此知识库中的文档",
   "reporter_role_desc": "可以查看此知识库中的文档",
-  "restricted_analyst_role_desc": "盲分析师，只能访问部分资源",
+  "restricted_analyst_role_desc": "访客，只能访问部分资源",
   "submit_request": "提交申请",
   "request_submitted": "申请已提交",
   "request_submitted_desc": "您的访问请求已提交，请等待所有者审批。",

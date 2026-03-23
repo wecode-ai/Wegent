@@ -92,9 +92,15 @@ class StatusUpdatingEmitter(ResultEmitter):
                 f"[StatusUpdatingEmitter] Set task streaming status: "
                 f"task_id={self._task_id}, subtask_id={self._subtask_id}"
             )
+        elif event.type in (
+            EventType.CHUNK.value,
+            EventType.TOOL_START.value,
+            EventType.TOOL_RESULT.value,
+        ):
+            await session_manager.touch_task_streaming_activity(self._task_id)
 
         # Collect blocks for mixed content rendering using session_manager
-        elif event.type == EventType.TOOL_START.value:
+        if event.type == EventType.TOOL_START.value:
             # When a tool starts, finalize any current text block and add tool block
             display_name = event.data.get("display_name") if event.data else None
             await session_manager.add_tool_block(

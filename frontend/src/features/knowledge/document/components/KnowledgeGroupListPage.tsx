@@ -486,7 +486,7 @@ function KnowledgeBaseRow({
       <td className="px-6 py-3 overflow-hidden">
         <div className="flex items-center gap-3 min-w-0">
           <KbTypeIcon kbType={kb.kb_type} className="w-5 h-5 flex-shrink-0" />
-          <span className="font-medium text-text-primary truncate">{kb.name}</span>
+          <span className="text-sm font-medium text-text-primary truncate">{kb.name}</span>
           {isFavorite && <Star className="w-4 h-4 text-yellow-500 fill-yellow-500 flex-shrink-0" />}
         </div>
       </td>

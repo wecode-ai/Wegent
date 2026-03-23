@@ -736,6 +736,7 @@ async def get_chat_history(
     When limit is specified, returns the most recent N messages (not the oldest N).
     """
     session_type, task_id = parse_session_id(session_id)
+    history_statuses = [SubtaskStatus.COMPLETED, SubtaskStatus.CANCELLED]
 
     if session_type != "task":
         raise HTTPException(
@@ -743,11 +744,21 @@ async def get_chat_history(
             detail="Only task-based sessions are supported",
         )
 
-    # Build query for subtasks - only get COMPLETED messages for history
-    # This matches the behavior in backup version (loader.py:75-78)
+    logger.info(
+        "get_chat_history:start session_id=%s task_id=%s before_message_id=%s limit=%s is_group_chat=%s statuses=%s",
+        session_id,
+        task_id,
+        before_message_id,
+        limit,
+        is_group_chat,
+        [status.value for status in history_statuses],
+    )
+
+    # Build query for subtasks - include terminal history messages.
+    # Keep FAILED excluded to avoid loading errored assistant turns into context.
     query = db.query(Subtask).filter(
         Subtask.task_id == task_id,
-        Subtask.status == SubtaskStatus.COMPLETED,
+        Subtask.status.in_(history_statuses),
     )
 
     if before_message_id:
@@ -776,6 +787,13 @@ async def get_chat_history(
         len(messages),
         is_group_chat,
         limit,
+    )
+    logger.info(
+        "get_chat_history:done session_id=%s task_id=%s count=%d message_ids=%s",
+        session_id,
+        task_id,
+        len(messages),
+        [st.message_id for st in subtasks],
     )
 
     return HistoryResponse(session_id=session_id, messages=messages)
