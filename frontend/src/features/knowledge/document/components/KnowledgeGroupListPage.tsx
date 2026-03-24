@@ -35,7 +35,9 @@ import type {
   KnowledgeBaseType,
   KnowledgeBaseWithGroupInfo,
   KnowledgeGroupType,
+  MemberRole,
 } from '@/types/knowledge'
+import { ROLE_DISPLAY_NAMES } from '@/types/base-role'
 
 /** Group info for display */
 export interface KbGroupInfo {
@@ -90,8 +92,23 @@ export interface KnowledgeGroupListPageProps {
   personalSharedWithMe?: KnowledgeBaseWithGroupInfo[]
 }
 
-type SortBy = 'name' | 'updated' | 'group'
+type SortBy = 'name' | 'updated' | 'group' | 'permission' | 'default'
 type SortOrder = 'asc' | 'desc'
+
+/** Role priority for sorting (lower number = higher priority) */
+const ROLE_PRIORITY: Record<string, number> = {
+  Owner: 1,
+  Maintainer: 2,
+  Developer: 3,
+  Reporter: 4,
+  RestrictedAnalyst: 5,
+}
+
+/** Get role priority for sorting */
+function getRolePriority(role: string | null | undefined): number {
+  if (!role) return 999 // No role = lowest priority
+  return ROLE_PRIORITY[role] ?? 999
+}
 
 /** Format relative time */
 function formatRelativeTime(
@@ -161,16 +178,25 @@ export function KnowledgeGroupListPage({
   personalSharedWithMe = [],
 }: KnowledgeGroupListPageProps) {
   const { t } = useTranslation('knowledge')
-  const [sortBy, setSortBy] = useState<SortBy>('updated')
-  const [sortOrder, setSortOrder] = useState<SortOrder>('desc')
+  const [sortBy, setSortBy] = useState<SortBy>('default')
+  const [sortOrder, setSortOrder] = useState<SortOrder>('asc')
 
   // Determine which data source to use
+  // Prefer knowledgeBasesWithGroupInfo when available (has my_role field)
   const dataSource = useMemo(() => {
-    if (isAllMode && knowledgeBasesWithGroupInfo) {
+    if (knowledgeBasesWithGroupInfo && knowledgeBasesWithGroupInfo.length > 0) {
       return knowledgeBasesWithGroupInfo
     }
     return knowledgeBases
-  }, [isAllMode, knowledgeBasesWithGroupInfo, knowledgeBases])
+  }, [knowledgeBasesWithGroupInfo, knowledgeBases])
+
+  // Helper function to get my_role from KB
+  const getKbRole = useCallback((kb: KbDataItem): string | null | undefined => {
+    if ('my_role' in kb) {
+      return kb.my_role
+    }
+    return undefined
+  }, [])
 
   // Sort function for knowledge bases
   const sortKbs = useCallback(
@@ -192,13 +218,37 @@ export function KnowledgeGroupListPage({
               comparison = groupA.localeCompare(groupB)
             }
             break
+          case 'permission':
+            comparison = getRolePriority(getKbRole(a)) - getRolePriority(getKbRole(b))
+            break
+          case 'default':
+            // Default sort: permission (asc) > group (asc) > name (asc)
+            // 1. Sort by permission (higher priority first)
+            const permComparison = getRolePriority(getKbRole(a)) - getRolePriority(getKbRole(b))
+            if (permComparison !== 0) {
+              comparison = permComparison
+              break
+            }
+            // 2. Sort by group name
+            if (getKbGroupInfo) {
+              const groupA = getKbGroupInfo(a).groupName
+              const groupB = getKbGroupInfo(b).groupName
+              const groupComparison = groupA.localeCompare(groupB)
+              if (groupComparison !== 0) {
+                comparison = groupComparison
+                break
+              }
+            }
+            // 3. Sort by name
+            comparison = a.name.localeCompare(b.name)
+            break
           default:
             comparison = 0
         }
         return sortOrder === 'asc' ? comparison : -comparison
       })
     },
-    [sortBy, sortOrder, getKbGroupInfo]
+    [sortBy, sortOrder, getKbGroupInfo, getKbRole]
   )
 
   // Filter and sort knowledge bases
@@ -264,7 +314,7 @@ export function KnowledgeGroupListPage({
   const renderTableHeader = (showGroupColumn: boolean) => (
     <thead className="sticky top-0 bg-surface border-b border-border">
       <tr className="text-left text-sm text-text-secondary">
-        <th className="px-6 py-3 font-medium w-[40%]">
+        <th className="px-6 py-3 font-medium w-[35%]">
           <button
             className="flex items-center hover:text-text-primary transition-colors"
             onClick={() => handleSort('name')}
@@ -274,7 +324,7 @@ export function KnowledgeGroupListPage({
           </button>
         </th>
         {showGroupColumn && (
-          <th className="px-6 py-3 font-medium w-[25%]">
+          <th className="px-6 py-3 font-medium w-[20%]">
             <button
               className="flex items-center hover:text-text-primary transition-colors"
               onClick={() => handleSort('group')}
@@ -284,7 +334,8 @@ export function KnowledgeGroupListPage({
             </button>
           </th>
         )}
-        <th className="px-6 py-3 font-medium w-[20%]">
+        <th className="px-6 py-3 font-medium w-[15%]">{t('document.table.permission', '权限')}</th>
+        <th className="px-6 py-3 font-medium w-[15%]">
           <button
             className="flex items-center hover:text-text-primary transition-colors"
             onClick={() => handleSort('updated')}
@@ -497,6 +548,11 @@ function KnowledgeBaseRow({
           <span className="truncate block">{groupInfo ? groupInfo.groupName : '--'}</span>
         </td>
       )}
+
+      {/* Permission column */}
+      <td className="px-6 py-3 text-text-secondary whitespace-nowrap">
+        {'my_role' in kb && kb.my_role ? ROLE_DISPLAY_NAMES[kb.my_role as MemberRole] : '--'}
+      </td>
 
       {/* Last access column */}
       <td className="px-6 py-3 text-text-secondary whitespace-nowrap">

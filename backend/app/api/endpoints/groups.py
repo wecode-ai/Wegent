@@ -35,7 +35,7 @@ router = APIRouter()
 @router.get("", response_model=GroupListResponse)
 def list_groups(
     page: int = Query(1, ge=1, description="Page number"),
-    limit: int = Query(10, ge=1, le=100, description="Items per page"),
+    limit: int = Query(100, ge=1, le=100, description="Items per page"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
