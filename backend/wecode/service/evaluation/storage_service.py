@@ -180,44 +180,6 @@ class EvalStorageService:
 
         return self._upload(key, data, content_type, filename)
 
-    def upload_answer(
-        self,
-        respondent_id: int,
-        topic_id: int,
-        question_id: int,
-        filename: str,
-        data: bytes,
-        content_type: str = "application/octet-stream",
-    ) -> Optional[str]:
-        """
-        Upload answer attachment.
-
-        Args:
-            respondent_id: Respondent user ID
-            topic_id: Topic ID
-            question_id: Question ID
-            filename: Original filename
-            data: File data
-            content_type: MIME type
-
-        Returns:
-            Storage key if successful
-        """
-        if not self.client:
-            return None
-
-        timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
-        key = self._build_key(
-            "answers",
-            str(respondent_id),
-            str(topic_id),
-            str(question_id),
-            timestamp,
-            filename,
-        )
-
-        return self._upload(key, data, content_type, filename)
-
     def save_grading_report(
         self,
         respondent_id: int,
@@ -225,6 +187,7 @@ class EvalStorageService:
         question_id: int,
         content: str,
         is_draft: bool = True,
+        suffix: str = "",
     ) -> Optional[str]:
         """
         Save grading report to S3.
@@ -235,6 +198,7 @@ class EvalStorageService:
             question_id: Question ID
             content: Report content (Markdown)
             is_draft: Whether this is a draft or final report
+            suffix: Optional suffix for the filename (e.g., "_scorer_1")
 
         Returns:
             Storage key if successful
@@ -243,7 +207,8 @@ class EvalStorageService:
             return None
 
         timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
-        filename = "draft.md" if is_draft else "final.md"
+        base_name = "draft" if is_draft else "final"
+        filename = f"{base_name}{suffix}.md"
         key = self._build_key(
             "reports",
             str(respondent_id),
@@ -399,6 +364,72 @@ class EvalStorageService:
             return None
         except Exception as e:
             logger.error(f"[Evaluation] Unexpected error getting stream from S3: {e}")
+            return None
+
+    def get_range_stream(
+        self,
+        key: str,
+        start: int,
+        end: int,
+        chunk_size: int = 65536,
+    ):
+        """
+        Get a range of bytes from a file as a streaming generator.
+
+        Supports HTTP Range requests for video seeking/scrubbing.
+
+        Args:
+            key: Storage key
+            start: Start byte position (inclusive)
+            end: End byte position (inclusive)
+            chunk_size: Size of each chunk in bytes (default 64KB)
+
+        Yields:
+            File data chunks for the specified range
+
+        Returns:
+            Generator yielding file chunks, or None if file not found
+        """
+        if not self.client:
+            return None
+
+        try:
+            # Calculate length from range (end is inclusive)
+            length = end - start + 1
+
+            response = self.client.get_object(
+                self._bucket,
+                key,
+                offset=start,
+                length=length,
+            )
+
+            def generate():
+                try:
+                    bytes_remaining = length
+                    while bytes_remaining > 0:
+                        read_size = min(chunk_size, bytes_remaining)
+                        chunk = response.read(read_size)
+                        if not chunk:
+                            break
+                        bytes_remaining -= len(chunk)
+                        yield chunk
+                finally:
+                    response.close()
+                    response.release_conn()
+
+            return generate()
+
+        except S3Error as e:
+            if e.code == "NoSuchKey":
+                logger.info(f"[Evaluation] Object not found: {key}")
+            else:
+                logger.error(f"[Evaluation] Failed to get range stream from S3: {e}")
+            return None
+        except Exception as e:
+            logger.error(
+                f"[Evaluation] Unexpected error getting range stream from S3: {e}"
+            )
             return None
 
     def get_file_info(self, key: str) -> Optional[dict]:
@@ -588,7 +619,7 @@ class EvalStorageService:
         Generate a storage key for file upload based on file type.
 
         Args:
-            file_type: Type of file (question_content, question_criteria, answer_attachment, exam_attachment)
+            file_type: Type of file (question_content, question_criteria, exam_attachment, topic_attachment)
             user_id: User ID uploading the file
             topic_id: Topic ID
             question_id: Question ID (optional, depends on type)
@@ -620,15 +651,6 @@ class EvalStorageService:
                 "draft",
                 f"{timestamp}_{filename}",
             )
-        elif file_type == "answer_attachment":
-            return self._build_key(
-                "answers",
-                str(user_id),
-                str(topic_id),
-                str(question_id or 0),
-                timestamp,
-                filename,
-            )
         elif file_type == "exam_attachment":
             # Include slot in path for exam attachments
             if slot:
@@ -648,6 +670,15 @@ class EvalStorageService:
                 str(question_id or 0),
                 timestamp,
                 filename,
+            )
+        elif file_type == "topic_attachment":
+            # Topic-level attachments (e.g., intro video)
+            # Path: topics/{topic_id}/{slot}/filename
+            return self._build_key(
+                "topics",
+                str(topic_id),
+                slot or "attachments",
+                f"{timestamp}_{filename}",
             )
         else:
             # Default fallback

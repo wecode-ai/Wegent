@@ -2,130 +2,141 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { uploadTextAsFile } from '@wecode/api/evaluation-shared'
-import type { ExamAttachment } from '@wecode/types/evaluation-exam'
-import type { QuestionDataMap, QuestionData } from './ai-assessment-types'
-
-/**
- * Generate a unique filename for supplementary notes
- */
-export function generateSupplementaryNotesFilename(): string {
-  const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
-  const randomStr = Math.random().toString(36).substring(2, 6)
-  return `作答说明_${timestamp}_${randomStr}.txt`
-}
-
-/**
- * Upload supplementary notes text as a file
- */
-export async function uploadSupplementaryNotes(
-  notes: string,
-  topicId: number,
-  questionId: number
-): Promise<ExamAttachment | null> {
-  if (!notes.trim()) return null
-
-  const filename = generateSupplementaryNotesFilename()
-  const response = await uploadTextAsFile(
-    notes,
-    filename,
-    'exam_attachment',
-    topicId,
-    questionId,
-    'supplementaryNotes'
-  )
-
-  return {
-    key: response.key,
-    filename: response.filename,
-    size: response.file_size,
-    content_type: response.content_type,
-  }
-}
+import type { ExamAttachment, SlotAnswer, AnswerSlot } from '@wecode/types/evaluation-exam'
+import type { DynamicQuestionData, DynamicQuestionDataMap } from './ai-assessment-types'
 
 /**
  * Extract attachments from answer content data
  */
-export function extractAttachmentsFromContent(content: {
-  attachments?: Record<string, unknown>
-}): QuestionData['attachments'] {
-  const attachments = content.attachments || {}
-
-  return {
-    main: (attachments.main as ExamAttachment[]) || [],
-    interaction: (attachments.interaction as ExamAttachment[]) || [],
-    bonusAgent: (attachments.bonusAgent as { files?: ExamAttachment[] })?.files || [],
-    bonusMultimodal: (attachments.bonusMultimodal as ExamAttachment[]) || [],
-  }
-}
-
-/**
- * Extract link values from answer content data
- */
-export function extractLinkValuesFromContent(content: {
-  attachments?: Record<string, unknown>
-}): Record<string, string> {
-  const attachments = content.attachments || {}
-
-  return {
-    bonusAgent: (attachments.bonusAgent as { link?: string })?.link || '',
-  }
-}
-
-/**
- * Parse answer data from API response into question data format
- */
-export function parseAnswerData(answerData: {
-  content_data?: {
-    selectedTopicId?: number
-    inputs?: { supplementaryNotes?: string }
+export function extractAttachmentsFromContent(
+  content: {
     attachments?: Record<string, unknown>
-    supplementaryNotesFiles?: ExamAttachment[]
+    answers?: Record<string, SlotAnswer>
+  },
+  answerSlots: AnswerSlot[]
+): Record<string, SlotAnswer> {
+  // If content has the new answers format, use it directly
+  if (content.answers && typeof content.answers === 'object') {
+    return content.answers as Record<string, SlotAnswer>
   }
-}): Partial<QuestionData> | null {
+
+  // Otherwise, convert from attachments format
+  const attachments = content.attachments || {}
+  const result: Record<string, SlotAnswer> = {}
+
+  for (const slot of answerSlots) {
+    const slotData = attachments[slot.key]
+
+    if (slotData && typeof slotData === 'object') {
+      // Check if it's an object format with files/text/link
+      if (
+        'files' in (slotData as Record<string, unknown>) ||
+        'text' in (slotData as Record<string, unknown>) ||
+        'link' in (slotData as Record<string, unknown>)
+      ) {
+        const typedSlot = slotData as { files?: ExamAttachment[]; text?: string; link?: string }
+        result[slot.key] = {
+          files: typedSlot.files || [],
+          text: typedSlot.text,
+          link: typedSlot.link,
+        }
+      } else if (Array.isArray(slotData)) {
+        // It's a simple array of files
+        result[slot.key] = {
+          files: slotData as ExamAttachment[],
+        }
+      }
+    } else {
+      // Initialize with empty value based on slot input mode
+      if (slot.inputMode === 'text') {
+        result[slot.key] = { text: '' }
+      } else if (slot.inputMode === 'link+attachment') {
+        result[slot.key] = { link: '', files: [] }
+      } else {
+        result[slot.key] = { files: [] }
+      }
+    }
+  }
+
+  return result
+}
+
+/**
+ * Extract text values from dynamic answer content
+ */
+export function extractTextValuesFromContent(
+  answers: Record<string, SlotAnswer>
+): Record<string, string> {
+  const result: Record<string, string> = {}
+
+  for (const [key, answer] of Object.entries(answers)) {
+    if (answer.text) {
+      result[key] = answer.text
+    }
+  }
+
+  return result
+}
+
+/**
+ * Parse answer data from API response into dynamic question data format
+ */
+export function parseDynamicAnswerData(
+  answerData: {
+    content_data?: {
+      selectedTopicId?: number
+      attachments?: Record<string, unknown>
+      answers?: Record<string, SlotAnswer>
+    }
+  },
+  answerSlots: AnswerSlot[]
+): Partial<DynamicQuestionData> | null {
   const content = answerData.content_data
   if (!content || !content.selectedTopicId) return null
 
   return {
-    attachments: extractAttachmentsFromContent(content),
-    supplementaryNotesFiles: (content.attachments?.supplementaryNotes as ExamAttachment[]) || [],
-    supplementaryNotes: content.inputs?.supplementaryNotes || '',
-    linkValues: extractLinkValuesFromContent(content),
+    answers: extractAttachmentsFromContent(content, answerSlots),
   }
 }
 
 /**
- * Build question data map from all answers
+ * Build dynamic question data map from all answers
  */
-export function buildQuestionDataMapFromAnswers(
+export function buildDynamicQuestionDataMapFromAnswers(
   allAnswers: Record<
     string,
     {
       content_data?: {
         selectedTopicId?: number
-        inputs?: { supplementaryNotes?: string }
         attachments?: Record<string, unknown>
+        answers?: Record<string, SlotAnswer>
       }
     }
-  >
-): QuestionDataMap {
-  const result: QuestionDataMap = {}
+  >,
+  answerSlotsMap: Record<number, AnswerSlot[]>
+): DynamicQuestionDataMap {
+  const result: DynamicQuestionDataMap = {}
 
   Object.entries(allAnswers).forEach(([questionIdStr, answerData]) => {
     const questionId = parseInt(questionIdStr, 10)
-    const parsed = parseAnswerData(answerData)
+    const slots = answerSlotsMap[questionId] || []
+    const parsed = parseDynamicAnswerData(answerData, slots)
 
     if (parsed) {
+      // Initialize with empty slots
+      const answers: Record<string, SlotAnswer> = {}
+      for (const slot of slots) {
+        if (slot.inputMode === 'text') {
+          answers[slot.key] = { text: '' }
+        } else if (slot.inputMode === 'link+attachment') {
+          answers[slot.key] = { link: '', files: [] }
+        } else {
+          answers[slot.key] = { files: [] }
+        }
+      }
+
       result[questionId] = {
-        attachments: parsed.attachments || {
-          main: [],
-          interaction: [],
-          bonusAgent: [],
-          bonusMultimodal: [],
-        },
-        supplementaryNotesFiles: parsed.supplementaryNotesFiles || [],
-        supplementaryNotes: parsed.supplementaryNotes || '',
-        linkValues: parsed.linkValues || { bonusAgent: '' },
+        answers: { ...answers, ...parsed.answers },
       }
     }
   })
@@ -134,33 +145,34 @@ export function buildQuestionDataMapFromAnswers(
 }
 
 /**
- * Calculate total file count for a question
+ * Calculate total file count for dynamic question data
  */
-export function getTotalFileCount(questionData: QuestionDataMap, questionId: number): number {
-  const data = questionData[questionId]
-  if (!data) return 0
-
-  const slotFiles = Object.values(data.attachments).reduce((sum, arr) => sum + arr.length, 0)
-  const supplementaryFiles = data.supplementaryNotesFiles?.length || 0
-  return slotFiles + supplementaryFiles
+export function getDynamicTotalFileCount(answers: Record<string, SlotAnswer>): number {
+  return Object.values(answers).reduce((sum, answer) => {
+    return sum + (answer.files?.length || 0)
+  }, 0)
 }
 
 /**
- * Check if question has required files (main + interaction)
+ * Check if dynamic question has required files based on slot configuration
  */
-export function hasRequiredFiles(data: QuestionData | undefined | null): boolean {
-  if (!data) return false
-  return data.attachments.interaction.length > 0 && data.attachments.main.length > 0
-}
-
-/**
- * Check if question has supplementary notes
- */
-export function hasSupplementaryNotes(data: QuestionData | undefined | null): boolean {
-  if (!data) return false
-  return (
-    data.supplementaryNotes.trim().length > 0 || (data.supplementaryNotesFiles?.length ?? 0) > 0
-  )
+export function hasDynamicRequiredFiles(
+  answers: Record<string, SlotAnswer>,
+  answerSlots: AnswerSlot[]
+): boolean {
+  for (const slot of answerSlots) {
+    if (slot.required && !slot.isBonus) {
+      const answer = answers[slot.key]
+      const hasContent =
+        (answer?.files && answer.files.length > 0) ||
+        (answer?.text && answer.text.trim() !== '') ||
+        (answer?.link && answer.link.trim() !== '')
+      if (!hasContent) {
+        return false
+      }
+    }
+  }
+  return true
 }
 
 /**

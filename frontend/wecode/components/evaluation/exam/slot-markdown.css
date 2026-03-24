@@ -1,0 +1,85 @@
+/* Slot Markdown Styles */
+
+.slot-markdown {
+  font-size: 1rem;
+}
+
+/* Main description paragraphs */
+.slot-markdown > .slot-md-p {
+  font-size: 1rem;
+  line-height: 1.8;
+  color: #4b5563; /* text-gray-600 */
+  margin-bottom: 0.5rem;
+}
+
+.slot-markdown > .slot-md-p:last-child {
+  margin-bottom: 0;
+}
+
+/* Paragraphs with only strong text (like "交付参考：") indicate start of deliverables */
+.slot-markdown > .slot-md-p:has(> .slot-md-strong:only-child) {
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: #6b7280; /* text-gray-500 */
+  margin-bottom: 0;
+  padding: 0.75rem 1rem 0.5rem 1rem;
+  background-color: #f9fafb;
+  border-radius: 0.75rem 0.75rem 0 0;
+}
+
+/* Strong text */
+.slot-md-strong {
+  font-weight: 700;
+  color: #1f2937;
+}
+
+/* Blockquotes for secondary notes */
+.slot-md-blockquote {
+  margin: 0 0 0.5rem 0;
+  padding: 0;
+  border: none;
+  font-size: 0.875rem;
+  color: #6b7280; /* text-gray-500 */
+}
+
+.slot-md-blockquote > .slot-md-p {
+  font-size: 0.875rem;
+  color: #6b7280;
+  margin: 0;
+  line-height: 1.6;
+}
+
+/* Unordered list for deliverables */
+.slot-md-ul {
+  list-style: none;
+  padding: 0.5rem 1rem 0.75rem 1rem;
+  margin: 0;
+  background-color: #f9fafb;
+  border-radius: 0 0 0.75rem 0.75rem;
+}
+
+/* List items */
+.slot-md-li {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+  color: #4b5563;
+  line-height: 1.6;
+  margin-bottom: 0.25rem;
+}
+
+.slot-md-li:last-child {
+  margin-bottom: 0;
+}
+
+/* Bullet point */
+.slot-md-bullet {
+  color: #d1d5db; /* text-gray-300 */
+  flex-shrink: 0;
+}
+
+/* Connect strong paragraph and ul visually */
+.slot-markdown > .slot-md-p:has(> .slot-md-strong:only-child) + .slot-md-ul {
+  margin-top: 0;
+}

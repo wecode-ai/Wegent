@@ -8,6 +8,37 @@
  */
 
 // ============================================================================
+// Answer Slot Types (Dynamic Answer Slots)
+// ============================================================================
+
+/** Answer slot input mode */
+export type SlotInputMode = 'attachment' | 'text' | 'link+attachment'
+
+/**
+ * Answer slot configuration
+ *
+ * @property key - Unique identifier. MUST contain only alphanumeric characters [a-zA-Z0-9]
+ *                 as it will be used in S3 paths. No special characters allowed.
+ * @property _id - Internal stable ID for React rendering. Auto-generated, do not modify.
+ */
+export interface AnswerSlot {
+  _id?: string // Internal stable ID for React key (auto-generated)
+  key: string // Unique identifier (alphanumeric only: a-z, A-Z, 0-9)
+  label: string // Display name
+  icon: string // Icon name from ExamIcons
+  inputMode: SlotInputMode // Input mode
+  required: boolean // Whether required
+  hint?: string // Help text
+  maxFiles?: number // Max files (default 10)
+  accept?: string // Accepted file types, e.g. ".zip,.pdf"
+
+  // Bonus question fields (required when isBonus=true)
+  isBonus?: boolean // Whether this is a bonus question
+  title?: string // Bonus question title
+  contentMarkdown?: string // Bonus question content
+}
+
+// ============================================================================
 // Core Exam Configuration
 // ============================================================================
 
@@ -56,6 +87,20 @@ export interface ExamBonusItem {
 }
 
 /**
+ * Video attachment for exam introduction
+ */
+export interface ExamVideoAttachment {
+  /** S3 storage key */
+  key: string
+  /** Display filename */
+  filename: string
+  /** File size in bytes */
+  size: number
+  /** MIME type */
+  content_type: string
+}
+
+/**
  * Complete exam configuration stored in Topic.extra_data
  */
 export interface ExamTopicConfig {
@@ -67,6 +112,10 @@ export interface ExamTopicConfig {
   timeNote: string
   uploadSlots: ExamUploadSlot[]
   bonusItems: ExamBonusItem[]
+  /** Optional video attachment for exam introduction */
+  video?: ExamVideoAttachment
+  /** Optional custom instructions markdown to replace default rules display */
+  instructions?: string
 }
 
 // ============================================================================
@@ -90,19 +139,15 @@ export interface ExamQuestionDisplay {
 export interface ExamQuestionContent {
   display: ExamQuestionDisplay
   contentMarkdown: string
+  /** Optional material package attachments (e.g., ZIP files) for exam takers to download */
+  attachments?: ExamAttachment[]
+  /** Answer slot configuration for dynamic answer collection */
+  answerSlots?: AnswerSlot[]
 }
 
 // ============================================================================
-// Legacy Types (for backward compatibility during transition)
+// Answer Content Types
 // ============================================================================
-
-/**
- * @deprecated Use ExamTopicConfig instead
- */
-export interface ExamTopicExtraData {
-  duration: ExamDuration
-  instructions: string
-}
 
 /**
  * Exam attachment metadata
@@ -119,57 +164,35 @@ export interface ExamAttachment {
 }
 
 /**
- * Grouped attachments for exam submission
- */
-export interface ExamAttachmentGroup {
-  /** Main deliverable attachments */
-  main: ExamAttachment[]
-  /** Interaction design attachments */
-  interaction: ExamAttachment[]
-  /** Bonus: Agent deployment */
-  bonusAgent: {
-    /** Deployment link */
-    link?: string
-    /** Supporting files */
-    files: ExamAttachment[]
-  }
-  /** Bonus: Multimodal attachments */
-  bonusMultimodal: ExamAttachment[]
-}
-
-/**
- * Text input fields for exam answers
- * Supports multiple text input fields with real-time saving
- */
-export interface ExamAnswerInputs {
-  /** Supplementary notes text content */
-  supplementaryNotes?: string
-}
-
-/**
- * Extended attachment group including supplementary notes as files
- */
-export interface ExtendedExamAttachmentGroup extends ExamAttachmentGroup {
-  /** Supplementary notes converted to file attachments */
-  supplementaryNotes?: ExamAttachment[]
-}
-
-/**
  * Exam answer content stored in Answer.content_data
  *
- * Architecture:
- * - inputs: Text input fields (real-time saved, cleared after conversion)
- * - attachments: File attachments including converted text inputs
+ * All answer content is stored in the `answers` field using dynamic slots.
  */
 export interface ExamAnswerContent {
   /** Participant's name */
   participantName: string
   /** Selected topic ID (for validation) */
   selectedTopicId: number
-  /** Text input fields (supplementaryNotes, etc.) */
-  inputs?: ExamAnswerInputs
-  /** Grouped file attachments (includes supplementaryNotes after conversion) */
-  attachments: ExtendedExamAttachmentGroup
+  /** Dynamic slot-based answers */
+  answers: Record<string, SlotAnswer>
+}
+
+// ============================================================================
+// Dynamic Answer Content (for AnswerSlot-based questions)
+// ============================================================================
+
+/** Single slot answer */
+export interface SlotAnswer {
+  text?: string // Text content (supports Markdown) - for 'text' mode
+  link?: string // URL link - for 'link+attachment' mode
+  files?: ExamAttachment[]
+}
+
+/** Dynamic answer content structure */
+export interface DynamicAnswerContent {
+  participantName: string
+  selectedTopicId: number
+  answers: Record<string, SlotAnswer> // key is slot key
 }
 
 /**
@@ -217,7 +240,7 @@ export interface ExamDataResponse {
     visibility: string
     status: string
     current_version: string
-    extra_data: ExamTopicExtraData
+    extra_data: Record<string, unknown>
     created_at: string
     updated_at: string
     is_active: boolean
@@ -278,46 +301,6 @@ export const DEFAULT_EXAM_DURATION: ExamDuration = {
   review: 5,
 }
 
-export const DEFAULT_UPLOAD_SLOTS: ExamUploadSlot[] = [
-  {
-    key: 'interaction',
-    label: '交互过程记录',
-    hint: '支持 PDF、图片、文本等格式，最多可上传 20 个文件',
-    required: true,
-    maxFiles: 20,
-    accept: '.pdf,.doc,.docx,.txt,.md,.png,.jpg,.jpeg,.gif,.webp,.html,.json',
-    icon: 'pen',
-  },
-  {
-    key: 'main',
-    label: '产出报告及方案',
-    hint: '支持 PDF、Word、TXT 等格式，最多可上传 20 个文件',
-    required: true,
-    maxFiles: 20,
-    accept: '.pdf,.doc,.docx,.txt,.md,.rtf,.pages',
-    icon: 'file',
-  },
-  {
-    key: 'bonusAgent',
-    label: '附加题一：Agent / Skill',
-    hint: '支持图片、PDF、文档等格式，最多可上传 20 个文件',
-    maxFiles: 20,
-    accept: '.pdf,.doc,.docx,.png,.jpg,.jpeg,.gif,.webp,.pptx,.ppt,.html',
-    icon: 'workflow',
-    showLinkInput: true,
-    linkLabel: 'Agent 分享链接',
-    linkPlaceholder: '粘贴可访问/可运行的 Agent 分享链接',
-  },
-  {
-    key: 'bonusMultimodal',
-    label: '附加题二：多模态交付物',
-    hint: '支持 PPTX、PDF、图片、MP4 等格式，最多可上传 20 个文件',
-    maxFiles: 20,
-    accept: '.pptx,.ppt,.pdf,.doc,.docx,.png,.jpg,.jpeg,.gif,.webp,.mp4,.mov,.avi,.svg',
-    icon: 'layers',
-  },
-]
-
 export const DEFAULT_BONUS_ITEMS: ExamBonusItem[] = [
   {
     title: '可自动运行的 Agent / Skill',
@@ -373,7 +356,7 @@ export function createDefaultTopicConfig(title = 'AI应用能力考核'): ExamTo
     rulesMarkdown: DEFAULT_RULES_MARKDOWN,
     scoring: DEFAULT_SCORING,
     timeNote: DEFAULT_TIME_NOTE,
-    uploadSlots: DEFAULT_UPLOAD_SLOTS,
+    uploadSlots: [],
     bonusItems: DEFAULT_BONUS_ITEMS,
   }
 }
@@ -399,20 +382,21 @@ export function createDefaultQuestionContent(): ExamQuestionContent {
 2. **任务二**: 任务描述...
 
 > ## 文档要求
-> 
+>
 > 文档要求观点清晰、逻辑自洽。
-> 
+>
 > ## 交付内容
-> 
+>
 > 1. 提交与 AI 的交互过程记录
 > 2. 提交题目要求的正式产出报告（支持 PDF、Word等）
 > 3. 请在"作答补充说明"中简要说明本次借助 AI 完成作答的整体思路。
-> 
+>
 > ## 附加题交付（可选）
-> 
+>
 > - 如参与"可自动运行的 Agent / Skill"，请提交可访问/可运行的 Agent 分享链接
 > - 如参与"多模态应用"，请上传基于本次作答生成的多模态交付物
 `,
+    answerSlots: [],
   }
 }
 

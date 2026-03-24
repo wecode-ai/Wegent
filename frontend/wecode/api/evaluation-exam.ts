@@ -117,24 +117,15 @@ export async function updateExamAttachments(
   data: {
     selectedQuestionId: number
     content_data: {
-      attachments?: {
-        main?: { key: string; filename: string; size: number; content_type?: string }[]
-        interaction?: { key: string; filename: string; size: number; content_type?: string }[]
-        bonusAgent?: {
+      /** Dynamic slot-based answers */
+      answers?: Record<
+        string,
+        {
+          text?: string
           link?: string
-          files: { key: string; filename: string; size: number; content_type?: string }[]
+          files?: { key: string; filename: string; size: number; content_type?: string }[]
         }
-        bonusMultimodal?: { key: string; filename: string; size: number; content_type?: string }[]
-        supplementaryNotes?: {
-          key: string
-          filename: string
-          size: number
-          content_type?: string
-        }[]
-      }
-      inputs?: {
-        supplementaryNotes?: string
-      }
+      >
     }
   }
 ): Promise<Answer> {

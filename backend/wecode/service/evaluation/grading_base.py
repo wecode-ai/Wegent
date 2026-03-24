@@ -2,16 +2,23 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Base classes and shared utilities for evaluation grading service."""
+"""Base classes and shared utilities for evaluation grading service.
+
+Architecture:
+- GradingStrategy: Abstract base for grading execution strategies
+- GradingService (in grading_service.py): Manages task lifecycle and orchestrates strategies
+
+Key design principles:
+1. Strategies only execute grading logic and return GradingResult
+2. Strategies do NOT import or call GradingService (no circular dependency)
+3. GradingService runs strategies in background threads and handles results
+"""
 
 import asyncio
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from datetime import datetime
-
-# Import for type hints only - avoid circular imports at runtime
-from typing import TYPE_CHECKING, List, Optional, Tuple
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
 from sqlalchemy.orm import Session
 
@@ -19,7 +26,6 @@ from app.models.kind import Kind
 from app.models.subtask import Subtask, SubtaskStatus
 from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
 from app.models.user import User
-from wecode.models.evaluation import EvalGradingTask, GradingTaskStatus
 from wecode.service.evaluation.storage_service import EvalStorageService
 
 if TYPE_CHECKING:
@@ -57,16 +63,45 @@ class GradingContext:
     force_override_bot_model: bool = False
 
 
+@dataclass
+class GradingResult:
+    """Result from grading strategy execution.
+
+    Strategies return this to communicate outcome to GradingService.
+    The service then handles state updates based on this result.
+    """
+
+    success: bool
+    content: Optional[str] = None  # Report content if successful
+    error_message: Optional[str] = None  # Error message if failed
+    scorer_results: Optional[List[Dict]] = None  # For multi-model mode
+
+
 class GradingStrategy(ABC):
-    """Abstract base class for grading strategies."""
+    """Abstract base class for grading strategies.
+
+    Strategies handle execution flow only and return GradingResult.
+    State changes (complete, fail) are handled by GradingService based on the result.
+
+    IMPORTANT: Strategies must NOT import or call GradingService methods.
+    """
 
     def __init__(self):
         self._storage_service = EvalStorageService()
 
     @abstractmethod
-    async def execute(self, ctx: GradingContext) -> None:
-        """Execute the grading strategy."""
+    async def execute(self, ctx: GradingContext) -> GradingResult:
+        """Execute the grading strategy and return result.
+
+        Args:
+            ctx: Grading context with task info and configuration
+
+        Returns:
+            GradingResult indicating success/failure and content
+        """
         pass
+
+    # ========== Shared utility methods for strategies ==========
 
     async def _copy_attachments_to_context(
         self,
@@ -76,8 +111,6 @@ class GradingStrategy(ABC):
         attachments: List[AttachmentInfo],
     ) -> None:
         """Copy evaluation attachments to SubtaskContext records."""
-        from app.services.attachment.parser import DocumentParseError, DocumentParser
-
         for att in attachments:
             context = self._create_attachment_context(db, subtask_id, user_id, att)
             if context:
@@ -152,14 +185,19 @@ class GradingStrategy(ABC):
         timeout: int = 1800,
         poll_interval: int = 5,
     ) -> Tuple[Optional[str], Optional[str]]:
-        """Wait for a subtask to complete and return its result."""
+        """Wait for a subtask to complete and return its result.
+
+        Returns:
+            Tuple of (content, error_message). On success, content is set.
+            On failure, error_message is set.
+        """
         elapsed = 0
         logger.info(
-            f"[_wait_for_subtask_completion] Starting to wait for subtask {assistant_subtask_id}, timeout={timeout}s"
+            f"[GradingStrategy] Waiting for subtask {assistant_subtask_id}, "
+            f"timeout={timeout}s"
         )
 
-        # Commit any pending changes before starting polling
-        # This ensures we can see updates from other sessions
+        # Commit pending changes before polling to ensure visibility
         db.commit()
 
         while elapsed < timeout:
@@ -172,19 +210,21 @@ class GradingStrategy(ABC):
 
             if not assistant_subtask:
                 logger.error(
-                    f"[_wait_for_subtask_completion] Subtask {assistant_subtask_id} not found"
+                    f"[GradingStrategy] Subtask {assistant_subtask_id} not found"
                 )
                 return None, "Assistant subtask not found"
 
             status = assistant_subtask.status
             if elapsed % 30 == 0:  # Log every 30 seconds
                 logger.info(
-                    f"[_wait_for_subtask_completion] Subtask {assistant_subtask_id} status: {status}, elapsed: {elapsed}s"
+                    f"[GradingStrategy] Subtask {assistant_subtask_id} "
+                    f"status: {status}, elapsed: {elapsed}s"
                 )
 
             if status == SubtaskStatus.COMPLETED:
                 logger.info(
-                    f"[_wait_for_subtask_completion] Subtask {assistant_subtask_id} COMPLETED after {elapsed}s"
+                    f"[GradingStrategy] Subtask {assistant_subtask_id} "
+                    f"COMPLETED after {elapsed}s"
                 )
                 if assistant_subtask.result and isinstance(
                     assistant_subtask.result, dict
@@ -194,7 +234,8 @@ class GradingStrategy(ABC):
 
             elif status == SubtaskStatus.FAILED:
                 logger.error(
-                    f"[_wait_for_subtask_completion] Subtask {assistant_subtask_id} FAILED after {elapsed}s"
+                    f"[GradingStrategy] Subtask {assistant_subtask_id} "
+                    f"FAILED after {elapsed}s"
                 )
                 error = "AI task failed"
                 if assistant_subtask.result and isinstance(
@@ -207,87 +248,10 @@ class GradingStrategy(ABC):
             elapsed += poll_interval
 
         logger.error(
-            f"[_wait_for_subtask_completion] Subtask {assistant_subtask_id} TIMEOUT after {timeout}s"
+            f"[GradingStrategy] Subtask {assistant_subtask_id} "
+            f"TIMEOUT after {timeout}s"
         )
         return None, f"Timeout after {timeout} seconds"
-
-    async def _update_task_failed(
-        self, db: Session, grading_task_id: int, error_message: str
-    ) -> None:
-        """Update grading task status to failed."""
-        try:
-            task = (
-                db.query(EvalGradingTask)
-                .filter(EvalGradingTask.id == grading_task_id)
-                .first()
-            )
-            if task:
-                task.status = GradingTaskStatus.FAILED
-                task.error_message = error_message[:500]
-                task.completed_at = datetime.now()
-                db.commit()
-        except Exception as e:
-            logger.exception(
-                f"[GradingStrategy] Failed to update grading task status: {e}"
-            )
-
-    def _update_task_running(
-        self, db: Session, task: EvalGradingTask, grading_mode: str = "single"
-    ) -> None:
-        """Update task status to running."""
-        task.status = GradingTaskStatus.RUNNING
-        task.grading_mode = grading_mode
-        task.started_at = datetime.now()
-        task.attempt_count = task.attempt_count + 1
-        db.commit()
-
-    def _save_report_to_s3(
-        self, db: Session, task: EvalGradingTask, content: str, is_draft: bool = True
-    ) -> Optional[str]:
-        """Save a report to S3."""
-        from wecode.service.evaluation.question_service import QuestionService
-
-        question_service = QuestionService()
-        question = question_service.get(db, task.question_id)
-        topic_id = question.topic_id if question else 0
-
-        return self._storage_service.save_grading_report(
-            respondent_id=task.respondent_id,
-            topic_id=topic_id,
-            question_id=task.question_id,
-            content=content,
-            is_draft=is_draft,
-        )
-
-    def _complete_task(
-        self, db: Session, task: EvalGradingTask, report_content: str
-    ) -> None:
-        """Mark grading task as completed with AI report."""
-        from sqlalchemy.orm.attributes import flag_modified
-
-        s3_path = self._save_report_to_s3(db, task, report_content, is_draft=True)
-
-        task.status = GradingTaskStatus.COMPLETED
-        task.completed_at = datetime.now()
-
-        report_data = dict(task.report_data) if task.report_data else {}
-        report_data["ai_report"] = {
-            "content": (
-                report_content[:1000] + "..."
-                if len(report_content) > 1000
-                else report_content
-            ),
-            "s3_path": s3_path,
-            "generated_at": datetime.now().isoformat(),
-        }
-        task.report_data = report_data
-        flag_modified(task, "report_data")
-        task.version = task.version + 1
-
-        db.flush()
-        db.commit()
-
-        logger.info(f"[GradingStrategy] Completed grading task {task.id}")
 
     async def _trigger_ai_response(
         self,
@@ -332,4 +296,36 @@ class GradingStrategy(ABC):
             namespace=None,
             user_subtask_id=user_subtask.id,
             auth_token="",
+        )
+
+    def _save_content_to_s3(
+        self,
+        respondent_id: int,
+        topic_id: int,
+        question_id: int,
+        content: str,
+        suffix: str = "",
+    ) -> Optional[str]:
+        """Save content to S3 and return the path.
+
+        This is a utility method for strategies to save intermediate results
+        (like scorer reports) without needing to access GradingService.
+
+        Args:
+            respondent_id: User ID of the respondent
+            topic_id: Topic ID
+            question_id: Question ID
+            content: Content to save
+            suffix: Optional suffix for the filename (e.g., "_scorer_1")
+
+        Returns:
+            S3 path if successful, None otherwise
+        """
+        return self._storage_service.save_grading_report(
+            respondent_id=respondent_id,
+            topic_id=topic_id,
+            question_id=question_id,
+            content=content,
+            is_draft=True,
+            suffix=suffix,
         )

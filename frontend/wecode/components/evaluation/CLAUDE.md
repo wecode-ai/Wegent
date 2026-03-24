@@ -2,6 +2,26 @@
 
 ## 开发经验总结
 
+### 0. 评分配置必填项
+
+**提示词模板是必填项**：
+
+- 单模型评分：`prompt_template` 必填
+- 多模型评分（Scorer）：`scorer_prompt_template` 必填
+- 多模型评分（Aggregator）：`aggregator_prompt_template` 必填
+
+**前端验证**：
+
+```typescript
+// GradingConfigTab.tsx handleSave 中验证
+if (gradingMode === GRADING_MODES.SINGLE && !promptTemplate.trim()) {
+  toast({ title: t('errors.validation_failed'), variant: 'destructive' })
+  return
+}
+```
+
+**推荐模板组件**：`TemplateRecommendation` 组件提供预览和一键导入功能。
+
 ### 1. i18n 命名空间使用
 
 **问题**: 组件使用了错误的命名空间（如 `grading:`），导致翻译缺失。
@@ -182,6 +202,7 @@ const handleExecuteWithModel = async (modelId?: string, forceOverride?: boolean)
 ```
 
 **优势**:
+
 - 自动从 topic config 中选择模型
 - 显示默认配置模型信息
 - 提示用户可直接确认使用默认模型
@@ -190,6 +211,7 @@ const handleExecuteWithModel = async (modelId?: string, forceOverride?: boolean)
 - 减少页面代码量 (~100 行)
 
 **对话框展示内容**:
+
 - 默认配置模型名称（从 topic config 读取）
 - 提示信息：可直接确认使用默认模型，或选择其他模型覆盖
 - ModelSelector 组件供用户选择覆盖模型
@@ -283,6 +305,7 @@ i18n.on('missingKey', (lng, ns, key) => {
 **问题**: 在 GradingConfigTab 中，配置了高级模型后刷新页面，ModelSelector 不显示已选中的模型。
 
 **原因**:
+
 - `useModelSelection` hook 默认 `showAdvancedModels = false`
 - 高级模型被 `filteredModels` 过滤掉
 - 外部传入的 `selectedModel` 无法在列表中匹配到

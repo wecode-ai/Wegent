@@ -12,6 +12,7 @@ import logging
 from typing import Dict, List, Optional, Tuple
 
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from wecode.models.evaluation import (
     EvalQuestion,
@@ -184,6 +185,7 @@ class QuestionService:
             question.content_data = content_data
             if "_criteria" not in question.content_data and existing_criteria:
                 question.content_data["_criteria"] = existing_criteria
+            flag_modified(question, "content_data")
 
         # Update criteria (both type and data)
         if criteria_data is not None or criteria_type is not None:
@@ -204,6 +206,7 @@ class QuestionService:
                 ),
             }
             question.content_data["_criteria"] = new_criteria
+            flag_modified(question, "content_data")
 
         if order_index is not None:
             question.order_index = order_index
@@ -349,7 +352,9 @@ class QuestionService:
             ).update({"order_index": index})
 
         db.flush()
-        logger.info(f"[Evaluation] Reordered {len(question_ids)} questions in topic {topic_id}")
+        logger.info(
+            f"[Evaluation] Reordered {len(question_ids)} questions in topic {topic_id}"
+        )
         return True
 
     def get_criteria_data(self, db: Session, question: EvalQuestion) -> Dict:

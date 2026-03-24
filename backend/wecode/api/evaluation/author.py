@@ -292,10 +292,8 @@ def update_topic(
         db=db,
         topic=topic,
         name=topic_update.name,
-        description=topic_update.description,
         visibility=topic_update.visibility,
         grading_team_id=topic_update.grading_team_id,
-        instructions=topic_update.instructions,
         extra_data=topic_update.extra_data,
     )
     db.commit()
@@ -1061,13 +1059,13 @@ def update_grading_config(
             m.model_dump() for m in config_update.scorer_models
         ]
     if config_update.aggregator_model is not None:
-        updated_config["aggregator_model"] = (
-            config_update.aggregator_model.model_dump()
-        )
+        updated_config["aggregator_model"] = config_update.aggregator_model.model_dump()
     if config_update.scorer_prompt_template is not None:
         updated_config["scorer_prompt_template"] = config_update.scorer_prompt_template
     if config_update.aggregator_prompt_template is not None:
-        updated_config["aggregator_prompt_template"] = config_update.aggregator_prompt_template
+        updated_config["aggregator_prompt_template"] = (
+            config_update.aggregator_prompt_template
+        )
 
     topic.grading_team_config = updated_config
     # Explicitly mark the JSON field as modified to ensure SQLAlchemy persists the change

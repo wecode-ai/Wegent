@@ -11,7 +11,6 @@ export { PermissionsTab } from './PermissionsTab'
 export { ExamSessionsTab } from './ExamSessionsTab'
 export { VersionsTab } from './VersionsTab'
 export { GradingConfigTab } from './GradingConfigTab'
-export { QuickActionsPanel } from './QuickActionsPanel'
 export { ConfigDrawer } from './ConfigDrawer'
 export { QuestionEditorDrawer } from './QuestionEditorDrawer'
 export type {
@@ -21,5 +20,4 @@ export type {
   TopicTab,
   StatusBadgeConfig,
   GradingConfigTabProps,
-  QuickActionsPanelProps,
 } from './types'

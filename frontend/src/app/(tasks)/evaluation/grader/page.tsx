@@ -46,10 +46,10 @@ import {
   getGraderTask,
 } from '@wecode/api/evaluation'
 import { graderListTopics, type GraderTopicItem } from '@wecode/api/evaluation-grader'
+import { fetchFileContent } from '@wecode/api/evaluation-shared'
 import { GradingTaskStatus, type GradingTask, getStatusLabel } from '@wecode/types/evaluation'
 import { useTranslation } from '@/hooks/useTranslation'
 import { formatDateTime } from '@/utils/dateTime'
-import { ModelSelectionDialog, MultiStageRetryDialog } from '@wecode/components/evaluation/grader'
 import { useGradingActions } from '@wecode/components/evaluation/grader/useGradingActions'
 
 const TASKS_PER_PAGE = 20
@@ -74,7 +74,7 @@ function GraderDashboardContent() {
   const [statusFilter, setStatusFilter] = useState<string>(initialStatus ?? 'all')
   const [topicFilter, setTopicFilter] = useState<string>(initialTopicId ?? 'all')
   const [page, setPage] = useState(1)
-  const { executing, publishing, executeTask, retryTask, publishTask, batchExecute, batchPublish } =
+  const { executing, publishing, retryTask, publishTask, batchExecute, batchPublish } =
     useGradingActions({
       onSuccess: () => {
         loadTasks()
@@ -87,13 +87,7 @@ function GraderDashboardContent() {
   const [reportDialogOpen, setReportDialogOpen] = useState(false)
   const [selectedTask, setSelectedTask] = useState<GradingTask | null>(null)
   const [loadingReport, setLoadingReport] = useState(false)
-
-  // Model selection dialog state
-  const [modelDialogOpen, setModelDialogOpen] = useState(false)
-  const [retryDialogOpen, setRetryDialogOpen] = useState(false)
-  const [pendingTaskId, setPendingTaskId] = useState<number | null>(null)
-  const [pendingAction, setPendingAction] = useState<'execute' | 'retry' | null>(null)
-  const [pendingTopicId, setPendingTopicId] = useState<number | null>(null)
+  const [reportContent, setReportContent] = useState<string>('')
 
   // Load dashboard stats and topics list
   const loadDashboard = useCallback(async () => {
@@ -158,77 +152,101 @@ function GraderDashboardContent() {
     router.replace(newUrl, { scroll: false })
   }, [statusFilter, topicFilter, router])
 
-  const handleRetrySingle = (taskId: number, topicId?: number) => {
-    setPendingTaskId(taskId)
-    setPendingTopicId(topicId || null)
-    setRetryDialogOpen(true)
-  }
+  const handleRetrySingle = useCallback(
+    async (taskId: number) => {
+      // Retry with topic's original config - graders cannot modify anything
+      await retryTask(taskId)
+    },
+    [retryTask]
+  )
 
-  const handleExecuteWithModel = async (modelId?: string, forceOverride?: boolean) => {
-    if (!pendingTaskId || !pendingAction) return
-    setModelDialogOpen(false)
+  const handlePublishSingle = useCallback(
+    (taskId: number) => {
+      publishTask(taskId)
+    },
+    [publishTask]
+  )
 
-    try {
-      if (pendingAction === 'execute') {
-        await executeTask(pendingTaskId, modelId, forceOverride)
-      }
-    } finally {
-      setPendingTaskId(null)
-      setPendingAction(null)
-    }
-  }
-
-  const handleRetryWithModel = async (data: {
-    gradingMode: 'single' | 'multi'
-    modelId?: string
-    forceOverride?: boolean
-    scorerModels?: { model_id: string; force_override: boolean }[]
-    aggregatorModel?: { model_id: string; force_override: boolean }
-  }) => {
-    if (!pendingTaskId) return
-    setRetryDialogOpen(false)
-
-    await retryTask(pendingTaskId, {
-      gradingMode: data.gradingMode,
-      modelId: data.modelId,
-      forceOverride: data.forceOverride,
-      scorerModels: data.scorerModels,
-      aggregatorModel: data.aggregatorModel,
-    })
-  }
-
-  const handlePublishSingle = (taskId: number) => {
-    publishTask(taskId)
-  }
-
-  const handleBatchExecute = () => {
+  const handleBatchExecute = useCallback(() => {
     batchExecute(Array.from(selectedTasks))
-  }
+  }, [batchExecute, selectedTasks])
 
-  const handleBatchPublish = () => {
+  const handleBatchPublish = useCallback(() => {
     batchPublish(Array.from(selectedTasks))
-  }
+  }, [batchPublish, selectedTasks])
 
-  const handleViewReport = async (task: GradingTask) => {
-    setLoadingReport(true)
-    setReportDialogOpen(true)
-    try {
-      const fullTask = await getGraderTask(task.id)
-      setSelectedTask(fullTask)
-    } catch (_error) {
-      toast({
-        title: t('errors.load_failed'),
-        description: '',
-        variant: 'destructive',
-      })
-    } finally {
-      setLoadingReport(false)
-    }
-  }
+  const handleViewReport = useCallback(
+    async (task: GradingTask) => {
+      setLoadingReport(true)
+      setReportContent('')
+      setReportDialogOpen(true)
+      try {
+        const fullTask = await getGraderTask(task.id)
+        setSelectedTask(fullTask)
 
-  const handleViewAnswer = (answerId: number) => {
-    router.push(`/evaluation/grader/answers/${answerId}`)
-  }
+        // Extract report content - priority: final > human > ai
+        // And prefer S3 (full content) over inline (truncated)
+        const reportData = fullTask.report_data || {}
+        let content = ''
+
+        // Helper to get S3 path and inline content from a report section
+        const getReportSection = (section: unknown): { s3Path?: string; content?: string } => {
+          if (!section || typeof section !== 'object') return {}
+          const s = section as Record<string, unknown>
+          return {
+            s3Path: typeof s.s3_path === 'string' ? s.s3_path : undefined,
+            content: typeof s.content === 'string' ? s.content : undefined,
+          }
+        }
+
+        const finalReport = getReportSection(reportData.final_report)
+        const humanReport = getReportSection(reportData.human_report)
+        const aiReport = getReportSection(reportData.ai_report)
+
+        // Try final report first (published content)
+        if (finalReport.s3Path) {
+          content = await fetchFileContent(finalReport.s3Path)
+        }
+        if (!content && finalReport.content) {
+          content = finalReport.content
+        }
+
+        // Then human report (draft)
+        if (!content && humanReport.s3Path) {
+          content = await fetchFileContent(humanReport.s3Path)
+        }
+        if (!content && humanReport.content) {
+          content = humanReport.content
+        }
+
+        // Finally AI report
+        if (!content && aiReport.s3Path) {
+          content = await fetchFileContent(aiReport.s3Path)
+        }
+        if (!content && aiReport.content) {
+          content = aiReport.content
+        }
+
+        setReportContent(content || '')
+      } catch (_error) {
+        toast({
+          title: t('errors.load_failed'),
+          description: '',
+          variant: 'destructive',
+        })
+      } finally {
+        setLoadingReport(false)
+      }
+    },
+    [toast, t]
+  )
+
+  const handleViewAnswer = useCallback(
+    (answerId: number) => {
+      router.push(`/evaluation/grader/answers/${answerId}`)
+    },
+    [router]
+  )
 
   const getStatusBadgeVariant = (
     status: number
@@ -348,12 +366,12 @@ function GraderDashboardContent() {
 
           return (
             <div className="flex items-center justify-end gap-2">
-              {/* AI Grading Actions - Show retry for any status if team is configured */}
-              {task.team_id > 0 && (
+              {/* AI Grading Actions - Show retry for any status if grading is configured */}
+              {task.grading_mode && (
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => handleRetrySingle(task.id, task.topic_id)}
+                  onClick={() => handleRetrySingle(task.id)}
                   disabled={executing}
                   title={t('grading.retry')}
                   className="h-8 w-8 p-0"
@@ -399,7 +417,16 @@ function GraderDashboardContent() {
         },
       },
     ],
-    [t, executing, publishing]
+    [
+      t,
+      executing,
+      publishing,
+      handleRetrySingle,
+      handlePublishSingle,
+      handleViewReport,
+      handleViewAnswer,
+      router,
+    ]
   )
 
   if (loading && !stats) {
@@ -567,16 +594,10 @@ function GraderDashboardContent() {
           <div className="max-h-96 overflow-auto">
             {loadingReport ? (
               <Skeleton className="h-48 w-full" />
-            ) : selectedTask?.report_data && Object.keys(selectedTask.report_data).length > 0 ? (
+            ) : reportContent ? (
               <div className="rounded-xl bg-gray-50 p-4">
                 <EnhancedMarkdown
-                  source={
-                    typeof selectedTask.report_data === 'string'
-                      ? selectedTask.report_data
-                      : typeof selectedTask.report_data.content === 'string'
-                        ? selectedTask.report_data.content
-                        : JSON.stringify(selectedTask.report_data, null, 2)
-                  }
+                  source={reportContent}
                   theme={theme === 'dark' ? 'dark' : 'light'}
                 />
               </div>
@@ -586,29 +607,6 @@ function GraderDashboardContent() {
           </div>
         </DialogContent>
       </Dialog>
-
-      {/* Model Selection Dialog - For Execute */}
-      <ModelSelectionDialog
-        open={modelDialogOpen}
-        onOpenChange={setModelDialogOpen}
-        topicId={pendingTopicId}
-        onConfirm={handleExecuteWithModel}
-        title={t('grading.select_model_title')}
-        description={t('grading.select_model_description')}
-        confirmText={t('grading.start_grading')}
-        loading={executing}
-      />
-
-      {/* Multi-Stage Retry Dialog - For Retry */}
-      <MultiStageRetryDialog
-        open={retryDialogOpen}
-        onOpenChange={setRetryDialogOpen}
-        topicId={pendingTopicId}
-        onConfirm={handleRetryWithModel}
-        title={t('grading.retry_config')}
-        confirmText={t('grading.retry')}
-        loading={executing}
-      />
     </div>
   )
 }
