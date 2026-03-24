@@ -172,6 +172,15 @@ class DeviceService:
         return await provider._get_online_info(user_id, device_id)
 
     @staticmethod
+    async def get_device_online_info_by_type(
+        user_id: int, device_id: str, device_type: DeviceType
+    ) -> Optional[Dict[str, Any]]:
+        """Get device online information using the matching provider."""
+
+        provider = DeviceService._get_provider(device_type)
+        return await provider._get_online_info(user_id, device_id)
+
+    @staticmethod
     async def is_device_online(user_id: int, device_id: str) -> bool:
         """Check if device is online.
 
