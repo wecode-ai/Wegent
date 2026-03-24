@@ -51,6 +51,7 @@ import type { DeviceInfo } from '@/apis/devices'
 import { SlotIndicator } from '@/features/devices/components/SlotIndicator'
 import { VersionBadge } from '@/features/devices/components/VersionBadge'
 import { RunningTasksList } from '@/features/devices/components/RunningTasksList'
+import { CloudDeviceCreateSection } from './CloudDeviceCreateSection'
 import type { DeviceUpgradeState } from '@/contexts/DeviceContext'
 
 /**
@@ -179,10 +180,7 @@ export function CloudDeviceSection({
 
       {/* Cloud machine list */}
       {machineCount === 0 ? (
-        <div className="text-center py-8 text-text-muted">
-          <Cloud className="w-12 h-12 mx-auto mb-3 opacity-30" />
-          <p className="text-sm">{t('cloud_device.empty')}</p>
-        </div>
+        <CloudDeviceCreateSection onDeviceCreated={onDeviceCreated} currentDeviceCount={0} />
       ) : (
         <div className="grid gap-4">
           {Object.entries(machineGroups).map(([sandboxId, devices]) => (
@@ -392,7 +390,7 @@ function CloudMachineCard({
       </div>
 
       {/* Device capability rows */}
-      <div className="mt-3 space-y-2">
+      <div className="mt-3 pt-3 border-t border-border/50">
         {devices.map(device => (
           <DeviceCapabilityRow
             key={device.device_id}
@@ -431,28 +429,35 @@ function DeviceCapabilityRow({ device, onStartTask, t }: DeviceCapabilityRowProp
   const canStartTask = isOnline && slotsAvailable
   const isOpenClaw = device.bind_shell === 'openclaw'
 
-  const capabilityLabel = isOpenClaw ? '🦞 openclaw' : 'claudecode'
-
   const statusColor = isOnline
     ? device.status === 'busy'
       ? 'bg-yellow-500'
       : 'bg-green-500'
     : 'bg-gray-400'
 
+  const statusText = isOnline
+    ? device.status === 'busy'
+      ? t('devices:status_busy')
+      : t('devices:status_online')
+    : t('devices:status_offline')
+
   return (
-    <div className="flex items-center justify-between pl-14 py-1.5">
-      <div className="flex items-center gap-2.5">
-        <span className={cn('w-1.5 h-1.5 rounded-full', statusColor)} />
-        <span className="text-sm text-text-primary truncate max-w-[240px]">{device.name}</span>
-        <span
-          className={cn(
-            'inline-flex items-center px-1.5 py-0.5 text-xs font-medium rounded',
-            isOpenClaw ? 'bg-red-50 text-red-600' : 'bg-primary/10 text-primary'
-          )}
-        >
-          {capabilityLabel}
-        </span>
-        {/* Slot indicator for online devices */}
+    <div className="grid grid-cols-[100px_1fr_60px_auto] items-center gap-3 py-2">
+      {/* Capability type badge - fixed width */}
+      <span
+        className={cn(
+          'inline-flex items-center justify-center px-2.5 py-1 text-xs font-medium rounded-md',
+          isOpenClaw
+            ? 'bg-red-50 text-red-600 dark:bg-red-950/50 dark:text-red-400'
+            : 'bg-primary/10 text-primary'
+        )}
+      >
+        {isOpenClaw ? '🦞 OpenClaw' : 'Claude Code'}
+      </span>
+
+      {/* Device name + slot indicator */}
+      <div className="flex items-center gap-2 min-w-0">
+        <span className="text-sm text-text-secondary truncate">{device.name}</span>
         {isOnline && device.slot_used > 0 && (
           <SlotIndicator
             used={device.slot_used}
@@ -461,22 +466,28 @@ function DeviceCapabilityRow({ device, onStartTask, t }: DeviceCapabilityRowProp
           />
         )}
       </div>
+
+      {/* Status */}
+      <div className="flex items-center gap-1.5">
+        <span className={cn('w-1.5 h-1.5 rounded-full flex-shrink-0', statusColor)} />
+        <span className="text-xs text-text-muted">{statusText}</span>
+      </div>
+
+      {/* Action button */}
       <TooltipProvider>
         <Tooltip>
           <TooltipTrigger asChild>
-            <div>
-              <Button
-                variant="default"
-                size="sm"
-                onClick={() => onStartTask(device.device_id)}
-                disabled={!canStartTask}
-                className="flex items-center gap-2"
-                data-testid={`start-task-${device.bind_shell ?? 'executor'}`}
-              >
-                <Play className="w-4 h-4" />
-                {!slotsAvailable ? t('devices:slots_full') : t('devices:start_task')}
-              </Button>
-            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => onStartTask(device.device_id)}
+              disabled={!canStartTask}
+              className="h-7 px-3 text-xs gap-1.5"
+              data-testid={`start-task-${device.bind_shell ?? 'executor'}`}
+            >
+              <Play className="w-3 h-3" />
+              {!slotsAvailable ? t('devices:slots_full') : t('devices:start_task')}
+            </Button>
           </TooltipTrigger>
           {!canStartTask && isOnline && !slotsAvailable && (
             <TooltipContent>
