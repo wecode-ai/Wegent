@@ -1016,7 +1016,8 @@ def update_grading_config(
             )
 
         # Check ownership or public access
-        if team.user_id != current_user.id and not team.spec.get("is_public", False):
+        team_spec = team.json.get("spec", {}) if team.json else {}
+        if team.user_id != current_user.id and not team_spec.get("is_public", False):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="You don't have access to this team",

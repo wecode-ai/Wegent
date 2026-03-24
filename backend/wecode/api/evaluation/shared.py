@@ -611,8 +611,10 @@ def download_file(
 def stream_file(
     request: Request,
     s3_path: str = Query(..., description="S3 storage path of the file"),
+    token: str = Query(
+        None, description="JWT token for authentication (for video/audio tags)"
+    ),
     db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
 ):
     """
     Stream a file through backend proxy for inline viewing (no S3 URL exposure).
@@ -621,10 +623,30 @@ def stream_file(
     Unlike download, this endpoint uses Content-Disposition: inline
     to allow in-browser playback of media files (video, audio, images, etc.)
 
+    Authentication: Supports both Authorization header and query parameter token.
+    The query parameter is needed for HTML5 video/audio tags which cannot set headers.
+
     Permission is verified based on the S3 path pattern (same as download).
 
     Returns the file content as a streaming response for inline viewing.
     """
+    # Authenticate user - try query token first (for video tags), then header
+    current_user = None
+    if token:
+        current_user = security.get_current_user_from_token(token, db)
+    if not current_user:
+        # Try to get from Authorization header
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            header_token = auth_header[7:]
+            current_user = security.get_current_user_from_token(header_token, db)
+
+    if not current_user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
+        )
+
     storage_service = get_storage_service()
 
     # Handle potential '+' to space conversion issue
