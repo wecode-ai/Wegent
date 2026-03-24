@@ -80,8 +80,7 @@ class MessageConverter:
             messages.append({"role": "user", "content": dynamic_context})
 
         # Build raw datetime text (without wrapper).  The wrapper is applied
-        # later by _build_system_reminder_block which merges ALL system context
-        # (attachment metadata, time, etc.) into a single <system-reminder> block.
+        # later by _build_system_reminder_block.
         time_text: str | None = None
         if inject_datetime:
             now = datetime.now()
@@ -91,8 +90,8 @@ class MessageConverter:
             # OpenAI Responses API format: list of content blocks
             # [{"type": "input_text", "text": "..."}, {"type": "input_image", ...}]
             # Convert to LangChain/OpenAI Chat Completions format.
-            # Context text blocks (attachment metadata, etc.) are merged with
-            # time_text into one <system-reminder> block.
+            # Context text blocks (attachment metadata, etc.) are kept as
+            # independent blocks; only time_text goes into <system-reminder>.
             messages.append(
                 MessageConverter._convert_responses_api_to_langchain(
                     current_message, username, time_text
@@ -201,32 +200,26 @@ class MessageConverter:
 
     @staticmethod
     def _build_system_reminder_block(
-        context_texts: list[str],
         time_text: str | None = None,
     ) -> dict[str, Any] | None:
-        """Build a single ``<system-reminder>`` content block.
+        """Build a ``<system-reminder>`` content block for ephemeral metadata.
 
-        Merges all system-injected context (attachment metadata, selected
-        documents, current time, etc.) into **one** block.  The frontend
-        strips ``<system-reminder>`` content when displaying messages.
+        Only contains small, non-persisted metadata like ``<CurrentTime>``.
+        Context content (attachments, knowledge base, selected documents)
+        is kept as independent text blocks — not merged here.
 
         Args:
-            context_texts: Raw context strings (e.g. ``<attachment>...</attachment>``).
             time_text: Optional raw time string (e.g. ``<CurrentTime>...</CurrentTime>``).
 
         Returns:
-            A ``{"type": "text", "text": "<system-reminder>...\n</system-reminder>"}``
+            A ``{"type": "text", "text": "<system-reminder>...</system-reminder>"}``
             dict, or ``None`` if there is nothing to include.
         """
-        parts = list(context_texts)
-        if time_text:
-            parts.append(time_text)
-        if not parts:
+        if not time_text:
             return None
-        inner = "".join(parts)
         return {
             "type": "text",
-            "text": f"<system-reminder>{inner}</system-reminder>",
+            "text": f"<system-reminder>{time_text}</system-reminder>",
         }
 
     @staticmethod
@@ -237,10 +230,10 @@ class MessageConverter:
     ) -> dict[str, Any]:
         """Convert OpenAI Responses API format to LangChain/Chat Completions format.
 
-        All non-user text blocks (attachment metadata, selected-documents, etc.)
-        are merged with ``time_text`` into a **single** ``<system-reminder>``
-        block at the end of the content list.  The last ``input_text`` block
-        is always treated as the user's own message.
+        Context text blocks (attachment metadata, selected-documents, etc.) are
+        kept as **independent** text blocks.  Only ``time_text`` is wrapped in
+        a ``<system-reminder>`` block appended at the end.  The last
+        ``input_text`` block is always treated as the user's own message.
 
         Args:
             content_blocks: List of content blocks in Responses API format
@@ -293,23 +286,22 @@ class MessageConverter:
         # Phase 2 — separate user message (last text) from context blocks
         if text_entries:
             user_msg_block = text_entries[-1]
-            context_texts = [b["text"] for b in text_entries[:-1]]
+            context_blocks = text_entries[:-1]  # independent text blocks
         else:
             # Image-only message: create an empty text block for username
             user_msg_block = {"type": "text", "text": ""}
-            context_texts = []
+            context_blocks = []
 
         # Apply username prefix to the user message block
         if username:
             user_msg_block["text"] = f"User[{username}]: {user_msg_block['text']}"
 
-        # Phase 3 — assemble: [user_msg, images, system-reminder]
+        # Phase 3 — assemble: [user_msg, images, context_blocks..., system-reminder]
         langchain_content: list[dict[str, Any]] = [user_msg_block]
         langchain_content.extend(image_entries)
+        langchain_content.extend(context_blocks)
 
-        reminder = MessageConverter._build_system_reminder_block(
-            context_texts, time_text
-        )
+        reminder = MessageConverter._build_system_reminder_block(time_text)
         if reminder:
             langchain_content.append(reminder)
 
