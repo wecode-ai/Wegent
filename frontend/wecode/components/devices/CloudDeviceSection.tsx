@@ -35,6 +35,7 @@ import {
   MoreVertical,
   ExternalLink,
   Pencil,
+  AlertTriangle,
 } from 'lucide-react'
 import {
   DropdownMenu,
@@ -141,6 +142,16 @@ export function CloudDeviceSection({
     return false
   })
 
+  // Check if any device was created before the system image upgrade date (March 24, 2026)
+  const LEGACY_UPGRADE_CUTOFF_DATE = new Date('2026-03-24T11:00:00Z')
+  const hasLegacyDevices = cloudDevices.some(device => {
+    if (device.cloud_config?.createdAt) {
+      const createdAt = new Date(device.cloud_config.createdAt)
+      return createdAt < LEGACY_UPGRADE_CUTOFF_DATE
+    }
+    return false
+  })
+
   // Auto-refresh when devices are being created
   useEffect(() => {
     if (!hasCreatingDevice) return
@@ -175,6 +186,14 @@ export function CloudDeviceSection({
         <Alert variant="success">
           <Loader2 className="w-4 h-4 animate-spin" />
           <AlertDescription>{t('cloud_device.creating_notice')}</AlertDescription>
+        </Alert>
+      )}
+
+      {/* Legacy device upgrade notice */}
+      {hasLegacyDevices && (
+        <Alert variant="warning" className="flex items-center gap-2 [&>svg]:static [&>svg~*]:pl-0">
+          <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+          <AlertDescription>{t('cloud_device.legacy_upgrade_notice')}</AlertDescription>
         </Alert>
       )}
 
