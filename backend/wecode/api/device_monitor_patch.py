@@ -97,13 +97,57 @@ async def restart_device_patched(
         )
 
 
+# Mark the patched function
+setattr(restart_device_patched, "_wecode_patched", True)
+
+
+def _patch_route_in_router(router, target_path: str, new_endpoint) -> bool:
+    """Recursively find and patch a route in router and its sub-routers.
+
+    Args:
+        router: The router to search in
+        target_path: The full path to match (e.g., "/admin/device-monitor/devices/{device_id}/restart")
+        new_endpoint: The new endpoint function to use
+
+    Returns:
+        True if the route was found and patched
+    """
+    if not hasattr(router, "routes"):
+        return False
+
+    for route in router.routes:
+        # Check if this is the target route
+        route_path = getattr(route, "path", "")
+        methods = getattr(route, "methods", set())
+
+        if route_path == target_path and "POST" in methods:
+            endpoint = getattr(route, "endpoint", None)
+            if callable(endpoint) and not getattr(endpoint, "_wecode_patched", False):
+                route.endpoint = new_endpoint
+                logger.info(
+                    f"[wecode] Patched route {target_path} with Nevis implementation"
+                )
+                return True
+
+        # Check sub-router (for APIRouter.include_router cases)
+        if hasattr(route, "app"):
+            sub_router = route.app
+            # Build the sub-path by removing the route's path prefix
+            if target_path.startswith(route_path):
+                sub_path = target_path[len(route_path) :]
+                if _patch_route_in_router(sub_router, sub_path, new_endpoint):
+                    return True
+
+    return False
+
+
 def apply_patch() -> None:
     """Replace restart_device endpoint function with actual Nevis implementation."""
     if device_monitor_module is None:
         logger.warning("[wecode] device_monitor_module not available, skipping patch")
         return
 
-    # Patch the module-level function directly
+    # 1. Patch the module-level function directly
     original_func = getattr(device_monitor_module, "restart_device", None)
     if original_func is None:
         logger.warning("[wecode] restart_device function not found, skipping patch")
@@ -114,24 +158,40 @@ def apply_patch() -> None:
         return
 
     # Replace the function in the module
-    setattr(restart_device_patched, "_wecode_patched", True)
     device_monitor_module.restart_device = restart_device_patched
+    logger.info("[wecode] Patched device_monitor_module.restart_device")
 
-    # Also update the router's route endpoint
-    router = getattr(device_monitor_module, "router", None)
-    if router and hasattr(router, "routes"):
-        for route in router.routes:
+    # 2. Patch the device_monitor router's route
+    dm_router = getattr(device_monitor_module, "router", None)
+    if dm_router and hasattr(dm_router, "routes"):
+        for route in dm_router.routes:
             path = getattr(route, "path", None)
             methods = getattr(route, "methods", set())
             if path == "/devices/{device_id}/restart" and "POST" in methods:
                 route.endpoint = restart_device_patched
-                logger.info(
-                    "[wecode] Patched restart_device endpoint with Nevis implementation"
-                )
+                logger.info("[wecode] Patched device_monitor.router restart route")
                 break
 
-    logger.info("[wecode] restart_device function patched successfully")
+
+def apply_patch_to_api_router() -> None:
+    """Apply patch to the main api_router after all routers are registered.
+
+    This should be called after api_router is fully constructed.
+    """
+    try:
+        from app.api.router import api_router
+    except Exception:
+        logger.warning("[wecode] api_router not available, skipping api_router patch")
+        return
+
+    # The full path in api_router after all include_router calls
+    target_path = "/admin/device-monitor/devices/{device_id}/restart"
+
+    if _patch_route_in_router(api_router, target_path, restart_device_patched):
+        logger.info("[wecode] Patched restart_device in api_router")
+    else:
+        logger.warning(f"[wecode] Could not find route {target_path} in api_router")
 
 
-# Auto-apply on import
+# Auto-apply module-level patch on import
 apply_patch()

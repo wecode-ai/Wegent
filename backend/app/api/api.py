@@ -199,3 +199,11 @@ api_router.include_router(
 api_router.include_router(
     callback_router, prefix="/internal", tags=["internal-callback"]
 )
+
+# Finalize wecode patches after all routers are registered
+try:
+    from wecode.api import finalize_patches
+
+    finalize_patches()
+except ImportError:
+    pass  # wecode module not available (open-source deployment)
