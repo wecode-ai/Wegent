@@ -101,11 +101,7 @@ class DeviceExtensionHandler:
     ) -> Path:
         workspace_root = Path(config.LOCAL_WORKSPACE_ROOT).expanduser().resolve()
         extension_dir = (
-            workspace_root
-            / str(task_id)
-            / ".claude"
-            / "skills"
-            / extension_name
+            workspace_root / str(task_id) / ".claude" / "skills" / extension_name
         ).resolve()
         resolved_path = (extension_dir / script_path).resolve()
 
@@ -146,7 +142,9 @@ class DeviceExtensionHandler:
         stdout = result.stdout.strip()
         stderr = result.stderr.strip()
         if result.returncode != 0:
-            message = stderr or stdout or f"Extension exited with code {result.returncode}"
+            message = (
+                stderr or stdout or f"Extension exited with code {result.returncode}"
+            )
             return {
                 "success": False,
                 "message": message,
