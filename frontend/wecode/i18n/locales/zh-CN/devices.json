@@ -64,10 +64,12 @@
   "slots_full_hint": "所有任务槽已被占用，请等待当前任务完成后再试",
   "mail_config": {
     "title": "配置邮箱",
-    "description": "输入邮箱密码后，将在本地设备上生成 Himalaya 配置文件。完成后请重新执行刚才的邮件操作。",
+    "description": "输入邮箱密码后，将在目标设备上生成 Himalaya 配置文件。完成后请重新执行刚才的邮件操作。",
     "device_label": "目标设备",
+    "current_device_label": "当前设备",
     "device_placeholder": "请选择目标设备",
-    "no_local_devices": "当前没有可用的本地设备",
+    "no_devices": "当前没有可用设备",
+    "no_task_context": "当前缺少任务上下文，无法定位 Himalaya skill 脚本",
     "account_label": "账户",
     "loading_account": "加载中...",
     "password_label": "邮箱密码",
@@ -80,7 +82,9 @@
     "save_failed": "生成邮箱配置失败",
     "retry_hint": "请重新执行刚才的邮件操作。",
     "load_devices_failed": "加载设备失败",
-    "load_user_failed": "加载账户信息失败"
+    "load_user_failed": "加载账户信息失败",
+    "device_type_local": "本地设备",
+    "device_type_cloud": "云设备"
   },
   "mail_access_guide": {
     "title": "切换邮件设备",
