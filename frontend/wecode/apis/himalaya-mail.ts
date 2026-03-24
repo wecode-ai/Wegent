@@ -7,6 +7,7 @@ import { apiClient } from '@/apis/client'
 export type HimalayaMailDomain = '@staff.sina.com.cn' | '@staff.weibo.com'
 
 export interface HimalayaMailConfigRequest {
+  task_id: number
   account_prefix: string
   email_domain: HimalayaMailDomain
   password: string

@@ -64,10 +64,12 @@
   "slots_full_hint": "All task slots are occupied. Please wait for current tasks to finish.",
   "mail_config": {
     "title": "Configure Mail",
-    "description": "Enter your mail password to generate a Himalaya config on the local device. Re-run the previous mail action after it completes.",
+    "description": "Enter your mail password to generate a Himalaya config on the target device. Re-run the previous mail action after it completes.",
     "device_label": "Target Device",
+    "current_device_label": "Current Device",
     "device_placeholder": "Select a target device",
-    "no_local_devices": "No local device is currently available",
+    "no_devices": "No device is currently available",
+    "no_task_context": "Task context is missing, so the Himalaya skill script cannot be located",
     "account_label": "Account",
     "loading_account": "Loading...",
     "password_label": "Mail Password",
@@ -80,7 +82,9 @@
     "save_failed": "Failed to generate mail config",
     "retry_hint": "Please retry the previous mail action.",
     "load_devices_failed": "Failed to load devices",
-    "load_user_failed": "Failed to load account information"
+    "load_user_failed": "Failed to load account information",
+    "device_type_local": "Local device",
+    "device_type_cloud": "Cloud device"
   },
   "mail_access_guide": {
     "title": "Switch Mail Device",

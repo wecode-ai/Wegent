@@ -14,6 +14,11 @@ from pydantic import BaseModel, Field
 class HimalayaMailConfigRequest(BaseModel):
     """Request schema for generating a Himalaya config on a local device."""
 
+    task_id: int = Field(
+        ...,
+        gt=0,
+        description="Task ID whose skill workspace contains the Himalaya extension",
+    )
     account_prefix: str = Field(
         ...,
         min_length=1,
