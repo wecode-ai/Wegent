@@ -384,8 +384,10 @@ export function DeviceMonitorPanel() {
             {devices.map(device => {
               const isOnline = device.status === 'online'
               const isCloud = device.device_type === 'cloud'
+              const isClaudeCode = device.bind_shell === 'claudecode'
               const canUpgrade =
                 isOnline &&
+                isClaudeCode &&
                 device.executor_version &&
                 isVersionAtLeast(device.executor_version, MIN_AUTO_UPGRADE_VERSION)
               const upgradeKey = `${device.device_id}-upgrade`
@@ -428,33 +430,35 @@ export function DeviceMonitorPanel() {
                     {/* Action Buttons */}
                     <div className="flex items-center gap-1 shrink-0">
                       <TooltipProvider>
-                        {/* Upgrade Button - available for online devices with version >= 1.6.5 */}
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8"
-                              disabled={!canUpgrade || !!actionLoading[upgradeKey]}
-                              onClick={() => handleUpgrade(device)}
-                              data-testid={`upgrade-device-${device.device_id}`}
-                            >
-                              <ArrowUpCircle
-                                className={cn(
-                                  'h-4 w-4',
-                                  actionLoading[upgradeKey] && 'animate-pulse'
-                                )}
-                              />
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipContent>
-                            {canUpgrade
-                              ? t('admin:device_monitor.actions.upgrade')
-                              : t('admin:device_monitor.actions.upgrade_unsupported', {
-                                  version: MIN_AUTO_UPGRADE_VERSION,
-                                })}
-                          </TooltipContent>
-                        </Tooltip>
+                        {/* Upgrade Button - ClaudeCode only, available for online devices with version >= 1.6.5 */}
+                        {isClaudeCode && (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8"
+                                disabled={!canUpgrade || !!actionLoading[upgradeKey]}
+                                onClick={() => handleUpgrade(device)}
+                                data-testid={`upgrade-device-${device.device_id}`}
+                              >
+                                <ArrowUpCircle
+                                  className={cn(
+                                    'h-4 w-4',
+                                    actionLoading[upgradeKey] && 'animate-pulse'
+                                  )}
+                                />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              {canUpgrade
+                                ? t('admin:device_monitor.actions.upgrade')
+                                : t('admin:device_monitor.actions.upgrade_unsupported', {
+                                    version: MIN_AUTO_UPGRADE_VERSION,
+                                  })}
+                            </TooltipContent>
+                          </Tooltip>
+                        )}
 
                         {/* Restart Button - cloud only */}
                         {isCloud && (
