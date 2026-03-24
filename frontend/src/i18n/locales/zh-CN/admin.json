@@ -13,7 +13,7 @@
     "api_keys": "密钥管理",
     "system_config": "系统配置",
     "im_channels": "IM 渠道",
-    "monitor": "监控",
+    "monitor": "订阅监控",
     "device_monitor": "设备监控"
   },
   "stats": {
@@ -824,7 +824,7 @@
       "total": "总设备数",
       "user_count": "用户数量",
       "online": "在线",
-      "offline": "离线",
+      "offline": "离线云设备",
       "busy": "忙碌",
       "local": "本地设备",
       "cloud": "云设备"
@@ -841,7 +841,19 @@
     },
     "errors": {
       "load_failed": "加载设备列表失败",
-      "load_stats_failed": "加载统计数据失败"
+      "load_stats_failed": "加载统计数据失败",
+      "upgrade_failed": "发送升级命令失败",
+      "restart_failed": "发送重启命令失败",
+      "migrate_failed": "发送迁移命令失败"
+    },
+    "actions": {
+      "upgrade": "升级",
+      "upgrade_unsupported": "版本低于 {{version}}，不支持在线升级",
+      "restart": "重启",
+      "migrate": "迁移",
+      "upgrade_sent": "升级命令已发送",
+      "restart_sent": "重启命令已发送",
+      "migrate_sent": "迁移命令已发送"
     }
   }
 }

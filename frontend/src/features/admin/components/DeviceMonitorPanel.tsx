@@ -6,16 +6,21 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
-import {
-  adminApis,
-  AdminDeviceInfo,
-  AdminDeviceStats,
-  DeviceStatus,
-  DeviceType,
-  BindShell,
-} from '@/apis/admin'
+import { adminApis, AdminDeviceInfo, AdminDeviceStats, DeviceType, BindShell } from '@/apis/admin'
 import { toast } from 'sonner'
-import { Monitor, Wifi, WifiOff, Cloud, HardDrive, RefreshCw, Search, Users } from 'lucide-react'
+import {
+  Monitor,
+  Wifi,
+  WifiOff,
+  Cloud,
+  HardDrive,
+  RefreshCw,
+  Search,
+  Users,
+  ArrowUpCircle,
+  RotateCcw,
+  MoveRight,
+} from 'lucide-react'
 import { ChevronLeftIcon, ChevronRightIcon } from '@heroicons/react/24/solid'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -28,7 +33,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { cn } from '@/lib/utils'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { cn, isVersionAtLeast } from '@/lib/utils'
+
+// Minimum version required for auto-upgrade support
+const MIN_AUTO_UPGRADE_VERSION = '1.6.5'
 
 interface StatCardProps {
   title: string
@@ -65,7 +74,7 @@ function StatCard({ title, value, icon, variant = 'default' }: StatCardProps) {
   )
 }
 
-function getStatusTag(status: DeviceStatus, t: (key: string) => string) {
+function getStatusTag(status: string, t: (key: string) => string) {
   switch (status) {
     case 'online':
       return <Tag variant="success">{t('admin:device_monitor.status.online')}</Tag>
@@ -117,9 +126,9 @@ export function DeviceMonitorPanel() {
   const [total, setTotal] = useState(0)
   const [isLoading, setIsLoading] = useState(true)
   const [isRefreshing, setIsRefreshing] = useState(false)
+  const [actionLoading, setActionLoading] = useState<Record<string, string>>({})
 
   // Filter states
-  const [statusFilter, setStatusFilter] = useState<string>('all')
   const [deviceTypeFilter, setDeviceTypeFilter] = useState<string>('all')
   const [bindShellFilter, setBindShellFilter] = useState<string>('all')
   const [search, setSearch] = useState('')
@@ -147,26 +156,18 @@ export function DeviceMonitorPanel() {
 
   const loadDevices = useCallback(async () => {
     try {
-      const status = statusFilter === 'all' ? undefined : (statusFilter as DeviceStatus)
       const deviceType = deviceTypeFilter === 'all' ? undefined : (deviceTypeFilter as DeviceType)
       const bindShell = bindShellFilter === 'all' ? undefined : (bindShellFilter as BindShell)
       const searchTerm = debouncedSearch.trim() || undefined
 
-      const data = await adminApis.getDevices(
-        page,
-        limit,
-        status,
-        deviceType,
-        bindShell,
-        searchTerm
-      )
+      const data = await adminApis.getDevices(page, limit, deviceType, bindShell, searchTerm)
       setDevices(data.items)
       setTotal(data.total)
     } catch (error) {
       console.error('Failed to load devices:', error)
       toast.error(t('admin:device_monitor.errors.load_failed'))
     }
-  }, [page, statusFilter, deviceTypeFilter, bindShellFilter, debouncedSearch, t])
+  }, [page, deviceTypeFilter, bindShellFilter, debouncedSearch, t])
 
   const loadData = useCallback(async () => {
     setIsLoading(true)
@@ -186,7 +187,89 @@ export function DeviceMonitorPanel() {
 
   useEffect(() => {
     setPage(1)
-  }, [statusFilter, deviceTypeFilter, bindShellFilter, debouncedSearch])
+  }, [deviceTypeFilter, bindShellFilter, debouncedSearch])
+
+  // Device action handlers
+  const handleUpgrade = useCallback(
+    async (device: AdminDeviceInfo) => {
+      const key = `${device.device_id}-upgrade`
+      if (actionLoading[key]) return
+
+      setActionLoading(prev => ({ ...prev, [key]: 'upgrade' }))
+      try {
+        const result = await adminApis.upgradeDevice(device.device_id, device.user_id)
+        if (result.success) {
+          toast.success(t('admin:device_monitor.actions.upgrade_sent'))
+        } else {
+          toast.error(result.message)
+        }
+      } catch (error) {
+        console.error('Failed to upgrade device:', error)
+        toast.error(t('admin:device_monitor.errors.upgrade_failed'))
+      } finally {
+        setActionLoading(prev => {
+          const next = { ...prev }
+          delete next[key]
+          return next
+        })
+      }
+    },
+    [actionLoading, t]
+  )
+
+  const handleRestart = useCallback(
+    async (device: AdminDeviceInfo) => {
+      const key = `${device.device_id}-restart`
+      if (actionLoading[key]) return
+
+      setActionLoading(prev => ({ ...prev, [key]: 'restart' }))
+      try {
+        const result = await adminApis.restartDevice(device.device_id, device.user_id)
+        if (result.success) {
+          toast.success(t('admin:device_monitor.actions.restart_sent'))
+        } else {
+          toast.info(result.message)
+        }
+      } catch (error) {
+        console.error('Failed to restart device:', error)
+        toast.error(t('admin:device_monitor.errors.restart_failed'))
+      } finally {
+        setActionLoading(prev => {
+          const next = { ...prev }
+          delete next[key]
+          return next
+        })
+      }
+    },
+    [actionLoading, t]
+  )
+
+  const handleMigrate = useCallback(
+    async (device: AdminDeviceInfo) => {
+      const key = `${device.device_id}-migrate`
+      if (actionLoading[key]) return
+
+      setActionLoading(prev => ({ ...prev, [key]: 'migrate' }))
+      try {
+        const result = await adminApis.migrateDevice(device.device_id, device.user_id)
+        if (result.success) {
+          toast.success(t('admin:device_monitor.actions.migrate_sent'))
+        } else {
+          toast.info(result.message)
+        }
+      } catch (error) {
+        console.error('Failed to migrate device:', error)
+        toast.error(t('admin:device_monitor.errors.migrate_failed'))
+      } finally {
+        setActionLoading(prev => {
+          const next = { ...prev }
+          delete next[key]
+          return next
+        })
+      }
+    },
+    [actionLoading, t]
+  )
 
   if (isLoading) {
     return (
@@ -263,17 +346,6 @@ export function DeviceMonitorPanel() {
             data-testid="device-search-input"
           />
         </div>
-        <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger className="w-[140px]" data-testid="status-filter-select">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">{t('admin:device_monitor.filters.all_status')}</SelectItem>
-            <SelectItem value="online">{t('admin:device_monitor.status.online')}</SelectItem>
-            <SelectItem value="offline">{t('admin:device_monitor.status.offline')}</SelectItem>
-            <SelectItem value="busy">{t('admin:device_monitor.status.busy')}</SelectItem>
-          </SelectContent>
-        </Select>
         <Select value={deviceTypeFilter} onValueChange={setDeviceTypeFilter}>
           <SelectTrigger className="w-[140px]" data-testid="device-type-filter-select">
             <SelectValue />
@@ -309,42 +381,138 @@ export function DeviceMonitorPanel() {
           </div>
         ) : (
           <div className="flex-1 overflow-y-auto space-y-2 p-1">
-            {devices.map(device => (
-              <Card
-                key={device.id}
-                className="p-3 bg-base hover:bg-hover transition-colors"
-                data-testid={`device-card-${device.device_id}`}
-              >
-                <div className="flex items-start justify-between min-w-0 gap-4">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1 flex-wrap">
-                      <span className="font-medium text-text-primary">{device.name}</span>
-                      {getStatusTag(device.status, t)}
-                      {getDeviceTypeTag(device.device_type, t)}
-                      {getBindShellTag(device.bind_shell, t)}
+            {devices.map(device => {
+              const isOnline = device.status === 'online'
+              const isCloud = device.device_type === 'cloud'
+              const canUpgrade =
+                isOnline &&
+                device.executor_version &&
+                isVersionAtLeast(device.executor_version, MIN_AUTO_UPGRADE_VERSION)
+              const upgradeKey = `${device.device_id}-upgrade`
+              const restartKey = `${device.device_id}-restart`
+              const migrateKey = `${device.device_id}-migrate`
+
+              return (
+                <Card
+                  key={device.id}
+                  className="p-3 bg-base hover:bg-hover transition-colors"
+                  data-testid={`device-card-${device.device_id}`}
+                >
+                  <div className="flex items-start justify-between min-w-0 gap-4">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1 flex-wrap">
+                        <span className="font-medium text-text-primary">{device.name}</span>
+                        {getStatusTag(device.status, t)}
+                        {getDeviceTypeTag(device.device_type, t)}
+                        {getBindShellTag(device.bind_shell, t)}
+                        {device.executor_version && (
+                          <Tag variant="default" className="text-xs">
+                            v{device.executor_version}
+                          </Tag>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-3 text-xs text-text-muted flex-wrap">
+                        <span>
+                          {t('admin:device_monitor.columns.device_id')}: {device.device_id}
+                        </span>
+                        <span>
+                          {t('admin:device_monitor.columns.user')}: {device.user_name}
+                        </span>
+                        {device.client_ip && (
+                          <span>
+                            {t('admin:device_monitor.columns.ip')}: {device.client_ip}
+                          </span>
+                        )}
+                      </div>
                     </div>
-                    <div className="flex items-center gap-3 text-xs text-text-muted flex-wrap">
-                      <span>
-                        {t('admin:device_monitor.columns.device_id')}: {device.device_id}
-                      </span>
-                      <span>
-                        {t('admin:device_monitor.columns.user')}: {device.user_name}
-                      </span>
-                      {device.executor_version && (
-                        <span>
-                          {t('admin:device_monitor.columns.version')}: {device.executor_version}
-                        </span>
-                      )}
-                      {device.client_ip && (
-                        <span>
-                          {t('admin:device_monitor.columns.ip')}: {device.client_ip}
-                        </span>
-                      )}
+                    {/* Action Buttons */}
+                    <div className="flex items-center gap-1 shrink-0">
+                      <TooltipProvider>
+                        {/* Upgrade Button - available for online devices with version >= 1.6.5 */}
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8"
+                              disabled={!canUpgrade || !!actionLoading[upgradeKey]}
+                              onClick={() => handleUpgrade(device)}
+                              data-testid={`upgrade-device-${device.device_id}`}
+                            >
+                              <ArrowUpCircle
+                                className={cn(
+                                  'h-4 w-4',
+                                  actionLoading[upgradeKey] && 'animate-pulse'
+                                )}
+                              />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            {canUpgrade
+                              ? t('admin:device_monitor.actions.upgrade')
+                              : t('admin:device_monitor.actions.upgrade_unsupported', {
+                                  version: MIN_AUTO_UPGRADE_VERSION,
+                                })}
+                          </TooltipContent>
+                        </Tooltip>
+
+                        {/* Restart Button - cloud only */}
+                        {isCloud && (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8"
+                                disabled={!!actionLoading[restartKey]}
+                                onClick={() => handleRestart(device)}
+                                data-testid={`restart-device-${device.device_id}`}
+                              >
+                                <RotateCcw
+                                  className={cn(
+                                    'h-4 w-4',
+                                    actionLoading[restartKey] && 'animate-spin'
+                                  )}
+                                />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              {t('admin:device_monitor.actions.restart')}
+                            </TooltipContent>
+                          </Tooltip>
+                        )}
+
+                        {/* Migrate Button - cloud only */}
+                        {isCloud && (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8"
+                                disabled={!!actionLoading[migrateKey]}
+                                onClick={() => handleMigrate(device)}
+                                data-testid={`migrate-device-${device.device_id}`}
+                              >
+                                <MoveRight
+                                  className={cn(
+                                    'h-4 w-4',
+                                    actionLoading[migrateKey] && 'animate-pulse'
+                                  )}
+                                />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              {t('admin:device_monitor.actions.migrate')}
+                            </TooltipContent>
+                          </Tooltip>
+                        )}
+                      </TooltipProvider>
                     </div>
                   </div>
-                </div>
-              </Card>
-            ))}
+                </Card>
+              )
+            })}
           </div>
         )}
       </div>

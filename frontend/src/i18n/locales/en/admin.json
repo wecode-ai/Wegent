@@ -13,7 +13,7 @@
     "api_keys": "API Keys",
     "system_config": "System Config",
     "im_channels": "IM Channels",
-    "monitor": "Monitor",
+    "monitor": "Subscription Monitor",
     "device_monitor": "Device Monitor"
   },
   "stats": {
@@ -824,7 +824,7 @@
       "total": "Total Devices",
       "user_count": "Users",
       "online": "Online",
-      "offline": "Offline",
+      "offline": "Offline Cloud Devices",
       "busy": "Busy",
       "local": "Local Devices",
       "cloud": "Cloud Devices"
@@ -841,7 +841,19 @@
     },
     "errors": {
       "load_failed": "Failed to load device list",
-      "load_stats_failed": "Failed to load statistics"
+      "load_stats_failed": "Failed to load statistics",
+      "upgrade_failed": "Failed to send upgrade command",
+      "restart_failed": "Failed to send restart command",
+      "migrate_failed": "Failed to send migrate command"
+    },
+    "actions": {
+      "upgrade": "Upgrade",
+      "upgrade_unsupported": "Version below {{version}}, online upgrade not supported",
+      "restart": "Restart",
+      "migrate": "Migrate",
+      "upgrade_sent": "Upgrade command sent",
+      "restart_sent": "Restart command sent",
+      "migrate_sent": "Migrate command sent"
     }
   }
 }
