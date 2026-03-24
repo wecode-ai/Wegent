@@ -29,7 +29,7 @@ const MAX_RECENT_ITEMS = 5
 export type GroupType = 'personal' | 'group' | 'organization'
 
 /** View mode for the knowledge page */
-export type ViewMode = 'all' | 'group' | 'kb'
+export type ViewMode = 'all' | 'group' | 'kb' | 'groups'
 
 export interface KnowledgeGroup {
   id: string
@@ -78,6 +78,7 @@ export interface UseKnowledgeSidebarReturn {
   selectedKb: KnowledgeBase | null
   selectKb: (kb: KnowledgeBase) => void
   selectGroup: (groupId: string) => void
+  selectGroups: () => void
   clearSelection: () => void
 
   // View mode
@@ -417,6 +418,14 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
     setFilterGroupId(null)
   }, [])
 
+  const selectGroups = useCallback(() => {
+    setSelectedGroupId(null)
+    setSelectedKbId(null)
+    setSelectedKb(null)
+    setViewMode('groups')
+    setFilterGroupId(null)
+  }, [])
+
   const clearSelection = useCallback(() => {
     setSelectedKbId(null)
     setSelectedKb(null)
@@ -462,6 +471,7 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
     selectedKb,
     selectKb,
     selectGroup,
+    selectGroups,
     clearSelection,
 
     // View mode

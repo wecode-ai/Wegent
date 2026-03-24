@@ -563,10 +563,27 @@ export function KnowledgeDocumentPageDesktop() {
     [sidebar]
   )
 
+  // Handle "Groups" selection - show all team groups' KBs combined
+  const handleSelectGroups = useCallback(() => {
+    sidebar.selectGroups()
+    // Update URL with groups parameter
+    updateUrlParams({ kb: null, group: 'all-groups' })
+  }, [sidebar, updateUrlParams])
+
   // Handle create KB from "All" page
   const handleCreateKbFromAll = useCallback((kbType: KnowledgeBaseType) => {
     // Show group selector when creating from "All" page
     setCreateScope('personal')
+    setCreateGroupName(undefined)
+    setCreateKbType(kbType)
+    setShowGroupSelector(true)
+    setShowCreateDialog(true)
+  }, [])
+
+  // Handle create KB from "Groups" page
+  const handleCreateKbFromGroups = useCallback((kbType: KnowledgeBaseType) => {
+    // Show group selector when creating from "Groups" page (only team groups)
+    setCreateScope('group')
     setCreateGroupName(undefined)
     setCreateKbType(kbType)
     setShowGroupSelector(true)
@@ -636,6 +653,55 @@ export function KnowledgeDocumentPageDesktop() {
       )
     }
 
+    // If "Groups" mode is selected, show all team groups' KBs combined
+    if (sidebar.viewMode === 'groups') {
+      // Filter to only show KBs from team groups (type === 'group')
+      const teamGroupKbs = sidebar.allKnowledgeBasesWithGroupInfo.filter(
+        kb => kb.group_type === 'group'
+      )
+
+      return (
+        <KnowledgeGroupListPage
+          groupId={null}
+          groupName={t('document.sidebar.groups', '分组')}
+          knowledgeBases={teamGroupKbs.map(kb => ({
+            id: kb.id,
+            name: kb.name,
+            description: kb.description,
+            user_id: kb.user_id,
+            namespace: kb.namespace,
+            document_count: kb.document_count,
+            is_active: true,
+            summary_enabled: false,
+            kb_type: kb.kb_type || 'notebook',
+            max_calls_per_conversation: 10,
+            exempt_calls_before_check: 5,
+            created_at: kb.created_at,
+            updated_at: kb.updated_at,
+          }))}
+          knowledgeBasesWithGroupInfo={teamGroupKbs}
+          isLoading={sidebar.isGroupsLoading}
+          onSelectKb={handleSelectKb}
+          onCreateKb={handleCreateKbFromGroups}
+          onEditKb={kb => {
+            const fullKb = sidebar.allKnowledgeBases.find(k => k.id === kb.id)
+            if (fullKb) setEditingKb(fullKb)
+          }}
+          onDeleteKb={kb => {
+            const fullKb = sidebar.allKnowledgeBases.find(k => k.id === kb.id)
+            if (fullKb) setDeletingKb(fullKb)
+          }}
+          onToggleFavorite={handleToggleFavorite}
+          isFavorite={isFavorite}
+          getKbGroupInfo={sidebar.getKbGroupInfo}
+          isAllMode={true}
+          filterGroupId={sidebar.filterGroupId}
+          onFilterGroupChange={sidebar.setFilterGroupId}
+          availableGroups={availableGroups.filter(g => g.id.startsWith('group-'))}
+        />
+      )
+    }
+
     // If "All" mode is selected, show all KBs with group info
     if (sidebar.viewMode === 'all') {
       return (
@@ -671,11 +737,24 @@ export function KnowledgeDocumentPageDesktop() {
       // Check if this is personal mode
       const isPersonalMode = selectedGroup.type === 'personal'
 
+      // Filter KBs with group info for this specific group to get my_role
+      const groupKbsWithInfo = sidebar.allKnowledgeBasesWithGroupInfo.filter(kb => {
+        if (selectedGroup.type === 'personal') {
+          return kb.group_type === 'personal'
+        } else if (selectedGroup.type === 'organization') {
+          return kb.group_type === 'organization'
+        } else {
+          // For team groups, match by group name
+          return kb.group_type === 'group' && kb.group_name === selectedGroup.name
+        }
+      })
+
       return (
         <KnowledgeGroupListPage
           groupId={selectedGroup.id}
           groupName={selectedGroup.displayName}
           knowledgeBases={groupKbs}
+          knowledgeBasesWithGroupInfo={groupKbsWithInfo}
           isLoading={isGroupKbsLoading}
           onBack={handleBackFromGroup}
           onSelectKb={handleSelectKb}
@@ -697,7 +776,7 @@ export function KnowledgeDocumentPageDesktop() {
           isPersonalMode={isPersonalMode}
           personalCreatedByMe={isPersonalMode ? sidebar.personalCreatedByMe : undefined}
           personalSharedWithMe={isPersonalMode ? sidebar.personalSharedWithMe : undefined}
-          getKbGroupInfo={isPersonalMode ? sidebar.getKbGroupInfo : undefined}
+          getKbGroupInfo={sidebar.getKbGroupInfo}
         />
       )
     }
@@ -737,6 +816,7 @@ export function KnowledgeDocumentPageDesktop() {
             onSelectKb={handleSelectKb}
             onSelectGroup={handleSelectGroup}
             onSelectAll={handleSelectAll}
+            onSelectGroups={handleSelectGroups}
             isAdmin={sidebar.isAdmin}
             onCollapse={() => updateSidebarCollapsed(true)}
           />

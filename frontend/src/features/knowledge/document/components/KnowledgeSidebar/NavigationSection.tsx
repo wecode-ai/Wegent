@@ -50,7 +50,6 @@ interface GroupTreeNode {
   /** The display name for this level (last segment of the path) */
   levelDisplayName: string
 }
-
 export interface NavigationSectionProps {
   /** Knowledge groups */
   groups: KnowledgeGroup[]
@@ -60,6 +59,8 @@ export interface NavigationSectionProps {
   selectedGroupId: string | null
   /** Whether "All" is selected */
   isAllSelected: boolean
+  /** Whether "Groups" is selected (show all groups list) */
+  isGroupsSelected: boolean
   /** Whether section is expanded */
   isExpanded: boolean
   /** Toggle expand/collapse */
@@ -68,6 +69,8 @@ export interface NavigationSectionProps {
   onSelectAll: () => void
   /** Select a group */
   onSelectGroup: (groupId: string) => void
+  /** Select "Groups" to show all groups list */
+  onSelectGroups: () => void
   /** Total KB count */
   totalKbCount: number
 }
@@ -310,10 +313,12 @@ export function NavigationSection({
   isLoading,
   selectedGroupId,
   isAllSelected,
+  isGroupsSelected,
   isExpanded: _isExpanded,
   onToggle: _onToggle,
   onSelectAll,
   onSelectGroup,
+  onSelectGroups,
   totalKbCount,
 }: NavigationSectionProps) {
   const { t } = useTranslation('knowledge')
@@ -415,8 +420,8 @@ export function NavigationSection({
         icon={<Users className="w-4 h-4" />}
         label={t('document.sidebar.groups', '组')}
         count={teamGroupsTotalCount}
-        isSelected={false}
-        onClick={() => {}}
+        isSelected={isGroupsSelected}
+        onClick={onSelectGroups}
         testId="nav-groups-item"
         actionButton={
           <span

@@ -452,6 +452,11 @@ class KnowledgeBaseWithGroupInfo(BaseModel):
     group_id: str  # namespace or 'default'
     group_name: str  # Display name
     group_type: str  # 'personal' | 'personal-shared' | 'group' | 'organization'
+    # User's role/permission for this knowledge base
+    my_role: Optional[str] = Field(
+        None,
+        description="Current user's role for this KB: 'Owner' | 'Maintainer' | 'Developer' | 'Reporter' | 'RestrictedAnalyst' | None",
+    )
 
 
 class AllGroupedPersonal(BaseModel):

@@ -1673,6 +1673,8 @@ class KnowledgeService:
 
         Returns:
             AllGroupedKnowledgeResponse with personal, groups, organization, and summary sections
+        Returns:
+            AllGroupedKnowledgeResponse with personal, groups, organization, and summary sections
         """
         from app.models.resource_member import MemberStatus, ResourceMember
         from app.models.share_link import ResourceType
@@ -1690,9 +1692,9 @@ class KnowledgeService:
             .all()
         )
 
-        # 2. Get shared knowledge bases (single query)
-        shared_kb_ids = (
-            db.query(ResourceMember.resource_id)
+        # 2. Get shared knowledge bases with their roles (single query)
+        shared_members = (
+            db.query(ResourceMember.resource_id, ResourceMember.role)
             .filter(
                 ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
                 ResourceMember.user_id == user_id,
@@ -1700,7 +1702,9 @@ class KnowledgeService:
             )
             .all()
         )
-        shared_kb_ids = [p[0] for p in shared_kb_ids]
+        shared_kb_ids = [p[0] for p in shared_members]
+        # Build a map from kb_id to role for shared KBs
+        shared_kb_roles: dict[int, str] = {p[0]: p[1] for p in shared_members}
 
         personal_shared = []
         if shared_kb_ids:
@@ -1716,8 +1720,13 @@ class KnowledgeService:
                 .all()
             )
 
-        # 3. Get all accessible groups (single query)
-        accessible_groups = get_user_groups(db, user_id)
+        # 3. Get all accessible groups with roles (single query)
+        from app.services.group_permission import get_user_groups_with_roles
+
+        accessible_groups_with_roles = get_user_groups_with_roles(db, user_id)
+        accessible_groups = [g[0] for g in accessible_groups_with_roles]
+        # Build a map from group_name to role
+        group_roles: dict[str, str] = {g[0]: g[1] for g in accessible_groups_with_roles}
 
         # 4. Get ALL group knowledge bases in ONE query (key optimization)
         group_kbs = []
@@ -1757,6 +1766,11 @@ class KnowledgeService:
             .first()
         )
 
+        # Get user's role in organization namespace (if exists)
+        org_role: str | None = None
+        if org_namespace:
+            org_role = get_effective_role_in_group(db, user_id, org_namespace.name)
+
         # 6. Batch fetch document counts (single query)
         all_kb_ids = (
             [kb.id for kb in personal_created]
@@ -1781,7 +1795,11 @@ class KnowledgeService:
 
         # Helper function to convert Kind to KnowledgeBaseWithGroupInfo
         def kb_to_response(
-            kb: Kind, group_id: str, group_name: str, group_type: str
+            kb: Kind,
+            group_id: str,
+            group_name: str,
+            group_type: str,
+            my_role: str | None = None,
         ) -> KnowledgeBaseWithGroupInfo:
             spec = kb.json.get("spec", {})
             return KnowledgeBaseWithGroupInfo(
@@ -1797,19 +1815,27 @@ class KnowledgeService:
                 group_id=group_id,
                 group_name=group_name,
                 group_type=group_type,
+                my_role=my_role,
             )
 
         # Build personal section
         # Use stable English identifiers for group_name - frontend handles localization
+        # For personal created KBs, user is always Owner
         created_by_me = [
-            kb_to_response(kb, "default", "personal", "personal")
+            kb_to_response(kb, "default", "personal", "personal", "Owner")
             for kb in personal_created
         ]
+        # For shared KBs, use the role from ResourceMember
         shared_with_me = [
-            kb_to_response(kb, "default", "personal-shared", "personal-shared")
+            kb_to_response(
+                kb,
+                "default",
+                "personal-shared",
+                "personal-shared",
+                shared_kb_roles.get(kb.id),
+            )
             for kb in personal_shared
         ]
-
         # Build groups section - group KBs by namespace in memory
         groups_map: dict[str, list[Kind]] = {}
         for kb in group_kbs:
@@ -1818,17 +1844,25 @@ class KnowledgeService:
             groups_map[kb.namespace].append(kb)
 
         # Build groups list - include ALL accessible groups, even those without KBs
+        # For group KBs, use the user's role in that group
         groups = []
         for ns_name in accessible_groups:
             display_name = namespace_display_names.get(ns_name, ns_name)
             kbs = groups_map.get(ns_name, [])
+            user_group_role = group_roles.get(ns_name)
             groups.append(
                 AllGroupedTeamGroup(
                     group_name=ns_name,
                     group_display_name=display_name or ns_name,
                     kb_count=len(kbs),
                     knowledge_bases=[
-                        kb_to_response(kb, ns_name, display_name or ns_name, "group")
+                        kb_to_response(
+                            kb,
+                            ns_name,
+                            display_name or ns_name,
+                            "group",
+                            user_group_role,
+                        )
                         for kb in kbs
                     ],
                 )
@@ -1836,6 +1870,7 @@ class KnowledgeService:
 
         # Build organization section
         # Use stable English identifier for fallback - frontend handles localization
+        # For organization KBs, use the user's role in the organization namespace
         org_display_name = (
             org_namespace.display_name if org_namespace else "organization"
         )
@@ -1846,7 +1881,11 @@ class KnowledgeService:
             kb_count=len(org_kbs),
             knowledge_bases=[
                 kb_to_response(
-                    kb, org_ns_name or "organization", org_display_name, "organization"
+                    kb,
+                    org_ns_name or "organization",
+                    org_display_name,
+                    "organization",
+                    org_role,
                 )
                 for kb in org_kbs
             ],

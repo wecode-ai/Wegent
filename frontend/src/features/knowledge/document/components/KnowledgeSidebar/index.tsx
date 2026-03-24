@@ -60,6 +60,8 @@ export interface KnowledgeSidebarProps {
   onSelectGroup: (groupId: string) => void
   /** Select "All" */
   onSelectAll: () => void
+  /** Select "Groups" to show all groups list */
+  onSelectGroups: () => void
   /** Whether user is admin */
   isAdmin: boolean
   /** Callback to collapse the sidebar */
@@ -82,6 +84,7 @@ export function KnowledgeSidebar({
   onSelectKb,
   onSelectGroup,
   onSelectAll,
+  onSelectGroups,
   isAdmin: _isAdmin,
   onCollapse,
 }: KnowledgeSidebarProps) {
@@ -188,10 +191,12 @@ export function KnowledgeSidebar({
           isLoading={isGroupsLoading}
           selectedGroupId={selectedGroupId}
           isAllSelected={viewMode === 'all'}
+          isGroupsSelected={viewMode === 'groups'}
           isExpanded={sectionStates.groups}
           onToggle={() => toggleSection('groups')}
           onSelectAll={onSelectAll}
           onSelectGroup={onSelectGroup}
+          onSelectGroups={onSelectGroups}
           totalKbCount={groups.reduce((sum, g) => sum + g.kbCount, 0)}
         />
       </div>
