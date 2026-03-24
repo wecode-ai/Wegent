@@ -408,3 +408,128 @@ class TestCreateAndConnectClientEnvPassing:
             if "env" in captured_options:
                 assert "ANTHROPIC_AUTH_TOKEN" in captured_options["env"]
                 assert "CLAUDE_CONFIG_DIR" in captured_options["env"]
+
+
+class TestResumeSessionProcessCleanup:
+    """Tests for stale process cleanup when resuming Claude sessions."""
+
+    @pytest.fixture
+    def task_data(self):
+        """Sample task data for testing."""
+        return ExecutionRequest(
+            task_id=12345,
+            subtask_id=67890,
+            task_title="Test Task",
+            subtask_title="Test Subtask",
+            user={"user_name": "testuser"},
+            bot=[{"id": 987, "api_key": "test_api_key", "model": "claude-3-5-sonnet"}],
+        )
+
+    @pytest.fixture
+    def temp_workspace(self):
+        """Create temporary workspace directory."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            yield tmpdir
+
+    @pytest.mark.asyncio
+    async def test_resume_terminates_stale_process_before_connect(
+        self, task_data, temp_workspace
+    ):
+        """Should cleanup stale process for the same resume session before connecting."""
+        from executor.agents.claude_code.claude_code_agent import ClaudeCodeAgent
+
+        with (
+            patch("executor.config.config.EXECUTOR_MODE", "local"),
+            patch(
+                "executor.config.config.get_workspace_root", return_value=temp_workspace
+            ),
+        ):
+            agent = ClaudeCodeAgent(task_data, create_mock_emitter())
+            agent.options = {"cwd": temp_workspace}
+
+            mock_client = MagicMock()
+            mock_client.connect = AsyncMock()
+            mock_client._transport = MagicMock(_process=MagicMock(pid=4321))
+
+            with (
+                patch(
+                    "executor.platform_compat.prepare_options_for_windows",
+                    side_effect=lambda options, _config_dir: options,
+                ),
+                patch(
+                    "executor.agents.claude_code.claude_code_agent.SessionManager.load_saved_session_id",
+                    return_value="session-abc",
+                ),
+                patch(
+                    "executor.agents.claude_code.claude_code_agent.SessionManager.terminate_stale_resumed_process",
+                    new_callable=AsyncMock,
+                    create=True,
+                ) as mock_terminate_stale,
+                patch(
+                    "executor.agents.claude_code.claude_code_agent.ClaudeAgentOptions",
+                    side_effect=lambda **kwargs: kwargs,
+                ),
+                patch(
+                    "executor.agents.claude_code.claude_code_agent.ClaudeSDKClient",
+                    return_value=mock_client,
+                ),
+                patch(
+                    "executor.agents.claude_code.claude_code_agent.SessionManager.register_client_process",
+                    create=True,
+                ),
+            ):
+                await agent._create_and_connect_client()
+
+            mock_terminate_stale.assert_awaited_once_with(12345, 987, "session-abc")
+            mock_client.connect.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_resume_registers_process_pid_for_future_cleanup(
+        self, task_data, temp_workspace
+    ):
+        """Should persist connected process pid for later stale-process cleanup."""
+        from executor.agents.claude_code.claude_code_agent import ClaudeCodeAgent
+
+        with (
+            patch("executor.config.config.EXECUTOR_MODE", "local"),
+            patch(
+                "executor.config.config.get_workspace_root", return_value=temp_workspace
+            ),
+        ):
+            agent = ClaudeCodeAgent(task_data, create_mock_emitter())
+            agent.options = {"cwd": temp_workspace}
+
+            mock_client = MagicMock()
+            mock_client.connect = AsyncMock()
+            mock_client._transport = MagicMock(_process=MagicMock(pid=7654))
+
+            with (
+                patch(
+                    "executor.platform_compat.prepare_options_for_windows",
+                    side_effect=lambda options, _config_dir: options,
+                ),
+                patch(
+                    "executor.agents.claude_code.claude_code_agent.SessionManager.load_saved_session_id",
+                    return_value="session-xyz",
+                ),
+                patch(
+                    "executor.agents.claude_code.claude_code_agent.SessionManager.terminate_stale_resumed_process",
+                    new_callable=AsyncMock,
+                    create=True,
+                ),
+                patch(
+                    "executor.agents.claude_code.claude_code_agent.ClaudeAgentOptions",
+                    side_effect=lambda **kwargs: kwargs,
+                ),
+                patch(
+                    "executor.agents.claude_code.claude_code_agent.ClaudeSDKClient",
+                    return_value=mock_client,
+                ),
+                patch(
+                    "executor.agents.claude_code.claude_code_agent.SessionManager.register_client_process",
+                    create=True,
+                ) as mock_register_pid,
+            ):
+                await agent._create_and_connect_client()
+
+            mock_register_pid.assert_called_once_with(12345, 987, "session-xyz", 7654)

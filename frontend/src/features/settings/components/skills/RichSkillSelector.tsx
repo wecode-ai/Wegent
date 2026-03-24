@@ -19,7 +19,7 @@ interface RichSkillSelectorProps {
   /** Currently selected skill names */
   selectedSkillNames: string[]
   /** Callback when a skill is selected */
-  onSelectSkill: (skillName: string) => void
+  onSelectSkill: (skill: UnifiedSkill) => void
   /** Placeholder text for the trigger */
   placeholder?: string
   /** Whether the selector is disabled */
@@ -143,8 +143,8 @@ export function RichSkillSelector({
   }
 
   // Handle skill selection
-  const handleSelect = (skillName: string) => {
-    onSelectSkill(skillName)
+  const handleSelect = (skill: UnifiedSkill) => {
+    onSelectSkill(skill)
     setOpen(false)
     setSearchQuery('')
   }
@@ -215,15 +215,15 @@ export function RichSkillSelector({
 
       elements.push(
         <div
-          key={skill.name}
+          key={`${skill.name}:${skill.namespace}:${skill.id}`}
           className="px-4 py-3 cursor-pointer hover:bg-muted transition-colors border-b border-border last:border-b-0"
-          onClick={() => handleSelect(skill.name)}
+          onClick={() => handleSelect(skill)}
           role="button"
           tabIndex={0}
           onKeyDown={e => {
             if (e.key === 'Enter' || e.key === ' ') {
               e.preventDefault()
-              handleSelect(skill.name)
+              handleSelect(skill)
             }
           }}
         >

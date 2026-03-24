@@ -66,6 +66,12 @@ export interface GitInfo {
 }
 
 // Bot Types
+export interface SkillRefMeta {
+  skill_id: number
+  namespace: string
+  is_public: boolean
+}
+
 export interface Bot {
   id: number
   name: string
@@ -76,7 +82,9 @@ export interface Bot {
   system_prompt: string
   mcp_servers: Record<string, unknown>
   skills?: string[] // Skills associated with this bot
+  skill_refs?: Record<string, SkillRefMeta>
   preload_skills?: string[] // Skills to preload into system prompt
+  preload_skill_refs?: Record<string, SkillRefMeta>
   is_active: boolean
   created_at: string
   updated_at: string

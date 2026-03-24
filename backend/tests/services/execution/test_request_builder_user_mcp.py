@@ -146,7 +146,12 @@ class TestUserScopedMcpInjection:
             return_value={"name": "dingtalk-config-guide"},
         )
 
-        skills, preload_skills, user_selected_skills = builder._get_bot_skills(
+        (
+            skills,
+            preload_skills,
+            user_selected_skills,
+            skill_refs,
+        ) = builder._get_bot_skills(
             bot=bot,
             team=team,
             user_id=2,
@@ -169,3 +174,40 @@ class TestUserScopedMcpInjection:
         assert skills == [{"name": "dingtalk-config-guide"}]
         assert preload_skills == ["dingtalk-config-guide"]
         assert user_selected_skills == ["dingtalk-config-guide"]
+        assert skill_refs == {
+            "dingtalk-config-guide": {
+                "skill_id": None,
+                "namespace": "default",
+                "is_public": True,
+            }
+        }
+
+    def test_get_bot_skills_returns_four_tuple_when_ghost_not_found(
+        self, test_db, mocker
+    ):
+        builder = TaskRequestBuilder(test_db)
+        team = SimpleNamespace(user_id=2, namespace="default")
+        bot = SimpleNamespace(
+            name="chat-bot",
+            json={
+                "kind": "Bot",
+                "metadata": {"name": "chat-bot", "namespace": "default"},
+                "spec": {
+                    "ghostRef": {"name": "missing-ghost", "namespace": "default"},
+                    "shellRef": {"name": "Chat", "namespace": "default"},
+                },
+            },
+        )
+        mock_query = mocker.Mock()
+        mock_query.filter.return_value.first.return_value = None
+        mocker.patch.object(builder.db, "query", return_value=mock_query)
+
+        result = builder._get_bot_skills(
+            bot=bot,
+            team=team,
+            user_id=2,
+            user_preload_skills=None,
+        )
+
+        assert len(result) == 4
+        assert result == ([], [], [], {})

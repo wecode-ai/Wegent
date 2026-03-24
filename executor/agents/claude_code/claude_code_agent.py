@@ -675,24 +675,48 @@ class ClaudeCodeAgent(Agent):
                         prompt, cwd_text, prepend=False
                     )
             else:
-                # Plain text prompt
-                if user_selected_skills:
-                    skill_emphasis = self._build_skill_emphasis_prompt(
-                        user_selected_skills
-                    )
-                    prompt = skill_emphasis + "\n\n" + prompt
-                    logger.info(
-                        f"Added skill emphasis for {len(user_selected_skills)} user-selected skills: {user_selected_skills}"
-                    )
-                if self.options.get("cwd"):
-                    prompt = (
-                        prompt
-                        + "\nCurrent working directory: "
-                        + self.options.get("cwd")
-                    )
-                    git_url = self.task_data.git_url
-                    if git_url:
-                        prompt = prompt + "\n project url:" + git_url
+                # Plain text prompt (or content block list without images)
+                if isinstance(prompt, list):
+                    # Handle content block list (non-vision)
+                    if user_selected_skills:
+                        skill_emphasis = self._build_skill_emphasis_prompt(
+                            user_selected_skills
+                        )
+                        prompt = append_text_to_vision_prompt(
+                            prompt, skill_emphasis, prepend=True
+                        )
+                        logger.info(
+                            f"Added skill emphasis for {len(user_selected_skills)} user-selected skills: {user_selected_skills}"
+                        )
+                    if self.options.get("cwd"):
+                        cwd_text = "\nCurrent working directory: " + self.options.get(
+                            "cwd"
+                        )
+                        git_url = self.task_data.git_url
+                        if git_url:
+                            cwd_text += "\n project url:" + git_url
+                        prompt = append_text_to_vision_prompt(
+                            prompt, cwd_text, prepend=False
+                        )
+                else:
+                    # Handle string prompt
+                    if user_selected_skills:
+                        skill_emphasis = self._build_skill_emphasis_prompt(
+                            user_selected_skills
+                        )
+                        prompt = skill_emphasis + "\n\n" + prompt
+                        logger.info(
+                            f"Added skill emphasis for {len(user_selected_skills)} user-selected skills: {user_selected_skills}"
+                        )
+                    if self.options.get("cwd"):
+                        prompt = (
+                            prompt
+                            + "\nCurrent working directory: "
+                            + self.options.get("cwd")
+                        )
+                        git_url = self.task_data.git_url
+                        if git_url:
+                            prompt = prompt + "\n project url:" + git_url
 
             progress = 75
             # Update current progress
@@ -728,6 +752,14 @@ class ClaudeCodeAgent(Agent):
                     logger.info(
                         f"Saved {len(saved_paths)} images to disk: {saved_paths}"
                     )
+                anthropic_content = convert_openai_to_anthropic_content(prompt)
+                await self.client.query(
+                    create_multimodal_query(anthropic_content),
+                    session_id=self.session_id,
+                )
+            elif isinstance(prompt, list):
+                # Content block list without images - convert to Anthropic format
+                # and send via multimodal query (SDK expects async generator for content blocks)
                 anthropic_content = convert_openai_to_anthropic_content(prompt)
                 await self.client.query(
                     create_multimodal_query(anthropic_content),
@@ -828,6 +860,9 @@ class ClaudeCodeAgent(Agent):
                     f"(bot_id={self._bot_id}): {saved_session_id}"
                 )
                 self.options["resume"] = saved_session_id
+                await SessionManager.terminate_stale_resumed_process(
+                    self.task_id, self._bot_id, saved_session_id
+                )
 
         # On Windows, write large options to files to avoid command line length limit
         # Windows has a ~8191 character limit (WinError 206 if exceeded)
@@ -894,6 +929,7 @@ class ClaudeCodeAgent(Agent):
 
                 # Remove resume option and retry
                 del self.options["resume"]
+                saved_session_id = None
 
                 # Recreate client without resume option
                 if self.options:
@@ -910,6 +946,19 @@ class ClaudeCodeAgent(Agent):
             else:
                 # Not a resume failure, re-raise the exception
                 raise
+
+        # Persist process PID for resume-session cleanup on next execution
+        if saved_session_id:
+            pid = None
+            transport = getattr(self.client, "_transport", None)
+            if transport is not None:
+                process = getattr(transport, "_process", None)
+                pid = getattr(process, "pid", None)
+
+            if isinstance(pid, int):
+                SessionManager.register_client_process(
+                    self.task_id, self._bot_id, saved_session_id, pid
+                )
 
         # Note: No longer caching client in SessionManager since each subtask
         # creates a new Agent instance and destroys it after completion.

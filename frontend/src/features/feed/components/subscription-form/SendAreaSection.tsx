@@ -485,9 +485,8 @@ export function SendAreaSection({
               <RichSkillSelector
                 skills={availableSkills}
                 selectedSkillNames={skillRefs.map(s => s.name)}
-                onSelectSkill={(skillName: string) => {
-                  const skill = availableSkills.find(s => s.name === skillName)
-                  if (skill && !skillRefs.some(s => s.name === skillName)) {
+                onSelectSkill={skill => {
+                  if (skill && !skillRefs.some(s => s.name === skill.name)) {
                     setSkillRefs(prev => [
                       ...prev,
                       {

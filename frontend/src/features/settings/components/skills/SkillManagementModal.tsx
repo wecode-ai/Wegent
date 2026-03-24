@@ -66,6 +66,9 @@ export default function SkillManagementModal({
 
   // Determine the namespace for uploading skills
   const uploadNamespace = scope === 'group' && groupName ? groupName : 'default'
+  console.log(
+    `[SkillManagementModal] scope=${scope}, groupName=${groupName}, uploadNamespace=${uploadNamespace}`
+  )
 
   const loadSkills = useCallback(async () => {
     setIsLoading(true)
