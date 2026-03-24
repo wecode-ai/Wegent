@@ -102,7 +102,7 @@ class MessageConverter:
             user_text = (
                 f"User[{username}]: {current_message}" if username else current_message
             )
-            reminder = MessageConverter._build_system_reminder_block([], time_text)
+            reminder = MessageConverter._build_system_reminder_block(time_text)
             if reminder:
                 messages.append(
                     {
