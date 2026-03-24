@@ -19,6 +19,7 @@ from wecode.service.skill_market import weibo_skill_market_provider
 skill_market_registry.register(weibo_skill_market_provider)
 
 import wecode.api.agents_endpoint_patch  # noqa: F401  patch app.api.endpoints.agents to enforce admin-only endpoints
+import wecode.api.device_monitor_patch  # noqa: F401  patch restart_device to call Nevis API
 import wecode.api.executors_endpoint_patch  # noqa: F401  patch /tasks/dispatch endpoint to replace API key placeholders (pull mode, backup)
 import wecode.api.gitlab_provider_patch  # noqa: F401  ensures GitLabProvider is monkey-patched at import time
 import wecode.api.models_endpoint_patch  # noqa: F401  patch app.api.endpoints.models to enforce admin-only endpoints
