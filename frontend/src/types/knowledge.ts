@@ -540,6 +540,8 @@ export interface KnowledgeBaseWithGroupInfo {
   group_name: string
   /** Type of group */
   group_type: KnowledgeGroupType
+  /** Current user's role for this KB: 'Owner' | 'Maintainer' | 'Developer' | 'Reporter' | 'RestrictedAnalyst' | null */
+  my_role?: MemberRole | null
 }
 
 /** Personal knowledge bases in all-grouped response */

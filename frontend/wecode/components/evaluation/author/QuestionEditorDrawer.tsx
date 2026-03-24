@@ -5,7 +5,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { X, Eye, EyeOff, FileText, Loader2, Send, Save } from 'lucide-react'
+import { X, Eye, EyeOff, FileText, Loader2, Send, Save, FileArchive, Settings } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -19,10 +19,12 @@ import {
   publishAuthorQuestion,
 } from '@wecode/api/evaluation-author'
 import type { Question } from '@wecode/types/evaluation'
-import type { ExamQuestionContent } from '@wecode/types/evaluation-exam'
+import type { ExamQuestionContent, ExamAttachment, AnswerSlot } from '@wecode/types/evaluation-exam'
 import { createDefaultQuestionContent, isExamQuestionContent } from '@wecode/types/evaluation-exam'
 import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
+import { MultiFileUpload } from '../common/FileUploadComponents'
+import { SlotConfigEditor } from './SlotConfigEditor'
 
 interface QuestionEditorDrawerProps {
   isOpen: boolean
@@ -52,6 +54,12 @@ export function QuestionEditorDrawer({
   const [title, setTitle] = useState('')
   const [content, setContent] = useState<ExamQuestionContent>(createDefaultQuestionContent())
 
+  // Material package (ZIP) attachments
+  const [attachments, setAttachments] = useState<ExamAttachment[]>([])
+
+  // Answer slots configuration
+  const [answerSlots, setAnswerSlots] = useState<AnswerSlot[]>([])
+
   const loadQuestion = useCallback(async () => {
     if (!isOpen || !isEditMode || !questionId) return
 
@@ -63,6 +71,8 @@ export function QuestionEditorDrawer({
       const contentData = questionData.content_data || {}
       if (isExamQuestionContent(contentData)) {
         setContent(contentData)
+        setAttachments(contentData.attachments || [])
+        setAnswerSlots(contentData.answerSlots || [])
       } else {
         setContent({
           display: {
@@ -71,6 +81,8 @@ export function QuestionEditorDrawer({
           },
           contentMarkdown: (contentData.content as string) || (contentData.text as string) || '',
         })
+        setAttachments([])
+        setAnswerSlots([])
       }
     } catch (_error) {
       toast({
@@ -87,6 +99,8 @@ export function QuestionEditorDrawer({
   const resetForm = useCallback(() => {
     setTitle('')
     setContent(createDefaultQuestionContent())
+    setAttachments([])
+    setAnswerSlots([])
     setShowPreview(false)
   }, [])
 
@@ -122,24 +136,34 @@ export function QuestionEditorDrawer({
     return true
   }
 
+  // Build content data with attachments and answer slots
+  const buildContentData = (): ExamQuestionContent => {
+    return {
+      ...content,
+      attachments: attachments.length > 0 ? attachments : undefined,
+      answerSlots: answerSlots.length > 0 ? answerSlots : undefined,
+    }
+  }
+
   const handleSaveDraft = async () => {
     if (!validateForm()) return
 
     setSaving(true)
     try {
       let result: Question
+      const contentData = buildContentData()
 
       if (isEditMode && questionId) {
         result = await updateAuthorQuestion(questionId, {
           title: title.trim(),
           content_type: 'exam',
-          content_data: content as unknown as Record<string, unknown>,
+          content_data: contentData as unknown as Record<string, unknown>,
         })
       } else {
         result = await createAuthorQuestion(topicId, {
           title: title.trim(),
           content_type: 'exam',
-          content_data: content as unknown as Record<string, unknown>,
+          content_data: contentData as unknown as Record<string, unknown>,
         })
       }
 
@@ -167,19 +191,20 @@ export function QuestionEditorDrawer({
     setPublishing(true)
     try {
       let result: Question
+      const contentData = buildContentData()
 
       if (isEditMode && questionId) {
         result = await updateAuthorQuestion(questionId, {
           title: title.trim(),
           content_type: 'exam',
-          content_data: content as unknown as Record<string, unknown>,
+          content_data: contentData as unknown as Record<string, unknown>,
         })
         await publishAuthorQuestion(questionId)
       } else {
         result = await createAuthorQuestion(topicId, {
           title: title.trim(),
           content_type: 'exam',
-          content_data: content as unknown as Record<string, unknown>,
+          content_data: contentData as unknown as Record<string, unknown>,
         })
         await publishAuthorQuestion(result.id)
       }
@@ -204,6 +229,26 @@ export function QuestionEditorDrawer({
 
   const handleCancel = () => {
     onClose()
+  }
+
+  // ZIP file validation
+  const validateZipFile = (file: File): string | null => {
+    if (
+      !file.name.toLowerCase().endsWith('.zip') &&
+      file.type !== 'application/zip' &&
+      file.type !== 'application/x-zip-compressed'
+    ) {
+      return t('questions.exam_content.material_zip_accept')
+    }
+    return null
+  }
+
+  const handleUploadError = (error: Error) => {
+    toast({
+      title: t('errors.save_failed'),
+      description: error.message,
+      variant: 'destructive',
+    })
   }
 
   useEffect(() => {
@@ -263,6 +308,7 @@ export function QuestionEditorDrawer({
                     placeholder={t('questions.title_placeholder')}
                     maxLength={500}
                     disabled={saving || publishing}
+                    data-testid="question-title-input"
                   />
                   <p className="text-xs text-gray-400 text-right">{title.length}/500</p>
                 </div>
@@ -347,6 +393,50 @@ export function QuestionEditorDrawer({
                     {t('questions.exam_content.content_hint')}
                   </p>
                 </div>
+
+                {/* Material Package (ZIP) Upload Section */}
+                <div className="space-y-4 border-t border-gray-200 pt-6">
+                  <div className="flex items-center gap-2">
+                    <FileArchive className="h-5 w-5 text-[#DF2029]" />
+                    <h4 className="text-sm font-semibold text-gray-900">
+                      {t('questions.exam_content.material_zip')}
+                    </h4>
+                  </div>
+                  <p className="text-xs text-gray-500">
+                    {t('questions.exam_content.material_zip_hint')}
+                  </p>
+
+                  <MultiFileUpload
+                    accept=".zip,application/zip,application/x-zip-compressed"
+                    hint={t('questions.exam_content.material_zip_accept')}
+                    uploadText={t('questions.exam_content.material_zip_upload')}
+                    fileType="question_content"
+                    topicId={topicId}
+                    questionId={questionId}
+                    slot="material"
+                    maxFiles={5}
+                    maxSize={500 * 1024 * 1024}
+                    disabled={saving || publishing}
+                    attachments={attachments}
+                    onChange={setAttachments}
+                    validateFile={validateZipFile}
+                    onUploadError={handleUploadError}
+                  />
+                </div>
+
+                {/* Answer Slots Configuration */}
+                <div className="space-y-4 border-t border-gray-200 pt-6">
+                  <div className="flex items-center gap-2">
+                    <Settings className="h-5 w-5 text-[#DF2029]" />
+                    <h4 className="text-sm font-semibold text-gray-900">{t('slots.title')}</h4>
+                  </div>
+                  <p className="text-xs text-gray-500">{t('slots.description')}</p>
+                  <SlotConfigEditor
+                    slots={answerSlots}
+                    onChange={setAnswerSlots}
+                    disabled={saving || publishing}
+                  />
+                </div>
               </div>
             )}
           </div>
@@ -367,6 +457,7 @@ export function QuestionEditorDrawer({
               variant="outline"
               onClick={handleSaveDraft}
               disabled={saving || publishing || loading}
+              data-testid="save-draft-button"
             >
               {saving ? (
                 <>
@@ -385,6 +476,7 @@ export function QuestionEditorDrawer({
               onClick={handlePublish}
               disabled={saving || publishing || loading}
               className="bg-[#DF2029] hover:bg-[#c81d25]"
+              data-testid="publish-button"
             >
               {publishing ? (
                 <>

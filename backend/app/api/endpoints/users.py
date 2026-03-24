@@ -135,7 +135,20 @@ async def update_current_user_endpoint(
             user=current_user,
             obj_in=user_update,
         )
-        return user
+        # Explicitly convert ORM object to Pydantic model to avoid
+        # session access during response serialization
+        return UserInDB(
+            id=user.id,
+            user_name=user.user_name,
+            email=user.email,
+            is_active=user.is_active,
+            git_info=user.git_info,
+            preferences=user.preferences,
+            role=user.role,
+            auth_source=user.auth_source,
+            created_at=user.created_at,
+            updated_at=user.updated_at,
+        )
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
@@ -261,7 +274,20 @@ async def delete_git_token(
         user = user_service.delete_git_token(
             db=db, user=current_user, git_info_id=git_info_id, git_domain=git_domain
         )
-        return user
+        # Explicitly convert ORM object to Pydantic model to avoid
+        # session access during response serialization
+        return UserInDB(
+            id=user.id,
+            user_name=user.user_name,
+            email=user.email,
+            is_active=user.is_active,
+            git_info=user.git_info,
+            preferences=user.preferences,
+            role=user.role,
+            auth_source=user.auth_source,
+            created_at=user.created_at,
+            updated_at=user.updated_at,
+        )
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
@@ -273,7 +299,21 @@ def create_user(
     current_user: User = Depends(security.get_admin_user),
 ):
     """Create new user (admin only)"""
-    return user_service.create_user(db=db, obj_in=user_create)
+    user = user_service.create_user(db=db, obj_in=user_create)
+    # Explicitly convert ORM object to Pydantic model to avoid
+    # session access during response serialization
+    return UserInDB(
+        id=user.id,
+        user_name=user.user_name,
+        email=user.email,
+        is_active=user.is_active,
+        git_info=user.git_info,
+        preferences=user.preferences,
+        role=user.role,
+        auth_source=user.auth_source,
+        created_at=user.created_at,
+        updated_at=user.updated_at,
+    )
 
 
 QUICK_ACCESS_CONFIG_KEY = "quick_access_recommended"

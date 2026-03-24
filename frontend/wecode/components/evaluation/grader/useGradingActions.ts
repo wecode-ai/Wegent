@@ -12,25 +12,16 @@ import {
   batchExecuteGraderTasks,
   batchPublishGraderTasks,
 } from '@wecode/api/evaluation'
-import type { GradingTaskExecuteRequest } from '@wecode/types/evaluation'
 
 interface UseGradingActionsOptions {
   onSuccess?: () => void
-}
-
-interface RetryTaskData {
-  modelId?: string
-  forceOverride?: boolean
-  gradingMode?: 'single' | 'multi'
-  scorerModels?: { model_id: string; force_override: boolean }[]
-  aggregatorModel?: { model_id: string; force_override: boolean }
 }
 
 interface UseGradingActionsReturn {
   executing: boolean
   publishing: boolean
   executeTask: (taskId: number, modelId?: string, forceOverride?: boolean) => Promise<void>
-  retryTask: (taskId: number, data?: RetryTaskData) => Promise<void>
+  retryTask: (taskId: number) => Promise<void>
   publishTask: (taskId: number) => Promise<void>
   batchExecute: (taskIds: number[]) => Promise<void>
   batchPublish: (taskIds: number[]) => Promise<void>
@@ -68,7 +59,7 @@ export function useGradingActions(options: UseGradingActionsOptions = {}): UseGr
         handleSuccess()
       } catch (_error) {
         toast({
-          title: t('errors.save_failed'),
+          title: t('errors.execute_failed'),
           description: '',
           variant: 'destructive',
         })
@@ -81,27 +72,11 @@ export function useGradingActions(options: UseGradingActionsOptions = {}): UseGr
   )
 
   const retryTask = useCallback(
-    async (taskId: number, data?: RetryTaskData) => {
+    async (taskId: number) => {
       setExecuting(true)
       try {
-        const requestData: GradingTaskExecuteRequest = {}
-
-        if (data?.gradingMode === 'multi') {
-          // Multi-model retry
-          requestData.grading_mode = 'multi'
-          if (data.scorerModels && data.scorerModels.length > 0) {
-            requestData.scorer_models = data.scorerModels
-          }
-          if (data.aggregatorModel) {
-            requestData.aggregator_model = data.aggregatorModel
-          }
-        } else {
-          // Single model retry (legacy or explicit single)
-          requestData.model_id = data?.modelId
-          requestData.force_override_bot_model = data?.forceOverride
-        }
-
-        await retryGraderTask(taskId, requestData)
+        // Retry with topic's original config - graders cannot modify anything
+        await retryGraderTask(taskId)
         toast({
           title: t('grading.execute_success'),
           description: '',
@@ -109,7 +84,7 @@ export function useGradingActions(options: UseGradingActionsOptions = {}): UseGr
         handleSuccess()
       } catch (_error) {
         toast({
-          title: t('errors.save_failed'),
+          title: t('errors.retry_failed'),
           description: '',
           variant: 'destructive',
         })
@@ -133,7 +108,7 @@ export function useGradingActions(options: UseGradingActionsOptions = {}): UseGr
         handleSuccess()
       } catch (_error) {
         toast({
-          title: t('errors.save_failed'),
+          title: t('errors.publish_failed'),
           description: '',
           variant: 'destructive',
         })
@@ -159,7 +134,7 @@ export function useGradingActions(options: UseGradingActionsOptions = {}): UseGr
         handleSuccess()
       } catch (_error) {
         toast({
-          title: t('errors.save_failed'),
+          title: t('errors.execute_failed'),
           description: '',
           variant: 'destructive',
         })
@@ -185,7 +160,7 @@ export function useGradingActions(options: UseGradingActionsOptions = {}): UseGr
         handleSuccess()
       } catch (_error) {
         toast({
-          title: t('errors.save_failed'),
+          title: t('errors.publish_failed'),
           description: '',
           variant: 'destructive',
         })

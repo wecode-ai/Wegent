@@ -172,6 +172,15 @@ class DeviceService:
         return await provider._get_online_info(user_id, device_id)
 
     @staticmethod
+    async def get_device_online_info_by_type(
+        user_id: int, device_id: str, device_type: DeviceType
+    ) -> Optional[Dict[str, Any]]:
+        """Get device online information using the matching provider."""
+
+        provider = DeviceService._get_provider(device_type)
+        return await provider._get_online_info(user_id, device_id)
+
+    @staticmethod
     async def is_device_online(user_id: int, device_id: str) -> bool:
         """Check if device is online.
 
@@ -569,6 +578,57 @@ class DeviceService:
         if len(matching_devices) == 1:
             return matching_devices[0]
         return None
+
+    @staticmethod
+    def update_device_alias(
+        db: Session,
+        user_id: int,
+        device_id: str,
+        alias: str,
+    ) -> bool:
+        """Update a device's display name (alias).
+
+        Args:
+            db: Database session
+            user_id: Device owner user ID
+            device_id: Device unique identifier (stored in Kind.name)
+            alias: New display name for the device
+
+        Returns:
+            True if device was found and updated
+        """
+        device_kind = (
+            db.query(Kind)
+            .filter(
+                and_(
+                    Kind.user_id == user_id,
+                    Kind.kind == "Device",
+                    Kind.namespace == "default",
+                    Kind.name == device_id,
+                    Kind.is_active == True,
+                )
+            )
+            .first()
+        )
+
+        if not device_kind:
+            return False
+
+        # Update displayName in spec
+        device_json = copy.deepcopy(device_kind.json)
+        device_json["spec"]["displayName"] = alias
+        # Also update metadata displayName for consistency
+        if "metadata" in device_json:
+            device_json["metadata"]["displayName"] = alias
+        device_kind.json = device_json
+        flag_modified(device_kind, "json")
+        device_kind.updated_at = datetime.now()
+        db.commit()
+
+        logger.info(
+            f"Updated device alias: user_id={user_id}, device_id={device_id}, alias={alias}"
+        )
+        return True
 
 
 # Singleton instance

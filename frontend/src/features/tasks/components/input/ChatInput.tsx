@@ -751,6 +751,7 @@ export default function ChatInput({
                     onCompositionEnd={handleCompositionEnd}
                     onFocus={handleFocus}
                     data-testid="message-input"
+                    data-roleid="message-input"
                     className={`w-full pt-1 pb-2 bg-transparent text-text-primary text-base leading-[26px] focus:outline-none transition-all duration-300 ease-in-out ${isInputDisabled ? 'opacity-50 cursor-not-allowed' : ''}`}
                     style={{
                       minHeight,

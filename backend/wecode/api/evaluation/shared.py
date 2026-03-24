@@ -24,10 +24,11 @@ from fastapi import (
     Form,
     HTTPException,
     Query,
+    Request,
     UploadFile,
     status,
 )
-from fastapi.responses import PlainTextResponse, StreamingResponse
+from fastapi.responses import PlainTextResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -58,8 +59,8 @@ class FileType(str, Enum):
 
     QUESTION_CONTENT = "question_content"
     QUESTION_CRITERIA = "question_criteria"
-    ANSWER_ATTACHMENT = "answer_attachment"
     EXAM_ATTACHMENT = "exam_attachment"
+    TOPIC_ATTACHMENT = "topic_attachment"
 
 
 class FileUploadResponse(BaseModel):
@@ -143,6 +144,11 @@ def view_report(
                 detail="This report is not yet published",
             )
 
+    # Get grading_mode from report_data (stored there since there's no dedicated column)
+    report_data = task.report_data or {}
+    grading_mode = (
+        report_data.get("grading_mode") if isinstance(report_data, dict) else None
+    )
     return GradingTaskInDB(
         id=task.id,
         answer_id=task.answer_id,
@@ -153,12 +159,13 @@ def view_report(
         team_id=task.team_id,
         task_id=task.task_id,
         status=task.status,
-        report_data=task.report_data or {},
+        report_data=report_data,
         report_s3_path=task.report_s3_path,
         created_at=task.created_at,
         started_at=task.started_at,
         completed_at=task.completed_at,
         published_at=task.published_at,
+        grading_mode=grading_mode,
     )
 
 
@@ -220,20 +227,20 @@ async def upload_file(
                 detail="question_id is required for question files",
             )
 
-    elif file_type == FileType.ANSWER_ATTACHMENT:
-        # Answer attachment requires respondent permission
-        if not permission_service.can_answer(db, topic, current_user.id):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You don't have permission to upload answer attachments",
-            )
-
     elif file_type == FileType.EXAM_ATTACHMENT:
         # Exam attachment requires respondent permission
         if not permission_service.can_answer(db, topic, current_user.id):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="You don't have permission to upload exam attachments",
+            )
+
+    elif file_type == FileType.TOPIC_ATTACHMENT:
+        # Topic attachment requires author permission (topic creator)
+        if topic.creator_id != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You don't have permission to upload topic attachments",
             )
 
     # Read file content
@@ -337,19 +344,20 @@ async def upload_text_as_file(
                 detail="question_id is required for question files",
             )
 
-    elif request.file_type == FileType.ANSWER_ATTACHMENT:
-        if not permission_service.can_answer(db, topic, current_user.id):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You don't have permission to upload answer attachments",
-            )
-
     elif request.file_type == FileType.EXAM_ATTACHMENT:
         # Exam attachment requires respondent permission
         if not permission_service.can_answer(db, topic, current_user.id):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="You don't have permission to upload exam attachments",
+            )
+
+    elif request.file_type == FileType.TOPIC_ATTACHMENT:
+        # Topic attachment requires author permission (topic creator)
+        if topic.creator_id != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You don't have permission to upload topic attachments",
             )
 
     # Convert text to bytes
@@ -424,13 +432,13 @@ def _get_path_patterns() -> dict:
         "question": re.compile(rf"^{escaped_prefix}/questions/(\d+)/(\d+)/"),
         # {prefix}/criteria/{topic_id}/{question_id}/...
         "criteria": re.compile(rf"^{escaped_prefix}/criteria/(\d+)/(\d+)/"),
-        # {prefix}/answers/{user_id}/{topic_id}/{question_id}/...
-        "answer": re.compile(rf"^{escaped_prefix}/answers/(\d+)/(\d+)/(\d+)/"),
         # {prefix}/reports/{user_id}/{topic_id}/{question_id}/...
         "report": re.compile(rf"^{escaped_prefix}/reports/(\d+)/(\d+)/(\d+)/"),
         # {prefix}/exam/{user_id}/{topic_id}/{question_id}/{slot}/... or
         # {prefix}/exam/{user_id}/{topic_id}/{question_id}/{timestamp}/...
         "exam": re.compile(rf"^{escaped_prefix}/exam/(\d+)/(\d+)/(\d+)/[^/]+/"),
+        # {prefix}/topics/{topic_id}/{slot}/{filename} (topic-level attachments like intro video)
+        "topic": re.compile(rf"^{escaped_prefix}/topics/(\d+)/[^/]+/[^/]+"),
     }
 
 
@@ -448,7 +456,6 @@ def _verify_download_permission(
     permission_service = get_permission_service()
 
     path_patterns = _get_path_patterns()
-    logger.debug(f"Download file request: s3_path={s3_path}, user_id={current_user.id}")
 
     # Check question content pattern
     match = path_patterns["question"].match(s3_path)
@@ -466,18 +473,6 @@ def _verify_download_permission(
         topic = topic_service.get(db, topic_id)
         if topic:
             return permission_service.can_view_criteria(db, topic, current_user.id)
-        return False
-
-    # Check answer pattern
-    match = path_patterns["answer"].match(s3_path)
-    if match:
-        user_id = int(match.group(1))
-        topic_id = int(match.group(2))
-        topic = topic_service.get(db, topic_id)
-        if topic:
-            if user_id == current_user.id:
-                return True
-            return permission_service.can_grade(db, topic, current_user.id)
         return False
 
     # Check report pattern
@@ -506,6 +501,16 @@ def _verify_download_permission(
             return permission_service.can_grade(db, topic, current_user.id)
         return False
 
+    # Check topic attachment pattern (e.g., intro video)
+    match = path_patterns["topic"].match(s3_path)
+    if match:
+        topic_id = int(match.group(1))
+        topic = topic_service.get(db, topic_id)
+        if topic:
+            # Anyone who can view the topic can access topic-level attachments
+            return permission_service.can_view_topic(db, topic, current_user.id)
+        return False
+
     return False
 
 
@@ -529,15 +534,19 @@ def download_file(
     """
     storage_service = get_storage_service()
 
+    # Handle potential '+' to space conversion issue
+    # Some URL encodings use '+' for space, but FastAPI may not decode it
+    s3_path_normalized = s3_path.replace("+", " ")
+
     # Verify permission
-    if not _verify_download_permission(s3_path, current_user, db):
+    if not _verify_download_permission(s3_path_normalized, current_user, db):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You don't have permission to download this file",
         )
 
     # Get file info first to check existence and get size
-    file_info = storage_service.get_file_info(s3_path)
+    file_info = storage_service.get_file_info(s3_path_normalized)
     if file_info is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -545,15 +554,15 @@ def download_file(
         )
 
     # Get file stream
-    file_stream = storage_service.get_stream(s3_path)
+    file_stream = storage_service.get_stream(s3_path_normalized)
     if file_stream is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="File not found",
         )
 
-    # Extract filename from path
-    filename = s3_path.split("/")[-1]
+    # Extract filename from normalized path
+    filename = s3_path_normalized.split("/")[-1]
 
     # Try to determine content type based on file extension or use stored content type
     content_type = file_info.get("content_type", "application/octet-stream")
@@ -598,6 +607,158 @@ def download_file(
     )
 
 
+@router.get("/files/stream")
+def stream_file(
+    request: Request,
+    s3_path: str = Query(..., description="S3 storage path of the file"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Stream a file through backend proxy for inline viewing (no S3 URL exposure).
+
+    Supports HTTP Range requests for video seeking/scrubbing.
+    Unlike download, this endpoint uses Content-Disposition: inline
+    to allow in-browser playback of media files (video, audio, images, etc.)
+
+    Permission is verified based on the S3 path pattern (same as download).
+
+    Returns the file content as a streaming response for inline viewing.
+    """
+    storage_service = get_storage_service()
+
+    # Handle potential '+' to space conversion issue
+    # Some URL encodings use '+' for space, but FastAPI may not decode it
+    s3_path_normalized = s3_path.replace("+", " ")
+
+    # Verify permission (use normalized path)
+    if not _verify_download_permission(s3_path_normalized, current_user, db):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You don't have permission to preview this file",
+        )
+
+    # Get file info first to check existence and get size (use normalized path)
+    file_info = storage_service.get_file_info(s3_path_normalized)
+    if file_info is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="File not found",
+        )
+
+    file_size = file_info.get("size", 0)
+
+    # Extract filename from normalized path
+    filename = s3_path_normalized.split("/")[-1]
+
+    # Determine content type
+    content_type = file_info.get("content_type", "application/octet-stream")
+    if content_type == "application/octet-stream" and "." in filename:
+        ext = filename.rsplit(".", 1)[-1].lower()
+        content_type_map = {
+            # Video types
+            "mp4": "video/mp4",
+            "webm": "video/webm",
+            "mov": "video/quicktime",
+            "avi": "video/x-msvideo",
+            "mkv": "video/x-matroska",
+            # Image types
+            "png": "image/png",
+            "jpg": "image/jpeg",
+            "jpeg": "image/jpeg",
+            "gif": "image/gif",
+            "svg": "image/svg+xml",
+            "webp": "image/webp",
+            # Audio types
+            "mp3": "audio/mpeg",
+            "wav": "audio/wav",
+            "ogg": "audio/ogg",
+            # Document types (for inline viewing)
+            "pdf": "application/pdf",
+            "txt": "text/plain",
+            "md": "text/markdown",
+        }
+        content_type = content_type_map.get(ext, content_type)
+
+    # RFC 5987 encoding for non-ASCII filenames
+    encoded_filename = quote(filename, safe="")
+    content_disposition = (
+        f'inline; filename="{encoded_filename}"; '
+        f"filename*=UTF-8''{encoded_filename}"
+    )
+
+    # Parse Range header for partial content requests
+    range_header = request.headers.get("range")
+
+    if range_header:
+        # Parse range header: "bytes=start-end" or "bytes=start-"
+        try:
+            range_spec = range_header.replace("bytes=", "")
+            if "-" in range_spec:
+                parts = range_spec.split("-")
+                start = int(parts[0]) if parts[0] else 0
+                end = int(parts[1]) if parts[1] else file_size - 1
+            else:
+                start = int(range_spec)
+                end = file_size - 1
+
+            # Validate range
+            if start >= file_size:
+                return Response(
+                    status_code=416,  # Range Not Satisfiable
+                    headers={"Content-Range": f"bytes */{file_size}"},
+                )
+
+            # Clamp end to file size
+            end = min(end, file_size - 1)
+            content_length = end - start + 1
+
+            # Get range stream
+            file_stream = storage_service.get_range_stream(
+                s3_path_normalized, start, end
+            )
+            if file_stream is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="File not found",
+                )
+
+            # Return 206 Partial Content
+            return StreamingResponse(
+                file_stream,
+                status_code=206,
+                media_type=content_type,
+                headers={
+                    "Content-Disposition": content_disposition,
+                    "Content-Length": str(content_length),
+                    "Content-Range": f"bytes {start}-{end}/{file_size}",
+                    "Accept-Ranges": "bytes",
+                },
+            )
+
+        except (ValueError, IndexError):
+            # Invalid range header, fall back to full file
+            pass
+
+    # No range request or invalid range - return full file
+    file_stream = storage_service.get_stream(s3_path_normalized)
+    if file_stream is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="File not found",
+        )
+
+    return StreamingResponse(
+        file_stream,
+        media_type=content_type,
+        headers={
+            "Content-Disposition": content_disposition,
+            "Content-Length": str(file_size),
+            "Accept-Ranges": "bytes",
+        },
+    )
+
+
 # ============================================================================
 # File content endpoint (for reading text files)
 # ============================================================================
@@ -621,15 +782,18 @@ def get_file_content(
     """
     storage_service = get_storage_service()
 
+    # Handle potential '+' to space conversion issue
+    s3_path_normalized = s3_path.replace("+", " ")
+
     # Verify permission (same as download)
-    if not _verify_download_permission(s3_path, current_user, db):
+    if not _verify_download_permission(s3_path_normalized, current_user, db):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You don't have permission to access this file",
         )
 
     # Get file info first to check existence
-    file_info = storage_service.get_file_info(s3_path)
+    file_info = storage_service.get_file_info(s3_path_normalized)
     if file_info is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -637,7 +801,7 @@ def get_file_content(
         )
 
     # Get file stream
-    file_stream = storage_service.get_stream(s3_path)
+    file_stream = storage_service.get_stream(s3_path_normalized)
     if file_stream is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

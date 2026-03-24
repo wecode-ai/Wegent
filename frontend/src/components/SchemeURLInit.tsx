@@ -4,6 +4,8 @@
 
 'use client'
 
+import '@wecode/modals'
+
 import { useEffect } from 'react'
 import { initializeSchemeSystem } from '@/lib/scheme'
 import { enableDevMode } from '@/lib/scheme/devtools'

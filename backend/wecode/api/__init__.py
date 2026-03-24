@@ -19,6 +19,7 @@ from wecode.service.skill_market import weibo_skill_market_provider
 skill_market_registry.register(weibo_skill_market_provider)
 
 import wecode.api.agents_endpoint_patch  # noqa: F401  patch app.api.endpoints.agents to enforce admin-only endpoints
+import wecode.api.device_monitor_patch  # noqa: F401  patch restart_device to call Nevis API
 import wecode.api.executors_endpoint_patch  # noqa: F401  patch /tasks/dispatch endpoint to replace API key placeholders (pull mode, backup)
 import wecode.api.gitlab_provider_patch  # noqa: F401  ensures GitLabProvider is monkey-patched at import time
 import wecode.api.models_endpoint_patch  # noqa: F401  patch app.api.endpoints.models to enforce admin-only endpoints
@@ -35,7 +36,11 @@ from app.api.router import api_router
 from wecode.api.apikey import router as apikey_router
 from wecode.api.auth import router as auth_router
 from wecode.api.cloud_devices import router as cloud_devices_router
+from wecode.api.device_monitor_patch import (
+    apply_patch_to_api_router as _apply_device_monitor_patch,
+)
 from wecode.api.evaluation import router as evaluation_router
+from wecode.api.himalaya_mail_devices import router as himalaya_mail_devices_router
 from wecode.api.mail_token import router as mail_token_router
 
 api_router.include_router(apikey_router, prefix="/internal/apikey", tags=["internal"])
@@ -44,4 +49,15 @@ api_router.include_router(
     cloud_devices_router, prefix="/cloud-devices", tags=["cloud-devices"]
 )
 api_router.include_router(evaluation_router, tags=["evaluation"])
+api_router.include_router(
+    himalaya_mail_devices_router, prefix="/devices", tags=["devices"]
+)
 api_router.include_router(mail_token_router, prefix="/wecode", tags=["wecode"])
+
+
+def finalize_patches() -> None:
+    """Apply patches that require all routers to be registered.
+
+    This should be called after all routers are included in api_router.
+    """
+    _apply_device_monitor_patch()

@@ -22,6 +22,7 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.api.dependencies import get_db
 from app.core import security
@@ -894,6 +895,7 @@ def submit_exam(
             existing_answer.content_data or {}, content_data
         )
         existing_answer.content_data = updated_content
+        flag_modified(existing_answer, "content_data")
         existing_answer.submitted_at = datetime.now(timezone.utc)
         db.commit()
         db.refresh(existing_answer)
@@ -1077,6 +1079,7 @@ def update_exam_attachments(
             existing_answer.content_data or {}, request.content_data or {}
         )
         existing_answer.content_data = updated_content
+        flag_modified(existing_answer, "content_data")
         db.commit()
         db.refresh(existing_answer)
         answer = existing_answer
@@ -1176,51 +1179,77 @@ def advance_exam_phase(
         )
 
 
-def _has_valid_answer_content(answer: Any) -> bool:
+def _has_valid_answer_content(answer: Any, question: Any = None) -> bool:
     """
     Check if an answer has valid content for grading.
 
-    Checks if there are any attachments (main, interaction, bonusAgent files,
-    bonusMultimodal) or supplementary notes/files.
+    If question is provided, validates against answerSlots configuration:
+    - For each required slot, check if answer has valid content (text, link, or files)
+
+    If no answerSlots configuration, falls back to checking any content existence.
+
+    Args:
+        answer: The answer object
+        question: Optional question object with content_data.answerSlots
+
+    Returns:
+        True if answer has valid content for grading
     """
     if not answer or not answer.content_data:
         return False
 
     content_data = answer.content_data
+
+    # Get answerSlots from question if available
+    answer_slots = []
+    if question and question.content_data:
+        answer_slots = question.content_data.get("answerSlots", [])
+
+    # New structure: answers dict with slot keys
+    answers = content_data.get("answers", {})
+
+    # If answerSlots are defined, validate required slots
+    if answer_slots:
+        for slot in answer_slots:
+            if not slot.get("required", False):
+                continue  # Skip optional slots
+            slot_key = slot.get("key")
+            if not slot_key:
+                continue
+            slot_answer = answers.get(slot_key, {})
+            # A slot has valid content if it has non-empty text, link, OR files
+            has_text = bool(slot_answer.get("text", "").strip())
+            has_link = bool(slot_answer.get("link", "").strip())
+            has_files = bool(slot_answer.get("files") and len(slot_answer["files"]) > 0)
+            if not has_text and not has_link and not has_files:
+                return False  # Required slot is empty
+        # All required slots have content
+        return True
+
+    # Fallback: Check if any answer slot has content
+    if answers:
+        for slot_answer in answers.values():
+            if isinstance(slot_answer, dict):
+                has_text = bool(slot_answer.get("text", "").strip())
+                has_link = bool(slot_answer.get("link", "").strip())
+                has_files = bool(
+                    slot_answer.get("files") and len(slot_answer["files"]) > 0
+                )
+                if has_text or has_link or has_files:
+                    return True
+
+    # Legacy fallback: Check old structure for backward compatibility
     attachments = content_data.get("attachments", {})
 
-    # Check main attachments
-    if attachments.get("main") and len(attachments["main"]) > 0:
-        return True
-
-    # Check interaction attachments
-    if attachments.get("interaction") and len(attachments["interaction"]) > 0:
-        return True
-
-    # Check bonusAgent files
-    bonus_agent = attachments.get("bonusAgent", {})
-    if bonus_agent.get("files") and len(bonus_agent["files"]) > 0:
-        return True
-    if bonus_agent.get("link") and bonus_agent["link"].strip():
-        return True
-
-    # Check bonusMultimodal attachments
-    if attachments.get("bonusMultimodal") and len(attachments["bonusMultimodal"]) > 0:
-        return True
-
-    # Check supplementary notes files
-    if (
-        content_data.get("supplementaryNotesFiles")
-        and len(content_data["supplementaryNotesFiles"]) > 0
-    ):
-        return True
-
-    # Check supplementary notes text
-    if (
-        content_data.get("supplementaryNotes")
-        and content_data["supplementaryNotes"].strip()
-    ):
-        return True
+    # Check any attachment slot
+    for slot_value in attachments.values():
+        if isinstance(slot_value, list) and len(slot_value) > 0:
+            return True
+        if isinstance(slot_value, dict):
+            if slot_value.get("files") and len(slot_value["files"]) > 0:
+                return True
+            if slot_value.get("link") and slot_value["link"].strip():
+                return True
 
     return False
 
@@ -1266,7 +1295,7 @@ def _create_grading_tasks_for_exam_completion(
             continue
 
         # Check if answer has valid content for grading
-        if not _has_valid_answer_content(answer):
+        if not _has_valid_answer_content(answer, question):
             logger.info(
                 f"[Evaluation] Answer {answer.id} for question {question.id} has no valid content, skipping"
             )
@@ -1290,14 +1319,23 @@ def _create_grading_tasks_for_exam_completion(
             skipped_count += 1
             continue
 
-        # Create grading task
+        # Get grading_mode from topic config
+        grading_mode = None
+        if topic and topic.grading_team_config:
+            grading_mode = topic.grading_team_config.get("grading_mode")
+            # Backward compatibility: if no grading_mode but has team_id, it's single mode
+            if not grading_mode and topic.grading_team_config.get("team_id"):
+                grading_mode = "single"
+
+        # Create grading task with grading_mode in report_data
+        report_data = {"grading_mode": grading_mode} if grading_mode else {}
         grading_task = EvalGradingTask(
             answer_id=answer.id,
             question_id=question.id,
             question_version=question.current_version,
             respondent_id=user_id,
             status=GradingTaskStatus.PENDING,
-            report_data={},
+            report_data=report_data,
         )
         db.add(grading_task)
         db.flush()
@@ -1336,11 +1374,21 @@ def _create_grading_tasks_for_exam_completion(
                             f"{grading_task.id} with {len(multi_model_config.scorer_models)} scorers"
                         )
 
+                    # For single mode, extract model config from topic config
+                    # When model_id is specified, default force_override to True
+                    # for consistency with multi-model mode behavior
+                    model_id = grading_config.get("model_id")
+                    force_override = grading_config.get(
+                        "force_override_bot_model", True if model_id else False
+                    )
+
                     grading_service.execute(
                         db=db,
                         task=grading_task,
                         team_id=team_id,
                         user_id=topic.creator_id,
+                        model_id=model_id,
+                        force_override_bot_model=force_override,
                         multi_model_config=multi_model_config,
                     )
                     logger.info(

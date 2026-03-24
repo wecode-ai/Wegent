@@ -14,7 +14,11 @@ import { getToken } from '@/apis/user'
 // Types
 // ============================================================================
 
-export type EvalFileType = 'question_content' | 'question_criteria' | 'answer_attachment' | 'exam_attachment'
+export type EvalFileType =
+  | 'question_content'
+  | 'question_criteria'
+  | 'exam_attachment'
+  | 'topic_attachment'
 
 export interface FileUploadResponse {
   key: string

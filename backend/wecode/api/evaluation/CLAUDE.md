@@ -221,6 +221,34 @@ return task, topic, team_id
 - 提取的函数应该接收所需的数据作为参数，而不是依赖外部闭包
 - 辅助函数应该纯逻辑，不涉及外部状态
 
+### 10. 人工报告（human_report）的设计原则
+
+**设计**: `human_report` 是一个永久可编辑的草稿，与发布状态无关。
+
+**允许的操作**:
+- **编辑 (update_report)**: 除 RUNNING 状态外，任何状态都可以编辑人工草稿
+- **发布 (publish)**: 可以首次发布，也可以重新发布（更新已发布的报告）
+- **重新发布**: PUBLISHED 状态的任务可以再次发布，用人工草稿更新 final_report
+
+**状态限制**:
+```python
+# 更新报告 - 只禁止 RUNNING 状态
+if task.status == GradingTaskStatus.RUNNING:
+    raise HTTPException(detail="Cannot update tasks that are currently running")
+
+# 发布报告 - 允许 COMPLETED, PUBLISHED, 以及有人工报告的 PENDING/FAILED
+allowed_statuses = [GradingTaskStatus.COMPLETED, GradingTaskStatus.PUBLISHED]
+if has_human_report:
+    allowed_statuses.extend([GradingTaskStatus.PENDING, GradingTaskStatus.FAILED])
+```
+
+**用户流程**:
+1. AI 评分完成 → status=COMPLETED
+2. 用户编辑人工草稿 → 更新 human_report
+3. 用户发布 → status=PUBLISHED, 创建 final_report
+4. 用户发现需要修改 → 编辑 human_report（PUBLISHED 状态下仍可编辑）
+5. 用户重新发布 → 更新 final_report
+
 ## 检查清单
 
 添加新配置字段时:

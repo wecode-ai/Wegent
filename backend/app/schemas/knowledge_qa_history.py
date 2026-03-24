@@ -9,7 +9,7 @@ Pydantic schemas for knowledge base QA history query.
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_serializer
 
 
 class KnowledgeBaseTypeData(BaseModel):
@@ -97,6 +97,13 @@ class QAHistoryItem(BaseModel):
         None, description="Knowledge base configuration"
     )
     created_at: datetime = Field(..., description="Record creation time")
+
+    @field_serializer("user_prompt")
+    def clean_user_prompt(self, value: Optional[str]) -> Optional[str]:
+        """Strip system-injected metadata blocks from user prompt before serialization."""
+        from app.utils.prompt_utils import extract_display_prompt
+
+        return extract_display_prompt(value)
 
 
 class PaginationInfo(BaseModel):

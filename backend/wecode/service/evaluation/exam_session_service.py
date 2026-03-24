@@ -392,37 +392,47 @@ class ExamSessionService:
         return session
 
     @staticmethod
-    def _convert_supplementary_notes_if_needed(
+    def _convert_text_slots_if_needed(
         db: Session,
         session: EvalExamSession,
         target_phase: str,
     ) -> bool:
-        """Convert text inputs to S3 attachments when entering review phase.
+        """Convert text slot content to S3 attachments when entering review or completed phase.
 
-        Reads from content_data.inputs.supplementaryNotes,
-        converts to S3 file, and saves to content_data.attachments.supplementaryNotes.
+        For dynamic answer slots with inputMode='text':
+        - Reads from content_data.answers[slot_key].text
+        - Converts to S3 file
+        - Saves to content_data.answers[slot_key].files
+        - Clears content_data.answers[slot_key].text
+
+        Note: Conversion happens when entering review phase AND when completing the exam.
+        This ensures text content is converted even if modified during review phase.
         """
         logger.info(
-            f"[ExamSession] _convert_supplementary_notes_if_needed called: "
+            f"[ExamSession] _convert_text_slots_if_needed called: "
             f"target_phase={target_phase}, session_id={session.id}"
         )
 
-        # Only convert when entering review phase
-        if target_phase != "review":
+        # Convert when entering review phase OR when completing the exam
+        # This handles the case where user modifies text during review phase
+        if target_phase not in ("review", "completed"):
             logger.info(
-                f"[ExamSession] Skipping conversion - target_phase={target_phase} is not 'review'"
+                f"[ExamSession] Skipping conversion - target_phase={target_phase} "
+                f"is not 'review' or 'completed'"
             )
             return False
 
         # Query all questions for this topic
-        question_ids = (
-            db.query(EvalQuestion.id)
+        questions = (
+            db.query(EvalQuestion)
             .filter(
                 EvalQuestion.topic_id == session.topic_id,
                 EvalQuestion.is_active,
             )
-            .scalar_subquery()
+            .all()
         )
+        question_ids = [q.id for q in questions]
+        question_map = {q.id: q for q in questions}
 
         # Query all latest answers for this user
         user_answers = (
@@ -442,54 +452,68 @@ class ExamSessionService:
             if not answer.content_data:
                 continue
 
-            # Get text from inputs.supplementaryNotes
-            inputs = answer.content_data.get("inputs", {})
-            notes = inputs.get("supplementaryNotes", "")
+            question = question_map.get(answer.question_id)
+            answer_slots = []
+            if question and question.content_data:
+                answer_slots = question.content_data.get("answerSlots", [])
 
-            # Check if already converted (attachments.supplementaryNotes exists)
-            attachments = answer.content_data.get("attachments", {})
-            existing_files = attachments.get("supplementaryNotes", [])
+            # Create new dict to trigger SQLAlchemy change detection
+            new_content_data = dict(answer.content_data)
+            answer_modified = False
 
-            # Skip if no notes or already has files
-            if not notes or not notes.strip():
-                continue
-            if existing_files:
-                logger.info(
-                    f"[ExamSession] Answer {answer.id} already has {len(existing_files)} files, skipping"
-                )
-                continue
+            # Process dynamic answer slots with text inputMode
+            if answer_slots:
+                answers = new_content_data.get("answers", {})
+                for slot in answer_slots:
+                    slot_key = slot.get("key")
+                    input_mode = slot.get("inputMode", "attachment")
+                    # Only process text slots
+                    if not slot_key or input_mode != "text":
+                        continue
 
-            # Convert notes to S3
-            attachment = TextConversionService.convert_question_notes_to_s3(
-                db, session, answer.question_id, notes
-            )
+                    slot_answer = answers.get(slot_key, {})
+                    text_content = slot_answer.get("text", "")
+                    existing_files = slot_answer.get("files", [])
 
-            if attachment:
-                # Create new dict to trigger SQLAlchemy change detection
-                new_content_data = dict(answer.content_data)
+                    # Skip if no text content or already has files
+                    if not text_content or not text_content.strip():
+                        continue
+                    if existing_files:
+                        logger.info(
+                            f"[ExamSession] Answer {answer.id} slot {slot_key} already has {len(existing_files)} files, skipping"
+                        )
+                        continue
 
-                # Ensure attachments dict exists
-                if "attachments" not in new_content_data:
-                    new_content_data["attachments"] = {}
-                new_content_data["attachments"]["supplementaryNotes"] = [attachment]
+                    # Convert text content to S3
+                    attachment = TextConversionService.convert_text_slot_to_s3(
+                        db, session, answer.question_id, text_content, slot_key
+                    )
 
-                # Clear inputs.supplementaryNotes
-                if "inputs" in new_content_data:
-                    new_content_data["inputs"] = dict(new_content_data["inputs"])
-                    new_content_data["inputs"]["supplementaryNotes"] = ""
+                    if attachment:
+                        # Update answers structure
+                        if "answers" not in new_content_data:
+                            new_content_data["answers"] = {}
+                        if slot_key not in new_content_data["answers"]:
+                            new_content_data["answers"][slot_key] = {}
+                        new_content_data["answers"][slot_key]["files"] = [attachment]
+                        # Clear text content after conversion
+                        new_content_data["answers"][slot_key]["text"] = ""
+                        answer_modified = True
+                        converted_count += 1
+                        logger.info(
+                            f"[ExamSession] Converted text to S3 for answer {answer.id} slot {slot_key}"
+                        )
 
+            if answer_modified:
                 answer.content_data = new_content_data
-                converted_count += 1
-                logger.info(
-                    f"[ExamSession] Converted notes to S3 for answer {answer.id}"
-                )
+                attributes.flag_modified(answer, "content_data")
 
         if converted_count > 0:
             db.commit()
             logger.info(f"[ExamSession] Committed {converted_count} conversions")
             return True
 
-        logger.info("[ExamSession] No supplementary notes to convert")
+        logger.info("[ExamSession] No text slots to convert")
         return False
 
     @staticmethod
@@ -500,9 +524,7 @@ class ExamSessionService:
     ) -> EvalExamSession:
         """Advance exam phase with text conversion when entering review phase."""
         # Convert supplementary notes to S3 when entering review phase
-        ExamSessionService._convert_supplementary_notes_if_needed(
-            db, session, target_phase
-        )
+        ExamSessionService._convert_text_slots_if_needed(db, session, target_phase)
 
         # Update phase
         session.current_phase = target_phase
@@ -530,13 +552,13 @@ class ExamSessionService:
     ) -> EvalExamSession:
         """Complete exam session.
 
-        If session has supplementaryNotes that haven't been converted yet
+        If session has text slots that haven't been converted yet
         (e.g., when transitioning directly from exam to completed), convert them now.
         """
         # Check if there are any notes that need conversion
         # This handles the case when author forces exam -> completed transition
         # skipping the review phase
-        ExamSessionService._convert_supplementary_notes_if_needed(db, session, "review")
+        ExamSessionService._convert_text_slots_if_needed(db, session, "review")
 
         session.current_phase = "completed"
         session.completed_at = datetime.now(timezone.utc)

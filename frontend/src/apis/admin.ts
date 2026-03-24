@@ -411,6 +411,45 @@ export interface IMChannelStatus {
   extra_info: Record<string, unknown> | null
 }
 
+// Device Monitor Types
+export type DeviceStatus = 'online' | 'offline' | 'busy'
+export type DeviceType = 'local' | 'cloud'
+export type BindShell = 'claudecode' | 'openclaw'
+
+export interface AdminDeviceInfo {
+  id: number
+  device_id: string
+  name: string
+  status: DeviceStatus
+  device_type: DeviceType
+  bind_shell: BindShell
+  user_id: number
+  user_name: string
+  client_ip: string | null
+  executor_version: string | null
+  slot_used: number
+  slot_max: number
+}
+
+export interface AdminDeviceListResponse {
+  items: AdminDeviceInfo[]
+  total: number
+}
+
+export interface AdminDeviceStats {
+  total: number
+  user_count: number
+  by_status: Record<string, number>
+  by_device_type: Record<string, number>
+  by_bind_shell: Record<string, number>
+}
+
+// Admin Device Action Types
+export interface AdminDeviceActionResponse {
+  success: boolean
+  message: string
+}
+
 // Admin API Services
 export const adminApis = {
   // ==================== User Management ====================
@@ -909,5 +948,76 @@ export const adminApis = {
    */
   async getIMChannelStatus(channelId: number): Promise<IMChannelStatus> {
     return apiClient.get(`/admin/im-channels/${channelId}/status`)
+  },
+
+  // ==================== Device Monitor ====================
+
+  /**
+   * Get list of all devices across all users (admin only)
+   */
+  async getDevices(
+    page: number = 1,
+    limit: number = 20,
+    deviceType?: DeviceType,
+    bindShell?: BindShell,
+    search?: string
+  ): Promise<AdminDeviceListResponse> {
+    const params = new URLSearchParams()
+    params.append('page', String(page))
+    params.append('limit', String(limit))
+    if (deviceType) {
+      params.append('device_type', deviceType)
+    }
+    if (bindShell) {
+      params.append('bind_shell', bindShell)
+    }
+    if (search) {
+      params.append('search', search)
+    }
+    return apiClient.get(`/admin/device-monitor/devices?${params.toString()}`)
+  },
+
+  /**
+   * Get device statistics (admin only)
+   */
+  async getDeviceStats(): Promise<AdminDeviceStats> {
+    return apiClient.get('/admin/device-monitor/stats')
+  },
+
+  /**
+   * Upgrade a device (admin only)
+   */
+  async upgradeDevice(
+    deviceId: string,
+    userId: number,
+    forceStopTasks: boolean = false
+  ): Promise<AdminDeviceActionResponse> {
+    return apiClient.post(`/admin/device-monitor/devices/${encodeURIComponent(deviceId)}/upgrade`, {
+      user_id: userId,
+      force_stop_tasks: forceStopTasks,
+    })
+  },
+
+  /**
+   * Restart a cloud device (admin only)
+   */
+  async restartDevice(deviceId: string, userId: number): Promise<AdminDeviceActionResponse> {
+    return apiClient.post(`/admin/device-monitor/devices/${encodeURIComponent(deviceId)}/restart`, {
+      user_id: userId,
+    })
+  },
+
+  /**
+   * Migrate a cloud device (admin only)
+   */
+  async migrateDevice(
+    deviceId: string,
+    userId: number,
+    targetHost?: string
+  ): Promise<AdminDeviceActionResponse> {
+    return apiClient.post(`/admin/device-monitor/devices/${encodeURIComponent(deviceId)}/migrate`, {
+      user_id: userId,
+      target_host: targetHost,
+    })
   },
 }

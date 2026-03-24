@@ -32,6 +32,7 @@ import {
   ArrowRight,
   FileText,
   Layers,
+  Copy,
 } from 'lucide-react'
 import { getAuthorGradingConfig, updateAuthorGradingConfig } from '@wecode/api/evaluation-author'
 import type { GradingConfig, TopicStatistics } from '@wecode/types/evaluation'
@@ -52,15 +53,109 @@ const TRIGGER_CONDITIONS = {
 }
 
 const GRADING_MODES = {
+  MANUAL: 'manual',
   SINGLE: 'single',
   MULTI: 'multi',
 }
 
-const NO_TEAM_VALUE = '__none__'
+// Recommended prompt templates
+const RECOMMENDED_TEMPLATES = {
+  // Single model / Scorer template (answer content passed via attachments)
+  single: `请评测 {user_id} 号用户提交的报告。
+
+题目：{question_title}
+
+用户提交的内容已作为附件提供，请查看附件中的文件。
+
+请按照评分标准进行评测，给出详细的评分报告，包括：
+1. 得分（满分100分）
+2. 评分依据
+3. 优点
+4. 改进建议`,
+
+  // Aggregator template for multi-model mode
+  aggregator: `你是一位评分结果汇总专家。请阅读附件中的 {scorer_count} 份评分专家报告，给出最终评分报告。
+
+原始题目：
+{question_title}
+
+评分专家列表：
+{scorer_summary}
+
+请阅读上述附件中的评分报告，然后：
+1. 分析各专家评分的差异和共识点
+2. 给出最终得分（综合各专家意见，给出合理的最终分数）
+3. 撰写综合评语（整合各专家意见，给出全面的评价）
+4. 提出主要改进建议
+
+请输出格式化的最终评分报告。`,
+}
+
+// Template variables
+const TEMPLATE_VARIABLES = {
+  single: [
+    { name: 'user_id', description: '答题人 ID' },
+    { name: 'grading_task_id', description: '评分任务 ID' },
+    { name: 'topic_id', description: '专题 ID' },
+    { name: 'question_id', description: '题目 ID' },
+    { name: 'question_title', description: '题目标题' },
+  ],
+  aggregator: [
+    { name: 'question_title', description: '题目标题' },
+    { name: 'scorer_count', description: '评分专家数量' },
+    { name: 'scorer_summary', description: '评分专家列表（含附件名）' },
+  ],
+}
 
 interface GradingConfigTabProps {
   topicId: number
   statistics: TopicStatistics | null
+}
+
+// Template recommendation component
+function TemplateRecommendation({
+  template,
+  variables,
+  onImport,
+  t,
+}: {
+  template: string
+  variables: Array<{ name: string; description: string }>
+  onImport: () => void
+  t: (key: string, options?: Record<string, unknown>) => string
+}) {
+  return (
+    <div className="mt-3 p-4 bg-gray-50 rounded-lg border border-gray-200">
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-sm font-medium text-gray-700">
+          {t('grading.recommended_template') || 'Recommended Template'}
+        </span>
+        <Button variant="outline" size="sm" onClick={onImport} className="h-7 px-2 text-xs">
+          <Copy className="h-3 w-3 mr-1" />
+          {t('grading.import_template') || 'Import'}
+        </Button>
+      </div>
+      <pre className="text-xs text-gray-600 whitespace-pre-wrap bg-white p-3 rounded border border-gray-100 max-h-48 overflow-y-auto font-mono">
+        {template}
+      </pre>
+      <div className="mt-2 text-xs text-text-muted">
+        <span className="font-medium">
+          {t('grading.available_variables') || 'Available variables'}:
+        </span>
+        <div className="flex flex-wrap gap-1 mt-1">
+          {variables.map(v => (
+            <span
+              key={v.name}
+              className="inline-flex items-center px-1.5 py-0.5 bg-gray-100 rounded text-gray-600"
+              title={v.description}
+            >
+              {'{' + v.name + '}'}
+            </span>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
 }
 
 // Check if a team uses Chat shell type (for AI grading)
@@ -116,9 +211,16 @@ export function GradingConfigTab({ topicId, statistics }: GradingConfigTabProps)
       setGroupTeams(teamsData.items || [])
 
       // Populate form state - Common
-      setGradingMode(configData.grading_mode || GRADING_MODES.SINGLE)
-      setTeamId(configData.team_id?.toString() || NO_TEAM_VALUE)
-      setAutoTrigger(configData.auto_trigger || false)
+      // Determine grading mode: if no mode specified, infer from team_id
+      const inferredMode =
+        configData.grading_mode ||
+        (configData.team_id ? GRADING_MODES.SINGLE : GRADING_MODES.MANUAL)
+      setGradingMode(inferredMode)
+      setTeamId(configData.team_id?.toString() || '')
+      // Auto-trigger is not applicable for manual mode
+      setAutoTrigger(
+        inferredMode === GRADING_MODES.MANUAL ? false : configData.auto_trigger || false
+      )
       setTriggerCondition(configData.trigger_condition || TRIGGER_CONDITIONS.ON_SUBMIT)
       setGradingTimeout(configData.grading_timeout || 3600)
       setPromptTemplate(configData.prompt_template || '')
@@ -128,8 +230,8 @@ export function GradingConfigTab({ topicId, statistics }: GradingConfigTabProps)
       setForceOverride(configData.force_override_bot_model || false)
 
       // Populate form state - Multi Model
-      setScorerTeamId(configData.scorer_team_id?.toString() || NO_TEAM_VALUE)
-      setAggregatorTeamId(configData.aggregator_team_id?.toString() || NO_TEAM_VALUE)
+      setScorerTeamId(configData.scorer_team_id?.toString() || '')
+      setAggregatorTeamId(configData.aggregator_team_id?.toString() || '')
       // Convert scorer_models to MultiModelEntry format
       const scorerModelsData = configData.scorer_models || []
       setScorerModels(
@@ -159,38 +261,85 @@ export function GradingConfigTab({ topicId, statistics }: GradingConfigTabProps)
   }, [loadData])
 
   const handleSave = async () => {
+    // Validate required prompt templates for AI grading modes
+    if (gradingMode === GRADING_MODES.SINGLE && !promptTemplate.trim()) {
+      toast({
+        title: t('errors.validation_failed') || 'Validation Failed',
+        description: t('grading.prompt_template_required') || 'Prompt template is required',
+        variant: 'destructive',
+      })
+      return
+    }
+    if (gradingMode === GRADING_MODES.MULTI) {
+      if (!scorerPromptTemplate.trim()) {
+        toast({
+          title: t('errors.validation_failed') || 'Validation Failed',
+          description:
+            t('grading.scorer_prompt_template_required') || 'Scorer prompt template is required',
+          variant: 'destructive',
+        })
+        return
+      }
+      if (!aggregatorPromptTemplate.trim()) {
+        toast({
+          title: t('errors.validation_failed') || 'Validation Failed',
+          description:
+            t('grading.aggregator_prompt_template_required') ||
+            'Aggregator prompt template is required',
+          variant: 'destructive',
+        })
+        return
+      }
+    }
+
     setSaving(true)
     try {
       const payload: Record<string, unknown> = {
-        auto_trigger: autoTrigger,
+        // Auto-trigger is always false for manual mode
+        auto_trigger: gradingMode === GRADING_MODES.MANUAL ? false : autoTrigger,
         trigger_condition: triggerCondition,
         grading_timeout: gradingTimeout,
         grading_mode: gradingMode,
       }
 
-      if (gradingMode === GRADING_MODES.SINGLE) {
+      if (gradingMode === GRADING_MODES.MANUAL) {
+        // Manual grading mode - clear all AI grading configurations
+        payload.team_id = undefined
+        payload.scorer_team_id = undefined
+        payload.aggregator_team_id = undefined
+      } else if (gradingMode === GRADING_MODES.SINGLE) {
         // Single model mode
-        payload.team_id = teamId && teamId !== NO_TEAM_VALUE ? parseInt(teamId) : undefined
-        payload.prompt_template = promptTemplate || undefined
+        payload.team_id = teamId ? parseInt(teamId) : undefined
+        payload.prompt_template = promptTemplate // Required, already validated
         payload.model_id = selectedModel || undefined
         payload.force_override_bot_model = forceOverride
+        // Clear multi-model config to avoid confusion
+        payload.scorer_team_id = undefined
+        payload.aggregator_team_id = undefined
+        payload.scorer_models = undefined
+        payload.aggregator_model = undefined
       } else {
         // Multi model mode
-        payload.scorer_team_id = scorerTeamId && scorerTeamId !== NO_TEAM_VALUE ? parseInt(scorerTeamId) : undefined
-        payload.aggregator_team_id = aggregatorTeamId && aggregatorTeamId !== NO_TEAM_VALUE ? parseInt(aggregatorTeamId) : undefined
+        payload.scorer_team_id = scorerTeamId ? parseInt(scorerTeamId) : undefined
+        payload.aggregator_team_id = aggregatorTeamId ? parseInt(aggregatorTeamId) : undefined
         // Convert MultiModelEntry to ScorerModelConfig
-        payload.scorer_models = scorerModels.length > 0
-          ? scorerModels.map(m => ({
-              model_id: m.modelId,
-              force_override: m.forceOverride,
-            }))
+        payload.scorer_models =
+          scorerModels.length > 0
+            ? scorerModels.map(m => ({
+                model_id: m.modelId,
+                force_override: m.forceOverride,
+              }))
+            : undefined
+        payload.aggregator_model = aggregatorModel
+          ? {
+              model_id: aggregatorModel,
+              force_override: aggregatorForceOverride,
+            }
           : undefined
-        payload.aggregator_model = aggregatorModel ? {
-          model_id: aggregatorModel,
-          force_override: aggregatorForceOverride,
-        } : undefined
-        payload.scorer_prompt_template = scorerPromptTemplate || undefined
-        payload.aggregator_prompt_template = aggregatorPromptTemplate || undefined
+        payload.scorer_prompt_template = scorerPromptTemplate // Required, already validated
+        payload.aggregator_prompt_template = aggregatorPromptTemplate // Required, already validated
+        // Clear single-model config to avoid confusion
+        payload.team_id = undefined
       }
 
       await updateAuthorGradingConfig(topicId, payload)
@@ -234,7 +383,8 @@ export function GradingConfigTab({ topicId, statistics }: GradingConfigTabProps)
             {t('grading.grading_mode') || 'Grading Mode'}
           </CardTitle>
           <CardDescription className="text-sm text-text-secondary">
-            {t('grading.grading_mode_description') || 'Choose between single model or multi-model grading'}
+            {t('grading.grading_mode_description') ||
+              'Choose between single model or multi-model grading'}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -242,20 +392,42 @@ export function GradingConfigTab({ topicId, statistics }: GradingConfigTabProps)
             <Label htmlFor="gradingMode" className="text-sm font-medium">
               {t('grading.mode') || 'Mode'}
             </Label>
-            <Select value={gradingMode} onValueChange={setGradingMode}>
+            <Select
+              value={gradingMode}
+              onValueChange={value => {
+                setGradingMode(value)
+                // Disable auto-trigger when switching to manual mode
+                if (value === GRADING_MODES.MANUAL) {
+                  setAutoTrigger(false)
+                }
+              }}
+            >
               <SelectTrigger id="gradingMode" className="w-full">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
+                <SelectItem value={GRADING_MODES.MANUAL}>
+                  {t('grading.manual_mode') || 'Manual Grading Only'}
+                </SelectItem>
                 <SelectItem value={GRADING_MODES.SINGLE}>
-                  {t('grading.single_mode') || 'Single Model'}
+                  {t('grading.single_mode') || 'Single AI Model'}
                 </SelectItem>
                 <SelectItem value={GRADING_MODES.MULTI}>
-                  {t('grading.multi_mode') || 'Multi-Model (with Aggregation)'}
+                  {t('grading.multi_mode') || 'Multi-Model AI (with Aggregation)'}
                 </SelectItem>
               </SelectContent>
             </Select>
           </div>
+
+          {gradingMode === GRADING_MODES.MANUAL && (
+            <Alert className="bg-gray-50 border-gray-200">
+              <AlertCircle className="h-4 w-4 text-gray-600" />
+              <AlertDescription className="text-gray-700 text-sm">
+                {t('grading.manual_mode_info') ||
+                  'No AI grading will be performed. Graders must manually review and grade all submissions.'}
+              </AlertDescription>
+            </Alert>
+          )}
 
           {gradingMode === GRADING_MODES.MULTI && (
             <Alert className="bg-blue-50 border-blue-200">
@@ -269,7 +441,7 @@ export function GradingConfigTab({ topicId, statistics }: GradingConfigTabProps)
         </CardContent>
       </Card>
 
-      {gradingMode === GRADING_MODES.SINGLE ? (
+      {gradingMode === GRADING_MODES.MANUAL ? null : gradingMode === GRADING_MODES.SINGLE ? ( // Manual mode - no AI team selection needed
         <>
           {/* Team Selection Card - Single Mode */}
           <Card className="bg-white rounded-2xl shadow-sm border border-gray-100">
@@ -292,9 +464,8 @@ export function GradingConfigTab({ topicId, statistics }: GradingConfigTabProps)
                     <SelectValue placeholder={t('grading.select_team_placeholder')} />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value={NO_TEAM_VALUE}>{t('grading.no_team')}</SelectItem>
                     {availableTeams.map(team => (
-                      <SelectItem key={team.id} value={team.id?.toString() || NO_TEAM_VALUE}>
+                      <SelectItem key={team.id} value={team.id?.toString() || ''}>
                         {team.namespace && team.namespace !== 'default'
                           ? `[${team.namespace}] ${team.name || `Team ${team.id}`}`
                           : team.name || `Team ${team.id}`}
@@ -310,7 +481,7 @@ export function GradingConfigTab({ topicId, statistics }: GradingConfigTabProps)
                 )}
               </div>
 
-              {(!teamId || teamId === NO_TEAM_VALUE) && (
+              {!teamId && (
                 <Alert className="bg-amber-50 border-amber-200">
                   <AlertCircle className="h-4 w-4 text-amber-600" />
                   <AlertDescription className="text-amber-700 text-sm">
@@ -342,7 +513,7 @@ export function GradingConfigTab({ topicId, statistics }: GradingConfigTabProps)
                     setForceOverride(force)
                   }}
                   forceOverride={forceOverride}
-                  disabled={!teamId || teamId === NO_TEAM_VALUE}
+                  disabled={!teamId}
                   placeholder={t('grading.select_model') || 'Select Model'}
                 />
               </div>
@@ -364,20 +535,21 @@ export function GradingConfigTab({ topicId, statistics }: GradingConfigTabProps)
               <div className="space-y-2">
                 <Label htmlFor="promptTemplate" className="text-sm font-medium">
                   {t('grading.prompt_template_label')}
+                  <span className="text-red-500 ml-1">*</span>
                 </Label>
                 <Textarea
                   id="promptTemplate"
                   value={promptTemplate}
                   onChange={e => setPromptTemplate(e.target.value)}
-                  placeholder={t('grading.prompt_template_placeholder')}
+                  placeholder={t('grading.prompt_template_placeholder_required') || 'Required'}
                   className="w-full min-h-[120px] font-mono text-sm"
                 />
-                <div className="text-xs text-text-muted space-y-1">
-                  <p>{t('grading.prompt_template_hint')}</p>
-                  <p className="font-mono bg-gray-100 px-2 py-1 rounded">
-                    {'{user_id}, {grading_task_id}, {topic_id}, {question_id}, {question_title}'}
-                  </p>
-                </div>
+                <TemplateRecommendation
+                  template={RECOMMENDED_TEMPLATES.single}
+                  variables={TEMPLATE_VARIABLES.single}
+                  onImport={() => setPromptTemplate(RECOMMENDED_TEMPLATES.single)}
+                  t={t}
+                />
               </div>
             </CardContent>
           </Card>
@@ -406,9 +578,8 @@ export function GradingConfigTab({ topicId, statistics }: GradingConfigTabProps)
                     <SelectValue placeholder={t('grading.select_team_placeholder')} />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value={NO_TEAM_VALUE}>{t('grading.no_team')}</SelectItem>
                     {availableTeams.map(team => (
-                      <SelectItem key={team.id} value={team.id?.toString() || NO_TEAM_VALUE}>
+                      <SelectItem key={team.id} value={team.id?.toString() || ''}>
                         {team.namespace && team.namespace !== 'default'
                           ? `[${team.namespace}] ${team.name || `Team ${team.id}`}`
                           : team.name || `Team ${team.id}`}
@@ -426,7 +597,7 @@ export function GradingConfigTab({ topicId, statistics }: GradingConfigTabProps)
                 <EvaluationMultiModelSelector
                   value={scorerModels}
                   onChange={setScorerModels}
-                  disabled={!scorerTeamId || scorerTeamId === NO_TEAM_VALUE}
+                  disabled={!scorerTeamId}
                   maxModels={10}
                   minModels={0}
                 />
@@ -436,13 +607,20 @@ export function GradingConfigTab({ topicId, statistics }: GradingConfigTabProps)
               <div className="space-y-2 pt-2">
                 <Label htmlFor="scorerPromptTemplate" className="text-sm font-medium">
                   {t('grading.scorer_prompt_template') || 'Scorer Prompt Template'}
+                  <span className="text-red-500 ml-1">*</span>
                 </Label>
                 <Textarea
                   id="scorerPromptTemplate"
                   value={scorerPromptTemplate}
                   onChange={e => setScorerPromptTemplate(e.target.value)}
-                  placeholder={t('grading.scorer_prompt_placeholder') || 'Prompt template for scorer models...'}
+                  placeholder={t('grading.prompt_template_placeholder_required') || 'Required'}
                   className="w-full min-h-[100px] font-mono text-sm"
+                />
+                <TemplateRecommendation
+                  template={RECOMMENDED_TEMPLATES.single}
+                  variables={TEMPLATE_VARIABLES.single}
+                  onImport={() => setScorerPromptTemplate(RECOMMENDED_TEMPLATES.single)}
+                  t={t}
                 />
               </div>
             </CardContent>
@@ -470,9 +648,8 @@ export function GradingConfigTab({ topicId, statistics }: GradingConfigTabProps)
                     <SelectValue placeholder={t('grading.select_team_placeholder')} />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value={NO_TEAM_VALUE}>{t('grading.no_team')}</SelectItem>
                     {availableTeams.map(team => (
-                      <SelectItem key={team.id} value={team.id?.toString() || NO_TEAM_VALUE}>
+                      <SelectItem key={team.id} value={team.id?.toString() || ''}>
                         {team.namespace && team.namespace !== 'default'
                           ? `[${team.namespace}] ${team.name || `Team ${team.id}`}`
                           : team.name || `Team ${team.id}`}
@@ -494,7 +671,7 @@ export function GradingConfigTab({ topicId, statistics }: GradingConfigTabProps)
                     setAggregatorForceOverride(force)
                   }}
                   forceOverride={aggregatorForceOverride}
-                  disabled={!aggregatorTeamId || aggregatorTeamId === NO_TEAM_VALUE}
+                  disabled={!aggregatorTeamId}
                   placeholder={t('grading.select_aggregator_model') || 'Select Aggregator Model'}
                 />
               </div>
@@ -503,21 +680,21 @@ export function GradingConfigTab({ topicId, statistics }: GradingConfigTabProps)
               <div className="space-y-2 pt-2">
                 <Label htmlFor="aggregatorPromptTemplate" className="text-sm font-medium">
                   {t('grading.aggregator_prompt_template') || 'Aggregator Prompt Template'}
+                  <span className="text-red-500 ml-1">*</span>
                 </Label>
                 <Textarea
                   id="aggregatorPromptTemplate"
                   value={aggregatorPromptTemplate}
                   onChange={e => setAggregatorPromptTemplate(e.target.value)}
-                  placeholder={t('grading.aggregator_prompt_placeholder') ||
-                    'Prompt template for aggregator model. Use {scorer_results} to include all scorer outputs...'}
+                  placeholder={t('grading.prompt_template_placeholder_required') || 'Required'}
                   className="w-full min-h-[100px] font-mono text-sm"
                 />
-                <div className="text-xs text-text-muted">
-                  <p className="font-mono bg-gray-100 px-2 py-1 rounded inline-block">
-                    {'{scorer_results}'}
-                  </p>{' '}
-                  {t('grading.aggregator_template_hint') || 'will be replaced with all scorer outputs'}
-                </div>
+                <TemplateRecommendation
+                  template={RECOMMENDED_TEMPLATES.aggregator}
+                  variables={TEMPLATE_VARIABLES.aggregator}
+                  onImport={() => setAggregatorPromptTemplate(RECOMMENDED_TEMPLATES.aggregator)}
+                  t={t}
+                />
               </div>
             </CardContent>
           </Card>
@@ -545,9 +722,10 @@ export function GradingConfigTab({ topicId, statistics }: GradingConfigTabProps)
               checked={autoTrigger}
               onCheckedChange={setAutoTrigger}
               disabled={
-                gradingMode === GRADING_MODES.SINGLE
-                  ? !teamId || teamId === NO_TEAM_VALUE
-                  : (!scorerTeamId || scorerTeamId === NO_TEAM_VALUE || !aggregatorTeamId || aggregatorTeamId === NO_TEAM_VALUE)
+                gradingMode === GRADING_MODES.MANUAL ||
+                (gradingMode === GRADING_MODES.SINGLE
+                  ? !teamId
+                  : !scorerTeamId || !aggregatorTeamId)
               }
             />
           </div>
@@ -564,9 +742,6 @@ export function GradingConfigTab({ topicId, statistics }: GradingConfigTabProps)
                 <SelectContent>
                   <SelectItem value={TRIGGER_CONDITIONS.ON_SUBMIT}>
                     {t('grading.trigger_on_submit')}
-                  </SelectItem>
-                  <SelectItem value={TRIGGER_CONDITIONS.MANUAL}>
-                    {t('grading.trigger_manual')}
                   </SelectItem>
                   <SelectItem value={TRIGGER_CONDITIONS.SCHEDULED}>
                     {t('grading.trigger_scheduled')}

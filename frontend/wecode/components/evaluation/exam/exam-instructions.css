@@ -1,0 +1,304 @@
+/* Exam Instructions Markdown Styles - Separate from question content rendering */
+
+.exam-instructions-markdown {
+  font-size: 1rem;
+}
+
+.exam-instructions-markdown p {
+  font-size: 1rem;
+  line-height: 1.8;
+  color: #4b5563;
+  margin-bottom: 0.75rem;
+}
+
+.exam-instructions-markdown p:last-child {
+  margin-bottom: 0;
+}
+
+/* ============================================================================
+   Headings
+   ============================================================================ */
+
+h2.exam-inst-h2 {
+  font-size: 1.125rem;
+  font-weight: 700;
+  color: #1f2937;
+  margin-top: 1.5rem;
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 2px solid #fee2e2;
+}
+
+h2.exam-inst-h2:first-child {
+  margin-top: 0;
+}
+
+h3.exam-inst-h3 {
+  font-size: 1rem;
+  font-weight: 600;
+  color: #374151;
+  margin-top: 1rem;
+  margin-bottom: 0.5rem;
+}
+
+/* ============================================================================
+   Rule Cards - Responsive Grid Layout
+   Markdown format: - **标题**：内容  OR  1. **标题**\n\n   内容
+   ============================================================================ */
+
+ul.exam-inst-rules,
+ol.exam-inst-rules {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 2rem 0;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1rem;
+}
+
+@media (min-width: 640px) {
+  ul.exam-inst-rules,
+  ol.exam-inst-rules {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* 使用 Grid 布局：第一列是图标，第二列是所有内容纵向排列 */
+ul.exam-inst-rules > li,
+ol.exam-inst-rules > li {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 1rem;
+  row-gap: 0;
+  align-items: start;
+  align-content: start;
+  background-color: #f9fafb;
+  border-radius: 1rem;
+  padding: 1.25rem;
+  border: 1px solid #f3f4f6;
+}
+
+/* 图标放在第一列，跨足够多的行 */
+ul.exam-inst-rules > li::before,
+ol.exam-inst-rules > li::before {
+  grid-column: 1;
+  grid-row: 1 / span 10;
+  content: '';
+  width: 2.5rem;
+  height: 2.5rem;
+  flex-shrink: 0;
+  background-color: rgba(223, 32, 41, 0.08);
+  border-radius: 0.75rem;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='%23DF2029' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M22 11.08V12a10 10 0 1 1-5.93-9.14'%3E%3C/path%3E%3Cpolyline points='22 4 12 14.01 9 11.01'%3E%3C/polyline%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: center;
+}
+
+/* 所有 p 元素放在第二列 */
+ul.exam-inst-rules > li > p,
+ol.exam-inst-rules > li > p {
+  grid-column: 2;
+  margin: 0;
+  font-size: 1rem;
+  line-height: 1.7;
+  color: #374151;
+}
+
+/* 第一个 p 元素（标题）加粗，灰色小字 */
+ul.exam-inst-rules > li > p:first-of-type,
+ol.exam-inst-rules > li > p:first-of-type {
+  font-weight: 700;
+  color: #6b7280;
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+/* 标题内的 strong 不需要额外样式 */
+ul.exam-inst-rules > li > p strong.exam-inst-strong,
+ol.exam-inst-rules > li > p strong.exam-inst-strong {
+  font-weight: inherit;
+  color: inherit;
+  display: inline;
+}
+
+/* ============================================================================
+   Regular Unordered List
+   ============================================================================ */
+
+ul.exam-inst-ul {
+  list-style: none;
+  padding: 0;
+  margin: 0.75rem 0;
+}
+
+ul.exam-inst-ul > li {
+  position: relative;
+  padding-left: 1.5rem;
+  margin-bottom: 0.5rem;
+  color: #4b5563;
+  line-height: 1.8;
+  font-size: 1rem;
+}
+
+ul.exam-inst-ul > li::before {
+  content: '';
+  position: absolute;
+  left: 0.25rem;
+  top: 0.65rem;
+  width: 8px;
+  height: 8px;
+  background-color: #df2029;
+  border-radius: 50%;
+}
+
+ul.exam-inst-ul > li:last-child {
+  margin-bottom: 0;
+}
+
+/* ============================================================================
+   Ordered List
+   ============================================================================ */
+
+ol.exam-inst-ol {
+  list-style: none;
+  padding: 1.5rem;
+  margin: 1rem 0;
+  background-color: #f9fafb;
+  border-radius: 1rem;
+  counter-reset: inst-counter;
+}
+
+ol.exam-inst-ol > li {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 1rem;
+  align-items: start;
+  counter-increment: inst-counter;
+  margin-bottom: 1rem;
+  font-size: 1rem;
+}
+
+ol.exam-inst-ol > li::before {
+  grid-column: 1;
+  grid-row: 1 / -1;
+  content: counter(inst-counter);
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: rgba(223, 32, 41, 0.1);
+  border-radius: 9999px;
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: #df2029;
+  margin-top: 2px;
+}
+
+ol.exam-inst-ol > li > p {
+  grid-column: 2;
+  margin: 0;
+  line-height: 1.8;
+  color: #4b5563;
+}
+
+ol.exam-inst-ol > li:last-child {
+  margin-bottom: 0;
+}
+
+/* ============================================================================
+   Method Block - Red background block (for 考评方式 etc.)
+   Markdown format: > ### 标题\n> 内容...
+   ============================================================================ */
+
+blockquote.exam-inst-method {
+  margin: 1rem 0 1.5rem 0;
+  padding: 1.5rem;
+  background-color: rgba(254, 242, 242, 0.5);
+  border-radius: 1rem;
+  border: 1px solid rgba(254, 202, 202, 0.6);
+}
+
+blockquote.exam-inst-method h3.exam-inst-h3 {
+  font-size: 1rem;
+  font-weight: 700;
+  color: #1f2937;
+  margin: 0 0 0.75rem 0;
+}
+
+blockquote.exam-inst-method > p {
+  margin: 0 0 0.75rem 0;
+  color: #4b5563;
+  font-size: 1rem;
+  line-height: 1.7;
+}
+
+blockquote.exam-inst-method > p:last-child {
+  margin-bottom: 0;
+}
+
+blockquote.exam-inst-method strong.exam-inst-strong {
+  font-weight: 700;
+  color: #374151;
+}
+
+/* ============================================================================
+   Blockquote - Warning/Tip Style
+   ============================================================================ */
+
+blockquote.exam-inst-blockquote {
+  margin: 1rem 0;
+  padding: 1.25rem 1.5rem;
+  background-color: #fffbeb;
+  border-radius: 1rem;
+  font-size: 1rem;
+  border: 1px solid #fde68a;
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+}
+
+blockquote.exam-inst-blockquote::before {
+  content: '';
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  margin-top: 0.125rem;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='%23f59e0b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z'%3E%3C/path%3E%3Cline x1='12' y1='9' x2='12' y2='13'%3E%3C/line%3E%3Cline x1='12' y1='17' x2='12.01' y2='17'%3E%3C/line%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: center;
+}
+
+blockquote.exam-inst-blockquote > p {
+  margin: 0;
+  color: #92400e;
+  line-height: 1.7;
+  font-size: 1rem;
+  flex: 1;
+}
+
+blockquote.exam-inst-blockquote strong.exam-inst-strong {
+  font-weight: 600;
+  color: #78350f;
+}
+
+/* ============================================================================
+   Paragraph and Strong
+   ============================================================================ */
+
+p.exam-inst-p {
+  font-size: 1rem;
+  line-height: 1.8;
+  color: #4b5563;
+  margin-bottom: 0.75rem;
+}
+
+p.exam-inst-p:last-child {
+  margin-bottom: 0;
+}
+
+strong.exam-inst-strong {
+  font-weight: 700;
+  color: #1f2937;
+}

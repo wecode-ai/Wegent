@@ -204,6 +204,11 @@ def _convert_task_to_schema(
     submitted_at: Optional[datetime] = None,
 ) -> GradingTaskInDB:
     """Convert a grading task model to schema."""
+    # Get grading_mode from report_data (stored there since there's no dedicated column)
+    report_data = task.report_data or {}
+    grading_mode = (
+        report_data.get("grading_mode") if isinstance(report_data, dict) else None
+    )
     return GradingTaskInDB(
         id=task.id,
         answer_id=task.answer_id,
@@ -214,7 +219,7 @@ def _convert_task_to_schema(
         team_id=task.team_id,
         task_id=task.task_id,
         status=task.status,
-        report_data=task.report_data or {},
+        report_data=report_data,
         report_s3_path=task.report_s3_path,
         created_at=task.created_at,
         started_at=task.started_at,
@@ -226,6 +231,7 @@ def _convert_task_to_schema(
         topic_id=topic_id,
         topic_name=topic_name,
         submitted_at=submitted_at,
+        grading_mode=grading_mode,
     )
 
 
@@ -804,10 +810,17 @@ def _get_task_for_grading(
         db, task, current_user_id, permission_service, allowed_statuses
     )
 
-    # Get team ID from topic config
-    team_id = (
-        topic.grading_team_config.get("team_id") if topic.grading_team_config else None
-    )
+    # Get team ID from topic config (supports both single and multi modes)
+    config = topic.grading_team_config or {}
+    grading_mode = config.get("grading_mode", "single")
+
+    if grading_mode == "multi":
+        # Multi mode: use scorer_team_id
+        team_id = config.get("scorer_team_id")
+    else:
+        # Single mode: use team_id
+        team_id = config.get("team_id")
+
     if not team_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -920,11 +933,15 @@ def execute_grader_task(
 @router.post("/tasks/{task_id}/retry", response_model=GradingTaskInDB)
 def retry_grader_task(
     task_id: int,
-    request: GradingTaskExecuteRequest = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
-    """Retry AI grading for tasks in any status except non-existent."""
+    """Retry AI grading for tasks in any status except non-existent.
+
+    Note: All grading configuration (mode, team, models) is determined by
+    topic's original configuration set by the topic author. Graders can only
+    trigger the retry, cannot modify any configuration.
+    """
     grading_service = get_grading_service()
 
     # Allow retry for all statuses - AI report is independent of publish status
@@ -937,24 +954,37 @@ def retry_grader_task(
         None,  # Allow any status
     )
 
-    if request and request.team_id:
-        team_id = request.team_id
+    # Always use topic's original config - graders cannot modify anything
+    config = topic.grading_team_config or {}
+    grading_mode = config.get("grading_mode", "single")
 
-    model_id = request.model_id if request else None
-    force_override = request.force_override_bot_model if request else False
+    if grading_mode == "multi":
+        multi_model_config = _build_multi_model_config(topic, None)
+        task = grading_service.execute(
+            db,
+            task,
+            team_id,
+            current_user.id,
+            multi_model_config=multi_model_config,
+        )
+    else:
+        # Single mode - use config from topic, no overrides
+        # Extract model config from topic config
+        model_id = config.get("model_id")
+        # When model_id is specified, default force_override to True for consistency
+        # with multi-model mode behavior (ScorerModelConfig defaults force_override=True)
+        force_override = config.get(
+            "force_override_bot_model", True if model_id else False
+        )
+        task = grading_service.execute(
+            db,
+            task,
+            team_id,
+            current_user.id,
+            model_id=model_id,
+            force_override_bot_model=force_override,
+        )
 
-    # Check for multi-model grading configuration
-    multi_model_config = _build_multi_model_config(topic, request)
-
-    task = grading_service.execute(
-        db,
-        task,
-        team_id,
-        current_user.id,
-        model_id=model_id,
-        force_override_bot_model=force_override,
-        multi_model_config=multi_model_config,
-    )
     db.commit()
 
     return _convert_task_to_schema(task)
@@ -984,22 +1014,12 @@ def update_grader_task_report(
             detail="Grading task not found",
         )
 
-    # Allow updating report in PENDING, FAILED, or COMPLETED status (before publishing)
-    if task.status not in [
-        GradingTaskStatus.PENDING,
-        GradingTaskStatus.FAILED,
-        GradingTaskStatus.COMPLETED,
-    ]:
+    # Allow updating human report draft in any status except RUNNING
+    # Design: human_report is always a draft that can be edited and re-published
+    if task.status == GradingTaskStatus.RUNNING:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Can only update tasks that are pending, failed, or completed before publishing",
-        )
-
-    # Cannot update if already published
-    if task.status == GradingTaskStatus.PUBLISHED:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Cannot update published tasks",
+            detail="Cannot update tasks that are currently running",
         )
 
     question = question_service.get(db, task.question_id)
@@ -1064,21 +1084,17 @@ def publish_grader_task(
 
     # Allow publishing if task is COMPLETED, or PENDING/FAILED with a human report
     # This supports manual-only grading scenarios
+    # Also allow re-publishing if already PUBLISHED (to update the published report)
     report_data = task.report_data or {}
     has_human_report = bool(
         report_data.get("human_report", {}).get("content")
         or report_data.get("human_report", {}).get("s3_path")
     )
 
-    # Task already published - cannot publish again
-    if task.status == GradingTaskStatus.PUBLISHED:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Task is already published",
-        )
-
-    # Allow publishing if task is COMPLETED, or PENDING/FAILED with a human report
-    allowed_statuses = [GradingTaskStatus.COMPLETED]
+    # Allow re-publishing PUBLISHED tasks (for updating published reports from draft)
+    # Allow publishing COMPLETED tasks
+    # Allow publishing PENDING/FAILED tasks if they have a human report
+    allowed_statuses = [GradingTaskStatus.COMPLETED, GradingTaskStatus.PUBLISHED]
     if has_human_report:
         allowed_statuses.extend([GradingTaskStatus.PENDING, GradingTaskStatus.FAILED])
 
@@ -1251,7 +1267,7 @@ def publish_grader_task_with_attachment(
     Publish a grading report with an uploaded attachment as the final report.
 
     Use this endpoint after uploading a file via the upload-url endpoint.
-    The task must be in COMPLETED status.
+    Allows publishing COMPLETED tasks or re-publishing PUBLISHED tasks.
     """
     topic_service = get_topic_service()
     question_service = get_question_service()
@@ -1265,10 +1281,11 @@ def publish_grader_task_with_attachment(
             detail="Grading task not found",
         )
 
-    if task.status != GradingTaskStatus.COMPLETED:
+    # Allow publishing COMPLETED tasks or re-publishing PUBLISHED tasks
+    if task.status not in [GradingTaskStatus.COMPLETED, GradingTaskStatus.PUBLISHED]:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Can only publish completed grading tasks",
+            detail="Can only publish completed or already published grading tasks",
         )
 
     question = question_service.get(db, task.question_id)

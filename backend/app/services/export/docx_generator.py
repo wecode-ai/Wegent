@@ -27,6 +27,7 @@ from app.models.kind import Kind
 from app.models.subtask import Subtask
 from app.models.subtask_context import SubtaskContext
 from app.models.user import User
+from app.utils.prompt_utils import extract_display_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -226,8 +227,13 @@ def _add_message(doc: Document, subtask: Subtask, task: Kind, user: User, db: Se
         if knowledge_base_contexts:
             _add_knowledge_bases(doc, knowledge_base_contexts)
 
-    # Message content
-    content = subtask.prompt if is_user else _extract_result_value(subtask.result)
+    # Message content — strip system-injected metadata (<system-reminder> etc.) for user messages
+    content = (
+        extract_display_prompt(subtask.prompt)
+        if is_user
+        else _extract_result_value(subtask.result)
+    )
+    content = content or ""
 
     # Remove special markers
     content = _clean_content(content)

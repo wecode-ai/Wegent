@@ -206,10 +206,8 @@ class TopicService:
         db: Session,
         topic: EvalTopic,
         name: Optional[str] = None,
-        description: Optional[str] = None,
         visibility: Optional[str] = None,
         grading_team_id: Optional[int] = None,
-        instructions: Optional[str] = None,
         extra_data: Optional[Dict[str, Any]] = None,
     ) -> EvalTopic:
         """
@@ -219,11 +217,9 @@ class TopicService:
             db: Database session
             topic: Topic to update
             name: New name (optional)
-            description: New description (optional)
             visibility: New visibility (optional)
             grading_team_id: New grading team ID (optional)
-            instructions: New exam instructions (optional)
-            extra_data: Additional extra data to merge (optional)
+            extra_data: Extra data to merge (optional), contains description, instructions, duration, video
 
         Returns:
             Updated topic
@@ -231,24 +227,11 @@ class TopicService:
         if name:
             topic.name = name
 
-        # Handle extra_data updates (description, instructions, and other fields)
-        # Reassign the entire dict for SQLAlchemy JSON column mutation detection
-        if (
-            description is not None
-            or instructions is not None
-            or extra_data is not None
-        ):
+        # Handle extra_data updates
+        if extra_data is not None:
             current_extra_data = dict(topic.extra_data) if topic.extra_data else {}
-            # First update with extra_data, then apply explicit description/instructions
-            # so that explicit parameters take precedence over extra_data values
-            if extra_data is not None:
-                current_extra_data.update(extra_data)
-            if description is not None:
-                current_extra_data["description"] = description
-            if instructions is not None:
-                current_extra_data["instructions"] = instructions
+            current_extra_data.update(extra_data)
             topic.extra_data = current_extra_data
-            # Explicitly mark the JSON field as modified to ensure SQLAlchemy persists the change
             flag_modified(topic, "extra_data")
 
         if visibility:

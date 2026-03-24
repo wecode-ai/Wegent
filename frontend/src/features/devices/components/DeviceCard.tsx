@@ -9,7 +9,7 @@
 
 'use client'
 
-import { Monitor, Play, Star, MoreVertical, Trash2, Loader2 } from 'lucide-react'
+import { Monitor, Play, Star, MoreVertical, Trash2, Loader2, Pencil } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -34,6 +34,7 @@ export interface DeviceCardProps {
   onDelete: (device: DeviceInfo) => void
   onCancelTask: (taskId: number) => Promise<void>
   onUpgrade?: (device: DeviceInfo) => void
+  onEditAlias?: (device: DeviceInfo) => void
   isUpgrading?: boolean
   upgradeStatus?: DeviceUpgradeState
 }
@@ -56,6 +57,7 @@ export function DeviceCard({
   onDelete,
   onCancelTask,
   onUpgrade,
+  onEditAlias,
   isUpgrading,
   upgradeStatus,
 }: DeviceCardProps) {
@@ -174,6 +176,10 @@ export function DeviceCard({
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => onEditAlias?.(device)}>
+                <Pencil className="w-4 h-4 mr-2" />
+                {t('edit_alias')}
+              </DropdownMenuItem>
               {!device.is_default && (
                 <DropdownMenuItem onClick={() => onSetDefault(device)}>
                   <Star className="w-4 h-4 mr-2" />

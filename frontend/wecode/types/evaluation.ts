@@ -264,6 +264,7 @@ export interface GradingTask {
   topic_name?: string
   submitted_at?: string
   version?: number
+  grading_mode?: string
 }
 
 // Scoring result from individual scorer
@@ -274,6 +275,14 @@ export interface ScoringResult {
   status: string
   error_message?: string
   s3_path?: string
+}
+
+// Chat task info for grading audit
+export interface ChatTaskInfo {
+  taskId: number
+  modelId: string
+  type: 'scorer' | 'aggregator' | 'single'
+  status?: string
 }
 
 export interface GradingTaskExecuteRequest {

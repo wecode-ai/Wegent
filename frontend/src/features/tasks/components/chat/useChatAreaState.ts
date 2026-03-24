@@ -25,6 +25,34 @@ import { teamRequiresWorkspace } from '../../service/messageService'
 
 const SHOULD_HIDE_QUOTA_NAME_LIMIT = 18
 
+type WelcomeItemWithMode = {
+  mode?: string
+}
+
+function getWelcomeItemsForMode<T extends WelcomeItemWithMode>(
+  items: T[],
+  taskType: TaskType
+): T[] {
+  const getMatchedItems = (mode: TaskType) =>
+    items.filter(item => {
+      const itemMode = item.mode || 'both'
+      return itemMode === mode || itemMode === 'both'
+    })
+
+  const matchedItems = getMatchedItems(taskType)
+  if (matchedItems.length > 0) {
+    return matchedItems
+  }
+
+  // Selecting a device on the main chat page switches taskType to "task".
+  // When task-specific welcome copy is not configured, keep using chat copy.
+  if (taskType === 'task') {
+    return getMatchedItems('chat')
+  }
+
+  return []
+}
+
 export interface UseChatAreaStateOptions {
   teams: Team[]
   taskType: TaskType
@@ -304,10 +332,7 @@ export function useChatAreaState({
     if (!welcomeConfig?.slogans || welcomeConfig.slogans.length === 0) {
       return null
     }
-    const filteredSlogans = welcomeConfig.slogans.filter(slogan => {
-      const sloganMode = slogan.mode || 'both'
-      return sloganMode === taskType || sloganMode === 'both'
-    })
+    const filteredSlogans = getWelcomeItemsForMode(welcomeConfig.slogans, taskType)
 
     if (filteredSlogans.length === 0) {
       return null
@@ -325,10 +350,7 @@ export function useChatAreaState({
     if (!welcomeConfig?.tips || welcomeConfig.tips.length === 0) {
       return null
     }
-    const filteredTips = welcomeConfig.tips.filter(tip => {
-      const tipMode = tip.mode || 'both'
-      return tipMode === taskType || tipMode === 'both'
-    })
+    const filteredTips = getWelcomeItemsForMode(welcomeConfig.tips, taskType)
 
     if (filteredTips.length === 0) {
       return null

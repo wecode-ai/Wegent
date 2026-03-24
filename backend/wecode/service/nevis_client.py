@@ -8,6 +8,7 @@ Nevis Sandbox API client.
 Provides methods to manage cloud device lifecycle through Nevis Sandbox API:
 - Create sandbox VMs
 - Query sandbox status
+- Restart sandbox VMs
 - Delete sandbox VMs
 """
 
@@ -73,10 +74,7 @@ class NevisClient:
             True if all required settings are present
         """
         return bool(
-            self.base_url
-            and self.manager_id
-            and self.image_id
-            and self.signature
+            self.base_url and self.manager_id and self.image_id and self.signature
         )
 
     async def create_sandbox(
@@ -174,6 +172,61 @@ class NevisClient:
                 )
                 raise NevisClientError(
                     f"Failed to get sandbox: {e.response.text}",
+                    status_code=e.response.status_code,
+                )
+            except httpx.RequestError as e:
+                logger.error(f"Nevis API request error: {str(e)}")
+                raise NevisClientError(f"Failed to connect to Nevis API: {str(e)}")
+
+    async def restart_sandbox(self, sandbox_id: str) -> Dict[str, Any]:
+        """Restart a sandbox VM.
+
+        API: POST /apis/sandboxes/v1/managers/{manager_id}/sandboxes/{sandbox_id}/restart
+
+        Args:
+            sandbox_id: The sandbox ID to restart
+
+        Returns:
+            Restart operation response from Nevis API
+
+        Raises:
+            NevisClientError: If API call fails
+        """
+        if not self.is_configured():
+            raise NevisClientError("Nevis client is not properly configured")
+
+        url = f"{self._get_sandboxes_url(sandbox_id)}/restart"
+        payload = {
+            "id": sandbox_id,
+            "managerId": self.manager_id,
+        }
+
+        logger.info(f"Restarting Nevis sandbox: {sandbox_id}")
+
+        async with httpx.AsyncClient(timeout=NEVIS_TIMEOUT) as client:
+            try:
+                response = await client.post(
+                    url,
+                    headers=self._get_headers(),
+                    json=payload,
+                )
+                response.raise_for_status()
+                result = response.json()
+                logger.info(f"Nevis sandbox restart initiated: {sandbox_id}")
+                return result
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 404:
+                    logger.warning(f"Nevis sandbox not found: {sandbox_id}")
+                    raise NevisClientError(
+                        f"Sandbox not found: {sandbox_id}",
+                        status_code=404,
+                    )
+                logger.error(
+                    f"Nevis API error: status={e.response.status_code}, "
+                    f"body={e.response.text}"
+                )
+                raise NevisClientError(
+                    f"Failed to restart sandbox: {e.response.text}",
                     status_code=e.response.status_code,
                 )
             except httpx.RequestError as e:

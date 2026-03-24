@@ -27,6 +27,7 @@ from typing import Any, Dict, Optional
 from executor.config import config
 from executor.config.device_config import DeviceConfig
 from executor.modes.local.events import ChatEvents, TaskEvents
+from executor.modes.local.extension_handler import DeviceExtensionHandler
 from executor.modes.local.handlers import TaskHandler, UpgradeHandler
 from executor.modes.local.heartbeat import LocalHeartbeatService
 from executor.modes.local.websocket_client import WebSocketClient
@@ -78,6 +79,7 @@ class LocalRunner:
         # Event handlers
         self.task_handler = TaskHandler(self)
         self.upgrade_handler = UpgradeHandler(self)
+        self.extension_handler = DeviceExtensionHandler(self)
 
         # Task queue for execution
         self.task_queue: asyncio.Queue = asyncio.Queue()
@@ -233,8 +235,23 @@ class LocalRunner:
         self.websocket_client.on(
             "device:upgrade", self.upgrade_handler.handle_upgrade_command
         )
+        self.websocket_client.on(
+            "device:run_extension", self.extension_handler.handle_run_extension
+        )
+        self._register_extension_handlers()
 
         logger.info("WebSocket event handlers registered")
+
+    def _register_extension_handlers(self) -> None:
+        """Allow downstream distributions to attach local runner handlers."""
+
+        try:
+            from executor.wecode.local import register_local_runner_extensions
+        except ImportError:
+            logger.debug("No local runner extensions registered")
+            return
+
+        register_local_runner_extensions(self)
 
     async def enqueue_task(self, task_data: ExecutionRequest) -> None:
         """Add a task to the execution queue."""
