@@ -339,10 +339,13 @@ export function DeviceSelectorTab({
 
     autoSelectionInitializedRef.current = true
     // Use user's default preference
-    if (defaultExecutionTarget === 'cloud') {
-      setSelectedDeviceId(null)
-    } else {
+    // Only auto-select device if user has explicitly set a device as default
+    // Otherwise, default to cloud mode (selectedDeviceId = null)
+    if (defaultExecutionTarget && defaultExecutionTarget !== 'cloud') {
       setSelectedDeviceId(preferredDevice?.device_id || null)
+    } else {
+      // Default to cloud mode when no preference is set or cloud is explicitly selected
+      setSelectedDeviceId(null)
     }
   }, [
     hasMessages,
