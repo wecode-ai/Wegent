@@ -115,6 +115,19 @@ class Status(BaseModel):
     # conditions: Optional[List[Dict[str, Any]]] = None
 
 
+# Skill reference metadata for precise skill identification
+class SkillRefMeta(BaseModel):
+    """Skill reference metadata for precise skill identification.
+
+    Used in Ghost.spec.skill_refs to avoid ambiguity when multiple skills
+    have the same name in different namespaces.
+    """
+
+    skill_id: int = Field(..., description="Unique skill ID (Kind.id)")
+    namespace: str = Field("default", description="Skill namespace")
+    is_public: bool = Field(False, description="Whether this is a public skill")
+
+
 # Ghost CRD schemas
 class GhostSpec(BaseModel):
     """Ghost specification"""
@@ -127,6 +140,19 @@ class GhostSpec(BaseModel):
         description="List of skill names to preload into system prompt. "
         "Must be a subset of skills. When specified, these skills' prompts "
         "will be automatically injected into the system message.",
+    )
+    skill_refs: Optional[Dict[str, SkillRefMeta]] = Field(
+        None,
+        description="Mapping from skill name to skill metadata for precise identification. "
+        "Used to avoid ambiguity when multiple skills have the same name. "
+        "Keys must match the skills list. "
+        "Example: {'excel-helper': {'skill_id': 101, 'namespace': 'default', 'is_public': false}}",
+    )
+    preload_skill_refs: Optional[Dict[str, SkillRefMeta]] = Field(
+        None,
+        description="Mapping from preload skill name to skill metadata. "
+        "Keys must match the preload_skills list. "
+        "Used for precise skill identification during preloading.",
     )
 
 

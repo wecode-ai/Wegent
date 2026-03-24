@@ -193,7 +193,7 @@ class TaskRequestBuilder:
                 for s in effective_preload_skills
             ]
 
-        resolved_skills, resolved_preload_skills, resolved_user_selected = (
+        resolved_skills, resolved_preload_skills, resolved_user_selected, skill_refs = (
             self._get_bot_skills(
                 bot=bot,
                 team=team,
@@ -201,6 +201,11 @@ class TaskRequestBuilder:
                 user_preload_skills=user_preload_skills,
             )
         )
+        preload_skill_refs = {
+            name: skill_refs[name]
+            for name in resolved_preload_skills
+            if name in skill_refs
+        }
 
         # Build bot configuration
         bot_config = self._build_bot_config(
@@ -284,6 +289,8 @@ class TaskRequestBuilder:
             skill_configs=resolved_skills,
             preload_skills=resolved_preload_skills,
             user_selected_skills=user_selected_skills or resolved_user_selected,
+            skill_refs=skill_refs,
+            preload_skill_refs=preload_skill_refs,
             mcp_servers=mcp_servers,
             knowledge_base_ids=knowledge_base_ids,
             document_ids=document_ids,
@@ -732,13 +739,14 @@ class TaskRequestBuilder:
         team: Kind,
         user_id: int,
         user_preload_skills: list | None = None,
-    ) -> tuple[list[dict], list[str], list[str]]:
+    ) -> tuple[list[dict], list[str], list[str], dict[str, dict]]:
         """Get skills for the bot from Ghost, plus any additional skills from frontend.
 
         Returns tuple of:
         - List of skill metadata including tools configuration
         - List of resolved preload skill names (from Ghost CRD + user selected skills)
         - List of user-selected skill names (skills explicitly chosen by user for this message)
+        - Dict mapping skill name to skill reference metadata (skill_id, namespace, is_public)
 
         The tools field contains tool declarations from SKILL.md frontmatter,
         which are used by SkillToolRegistry to dynamically create tool instances.
@@ -751,7 +759,7 @@ class TaskRequestBuilder:
                 Each item can be a dict with {name, namespace, is_public} or a SkillRef object.
 
         Returns:
-            Tuple of (skills, preload_skills, user_selected_skills)
+            Tuple of (skills, preload_skills, user_selected_skills, skill_refs)
         """
         from app.schemas.kind import Skill as SkillCRD
 
@@ -766,7 +774,7 @@ class TaskRequestBuilder:
             logger.warning(
                 "[_get_bot_skills] Bot has no ghostRef, returning empty skills"
             )
-            return [], [], []
+            return [], [], [], {}
 
         # Query Ghost
         ghost = (
@@ -787,7 +795,7 @@ class TaskRequestBuilder:
                 bot_crd.spec.ghostRef.name,
                 bot_crd.spec.ghostRef.namespace,
             )
-            return [], [], []
+            return [], [], [], {}
 
         ghost_crd = Ghost.model_validate(ghost.json)
         logger.info(
@@ -802,11 +810,14 @@ class TaskRequestBuilder:
         preload_skills: list[str] = []
         user_selected_skills: list[str] = []
         existing_skill_names: set[str] = set()
+        skill_refs: dict[str, dict] = {}
 
         # Build preload set from Ghost CRD
         ghost_preload_set = set(ghost_crd.spec.preload_skills or [])
 
         # Process Ghost skills
+        ghost_skill_refs = ghost_crd.spec.skill_refs or {}
+        ghost_preload_skill_refs = ghost_crd.spec.preload_skill_refs or {}
         if ghost_crd.spec.skills:
             for skill_name in ghost_crd.spec.skills:
                 skill = self._find_skill(skill_name, team)
@@ -815,9 +826,24 @@ class TaskRequestBuilder:
                     skills.append(skill_data)
                     existing_skill_names.add(skill_name)
 
+                    # Build skill_refs entry (prefer Ghost stored refs for precision)
+                    ghost_skill_ref = ghost_skill_refs.get(skill_name)
+                    if ghost_skill_ref:
+                        skill_refs[skill_name] = ghost_skill_ref.model_dump()
+                    else:
+                        skill_refs[skill_name] = {
+                            "skill_id": getattr(skill, "id", None),
+                            "namespace": getattr(skill, "namespace", "default"),
+                            "is_public": getattr(skill, "user_id", 1) == 0,
+                        }
+
                     # Add to preload if configured in Ghost
                     if skill_name in ghost_preload_set:
                         preload_skills.append(skill_name)
+                        ghost_preload_ref = ghost_preload_skill_refs.get(skill_name)
+                        if ghost_preload_ref:
+                            # Preload explicit reference overrides same-name skill ref
+                            skill_refs[skill_name] = ghost_preload_ref.model_dump()
                         logger.info(
                             "[_get_bot_skills] Skill '%s' added to preload (from Ghost)",
                             skill_name,
@@ -855,6 +881,25 @@ class TaskRequestBuilder:
                     # Always mark as user-selected since user explicitly chose it
                     if skill_name not in user_selected_skills:
                         user_selected_skills.append(skill_name)
+                    # Explicit user selection should override same-name skill reference
+                    resolved_selected_skill = self._find_skill_by_ref(
+                        skill_name,
+                        skill_namespace,
+                        is_public,
+                        user_id,
+                        team_namespace=team_namespace,
+                    )
+                    if resolved_selected_skill:
+                        skill_refs[skill_name] = {
+                            "skill_id": getattr(resolved_selected_skill, "id", None),
+                            "namespace": getattr(
+                                resolved_selected_skill,
+                                "namespace",
+                                skill_namespace,
+                            ),
+                            "is_public": getattr(resolved_selected_skill, "user_id", 1)
+                            == 0,
+                        }
                     logger.info(
                         "[_get_bot_skills] Skill '%s' added to preload and user_selected (user selected, already in Ghost)",
                         skill_name,
@@ -875,6 +920,14 @@ class TaskRequestBuilder:
                     existing_skill_names.add(skill_name)
                     preload_skills.append(skill_name)
                     user_selected_skills.append(skill_name)
+
+                    # Build skill_refs entry for user-selected skill
+                    skill_refs[skill_name] = {
+                        "skill_id": getattr(skill, "id", None),
+                        "namespace": getattr(skill, "namespace", skill_namespace),
+                        "is_public": getattr(skill, "user_id", 1) == 0,
+                    }
+
                     logger.info(
                         "[_get_bot_skills] Added user-selected skill '%s' to skills, preload, and user_selected",
                         skill_name,
@@ -889,12 +942,13 @@ class TaskRequestBuilder:
                     )
 
         logger.info(
-            "[_get_bot_skills] Final result: preload_skills=%s, user_selected_skills=%s, total skills=%d",
+            "[_get_bot_skills] Final result: preload_skills=%s, user_selected_skills=%s, total skills=%d, skill_refs=%s",
             preload_skills,
             user_selected_skills,
             len(skills),
+            list(skill_refs.keys()),
         )
-        return skills, preload_skills, user_selected_skills
+        return skills, preload_skills, user_selected_skills, skill_refs
 
     def _find_skill(self, skill_name: str, team: Kind) -> Kind | None:
         """Find skill by name.

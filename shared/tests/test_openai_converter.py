@@ -32,3 +32,38 @@ def test_to_execution_request_normalizes_null_kb_tool_access_mode():
     request = OpenAIRequestConverter.to_execution_request(openai_request)
 
     assert request.kb_tool_access_mode == KnowledgeBaseToolAccessMode.FULL
+
+
+def test_round_trip_preserves_skill_reference_metadata():
+    request = ExecutionRequest(
+        skill_names=["analysis-skill"],
+        skill_configs=[
+            {
+                "name": "analysis-skill",
+                "skill_id": 101,
+                "namespace": "team-a",
+                "is_public": False,
+            }
+        ],
+        preload_skills=["analysis-skill"],
+        skill_refs={
+            "analysis-skill": {
+                "skill_id": 101,
+                "namespace": "team-a",
+                "is_public": False,
+            }
+        },
+        preload_skill_refs={
+            "analysis-skill": {
+                "skill_id": 202,
+                "namespace": "team-b",
+                "is_public": False,
+            }
+        },
+    )
+
+    openai_request = OpenAIRequestConverter.from_execution_request(request)
+    converted = OpenAIRequestConverter.to_execution_request(openai_request)
+
+    assert converted.skill_refs == request.skill_refs
+    assert converted.preload_skill_refs == request.preload_skill_refs

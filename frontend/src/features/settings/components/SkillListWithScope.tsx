@@ -52,6 +52,7 @@ import {
   GitBranch,
   Search,
   ExternalLink,
+  Users,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import SkillUploadModal from './skills/SkillUploadModal'
@@ -337,6 +338,19 @@ export function SkillListWithScope({ scope, selectedGroup }: SkillListWithScopeP
     return true
   })
 
+  // Show prompt to select a group when in group scope but no group is selected
+  if (scope === 'group' && !selectedGroup) {
+    return (
+      <div className="flex flex-col items-center justify-center py-12 text-text-secondary">
+        <Users className="w-12 h-12 mb-4 opacity-50" />
+        <p className="text-lg font-medium text-text-primary mb-2">
+          {t('skills.select_group_title')}
+        </p>
+        <p className="text-sm mb-4">{t('skills.select_group_description')}</p>
+      </div>
+    )
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -552,6 +566,13 @@ export function SkillListWithScope({ scope, selectedGroup }: SkillListWithScopeP
       </AlertDialog>
 
       {/* Upload Modal */}
+      {(() => {
+        const uploadNs = scope === 'group' && selectedGroup ? selectedGroup : 'default'
+        console.log(
+          `[SkillListWithScope] scope=${scope}, selectedGroup=${selectedGroup}, uploadNamespace=${uploadNs}`
+        )
+        return null
+      })()}
       <SkillUploadModal
         open={uploadModalOpen}
         onClose={handleUploadModalClose}

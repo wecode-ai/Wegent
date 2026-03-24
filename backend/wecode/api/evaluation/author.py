@@ -1015,9 +1015,26 @@ def update_grading_config(
                 detail="Team not found",
             )
 
-        # Check ownership or public access
-        team_spec = team.json.get("spec", {}) if team.json else {}
-        if team.user_id != current_user.id and not team_spec.get("is_public", False):
+        # Check access permission:
+        # 1. User owns the team (team.user_id == current_user.id)
+        # 2. Team is public (is_public=True in spec)
+        # 3. Team belongs to a group the user is a member of
+        has_access = False
+        if team.user_id == current_user.id:
+            has_access = True
+        else:
+            team_spec = team.json.get("spec", {}) if team.json else {}
+            if team_spec.get("is_public", False):
+                has_access = True
+            elif team.namespace and team.namespace != "default":
+                # Team belongs to a group - check if user is a member
+                from app.services.group_permission import get_user_groups
+
+                user_groups = get_user_groups(db, current_user.id)
+                if team.namespace in user_groups:
+                    has_access = True
+
+        if not has_access:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="You don't have access to this team",

@@ -195,6 +195,12 @@ export function SettingsTabNav({
   // Handle scope change
   const handleScopeChange = (newScope: ResourceScope) => {
     setCurrentScope(newScope)
+
+    // If switching to group scope and no group is selected, auto-select the first group
+    if (newScope === 'group' && !selectedGroup && groups.length > 0) {
+      onGroupChange?.(groups[0].name)
+    }
+
     const currentKey = getCurrentResourceKey()
     if (currentKey) {
       const tab = resourceTabs.find(t => t.key === currentKey)

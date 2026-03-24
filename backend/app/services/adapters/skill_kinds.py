@@ -6,6 +6,7 @@
 Skill adapter service for managing Skills using kinds table
 """
 
+import logging
 from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException
@@ -17,6 +18,8 @@ from app.models.kind import Kind
 from app.models.skill_binary import SkillBinary
 from app.schemas.kind import ObjectMeta, Skill, SkillList, SkillSpec, SkillStatus
 from app.services.skill_service import SkillValidator
+
+logger = logging.getLogger(__name__)
 
 
 class SkillKindsService:
@@ -55,18 +58,47 @@ class SkillKindsService:
             HTTPException: If validation fails or name already exists (active)
         """
         # Check for existing skill (including soft-deleted ones)
-        existing = (
-            db.query(Kind)
-            .filter(
-                Kind.user_id == user_id,
-                Kind.kind == "Skill",
-                Kind.name == name,
-                Kind.namespace == namespace,
-            )
-            .first()
+        # For default namespace: check by (user_id, name, namespace) - personal space
+        # For non-default namespace: check by (name, namespace) - shared group space
+        logger.info(
+            f"[create_skill] Checking for existing skill: name={name}, namespace={namespace}, user_id={user_id}"
         )
+        if namespace == "default":
+            # Personal namespace: each user can have their own skill with the same name
+            existing = (
+                db.query(Kind)
+                .filter(
+                    Kind.user_id == user_id,
+                    Kind.kind == "Skill",
+                    Kind.name == name,
+                    Kind.namespace == namespace,
+                )
+                .first()
+            )
+            logger.info(
+                f"[create_skill] Default namespace check: existing={existing is not None}, is_active={existing.is_active if existing else None}"
+            )
+        else:
+            # Group namespace: allow different users to have skills with the same name
+            # But check if this user already has a skill with this name in this namespace
+            existing = (
+                db.query(Kind)
+                .filter(
+                    Kind.user_id == user_id,
+                    Kind.kind == "Skill",
+                    Kind.name == name,
+                    Kind.namespace == namespace,
+                )
+                .first()
+            )
+            logger.info(
+                f"[create_skill] Group namespace check: existing={existing is not None}, is_active={existing.is_active if existing else None}"
+            )
 
         if existing and existing.is_active:
+            logger.warning(
+                f"[create_skill] Skill already exists: name={name}, namespace={namespace}, user_id={user_id}"
+            )
             raise HTTPException(
                 status_code=400,
                 detail=f"Skill name '{name}' already exists in namespace '{namespace}'",

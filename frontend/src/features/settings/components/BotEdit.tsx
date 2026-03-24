@@ -29,7 +29,7 @@ import DifyBotConfig from './DifyBotConfig'
 import { PromptFineTuneDialog } from './prompt-fine-tune'
 
 import { Bot } from '@/types/api'
-import { botApis, CreateBotRequest, UpdateBotRequest } from '@/apis/bots'
+import { botApis, CreateBotRequest, SkillRefMeta, UpdateBotRequest } from '@/apis/bots'
 import {
   isPredefinedModel,
   getModelFromConfig,
@@ -43,6 +43,7 @@ import { fetchUnifiedSkillsList, fetchPublicSkillsList, UnifiedSkill } from '@/a
 import { publicResourceApis, PublicBotFormData } from '@/apis/publicResources'
 import { useTranslation } from '@/hooks/useTranslation'
 import { adaptMcpConfigForAgent, isValidAgentType } from '../utils/mcpTypeAdapter'
+import { buildSkillRefsFromSelection } from '../utils/skillRefResolver'
 
 /** Agent types supported by the system */
 export type AgentType = 'ClaudeCode' | 'Agno' | 'Dify'
@@ -55,6 +56,7 @@ export interface BotFormData {
   system_prompt: string
   mcp_servers: Record<string, unknown>
   skills: string[]
+  skill_refs: Record<string, SkillRefMeta>
   // preload_skills: string[]
 }
 
@@ -165,6 +167,9 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
   )
   const [selectedSkills, setSelectedSkills] = useState<string[]>(baseBot?.skills || [])
   const [preloadSkills, setPreloadSkills] = useState<string[]>(baseBot?.preload_skills || [])
+  const [selectedSkillRefs, setSelectedSkillRefs] = useState<Record<string, SkillRefMeta>>(
+    baseBot?.skill_refs || {}
+  )
   // Initial bot skills snapshot for preload selection - remains constant during edit session
   const [initialBotSkills, setInitialBotSkills] = useState<string[]>(baseBot?.skills || [])
   const [allSkills, setAllSkills] = useState<UnifiedSkill[]>([])
@@ -470,6 +475,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
 
     setSelectedSkills(baseBot?.skills || [])
     setPreloadSkills(baseBot?.preload_skills || [])
+    setSelectedSkillRefs(baseBot?.skill_refs || {})
     // Capture initial bot skills - this list remains constant for preload selection
     setInitialBotSkills(baseBot?.skills || [])
     setAgentConfigError(false)
@@ -616,6 +622,13 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
       system_prompt: isDifyAgent ? '' : prompt.trim() || '',
       mcp_servers: parsedMcpConfig,
       skills: selectedSkills.length > 0 ? selectedSkills : [],
+      skill_refs: buildSkillRefsFromSelection(
+        selectedSkills,
+        selectedSkillRefs,
+        availableSkills,
+        scope,
+        groupName
+      ),
       // preload_skills: preloadSkills.length > 0 ? preloadSkills : [],
     }
   }, [
@@ -631,7 +644,10 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     botName,
     prompt,
     selectedSkills,
-
+    selectedSkillRefs,
+    availableSkills,
+    scope,
+    groupName,
     selectedModelNamespace,
   ])
 
@@ -683,6 +699,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
           system_prompt: botData.system_prompt,
           mcp_servers: botData.mcp_servers,
           skills: botData.skills,
+          skill_refs: botData.skill_refs,
           // preload_skills: botData.preload_skills,
           namespace: scope === 'group' && groupName ? groupName : undefined,
         }
@@ -864,6 +881,13 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
           system_prompt: isDifyAgent ? '' : prompt.trim() || '', // Clear system_prompt for Dify
           mcp_servers: parsedMcpConfig ?? {},
           skills: selectedSkills.length > 0 ? selectedSkills : [],
+          skill_refs: buildSkillRefsFromSelection(
+            selectedSkills,
+            selectedSkillRefs,
+            availableSkills,
+            scope,
+            groupName
+          ),
           // preload_skills: preloadSkills.length > 0 ? preloadSkills : [],
           namespace: scope === 'group' && groupName ? groupName : undefined,
         }
@@ -1343,10 +1367,18 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                         <RichSkillSelector
                           skills={availableSkills}
                           selectedSkillNames={selectedSkills}
-                          onSelectSkill={(skillName: string) => {
+                          onSelectSkill={skill => {
                             if (readOnly) return
-                            if (skillName && !selectedSkills.includes(skillName)) {
-                              setSelectedSkills([...selectedSkills, skillName])
+                            if (skill && !selectedSkills.includes(skill.name)) {
+                              setSelectedSkills([...selectedSkills, skill.name])
+                              setSelectedSkillRefs(prev => ({
+                                ...prev,
+                                [skill.name]: {
+                                  skill_id: skill.id,
+                                  namespace: skill.namespace || 'default',
+                                  is_public: skill.is_public || false,
+                                },
+                              }))
                             }
                           }}
                           placeholder={t('common:skills.select_skill_to_add')}
@@ -1357,7 +1389,10 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                         {selectedSkills.length > 0 && (
                           <div className="flex flex-wrap gap-1.5">
                             {selectedSkills.map(skillName => {
-                              const skill = availableSkills.find(s => s.name === skillName)
+                              const skillRef = selectedSkillRefs[skillName]
+                              const skill =
+                                availableSkills.find(s => s.id === skillRef?.skill_id) ||
+                                availableSkills.find(s => s.name === skillName)
                               return (
                                 <div
                                   key={skillName}
@@ -1368,6 +1403,11 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                                     onClick={() => {
                                       if (readOnly) return
                                       setSelectedSkills(selectedSkills.filter(s => s !== skillName))
+                                      setSelectedSkillRefs(prev => {
+                                        const next = { ...prev }
+                                        delete next[skillName]
+                                        return next
+                                      })
                                     }}
                                     disabled={readOnly}
                                     className={`text-text-muted hover:text-text-primary ${readOnly ? 'cursor-not-allowed opacity-50' : ''}`}

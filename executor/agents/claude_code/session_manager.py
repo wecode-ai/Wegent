@@ -12,7 +12,10 @@ so there's no in-memory client caching. Session continuity is maintained via
 """
 
 import asyncio
+import json
 import os
+import signal
+import time
 from typing import Optional
 
 from claude_agent_sdk import ClaudeSDKClient
@@ -56,6 +59,15 @@ class SessionManager:
         if bot_id:
             return os.path.join(task_dir, f".claude_session_id_{bot_id}")
         return os.path.join(task_dir, ".claude_session_id")
+
+    @staticmethod
+    def get_process_info_file_path(task_id: int, bot_id: Optional[int] = None) -> str:
+        """Get the path to tracked resume process info file."""
+        workspace_root = config.get_workspace_root()
+        task_dir = os.path.join(workspace_root, str(task_id))
+        if bot_id:
+            return os.path.join(task_dir, f".claude_resume_process_{bot_id}.json")
+        return os.path.join(task_dir, ".claude_resume_process.json")
 
     @classmethod
     def load_saved_session_id(
@@ -130,19 +142,153 @@ class SessionManager:
             True if file was deleted, False otherwise
         """
         session_file = cls.get_session_id_file_path(task_id, bot_id)
+        process_info_file = cls.get_process_info_file_path(task_id, bot_id)
         try:
+            deleted = False
             if os.path.exists(session_file):
                 os.remove(session_file)
                 logger.info(
                     f"Deleted invalid session ID file for task {task_id} "
                     f"(bot_id={bot_id}): {session_file}"
                 )
-                return True
-            return False
+                deleted = True
+
+            if os.path.exists(process_info_file):
+                os.remove(process_info_file)
+                logger.info(
+                    f"Deleted tracked resume process file for task {task_id} "
+                    f"(bot_id={bot_id}): {process_info_file}"
+                )
+                deleted = True
+
+            return deleted
         except Exception as e:
             logger.warning(
                 f"Failed to delete session ID file for task {task_id} "
                 f"(bot_id={bot_id}): {e}"
+            )
+            return False
+
+    @staticmethod
+    def _is_process_running(pid: int) -> bool:
+        """Check whether a PID is currently alive."""
+        try:
+            os.kill(pid, 0)
+            return True
+        except (OSError, ProcessLookupError):
+            return False
+
+    @staticmethod
+    def _read_process_cmdline(pid: int) -> str:
+        """Read process command line from /proc when available (Unix-like systems)."""
+        cmdline_path = f"/proc/{pid}/cmdline"
+        try:
+            if os.path.exists(cmdline_path):
+                with open(cmdline_path, "rb") as f:
+                    raw = f.read()
+                return raw.replace(b"\x00", b" ").decode("utf-8", errors="ignore")
+        except Exception:
+            return ""
+        return ""
+
+    @classmethod
+    def _is_expected_resume_process(cls, pid: int, session_id: str) -> bool:
+        """Validate PID belongs to a Claude process resuming the target session."""
+        cmdline = cls._read_process_cmdline(pid)
+        if not cmdline:
+            # Best-effort fallback for environments without /proc.
+            return True
+        return "claude" in cmdline and "--resume" in cmdline and session_id in cmdline
+
+    @classmethod
+    async def _terminate_pid(cls, pid: int, session_id: str) -> bool:
+        """Terminate a process by PID with graceful shutdown then force-kill."""
+        try:
+            os.kill(pid, signal.SIGTERM)
+            deadline = time.time() + 2.0
+            while time.time() < deadline:
+                if not cls._is_process_running(pid):
+                    return True
+                await asyncio.sleep(0.1)
+
+            os.kill(pid, signal.SIGKILL)
+            deadline = time.time() + 1.0
+            while time.time() < deadline:
+                if not cls._is_process_running(pid):
+                    return True
+                await asyncio.sleep(0.05)
+
+            logger.warning(
+                f"PID {pid} still running after SIGKILL for session_id={session_id}"
+            )
+            return False
+        except ProcessLookupError:
+            return True
+        except Exception as e:
+            logger.warning(
+                f"Failed to terminate stale PID {pid} for session_id={session_id}: {e}"
+            )
+            return False
+
+    @classmethod
+    def register_client_process(
+        cls, task_id: int, bot_id: Optional[int], session_id: str, pid: int
+    ) -> None:
+        """Persist PID info for resumed session cleanup on next run."""
+        process_info_file = cls.get_process_info_file_path(task_id, bot_id)
+        payload = {
+            "session_id": session_id,
+            "pid": pid,
+            "updated_at": time.time(),
+        }
+        try:
+            os.makedirs(os.path.dirname(process_info_file), exist_ok=True)
+            with open(process_info_file, "w", encoding="utf-8") as f:
+                json.dump(payload, f)
+            if os.name != "nt":
+                os.chmod(process_info_file, 0o600)
+        except Exception as e:
+            logger.warning(
+                f"Failed to register process file for task {task_id} (bot_id={bot_id}): {e}"
+            )
+
+    @classmethod
+    async def terminate_stale_resumed_process(
+        cls, task_id: int, bot_id: Optional[int], session_id: str
+    ) -> bool:
+        """Terminate previously tracked process for the same resumed session."""
+        process_info_file = cls.get_process_info_file_path(task_id, bot_id)
+        try:
+            if not os.path.exists(process_info_file):
+                return False
+
+            with open(process_info_file, "r", encoding="utf-8") as f:
+                payload = json.load(f)
+
+            tracked_session_id = str(payload.get("session_id") or "")
+            tracked_pid = payload.get("pid")
+            if tracked_session_id != session_id or not isinstance(tracked_pid, int):
+                return False
+
+            if not cls._is_process_running(tracked_pid):
+                os.remove(process_info_file)
+                return False
+
+            if not cls._is_expected_resume_process(tracked_pid, session_id):
+                logger.warning(
+                    f"Tracked PID {tracked_pid} does not match expected Claude resume process "
+                    f"for session_id={session_id}, skipping termination"
+                )
+                return False
+
+            terminated = await cls._terminate_pid(tracked_pid, session_id)
+            if terminated and os.path.exists(process_info_file):
+                os.remove(process_info_file)
+            return terminated
+        except Exception as e:
+            logger.warning(
+                f"Failed to cleanup stale resumed process for task {task_id} "
+                f"(bot_id={bot_id}, session_id={session_id}): {e}"
             )
             return False
 

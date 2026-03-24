@@ -97,6 +97,7 @@ export default function SkillUploadModal({
   // Upload tab state
   const [skillName, setSkillName] = useState(getSkillName(skill))
   const namespace = propNamespace || 'default'
+  console.log(`[SkillUploadModal] propNamespace=${propNamespace}, namespace=${namespace}`)
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [uploading, setUploading] = useState(false)
   const [uploadProgress, setUploadProgress] = useState(0)
@@ -200,15 +201,20 @@ export default function SkillUploadModal({
     }
 
     // Check if skill with same name already exists (only for create mode)
+    console.log(
+      `[SkillUploadModal] Checking for existing skill: name=${skillName.trim()}, namespace=${namespace}`
+    )
     if (!isEditMode) {
       try {
         const existing = await fetchSkillByName(skillName.trim(), namespace)
+        console.log(`[SkillUploadModal] Existing skill check result:`, existing)
         if (existing) {
           setExistingSkill(existing)
           setOverwriteDialogOpen(true)
           return
         }
-      } catch {
+      } catch (error) {
+        console.error(`[SkillUploadModal] Error checking for existing skill:`, error)
         // Ignore errors when checking for existing skill
       }
     }

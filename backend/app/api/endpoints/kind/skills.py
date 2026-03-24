@@ -7,6 +7,7 @@ Skills API endpoints for managing Claude Code Skills
 """
 
 import io
+import logging
 import zipfile
 from typing import Any, Dict, List, Optional
 
@@ -14,6 +15,8 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+
+logger = logging.getLogger(__name__)
 
 from app.api.dependencies import get_db
 from app.core import security
@@ -195,10 +198,16 @@ def list_skills(
     Authorization is verified by checking if current_user is a member of the task.
     """
     if name:
+        logger.info(
+            f"[list_skills] Searching for skill: name={name}, namespace={namespace}, exact_match={exact_match}, user_id={current_user.id}"
+        )
         if exact_match:
             # Exact match mode: only search in the specified namespace
             skill = skill_kinds_service.get_skill_by_name(
                 db=db, name=name, namespace=namespace, user_id=current_user.id
+            )
+            logger.info(
+                f"[list_skills] Exact match result: skill={skill.metadata.name if skill else None}"
             )
             return SkillList(items=[skill] if skill else [])
 
