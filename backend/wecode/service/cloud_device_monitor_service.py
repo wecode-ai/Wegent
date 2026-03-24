@@ -22,6 +22,7 @@ from shared.models.db.kind import Kind
 from shared.models.db.user import User
 from wecode.service.dingtalk_webhook import DingTalkWebhookSender
 from wecode.service.nevis_client import nevis_client
+from wecode.service.ping_utils import ping_device_ip
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +30,7 @@ DEVICE_ONLINE_KEY_PREFIX = "device:online:"
 REDIS_OFFLINE_DEVICES_KEY = "cloud_device_monitor:offline_devices"
 REDIS_KEY_TTL_SECONDS = 900  # 15 minutes
 
-PRIORITY_USERS = {"gaofei", "qingfeng", "qindi"}
+PRIORITY_USERS = {"gaofei", "qingfeng", "qindi", "liubin1", "jinshan"}
 
 
 def sort_devices_by_priority(devices: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -156,6 +157,14 @@ async def check_cloud_devices_status(
             offline_devices.append(device_info)
             current_offline_ids.add(device_id)
 
+    # Ping all devices (both online and offline) to check network reachability
+    for device_info in online_devices:
+        ping_result = await ping_device_ip(device_info.get("client_ip"))
+        device_info["ping_result"] = ping_result
+    for device_info in offline_devices:
+        ping_result = await ping_device_ip(device_info.get("client_ip"))
+        device_info["ping_result"] = ping_result
+
     # Calculate changes
     new_offline = list(current_offline_ids - last_offline)
     recovered = list(last_offline - current_offline_ids)
@@ -278,6 +287,7 @@ def format_device_table_with_ping(devices: List[Dict[str, Any]]) -> str:
     rows = []
     for d in sorted_devices:
         ip_str = d.get("client_ip", "-") or "-"
+        sandbox_id = d.get("sandbox_id", "-") or "-"
         ping_result = d.get("ping_result")
         if ping_result:
             # Handle both dict and object (PingResult) types
@@ -298,7 +308,7 @@ def format_device_table_with_ping(devices: List[Dict[str, Any]]) -> str:
         else:
             ping_str = "N/A"
         rows.append(
-            f"| {d['user_name']} | {d['user_id']} | {d['device_id']} | {ip_str} | {ping_str} |"
+            f"| {d['user_name']} | {d['user_id']} | {d['device_id']} | {sandbox_id} | {ip_str} | {ping_str} |"
         )
     return "\n".join(rows)
 
@@ -340,8 +350,8 @@ async def send_monitoring_report(
 
     if check_result["new_offline"]:
         sections.append(f"**新增离线设备 ⚠️ ({len(new_offline_devices)} 个)**")
-        sections.append("| User Name | User ID | Device ID | IP | Ping |")
-        sections.append("|-----------|---------|-----------|----|------|")
+        sections.append("| User Name | User ID | Device ID | SandboxId | IP | Ping |")
+        sections.append("|-----------|---------|-----------|-----------|----|------|")
         sections.append(format_device_table_with_ping(new_offline_devices))
         sections.append("")
 
@@ -353,16 +363,16 @@ async def send_monitoring_report(
 
     if check_result["recovered"]:
         sections.append(f"**恢复在线设备 ✅ ({len(recovered_devices)} 个)**")
-        sections.append("| User Name | User ID | Device ID | IP | Ping |")
-        sections.append("|-----------|---------|-----------|----|------|")
+        sections.append("| User Name | User ID | Device ID | SandboxId | IP | Ping |")
+        sections.append("|-----------|---------|-----------|-----------|----|------|")
         sections.append(format_device_table_with_ping(recovered_devices))
         sections.append("")
 
     # Current offline devices list
     if check_result["offline_count"] > 0:
         sections.append(f"**当前离线设备列表 ({check_result['offline_count']} 个)**")
-        sections.append("| User Name | User ID | Device ID | IP | Ping |")
-        sections.append("|-----------|---------|-----------|----|------|")
+        sections.append("| User Name | User ID | Device ID | SandboxId | IP | Ping |")
+        sections.append("|-----------|---------|-----------|-----------|----|------|")
         sections.append(format_device_table_with_ping(check_result["offline_devices"]))
         sections.append("")
 
