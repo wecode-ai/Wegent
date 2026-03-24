@@ -4,9 +4,10 @@
 
 'use client'
 
-import { useState, useRef } from 'react'
+import { useState, useRef, useMemo } from 'react'
 import { Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { getToken } from '@/apis/user'
 
 interface ExamVideoPlayerProps {
   /** S3 storage key for the video */
@@ -27,7 +28,12 @@ export function ExamVideoPlayer({ videoKey, className }: ExamVideoPlayerProps) {
   const [error, setError] = useState<string | null>(null)
 
   // Build the video URL using the backend proxy stream endpoint (inline viewing)
-  const videoUrl = `/api/wecode/evaluation/shared/files/stream?s3_path=${encodeURIComponent(videoKey)}`
+  // Include token as query parameter since HTML5 video tags cannot set Authorization header
+  const videoUrl = useMemo(() => {
+    const token = getToken()
+    const baseUrl = `/api/wecode/evaluation/shared/files/stream?s3_path=${encodeURIComponent(videoKey)}`
+    return token ? `${baseUrl}&token=${encodeURIComponent(token)}` : baseUrl
+  }, [videoKey])
 
   const handleLoadedData = () => {
     setIsLoading(false)
