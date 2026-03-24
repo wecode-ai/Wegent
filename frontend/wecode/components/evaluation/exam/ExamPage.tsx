@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { useUser } from '@/features/common/UserContext'
 import { usePageVisibility } from '@/hooks/usePageVisibility'
@@ -12,24 +12,24 @@ import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useExamTimer } from './hooks/useExamTimer'
 import { useAutoSave } from './hooks/useAutoSave'
-import { SlotBasedFileUpload } from './SlotBasedFileUpload'
+import { DynamicAnswerUploadZone } from './DynamicAnswerUploadZone'
 import {
   getExamData,
   updateExamAttachments,
   selectExamQuestion,
   advanceExamPhase,
 } from '@wecode/api/evaluation-exam'
-import { fetchFileContent } from '@wecode/api/evaluation-shared'
 import type {
-  ExamAttachment,
   ExamSessionStatus,
   ExamTopicConfig,
   ExamQuestionContent,
+  ExamVideoAttachment,
+  SlotAnswer,
+  AnswerSlot,
 } from '@wecode/types/evaluation-exam'
 import {
   isExamTopicConfig,
   isExamQuestionContent,
-  DEFAULT_UPLOAD_SLOTS,
   DEFAULT_BONUS_ITEMS,
   DEFAULT_SCORING,
   DEFAULT_TIME_NOTE,
@@ -42,7 +42,6 @@ import {
   ExamHeader,
   ExamInfoSection,
   BonusItemsSection,
-  SupplementaryNotesSection,
   ParticipantInfoSection,
   CompletedState,
   PreviewConfirmModal,
@@ -50,12 +49,13 @@ import {
   TimeWarningModal,
 } from './index'
 import { ExamTopicDetail } from './ExamTopicDetail'
-import type { PermissionState, QuestionDataMap } from './ai-assessment-types'
-import { createInitialQuestionDataMap } from './ai-assessment-types'
+import type { PermissionState, DynamicQuestionDataMap } from './ai-assessment-types'
+import { createInitialDynamicQuestionDataMap } from './ai-assessment-types'
 import {
-  buildQuestionDataMapFromAnswers,
-  hasSupplementaryNotes,
+  buildDynamicQuestionDataMapFromAnswers,
+  hasDynamicRequiredFiles,
   getTimerColorClass,
+  extractAttachmentsFromContent,
 } from './ai-assessment-utils'
 import type { Topic } from './AIAssessmentTopicCard'
 
@@ -125,6 +125,8 @@ function transformQuestionToTopic(question: Question, _index: number): Topic {
       requirement: '',
       deliverable: [],
       bonusDeliverable: [],
+      attachments: contentData.attachments,
+      answerSlots: contentData.answerSlots,
     }
   }
 
@@ -154,7 +156,7 @@ function buildExamData(
     rulesMarkdown: '',
     scoring: DEFAULT_SCORING,
     timeNote: DEFAULT_TIME_NOTE,
-    uploadSlots: DEFAULT_UPLOAD_SLOTS,
+    uploadSlots: [],
     bonusItems: DEFAULT_BONUS_ITEMS,
   }
 
@@ -182,44 +184,6 @@ function buildExamData(
   }
 }
 
-// Build upload slots config from topic config
-function buildUploadSlotsConfig(topicConfig: ExamTopicConfig | null) {
-  const slots = topicConfig?.uploadSlots || DEFAULT_UPLOAD_SLOTS
-
-  return slots.map(slot => {
-    let iconName = 'file'
-    let iconClass = 'text-gray-400'
-
-    if (slot.key === 'interaction') {
-      iconName = 'pen'
-      iconClass = 'text-gray-400'
-    } else if (slot.key === 'main') {
-      iconName = 'file'
-      iconClass = 'text-[#DF2029]'
-    } else if (slot.key === 'bonusAgent') {
-      iconName = 'workflow'
-      iconClass = 'text-indigo-500'
-    } else if (slot.key === 'bonusMultimodal') {
-      iconName = 'layers'
-      iconClass = 'text-rose-500'
-    }
-
-    return {
-      key: slot.key,
-      label: slot.label,
-      hint: slot.hint,
-      required: slot.required,
-      maxFiles: slot.maxFiles,
-      accept: slot.accept,
-      iconName,
-      iconClass,
-      showLinkInput: slot.showLinkInput,
-      linkLabel: slot.linkLabel,
-      linkPlaceholder: slot.linkPlaceholder,
-    }
-  })
-}
-
 export function ExamPage({ topicId }: ExamPageProps) {
   const router = useRouter()
   const { user, isLoading: isUserLoading } = useUser()
@@ -237,12 +201,24 @@ export function ExamPage({ topicId }: ExamPageProps) {
   const [topicConfig, setTopicConfig] = useState<ExamTopicConfig | null>(null)
   const [questions, setQuestions] = useState<Question[]>([])
   const [topicName, setTopicName] = useState<string>('')
+  const [topicInstructions, setTopicInstructions] = useState<string>('')
+  const [topicVideo, setTopicVideo] = useState<ExamVideoAttachment | undefined>(undefined)
 
   const examData = useMemo(
     () => buildExamData(topicConfig, questions, topicName),
     [topicConfig, questions, topicName]
   )
-  const uploadSlotsConfig = useMemo(() => buildUploadSlotsConfig(topicConfig), [topicConfig])
+
+  // Build answerSlots map for all questions
+  const answerSlotsMap = useMemo(() => {
+    const map: Record<number, AnswerSlot[]> = {}
+    for (const topic of examData.topics) {
+      if (topic.answerSlots) {
+        map[topic.id] = topic.answerSlots
+      }
+    }
+    return map
+  }, [examData.topics])
 
   const questionIds = useMemo(() => questions.map(q => q.id), [questions])
 
@@ -263,27 +239,58 @@ export function ExamPage({ topicId }: ExamPageProps) {
     session: examSession,
   })
 
-  const [questionData, setQuestionData] = useState<QuestionDataMap>({})
+  // Question data using dynamic slots
+  const [questionData, setQuestionData] = useState<DynamicQuestionDataMap>({})
 
   const [showPreviewConfirmModal, setShowPreviewConfirmModal] = useState(false)
   const [showFinalConfirmModal, setShowFinalConfirmModal] = useState(false)
   const [showTimeWarning, setShowTimeWarning] = useState(false)
   const [timeWarningShown, setTimeWarningShown] = useState(false)
 
-  const uploadSlots = useMemo(
-    () =>
-      uploadSlotsConfig.map(slot => ({
-        ...slot,
-        icon: <Icon name={slot.iconName} size={18} className={slot.iconClass} />,
-      })),
-    [uploadSlotsConfig]
-  )
+  // Auto-save hook for text/link inputs in answer slots
+  const {
+    triggerSave: triggerTextSave,
+    flushSave: flushTextSave,
+    saveStatus: textSaveStatus,
+    lastSavedAt: textLastSavedAt,
+  } = useAutoSave<{
+    questionId: number
+    answers: Record<string, SlotAnswer>
+  }>({
+    onSave: async ({ questionId, answers }) => {
+      try {
+        await updateExamAttachments(topicId, {
+          selectedQuestionId: questionId,
+          content_data: { answers },
+        })
+      } catch (error) {
+        console.error('Failed to auto-save text/link content:', error)
+        throw error
+      }
+    },
+    delay: 2000,
+    enabled: examPhase === 'exam' && selectedTopic !== null,
+  })
+
+  // Warn user about unsaved changes on page leave
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (textSaveStatus === 'saving' || textSaveStatus === 'error') {
+        e.preventDefault()
+        e.returnValue = t('exam.modal.leave_description')
+        return e.returnValue
+      }
+    }
+
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
+  }, [textSaveStatus, t])
 
   useEffect(() => {
     if (questionIds.length > 0) {
-      setQuestionData(createInitialQuestionDataMap(questionIds))
+      setQuestionData(createInitialDynamicQuestionDataMap(questionIds, answerSlotsMap))
     }
-  }, [questionIds])
+  }, [questionIds, answerSlotsMap])
 
   useEffect(() => {
     if (isUserLoading) return
@@ -310,6 +317,18 @@ export function ExamPage({ topicId }: ExamPageProps) {
 
         // Parse topic configuration from extra_data
         if (data.topic?.extra_data) {
+          const extraData = data.topic.extra_data as unknown as Record<string, unknown>
+
+          // Load instructions from extra_data (for custom exam info display)
+          if (typeof extraData.instructions === 'string') {
+            setTopicInstructions(extraData.instructions)
+          }
+
+          // Load video from extra_data
+          if (extraData.video && typeof extraData.video === 'object') {
+            setTopicVideo(extraData.video as ExamVideoAttachment)
+          }
+
           if (isExamTopicConfig(data.topic.extra_data)) {
             setTopicConfig(data.topic.extra_data)
           } else {
@@ -396,7 +415,7 @@ export function ExamPage({ topicId }: ExamPageProps) {
   // Load existing answer data for all questions
   useEffect(() => {
     async function loadExistingAnswer() {
-      if (dataLoadedRef.current || !examSession) return
+      if (dataLoadedRef.current || !examSession || Object.keys(answerSlotsMap).length === 0) return
       dataLoadedRef.current = true
 
       try {
@@ -404,50 +423,18 @@ export function ExamPage({ topicId }: ExamPageProps) {
         let loadedData: typeof questionData = {}
 
         if (data.allAnswers && Object.keys(data.allAnswers).length > 0) {
-          loadedData = buildQuestionDataMapFromAnswers(data.allAnswers)
+          loadedData = buildDynamicQuestionDataMapFromAnswers(data.allAnswers, answerSlotsMap)
           setQuestionData(prev => ({ ...prev, ...loadedData }))
         } else if (data.userAnswer?.content_data) {
           const content = data.userAnswer.content_data
           const questionId = content.selectedTopicId
 
           if (questionId) {
-            const questionState = {
-              attachments: {
-                main: content.attachments?.main || [],
-                interaction: content.attachments?.interaction || [],
-                bonusAgent: content.attachments?.bonusAgent?.files || [],
-                bonusMultimodal: content.attachments?.bonusMultimodal || [],
-              },
-              supplementaryNotesFiles: content.attachments?.supplementaryNotes || [],
-              supplementaryNotes: content.inputs?.supplementaryNotes || '',
-              linkValues: {
-                bonusAgent: content.attachments?.bonusAgent?.link || '',
-              },
-            }
+            const slots = answerSlotsMap[questionId] || []
+            const answers = extractAttachmentsFromContent(content, slots)
+            const questionState = { answers }
             loadedData = { [questionId]: questionState }
             setQuestionData(prev => ({ ...prev, ...loadedData }))
-          }
-        }
-
-        for (const [questionIdStr, qData] of Object.entries(loadedData)) {
-          const questionId = parseInt(questionIdStr, 10)
-          const hasText = qData.supplementaryNotes?.trim().length > 0
-          const hasFiles = qData.supplementaryNotesFiles?.length > 0
-
-          if (!hasText && hasFiles) {
-            const file = qData.supplementaryNotesFiles![0]
-            try {
-              const content = await fetchFileContent(file.key)
-              setQuestionData(prev => ({
-                ...prev,
-                [questionId]: {
-                  ...prev[questionId],
-                  supplementaryNotes: content,
-                },
-              }))
-            } catch (e) {
-              console.error('Failed to load supplementary notes content:', e)
-            }
           }
         }
       } catch (error) {
@@ -456,84 +443,58 @@ export function ExamPage({ topicId }: ExamPageProps) {
       }
     }
     loadExistingAnswer()
-  }, [examSession, topicId])
-
-  const {
-    triggerSave: triggerNotesSave,
-    flushSave: flushNotesSave,
-    saveStatus: notesSaveStatus,
-    lastSavedAt: notesLastSavedAt,
-    manualSave: manualSaveNotes,
-  } = useAutoSave<{
-    questionId: number
-    notes: string
-  }>({
-    onSave: async ({ questionId, notes }) => {
-      try {
-        await updateExamAttachments(topicId, {
-          selectedQuestionId: questionId,
-          content_data: {
-            inputs: {
-              supplementaryNotes: notes,
-            },
-          },
-        })
-      } catch (error) {
-        console.error('Failed to auto-save supplementary notes:', error)
-        throw error
-      }
-    },
-    delay: 2000,
-    enabled: examPhase === 'exam' && selectedTopic !== null,
-  })
-
-  useEffect(() => {
-    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-      if (notesSaveStatus === 'saving' || notesSaveStatus === 'error') {
-        e.preventDefault()
-        e.returnValue = t('exam.modal.leave_description')
-        return e.returnValue
-      }
-    }
-
-    window.addEventListener('beforeunload', handleBeforeUnload)
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
-  }, [notesSaveStatus, t])
+  }, [examSession, topicId, answerSlotsMap])
 
   const progressSteps = useMemo(() => {
     const anyQuestionSelected = selectedTopic !== null
     const currentQuestionId = selectedTopic !== null ? questionIds[selectedTopic] : null
     const currentData = currentQuestionId !== null ? questionData[currentQuestionId] : null
+    const slots = currentQuestionId !== null ? answerSlotsMap[currentQuestionId] || [] : []
 
-    return [
-      {
-        label: t('exam.progress.fill_notes'),
-        done: anyQuestionSelected && hasSupplementaryNotes(currentData),
-      },
-      {
-        label: t('exam.upload.interaction'),
-        done: anyQuestionSelected && (currentData?.attachments.interaction.length ?? 0) > 0,
-      },
-      {
-        label: t('exam.upload.main_report'),
-        done: anyQuestionSelected && (currentData?.attachments.main.length ?? 0) > 0,
-      },
-    ]
-  }, [selectedTopic, questionData, questionIds, t])
+    // Generate progress steps from required slots (excluding bonus slots)
+    const steps: Array<{ label: string; done: boolean }> = []
+
+    // Add steps for required slots
+    for (const slot of slots) {
+      if (slot.required && !slot.isBonus) {
+        const answer = currentData?.answers[slot.key]
+        const hasContent = Boolean(
+          (answer?.files && answer.files.length > 0) ||
+          (answer?.text && answer.text.trim() !== '') ||
+          (answer?.link && answer.link.trim() !== '')
+        )
+        steps.push({
+          label: slot.label,
+          done: anyQuestionSelected && hasContent,
+        })
+      }
+    }
+
+    return steps
+  }, [selectedTopic, questionData, questionIds, answerSlotsMap])
 
   const timerColor = useMemo(() => getTimerColorClass(timeLeft, isOvertime), [timeLeft, isOvertime])
 
   const currentQuestionId = selectedTopic !== null ? questionIds[selectedTopic] : null
   const currentQuestionData = currentQuestionId !== null ? questionData[currentQuestionId] : null
-  const hasMainReport = (currentQuestionData?.attachments.main.length ?? 0) > 0
-  const hasInteractionRecord = (currentQuestionData?.attachments.interaction.length ?? 0) > 0
-  const hasNotes = hasSupplementaryNotes(currentQuestionData)
+
+  // Get answerSlots for current question
+  const currentAnswerSlots = useMemo(() => {
+    if (currentQuestionId === null) return []
+    return answerSlotsMap[currentQuestionId] || []
+  }, [currentQuestionId, answerSlotsMap])
+
+  // Get current answers for dynamic upload zone
+  const currentAnswers = useMemo((): Record<string, SlotAnswer> => {
+    if (!currentQuestionData) return {}
+    return currentQuestionData.answers || {}
+  }, [currentQuestionData])
+
+  const hasRequiredContent = hasDynamicRequiredFiles(currentAnswers, currentAnswerSlots)
 
   const isSubmitReady =
     selectedTopic !== null &&
-    hasMainReport &&
-    hasInteractionRecord &&
-    hasNotes &&
+    hasRequiredContent &&
     participantName.trim().length > 0 &&
     !isCompleted
 
@@ -571,53 +532,22 @@ export function ExamPage({ topicId }: ExamPageProps) {
   const handleTopicSelect = async (topicIndex: number | null) => {
     if (selectingTopic !== null) return
 
-    await flushNotesSave()
-
     if (topicIndex !== null) {
       setSelectingTopic(topicIndex)
       try {
         const questionId = questionIds[topicIndex]
+        const slots = answerSlotsMap[questionId] || []
         await selectExamQuestion(topicId, questionId)
         const data = await getExamData(topicId)
         if (data.userAnswer?.content_data) {
           const content = data.userAnswer.content_data
-          const questionState = {
-            attachments: {
-              main: content.attachments?.main || [],
-              interaction: content.attachments?.interaction || [],
-              bonusAgent: content.attachments?.bonusAgent?.files || [],
-              bonusMultimodal: content.attachments?.bonusMultimodal || [],
-            },
-            supplementaryNotesFiles: content.attachments?.supplementaryNotes || [],
-            supplementaryNotes: content.inputs?.supplementaryNotes || '',
-            linkValues: {
-              bonusAgent: content.attachments?.bonusAgent?.link || '',
-            },
-          }
+          const answers = extractAttachmentsFromContent(content, slots)
+          const questionState = { answers }
 
           setQuestionData(prev => ({
             ...prev,
             [questionId]: questionState,
           }))
-
-          // Load supplementary notes content from attachments if no text content
-          const hasText = questionState.supplementaryNotes?.trim().length > 0
-          const hasFiles = questionState.supplementaryNotesFiles?.length > 0
-          if (!hasText && hasFiles) {
-            const file = questionState.supplementaryNotesFiles![0]
-            try {
-              const fileContent = await fetchFileContent(file.key)
-              setQuestionData(prev => ({
-                ...prev,
-                [questionId]: {
-                  ...prev[questionId],
-                  supplementaryNotes: fileContent,
-                },
-              }))
-            } catch (e) {
-              console.error('Failed to load supplementary notes content:', e)
-            }
-          }
         }
         setSelectedTopic(topicIndex)
       } catch (error) {
@@ -630,37 +560,12 @@ export function ExamPage({ topicId }: ExamPageProps) {
     }
   }
 
-  const handleNotesChange = useCallback(
-    (notes: string) => {
-      const questionId = questionIds[selectedTopic!]
-      setQuestionData(prev => ({
-        ...prev,
-        [questionId]: {
-          ...prev[questionId],
-          supplementaryNotes: notes,
-        },
-      }))
-      triggerNotesSave({ questionId, notes })
-    },
-    [selectedTopic, triggerNotesSave, questionIds]
-  )
-
-  const handleNotesBlur = useCallback(async () => {
-    await flushNotesSave()
-  }, [flushNotesSave])
-
-  const handleManualSave = useCallback(async () => {
-    if (selectedTopic === null) return
-    const questionId = questionIds[selectedTopic]
-    const notes = questionData[questionId]?.supplementaryNotes || ''
-    await manualSaveNotes({ questionId, notes })
-  }, [selectedTopic, questionData, manualSaveNotes, questionIds])
-
   const enterPreviewMode = async () => {
     setShowPreviewConfirmModal(false)
     setIsTransitioning(true)
     try {
-      await flushNotesSave()
+      // Flush any pending auto-save before advancing phase
+      await flushTextSave()
       const result = await advanceExamPhase(topicId, 'review')
       setExamSession(result.session)
     } catch (error) {
@@ -717,7 +622,13 @@ export function ExamPage({ topicId }: ExamPageProps) {
     )
   }
 
-  const gridClass = questions.length === 2 ? 'md:grid-cols-2' : 'md:grid-cols-3'
+  // Grid layout: 1 question = full width, 2 questions = 2 cols, 3+ = 3 cols
+  const gridClass =
+    questions.length === 1
+      ? 'md:grid-cols-1'
+      : questions.length === 2
+        ? 'md:grid-cols-2'
+        : 'md:grid-cols-3'
 
   return (
     <div className="min-h-screen bg-[#fafbfc] overflow-visible">
@@ -741,6 +652,8 @@ export function ExamPage({ topicId }: ExamPageProps) {
           loading={loading}
           isTransitioning={isTransitioning}
           onStartAnswering={startAnswering}
+          video={topicVideo || topicConfig?.video}
+          instructions={topicInstructions}
         />
 
         {(examPhase === 'exam' || examPhase === 'review') && (
@@ -802,149 +715,106 @@ export function ExamPage({ topicId }: ExamPageProps) {
         )}
 
         {(examPhase === 'exam' || examPhase === 'review') && selectedTopic !== null && (
-          <BonusItemsSection bonusItems={examData.bonusItems} />
+          <BonusItemsSection slots={currentAnswerSlots} />
         )}
 
-        {(examPhase === 'exam' || examPhase === 'review') && selectedTopic !== null && (
-          <SupplementaryNotesSection
-            notes={currentQuestionData?.supplementaryNotes || ''}
-            disabled={examPhase !== 'exam'}
-            required={true}
-            onNotesChange={handleNotesChange}
-            onBlur={handleNotesBlur}
-            onManualSave={handleManualSave}
-            saveStatus={notesSaveStatus}
-            lastSavedAt={notesLastSavedAt}
-          />
-        )}
-
-        {(examPhase === 'exam' || examPhase === 'review') && selectedTopic !== null && (
-          <SlotBasedFileUpload
-            topicId={topicId}
-            questionId={currentQuestionId!}
-            slots={uploadSlots}
-            attachments={currentQuestionData?.attachments || {}}
-            onChange={(slot: string, newAttachments: ExamAttachment[]) => {
-              setQuestionData(prev => ({
-                ...prev,
-                [currentQuestionId!]: {
-                  ...prev[currentQuestionId!],
-                  attachments: {
-                    ...prev[currentQuestionId!].attachments,
-                    [slot]: newAttachments,
-                  },
-                },
-              }))
-            }}
-            onAttachmentsUpdate={async newAttachments => {
-              try {
-                await updateExamAttachments(topicId, {
-                  selectedQuestionId: currentQuestionId!,
-                  content_data: {
-                    attachments: {
-                      main: newAttachments.main || [],
-                      interaction: newAttachments.interaction || [],
-                      bonusAgent: { files: newAttachments.bonusAgent || [] },
-                      bonusMultimodal: newAttachments.bonusMultimodal || [],
+        {(examPhase === 'exam' || examPhase === 'review') &&
+          selectedTopic !== null &&
+          currentAnswerSlots.length > 0 && (
+            <DynamicAnswerUploadZone
+              topicId={topicId}
+              questionId={currentQuestionId!}
+              answerSlots={currentAnswerSlots}
+              answers={currentAnswers}
+              onChange={(slotKey: string, value: SlotAnswer) => {
+                setQuestionData(prev => ({
+                  ...prev,
+                  [currentQuestionId!]: {
+                    ...prev[currentQuestionId!],
+                    answers: {
+                      ...prev[currentQuestionId!].answers,
+                      [slotKey]: value,
                     },
                   },
-                })
-              } catch (error) {
-                console.error('Failed to update attachments:', error)
-              }
-            }}
-            linkValues={currentQuestionData?.linkValues || {}}
-            onLinkChange={async (slot: string, value: string) => {
-              setQuestionData(prev => ({
-                ...prev,
-                [currentQuestionId!]: {
-                  ...prev[currentQuestionId!],
-                  linkValues: {
-                    ...prev[currentQuestionId!].linkValues,
-                    [slot]: value,
-                  },
-                },
-              }))
-
-              try {
-                const currentData = questionData[currentQuestionId!]
-                await updateExamAttachments(topicId, {
-                  selectedQuestionId: currentQuestionId!,
-                  content_data: {
-                    attachments: {
-                      main: currentData?.attachments?.main || [],
-                      interaction: currentData?.attachments?.interaction || [],
-                      bonusAgent: {
-                        link:
-                          slot === 'bonusAgent' ? value : currentData?.linkValues?.bonusAgent || '',
-                        files: currentData?.attachments?.bonusAgent || [],
-                      },
-                      bonusMultimodal: currentData?.attachments?.bonusMultimodal || [],
+                }))
+              }}
+              onAnswersUpdate={async (answers: Record<string, SlotAnswer>) => {
+                try {
+                  await updateExamAttachments(topicId, {
+                    selectedQuestionId: currentQuestionId!,
+                    content_data: {
+                      answers,
                     },
-                  },
+                  })
+                } catch (error) {
+                  console.error('Failed to update attachments:', error)
+                }
+              }}
+              disabled={examPhase !== 'exam'}
+              totalFileLimit={20}
+              onLimitExceeded={() => {
+                toast({
+                  title: t('errors.save_failed'),
+                  description: t('exam.submit.file_limit', { count: 20 }),
+                  variant: 'destructive',
                 })
-              } catch (error) {
-                console.error('Failed to update link:', error)
-              }
-            }}
-            disabled={examPhase !== 'exam'}
-            totalFileLimit={20}
-            currentTotalCount={currentQuestionData?.supplementaryNotesFiles?.length || 0}
-            onLimitExceeded={() => {
-              toast({
-                title: t('errors.save_failed'),
-                description: t('exam.submit.file_limit', { count: 20 }),
-                variant: 'destructive',
-              })
-            }}
-          />
-        )}
+              }}
+              onTextChange={(_slotKey: string) => {
+                // Trigger debounced auto-save for text/link changes
+                const questionId = currentQuestionId!
+                const answers = questionData[questionId]?.answers || {}
+                triggerTextSave({ questionId, answers })
+              }}
+              textSaveStatus={Object.fromEntries(
+                currentAnswerSlots
+                  .filter(s => s.inputMode === 'text' || s.inputMode === 'link+attachment')
+                  .map(s => [s.key, textSaveStatus])
+              )}
+              textLastSavedAt={Object.fromEntries(
+                currentAnswerSlots
+                  .filter(s => s.inputMode === 'text' || s.inputMode === 'link+attachment')
+                  .map(s => [s.key, textLastSavedAt])
+              )}
+            />
+          )}
 
         {/* Unified Submit Button - Exam Phase */}
         {examPhase === 'exam' && selectedTopic !== null && !isCompleted && (
           <section className="animate-[slideDown_0.35s_ease-out]">
             <div className="bg-white rounded-3xl shadow-sm border border-gray-100 p-7 sm:p-9">
               <h3 className="text-base font-bold text-gray-700 mb-5">{t('exam.submit.title')}</h3>
-              <div className="grid grid-cols-3 gap-3 mb-5">
-                {[
-                  {
-                    label: t('exam.submit.check_item.notes_filled'),
-                    done: hasNotes,
-                    required: true,
-                  },
-                  {
-                    label: t('exam.submit.check_item.interaction_record'),
-                    done: hasInteractionRecord,
-                    required: true,
-                  },
-                  {
-                    label: t('exam.submit.check_item.report_uploaded'),
-                    done: hasMainReport,
-                    required: true,
-                  },
-                ].map((item, _index) => (
+              <div
+                className={`grid gap-3 mb-5 ${
+                  progressSteps.length === 1
+                    ? 'grid-cols-1'
+                    : progressSteps.length === 2
+                      ? 'grid-cols-2'
+                      : progressSteps.length === 3
+                        ? 'grid-cols-3'
+                        : progressSteps.length === 4
+                          ? 'grid-cols-2 sm:grid-cols-4'
+                          : progressSteps.length === 5
+                            ? 'grid-cols-2 sm:grid-cols-5'
+                            : progressSteps.length === 6
+                              ? 'grid-cols-2 sm:grid-cols-3'
+                              : 'grid-cols-2 sm:grid-cols-4'
+                }`}
+              >
+                {progressSteps.map((item, _index) => (
                   <div
                     key={_index}
                     className={`flex items-center gap-2.5 px-4 py-3 rounded-xl text-sm font-medium ${
-                      item.done
-                        ? 'bg-green-50 text-green-700'
-                        : item.required
-                          ? 'bg-red-50 text-red-400'
-                          : 'bg-gray-50 text-gray-400'
+                      item.done ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-400'
                     }`}
                   >
                     {item.done ? (
                       <Icon name="checkCircle" size={18} className="text-green-500" />
                     ) : (
-                      <div
-                        className={`w-[18px] h-[18px] rounded-full border-2 flex-shrink-0 ${
-                          item.required ? 'border-red-300' : 'border-gray-300'
-                        }`}
-                      />
+                      <div className="w-[18px] h-[18px] rounded-full border-2 flex-shrink-0 border-red-300" />
                     )}
                     <span>
                       {item.label}
-                      {item.required && !item.done ? ' *' : ''}
+                      {!item.done ? ' *' : ''}
                     </span>
                   </div>
                 ))}
@@ -956,13 +826,11 @@ export function ExamPage({ topicId }: ExamPageProps) {
                     count: (() => {
                       const currentData = questionData[currentQuestionId!]
                       if (!currentData) return 0
-                      return (
-                        (currentData.attachments?.main?.length || 0) +
-                        (currentData.attachments?.interaction?.length || 0) +
-                        (currentData.attachments?.bonusAgent?.length || 0) +
-                        (currentData.attachments?.bonusMultimodal?.length || 0) +
-                        (currentData.supplementaryNotesFiles?.length || 0)
+                      const answerFiles = Object.values(currentData.answers || {}).reduce(
+                        (sum, answer) => sum + (answer.files?.length || 0),
+                        0
                       )
+                      return answerFiles
                     })(),
                   })}
                 </p>

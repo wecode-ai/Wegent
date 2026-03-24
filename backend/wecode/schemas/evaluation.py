@@ -27,14 +27,18 @@ class ScorerModelConfig(BaseModel):
     """Configuration for a single scorer model in multi-model grading."""
 
     model_id: str = Field(..., description="Model ID for scoring")
-    force_override: bool = Field(True, description="Whether to force override bot's model")
+    force_override: bool = Field(
+        True, description="Whether to force override bot's model"
+    )
 
 
 class AggregatorModelConfig(BaseModel):
     """Configuration for the aggregator model in multi-model grading."""
 
     model_id: str = Field(..., description="Model ID for aggregation")
-    force_override: bool = Field(True, description="Whether to force override bot's model")
+    force_override: bool = Field(
+        True, description="Whether to force override bot's model"
+    )
 
 
 class MultiModelGradingConfig(BaseModel):
@@ -42,10 +46,18 @@ class MultiModelGradingConfig(BaseModel):
 
     scorer_team_id: int = Field(..., description="Team ID for scorer models")
     aggregator_team_id: int = Field(..., description="Team ID for aggregator model")
-    scorer_models: List[ScorerModelConfig] = Field(..., description="List of scorer model configurations")
-    aggregator_model: AggregatorModelConfig = Field(..., description="Aggregator model configuration")
-    scorer_prompt_template: Optional[str] = Field(None, description="Prompt template for scorer models")
-    aggregator_prompt_template: Optional[str] = Field(None, description="Prompt template for aggregator model")
+    scorer_models: List[ScorerModelConfig] = Field(
+        ..., description="List of scorer model configurations"
+    )
+    aggregator_model: AggregatorModelConfig = Field(
+        ..., description="Aggregator model configuration"
+    )
+    scorer_prompt_template: Optional[str] = Field(
+        None, description="Prompt template for scorer models"
+    )
+    aggregator_prompt_template: Optional[str] = Field(
+        None, description="Prompt template for aggregator model"
+    )
 
 
 # ============================================================================
@@ -80,17 +92,11 @@ class TopicUpdate(BaseModel):
     """Schema for updating a topic."""
 
     name: Optional[str] = Field(None, min_length=1, max_length=200)
-    description: Optional[str] = Field(None, max_length=2000)
     visibility: Optional[str] = Field(None)
     grading_team_id: Optional[int] = Field(None)
-    instructions: Optional[str] = Field(
-        None,
-        max_length=10000,
-        description="Exam instructions in Markdown format",
-    )
     extra_data: Optional[Dict[str, Any]] = Field(
         None,
-        description="Extra data: {duration: {intro, exam, review}, instructions: string}",
+        description="Extra data: {description, instructions, duration: {intro, exam, review}, video}",
     )
 
 
@@ -409,6 +415,11 @@ class GradingTaskInDB(BaseModel):
         None, description="When the answer was submitted by the respondent"
     )
 
+    # Grading mode: single or multi
+    grading_mode: Optional[str] = Field(
+        None, description="Grading mode: single or multi"
+    )
+
     class Config:
         from_attributes = True
 
@@ -507,7 +518,7 @@ class GradingConfigUpdate(BaseModel):
 
     # New multi-model grading fields
     grading_mode: str = Field(
-        "single", description="Grading mode: single or multi"
+        "single", description="Grading mode: manual, single or multi"
     )
     scorer_team_id: Optional[int] = Field(
         None, description="Team ID for scorer models (multi-model mode)"
@@ -516,7 +527,8 @@ class GradingConfigUpdate(BaseModel):
         None, description="Team ID for aggregator model (multi-model mode)"
     )
     scorer_models: List[ScorerModelConfig] = Field(
-        default_factory=list, description="List of scorer model configurations (3-5 models)"
+        default_factory=list,
+        description="List of scorer model configurations (3-5 models)",
     )
     aggregator_model: Optional[AggregatorModelConfig] = Field(
         None, description="Aggregator model configuration"

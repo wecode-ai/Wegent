@@ -5,6 +5,9 @@
 'use client'
 
 import { Icon } from './ExamIcons'
+import { ExamVideoPlayer } from './ExamVideoPlayer'
+import { ExamInstructionsMarkdown } from './ExamInstructionsMarkdown'
+import type { ExamVideoAttachment } from '@wecode/types/evaluation-exam'
 
 interface ExamRule {
   icon: string
@@ -28,6 +31,9 @@ interface ExamInfoSectionProps {
   loading: boolean
   isTransitioning: boolean
   onStartAnswering: () => void
+  video?: ExamVideoAttachment
+  /** Custom instructions markdown to replace default rules display */
+  instructions?: string
 }
 
 export function ExamInfoSection({
@@ -40,6 +46,8 @@ export function ExamInfoSection({
   loading,
   isTransitioning,
   onStartAnswering,
+  video,
+  instructions,
 }: ExamInfoSectionProps) {
   return (
     <section className="bg-white rounded-3xl shadow-sm border border-gray-100 p-8 sm:p-10">
@@ -81,42 +89,60 @@ export function ExamInfoSection({
           examPhase === 'review' ||
           examPhase === 'completed') && (
           <>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-8">
-              {rules.map((rule, i) => (
-                <div
-                  key={i}
-                  className="flex items-start gap-4 bg-gray-50 rounded-2xl p-5 border border-gray-100"
-                >
-                  <div className="w-10 h-10 rounded-xl bg-[#DF2029]/[0.08] flex items-center justify-center flex-shrink-0">
-                    <Icon name={rule.icon} size={20} className="text-[#DF2029]" />
-                  </div>
-                  <div>
-                    <p className="text-sm font-bold text-gray-500 mb-0.5">{rule.label}</p>
-                    <p className="text-[1rem] text-gray-700 leading-relaxed">{rule.text}</p>
-                  </div>
+            {/* Video Player - shown if video is attached */}
+            {video && (
+              <div className="mb-8">
+                <ExamVideoPlayer
+                  videoKey={video.key}
+                  filename={video.filename}
+                  className="w-full max-w-3xl mx-auto"
+                />
+              </div>
+            )}
+
+            {/* Custom Instructions (Markdown) or Default Rules Display */}
+            {instructions?.trim() ? (
+              <ExamInstructionsMarkdown content={instructions} className="mb-8" />
+            ) : (
+              <>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-8">
+                  {rules.map((rule, i) => (
+                    <div
+                      key={i}
+                      className="flex items-start gap-4 bg-gray-50 rounded-2xl p-5 border border-gray-100"
+                    >
+                      <div className="w-10 h-10 rounded-xl bg-[#DF2029]/[0.08] flex items-center justify-center flex-shrink-0">
+                        <Icon name={rule.icon} size={20} className="text-[#DF2029]" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-bold text-gray-500 mb-0.5">{rule.label}</p>
+                        <p className="text-[1rem] text-gray-700 leading-relaxed">{rule.text}</p>
+                      </div>
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
 
-            {/* Exam method */}
-            <div className="bg-red-50/50 rounded-2xl p-6 border border-red-100/60 mb-6">
-              <h3 className="text-[1rem] font-bold text-gray-800 mb-3">考评方式</h3>
-              <p className="text-[1rem] text-gray-600 mb-3">{examMethod.scoring}</p>
-              <p className="text-[1rem] text-gray-600 mb-3">
-                评估维度：{examMethod.dimensions.join('、')}
-              </p>
-              <p className="text-[1rem] font-bold text-gray-600 mb-3">{examMethod.bonus}</p>
-            </div>
+                {/* Exam method */}
+                <div className="bg-red-50/50 rounded-2xl p-6 border border-red-100/60 mb-6">
+                  <h3 className="text-[1rem] font-bold text-gray-800 mb-3">考评方式</h3>
+                  <p className="text-[1rem] text-gray-600 mb-3">{examMethod.scoring}</p>
+                  <p className="text-[1rem] text-gray-600 mb-3">
+                    评估维度：{examMethod.dimensions.join('、')}
+                  </p>
+                  <p className="text-[1rem] font-bold text-gray-600 mb-3">{examMethod.bonus}</p>
+                </div>
 
-            {/* Time note */}
-            <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-2xl p-5 mb-8">
-              <Icon
-                name="alertTriangle"
-                size={20}
-                className="text-amber-500 flex-shrink-0 mt-0.5"
-              />
-              <p className="text-[1rem] text-amber-800 leading-relaxed">{timeNote}</p>
-            </div>
+                {/* Time note */}
+                <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-2xl p-5 mb-8">
+                  <Icon
+                    name="alertTriangle"
+                    size={20}
+                    className="text-amber-500 flex-shrink-0 mt-0.5"
+                  />
+                  <p className="text-[1rem] text-amber-800 leading-relaxed">{timeNote}</p>
+                </div>
+              </>
+            )}
 
             {/* Phase Control Buttons for intro phase */}
             {examPhase === 'intro' && (

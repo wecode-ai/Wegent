@@ -2,34 +2,61 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import type { ExamAttachment } from '@wecode/types/evaluation-exam'
+import type { AnswerSlot, SlotAnswer } from '@wecode/types/evaluation-exam'
 
 /** Permission check states for the exam page */
 export type PermissionState = 'checking' | 'granted' | 'denied'
 
-/** Question data structure for per-question state */
-export interface QuestionData {
-  attachments: Record<string, ExamAttachment[]>
-  supplementaryNotes: string
-  supplementaryNotesFiles: ExamAttachment[]
-  linkValues: Record<string, string>
+// ============================================================================
+// Dynamic Question Data Types
+// ============================================================================
+
+/**
+ * Dynamic question data structure using SlotAnswer
+ * All content (including text inputs like "作答说明") is stored in the answers map
+ */
+export interface DynamicQuestionData {
+  answers: Record<string, SlotAnswer>
 }
 
-/** Map of question ID to question data */
-export type QuestionDataMap = Record<number, QuestionData>
+/** Map of question ID to dynamic question data */
+export type DynamicQuestionDataMap = Record<number, DynamicQuestionData>
 
-/** Initial empty question data structure */
-export const createEmptyQuestionData = (): QuestionData => ({
-  attachments: { main: [], interaction: [], bonusAgent: [], bonusMultimodal: [] },
-  supplementaryNotes: '',
-  supplementaryNotesFiles: [],
-  linkValues: { bonusAgent: '' },
-})
+// ============================================================================
+// Factory Functions
+// ============================================================================
 
-/** Create initial question data map for all questions */
-export const createInitialQuestionDataMap = (questionIds: number[]): QuestionDataMap => {
+/** Create empty dynamic question data based on answer slots configuration */
+export const createEmptyDynamicQuestionData = (answerSlots: AnswerSlot[]): DynamicQuestionData => {
+  const answers: Record<string, SlotAnswer> = {}
+  for (const slot of answerSlots) {
+    // Initialize based on input mode
+    if (slot.inputMode === 'text') {
+      answers[slot.key] = { text: '' }
+    } else if (slot.inputMode === 'link+attachment') {
+      answers[slot.key] = { link: '', files: [] }
+    } else {
+      answers[slot.key] = { files: [] }
+    }
+  }
+  return { answers }
+}
+
+/** Create initial dynamic question data map for all questions */
+export const createInitialDynamicQuestionDataMap = (
+  questionIds: number[],
+  answerSlotsMap: Record<number, AnswerSlot[]>
+): DynamicQuestionDataMap => {
   return questionIds.reduce((acc, id) => {
-    acc[id] = createEmptyQuestionData()
+    const slots = answerSlotsMap[id] || []
+    acc[id] = createEmptyDynamicQuestionData(slots)
     return acc
-  }, {} as QuestionDataMap)
+  }, {} as DynamicQuestionDataMap)
+}
+
+/**
+ * Check if a question uses dynamic slots (has answerSlots defined)
+ */
+export const hasDynamicSlots = (answerSlots: AnswerSlot[] | undefined): boolean => {
+  return Array.isArray(answerSlots) && answerSlots.length > 0
 }

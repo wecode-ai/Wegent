@@ -101,13 +101,22 @@ class AnswerService:
         # Create grading task if requested
         grading_task = None
         if auto_create_grading:
+            # Get grading_mode from topic config
+            grading_mode = None
+            if topic and topic.grading_team_config:
+                grading_mode = topic.grading_team_config.get("grading_mode")
+                # Backward compatibility: if no grading_mode but has team_id, it's single mode
+                if not grading_mode and topic.grading_team_config.get("team_id"):
+                    grading_mode = "single"
+
+            report_data = {"grading_mode": grading_mode} if grading_mode else {}
             grading_task = EvalGradingTask(
                 answer_id=answer.id,
                 question_id=question_id,
                 question_version=question.current_version,
                 respondent_id=user_id,
                 status=GradingTaskStatus.PENDING,
-                report_data={},
+                report_data=report_data,
             )
             db.add(grading_task)
             db.flush()
@@ -141,9 +150,11 @@ class AnswerService:
                     try:
                         grading_service = GradingService()
                         # Extract model override config from topic grading config
+                        # When model_id is specified, default force_override to True
+                        # for consistency with multi-model mode behavior
                         model_id = grading_config.get("model_id")
                         force_override = grading_config.get(
-                            "force_override_bot_model", False
+                            "force_override_bot_model", True if model_id else False
                         )
 
                         # Build multi-model config if in multi mode
@@ -438,8 +449,10 @@ class AnswerService:
     def merge_content_data(existing_content: Dict, new_content: Dict) -> Dict:
         """Merge new content data into existing content data.
 
-        Handles deep merging of attachments and special fields like
-        supplementaryNotes and supplementaryNotesFiles.
+        Handles deep merging of:
+        - answers (new dynamic slot structure)
+        - attachments (legacy structure)
+        - inputs (text fields)
 
         Args:
             existing_content: Existing content data from database
@@ -451,7 +464,24 @@ class AnswerService:
         # Start with existing content as base
         merged = {**existing_content}
 
-        # Deep merge attachments if new content has attachments
+        # Deep merge answers (new dynamic slot structure)
+        if "answers" in new_content:
+            existing_answers = existing_content.get("answers", {})
+            new_answers = new_content["answers"]
+
+            # Deep merge each answer slot
+            merged_answers = {}
+            for key in set(existing_answers.keys()) | set(new_answers.keys()):
+                if key in new_answers:
+                    # Use new value for completely replaced slots
+                    merged_answers[key] = new_answers[key]
+                else:
+                    # Keep existing value
+                    merged_answers[key] = existing_answers[key]
+
+            merged["answers"] = merged_answers
+
+        # Deep merge attachments (legacy structure) if new content has attachments
         if "attachments" in new_content:
             # Start with existing attachments or empty dict
             existing_attachments = existing_content.get("attachments", {})
@@ -469,21 +499,11 @@ class AnswerService:
 
             merged["attachments"] = merged_attachments
 
-        # Handle supplementaryNotesFiles - use new value if provided, otherwise keep existing
-        if "supplementaryNotesFiles" in new_content:
-            # Use the new value (for delete operations)
-            merged["supplementaryNotesFiles"] = new_content["supplementaryNotesFiles"]
-        elif "supplementaryNotesFiles" in existing_content:
-            # Keep existing value if not in new content
-            merged["supplementaryNotesFiles"] = existing_content[
-                "supplementaryNotesFiles"
-            ]
-
-        # Deep merge inputs (for text fields like supplementaryNotes)
-        if "inputs" in new_content:
-            merged["inputs"] = {
-                **existing_content.get("inputs", {}),
-                **new_content["inputs"],
+        # Deep merge answers (for dynamic slot-based answers)
+        if "answers" in new_content:
+            merged["answers"] = {
+                **existing_content.get("answers", {}),
+                **new_content["answers"],
             }
 
         # Merge other simple fields

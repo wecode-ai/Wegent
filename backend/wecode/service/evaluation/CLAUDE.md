@@ -47,30 +47,52 @@ for slot_name, slot_value in attachments_data.items():
     _collect_from_slot(slot_value)
 ```
 
-### 3. 可配置提示词模板
+### 3. 提示词模板（必填）
 
 **设计原则**:
-- 默认模板保持简洁，保护用户隐私（不包含 user_name）
-- 从 `topic.grading_team_config` 读取自定义模板
-- 支持变量: `{user_id}`, `{grading_task_id}`, `{topic_id}`, `{question_id}`, `{question_title}`
+- 提示词模板是**必填项**，不再有默认模板
+- 前端 GradingConfigTab 组件提供推荐模板和一键导入功能
+- 从 `topic.grading_team_config` 读取配置的模板
+- 答案内容通过附件传递，不再作为模板变量
+
+**单模型/Scorer 模板支持的变量**:
+- `{user_id}` - 答题人 ID
+- `{grading_task_id}` - 评分任务 ID
+- `{topic_id}` - 专题 ID
+- `{question_id}` - 题目 ID
+- `{question_title}` - 题目标题
+
+**Aggregator 模板支持的变量**:
+- `{question_title}` - 题目标题
+- `{scorer_count}` - 评分专家数量
+- `{scorer_summary}` - 评分专家报告摘要（自动生成）
 
 **实现**:
 ```python
-DEFAULT_PROMPT_TEMPLATE = """评测 {user_id} 号用户提交的报告"""
-
-# 读取自定义模板
+# 读取模板（必填，无默认值）
 prompt_template = topic.grading_team_config.get("prompt_template")
-template = prompt_template or DEFAULT_PROMPT_TEMPLATE
+if not prompt_template:
+    raise ValueError("prompt_template is required in grading configuration")
 
-# 构建变量
-template_vars = {
-    "user_id": task.respondent_id,
-    "grading_task_id": task.id,
-    "topic_id": topic_id,
-    "question_id": task.question_id,
-    "question_title": question_title,
-}
-prompt = template.format(**template_vars)
+# 构建变量并格式化
+prompt = prompt_template.format(
+    user_id=task.respondent_id,
+    grading_task_id=task.id,
+    topic_id=topic_id,
+    question_id=task.question_id,
+    question_title=question_title,
+)
+```
+
+**前端推荐模板示例**:
+```
+请评测 {user_id} 号用户提交的报告。
+
+题目：{question_title}
+
+用户提交的内容已作为附件提供，请查看附件中的文件。
+
+请按照评分标准进行评测，给出详细的评分报告...
 ```
 
 ### 4. 模型选择传递
@@ -101,27 +123,60 @@ API Schema -> grading_service.execute() -> TaskCreationParams -> create_chat_tas
 - [ ] API 处理函数中返回了新字段
 - [ ] 数据库 JSON 字段正确更新（使用 `flag_modified`）
 
-### 6. 模块导入规则
+### 6. 评分模块架构设计
 
-**重要**: evaluation 模块内的导入必须在文件顶部，禁止在方法内导入。
-
-**正确做法**:
-```python
-# 文件顶部导入
-from wecode.service.evaluation.topic_service import TopicService
-
-class GradingService:
-    def execute(self, ...):
-        topic_service = TopicService()  # 实例化在方法内
+**模块结构**:
+```
+grading_service.py    - 任务生命周期管理 + 策略协调
+grading_strategies.py - 策略实现（SingleModel, MultiModel）
+grading_base.py       - 数据类 + 抽象基类 + 共享工具
+grading_monitor.py    - 后台任务监控和恢复
 ```
 
-**错误做法**:
-```python
-class GradingService:
-    def execute(self, ...):
-        import json  # 禁止！
-        from wecode.service.evaluation.topic_service import TopicService  # 禁止！
+**核心设计原则**:
+1. **Strategy 只执行，返回结果**: 策略不直接修改任务状态，只返回 `GradingResult`
+2. **Service 管理生命周期**: 根据策略返回的结果调用 `complete()` 或 `fail()`
+3. **无循环依赖**: 策略不导入 Service，Service 在方法内延迟导入策略
+
+**导入关系**:
 ```
+grading_service.py
+    └── imports grading_base (顶层)
+    └── imports grading_strategies (execute 方法内，延迟导入)
+
+grading_strategies.py
+    └── imports grading_base (顶层)
+    └── 不导入 grading_service ✓
+
+grading_base.py
+    └── 不导入其他 grading 模块 ✓
+```
+
+**GradingResult 数据类**:
+```python
+@dataclass
+class GradingResult:
+    success: bool
+    content: Optional[str] = None  # 成功时的报告内容
+    error_message: Optional[str] = None  # 失败时的错误信息
+    scorer_results: Optional[List[Dict]] = None  # 多模型模式的评分结果
+```
+
+**Service 处理结果的流程**:
+```python
+def run_and_handle_result():
+    result = loop.run_until_complete(strategy.execute(ctx))
+    bg_task = bg_db.query(EvalGradingTask).filter(...).first()
+
+    if result.success and result.content is not None:
+        self.complete(bg_db, bg_task, result.content)
+    else:
+        self.fail(bg_db, bg_task, result.error_message)
+```
+
+**延迟导入的使用场景**:
+- 打破循环依赖时使用方法内导入
+- 其他情况优先使用顶层导入
 
 ### 7. 代码文件组织
 
@@ -536,6 +591,55 @@ content, error = await self._wait_for_subtask_completion(
 - 需要显式调用 `trigger_ai_response_unified` 来触发 AI
 - 参考 `SingleModelStrategy._trigger_ai_response` 实现
 
+### 19. 发布报告时从 S3 加载完整内容
+
+**问题**: 发布报告后，`final_report` 的 S3 内容也是被截断的，只有前 1000 字符。
+
+**根本原因**: `publish()` 方法在没有传入 `report_content` 时，从 `human_report.get("content")` 或 `ai_report.get("content")` 获取内容。但这些 `.content` 字段本身就是被截断的（只有前1000字符），完整内容在 S3 上的 `.s3_path`。
+
+**错误代码**:
+```python
+def publish(self, db, task, report_content=None, attachment=None):
+    final_content = report_content
+    if not final_content:
+        human_report = report_data.get("human_report", {})
+        ai_report = report_data.get("ai_report", {})
+        # ❌ 错误：.content 是截断的
+        final_content = human_report.get("content") or ai_report.get("content", "")
+```
+
+**正确做法**:
+```python
+def publish(self, db, task, report_content=None, attachment=None):
+    final_content = report_content
+    if not final_content:
+        human_report = report_data.get("human_report", {})
+        ai_report = report_data.get("ai_report", {})
+
+        # ✅ 正确：优先从 S3 加载完整内容
+        human_s3_path = human_report.get("s3_path")
+        ai_s3_path = ai_report.get("s3_path")
+
+        if human_s3_path:
+            s3_content = self._storage_service.get(human_s3_path)
+            if s3_content:
+                final_content = s3_content.decode("utf-8")
+
+        if not final_content and ai_s3_path:
+            s3_content = self._storage_service.get(ai_s3_path)
+            if s3_content:
+                final_content = s3_content.decode("utf-8")
+
+        # 回退到 inline content（可能截断）
+        if not final_content:
+            final_content = human_report.get("content") or ai_report.get("content", "")
+```
+
+**教训**:
+- 报告内容存储架构：inline `.content` 只保存前 1000 字符作为预览，完整内容在 `.s3_path`
+- 任何需要完整内容的地方都应该优先从 S3 加载，而非使用 inline content
+- 前端也需要同样的逻辑：优先 S3，回退 inline
+
 ---
-最后更新：2026-03-19
-经验版本：1.3
+最后更新：2026-03-24
+经验版本：1.6

@@ -143,70 +143,79 @@ function TopicGradingContent() {
     }
   }, [topic, loadTasks])
 
-  const handleExecuteSingle = async (taskId: number) => {
-    setExecuting(true)
-    try {
-      await graderExecuteTask(taskId)
-      toast({
-        title: t('grading.execute_success'),
-        description: '',
-      })
-      loadTasks()
-      loadTopic()
-    } catch (_error) {
-      toast({
-        title: t('errors.save_failed'),
-        description: '',
-        variant: 'destructive',
-      })
-    } finally {
-      setExecuting(false)
-    }
-  }
+  const handleExecuteSingle = useCallback(
+    async (taskId: number) => {
+      setExecuting(true)
+      try {
+        await graderExecuteTask(taskId)
+        toast({
+          title: t('grading.execute_success'),
+          description: '',
+        })
+        loadTasks()
+        loadTopic()
+      } catch (_error) {
+        toast({
+          title: t('errors.execute_failed'),
+          description: '',
+          variant: 'destructive',
+        })
+      } finally {
+        setExecuting(false)
+      }
+    },
+    [toast, t, loadTasks, loadTopic]
+  )
 
-  const handleRetrySingle = async (taskId: number) => {
-    setExecuting(true)
-    try {
-      await graderRetryTask(taskId)
-      toast({
-        title: t('grading.execute_success'),
-        description: '',
-      })
-      loadTasks()
-      loadTopic()
-    } catch (_error) {
-      toast({
-        title: t('errors.save_failed'),
-        description: '',
-        variant: 'destructive',
-      })
-    } finally {
-      setExecuting(false)
-    }
-  }
+  const handleRetrySingle = useCallback(
+    async (taskId: number) => {
+      setExecuting(true)
+      try {
+        await graderRetryTask(taskId)
+        toast({
+          title: t('grading.execute_success'),
+          description: '',
+        })
+        loadTasks()
+        loadTopic()
+      } catch (_error) {
+        toast({
+          title: t('errors.retry_failed'),
+          description: '',
+          variant: 'destructive',
+        })
+      } finally {
+        setExecuting(false)
+      }
+    },
+    [toast, t, loadTasks, loadTopic]
+  )
 
-  const handlePublishSingle = async (taskId: number) => {
-    setPublishing(true)
-    try {
-      await graderPublishTask(taskId)
-      toast({
-        title: t('grading.publish_success'),
-        description: '',
-      })
-      loadTasks()
-      loadTopic()
-    } catch (_error) {
-      toast({
-        title: t('errors.save_failed'),
-        description: '',
-        variant: 'destructive',
-      })
-    } finally {
-      setPublishing(false)
-    }
-  }
+  const handlePublishSingle = useCallback(
+    async (taskId: number) => {
+      setPublishing(true)
+      try {
+        await graderPublishTask(taskId)
+        toast({
+          title: t('grading.publish_success'),
+          description: '',
+        })
+        loadTasks()
+        loadTopic()
+      } catch (_error) {
+        toast({
+          title: t('errors.publish_failed'),
+          description: '',
+          variant: 'destructive',
+        })
+      } finally {
+        setPublishing(false)
+      }
+    },
+    [toast, t, loadTasks, loadTopic]
+  )
 
-  const handleBatchExecute = async () => {
+  const handleBatchExecute = useCallback(async () => {
     if (selectedTasks.size === 0) return
 
     setExecuting(true)
@@ -221,16 +230,16 @@ function TopicGradingContent() {
       loadTopic()
     } catch (_error) {
       toast({
-        title: t('errors.save_failed'),
+        title: t('errors.execute_failed'),
         description: '',
         variant: 'destructive',
       })
     } finally {
       setExecuting(false)
     }
-  }
+  }, [selectedTasks, toast, t, loadTasks, loadTopic])
 
-  const handleBatchPublish = async () => {
+  const handleBatchPublish = useCallback(async () => {
     if (selectedTasks.size === 0) return
 
     setPublishing(true)
@@ -245,35 +254,41 @@ function TopicGradingContent() {
       loadTopic()
     } catch (_error) {
       toast({
-        title: t('errors.save_failed'),
+        title: t('errors.publish_failed'),
         description: '',
         variant: 'destructive',
       })
     } finally {
       setPublishing(false)
     }
-  }
+  }, [selectedTasks, toast, t, loadTasks, loadTopic])
 
-  const handleViewReport = async (task: GradingTask) => {
-    setLoadingReport(true)
-    setReportDialogOpen(true)
-    try {
-      const fullTask = await graderGetTask(task.id)
-      setSelectedTask(fullTask)
-    } catch (_error) {
-      toast({
-        title: t('errors.load_failed'),
-        description: '',
-        variant: 'destructive',
-      })
-    } finally {
-      setLoadingReport(false)
-    }
-  }
+  const handleViewReport = useCallback(
+    async (task: GradingTask) => {
+      setLoadingReport(true)
+      setReportDialogOpen(true)
+      try {
+        const fullTask = await graderGetTask(task.id)
+        setSelectedTask(fullTask)
+      } catch (_error) {
+        toast({
+          title: t('errors.load_failed'),
+          description: '',
+          variant: 'destructive',
+        })
+      } finally {
+        setLoadingReport(false)
+      }
+    },
+    [toast, t]
+  )
 
-  const handleViewAnswer = (answerId: number) => {
-    router.push(`/evaluation/grader/answers/${answerId}`)
-  }
+  const handleViewAnswer = useCallback(
+    (answerId: number) => {
+      router.push(`/evaluation/grader/answers/${answerId}`)
+    },
+    [router]
+  )
 
   const getStatusBadgeVariant = (
     status: number
@@ -358,7 +373,7 @@ function TopicGradingContent() {
         render: (task: GradingTask) => (
           <div className="flex items-center justify-end gap-2">
             {/* AI Grading Actions */}
-            {task.team_id > 0 && task.status === GradingTaskStatus.PENDING && (
+            {task.grading_mode && task.status === GradingTaskStatus.PENDING && (
               <Button
                 variant="outline"
                 size="sm"
@@ -370,7 +385,7 @@ function TopicGradingContent() {
                 <Play className="h-4 w-4" />
               </Button>
             )}
-            {task.team_id > 0 &&
+            {task.grading_mode &&
               (task.status === GradingTaskStatus.FAILED ||
                 task.status === GradingTaskStatus.RUNNING ||
                 task.status === GradingTaskStatus.COMPLETED) && (
@@ -425,7 +440,17 @@ function TopicGradingContent() {
         ),
       },
     ],
-    [t, executing, publishing]
+    [
+      t,
+      executing,
+      publishing,
+      handleExecuteSingle,
+      handleRetrySingle,
+      handlePublishSingle,
+      handleViewReport,
+      handleViewAnswer,
+      router,
+    ]
   )
 
   if (loading) {

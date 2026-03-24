@@ -5,6 +5,7 @@
 'use client'
 
 import { Icon } from './ExamIcons'
+import type { ExamAttachment, AnswerSlot } from '@wecode/types/evaluation-exam'
 
 export interface Topic {
   id: number
@@ -19,6 +20,10 @@ export interface Topic {
   scenarios?: string[]
   contextSuffix?: string
   tasksLabel?: string
+  /** Optional material package attachments for exam takers to download */
+  attachments?: ExamAttachment[]
+  /** Answer slot configuration for dynamic answer collection */
+  answerSlots?: AnswerSlot[]
 }
 
 interface AIAssessmentTopicCardProps {

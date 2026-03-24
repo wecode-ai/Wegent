@@ -22,7 +22,6 @@ export type { Column, DataTableProps } from './common/DataTable'
 
 // Author components
 export { TopicCard } from './author/TopicCard'
-export { QuestionFileUpload } from './author/QuestionFileUpload'
 
 // Respondent components
 export { RespondentTopicCard } from './respondent/RespondentTopicCard'

@@ -4,45 +4,16 @@
 
 'use client'
 
-import { useEffect, useState } from 'react'
-import {
-  AIAssessmentExamPage,
-  EXAM_DATA,
-  UPLOAD_SLOTS_CONFIG,
-} from '@wecode/components/evaluation/exam'
-import { getTopic } from '@wecode/api/evaluation'
+import { ExamPage } from '@wecode/components/evaluation/exam'
 
 /**
  * AI Assessment 2026 Exam Page
  *
  * Topic ID: 1
- * Question IDs: 1, 2, 3
  *
- * This page uses the shared AIAssessmentExamPage component.
+ * This page uses the dynamic ExamPage component which loads slot configuration
+ * from Question.content_data.answerSlots.
  */
 export default function AIAssessment2026Page() {
-  const [topicName, setTopicName] = useState<string>('')
-
-  useEffect(() => {
-    getTopic(1)
-      .then(topic => {
-        if (topic?.name) {
-          setTopicName(topic.name)
-        }
-      })
-      .catch(() => {
-        // Fallback to default title
-      })
-  }, [])
-
-  return (
-    <AIAssessmentExamPage
-      topicId={1}
-      examData={EXAM_DATA}
-      uploadSlotsConfig={UPLOAD_SLOTS_CONFIG}
-      pageTitle={topicName || '微博高层管理人员 AI 应用能力考核'}
-      gridCols={3}
-      enableFileContentLoading={false}
-    />
-  )
+  return <ExamPage topicId={1} />
 }

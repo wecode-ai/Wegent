@@ -169,50 +169,6 @@ export const EXAM_DATA = {
   ],
 }
 
-export const UPLOAD_SLOTS_CONFIG = [
-  {
-    key: 'interaction',
-    label: '交互过程记录',
-    hint: '支持 PDF、图片、文本等格式，最多可上传 20 个文件',
-    required: true,
-    maxFiles: 20,
-    accept: '.pdf,.doc,.docx,.txt,.md,.png,.jpg,.jpeg,.gif,.webp,.html,.json',
-    iconName: 'pen',
-    iconClass: 'text-gray-400',
-  },
-  {
-    key: 'main',
-    label: '产出报告及方案',
-    hint: '支持 PDF、Word、TXT 等格式，最多可上传 20 个文件',
-    required: true,
-    maxFiles: 20,
-    accept: '.pdf,.doc,.docx,.txt,.md,.rtf,.pages',
-    iconName: 'file',
-    iconClass: 'text-[#DF2029]',
-  },
-  {
-    key: 'bonusAgent',
-    label: '附加题一：Agent / Skill',
-    hint: '支持图片、PDF、文档等格式，最多可上传 20 个文件',
-    maxFiles: 20,
-    accept: '.pdf,.doc,.docx,.png,.jpg,.jpeg,.gif,.webp,.pptx,.ppt,.html',
-    iconName: 'workflow',
-    iconClass: 'text-indigo-500',
-    showLinkInput: true,
-    linkLabel: 'Agent 分享链接',
-    linkPlaceholder: '粘贴可访问/可运行的 Agent 分享链接',
-  },
-  {
-    key: 'bonusMultimodal',
-    label: '附加题二：多模态交付物',
-    hint: '支持 PPTX、PDF、图片、MP4 等格式，最多可上传 20 个文件',
-    maxFiles: 20,
-    accept: '.pptx,.ppt,.pdf,.doc,.docx,.png,.jpg,.jpeg,.gif,.webp,.mp4,.mov,.avi,.svg',
-    iconName: 'layers',
-    iconClass: 'text-rose-500',
-  },
-] as const
-
 /**
  * AI Assessment 2026 Exam Data V2
  *
@@ -360,47 +316,3 @@ export const EXAM_DATA_V2 = {
     },
   ],
 }
-
-export const UPLOAD_SLOTS_CONFIG_V2 = [
-  {
-    key: 'interaction',
-    label: '交互过程记录',
-    hint: '支持 PDF、图片、文本等格式，最多可上传 20 个文件',
-    required: true,
-    maxFiles: 20,
-    accept: '.pdf,.doc,.docx,.txt,.md,.png,.jpg,.jpeg,.gif,.webp,.html,.json',
-    iconName: 'pen',
-    iconClass: 'text-gray-400',
-  },
-  {
-    key: 'main',
-    label: '产出报告及方案',
-    hint: '支持 PDF、Word、TXT 等格式，最多可上传 20 个文件',
-    required: true,
-    maxFiles: 20,
-    accept: '.pdf,.doc,.docx,.txt,.md,.rtf,.pages',
-    iconName: 'file',
-    iconClass: 'text-[#DF2029]',
-  },
-  {
-    key: 'bonusAgent',
-    label: '附加题一：Agent / Skill',
-    hint: '支持图片、PDF、文档等格式，最多可上传 20 个文件',
-    maxFiles: 20,
-    accept: '.pdf,.doc,.docx,.png,.jpg,.jpeg,.gif,.webp,.pptx,.ppt,.html',
-    iconName: 'workflow',
-    iconClass: 'text-indigo-500',
-    showLinkInput: true,
-    linkLabel: 'Agent 分享链接',
-    linkPlaceholder: '粘贴可访问/可运行的 Agent 分享链接',
-  },
-  {
-    key: 'bonusMultimodal',
-    label: '附加题二：多模态交付物',
-    hint: '支持 PPTX、PDF、图片、MP4 等格式，最多可上传 20 个文件',
-    maxFiles: 20,
-    accept: '.pptx,.ppt,.pdf,.doc,.docx,.png,.jpg,.jpeg,.gif,.webp,.mp4,.mov,.avi,.svg',
-    iconName: 'layers',
-    iconClass: 'text-rose-500',
-  },
-] as const

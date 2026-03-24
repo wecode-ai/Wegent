@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import {
   ArrowLeft,
@@ -15,6 +15,7 @@ import {
   CheckCircle,
   Circle,
   AlertCircle,
+  Loader2,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -32,6 +33,14 @@ import {
   generateEvaluationPrefixedFilename,
   type GenericAttachment,
 } from '@wecode/components/evaluation/common'
+import { fetchFileContent } from '@wecode/api/evaluation-shared'
+import EnhancedMarkdown from '@/components/common/EnhancedMarkdown'
+import { useTheme } from '@/features/theme/ThemeProvider'
+import {
+  isExamQuestionContent,
+  type ExamQuestionContent,
+  type AnswerSlot,
+} from '@wecode/types/evaluation-exam'
 
 interface Attachment {
   key: string
@@ -40,25 +49,18 @@ interface Attachment {
   content_type?: string
 }
 
-interface AttachmentGroup {
-  main?: Attachment[]
-  interaction?: Attachment[]
-  bonusAgent?: {
-    link?: string
-    files?: Attachment[]
-  }
-  bonusMultimodal?: Attachment[]
+/** Single slot answer */
+interface SlotAnswer {
+  text?: string
+  link?: string
+  files?: Attachment[]
 }
 
 interface AnswerContent {
   participantName?: string
   selectedTopicId?: number
-  inputs?: {
-    supplementaryNotes?: string
-  }
-  attachments?: AttachmentGroup & {
-    supplementaryNotes?: Attachment[]
-  }
+  /** Dynamic slot-based answers */
+  answers?: Record<string, SlotAnswer>
 }
 
 const PHASE_OPTIONS = [
@@ -163,24 +165,171 @@ function QuestionAnswerCard({
   userId: number
   topicId: number
 }) {
+  const { theme } = useTheme()
   const hasAnswer = !!answerContent
-  const attachments = answerContent?.attachments
-  const hasMainFiles = attachments?.main && attachments.main.length > 0
-  const hasInteractionFiles = attachments?.interaction && attachments.interaction.length > 0
-  const hasBonusAgentFiles =
-    attachments?.bonusAgent?.files && attachments.bonusAgent.files.length > 0
-  const hasBonusMultimodalFiles =
-    attachments?.bonusMultimodal && attachments.bonusMultimodal.length > 0
-  const hasSupplementaryNotesFiles =
-    attachments?.supplementaryNotes && attachments.supplementaryNotes.length > 0
-  const hasSupplementaryNotesText = !!answerContent?.inputs?.supplementaryNotes?.trim()
-  const hasLink = attachments?.bonusAgent?.link
+  // Memoize answers to prevent useEffect from running on every render
+  const answers = useMemo(() => answerContent?.answers || {}, [answerContent])
 
-  const checklistItems = [
-    { label: '已填写说明', done: hasSupplementaryNotesText || hasSupplementaryNotesFiles },
-    { label: '已上传交互记录', done: hasInteractionFiles },
-    { label: '已上传报告', done: hasMainFiles },
-  ]
+  // State for loading text content from S3
+  const [loadedTexts, setLoadedTexts] = useState<Record<string, string>>({})
+  const [loadingSlots, setLoadingSlots] = useState<Set<string>>(new Set())
+
+  // Load text from S3 for slots that have .txt files but empty text
+  useEffect(() => {
+    const loadTextFromS3 = async () => {
+      for (const [slotKey, slotAnswer] of Object.entries(answers)) {
+        // Check if text is empty and there's a .txt file
+        if (
+          (!slotAnswer.text || !slotAnswer.text.trim()) &&
+          slotAnswer.files &&
+          slotAnswer.files.length > 0 &&
+          !loadedTexts[slotKey] &&
+          !loadingSlots.has(slotKey)
+        ) {
+          const txtFile = slotAnswer.files.find(f => f.filename.endsWith('.txt'))
+          if (txtFile) {
+            setLoadingSlots(prev => new Set(prev).add(slotKey))
+            try {
+              const content = await fetchFileContent(txtFile.key)
+              setLoadedTexts(prev => ({ ...prev, [slotKey]: content }))
+            } catch (error) {
+              console.error(`Failed to load text from S3 for slot ${slotKey}:`, error)
+            } finally {
+              setLoadingSlots(prev => {
+                const newSet = new Set(prev)
+                newSet.delete(slotKey)
+                return newSet
+              })
+            }
+          }
+        }
+      }
+    }
+    loadTextFromS3()
+  }, [answers, loadedTexts, loadingSlots])
+
+  // Get answer slots from question content_data for display labels
+  const answerSlots: AnswerSlot[] = useMemo(() => {
+    return isExamQuestionContent(question.content_data)
+      ? (question.content_data as ExamQuestionContent).answerSlots || []
+      : []
+  }, [question.content_data])
+
+  // Helper to get slot label by key
+  const getSlotLabel = (slotKey: string): string => {
+    const slot = answerSlots.find(s => s.key === slotKey)
+    return slot?.label || slotKey.replace(/([A-Z])/g, ' $1').trim()
+  }
+
+  // Calculate submission checklist from required slots (consistent with ExamPage)
+  const checklistItems = useMemo(() => {
+    // Generate checklist from required slots (excluding bonus slots)
+    const items: Array<{ label: string; done: boolean }> = []
+
+    for (const slot of answerSlots) {
+      if (slot.required && !slot.isBonus) {
+        const slotAnswer = answers[slot.key]
+        const loadedText = loadedTexts[slot.key]
+        const hasContent = Boolean(
+          (slotAnswer?.files && slotAnswer.files.length > 0) ||
+          (slotAnswer?.text && slotAnswer.text.trim() !== '') ||
+          (loadedText && loadedText.trim() !== '') ||
+          (slotAnswer?.link && slotAnswer.link.trim() !== '')
+        )
+        items.push({
+          label: slot.label,
+          done: hasContent,
+        })
+      }
+    }
+
+    return items
+  }, [answerSlots, answers, loadedTexts])
+
+  // Render a single slot answer
+  const renderSlotAnswer = (slotKey: string, slotAnswer: SlotAnswer) => {
+    const elements: React.ReactNode[] = []
+    const slotLabel = getSlotLabel(slotKey)
+
+    // Check if there's a .txt file (text was converted to attachment)
+    const hasTxtFile = slotAnswer.files?.some(f => f.filename.endsWith('.txt'))
+    const isLoadingText = loadingSlots.has(slotKey)
+
+    // Only show text content if there's no .txt file attachment
+    // If text was converted to .txt file, just show the file as downloadable
+    if (!hasTxtFile) {
+      // Use loaded text from S3 if original text is empty
+      const displayText = slotAnswer.text?.trim() ? slotAnswer.text : loadedTexts[slotKey]
+
+      // Render text content (original or loaded from S3)
+      if (displayText && displayText.trim()) {
+        elements.push(
+          <div key={`${slotKey}-text`}>
+            <h4 className="text-sm font-medium text-gray-700 mb-3 flex items-center gap-2">
+              <FileText className="w-4 h-4" />
+              {slotLabel}
+            </h4>
+            <div className="bg-gray-50 rounded-xl p-4 border border-gray-100">
+              <div className="prose prose-sm max-w-none markdown-content">
+                <EnhancedMarkdown
+                  source={displayText}
+                  theme={theme === 'dark' ? 'dark' : 'light'}
+                />
+              </div>
+            </div>
+          </div>
+        )
+      } else if (isLoadingText) {
+        // Show loading indicator while fetching text from S3
+        elements.push(
+          <div key={`${slotKey}-loading`}>
+            <h4 className="text-sm font-medium text-gray-700 mb-3 flex items-center gap-2">
+              <FileText className="w-4 h-4" />
+              {slotLabel}
+            </h4>
+            <div className="bg-gray-50 rounded-xl p-4 border border-gray-100 flex items-center gap-2 text-gray-500">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              <span className="text-sm">加载内容中...</span>
+            </div>
+          </div>
+        )
+      }
+    }
+
+    // Render link
+    if (slotAnswer.link && slotAnswer.link.trim()) {
+      elements.push(
+        <div key={`${slotKey}-link`} className="p-3 bg-gray-50 rounded-xl border border-gray-100">
+          <p className="text-xs text-gray-500 mb-1">{slotLabel} - 链接</p>
+          <a
+            href={slotAnswer.link}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-sm text-blue-600 hover:underline break-all"
+          >
+            {slotAnswer.link}
+          </a>
+        </div>
+      )
+    }
+
+    // Render files - always show all files including .txt converted from text
+    if (slotAnswer.files && slotAnswer.files.length > 0) {
+      elements.push(
+        <AttachmentSection
+          key={`${slotKey}-files`}
+          title={`${slotLabel} - 附件`}
+          files={slotAnswer.files}
+          userId={userId}
+          topicId={topicId}
+          questionId={question.id}
+          slot={slotKey}
+        />
+      )
+    }
+
+    return elements.length > 0 ? <div className="space-y-3">{elements}</div> : null
+  }
 
   return (
     <Card className="overflow-hidden border-gray-200">
@@ -212,123 +361,59 @@ function QuestionAnswerCard({
         {/* Answer Content */}
         {hasAnswer && (
           <div className="p-5 space-y-6">
-            {/* Submission Checklist */}
-            <div>
-              <h4 className="text-sm font-medium text-gray-700 mb-3">提交检查</h4>
-              <div className="grid grid-cols-3 gap-3">
-                {checklistItems.map((item, index) => (
-                  <div
-                    key={index}
-                    className={`flex items-center gap-2 px-3 py-2 rounded-xl text-sm ${
-                      item.done ? 'bg-green-50 text-green-700' : 'bg-gray-50 text-gray-400'
-                    }`}
-                  >
-                    {item.done ? (
-                      <CheckCircle className="w-4 h-4 text-green-500 flex-shrink-0" />
-                    ) : (
-                      <Circle className="w-4 h-4 flex-shrink-0" />
-                    )}
-                    <span className="font-medium">{item.label}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Supplementary Notes Text */}
-            {hasSupplementaryNotesText && (
+            {/* Submission Checklist - consistent with ExamPage */}
+            {checklistItems.length > 0 && (
               <div>
-                <h4 className="text-sm font-medium text-gray-700 mb-3 flex items-center gap-2">
-                  <FileText className="w-4 h-4" />
-                  作答说明
-                </h4>
-                <div className="bg-gray-50 rounded-xl p-4 border border-gray-100">
-                  <pre className="text-sm text-gray-700 whitespace-pre-wrap font-sans">
-                    {answerContent?.inputs?.supplementaryNotes}
-                  </pre>
+                <h4 className="text-sm font-medium text-gray-700 mb-3">提交检查</h4>
+                <div
+                  className={`grid gap-3 ${
+                    checklistItems.length === 1
+                      ? 'grid-cols-1'
+                      : checklistItems.length === 2
+                        ? 'grid-cols-2'
+                        : checklistItems.length === 3
+                          ? 'grid-cols-3'
+                          : checklistItems.length === 4
+                            ? 'grid-cols-2 sm:grid-cols-4'
+                            : checklistItems.length === 5
+                              ? 'grid-cols-2 sm:grid-cols-5'
+                              : checklistItems.length === 6
+                                ? 'grid-cols-2 sm:grid-cols-3'
+                                : 'grid-cols-2 sm:grid-cols-4'
+                  }`}
+                >
+                  {checklistItems.map((item, index) => (
+                    <div
+                      key={index}
+                      className={`flex items-center gap-2.5 px-4 py-3 rounded-xl text-sm font-medium ${
+                        item.done ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-400'
+                      }`}
+                    >
+                      {item.done ? (
+                        <CheckCircle className="w-4 h-4 text-green-500 flex-shrink-0" />
+                      ) : (
+                        <div className="w-4 h-4 rounded-full border-2 border-red-300 flex-shrink-0" />
+                      )}
+                      <span>
+                        {item.label}
+                        {!item.done ? ' *' : ''}
+                      </span>
+                    </div>
+                  ))}
                 </div>
               </div>
             )}
 
-            {/* Supplementary Notes Files */}
-            {hasSupplementaryNotesFiles && (
-              <AttachmentSection
-                title="作答说明附件"
-                files={attachments!.supplementaryNotes!}
-                userId={userId}
-                topicId={topicId}
-                questionId={question.id}
-                slot="supplementaryNotes"
-              />
-            )}
-
-            {/* Interaction Records */}
-            {hasInteractionFiles && (
-              <AttachmentSection
-                title="交互记录"
-                files={attachments!.interaction!}
-                userId={userId}
-                topicId={topicId}
-                questionId={question.id}
-                slot="interaction"
-              />
-            )}
-
-            {/* Main Deliverables */}
-            {hasMainFiles && (
-              <AttachmentSection
-                title="主要交付物"
-                files={attachments!.main!}
-                userId={userId}
-                topicId={topicId}
-                questionId={question.id}
-                slot="main"
-              />
-            )}
-
-            {/* Bonus Agent */}
-            {(hasBonusAgentFiles || hasLink) && (
-              <div>
-                <h4 className="text-sm font-medium text-gray-700 mb-3 flex items-center gap-2">
-                  <Paperclip className="w-4 h-4" />
-                  智能体部署
-                </h4>
-                {hasLink && (
-                  <div className="p-3 bg-gray-50 rounded-xl border border-gray-100 mb-2">
-                    <p className="text-xs text-gray-500 mb-1">部署链接</p>
-                    <a
-                      href={attachments!.bonusAgent!.link}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-sm text-blue-600 hover:underline break-all"
-                    >
-                      {attachments!.bonusAgent!.link}
-                    </a>
-                  </div>
-                )}
-                {hasBonusAgentFiles && (
-                  <AttachmentSection
-                    title=""
-                    files={attachments!.bonusAgent!.files!}
-                    userId={userId}
-                    topicId={topicId}
-                    questionId={question.id}
-                    slot="bonusAgent"
-                  />
-                )}
-              </div>
-            )}
-
-            {/* Bonus Multimodal */}
-            {hasBonusMultimodalFiles && (
-              <AttachmentSection
-                title="多模态作品"
-                files={attachments!.bonusMultimodal!}
-                userId={userId}
-                topicId={topicId}
-                questionId={question.id}
-                slot="bonusMultimodal"
-              />
-            )}
+            {/* Dynamic Slot Answers - sorted by answerSlots order */}
+            {(() => {
+              const slotOrder = answerSlots.map(s => s.key)
+              const answersKeys = Object.keys(answers)
+              const orderedKeys = slotOrder.filter(key => answersKeys.includes(key))
+              const remainingKeys = answersKeys.filter(key => !slotOrder.includes(key)).sort()
+              return [...orderedKeys, ...remainingKeys].map(slotKey => (
+                <div key={slotKey}>{renderSlotAnswer(slotKey, answers[slotKey])}</div>
+              ))
+            })()}
           </div>
         )}
 
