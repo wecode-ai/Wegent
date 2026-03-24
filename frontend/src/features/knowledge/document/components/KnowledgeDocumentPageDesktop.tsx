@@ -744,8 +744,10 @@ export function KnowledgeDocumentPageDesktop() {
         } else if (selectedGroup.type === 'organization') {
           return kb.group_type === 'organization'
         } else {
-          // For team groups, match by group name
-          return kb.group_type === 'group' && kb.group_name === selectedGroup.name
+          // For team groups, match by namespace (group_id contains the namespace)
+          // selectedGroup.name is the namespace (e.g., "test/group2/ttt")
+          // kb.namespace is also the namespace
+          return kb.group_type === 'group' && kb.namespace === selectedGroup.name
         }
       })
 
