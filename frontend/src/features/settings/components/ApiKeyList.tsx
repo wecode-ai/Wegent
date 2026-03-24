@@ -251,7 +251,10 @@ const ApiKeyList: React.FC = () => {
         {!loading && (
           <div className="border-t border-border pt-3 mt-3 bg-base">
             <div className="flex justify-center">
-              <UnifiedAddButton onClick={() => setCreateDialogOpen(true)}>
+              <UnifiedAddButton
+                onClick={() => setCreateDialogOpen(true)}
+                data-roleid="api-key-create-button"
+              >
                 {t('common:api_keys.create')}
               </UnifiedAddButton>
             </div>
@@ -276,6 +279,7 @@ const ApiKeyList: React.FC = () => {
               value={keyName}
               onChange={e => setKeyName(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && handleCreate()}
+              data-roleid="api-key-name-input"
             />
           </div>
           <DialogFooter>
@@ -286,7 +290,11 @@ const ApiKeyList: React.FC = () => {
             >
               {t('common:actions.cancel')}
             </Button>
-            <Button onClick={handleCreate} disabled={isCreating || !keyName.trim()}>
+            <Button
+              onClick={handleCreate}
+              disabled={isCreating || !keyName.trim()}
+              data-roleid="api-key-submit-button"
+            >
               {isCreating ? (
                 <div className="flex items-center">
                   <Loader2 className="w-4 h-4 animate-spin mr-2" />
@@ -314,7 +322,10 @@ const ApiKeyList: React.FC = () => {
               {t('common:api_keys.key')}
             </label>
             <div className="mt-2 flex items-center gap-2">
-              <code className="flex-1 bg-muted p-3 rounded text-sm font-mono break-all">
+              <code
+                className="flex-1 bg-muted p-3 rounded text-sm font-mono break-all"
+                data-roleid="api-key-display"
+              >
                 {createdKey?.key}
               </code>
               <Button
