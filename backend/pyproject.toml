@@ -102,6 +102,8 @@ dependencies = [
     "croniter>=2.0.0",
     # Web scraping with JavaScript rendering support
     "crawl4ai>=0.4.0",
+    # Pin litellm to safe version (crawl4ai dependency) - versions after 1.82.6 contain supply chain attack
+    "litellm==1.82.6",
     # WebSocket support
     "python-socketio>=5.10.0",
     # DingTalk Stream SDK for IM channel integration
