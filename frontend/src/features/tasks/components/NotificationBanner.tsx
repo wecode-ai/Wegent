@@ -179,6 +179,7 @@ export default function NotificationBanner({
             {content && (
               <div
                 className={cn(
+                  'notification-markdown-container',
                   'text-sm pb-0 leading-5 text-text-primary prose prose-sm max-w-none dark:prose-invert',
                   '[&_a]:text-primary [&_a]:underline [&_a]:underline-offset-2 [&_a]:transition-colors hover:[&_a]:text-primary/80',
                   '[&_ul]:list-disc [&_ul]:pl-4 [&_ul]:space-y-0.5 [&_ul]:my-0 [&_ul]:mb-0',
@@ -189,8 +190,19 @@ export default function NotificationBanner({
                   '[&>div]:mb-0 [&>div>div]:mb-0',
                   title && 'mt-1'
                 )}
+                style={
+                  {
+                    '--color-canvas-default': 'transparent',
+                    '--color-canvas-subtle': 'transparent',
+                  } as React.CSSProperties
+                }
               >
-                <EnhancedMarkdown source={content} theme={theme} />
+                <div
+                  className="[&_.wmde-markdown]:!bg-transparent [&_.markdown-content]:!bg-transparent [&>*]:!bg-transparent"
+                  style={{ background: 'transparent' }}
+                >
+                  <EnhancedMarkdown source={content} theme={theme} />
+                </div>
               </div>
             )}
             {/* Legacy: Render items array (deprecated) */}
