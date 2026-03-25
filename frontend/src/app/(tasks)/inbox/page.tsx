@@ -21,7 +21,7 @@ import '@/features/common/scrollbar.css'
 /**
  * Inbox Page with Sidebar
  *
- * Main page for Work Queue (工作队列) module with left sidebar.
+ * Main page for Work Queue module with left sidebar.
  * Allows users to view and manage forwarded messages.
  */
 export default function InboxPage() {

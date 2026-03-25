@@ -261,7 +261,10 @@ export function QueueEditDialog({ queue, open, onOpenChange }: QueueEditDialogPr
                       type="number"
                       min={15}
                       value={scheduleInterval}
-                      onChange={e => setScheduleInterval(Number(e.target.value))}
+                      onChange={e => {
+                        const val = parseInt(e.target.value, 10)
+                        if (!isNaN(val)) setScheduleInterval(val)
+                      }}
                       data-testid="queue-schedule-interval-input"
                     />
                   </div>

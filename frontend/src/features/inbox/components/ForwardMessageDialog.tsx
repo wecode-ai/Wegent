@@ -8,7 +8,6 @@ import { useState, useEffect, useCallback } from 'react'
 import { X, User, Users, Inbox, Clock, Send, Loader2 } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
 import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
 import {
@@ -369,17 +368,20 @@ export function ForwardMessageDialog({
                       r => r.type === 'user' && r.id === contact.userId
                     )
                     return (
-                      <Badge
+                      <button
+                        type="button"
                         key={contact.id}
-                        variant={isSelected ? 'default' : 'info'}
                         className={cn(
-                          'cursor-pointer transition-colors',
-                          !isSelected && 'hover:bg-surface'
+                          'inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold transition-colors cursor-pointer',
+                          isSelected
+                            ? 'bg-primary text-primary-foreground'
+                            : 'bg-info text-info-foreground hover:bg-surface'
                         )}
                         onClick={() => !isSelected && handleAddRecentContact(contact)}
+                        disabled={isSelected}
                       >
                         {contact.userName}
-                      </Badge>
+                      </button>
                     )
                   })}
                 </div>

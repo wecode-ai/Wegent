@@ -356,17 +356,23 @@ class WorkQueueService:
     def set_default_queue(self, user_id: int, queue_id: int) -> WorkQueueResponse:
         """Set a queue as the default queue."""
         with self.get_db() as db:
-            # First, unset all other default queues
-            db.query(Kind).filter(
-                Kind.user_id == user_id,
-                Kind.kind == self.WORK_QUEUE_KIND,
-                Kind.is_active == True,
-            ).update(
-                {
-                    "json": func.json_set(Kind.json, "$.spec.isDefault", False),
-                    "updated_at": datetime.now(),
-                }
+            # First, unset all other default queues (Python-level update for PostgreSQL compatibility)
+            queues = (
+                db.query(Kind)
+                .filter(
+                    Kind.user_id == user_id,
+                    Kind.kind == self.WORK_QUEUE_KIND,
+                    Kind.is_active.is_(True),
+                )
+                .all()
             )
+            for q in queues:
+                if q.json.get("spec", {}).get("isDefault"):
+                    q.json = {
+                        **q.json,
+                        "spec": {**q.json.get("spec", {}), "isDefault": False},
+                    }
+                    q.updated_at = datetime.now()
 
             # Set the specified queue as default
             queue = (
@@ -375,7 +381,7 @@ class WorkQueueService:
                     Kind.id == queue_id,
                     Kind.user_id == user_id,
                     Kind.kind == self.WORK_QUEUE_KIND,
-                    Kind.is_active == True,
+                    Kind.is_active.is_(True),
                 )
                 .first()
             )

@@ -256,8 +256,8 @@ class MessageForwardingService:
         members = (
             db.query(NamespaceMember)
             .filter(
-                NamespaceMember.namespace == group_namespace,
-                NamespaceMember.is_active == True,
+                NamespaceMember.group_name == group_namespace,
+                NamespaceMember.is_active.is_(True),
             )
             .all()
         )

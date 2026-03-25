@@ -92,16 +92,17 @@ export function InboxProvider({ children }: InboxProviderProps) {
       // Auto-select default queue or first queue
       if (response.items.length > 0) {
         const defaultQueue = response.items.find(q => q.isDefault)
-        if (!selectedQueueId) {
-          setSelectedQueueId(defaultQueue?.id || response.items[0].id)
-        }
+        setSelectedQueueId(prev => {
+          if (prev) return prev // Keep existing selection
+          return defaultQueue?.id || response.items[0].id
+        })
       }
     } catch (error) {
       console.error('Failed to load work queues:', error)
     } finally {
       setQueuesLoading(false)
     }
-  }, [selectedQueueId])
+  }, [])
 
   // Load messages for selected queue
   const loadMessages = useCallback(

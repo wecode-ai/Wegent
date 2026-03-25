@@ -145,7 +145,7 @@ async def regenerate_invite_code(
 @router.get("/{queue_id}/messages", response_model=QueueMessageListResponse)
 async def list_queue_messages(
     queue_id: int,
-    status: Optional[QueueMessageStatus] = Query(None),
+    message_status: Optional[QueueMessageStatus] = Query(None, alias="status"),
     priority: Optional[QueueMessagePriority] = Query(None),
     sender_user_id: Optional[int] = Query(None),
     skip: int = Query(0, ge=0),
@@ -165,7 +165,7 @@ async def list_queue_messages(
     items, total, unread = queue_message_service.list_messages(
         user_id=current_user.id,
         queue_id=queue_id,
-        status=status,
+        status=message_status,
         priority=priority,
         sender_user_id=sender_user_id,
         skip=skip,
