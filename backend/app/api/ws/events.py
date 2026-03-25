@@ -592,9 +592,7 @@ class QueueMessageProcessedPayload(BaseModel):
 class QueueReplyReceivedPayload(BaseModel):
     """Payload for queue:reply_received event."""
 
-    original_message_id: int = Field(
-        ..., description="Original forwarded message ID"
-    )
+    original_message_id: int = Field(..., description="Original forwarded message ID")
     reply_from_user_id: int = Field(..., description="User who processed the message")
     reply_from_user_name: str = Field(..., description="Username of processor")
     reply_content: str = Field(..., description="Reply content")

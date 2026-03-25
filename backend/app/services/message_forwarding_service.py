@@ -39,9 +39,7 @@ class MessageForwardingService:
         """Get database session."""
         return SessionLocal()
 
-    def _get_message_content_snapshot(
-        self, subtask: Subtask
-    ) -> MessageContentSnapshot:
+    def _get_message_content_snapshot(self, subtask: Subtask) -> MessageContentSnapshot:
         """Create a content snapshot from a subtask."""
         # Build attachment info
         attachments = []
@@ -52,7 +50,11 @@ class MessageForwardingService:
 
         return MessageContentSnapshot(
             role=subtask.role.value if subtask.role else "USER",
-            content=subtask.prompt or subtask.result.get("value", "") if subtask.result else "",
+            content=(
+                subtask.prompt or subtask.result.get("value", "")
+                if subtask.result
+                else ""
+            ),
             senderUserName=getattr(subtask, "sender_user_name", None),
             createdAt=subtask.created_at.isoformat() if subtask.created_at else None,
             attachments=attachments if attachments else None,
@@ -132,11 +134,13 @@ class MessageForwardingService:
                     logger.error(
                         f"Failed to forward to recipient: {recipient}, error: {e}"
                     )
-                    failed_recipients.append({
-                        "type": recipient.type,
-                        "id": recipient.id,
-                        "error": str(e),
-                    })
+                    failed_recipients.append(
+                        {
+                            "type": recipient.type,
+                            "id": recipient.id,
+                            "error": str(e),
+                        }
+                    )
 
             return ForwardMessageResponse(
                 success=forwarded_count > 0,
@@ -279,9 +283,7 @@ class MessageForwardingService:
                     priority=priority,
                 )
             except Exception as e:
-                logger.error(
-                    f"Failed to forward to group member {member.user_id}: {e}"
-                )
+                logger.error(f"Failed to forward to group member {member.user_id}: {e}")
 
 
 # Global service instance

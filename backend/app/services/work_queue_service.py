@@ -58,7 +58,9 @@ class WorkQueueService:
         return secrets.token_urlsafe(16)
 
     def _build_queue_response(
-        self, db_queue: Kind, message_counts: Optional[Dict[int, Tuple[int, int]]] = None
+        self,
+        db_queue: Kind,
+        message_counts: Optional[Dict[int, Tuple[int, int]]] = None,
     ) -> WorkQueueResponse:
         """Build WorkQueueResponse from Kind model."""
         spec = db_queue.json.get("spec", {})
@@ -179,9 +181,7 @@ class WorkQueueService:
             queue_ids = [q.id for q in queues]
             message_counts = self._get_batch_message_counts(queue_ids)
 
-            return [
-                self._build_queue_response(q, message_counts) for q in queues
-            ]
+            return [self._build_queue_response(q, message_counts) for q in queues]
 
     def get_queue(self, user_id: int, queue_id: int) -> Optional[WorkQueueResponse]:
         """Get a specific work queue."""
@@ -213,9 +213,7 @@ class WorkQueueService:
                 .first()
             )
 
-    def create_queue(
-        self, user_id: int, data: WorkQueueCreate
-    ) -> WorkQueueResponse:
+    def create_queue(self, user_id: int, data: WorkQueueCreate) -> WorkQueueResponse:
         """Create a new work queue."""
         with self.get_db() as db:
             # Check if queue with same name already exists
@@ -311,9 +309,8 @@ class WorkQueueService:
             if data.visibility is not None:
                 spec["visibility"] = data.visibility.value
                 # Generate new invite code if switching to invite_only
-                if (
-                    data.visibility == QueueVisibility.INVITE_ONLY
-                    and not spec.get("inviteCode")
+                if data.visibility == QueueVisibility.INVITE_ONLY and not spec.get(
+                    "inviteCode"
                 ):
                     spec["inviteCode"] = self._generate_invite_code()
             if data.visibleToGroups is not None:
@@ -392,15 +389,11 @@ class WorkQueueService:
             db.commit()
             db.refresh(queue)
 
-            logger.info(
-                f"Set default work queue: id={queue_id}, user_id={user_id}"
-            )
+            logger.info(f"Set default work queue: id={queue_id}, user_id={user_id}")
 
             return self._build_queue_response(queue)
 
-    def regenerate_invite_code(
-        self, user_id: int, queue_id: int
-    ) -> WorkQueueResponse:
+    def regenerate_invite_code(self, user_id: int, queue_id: int) -> WorkQueueResponse:
         """Regenerate the invite code for a queue."""
         with self.get_db() as db:
             queue = (
@@ -475,13 +468,15 @@ class WorkQueueService:
                 spec = q.json.get("spec", {})
                 visibility = spec.get("visibility", "private")
                 if visibility in ["public", "invite_only"]:
-                    result.append({
-                        "id": q.id,
-                        "name": q.name,
-                        "displayName": spec.get("displayName", q.name),
-                        "description": spec.get("description"),
-                        "isDefault": spec.get("isDefault", False),
-                    })
+                    result.append(
+                        {
+                            "id": q.id,
+                            "name": q.name,
+                            "displayName": spec.get("displayName", q.name),
+                            "description": spec.get("description"),
+                            "isDefault": spec.get("isDefault", False),
+                        }
+                    )
 
             return result
 
@@ -573,8 +568,7 @@ class QueueMessageService:
             sourceTaskId=db_message.source_task_id,
             sourceSubtaskIds=db_message.source_subtask_ids,
             contentSnapshot=[
-                MessageContentSnapshot(**msg)
-                for msg in db_message.content_snapshot
+                MessageContentSnapshot(**msg) for msg in db_message.content_snapshot
             ],
             note=db_message.note,
             priority=db_message.priority,

@@ -6,7 +6,6 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { RefreshCw, Settings, Menu } from 'lucide-react'
 import TopNavigation from '@/features/layout/TopNavigation'
 import {
   TaskSidebar,
@@ -14,7 +13,6 @@ import {
   CollapsedSidebarButtons,
 } from '@/features/tasks/components/sidebar'
 import { InboxProvider, InboxPage as InboxPageContent } from '@/features/inbox'
-import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import '@/app/tasks/tasks.css'
