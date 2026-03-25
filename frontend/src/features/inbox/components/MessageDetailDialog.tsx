@@ -150,7 +150,7 @@ export function MessageDetailDialog({
                     {item.attachments && item.attachments.length > 0 && (
                       <div className="mt-2 flex flex-wrap gap-2">
                         {item.attachments.map((attachment, attIndex) => (
-                          <Badge key={attIndex} variant="outline" className="text-xs">
+                          <Badge key={attIndex} variant="info" className="text-xs">
                             {attachment.name}
                             {attachment.file_size && (
                               <span className="ml-1 text-text-muted">

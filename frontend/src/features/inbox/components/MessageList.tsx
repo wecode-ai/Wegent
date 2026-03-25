@@ -248,7 +248,7 @@ export function MessageList({ onViewMessage, onProcessMessage }: MessageListProp
                     </div>
                     {message.note && (
                       <div className="flex items-center gap-1 mt-1">
-                        <Badge variant="outline" className="text-xs">
+                        <Badge variant="info" className="text-xs">
                           {t('messages.note')}: {message.note}
                         </Badge>
                       </div>

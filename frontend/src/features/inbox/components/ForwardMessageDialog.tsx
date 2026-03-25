@@ -371,7 +371,7 @@ export function ForwardMessageDialog({
                     return (
                       <Badge
                         key={contact.id}
-                        variant={isSelected ? 'default' : 'outline'}
+                        variant={isSelected ? 'default' : 'info'}
                         className={cn(
                           'cursor-pointer transition-colors',
                           !isSelected && 'hover:bg-surface'
