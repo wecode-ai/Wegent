@@ -123,7 +123,7 @@ COPY backend/init_data /app/init_data
 
 # Copy startup script
 COPY docker/standalone/start.sh /app/start.sh
-RUN chmod +x /app/start.sh
+RUN sed -i 's/\r$//' /app/start.sh && chmod +x /app/start.sh
 
 # Environment variables for standalone mode
 ENV STANDALONE_MODE=true

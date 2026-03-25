@@ -25,6 +25,7 @@ import {
   CommandList,
 } from '@/components/ui/command'
 import { cn } from '@/lib/utils'
+import { getRepositoryIdentity } from './repositoryIdentity'
 
 /**
  * BranchSelector component
@@ -57,7 +58,7 @@ export default function BranchSelector({
   // Used antd message.error for unified error prompt, no need for local error state
   const [error, setError] = useState<string | null>(null)
   const [userCleared, setUserCleared] = useState(false)
-  const previousRepoIdRef = useRef<number | null>(null)
+  const previousRepoIdentityRef = useRef<string | null>(null)
   // State for compact mode popover - must be declared before any conditional returns
   const [compactOpen, setCompactOpen] = React.useState(false)
 
@@ -69,13 +70,14 @@ export default function BranchSelector({
 
   // Fetch branch list
   useEffect(() => {
-    const currentRepoId = selectedRepo?.git_repo_id ?? null
-    const previousRepoId = previousRepoIdRef.current
-    const repoChanged = previousRepoId !== null && currentRepoId !== previousRepoId
+    const currentRepoIdentity = selectedRepo ? getRepositoryIdentity(selectedRepo) : null
+    const previousRepoIdentity = previousRepoIdentityRef.current
+    const repoChanged =
+      previousRepoIdentity !== null && currentRepoIdentity !== previousRepoIdentity
     if (repoChanged) {
       handleBranchChange(null)
     }
-    previousRepoIdRef.current = currentRepoId
+    previousRepoIdentityRef.current = currentRepoIdentity
     if (!selectedRepo) {
       setBranches([])
       setError(null)

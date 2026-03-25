@@ -24,6 +24,7 @@ import { useRepositorySearch } from '../../hooks/useRepositorySearch'
 import { RepoListView } from './RepoListView'
 import { BranchListView } from './BranchListView'
 import { TaskContext } from '../../contexts/taskContext'
+import { getRepositoryIdentity } from './repositoryIdentity'
 
 /**
  * Props for UnifiedRepositorySelector component
@@ -147,10 +148,10 @@ export default function UnifiedRepositorySelector({
 
   // Convert repos to items and remove duplicates
   const repoItems = useMemo(() => {
-    // Remove duplicates by git_repo_id (backend may return duplicates)
+    // Remove duplicates by repository identity
     const seen = new Set<string>()
     const uniqueRepos = repos.filter(repo => {
-      const key = repo.git_repo_id.toString()
+      const key = getRepositoryIdentity(repo)
       if (seen.has(key)) {
         return false
       }
@@ -159,17 +160,18 @@ export default function UnifiedRepositorySelector({
     })
 
     const items = uniqueRepos.map(repo => ({
-      value: repo.git_repo_id.toString(),
+      value: getRepositoryIdentity(repo),
       label: repo.git_repo,
       searchText: repo.git_repo,
     }))
 
     // Ensure selected repo is in the items list
     if (selectedRepo) {
-      const hasSelected = items.some(item => item.value === selectedRepo.git_repo_id.toString())
+      const selectedRepoIdentity = getRepositoryIdentity(selectedRepo)
+      const hasSelected = items.some(item => item.value === selectedRepoIdentity)
       if (!hasSelected) {
         items.unshift({
-          value: selectedRepo.git_repo_id.toString(),
+          value: selectedRepoIdentity,
           label: selectedRepo.git_repo,
           searchText: selectedRepo.git_repo,
         })
@@ -523,7 +525,7 @@ export default function UnifiedRepositorySelector({
               >
                 <RepoListView
                   repos={repoItems}
-                  selectedRepoId={selectedRepo?.git_repo_id.toString() ?? null}
+                  selectedRepoId={selectedRepo ? getRepositoryIdentity(selectedRepo) : null}
                   onSelect={handleRepoSelect}
                   onSearchChange={handleSearchChange}
                   onConfigureClick={handleIntegrationClick}

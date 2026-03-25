@@ -337,4 +337,52 @@ describe('RepositorySelector', () => {
     // This is the bug we fixed - empty search results should not trigger a full reload
     expect((githubApis.getRepositories as jest.Mock).mock.calls.length).toBe(initialCallCount)
   })
+
+  it('should select the correct repository when git_repo_id overlaps across domains', async () => {
+    const overlappingRepos: GitRepoInfo[] = [
+      {
+        git_repo_id: 101,
+        name: 'repo-a',
+        git_repo: 'group/repo-a',
+        git_url: 'https://git.intra.weibo.com/group/repo-a',
+        git_domain: 'git.intra.weibo.com',
+        private: false,
+        type: 'gitlab',
+      },
+      {
+        git_repo_id: 101,
+        name: 'repo-b',
+        git_repo: 'group/repo-b',
+        git_url: 'https://gitlab.weibo.cn/group/repo-b',
+        git_domain: 'gitlab.weibo.cn',
+        private: false,
+        type: 'gitlab',
+      },
+    ]
+    ;(githubApis.getRepositories as jest.Mock).mockResolvedValue(overlappingRepos)
+
+    const user = userEvent.setup()
+
+    render(
+      <RepositorySelector
+        selectedRepo={null}
+        handleRepoChange={mockHandleRepoChange}
+        disabled={false}
+      />
+    )
+
+    await waitFor(() => {
+      expect(githubApis.getRepositories).toHaveBeenCalled()
+    })
+
+    const trigger = screen.getByRole('combobox')
+    await user.click(trigger)
+
+    const option = await screen.findByText('group/repo-b')
+    await user.click(option)
+
+    await waitFor(() => {
+      expect(mockHandleRepoChange).toHaveBeenCalledWith(overlappingRepos[1])
+    })
+  })
 })

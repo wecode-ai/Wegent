@@ -11,6 +11,7 @@ import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
 import { githubApis } from '@/apis/github'
 import { getLastRepo } from '@/utils/userPreferences'
+import { getRepositoryIdentity } from '@/features/tasks/components/selector/repositoryIdentity'
 
 export interface UseRepositorySearchOptions {
   selectedRepo: GitRepoInfo | null
@@ -233,7 +234,16 @@ export function useRepositorySearch({
    */
   const handleChange = useCallback(
     (value: string) => {
-      let repo = repos.find(r => r.git_repo_id === Number(value))
+      let repo = repos.find(r => getRepositoryIdentity(r) === value)
+
+      if (!repo) {
+        repo = cachedRepos.find(r => getRepositoryIdentity(r) === value)
+      }
+
+      // Backward-compatibility for legacy values that only pass git_repo_id
+      if (!repo) {
+        repo = repos.find(r => r.git_repo_id === Number(value))
+      }
 
       if (!repo) {
         repo = cachedRepos.find(r => r.git_repo_id === Number(value))
@@ -342,7 +352,10 @@ export function useRepositorySearch({
         const lastRepo = getLastRepo()
 
         if (lastRepo) {
-          const repoToRestore = repoList.find(r => r.git_repo_id === lastRepo.repoId)
+          const repoToRestore =
+            repoList.find(
+              r => r.git_repo_id === lastRepo.repoId && r.git_repo === lastRepo.repoName
+            ) ?? repoList.find(r => r.git_repo_id === lastRepo.repoId)
           if (repoToRestore) {
             handleRepoChange(repoToRestore)
           }

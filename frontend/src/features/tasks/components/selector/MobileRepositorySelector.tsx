@@ -16,6 +16,7 @@ import { Command, CommandInput } from '@/components/ui/command'
 
 import { RepositorySelectorFooter } from './RepositorySelectorFooter'
 import { useRepositorySearch } from '../../hooks/useRepositorySearch'
+import { getRepositoryIdentity } from './repositoryIdentity'
 
 // Initial number of repositories to render for performance
 const INITIAL_VISIBLE_COUNT = 50
@@ -93,10 +94,10 @@ export default function MobileRepositorySelector({
   }
 
   const selectItems = useMemo(() => {
-    // Remove duplicates by git_repo_id (backend may return duplicates)
+    // Remove duplicates by repository identity
     const seen = new Set<string>()
     const uniqueRepos = repos.filter(repo => {
-      const key = repo.git_repo_id.toString()
+      const key = getRepositoryIdentity(repo)
       if (seen.has(key)) {
         return false
       }
@@ -105,15 +106,16 @@ export default function MobileRepositorySelector({
     })
 
     const items = uniqueRepos.map(repo => ({
-      value: repo.git_repo_id.toString(),
+      value: getRepositoryIdentity(repo),
       label: repo.git_repo,
     }))
 
     if (selectedRepo) {
-      const hasSelected = items.some(item => item.value === selectedRepo.git_repo_id.toString())
+      const selectedRepoIdentity = getRepositoryIdentity(selectedRepo)
+      const hasSelected = items.some(item => item.value === selectedRepoIdentity)
       if (!hasSelected) {
         items.unshift({
-          value: selectedRepo.git_repo_id.toString(),
+          value: selectedRepoIdentity,
           label: selectedRepo.git_repo,
         })
       }
@@ -223,7 +225,7 @@ export default function MobileRepositorySelector({
                       <Check
                         className={cn(
                           'h-3 w-3 shrink-0',
-                          selectedRepo?.git_repo_id.toString() === item.value
+                          selectedRepo && getRepositoryIdentity(selectedRepo) === item.value
                             ? 'opacity-100 text-primary'
                             : 'opacity-0'
                         )}
