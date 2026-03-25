@@ -10,6 +10,7 @@ export {
   formatFileSize,
   getOfficeType,
   isCodeFile,
+  isFilePreviewable,
   type PreviewType,
 } from './utils'
 export { useFileBlob, useExcelParser, type ExcelSheet } from './hooks'

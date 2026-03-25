@@ -9,8 +9,8 @@ import Prism from 'prismjs'
 import { getPrismLanguage } from '../utils'
 import { useTheme } from '@/features/theme/ThemeProvider'
 
-// Import Prism core styles - use tomorrow theme (VS Code like dark theme)
-import 'prismjs/themes/prism-tomorrow.css'
+// Import Prism theme with CSS variables support
+import 'prism-theme-vars/base.css'
 
 // Import common languages
 import 'prismjs/components/prism-javascript'
@@ -49,32 +49,38 @@ export function TextPreview({ content, filename }: TextPreviewProps) {
     if (codeRef.current && content && language !== 'text') {
       Prism.highlightElement(codeRef.current)
     }
-  }, [content, language, isDarkMode])
+  }, [content, language])
 
   // Split content into lines for rendering with line numbers
   const lines = content.split('\n')
 
-  // Theme colors based on dark/light mode - VS Code Dark+ theme
-  const themeColors = isDarkMode
-    ? {
-        bg: '#1e1e1e', // VS Code editor background
-        lineNumberBg: '#1e1e1e', // Same as editor
-        lineNumberColor: '#858585', // VS Code line numbers
-        hoverBg: '#2a2d2e', // VS Code hover highlight
-        borderColor: '#333', // Subtle border
-        textColor: '#d4d4d4', // VS Code default text
-      }
-    : {
-        bg: '#f5f2f0',
-        lineNumberBg: '#e8e5e3',
-        lineNumberColor: '#999',
-        hoverBg: '#e0ddd9',
-        borderColor: '#ccc',
-        textColor: '#333',
-      }
-
   return (
-    <div className="flex flex-col h-full" style={{ backgroundColor: themeColors.bg }}>
+    <div
+      className="flex flex-col h-full"
+      style={
+        {
+          backgroundColor: 'var(--prism-background)',
+          '--prism-scheme': isDarkMode ? 'dark' : 'light',
+          '--prism-foreground': isDarkMode ? '#d4d4d4' : '#333',
+          '--prism-background': isDarkMode ? '#1e1e1e' : '#ffffff',
+          '--prism-comment': isDarkMode ? '#6a9955' : '#008000',
+          '--prism-string': isDarkMode ? '#ce9178' : '#a31515',
+          '--prism-literal': isDarkMode ? '#569cd6' : '#0000ff',
+          '--prism-keyword': isDarkMode ? '#569cd6' : '#0000ff',
+          '--prism-function': isDarkMode ? '#dcdcaa' : '#795e26',
+          '--prism-deleted': isDarkMode ? '#ce9178' : '#a31515',
+          '--prism-class': isDarkMode ? '#4ec9b0' : '#267f99',
+          '--prism-builtin': isDarkMode ? '#4ec9b0' : '#267f99',
+          '--prism-property': isDarkMode ? '#9cdcfe' : '#001080',
+          '--prism-namespace': isDarkMode ? '#4ec9b0' : '#267f99',
+          '--prism-punctuation': isDarkMode ? '#d4d4d4' : '#333',
+          '--prism-line-number': isDarkMode ? '#858585' : '#666',
+          '--prism-line-number-gutter': isDarkMode ? '#333' : '#ddd',
+          '--prism-line-highlight-background': isDarkMode ? '#2a2d2e' : '#f5f5f5',
+          '--prism-selection-background': isDarkMode ? '#264f78' : '#add6ff',
+        } as React.CSSProperties
+      }
+    >
       <div className="flex-1 overflow-auto">
         <table className="w-full border-collapse">
           <tbody>
@@ -84,7 +90,7 @@ export function TextPreview({ content, filename }: TextPreviewProps) {
                 className="transition-colors"
                 style={{ backgroundColor: 'transparent' }}
                 onMouseEnter={e => {
-                  e.currentTarget.style.backgroundColor = themeColors.hoverBg
+                  e.currentTarget.style.backgroundColor = 'var(--prism-line-highlight-background)'
                 }}
                 onMouseLeave={e => {
                   e.currentTarget.style.backgroundColor = 'transparent'
@@ -95,9 +101,9 @@ export function TextPreview({ content, filename }: TextPreviewProps) {
                   className="text-right select-none font-mono text-sm py-0 px-4 border-r"
                   style={{
                     minWidth: '3.5rem',
-                    backgroundColor: themeColors.lineNumberBg,
-                    color: themeColors.lineNumberColor,
-                    borderColor: themeColors.borderColor,
+                    backgroundColor: 'var(--prism-background)',
+                    color: 'var(--prism-line-number)',
+                    borderColor: 'var(--prism-line-number-gutter)',
                   }}
                 >
                   {index + 1}
@@ -122,7 +128,6 @@ export function TextPreview({ content, filename }: TextPreviewProps) {
                           textShadow: 'none',
                           padding: 0,
                           margin: 0,
-                          color: language === 'text' ? themeColors.textColor : undefined,
                         }}
                       >
                         {line || ' '}
@@ -135,7 +140,6 @@ export function TextPreview({ content, filename }: TextPreviewProps) {
                           textShadow: 'none',
                           padding: 0,
                           margin: 0,
-                          color: language === 'text' ? themeColors.textColor : undefined,
                         }}
                       >
                         {line || ' '}

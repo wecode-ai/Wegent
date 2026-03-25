@@ -19,6 +19,7 @@ from langchain_core.callbacks import CallbackManagerForToolRun
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field, PrivateAttr
 
+from shared.telemetry.context.large_data import log_large_string_list
 from shared.telemetry.decorators import add_span_event, set_span_attribute, trace_async
 
 from .knowledge_base_abc import KnowledgeBaseToolABC
@@ -419,7 +420,7 @@ class KbHeadTool(KnowledgeBaseToolABC, BaseTool):
         """
         try:
             add_span_event("reading_documents")
-            set_span_attribute("document_ids", str(document_ids))
+            log_large_string_list("document_ids", [str(d) for d in document_ids])
             set_span_attribute("offset", offset)
             set_span_attribute("limit", limit)
 
@@ -509,7 +510,7 @@ class KbHeadTool(KnowledgeBaseToolABC, BaseTool):
             )
 
         add_span_event("reading_documents")
-        set_span_attribute("document_ids", str(document_ids))
+        log_large_string_list("document_ids", [str(d) for d in document_ids])
         set_span_attribute("offset", offset)
         set_span_attribute("limit", limit)
         set_span_attribute("mode", "package")
@@ -591,7 +592,7 @@ class KbHeadTool(KnowledgeBaseToolABC, BaseTool):
         import httpx
 
         add_span_event("reading_documents")
-        set_span_attribute("document_ids", str(document_ids))
+        log_large_string_list("document_ids", [str(d) for d in document_ids])
         set_span_attribute("offset", offset)
         set_span_attribute("limit", limit)
         set_span_attribute("mode", "http")

@@ -42,6 +42,7 @@ from app.db.base import Base
 from app.db.session import SessionLocal, engine
 from app.models import *  # noqa: F401,F403
 from app.services.jobs import start_background_jobs, stop_background_jobs
+from shared.telemetry.context.large_data import log_json_body
 
 # Redis lock key for startup operations (migrations + YAML init)
 # Only used to prevent concurrent initialization, not to skip initialization
@@ -534,7 +535,7 @@ def create_app():
                 if request_body:
                     current_span = trace.get_current_span()
                     if current_span and current_span.is_recording():
-                        current_span.set_attribute("http.request.body", request_body)
+                        log_json_body("http.request.body", request_body)
 
         # Pre-request logging with request ID
         logger.info(

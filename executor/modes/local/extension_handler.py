@@ -122,6 +122,13 @@ class DeviceExtensionHandler:
         payload: dict[str, Any],
     ) -> dict[str, Any]:
         env = os.environ.copy()
+
+        # Fix PyInstaller LD_LIBRARY_PATH issue: restore original system library path
+        # so subprocess tools (e.g., openssl) use correct system libraries instead of
+        # PyInstaller's bundled versions which may be incompatible.
+        if "LD_LIBRARY_PATH_ORIG" in env:
+            env["LD_LIBRARY_PATH"] = env["LD_LIBRARY_PATH_ORIG"]
+
         env["WEGENT_EXTENSION_NAME"] = extension_name
         env["WEGENT_EXTENSION_ACTION"] = action
         env["WEGENT_EXTENSION_PAYLOAD"] = json.dumps(payload, ensure_ascii=True)

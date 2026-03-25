@@ -123,7 +123,7 @@ function SettingsContent() {
   }
 
   // Handle tab change
-  const handleTabChange = (tab: SettingsTabId) => {
+  const handleTabChange = (tab: SettingsTabId, groupName?: string | null) => {
     setActiveTab(tab)
     // Update URL with new tab
     const section = tab.startsWith('personal-')
@@ -131,7 +131,10 @@ function SettingsContent() {
       : tab.startsWith('group-')
         ? 'groups'
         : tab
-    const groupParam = selectedGroup ? `&group=${encodeURIComponent(selectedGroup)}` : ''
+    // Use provided groupName if available (for when tab change is triggered with group selection),
+    // otherwise fall back to current selectedGroup
+    const groupToUse = groupName !== undefined ? groupName : selectedGroup
+    const groupParam = groupToUse ? `&group=${encodeURIComponent(groupToUse)}` : ''
     router.replace(`?section=${section}&tab=${tab}${groupParam}`)
   }
 
