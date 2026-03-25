@@ -33,6 +33,7 @@ export interface UseRepositorySearchReturn {
   handleSearchChange: (query: string) => void
   handleRefreshCache: () => Promise<void>
   handleChange: (value: string) => void
+  resetSearch: () => void
 
   // Helpers
   hasGitInfo: () => boolean
@@ -140,17 +141,8 @@ export function useRepositorySearch({
           return
         }
 
-        // Merge local and remote results, remove duplicates
-        const localResults = searchLocalRepos(query)
-        const mergedResults = [...localResults]
-
-        results.forEach(remoteRepo => {
-          if (!mergedResults.find(r => r.git_repo_id === remoteRepo.git_repo_id)) {
-            mergedResults.push(remoteRepo)
-          }
-        })
-
-        setRepos(mergedResults)
+        // Use remote search results directly (replace, not merge)
+        setRepos(results)
         setError(null)
       } catch {
         if (requestId === searchRequestIdRef.current) {
@@ -162,7 +154,7 @@ export function useRepositorySearch({
         }
       }
     },
-    [cachedRepos, searchLocalRepos]
+    [cachedRepos]
   )
 
   /**
@@ -253,6 +245,21 @@ export function useRepositorySearch({
     },
     [repos, cachedRepos, handleRepoChange]
   )
+
+  /**
+   * Reset search state - clear query and restore cached repos
+   */
+  const resetSearch = useCallback(() => {
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current)
+      searchTimeoutRef.current = null
+    }
+    searchRequestIdRef.current++
+    setCurrentSearchQuery('')
+    setRepos(cachedRepos)
+    setIsSearching(false)
+    setError(null)
+  }, [cachedRepos])
 
   // Cleanup timer on unmount
   useEffect(() => {
@@ -362,6 +369,7 @@ export function useRepositorySearch({
     handleSearchChange,
     handleRefreshCache,
     handleChange,
+    resetSearch,
     hasGitInfo,
   }
 }

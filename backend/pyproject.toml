@@ -109,6 +109,8 @@ dependencies = [
     "crawl4ai>=0.4.0",
     # Pin Playwright to version synced by npmmirror (v1200 = Chromium 143.0.7499.4)
     "playwright==1.52.0",
+    # Pin litellm to safe version (crawl4ai dependency) - versions after 1.82.6 contain supply chain attack
+    "litellm==1.82.6",
     # WebSocket support
     "python-socketio>=5.10.0",
     # DingTalk Stream SDK for IM channel integration

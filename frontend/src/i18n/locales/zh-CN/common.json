@@ -17,7 +17,8 @@
     "unified_selector_placeholder": "选择仓库 / 分支",
     "requires_workspace": "需要仓库",
     "no_workspace_needed": "无需仓库",
-    "no_workspace_description": "此任务将在不使用代码仓库的情况下运行"
+    "no_workspace_description": "此任务将在不使用代码仓库的情况下运行",
+    "scroll_to_load_more": "滚动加载更多..."
   },
   "actions": {
     "save": "保存",

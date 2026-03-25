@@ -137,6 +137,7 @@ export default function UnifiedRepositorySelector({
     handleSearchChange,
     handleRefreshCache,
     handleChange: handleRepoSelectFromSearch,
+    resetSearch,
   } = useRepositorySearch({
     selectedRepo,
     handleRepoChange: onRepoChange,
@@ -144,9 +145,20 @@ export default function UnifiedRepositorySelector({
     selectedTaskDetail,
   })
 
-  // Convert repos to items
+  // Convert repos to items and remove duplicates
   const repoItems = useMemo(() => {
-    const items = repos.map(repo => ({
+    // Remove duplicates by git_repo_id (backend may return duplicates)
+    const seen = new Set<string>()
+    const uniqueRepos = repos.filter(repo => {
+      const key = repo.git_repo_id.toString()
+      if (seen.has(key)) {
+        return false
+      }
+      seen.add(key)
+      return true
+    })
+
+    const items = uniqueRepos.map(repo => ({
       value: repo.git_repo_id.toString(),
       label: repo.git_repo,
       searchText: repo.git_repo,
@@ -260,6 +272,7 @@ export default function UnifiedRepositorySelector({
   }, [selectedRepo, selectedTaskDetail?.branch_name])
 
   // Set initial view when popover opens based on selection state
+  // Reset search when popover closes
   useEffect(() => {
     if (isOpen) {
       // If repo is already selected, start with branch view for quick branch switching
@@ -269,8 +282,11 @@ export default function UnifiedRepositorySelector({
       } else {
         setCurrentView('repo')
       }
+    } else {
+      // Reset search when closing
+      resetSearch()
     }
-  }, [isOpen, selectedRepo])
+  }, [isOpen, selectedRepo, resetSearch])
 
   // Auto-open popover when requiresWorkspace changes from false to true (e.g., team switch)
   // and no repo is currently selected.
@@ -516,6 +532,7 @@ export default function UnifiedRepositorySelector({
                   isSearching={isSearching}
                   isRefreshing={isRefreshing}
                   error={repoError}
+                  isOpen={isOpen}
                   onClearSelection={
                     // Only show clear button if we have a way to toggle workspace requirement
                     // And currently workspace IS required (so we can clear it)

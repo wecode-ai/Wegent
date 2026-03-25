@@ -4,25 +4,23 @@
 
 'use client'
 
-import React, { useState, useMemo } from 'react'
-import { FolderGit2, Check } from 'lucide-react'
+import React, { useState, useMemo, useRef, useCallback, useEffect } from 'react'
+import { FolderGit2, Check, Loader2 } from 'lucide-react'
 import { GitRepoInfo, TaskDetail } from '@/types/api'
 import { useRouter } from 'next/navigation'
 import { paths } from '@/config/paths'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from '@/components/ui/command'
+import { Command, CommandInput } from '@/components/ui/command'
 
 import { RepositorySelectorFooter } from './RepositorySelectorFooter'
 import { useRepositorySearch } from '../../hooks/useRepositorySearch'
+
+// Initial number of repositories to render for performance
+const INITIAL_VISIBLE_COUNT = 50
+// Number of repositories to load on each scroll
+const LOAD_MORE_COUNT = 50
 
 interface MobileRepositorySelectorProps {
   selectedRepo: GitRepoInfo | null
@@ -45,6 +43,9 @@ export default function MobileRepositorySelector({
   const { t } = useTranslation()
   const router = useRouter()
   const [open, setOpen] = useState(false)
+  const listRef = useRef<HTMLDivElement>(null)
+  // Track visible count for progressive loading
+  const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE_COUNT)
 
   // Use the shared repository search hook
   const {
@@ -55,12 +56,31 @@ export default function MobileRepositorySelector({
     handleSearchChange,
     handleRefreshCache,
     handleChange: baseHandleChange,
+    resetSearch,
   } = useRepositorySearch({
     selectedRepo,
     handleRepoChange,
     disabled,
     selectedTaskDetail,
   })
+
+  // Reset visible count when repos change (new search results)
+  // Use a ref to track if this is a new search/filter operation
+  const prevReposRef = useRef(repos)
+  useEffect(() => {
+    // Check if repos array actually changed (different references or different items)
+    const prevRepos = prevReposRef.current
+    const hasChanged =
+      prevRepos.length !== repos.length ||
+      (repos.length > 0 &&
+        prevRepos.length > 0 &&
+        prevRepos[0]?.git_repo_id !== repos[0]?.git_repo_id)
+
+    if (hasChanged) {
+      setVisibleCount(INITIAL_VISIBLE_COUNT)
+      prevReposRef.current = repos
+    }
+  }, [repos])
 
   // Wrap handleChange to also close the popover
   const handleChange = (value: string) => {
@@ -73,7 +93,18 @@ export default function MobileRepositorySelector({
   }
 
   const selectItems = useMemo(() => {
-    const items = repos.map(repo => ({
+    // Remove duplicates by git_repo_id (backend may return duplicates)
+    const seen = new Set<string>()
+    const uniqueRepos = repos.filter(repo => {
+      const key = repo.git_repo_id.toString()
+      if (seen.has(key)) {
+        return false
+      }
+      seen.add(key)
+      return true
+    })
+
+    const items = uniqueRepos.map(repo => ({
       value: repo.git_repo_id.toString(),
       label: repo.git_repo,
     }))
@@ -91,15 +122,40 @@ export default function MobileRepositorySelector({
     return items
   }, [repos, selectedRepo])
 
+  // Get visible items based on current count
+  const visibleItems = useMemo(() => {
+    return selectItems.slice(0, visibleCount)
+  }, [selectItems, visibleCount])
+
+  const hasMoreItems = selectItems.length > visibleCount
+
+  // Handle scroll to load more
+  const handleScroll = useCallback(() => {
+    if (!listRef.current || !hasMoreItems) return
+
+    const { scrollTop, scrollHeight, clientHeight } = listRef.current
+    // Load more when user scrolls to bottom (within 50px)
+    if (scrollTop + clientHeight >= scrollHeight - 50) {
+      setVisibleCount(prev => Math.min(prev + LOAD_MORE_COUNT, selectItems.length))
+    }
+  }, [hasMoreItems, selectItems.length])
+
+  // Handle popover open/close changes
+  const handleOpenChange = useCallback(
+    (newOpen: boolean) => {
+      // Prevent opening when disabled
+      if ((disabled || loading) && newOpen) return
+      setOpen(newOpen)
+      // Reset search when closing
+      if (!newOpen) {
+        resetSearch()
+      }
+    },
+    [disabled, loading, resetSearch]
+  )
+
   return (
-    <Popover
-      open={open}
-      onOpenChange={newOpen => {
-        // Prevent opening when disabled
-        if ((disabled || loading) && newOpen) return
-        setOpen(newOpen)
-      }}
-    >
+    <Popover open={open} onOpenChange={handleOpenChange}>
       <PopoverTrigger asChild>
         <button
           type="button"
@@ -140,27 +196,27 @@ export default function MobileRepositorySelector({
             onValueChange={handleSearchChange}
             className="h-9 rounded-none border-b border-border flex-shrink-0 placeholder:text-text-muted text-sm"
           />
-          <CommandList className="min-h-[36px] max-h-[200px] overflow-y-auto flex-1">
+          <div
+            ref={listRef}
+            onScroll={handleScroll}
+            className="min-h-[36px] max-h-[200px] overflow-y-auto flex-1"
+          >
             {error ? (
               <div className="py-4 px-3 text-center text-sm text-error">{error}</div>
             ) : selectItems.length === 0 ? (
-              <CommandEmpty className="py-4 text-center text-sm text-text-muted">
+              <div className="py-4 text-center text-sm text-text-muted">
                 {loading ? 'Loading...' : t('branches.select_repository')}
-              </CommandEmpty>
+              </div>
             ) : (
               <>
-                <CommandEmpty className="py-4 text-center text-sm text-text-muted">
-                  {t('branches.no_match')}
-                </CommandEmpty>
-                <CommandGroup>
-                  {selectItems.map(item => (
-                    <CommandItem
+                <div className="p-1">
+                  {visibleItems.map(item => (
+                    <div
                       key={item.value}
-                      value={item.label}
-                      onSelect={() => handleChange(item.value)}
+                      onClick={() => handleChange(item.value)}
                       className={cn(
                         'cursor-pointer px-3 py-1.5 text-sm rounded-md mx-1 my-[2px]',
-                        'data-[selected=true]:bg-primary/10 aria-selected:bg-hover',
+                        'hover:bg-hover',
                         '!flex !flex-row !items-center !gap-3'
                       )}
                     >
@@ -173,12 +229,21 @@ export default function MobileRepositorySelector({
                         )}
                       />
                       <span className="flex-1 min-w-0 truncate">{item.label}</span>
-                    </CommandItem>
+                    </div>
                   ))}
-                </CommandGroup>
+                </div>
+                {/* Load more indicator */}
+                {hasMoreItems && (
+                  <div className="py-2 px-3 text-center text-xs text-text-muted">
+                    <div className="flex items-center justify-center gap-2">
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                      <span>{t('common:repos.scroll_to_load_more', 'Scroll to load more...')}</span>
+                    </div>
+                  </div>
+                )}
               </>
             )}
-          </CommandList>
+          </div>
         </Command>
         <RepositorySelectorFooter
           onConfigureClick={handleIntegrationClick}

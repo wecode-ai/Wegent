@@ -16,6 +16,7 @@ from typing import Any, Callable
 
 from chat_shell.services.streaming.core import should_display_tool_details
 from shared.models import ResponsesAPIEmitter
+from shared.telemetry.context.large_data import log_large_attribute
 from shared.telemetry.decorators import add_span_event
 
 logger = logging.getLogger(__name__)
@@ -97,13 +98,16 @@ def _handle_tool_start(
     state._tool_use_id_map[run_id] = tool_use_id
 
     # Add OpenTelemetry span event for tool start
-    add_span_event(
-        f"tool_start:{tool_name}",
-        attributes={
+    log_large_attribute(
+        "tool.input",
+        serializable_input,
+        max_attr_length=100,
+        max_event_length=5000,
+        event_name=f"tool_start:{tool_name}",
+        extra_attributes={
             "tool.name": tool_name,
             "tool.run_id": run_id,
             "tool.tool_use_id": tool_use_id,
-            "tool.input": str(serializable_input)[:1000],
         },
     )
 
@@ -171,14 +175,17 @@ def _handle_tool_end(
 
     # Add OpenTelemetry span event for tool end
     output_str = str(serializable_output)
-    add_span_event(
-        f"tool_end:{tool_name}",
-        attributes={
+    log_large_attribute(
+        "tool.output",
+        serializable_output,
+        max_attr_length=100,
+        max_event_length=5000,
+        event_name=f"tool_end:{tool_name}",
+        extra_attributes={
             "tool.name": tool_name,
             "tool.run_id": run_id,
             "tool.tool_use_id": tool_use_id,
             "tool.output_length": len(output_str),
-            "tool.output": output_str[:1000],
             "tool.status": "completed",
         },
     )

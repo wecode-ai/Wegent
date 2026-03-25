@@ -86,7 +86,7 @@ export function FilePreviewDialog({
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="max-w-5xl w-[90vw] h-[80vh] p-0 flex flex-col">
+      <DialogContent className="max-w-5xl w-[90vw] h-[80vh] p-0 flex flex-col" hideCloseButton>
         <DialogHeader className="px-4 py-3 border-b border-border flex flex-row items-center justify-between">
           <div className="flex items-center gap-3 min-w-0">
             <span className="text-2xl">{getFileIcon()}</span>

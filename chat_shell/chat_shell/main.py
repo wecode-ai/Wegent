@@ -38,6 +38,7 @@ from chat_shell.storage import StorageProvider, StorageType, create_storage_prov
 
 # Import telemetry config (always available)
 from shared.telemetry.config import get_otel_config
+from shared.telemetry.context.large_data import log_json_body
 
 # Initialize logging at module level
 setup_logging()
@@ -332,7 +333,7 @@ def create_app(
                 if request_body:
                     current_span = trace.get_current_span()
                     if current_span and current_span.is_recording():
-                        current_span.set_attribute("http.request.body", request_body)
+                        log_json_body("http.request.body", request_body)
 
         # Pre-request logging
         logger.info(

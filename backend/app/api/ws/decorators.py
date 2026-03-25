@@ -21,6 +21,7 @@ from shared.telemetry.context import (
     set_user_context,
     set_websocket_context,
 )
+from shared.telemetry.context.large_data import log_large_attribute
 from shared.telemetry.core import is_telemetry_enabled
 from shared.utils.ip_util import get_host_ip
 
@@ -168,7 +169,13 @@ def _set_event_data_attributes(span, event_data: dict) -> None:
 
     try:
         request_body_json = json.dumps(event_data, ensure_ascii=False)
-        _safe_set_attribute(span, "websocket.request_body", request_body_json)
+        log_large_attribute(
+            "websocket.request_body",
+            request_body_json,
+            max_attr_length=200,
+            max_event_length=10000,
+            event_name="websocket.request_received",
+        )
     except Exception as e:
         logger.debug(f"Failed to serialize request body to JSON: {e}")
 
