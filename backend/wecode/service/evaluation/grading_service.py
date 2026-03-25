@@ -399,16 +399,18 @@ class GradingService:
             else SingleModelStrategy()
         )
 
-        # Run strategy in background thread and handle result
-        def run_and_handle_result():
-            """Run strategy and handle result in background thread."""
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            bg_db = SessionLocal()
+        # Run strategy in main event loop to avoid cross-loop issues
+        # The execution_dispatcher uses httpx.AsyncClient which binds to the
+        # event loop where it was created (the main loop). Running strategy
+        # in a separate loop causes "Future attached to different loop" errors.
+        from app.core.async_utils import get_main_event_loop
 
+        async def execute_and_handle_result():
+            """Execute strategy and handle result in main event loop."""
+            bg_db = SessionLocal()
             try:
                 # Execute strategy
-                result = loop.run_until_complete(strategy.execute(ctx))
+                result = await strategy.execute(ctx)
 
                 # Get fresh task from database
                 bg_task = (
@@ -445,11 +447,47 @@ class GradingService:
                         f"[GradingService] Failed to update task: {inner_e}"
                     )
             finally:
-                loop.close()
                 bg_db.close()
 
-        thread = threading.Thread(target=run_and_handle_result, daemon=True)
-        thread.start()
+        # Schedule in main event loop using run_coroutine_threadsafe
+        # This avoids creating a new event loop and the cross-loop issues
+        main_loop = get_main_event_loop()
+        if main_loop is not None and main_loop.is_running():
+            future = asyncio.run_coroutine_threadsafe(
+                execute_and_handle_result(), main_loop
+            )
+
+            # Add callback to log any errors
+            def done_callback(f):
+                try:
+                    f.result()
+                except Exception as e:
+                    logger.exception(
+                        f"[GradingService] Async execution failed for task {ctx.task_id}: {e}"
+                    )
+
+            future.add_done_callback(done_callback)
+            logger.info(
+                f"[GradingService] Scheduled grading task {task.id} in main event loop"
+            )
+        else:
+            # Fallback: run in background thread with new event loop
+            # This may still have cross-loop issues but is better than failing immediately
+            logger.warning(
+                f"[GradingService] Main event loop not available, "
+                f"falling back to background thread for task {task.id}"
+            )
+
+            def run_in_thread():
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    loop.run_until_complete(execute_and_handle_result())
+                finally:
+                    loop.close()
+
+            thread = threading.Thread(target=run_in_thread, daemon=True)
+            thread.start()
 
         return task
 
