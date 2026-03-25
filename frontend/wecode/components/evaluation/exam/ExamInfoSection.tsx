@@ -7,6 +7,7 @@
 import { Icon } from './ExamIcons'
 import { ExamVideoPlayer } from './ExamVideoPlayer'
 import { ExamInstructionsMarkdown } from './ExamInstructionsMarkdown'
+import { useTranslation } from '@/hooks/useTranslation'
 import type { ExamVideoAttachment } from '@wecode/types/evaluation-exam'
 
 interface ExamRule {
@@ -34,6 +35,10 @@ interface ExamInfoSectionProps {
   video?: ExamVideoAttachment
   /** Custom instructions markdown to replace default rules display */
   instructions?: string
+  /** Exam duration in minutes for dynamic display */
+  examDurationMinutes?: number
+  /** Exam description to display below the title */
+  description?: string
 }
 
 export function ExamInfoSection({
@@ -48,7 +53,10 @@ export function ExamInfoSection({
   onStartAnswering,
   video,
   instructions,
+  examDurationMinutes = 50,
+  description,
 }: ExamInfoSectionProps) {
+  const { t } = useTranslation('evaluation')
   return (
     <section className="bg-white rounded-3xl shadow-sm border border-gray-100 p-8 sm:p-10">
       <div className="flex items-center gap-3 mb-2">
@@ -57,9 +65,7 @@ export function ExamInfoSection({
         </span>
       </div>
       <h2 className="text-2xl sm:text-3xl font-extrabold text-gray-900 mb-4">{title}</h2>
-      <p className="text-gray-600 mb-8">
-        本考核旨在评估高层管理人员的AI应用能力，包括工具使用、问题解决和创新思维、安全意识等方面。
-      </p>
+      {description && <p className="text-gray-600 mb-8">{description}</p>}
 
       {/* Loading state */}
       {loading && (
@@ -148,9 +154,9 @@ export function ExamInfoSection({
             {examPhase === 'intro' && (
               <div className="flex flex-col items-center gap-4">
                 <div className="text-center">
-                  <p className="text-sm text-gray-500 mb-2">当前阶段：考前介绍答疑</p>
+                  <p className="text-sm text-gray-500 mb-2">{t('exam.phase.qa_title')}</p>
                   <p className="text-[1rem] text-gray-700">
-                    请仔细阅读考试说明，准备好后点击开始答题，50分钟计时即开始
+                    {t('exam.phase.qa_description', { examDuration: examDurationMinutes })}
                   </p>
                 </div>
                 <button

@@ -116,6 +116,8 @@ export interface ExamTopicConfig {
   video?: ExamVideoAttachment
   /** Optional custom instructions markdown to replace default rules display */
   instructions?: string
+  /** Optional exam description to display below the title */
+  description?: string
 }
 
 // ============================================================================
@@ -335,7 +337,7 @@ export const DEFAULT_SCORING: ExamScoringConfig = {
 
 export const DEFAULT_RULES_MARKDOWN = `## 考试规则
 
-- **考试时间**：5分钟考前介绍答疑+50分钟答题+5分钟提交结果初查
+- **考试时间**：${DEFAULT_EXAM_DURATION.intro}分钟考前介绍答疑+${DEFAULT_EXAM_DURATION.exam}分钟答题+${DEFAULT_EXAM_DURATION.review}分钟提交结果初查
 - **工具不限**：不限制应用模型或工具，公司内外部工具、国内/海外工具均可使用
 - **提交要求**：请按要求提交作答说明、AI交互过程记录及产出报告/方案
 - **公平原则**：为确保公平性，现场不得直接使用过往工作产出作为结果提交

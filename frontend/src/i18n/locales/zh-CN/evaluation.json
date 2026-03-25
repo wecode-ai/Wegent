@@ -646,7 +646,7 @@
     },
     "phase": {
       "qa_title": "当前阶段：考前介绍答疑",
-      "qa_description": "请仔细阅读考试说明，准备好后点击开始答题，50分钟计时即开始"
+      "qa_description": "请仔细阅读考试说明，准备好后点击开始答题，{{examDuration}}分钟计时即开始"
     }
   },
   "exam_sessions": {
