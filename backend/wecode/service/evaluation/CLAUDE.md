@@ -640,6 +640,62 @@ def publish(self, db, task, report_content=None, attachment=None):
 - 任何需要完整内容的地方都应该优先从 S3 加载，而非使用 inline content
 - 前端也需要同样的逻辑：优先 S3，回退 inline
 
+### 20. Asyncio 跨事件循环问题 - Future attached to different loop
+
+**问题**: 线上环境重试评分任务时报错 "Task got Future attached to a different loop"。
+
+**根本原因**: `execution_dispatcher` 是一个全局单例，在模块导入时创建，其内部的 `httpx.AsyncClient` 绑定到了主事件循环。当评分服务在后台线程中使用 `asyncio.new_event_loop()` 创建新的事件循环执行策略时，调用 `trigger_ai_response_unified()` 会使用绑定到主循环的 HTTP 客户端，导致跨循环错误。
+
+**错误代码**:
+```python
+# ❌ 错误：在后台线程中创建新的事件循环
+def run_and_handle_result():
+    loop = asyncio.new_event_loop()  # 新循环
+    asyncio.set_event_loop(loop)
+    try:
+        # execution_dispatcher.http_client 绑定到主循环
+        # 这里会报 "Future attached to different loop"
+        result = loop.run_until_complete(strategy.execute(ctx))
+    finally:
+        loop.close()
+
+thread = threading.Thread(target=run_and_handle_result, daemon=True)
+thread.start()
+```
+
+**正确做法**:
+```python
+# ✅ 正确：在主事件循环中执行异步任务
+from app.core.async_utils import get_main_event_loop
+
+async def execute_and_handle_result():
+    bg_db = SessionLocal()
+    try:
+        result = await strategy.execute(ctx)
+        # 处理结果...
+    finally:
+        bg_db.close()
+
+# 使用 run_coroutine_threadsafe 调度到主循环
+main_loop = get_main_event_loop()
+if main_loop is not None and main_loop.is_running():
+    future = asyncio.run_coroutine_threadsafe(
+        execute_and_handle_result(), main_loop
+    )
+    future.add_done_callback(lambda f: ...)
+```
+
+**关键原则**:
+- `httpx.AsyncClient` 会将其内部的 asyncio 资源（超时、锁等）绑定到创建时的事件循环
+- 全局单例（如 `execution_dispatcher`）在应用启动时创建，绑定到主循环
+- 后台线程不能创建新的事件循环来使用这些全局资源
+- 使用 `run_coroutine_threadsafe()` 将异步任务调度到主循环执行
+
+**检查清单**:
+- [ ] 不要在后台线程中创建新的事件循环来调用涉及全局 HTTP 客户端的代码
+- [ ] 使用 `get_main_event_loop()` 和 `run_coroutine_threadsafe()` 调度异步任务
+- [ ] 添加回退逻辑处理主循环不可用的情况
+
 ---
-最后更新：2026-03-24
-经验版本：1.6
+最后更新：2026-03-25
+经验版本：1.7

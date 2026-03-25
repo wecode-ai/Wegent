@@ -23,6 +23,8 @@ Environment Variables:
     OTEL_EXCLUDED_URLS: Comma-separated list of URL patterns to exclude from tracing (default: health,metrics,docs)
     OTEL_INCLUDED_URLS: Comma-separated list of URL patterns to include (whitelist mode, empty means all)
     OTEL_DISABLE_SEND_RECEIVE_SPANS: Disable internal http.send/http.receive spans for SSE/streaming (default: true)
+    OTEL_REDIS_FILTER_MODE: Redis span filtering mode - "all", "errors", "slow", "websocket" (default: websocket)
+    OTEL_REDIS_SLOW_THRESHOLD_MS: Slow Redis query threshold in milliseconds (default: 100)
         This is the industry standard approach to reduce noise from streaming endpoints like /api/chat/stream
         where each chunk would otherwise create a separate span. See OpenTelemetry ASGI instrumentation docs.
 """
@@ -343,12 +345,16 @@ def get_excluded_urls_regex() -> str:
 
     This is useful for passing to FastAPIInstrumentor's excluded_urls parameter.
 
+    Note: The regex uses word boundaries and path separators to ensure exact matching
+    without ^ and $ anchors. FastAPIInstrumentor's excluded_urls matches against
+    the full URL path using re.search().
+
     Returns:
         str: Regex pattern string that matches all excluded URLs
 
     Example:
         >>> get_excluded_urls_regex()
-        '/health|/healthz|/ready|/metrics|/api/docs|/api/openapi.json|/favicon.ico'
+        '^/$|^/health$|^/healthz$|^/ready$|^/metrics$|^/api/docs$|^/api/openapi\\.json$|/api/quota/.*|^/favicon\\.ico$'
     """
     config = get_otel_config()
     if not config.excluded_urls:
@@ -358,14 +364,15 @@ def get_excluded_urls_regex() -> str:
     regex_parts = []
     for pattern in config.excluded_urls:
         if pattern.startswith("^"):
-            # Already a regex, use as-is (remove the ^ as we'll join with |)
-            regex_parts.append(pattern[1:] if pattern.startswith("^") else pattern)
+            # Already a regex, use as-is
+            regex_parts.append(pattern)
         elif pattern.endswith("*"):
             # Wildcard pattern: /api/* -> /api/.*
             prefix = re.escape(pattern[:-1])
             regex_parts.append(f"{prefix}.*")
         else:
-            # Exact match: escape special chars and add anchors
+            # Exact match: add ^ and $ anchors for exact path matching
+            # This ensures /health only matches /health, not /healthcheck
             regex_parts.append(f"^{re.escape(pattern)}$")
 
     return "|".join(regex_parts)

@@ -29,6 +29,7 @@ import { truncateMiddle } from '@/utils/stringUtils'
 import { RepositorySelectorProps, RepositorySelectItem } from './types'
 import { RepositorySelectorFooter } from './RepositorySelectorFooter'
 import { useRepositorySearch } from '../../hooks/useRepositorySearch'
+import { getRepositoryIdentity } from './repositoryIdentity'
 
 /**
  * RepositorySelector component
@@ -69,17 +70,18 @@ export default function RepositorySelector({
   // Convert repos to SearchableSelectItem format
   const selectItems: SearchableSelectItem[] = useMemo(() => {
     const items: RepositorySelectItem[] = repos.map(repo => ({
-      value: repo.git_repo_id.toString(),
+      value: getRepositoryIdentity(repo),
       label: repo.git_repo,
       searchText: repo.git_repo,
     }))
 
     // Ensure selected repo is in the items list
     if (selectedRepo) {
-      const hasSelected = items.some(item => item.value === selectedRepo.git_repo_id.toString())
+      const selectedRepoIdentity = getRepositoryIdentity(selectedRepo)
+      const hasSelected = items.some(item => item.value === selectedRepoIdentity)
       if (!hasSelected) {
         items.unshift({
-          value: selectedRepo.git_repo_id.toString(),
+          value: selectedRepoIdentity,
           label: selectedRepo.git_repo,
           searchText: selectedRepo.git_repo,
         })
@@ -189,7 +191,7 @@ export default function RepositorySelector({
                           <Check
                             className={cn(
                               'h-3 w-3 shrink-0 mt-0.5 ml-1',
-                              selectedRepo?.git_repo_id.toString() === item.value
+                              selectedRepo && getRepositoryIdentity(selectedRepo) === item.value
                                 ? 'opacity-100 text-primary'
                                 : 'opacity-0 text-text-muted'
                             )}
@@ -242,7 +244,7 @@ export default function RepositorySelector({
       </TooltipProvider>
       <div className={cn('relative flex items-center gap-2 min-w-0 flex-1', fullWidth && 'w-full')}>
         <SearchableSelect
-          value={selectedRepo?.git_repo_id.toString()}
+          value={selectedRepo ? getRepositoryIdentity(selectedRepo) : undefined}
           onValueChange={handleChange}
           onSearchChange={handleSearchChange}
           disabled={disabled || loading}

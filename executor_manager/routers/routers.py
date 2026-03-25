@@ -37,6 +37,7 @@ from shared.telemetry.context import (
     set_task_context,
     set_user_context,
 )
+from shared.telemetry.context.large_data import log_json_body
 from shared.utils.http_client import traced_async_client
 
 # Setup logger
@@ -143,7 +144,7 @@ async def log_requests(request: Request, call_next):
                 if request_body:
                     current_span = trace.get_current_span()
                     if current_span and current_span.is_recording():
-                        current_span.set_attribute("http.request.body", request_body)
+                        log_json_body("http.request.body", request_body)
         except Exception as e:
             logger.debug(f"Failed to set OTEL context: {e}")
 

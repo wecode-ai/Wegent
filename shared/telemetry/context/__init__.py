@@ -81,6 +81,17 @@ def __getattr__(name: str):
 
         return getattr(span, name)
 
+    # Large data logging utilities - lazy loaded from large_data.py
+    large_data_exports = (
+        "log_large_attribute",
+        "log_large_string_list",
+        "log_json_body",
+    )
+    if name in large_data_exports:
+        from shared.telemetry.context import large_data
+
+        return getattr(large_data, name)
+
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
@@ -123,6 +134,10 @@ __all__ = [
     # OTEL context management for async boundaries
     "attach_otel_context",
     "detach_otel_context",
+    # Large data logging utilities
+    "log_large_attribute",
+    "log_large_string_list",
+    "log_json_body",
     # Propagation
     "get_trace_context_for_propagation",
     "get_trace_context_env_vars",

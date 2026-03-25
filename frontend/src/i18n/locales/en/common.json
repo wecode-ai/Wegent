@@ -17,7 +17,8 @@
     "unified_selector_placeholder": "Select repo / branch",
     "requires_workspace": "Requires Repository",
     "no_workspace_needed": "No repository needed",
-    "no_workspace_description": "This task will run without a code repository"
+    "no_workspace_description": "This task will run without a code repository",
+    "scroll_to_load_more": "Scroll to load more..."
   },
   "actions": {
     "save": "Save",

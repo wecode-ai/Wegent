@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button'
 import { downloadAttachment, getAttachment, getFileIcon } from '@/apis/attachments'
 import type { AttachmentDetailResponse } from '@/apis/attachments'
 import { useShareToken } from '@/contexts/ShareTokenContext'
-import { FilePreviewDialog } from '@/components/common/FilePreview'
+import { FilePreviewDialog, isFilePreviewable } from '@/components/common/FilePreview'
 
 // Global cache for attachment details to avoid redundant API calls
 const attachmentCache = new Map<number, AttachmentDetailResponse>()
@@ -128,7 +128,7 @@ export function AttachmentCard({ attachmentId }: AttachmentCardProps) {
   return (
     <>
       <div
-        className="flex items-center gap-4 p-4 rounded-xl border border-border bg-surface hover:bg-surface-hover transition-colors cursor-pointer"
+        className={`flex items-center gap-4 p-4 rounded-xl border border-border bg-surface hover:bg-surface-hover transition-colors ${isPreviewable ? 'cursor-pointer' : ''}`}
         onClick={isPreviewable ? handlePreview : undefined}
       >
         {/* File Icon */}
@@ -193,46 +193,6 @@ export function AttachmentCard({ attachmentId }: AttachmentCardProps) {
       )}
     </>
   )
-}
-
-/**
- * Check if file type is previewable
- */
-function isFilePreviewable(mimeType: string, extension: string): boolean {
-  // Image types
-  if (mimeType.startsWith('image/')) return true
-  // PDF
-  if (mimeType === 'application/pdf') return true
-  // Video
-  if (mimeType.startsWith('video/')) return true
-  // Audio
-  if (mimeType.startsWith('audio/')) return true
-  // Text files
-  if (
-    mimeType.startsWith('text/') ||
-    mimeType === 'application/json' ||
-    mimeType === 'application/javascript' ||
-    mimeType === 'application/xml' ||
-    extension.match(
-      /\.(txt|md|json|js|ts|jsx|tsx|py|java|go|rs|cpp|c|h|hpp|css|scss|less|html|htm|xml|yaml|yml|sh|bash|zsh|ps1|sql|log)$/i
-    )
-  ) {
-    return true
-  }
-  // Office documents - check MIME type or extension
-  if (
-    mimeType.includes('officedocument') ||
-    mimeType.includes('msword') ||
-    mimeType.includes('ms-excel') ||
-    mimeType.includes('ms-powerpoint') ||
-    mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
-    mimeType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
-    mimeType === 'application/vnd.openxmlformats-officedocument.presentationml.presentation' ||
-    extension.match(/\.(xlsx|xls|csv|docx|doc|pptx|ppt)$/i)
-  ) {
-    return true
-  }
-  return false
 }
 
 /**

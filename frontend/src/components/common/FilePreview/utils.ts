@@ -5,9 +5,52 @@
 export type PreviewType = 'image' | 'pdf' | 'text' | 'video' | 'audio' | 'office' | 'unknown'
 
 /**
+ * Check if file type is previewable
+ * Centralized control for which file types support preview
+ */
+export function isFilePreviewable(mimeType: string, filename: string): boolean {
+  // Image types
+  if (mimeType.startsWith('image/')) return true
+  // PDF
+  if (mimeType === 'application/pdf') return true
+  // Video
+  if (mimeType.startsWith('video/')) return true
+  // Audio
+  if (mimeType.startsWith('audio/')) return true
+  // Text files
+  if (
+    mimeType.startsWith('text/') ||
+    mimeType === 'application/json' ||
+    mimeType === 'application/javascript' ||
+    mimeType === 'application/xml' ||
+    filename.match(
+      /\.(txt|md|json|js|ts|jsx|tsx|py|java|go|rs|cpp|c|h|hpp|css|scss|less|html|htm|xml|yaml|yml|sh|bash|zsh|ps1|sql|log)$/i
+    )
+  ) {
+    return true
+  }
+  // Office documents (excluding PPT)
+  if (
+    mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+    mimeType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+    mimeType === 'application/msword' ||
+    mimeType === 'application/vnd.ms-excel' ||
+    filename.match(/\.(xlsx|xls|csv|docx|doc)$/i)
+  ) {
+    return true
+  }
+  return false
+}
+
+/**
  * Determine preview type based on MIME type and filename
  */
 export function getPreviewType(mimeType: string, filename: string): PreviewType {
+  // First check if file is previewable at all
+  if (!isFilePreviewable(mimeType, filename)) {
+    return 'unknown'
+  }
+
   if (mimeType.startsWith('image/')) return 'image'
   if (mimeType === 'application/pdf') return 'pdf'
   if (mimeType.startsWith('video/')) return 'video'
@@ -24,19 +67,8 @@ export function getPreviewType(mimeType: string, filename: string): PreviewType 
   ) {
     return 'text'
   }
-  if (
-    mimeType.includes('officedocument') ||
-    mimeType.includes('msword') ||
-    mimeType.includes('ms-excel') ||
-    mimeType.includes('ms-powerpoint') ||
-    mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
-    mimeType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
-    mimeType === 'application/vnd.openxmlformats-officedocument.presentationml.presentation' ||
-    filename.match(/\.(xlsx|xls|csv|docx|doc|pptx|ppt)$/i)
-  ) {
-    return 'office'
-  }
-  return 'unknown'
+  // Office documents (Word/Excel only, PPT excluded)
+  return 'office'
 }
 
 /**

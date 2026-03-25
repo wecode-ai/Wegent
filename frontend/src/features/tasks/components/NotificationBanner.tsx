@@ -9,14 +9,70 @@ import { ArrowTopRightOnSquareIcon, XMarkIcon } from '@heroicons/react/24/outlin
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import EnhancedMarkdown from '@/components/common/EnhancedMarkdown'
+import { useTheme } from '@/features/theme/ThemeProvider'
 
 type NotificationBannerVariant = 'warning' | 'info'
+
+/**
+ * Parse text with Markdown-style links [text](url) and return React elements.
+ * Supports both internal links (starting with /) and external links.
+ * @deprecated Use `content` prop with EnhancedMarkdown instead
+ */
+function parseTextWithLinks(text: string): React.ReactNode {
+  // Regex to match Markdown-style links: [text](url)
+  const linkRegex = /\[([^\]]+)\]\(([^)]+)\)/g
+  const parts: React.ReactNode[] = []
+  let lastIndex = 0
+  let match: RegExpExecArray | null
+
+  while ((match = linkRegex.exec(text)) !== null) {
+    // Add text before the link
+    if (match.index > lastIndex) {
+      parts.push(text.slice(lastIndex, match.index))
+    }
+
+    const linkText = match[1]
+    const linkUrl = match[2]
+    const isExternal = linkUrl.startsWith('http://') || linkUrl.startsWith('https://')
+
+    // Add the link element
+    parts.push(
+      <a
+        key={`link-${match.index}`}
+        href={linkUrl}
+        target={isExternal ? '_blank' : undefined}
+        rel={isExternal ? 'noopener noreferrer' : undefined}
+        className="text-primary hover:text-primary/80 underline underline-offset-2 transition-colors"
+      >
+        {linkText}
+      </a>
+    )
+
+    lastIndex = match.index + match[0].length
+  }
+
+  // Add remaining text after the last link
+  if (lastIndex < text.length) {
+    parts.push(text.slice(lastIndex))
+  }
+
+  // If no links found, return original text
+  if (parts.length === 0) {
+    return text
+  }
+
+  return <>{parts}</>
+}
 
 interface NotificationBannerProps {
   className?: string
   storageKey: string
   title?: string
+  /** @deprecated Use `content` prop instead for full Markdown support */
   items?: string[]
+  /** Markdown content to render directly */
+  content?: string
   badgeText?: string
   actionLabel?: string
   actionHref?: string
@@ -42,6 +98,7 @@ export default function NotificationBanner({
   storageKey,
   title,
   items,
+  content,
   badgeText,
   actionLabel,
   actionHref,
@@ -50,6 +107,7 @@ export default function NotificationBanner({
 }: NotificationBannerProps) {
   const [isVisible, setIsVisible] = useState(true)
   const [isReady, setIsReady] = useState(false)
+  const { theme } = useTheme()
 
   useEffect(() => {
     const isClosed = localStorage.getItem(storageKey) === 'true'
@@ -117,7 +175,38 @@ export default function NotificationBanner({
                 )}
               </div>
             )}
-            {items && items.length > 0 && (
+            {/* New: Render Markdown content directly */}
+            {content && (
+              <div
+                className={cn(
+                  'notification-markdown-container',
+                  'text-sm pb-0 leading-5 text-text-primary prose prose-sm max-w-none dark:prose-invert',
+                  '[&_a]:text-primary [&_a]:underline [&_a]:underline-offset-2 [&_a]:transition-colors hover:[&_a]:text-primary/80',
+                  '[&_ul]:list-disc [&_ul]:pl-4 [&_ul]:space-y-0.5 [&_ul]:my-0 [&_ul]:mb-0',
+                  '[&_ol]:list-decimal [&_ol]:pl-4 [&_ol]:space-y-0.5 [&_ol]:my-0 [&_ol]:mb-0',
+                  '[&_p]:my-0 [&_p]:mb-0',
+                  '[&_li]:my-0 [&_li]:mb-0',
+                  '[&_.wmde-markdown]:mb-0 [&_.markdown-content]:mb-0',
+                  '[&>div]:mb-0 [&>div>div]:mb-0',
+                  title && 'mt-1'
+                )}
+                style={
+                  {
+                    '--color-canvas-default': 'transparent',
+                    '--color-canvas-subtle': 'transparent',
+                  } as React.CSSProperties
+                }
+              >
+                <div
+                  className="[&_.wmde-markdown]:!bg-transparent [&_.markdown-content]:!bg-transparent [&>*]:!bg-transparent"
+                  style={{ background: 'transparent' }}
+                >
+                  <EnhancedMarkdown source={content} theme={theme} />
+                </div>
+              </div>
+            )}
+            {/* Legacy: Render items array (deprecated) */}
+            {!content && items && items.length > 0 && (
               <ul className={cn('space-y-0.5', title && 'mt-1')}>
                 {items.map((item, index) => (
                   <li
@@ -125,7 +214,7 @@ export default function NotificationBanner({
                     className="flex items-baseline gap-2 text-sm leading-5 text-text-primary"
                   >
                     <span className="h-1 w-1 shrink-0 rounded-full bg-primary/70" />
-                    <span>{item}</span>
+                    <span>{parseTextWithLinks(item)}</span>
                   </li>
                 ))}
               </ul>
