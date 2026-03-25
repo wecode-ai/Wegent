@@ -70,3 +70,39 @@ class InjectionMode(str, PyEnum):
 
     DIRECT_INJECTION = "direct_injection"
     RAG_RETRIEVAL = "rag_retrieval"
+
+
+class QueueVisibility(str, PyEnum):
+    """Work queue visibility levels."""
+
+    PRIVATE = "private"  # Only owner can send messages
+    PUBLIC = "public"  # Any logged-in user can send messages
+    GROUP_VISIBLE = "group_visible"  # Only group members can send messages
+    INVITE_ONLY = "invite_only"  # Only users with invite code can send messages
+
+
+class QueueMessageStatus(str, PyEnum):
+    """Queue message processing status."""
+
+    UNREAD = "unread"
+    READ = "read"
+    PROCESSING = "processing"
+    PROCESSED = "processed"
+    ARCHIVED = "archived"
+
+
+class QueueMessagePriority(str, PyEnum):
+    """Queue message priority levels."""
+
+    LOW = "low"
+    NORMAL = "normal"
+    HIGH = "high"
+
+
+class TriggerMode(str, PyEnum):
+    """Auto-processing trigger mode."""
+
+    IMMEDIATE = "immediate"  # Process immediately when received
+    MANUAL = "manual"  # Only process when user triggers
+    SCHEDULED = "scheduled"  # Process at scheduled intervals
+    CONDITION_BASED = "condition_based"  # Process based on conditions

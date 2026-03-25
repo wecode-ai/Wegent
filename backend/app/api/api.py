@@ -28,6 +28,7 @@ from app.api.endpoints import (
     web_scraper,
     wiki,
     wizard,
+    work_queue,
 )
 from app.core.config import settings
 
@@ -146,6 +147,20 @@ api_router.include_router(
 # Unified share endpoints (Team, Task, KnowledgeBase)
 api_router.include_router(share.router, prefix="/share", tags=["share"])
 api_router.include_router(tables.router, prefix="/tables", tags=["tables"])
+
+# Work queue endpoints (message forwarding and inbox)
+api_router.include_router(
+    work_queue.router, prefix="/work-queues", tags=["work-queues"]
+)
+api_router.include_router(
+    work_queue.messages_router, prefix="/queue-messages", tags=["queue-messages"]
+)
+api_router.include_router(
+    work_queue.forward_router, prefix="/messages/forward", tags=["message-forwarding"]
+)
+api_router.include_router(
+    work_queue.users_router, prefix="/users", tags=["user-queues"]
+)
 
 # RAG router is conditionally registered based on STANDALONE_MODE
 if not settings.STANDALONE_MODE:
