@@ -194,6 +194,69 @@ class SandboxRepository(metaclass=SingletonMeta):
             )
             return None
 
+    async def load_sandbox_async(self, sandbox_id: str) -> Optional[Sandbox]:
+        """Load sandbox by sandbox_id from session Hash (async version).
+
+        Use this method in async contexts to avoid blocking the event loop.
+
+        Note: sandbox_id is actually the task_id (as string)
+
+        Args:
+            sandbox_id: Sandbox ID (which is task_id as string)
+
+        Returns:
+            Sandbox if found, None otherwise
+        """
+        client = await self._get_async_client()
+        if client is None:
+            return None
+
+        try:
+            task_id = int(sandbox_id)
+            hash_key = f"{SESSION_HASH_PREFIX}{task_id}"
+            sandbox_data_str = await client.hget(hash_key, SANDBOX_FIELD_NAME)
+            if sandbox_data_str is None:
+                return None
+
+            sandbox_info = json.loads(sandbox_data_str)
+
+            container_name = sandbox_info["container_name"]
+            base_url = sandbox_info.get("base_url")
+
+            # Determine status: use saved status if available, otherwise infer from base_url
+            saved_status = sandbox_info.get("status")
+            if saved_status:
+                status = SandboxStatus(saved_status)
+            elif base_url:
+                status = SandboxStatus.RUNNING
+            else:
+                status = SandboxStatus.PENDING
+
+            sandbox = Sandbox(
+                sandbox_id=sandbox_id,
+                container_name=container_name,
+                shell_type=sandbox_info["shell_type"],
+                status=status,
+                user_id=sandbox_info["user_id"],
+                user_name=sandbox_info["user_name"],
+                base_url=base_url,
+                created_at=sandbox_info["created_at"],
+                started_at=sandbox_info.get("started_at"),
+                last_activity_at=sandbox_info.get(
+                    "last_activity_at", sandbox_info["created_at"]
+                ),
+                expires_at=sandbox_info.get("expires_at"),
+                error_message=sandbox_info.get("error_message"),
+                metadata=sandbox_info.get("metadata", {}),
+            )
+
+            return sandbox
+        except Exception as e:
+            logger.error(
+                f"[SandboxRepository] Failed to load sandbox async: {e}", exc_info=True
+            )
+            return None
+
     def delete_sandbox(self, sandbox_id: str) -> bool:
         """Delete sandbox data from Redis.
 
@@ -244,6 +307,26 @@ class SandboxRepository(metaclass=SingletonMeta):
             return self.redis_client.zrange(ACTIVE_SANDBOXES_ZSET, 0, -1)
         except Exception as e:
             logger.error(f"[SandboxRepository] Failed to get active sandboxes: {e}")
+            return []
+
+    async def get_active_sandbox_ids_async(self) -> List[str]:
+        """Get all active sandbox IDs from ZSet (async version).
+
+        Use this method in async contexts to avoid blocking the event loop.
+
+        Returns:
+            List of sandbox IDs (task_id strings)
+        """
+        client = await self._get_async_client()
+        if client is None:
+            return []
+
+        try:
+            return await client.zrange(ACTIVE_SANDBOXES_ZSET, 0, -1)
+        except Exception as e:
+            logger.error(
+                f"[SandboxRepository] Failed to get active sandboxes async: {e}"
+            )
             return []
 
     def get_expired_sandbox_ids(self, max_age_seconds: int) -> List[str]:

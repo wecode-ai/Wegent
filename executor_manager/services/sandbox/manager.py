@@ -844,7 +844,8 @@ class SandboxManager(metaclass=SingletonMeta):
         IMPORTANT: This method uses async Redis operations to avoid blocking
         the event loop, which is critical for maintaining HTTP responsiveness.
         """
-        task_ids = self._repository.get_active_sandbox_ids()
+        # Use async method to avoid blocking the event loop
+        task_ids = await self._repository.get_active_sandbox_ids_async()
         if not task_ids:
             return
 
@@ -854,7 +855,8 @@ class SandboxManager(metaclass=SingletonMeta):
 
         for task_id_str in task_ids:
             try:
-                sandbox = self._repository.load_sandbox(task_id_str)
+                # Use async method to avoid blocking the event loop
+                sandbox = await self._repository.load_sandbox_async(task_id_str)
                 if sandbox is None or sandbox.status != SandboxStatus.RUNNING:
                     continue
 
