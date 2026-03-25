@@ -65,7 +65,8 @@ interface ExamPageProps {
 
 // Transform ExamTopicConfig rules markdown to rules array
 function transformRules(
-  rulesMarkdown: string
+  rulesMarkdown: string,
+  duration?: { intro: number; exam: number; review: number }
 ): Array<{ icon: string; label: string; text: string }> {
   const rules: Array<{ icon: string; label: string; text: string }> = []
   const lines = rulesMarkdown.split('\n')
@@ -84,13 +85,18 @@ function transformRules(
     }
   }
 
+  // Use dynamic duration if provided, otherwise use defaults
+  const introMinutes = duration?.intro ?? 5
+  const examMinutes = duration?.exam ?? 50
+  const reviewMinutes = duration?.review ?? 5
+
   return rules.length > 0
     ? rules
     : [
         {
           icon: 'clock',
           label: '考试时间',
-          text: '5分钟考前介绍答疑+50分钟答题+5分钟提交结果初查',
+          text: `${introMinutes}分钟考前介绍答疑+${examMinutes}分钟答题+${reviewMinutes}分钟提交结果初查`,
         },
         {
           icon: 'tool',
@@ -147,7 +153,8 @@ function transformQuestionToTopic(question: Question, _index: number): Topic {
 function buildExamData(
   topicConfig: ExamTopicConfig | null,
   questions: Question[],
-  topicName?: string
+  topicName?: string,
+  topicDescription?: string
 ) {
   const config = topicConfig || {
     title: topicName || 'AI应用能力考核',
@@ -158,14 +165,19 @@ function buildExamData(
     timeNote: DEFAULT_TIME_NOTE,
     uploadSlots: [],
     bonusItems: DEFAULT_BONUS_ITEMS,
+    description: topicDescription || '',
   }
 
-  const rules = transformRules(config.rulesMarkdown)
+  const rules = transformRules(config.rulesMarkdown, config.duration)
+
+  // Use description from config or fall back to topicDescription
+  const finalDescription = config.description || topicDescription || ''
 
   return {
     title: config.title,
     year: config.year,
     duration: config.duration,
+    description: finalDescription,
     rules,
     examMethod: {
       scoring: config.scoring.description,
@@ -201,12 +213,13 @@ export function ExamPage({ topicId }: ExamPageProps) {
   const [topicConfig, setTopicConfig] = useState<ExamTopicConfig | null>(null)
   const [questions, setQuestions] = useState<Question[]>([])
   const [topicName, setTopicName] = useState<string>('')
+  const [topicDescription, setTopicDescription] = useState<string>('')
   const [topicInstructions, setTopicInstructions] = useState<string>('')
   const [topicVideo, setTopicVideo] = useState<ExamVideoAttachment | undefined>(undefined)
 
   const examData = useMemo(
-    () => buildExamData(topicConfig, questions, topicName),
-    [topicConfig, questions, topicName]
+    () => buildExamData(topicConfig, questions, topicName, topicDescription),
+    [topicConfig, questions, topicName, topicDescription]
   )
 
   // Build answerSlots map for all questions
@@ -310,9 +323,12 @@ export function ExamPage({ topicId }: ExamPageProps) {
         const data = await getExamData(topicId)
         setExamSession(data.session)
 
-        // Set topic name from API response
+        // Set topic name and description from API response
         if (data.topic?.name) {
           setTopicName(data.topic.name)
+        }
+        if (data.topic?.description) {
+          setTopicDescription(data.topic.description)
         }
 
         // Parse topic configuration from extra_data
@@ -654,6 +670,8 @@ export function ExamPage({ topicId }: ExamPageProps) {
           onStartAnswering={startAnswering}
           video={topicVideo || topicConfig?.video}
           instructions={topicInstructions}
+          examDurationMinutes={examData.duration.exam}
+          description={examData.description}
         />
 
         {(examPhase === 'exam' || examPhase === 'review') && (

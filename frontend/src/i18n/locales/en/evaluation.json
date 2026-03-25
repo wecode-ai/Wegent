@@ -704,7 +704,7 @@
     },
     "phase": {
       "qa_title": "Current Phase: Pre-exam Q&A",
-      "qa_description": "Please read the exam instructions carefully and click start when ready"
+      "qa_description": "Please read the exam instructions carefully and click start when ready. The {{examDuration}} minute timer will begin"
     }
   },
   "common": {
