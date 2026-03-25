@@ -214,6 +214,11 @@ export function ExamPage({ topicId }: ExamPageProps) {
   const [questions, setQuestions] = useState<Question[]>([])
   const [topicName, setTopicName] = useState<string>('')
   const [topicDescription, setTopicDescription] = useState<string>('')
+  const [topicDuration, setTopicDuration] = useState<{
+    intro: number
+    exam: number
+    review: number
+  } | null>(null)
   const [topicInstructions, setTopicInstructions] = useState<string>('')
   const [topicVideo, setTopicVideo] = useState<ExamVideoAttachment | undefined>(undefined)
 
@@ -323,12 +328,32 @@ export function ExamPage({ topicId }: ExamPageProps) {
         const data = await getExamData(topicId)
         setExamSession(data.session)
 
-        // Set topic name and description from API response
+        // Set topic name from API response
         if (data.topic?.name) {
           setTopicName(data.topic.name)
         }
-        if (data.topic?.description) {
-          setTopicDescription(data.topic.description)
+
+        // Read description and duration directly from extra_data
+        if (data.topic?.extra_data && typeof data.topic.extra_data === 'object') {
+          const extraData = data.topic.extra_data as unknown as Record<string, unknown>
+          // Description from extra_data
+          if (typeof extraData.description === 'string') {
+            setTopicDescription(extraData.description)
+          }
+          // Duration from extra_data.duration
+          if (extraData.duration && typeof extraData.duration === 'object') {
+            const duration = extraData.duration as unknown as {
+              exam?: number
+              intro?: number
+              review?: number
+            }
+            // Store duration for later use
+            setTopicDuration({
+              intro: duration.intro ?? 5,
+              exam: duration.exam ?? 50,
+              review: duration.review ?? 5,
+            })
+          }
         }
 
         // Parse topic configuration from extra_data
@@ -670,7 +695,7 @@ export function ExamPage({ topicId }: ExamPageProps) {
           onStartAnswering={startAnswering}
           video={topicVideo || topicConfig?.video}
           instructions={topicInstructions}
-          examDurationMinutes={examData.duration.exam}
+          examDurationMinutes={topicDuration?.exam ?? examData.duration.exam}
           description={examData.description}
         />
 
