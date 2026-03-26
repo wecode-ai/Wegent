@@ -341,38 +341,37 @@ def _url_matches_pattern(url: str, pattern: str) -> bool:
 
 def get_excluded_urls_regex() -> str:
     """
-    Get excluded URLs as a regex pattern string for FastAPI instrumentation.
+    Get excluded URLs as a comma-separated string for FastAPI instrumentation.
 
     This is useful for passing to FastAPIInstrumentor's excluded_urls parameter.
 
-    Note: The regex uses word boundaries and path separators to ensure exact matching
-    without ^ and $ anchors. FastAPIInstrumentor's excluded_urls matches against
-    the full URL path using re.search().
+    Note: FastAPIInstrumentor expects a comma-separated string of regex patterns,
+    not a single combined regex. Each pattern is matched independently using re.search().
 
     Returns:
-        str: Regex pattern string that matches all excluded URLs
+        str: Comma-separated regex patterns for excluded URLs
 
     Example:
         >>> get_excluded_urls_regex()
-        '^/$|^/health$|^/healthz$|^/ready$|^/metrics$|^/api/docs$|^/api/openapi\\.json$|/api/quota/.*|^/favicon\\.ico$'
+        '^/$,^/health$,^/healthz$,^/ready$,^/metrics$,^/api/docs$,^/api/openapi\\.json$,/api/quota/.*,^/favicon\\.ico$'
     """
     config = get_otel_config()
     if not config.excluded_urls:
         return ""
 
-    # Convert patterns to regex
-    regex_parts = []
+    # Convert patterns to regex format suitable for FastAPIInstrumentor
+    # FastAPIInstrumentor expects comma-separated patterns, not | separated
+    regex_patterns = []
     for pattern in config.excluded_urls:
-        if pattern.startswith("^"):
-            # Already a regex, use as-is
-            regex_parts.append(pattern)
+        if pattern.startswith("^") or pattern.endswith("$"):
+            # Already a regex pattern (starts with ^ or ends with $), use as-is
+            regex_patterns.append(pattern)
         elif pattern.endswith("*"):
             # Wildcard pattern: /api/* -> /api/.*
-            prefix = re.escape(pattern[:-1])
-            regex_parts.append(f"{prefix}.*")
+            regex_patterns.append(f"{pattern[:-1]}.*")
         else:
             # Exact match: add ^ and $ anchors for exact path matching
             # This ensures /health only matches /health, not /healthcheck
-            regex_parts.append(f"^{re.escape(pattern)}$")
+            regex_patterns.append(f"^{pattern}$")
 
-    return "|".join(regex_parts)
+    return ",".join(regex_patterns)

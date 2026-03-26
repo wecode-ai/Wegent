@@ -68,7 +68,24 @@ class BackgroundExecutionManager:
         Returns:
             BackgroundExecutionInDB object
         """
-        subscription_crd = Subscription.model_validate(subscription.json)
+        # Try to validate, if fails due to invalid trigger config, fix it for reading
+        try:
+            subscription_crd = Subscription.model_validate(subscription.json)
+        except Exception as e:
+            error_str = str(e)
+            if (
+                "Interval must be at least" in error_str
+                or "Cron interval must be at least" in error_str
+            ):
+                # Import here to avoid circular imports
+                from app.services.subscription import subscription_service
+
+                fixed_json = subscription_service._fix_invalid_trigger_config_for_read(
+                    subscription.json
+                )
+                subscription_crd = Subscription.model_validate(fixed_json)
+            else:
+                raise
         internal = subscription.json.get("_internal", {})
 
         # For rental subscriptions, get promptTemplate from source subscription

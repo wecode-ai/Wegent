@@ -22,6 +22,7 @@ from app.models.subtask import Subtask
 from app.models.task import TaskResource
 from app.schemas.kind import Bot, Ghost, Shell, Team
 from app.services.mcp_provider_registry import list_mcp_providers
+from app.services.readers import KindType, kindReader
 from app.services.user_mcp_service import user_mcp_service
 from shared.models import ExecutionRequest
 from shared.models.db import Kind, User
@@ -385,16 +386,12 @@ class TaskRequestBuilder:
 
         first_member = team_crd.spec.members[0]
 
-        bot = (
-            self.db.query(Kind)
-            .filter(
-                Kind.user_id == team.user_id,
-                Kind.kind == "Bot",
-                Kind.name == first_member.botRef.name,
-                Kind.namespace == first_member.botRef.namespace,
-                Kind.is_active,
-            )
-            .first()
+        bot = kindReader.get_by_name_and_namespace(
+            self.db,
+            team.user_id,
+            KindType.BOT,
+            first_member.botRef.namespace,
+            first_member.botRef.name,
         )
 
         if not bot:
@@ -777,16 +774,12 @@ class TaskRequestBuilder:
             return [], [], [], {}
 
         # Query Ghost
-        ghost = (
-            self.db.query(Kind)
-            .filter(
-                Kind.user_id == team.user_id,
-                Kind.kind == "Ghost",
-                Kind.name == bot_crd.spec.ghostRef.name,
-                Kind.namespace == bot_crd.spec.ghostRef.namespace,
-                Kind.is_active == True,  # noqa: E712
-            )
-            .first()
+        ghost = kindReader.get_by_name_and_namespace(
+            self.db,
+            team.user_id,
+            KindType.GHOST,
+            bot_crd.spec.ghostRef.namespace,
+            bot_crd.spec.ghostRef.name,
         )
 
         if not ghost or not ghost.json:
@@ -1215,16 +1208,12 @@ class TaskRequestBuilder:
                 bot = first_bot
             else:
                 # Query additional bots
-                bot = (
-                    self.db.query(Kind)
-                    .filter(
-                        Kind.user_id == team.user_id,
-                        Kind.kind == "Bot",
-                        Kind.name == member.botRef.name,
-                        Kind.namespace == member.botRef.namespace,
-                        Kind.is_active,
-                    )
-                    .first()
+                bot = kindReader.get_by_name_and_namespace(
+                    self.db,
+                    team.user_id,
+                    KindType.BOT,
+                    member.botRef.namespace,
+                    member.botRef.name,
                 )
 
             if not bot:
@@ -1246,16 +1235,12 @@ class TaskRequestBuilder:
             ghost_skills = []
 
             if bot_spec and bot_spec.ghostRef:
-                ghost = (
-                    self.db.query(Kind)
-                    .filter(
-                        Kind.user_id == team.user_id,
-                        Kind.kind == "Ghost",
-                        Kind.name == bot_spec.ghostRef.name,
-                        Kind.namespace == bot_spec.ghostRef.namespace,
-                        Kind.is_active,
-                    )
-                    .first()
+                ghost = kindReader.get_by_name_and_namespace(
+                    self.db,
+                    team.user_id,
+                    KindType.GHOST,
+                    bot_spec.ghostRef.namespace,
+                    bot_spec.ghostRef.name,
                 )
                 if ghost and ghost.json:
                     ghost_crd = Ghost.model_validate(ghost.json)
@@ -1412,17 +1397,12 @@ class TaskRequestBuilder:
         bot_crd = Bot.model_validate(bot.json)
 
         if bot_crd.spec and bot_crd.spec.ghostRef:
-            # Query Ghost
-            ghost = (
-                self.db.query(Kind)
-                .filter(
-                    Kind.user_id == team.user_id,
-                    Kind.kind == "Ghost",
-                    Kind.name == bot_crd.spec.ghostRef.name,
-                    Kind.namespace == bot_crd.spec.ghostRef.namespace,
-                    Kind.is_active,
-                )
-                .first()
+            ghost = kindReader.get_by_name_and_namespace(
+                self.db,
+                team.user_id,
+                KindType.GHOST,
+                bot_crd.spec.ghostRef.namespace,
+                bot_crd.spec.ghostRef.name,
             )
 
             if ghost and ghost.json:

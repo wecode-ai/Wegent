@@ -9,7 +9,7 @@
  */
 
 import { useCallback } from 'react'
-import { Clock } from 'lucide-react'
+import { Clock, AlertCircle } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -28,6 +28,28 @@ import { RepositorySelector, BranchSelector } from '@/features/tasks/components/
 import { DateTimePicker } from '@/components/ui/date-time-picker'
 import { parseUTCDate } from '@/lib/utils'
 import type { SubscriptionOptionsSectionProps } from './types'
+
+// Minimum interval in minutes
+const MIN_INTERVAL_MINUTES = 15
+
+/**
+ * Validate interval trigger configuration
+ * Returns error message if invalid, null if valid
+ */
+export function validateIntervalTrigger(
+  triggerType: SubscriptionTriggerType,
+  triggerConfig: Record<string, unknown>,
+  t: (key: string) => string
+): string | null {
+  if (triggerType === 'interval') {
+    const value = (triggerConfig.value as number) || 1
+    const unit = (triggerConfig.unit as string) || 'hours'
+    if (unit === 'minutes' && value < MIN_INTERVAL_MINUTES) {
+      return t('interval_min_error').replace('{{min}}', String(MIN_INTERVAL_MINUTES))
+    }
+  }
+  return null
+}
 
 // Get user's local timezone
 const getUserTimezone = (): string => {
@@ -99,41 +121,52 @@ export function SubscriptionOptionsSection({
             </p>
           </div>
         )
-      case 'interval':
+      case 'interval': {
+        const intervalError = validateIntervalTrigger(triggerType, triggerConfig, t)
         return (
-          <div className="flex gap-3">
-            <div className="flex-1">
-              <Label>{t('interval_value')}</Label>
-              <Input
-                type="number"
-                min={1}
-                value={(triggerConfig.value as number) || 1}
-                onChange={e =>
-                  setTriggerConfig({
-                    ...triggerConfig,
-                    value: parseInt(e.target.value) || 1,
-                  })
-                }
-              />
+          <div className="space-y-2">
+            <div className="flex gap-3">
+              <div className="flex-1">
+                <Label>{t('interval_value')}</Label>
+                <Input
+                  type="number"
+                  min={1}
+                  value={(triggerConfig.value as number) || 1}
+                  onChange={e =>
+                    setTriggerConfig({
+                      ...triggerConfig,
+                      value: parseInt(e.target.value) || 1,
+                    })
+                  }
+                  className={intervalError ? 'border-destructive' : ''}
+                />
+              </div>
+              <div className="flex-1">
+                <Label>{t('interval_unit')}</Label>
+                <Select
+                  value={(triggerConfig.unit as string) || 'hours'}
+                  onValueChange={value => setTriggerConfig({ ...triggerConfig, unit: value })}
+                >
+                  <SelectTrigger className={intervalError ? 'border-destructive' : ''}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="minutes">{t('unit_minutes')}</SelectItem>
+                    <SelectItem value="hours">{t('unit_hours')}</SelectItem>
+                    <SelectItem value="days">{t('unit_days')}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
-            <div className="flex-1">
-              <Label>{t('interval_unit')}</Label>
-              <Select
-                value={(triggerConfig.unit as string) || 'hours'}
-                onValueChange={value => setTriggerConfig({ ...triggerConfig, unit: value })}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="minutes">{t('unit_minutes')}</SelectItem>
-                  <SelectItem value="hours">{t('unit_hours')}</SelectItem>
-                  <SelectItem value="days">{t('unit_days')}</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+            {intervalError && (
+              <div className="flex items-center gap-2 text-sm text-destructive">
+                <AlertCircle className="h-4 w-4" />
+                <span>{intervalError}</span>
+              </div>
+            )}
           </div>
         )
+      }
       case 'one_time': {
         const getLocalDate = (isoString: string | undefined): Date | undefined => {
           if (!isoString) return undefined

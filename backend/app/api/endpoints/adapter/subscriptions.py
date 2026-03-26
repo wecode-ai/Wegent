@@ -65,7 +65,7 @@ def list_subscriptions(
     """
     skip = (page - 1) * limit
 
-    items, total = subscription_service.list_subscriptions(
+    items, total, invalid_count = subscription_service.list_subscriptions(
         db=db,
         user_id=current_user.id,
         skip=skip,
@@ -74,7 +74,9 @@ def list_subscriptions(
         trigger_type=trigger_type,
     )
 
-    return SubscriptionListResponse(total=total, items=items)
+    return SubscriptionListResponse(
+        total=total, items=items, invalid_schedule_count=invalid_count
+    )
 
 
 @router.post("", response_model=SubscriptionInDB, status_code=status.HTTP_201_CREATED)

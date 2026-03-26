@@ -105,6 +105,56 @@ class SubscriptionService:
     def __init__(self):
         self.execution_manager = background_execution_manager
 
+    def _validate_trigger_config(
+        self,
+        trigger_type: SubscriptionTriggerType,
+        trigger_config: Dict[str, Any],
+    ) -> None:
+        """Validate trigger configuration, raises HTTPException if invalid."""
+        from app.core.config import settings
+
+        min_interval = settings.SUBSCRIPTION_MIN_INTERVAL_MINUTES
+
+        if trigger_type == SubscriptionTriggerType.INTERVAL:
+            value = trigger_config.get("value", 1)
+            unit = trigger_config.get("unit", "hours")
+            if unit == "minutes" and value < min_interval:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Interval must be at least {min_interval} minutes",
+                )
+        elif trigger_type == SubscriptionTriggerType.CRON:
+            # Validate cron expression minimum interval
+            try:
+                from croniter import croniter
+
+                expr = trigger_config.get("expression", "")
+                if expr:
+                    # Parse cron expression to check if it's too frequent
+                    # e.g., */5 * * * * means every 5 minutes
+                    parts = expr.strip().split()
+                    if len(parts) == 5:
+                        minute_part = parts[0]
+                        # Check for patterns like */N where N < min_interval
+                        if minute_part.startswith("*/"):
+                            try:
+                                interval = int(minute_part[2:])
+                                if interval < min_interval:
+                                    raise HTTPException(
+                                        status_code=400,
+                                        detail=f"Cron interval must be at least {min_interval} minutes",
+                                    )
+                            except ValueError:
+                                pass
+                        # Check for single digit minutes (0 to min_interval-1) which means every hour at that minute
+                        # This is acceptable, not too frequent
+            except ImportError:
+                pass
+            except HTTPException:
+                raise
+            except Exception:
+                pass
+
     def create_subscription(
         self,
         db: Session,
@@ -113,6 +163,12 @@ class SubscriptionService:
         user_id: int,
     ) -> SubscriptionInDB:
         """Create a new Subscription configuration."""
+        # Validate trigger configuration
+        self._validate_trigger_config(
+            subscription_in.trigger_type,
+            subscription_in.trigger_config,
+        )
+
         # Validate subscription name uniqueness
         existing = (
             db.query(Kind)
@@ -277,8 +333,10 @@ class SubscriptionService:
         limit: int = 100,
         enabled: Optional[bool] = None,
         trigger_type: Optional[SubscriptionTriggerType] = None,
-    ) -> Tuple[List[SubscriptionInDB], int]:
+    ) -> Tuple[List[SubscriptionInDB], int, int]:
         """List user's Subscriptions with pagination.
+
+        Returns: (items, total_count, invalid_schedule_count)
 
         Note: This method excludes rental subscriptions (is_rental=True).
         Rental subscriptions should be accessed via the market API.
@@ -323,12 +381,19 @@ class SubscriptionService:
         ]
         workspace_repo_cache = build_workspace_repo_cache(db, workspace_ids)
 
-        return [
+        converted_items = [
             self._convert_to_subscription_in_db(
                 s, db=db, workspace_repo_cache=workspace_repo_cache
             )
             for s in subscriptions
-        ], total
+        ]
+
+        # Count subscriptions with invalid trigger config
+        invalid_count = sum(
+            1 for item in converted_items if not item.trigger_config_valid
+        )
+
+        return converted_items, total, invalid_count
 
     def update_subscription(
         self,
@@ -353,7 +418,23 @@ class SubscriptionService:
         if not subscription:
             raise HTTPException(status_code=404, detail="Subscription not found")
 
-        subscription_crd = Subscription.model_validate(subscription.json)
+        # Try to validate, if fails due to invalid trigger config, fix it for reading
+        try:
+            subscription_crd = Subscription.model_validate(subscription.json)
+        except Exception as e:
+            error_str = str(e)
+            if (
+                "Interval must be at least" in error_str
+                or "Cron interval must be at least" in error_str
+            ):
+                # Fix invalid trigger config for reading
+                fixed_json = self._fix_invalid_trigger_config_for_read(
+                    subscription.json
+                )
+                subscription_crd = Subscription.model_validate(fixed_json)
+            else:
+                raise
+
         internal = subscription.json.get("_internal", {})
         update_data = subscription_in.model_dump(exclude_unset=True)
 
@@ -563,6 +644,14 @@ class SubscriptionService:
                 extract_trigger_config(subscription_crd.spec.trigger),
             )
 
+            # Validate trigger configuration
+            trigger_type_enum = (
+                trigger_type
+                if isinstance(trigger_type, SubscriptionTriggerType)
+                else SubscriptionTriggerType(trigger_type)
+            )
+            self._validate_trigger_config(trigger_type_enum, trigger_config)
+
             # Generate new webhook token if switching to event trigger
             if (
                 trigger_type == SubscriptionTriggerType.EVENT
@@ -664,7 +753,22 @@ class SubscriptionService:
         if not subscription:
             raise HTTPException(status_code=404, detail="Subscription not found")
 
-        subscription_crd = Subscription.model_validate(subscription.json)
+        # Try to validate, if fails due to invalid trigger config, fix it for reading
+        try:
+            subscription_crd = Subscription.model_validate(subscription.json)
+        except Exception as e:
+            error_str = str(e)
+            if (
+                "Interval must be at least" in error_str
+                or "Cron interval must be at least" in error_str
+            ):
+                fixed_json = self._fix_invalid_trigger_config_for_read(
+                    subscription.json
+                )
+                subscription_crd = Subscription.model_validate(fixed_json)
+            else:
+                raise
+
         internal = subscription.json.get("_internal", {})
 
         internal["enabled"] = enabled
@@ -924,6 +1028,57 @@ class SubscriptionService:
 
         return decrypted_webhooks
 
+    def _fix_invalid_trigger_config_for_read(
+        self, json_data: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Fix invalid trigger config in subscription JSON for reading.
+
+        This is used when loading existing data that may have invalid intervals.
+        We fix the interval to minimum SUBSCRIPTION_MIN_INTERVAL_MINUTES (default 15) for display purposes.
+        """
+        import copy
+
+        from app.core.config import settings
+
+        min_interval = settings.SUBSCRIPTION_MIN_INTERVAL_MINUTES
+
+        fixed = copy.deepcopy(json_data)
+        spec = fixed.get("spec", {})
+        trigger = spec.get("trigger", {})
+
+        if trigger.get("type") == "interval":
+            interval = trigger.get("interval", {})
+            if (
+                interval.get("unit") == "minutes"
+                and interval.get("value", 0) < min_interval
+            ):
+                # Fix to minimum valid interval
+                interval["value"] = min_interval
+                trigger["interval"] = interval
+                spec["trigger"] = trigger
+                fixed["spec"] = spec
+        elif trigger.get("type") == "cron":
+            cron_config = trigger.get("cron", {})
+            expression = cron_config.get("expression", "")
+            if expression:
+                parts = expression.strip().split()
+                if len(parts) == 5:
+                    minute_part = parts[0]
+                    if minute_part.startswith("*/"):
+                        try:
+                            interval = int(minute_part[2:])
+                            if interval < min_interval:
+                                # Fix to minimum valid interval
+                                parts[0] = f"*/{min_interval}"
+                                cron_config["expression"] = " ".join(parts)
+                                trigger["cron"] = cron_config
+                                spec["trigger"] = trigger
+                                fixed["spec"] = spec
+                        except ValueError:
+                            pass
+
+        return fixed
+
     def _convert_to_subscription_in_db(
         self,
         subscription: Kind,
@@ -935,7 +1090,29 @@ class SubscriptionService:
         """Convert Kind to SubscriptionInDB."""
         from app.schemas.subscription import SubscriptionVisibility
 
-        subscription_crd = Subscription.model_validate(subscription.json)
+        # Try to validate, if fails due to invalid trigger config, mark as invalid
+        trigger_config_valid = True
+        trigger_config_error = None
+        try:
+            subscription_crd = Subscription.model_validate(subscription.json)
+        except Exception as e:
+            # Check if it's a trigger config validation error
+            error_str = str(e)
+            if (
+                "Interval must be at least" in error_str
+                or "Cron interval must be at least" in error_str
+            ):
+                trigger_config_valid = False
+                trigger_config_error = "执行间隔太短，不满足最小间隔要求"
+                # Try to load without strict validation by fixing the config
+                fixed_json = self._fix_invalid_trigger_config_for_read(
+                    subscription.json
+                )
+                subscription_crd = Subscription.model_validate(fixed_json)
+            else:
+                # Re-raise if it's not a trigger config issue
+                raise
+
         internal = subscription.json.get("_internal", {})
 
         # Build webhook URL
@@ -1068,6 +1245,9 @@ class SubscriptionService:
             source_owner_username=source_owner_username,
             rental_count=rental_count,
             market_whitelist_user_ids=market_whitelist_user_ids,
+            # Trigger config validation status
+            trigger_config_valid=trigger_config_valid,
+            trigger_config_error=trigger_config_error,
             created_at=subscription.created_at,
             updated_at=subscription.updated_at,
         )
