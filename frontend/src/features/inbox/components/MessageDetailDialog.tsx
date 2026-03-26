@@ -163,22 +163,6 @@ export function MessageDetailDialog({
             </ScrollArea>
           </div>
 
-          {/* Process result */}
-          {message.processResult && (
-            <div className="border rounded-lg">
-              <div className="px-3 py-2 border-b bg-green-50">
-                <span className="text-sm font-medium text-green-700">
-                  {t('messages.view_result')}
-                </span>
-              </div>
-              <div className="p-3">
-                <pre className="text-xs text-text-secondary overflow-auto max-h-[200px]">
-                  {JSON.stringify(message.processResult, null, 2)}
-                </pre>
-              </div>
-            </div>
-          )}
-
           {/* Actions */}
           {canProcess && (
             <div className="flex items-center justify-end pt-2">

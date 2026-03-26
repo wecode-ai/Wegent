@@ -739,6 +739,7 @@ export function ForwardMessageDialog({
                           <Checkbox
                             checked={isSelected}
                             onCheckedChange={() => handleToggleMessage(msg.subtaskId)}
+                            onClick={e => e.stopPropagation()}
                             className="mt-0.5"
                           />
                           <div className="flex-1 min-w-0">
