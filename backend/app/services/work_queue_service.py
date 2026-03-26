@@ -43,6 +43,46 @@ from app.services.group_permission import check_user_group_permission
 
 logger = logging.getLogger(__name__)
 
+# System user ID for welcome messages
+SYSTEM_USER_ID = 1
+
+# Welcome message content in different languages
+WELCOME_MESSAGE_ZH = """👋 欢迎使用待办！
+
+待办是一个用于协作的消息收件箱，你可以在这里接收其他用户的消息，并使用AI进行进一步处理。
+
+### 主要功能：
+* 接收其他用户转发给你的对话消息
+* 管理和处理收到的消息
+* 将重要消息保存到你的队列中
+
+### 如何接收消息：
+其他用户可以在对话消息下方点击「转发✈️」按钮，选择转发人，消息将会发送到你的待办收件箱
+
+### 如何处理消息：
+* 在「待办」列表中点击消息，在弹出的对话框中选择「处理」按钮，这条消息会自动附加到聊天输入框中
+* 点「待办」列表上方的选择按钮，可以一次性选择多个并消息附加到新任务
+
+开始使用吧！"""
+
+WELCOME_MESSAGE_EN = """👋 Welcome to Inbox!
+
+Inbox is a collaborative message inbox where you can receive messages from other users and process them further with AI.
+
+### Key Features:
+* Receive conversation messages forwarded by other users
+* Manage and process received messages
+* Save important messages to your queue
+
+### How to Receive Messages:
+Other users can click the "Forward ✈️" button below a conversation message, select the recipient, and the message will be sent to your Inbox.
+
+### How to Process Messages:
+* Click a message in the "Inbox" list, then click the "Process" button in the popup dialog - the message will be automatically attached to the chat input box
+* Click the select button at the top of the "Inbox" list to select multiple messages and attach them to a new task at once
+
+Get started!"""
+
 
 class WorkQueueService:
     """Service for managing work queues."""
@@ -163,7 +203,11 @@ class WorkQueueService:
             }
 
     def list_queues(self, user_id: int) -> List[WorkQueueResponse]:
-        """List all work queues for a user."""
+        """List all work queues for a user.
+
+        If the user has no public default queue, automatically creates one
+        and inserts a welcome message.
+        """
         with self.get_db() as db:
             queues = (
                 db.query(Kind)
@@ -177,11 +221,184 @@ class WorkQueueService:
                 .all()
             )
 
+            # Check if user has a public default queue
+            has_public_default = False
+            existing_inbox = None
+            for q in queues:
+                spec = q.json.get("spec", {})
+                if (
+                    spec.get("isDefault")
+                    and spec.get("visibility") == QueueVisibility.PUBLIC.value
+                ):
+                    has_public_default = True
+                    break
+                # Track existing inbox for potential update
+                if q.name == "inbox":
+                    existing_inbox = q
+
+            # If no public default queue, create or update one
+            if not has_public_default:
+                new_queue = self._initialize_default_inbox_with_db(
+                    db, user_id, queues, existing_inbox
+                )
+                if new_queue and new_queue not in queues:
+                    queues.insert(0, new_queue)
+
             # Get message counts in batch
             queue_ids = [q.id for q in queues]
             message_counts = self._get_batch_message_counts(queue_ids)
 
             return [self._build_queue_response(q, message_counts) for q in queues]
+
+    def _initialize_default_inbox_with_db(
+        self,
+        db: Session,
+        user_id: int,
+        existing_queues: List[Kind],
+        existing_inbox: Optional[Kind],
+    ) -> Optional[Kind]:
+        """Initialize default inbox for a user with welcome message.
+
+        Uses the provided db session to avoid multiple connections.
+        Creates a public inbox queue and inserts a system welcome message.
+        Returns the created/updated queue or None if creation failed.
+        """
+        try:
+            if existing_inbox:
+                # Update existing inbox to be public and default
+                # First unset other defaults
+                for q in existing_queues:
+                    if (
+                        q.json.get("spec", {}).get("isDefault")
+                        and q.id != existing_inbox.id
+                    ):
+                        q.json = {
+                            **q.json,
+                            "spec": {**q.json.get("spec", {}), "isDefault": False},
+                        }
+                        q.updated_at = datetime.now()
+
+                spec = existing_inbox.json.get("spec", {})
+                spec["visibility"] = QueueVisibility.PUBLIC.value
+                spec["isDefault"] = True
+                existing_inbox.json["spec"] = spec
+                existing_inbox.updated_at = datetime.now()
+                db.commit()
+                logger.info(
+                    f"Updated existing inbox to public default: id={existing_inbox.id}, user_id={user_id}"
+                )
+                return existing_inbox
+
+            # First unset other defaults
+            for q in existing_queues:
+                if q.json.get("spec", {}).get("isDefault"):
+                    q.json = {
+                        **q.json,
+                        "spec": {**q.json.get("spec", {}), "isDefault": False},
+                    }
+                    q.updated_at = datetime.now()
+
+            # Create new inbox directly in the same session
+            spec = {
+                "displayName": "Inbox",
+                "description": "Default public inbox for receiving messages",
+                "isDefault": True,
+                "visibility": QueueVisibility.PUBLIC.value,
+                "visibleToGroups": None,
+                "inviteCode": None,
+            }
+
+            resource_json = {
+                "apiVersion": "agent.wecode.io/v1",
+                "kind": self.WORK_QUEUE_KIND,
+                "metadata": {
+                    "name": "inbox",
+                    "namespace": "default",
+                },
+                "spec": spec,
+                "status": {"state": "Available"},
+            }
+
+            db_queue = Kind(
+                user_id=user_id,
+                kind=self.WORK_QUEUE_KIND,
+                name="inbox",
+                namespace="default",
+                json=resource_json,
+            )
+            db.add(db_queue)
+            db.flush()  # Get the ID without committing
+
+            # Insert welcome message in the same transaction
+            self._insert_welcome_message_with_db(db, db_queue.id, user_id)
+
+            db.commit()
+
+            logger.info(
+                f"Initialized default inbox with welcome message: queue_id={db_queue.id}, user_id={user_id}"
+            )
+
+            return db_queue
+
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Failed to initialize default inbox for user {user_id}: {e}")
+            return None
+
+    def _insert_welcome_message_with_db(
+        self, db: Session, queue_id: int, recipient_user_id: int
+    ) -> None:
+        """Insert a welcome message into the queue using provided db session.
+
+        The message is sent from the system user (ID=1) with bilingual content.
+        """
+        # Check if welcome message already exists for this queue
+        existing_welcome = (
+            db.query(QueueMessage)
+            .filter(
+                QueueMessage.queue_id == queue_id,
+                QueueMessage.sender_user_id == SYSTEM_USER_ID,
+                QueueMessage.source_task_id == 0,
+            )
+            .first()
+        )
+
+        if existing_welcome:
+            logger.debug(f"Welcome message already exists for queue {queue_id}")
+            return
+
+        # Create welcome message with bilingual content
+        welcome_message = QueueMessage(
+            queue_id=queue_id,
+            sender_user_id=SYSTEM_USER_ID,
+            recipient_user_id=recipient_user_id,
+            source_task_id=0,
+            source_subtask_ids=[],
+            content_snapshot=[
+                {
+                    "role": "ASSISTANT",
+                    "content": WELCOME_MESSAGE_ZH,
+                    "senderUserName": "wegent",
+                    "createdAt": datetime.now().isoformat(),
+                },
+                {
+                    "role": "ASSISTANT",
+                    "content": WELCOME_MESSAGE_EN,
+                    "senderUserName": "wegent",
+                    "createdAt": datetime.now().isoformat(),
+                },
+            ],
+            note="",
+            priority=QueueMessagePriority.NORMAL,
+            status=QueueMessageStatus.UNREAD,
+            process_result={},
+            process_task_id=0,
+        )
+        db.add(welcome_message)
+
+        logger.info(
+            f"Inserted welcome message for queue {queue_id}, recipient {recipient_user_id}"
+        )
 
     def get_queue(self, user_id: int, queue_id: int) -> Optional[WorkQueueResponse]:
         """Get a specific work queue."""

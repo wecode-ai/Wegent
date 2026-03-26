@@ -182,10 +182,6 @@ export function QueueEditDialog({ queue, open, onOpenChange }: QueueEditDialogPr
               <SelectContent>
                 <SelectItem value="private">{t('queues.visibility_private')}</SelectItem>
                 <SelectItem value="public">{t('queues.visibility_public')}</SelectItem>
-                <SelectItem value="group_visible">
-                  {t('queues.visibility_group_visible')}
-                </SelectItem>
-                <SelectItem value="invite_only">{t('queues.visibility_invite_only')}</SelectItem>
               </SelectContent>
             </Select>
           </div>
