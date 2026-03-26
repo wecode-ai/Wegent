@@ -188,7 +188,7 @@ export default function TaskSidebar({
       })
     }
     return buttons
-  }, [t, pageType, isAdmin])
+  }, [t, pageType, isAdmin, inboxUnreadCount])
 
   // New conversation - always navigate to chat page
   const handleNewAgentClick = () => {
