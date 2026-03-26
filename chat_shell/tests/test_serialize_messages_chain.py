@@ -9,7 +9,11 @@ import json
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-from chat_shell.agents.graph_builder import _serialize_messages_chain
+from chat_shell.agents.graph_builder import (
+    InvalidToolMessageSequenceError,
+    _serialize_messages_chain,
+    _validate_tool_message_sequence,
+)
 
 
 class TestSerializeMessagesChain:
@@ -108,11 +112,36 @@ class TestSerializeMessagesChain:
         result = _serialize_messages_chain([msg])
         assert "name" not in result[0]
 
-    def test_tool_message_empty_tool_call_id(self):
-        """ToolMessage with None tool_call_id uses empty string."""
+    def test_tool_message_empty_tool_call_id_raises(self):
+        """ToolMessage with empty tool_call_id fails fast."""
         msg = ToolMessage(content="ok", tool_call_id="")
-        result = _serialize_messages_chain([msg])
-        assert result[0]["tool_call_id"] == ""
+        with pytest.raises(InvalidToolMessageSequenceError, match="non-empty string"):
+            _serialize_messages_chain([msg])
+
+    def test_ai_message_missing_tool_call_id_raises(self):
+        """Assistant tool calls without IDs fail fast during serialization."""
+        msg = AIMessage(
+            content="",
+            tool_calls=[{"id": "", "name": "search", "args": {"q": "test"}}],
+        )
+
+        with pytest.raises(InvalidToolMessageSequenceError, match="non-empty string"):
+            _serialize_messages_chain([msg])
+
+    def test_validate_tool_message_sequence_rejects_unknown_tool_result(self):
+        """Tool results referencing unknown IDs are rejected before provider adaptation."""
+        messages = [
+            {"role": "assistant", "content": "no tools here"},
+            {"role": "tool", "content": "orphaned", "tool_call_id": "call_1"},
+        ]
+
+        with pytest.raises(
+            InvalidToolMessageSequenceError, match="unknown tool_call_id"
+        ):
+            _validate_tool_message_sequence(
+                messages,
+                context="test input messages",
+            )
 
     def test_full_turn_sequence(self):
         """A complete tool-use turn: AI(tool_call) → Tool(result) → AI(final)."""

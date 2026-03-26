@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.schemas.kind import Bot, Shell, Team
+from app.services.readers import KindType, kindReader
 
 logger = logging.getLogger(__name__)
 
@@ -89,16 +90,12 @@ def get_team_first_bot_shell_type(db: Session, team: Kind) -> str:
         return ""
 
     first_member = team_crd.spec.members[0]
-    bot = (
-        db.query(Kind)
-        .filter(
-            Kind.user_id == team.user_id,
-            Kind.kind == "Bot",
-            Kind.name == first_member.botRef.name,
-            Kind.namespace == first_member.botRef.namespace,
-            Kind.is_active == True,
-        )
-        .first()
+    bot = kindReader.get_by_name_and_namespace(
+        db,
+        team.user_id,
+        KindType.BOT,
+        first_member.botRef.namespace,
+        first_member.botRef.name,
     )
 
     if bot:
@@ -131,16 +128,12 @@ def is_deep_research_protocol(db: Session, team: Kind) -> bool:
     first_member = team_crd.spec.members[0]
 
     # Get first bot
-    bot = (
-        db.query(Kind)
-        .filter(
-            Kind.user_id == team.user_id,
-            Kind.kind == "Bot",
-            Kind.name == first_member.botRef.name,
-            Kind.namespace == first_member.botRef.namespace,
-            Kind.is_active == True,
-        )
-        .first()
+    bot = kindReader.get_by_name_and_namespace(
+        db,
+        team.user_id,
+        KindType.BOT,
+        first_member.botRef.namespace,
+        first_member.botRef.name,
     )
 
     if not bot:
@@ -150,31 +143,14 @@ def is_deep_research_protocol(db: Session, team: Kind) -> bool:
     if not bot_crd.spec or not bot_crd.spec.modelRef:
         return False
 
-    # Get model from bot's modelRef
-    model = (
-        db.query(Kind)
-        .filter(
-            Kind.user_id == team.user_id,
-            Kind.kind == "Model",
-            Kind.name == bot_crd.spec.modelRef.name,
-            Kind.namespace == bot_crd.spec.modelRef.namespace,
-            Kind.is_active == True,
-        )
-        .first()
+    # Get model from bot's modelRef (kindReader handles public fallback)
+    model = kindReader.get_by_name_and_namespace(
+        db,
+        team.user_id,
+        KindType.MODEL,
+        bot_crd.spec.modelRef.namespace,
+        bot_crd.spec.modelRef.name,
     )
-
-    # If not found in user's models, try public models (user_id = 0)
-    if not model:
-        model = (
-            db.query(Kind)
-            .filter(
-                Kind.user_id == 0,
-                Kind.kind == "Model",
-                Kind.name == bot_crd.spec.modelRef.name,
-                Kind.is_active == True,
-            )
-            .first()
-        )
 
     if not model or not model.json:
         return False

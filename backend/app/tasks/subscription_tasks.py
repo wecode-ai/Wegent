@@ -720,6 +720,7 @@ def check_due_subscriptions(self):
 
                 # Filter due subscriptions based on _internal fields
                 due_subscriptions = []
+                skipped_invalid = 0
                 for sub in all_subscriptions:
                     internal = sub.json.get("_internal", {})
                     if not internal.get("enabled", True):
@@ -733,6 +734,11 @@ def check_due_subscriptions(self):
                     ]:
                         continue
 
+                    # Skip subscriptions with invalid trigger configurations
+                    if not _is_trigger_config_valid(sub.json):
+                        skipped_invalid += 1
+                        continue
+
                     next_exec_time_str = internal.get("next_execution_time")
                     if not next_exec_time_str:
                         continue
@@ -743,6 +749,11 @@ def check_due_subscriptions(self):
                             due_subscriptions.append(sub)
                     except (ValueError, TypeError):
                         continue
+
+                if skipped_invalid > 0:
+                    logger.warning(
+                        f"[subscription_tasks] Skipped {skipped_invalid} subscription(s) with invalid trigger config"
+                    )
 
                 total_due = len(due_subscriptions)
 
@@ -796,6 +807,30 @@ def check_due_subscriptions(self):
                             )
                             internal = subscription.json.get("_internal", {})
                             trigger_type = internal.get("trigger_type")
+                        except Exception as e:
+                            # Check if it's a trigger config validation error (interval too short)
+                            error_str = str(e)
+                            if (
+                                "Interval must be at least" in error_str
+                                or "Cron interval must be at least" in error_str
+                            ):
+                                logger.warning(
+                                    f"[subscription_tasks] Skipping subscription {subscription.id} ({subscription.name}): "
+                                    f"invalid trigger config - {error_str}"
+                                )
+                                # Update next_execution_time to prevent immediate retry
+                                try:
+                                    _update_next_execution_time(
+                                        db,
+                                        subscription,
+                                        None,
+                                        internal.get("trigger_type"),
+                                    )
+                                except Exception:
+                                    pass
+                                continue
+                            # Re-raise if it's not a trigger config issue
+                            raise
 
                             # Determine trigger reason
                             trigger_reason = _get_trigger_reason(
@@ -861,6 +896,49 @@ def check_due_subscriptions(self):
                     exc_info=True,
                 )
                 raise
+
+
+def _is_trigger_config_valid(json_data: Dict[str, Any]) -> bool:
+    """Check if subscription trigger configuration is valid.
+
+    Validates minimum interval requirements (default 15 minutes).
+
+    Args:
+        json_data: The subscription JSON data
+
+    Returns:
+        True if trigger config is valid, False otherwise
+    """
+    from app.core.config import settings
+
+    min_interval = settings.SUBSCRIPTION_MIN_INTERVAL_MINUTES
+
+    spec = json_data.get("spec", {})
+    trigger = spec.get("trigger", {})
+    trigger_type = trigger.get("type")
+
+    if trigger_type == "interval":
+        interval = trigger.get("interval", {})
+        if interval.get("unit") == "minutes":
+            value = interval.get("value", 1)
+            if value < min_interval:
+                return False
+    elif trigger_type == "cron":
+        cron_config = trigger.get("cron", {})
+        expression = cron_config.get("expression", "")
+        if expression:
+            parts = expression.strip().split()
+            if len(parts) == 5:
+                minute_part = parts[0]
+                if minute_part.startswith("*/"):
+                    try:
+                        interval = int(minute_part[2:])
+                        if interval < min_interval:
+                            return False
+                    except ValueError:
+                        pass
+
+    return True
 
 
 def _recover_stale_pending_executions(db: Session) -> int:

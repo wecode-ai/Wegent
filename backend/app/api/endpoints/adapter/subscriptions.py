@@ -34,6 +34,7 @@ from app.schemas.subscription import (
 )
 from app.services.subscription import subscription_service
 from app.services.subscription.follow_service import subscription_follow_service
+from app.services.subscription.helpers import validate_subscription_for_read
 from app.services.subscription.notification_service import (
     subscription_notification_service,
 )
@@ -65,7 +66,7 @@ def list_subscriptions(
     """
     skip = (page - 1) * limit
 
-    items, total = subscription_service.list_subscriptions(
+    items, total, invalid_count = subscription_service.list_subscriptions(
         db=db,
         user_id=current_user.id,
         skip=skip,
@@ -74,7 +75,9 @@ def list_subscriptions(
         trigger_type=trigger_type,
     )
 
-    return SubscriptionListResponse(total=total, items=items)
+    return SubscriptionListResponse(
+        total=total, items=items, invalid_schedule_count=invalid_count
+    )
 
 
 @router.post("", response_model=SubscriptionInDB, status_code=status.HTTP_201_CREATED)
@@ -247,7 +250,7 @@ def get_stale_executions(
             .first()
         )
         if subscription:
-            subscription_crd = Subscription.model_validate(subscription.json)
+            subscription_crd = validate_subscription_for_read(subscription.json)
             internal = subscription.json.get("_internal", {})
             exec_dict["subscription_name"] = subscription.name
             exec_dict["subscription_display_name"] = subscription_crd.spec.displayName

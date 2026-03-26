@@ -83,6 +83,7 @@ class AdminDeviceInfo(BaseModel):
     executor_version: Optional[str] = Field(None, description="Executor version")
     slot_used: int = Field(0, description="Number of slots in use")
     slot_max: int = Field(0, description="Maximum slots")
+    created_at: Optional[str] = Field(None, description="Device creation timestamp")
 
 
 class AdminDeviceListResponse(BaseModel):
@@ -234,6 +235,11 @@ def _build_device_info(
         executor_version = None
         slot_used = 0
 
+    # Format created_at as ISO string
+    created_at_str = None
+    if kind.created_at:
+        created_at_str = kind.created_at.isoformat()
+
     return AdminDeviceInfo(
         id=kind.id,
         device_id=device_id,
@@ -247,6 +253,7 @@ def _build_device_info(
         executor_version=executor_version,
         slot_used=slot_used,
         slot_max=5,  # MAX_DEVICE_SLOTS default
+        created_at=created_at_str,
     )
 
 

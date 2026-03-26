@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from chat_shell.history.loader import (
     _build_knowledge_base_text_prefix,
     _extract_user_text,
+    _truncate_history,
 )
 
 
@@ -102,3 +103,58 @@ class TestExtractUserText:
             {"type": "text", "text": "<attachment>file</attachment>"},
         ]
         assert _extract_user_text(content) == "User[Alice]: hello everyone"
+
+
+class TestTruncateHistory:
+    def test_preserves_tool_call_groups_at_head_and_tail_boundaries(self, monkeypatch):
+        monkeypatch.setattr(
+            "chat_shell.history.loader.settings.GROUP_CHAT_HISTORY_FIRST_MESSAGES", 2
+        )
+        monkeypatch.setattr(
+            "chat_shell.history.loader.settings.GROUP_CHAT_HISTORY_LAST_MESSAGES", 2
+        )
+
+        history = [
+            {"role": "user", "content": "User 0"},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": "search", "arguments": "{}"},
+                    }
+                ],
+            },
+            {"role": "tool", "content": "Result 1", "tool_call_id": "call_1"},
+            {"role": "assistant", "content": "Assistant 1"},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "call_2",
+                        "type": "function",
+                        "function": {"name": "read_file", "arguments": "{}"},
+                    }
+                ],
+            },
+            {"role": "tool", "content": "Result 2", "tool_call_id": "call_2"},
+            {"role": "assistant", "content": "Assistant 2"},
+        ]
+
+        truncated = _truncate_history(history)
+
+        assert [msg["role"] for msg in truncated] == [
+            "user",
+            "assistant",
+            "tool",
+            "assistant",
+            "tool",
+            "assistant",
+        ]
+        assert truncated[1]["tool_calls"][0]["id"] == "call_1"
+        assert truncated[2]["tool_call_id"] == "call_1"
+        assert truncated[3]["tool_calls"][0]["id"] == "call_2"
+        assert truncated[4]["tool_call_id"] == "call_2"

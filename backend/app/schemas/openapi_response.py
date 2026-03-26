@@ -34,6 +34,8 @@ class WegentTool(BaseModel):
     - mcp: Custom MCP server configuration
       Allows connecting to user-provided MCP servers for additional tools
     - skill: Preload specific skills for the bot
+    - knowledge_base: Enable knowledge base RAG for this request
+      Allows querying specific knowledge bases by name
 
     Note:
     - Bot/Ghost MCP tools are always available by default (no user tool needed)
@@ -41,6 +43,7 @@ class WegentTool(BaseModel):
     - Use wegent_code_bot to enable code tasks with a git repository
     - Use mcp type with mcp_servers to add custom MCP servers
     - Use skill type with skills to preload specific skills
+    - Use knowledge_base type with knowledge_base_names to enable RAG on specific KBs
 
     Examples:
         # Enable all server-side capabilities
@@ -68,11 +71,17 @@ class WegentTool(BaseModel):
 
         # Preload specific skills
         {"type": "skill", "preload_skills": ["skill_a", "skill_b"]}
+
+        # Enable knowledge base RAG with specific KBs
+        {
+            "type": "knowledge_base",
+            "knowledge_base_names": ["default#my_kb", "org#team_kb"]
+        }
     """
 
     type: str = Field(
         ...,
-        description="Tool type: 'wegent_chat_bot' (server capabilities), 'wegent_code_bot' (code task with git repo), 'mcp' (custom MCP servers), or 'skill' (preload skills)",
+        description="Tool type: 'wegent_chat_bot' (server capabilities), 'wegent_code_bot' (code task with git repo), 'mcp' (custom MCP servers), 'skill' (preload skills), or 'knowledge_base' (KB RAG)",
     )
     mcp_servers: Optional[List[Dict[str, Any]]] = Field(
         default=None,
@@ -85,6 +94,10 @@ class WegentTool(BaseModel):
     workspace: Optional[WorkspaceConfig] = Field(
         default=None,
         description="Workspace configuration for code tasks. Required when type='wegent_code_bot'",
+    )
+    knowledge_base_names: Optional[List[str]] = Field(
+        default=None,
+        description="List of knowledge base names in 'namespace#name' format. Required when type='knowledge_base'",
     )
 
 

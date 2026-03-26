@@ -9,7 +9,6 @@ from .data_table import DataTableTool
 from .evaluation import SubmitEvaluationResultTool
 from .file_reader import FileListSkill, FileReaderSkill
 from .knowledge_base import KnowledgeBaseTool
-from .knowledge_base_abc import KnowledgeBaseToolABC
 from .knowledge_listing import KbHeadTool, KbLsTool, KBToolCallCounter
 from .load_skill import LoadSkillTool
 from .preview_subscription import PreviewSubscriptionTool
@@ -21,7 +20,6 @@ __all__ = [
     "PreviewSubscriptionTool",
     "WebSearchTool",
     "KnowledgeBaseTool",
-    "KnowledgeBaseToolABC",
     "KbLsTool",
     "KbHeadTool",
     "KBToolCallCounter",

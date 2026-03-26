@@ -8,7 +8,7 @@
 
 export { SendAreaSection } from './SendAreaSection'
 export { BasicInfoSection } from './BasicInfoSection'
-export { SubscriptionOptionsSection } from './SubscriptionOptionsSection'
+export { SubscriptionOptionsSection, validateIntervalTrigger } from './SubscriptionOptionsSection'
 export { NotificationSection } from './NotificationSection'
 export type {
   SubscriptionModel,
