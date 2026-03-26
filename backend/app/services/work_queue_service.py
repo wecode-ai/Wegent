@@ -245,7 +245,12 @@ Get started!"""
             )
 
     def create_queue(self, user_id: int, data: WorkQueueCreate) -> WorkQueueResponse:
-        """Create a new work queue."""
+        """Create a new work queue.
+
+        Handles race conditions gracefully by catching database-level conflicts.
+        """
+        from sqlalchemy.exc import IntegrityError
+
         with self.get_db() as db:
             # Check if queue with same name already exists
             existing = (
@@ -303,8 +308,17 @@ Get started!"""
                 json=resource_json,
             )
             db.add(db_queue)
-            db.commit()
-            db.refresh(db_queue)
+
+            try:
+                db.commit()
+                db.refresh(db_queue)
+            except IntegrityError:
+                # Race condition: another request created the queue first
+                db.rollback()
+                logger.info(
+                    f"Queue '{data.name}' created by concurrent request for user_id={user_id}"
+                )
+                raise ConflictException(f"Work queue '{data.name}' already exists")
 
             logger.info(
                 f"Created work queue: id={db_queue.id}, name={data.name}, user_id={user_id}"
