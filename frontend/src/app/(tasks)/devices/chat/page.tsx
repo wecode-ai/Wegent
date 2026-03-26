@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import TopNavigation from '@/features/layout/TopNavigation'
 import {
@@ -123,8 +123,21 @@ export default function DeviceChatPage() {
   // Get selected device info
   const selectedDevice = devices.find(d => d.device_id === selectedDeviceId)
 
+  // For existing tasks, use task's device_id instead of selectedDeviceId for display
+  const taskDevice = selectedTaskDetail?.device_id
+    ? devices.find(d => d.device_id === selectedTaskDetail.device_id)
+    : null
+  // Task is considered to have messages if it has a non-empty title and was created
+  const hasMessages = !!(selectedTaskDetail && selectedTaskDetail.id)
+
   // Check if selected device is OpenClaw type
   const isOpenClaw = selectedDevice ? isOpenClawDevice(selectedDevice) : false
+
+  // Check if task was associated with a device that has been deleted
+  const isTaskDeviceDeleted = useMemo(() => {
+    if (!selectedTaskDetail?.device_id) return false
+    return !devices.some(d => d.device_id === selectedTaskDetail.device_id)
+  }, [selectedTaskDetail?.device_id, devices])
 
   return (
     <div className="flex smart-h-screen bg-base text-text-primary box-border">
@@ -162,30 +175,57 @@ export default function DeviceChatPage() {
           onMembersChanged={handleMembersChanged}
           isSidebarCollapsed={isCollapsed}
         >
-          {/* Device selector in top bar */}
-          <div className="flex items-center gap-2 mr-2">
-            <Monitor className="w-4 h-4 text-text-muted" />
-            <select
-              value={selectedDeviceId || ''}
-              onChange={e => handleDeviceSelect(e.target.value)}
-              className="bg-surface border border-border rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20"
-            >
-              <option value="" disabled>
-                {t('select_device')}
-              </option>
-              {devices.map(device => (
-                <option key={device.device_id} value={device.device_id}>
-                  {device.name} (
-                  {device.status === 'online'
-                    ? t('status_online')
-                    : device.status === 'busy'
-                      ? t('status_busy')
-                      : t('status_offline')}
-                  )
-                </option>
-              ))}
-            </select>
-          </div>
+          {/* Device selector in top bar - hide when task's device is deleted */}
+          {!isTaskDeviceDeleted && (
+            <div className="flex items-center gap-2 mr-2">
+              <Monitor className="w-4 h-4 text-text-muted" />
+              {/* For existing tasks with messages, show read-only device info */}
+              {hasMessages && taskDevice ? (
+                <div className="flex items-center gap-1.5 bg-surface border border-border rounded-md px-2 py-1 text-sm">
+                  <span className="truncate max-w-[150px]">{taskDevice.name}</span>
+                  <span
+                    className={`w-2 h-2 rounded-full ${
+                      taskDevice.status === 'online'
+                        ? 'bg-green-500'
+                        : taskDevice.status === 'busy'
+                          ? 'bg-yellow-500'
+                          : 'bg-gray-400'
+                    }`}
+                  />
+                  <span className="text-text-muted text-xs">
+                    (
+                    {taskDevice.status === 'online'
+                      ? t('status_online')
+                      : taskDevice.status === 'busy'
+                        ? t('status_busy')
+                        : t('status_offline')}
+                    )
+                  </span>
+                </div>
+              ) : (
+                <select
+                  value={selectedDeviceId || ''}
+                  onChange={e => handleDeviceSelect(e.target.value)}
+                  className="bg-surface border border-border rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20"
+                >
+                  <option value="" disabled>
+                    {t('select_device')}
+                  </option>
+                  {devices.map(device => (
+                    <option key={device.device_id} value={device.device_id}>
+                      {device.name} (
+                      {device.status === 'online'
+                        ? t('status_online')
+                        : device.status === 'busy'
+                          ? t('status_busy')
+                          : t('status_offline')}
+                      )
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+          )}
           {isMobile ? <ThemeToggle /> : <GithubStarButton />}
         </TopNavigation>
 
@@ -199,9 +239,15 @@ export default function DeviceChatPage() {
             taskType="task"
             onRefreshTeams={handleRefreshTeams}
             disabledReason={
-              !selectedDevice || selectedDevice.status === 'offline'
-                ? t('device_offline_cannot_send')
-                : undefined
+              isTaskDeviceDeleted
+                ? t('device_deleted_hint')
+                : hasMessages && taskDevice?.status === 'offline'
+                  ? t('device_offline_cannot_send')
+                  : hasMessages && !selectedTaskDetail?.device_id
+                    ? undefined // Task was created with cloud mode, allow sending
+                    : !selectedDevice || selectedDevice.status === 'offline'
+                      ? t('device_offline_cannot_send')
+                      : undefined
             }
             hideSelectors={isOpenClaw}
           />

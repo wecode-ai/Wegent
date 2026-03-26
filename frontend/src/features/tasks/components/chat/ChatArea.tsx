@@ -35,6 +35,7 @@ import { useAttachmentUpload } from '../hooks/useAttachmentUpload'
 import { useSchemeMessageActions } from '@/lib/scheme'
 import { useSkillSelector } from '../../hooks/useSkillSelector'
 import { useModelSelection } from '../../hooks/useModelSelection'
+import { useDevices } from '@/contexts/DeviceContext'
 
 /**
  * Threshold in pixels for determining when to collapse selectors.
@@ -111,6 +112,15 @@ function ChatAreaContent({
 
   // Task context
   const { selectedTaskDetail, setSelectedTask, accessDenied } = useTaskContext()
+
+  // Device context - for detecting deleted device
+  const { devices } = useDevices()
+
+  // Check if task was associated with a device that has been deleted
+  const isTaskDeviceDeleted = useMemo(() => {
+    if (!selectedTaskDetail?.device_id) return false
+    return !devices.some(d => d.device_id === selectedTaskDetail.device_id)
+  }, [selectedTaskDetail?.device_id, devices])
 
   // Use useTaskStateMachine hook for reactive state updates (SINGLE SOURCE OF TRUTH per AGENTS.md)
   const { state: taskState } = useTaskStateMachine(selectedTaskDetail?.id)
@@ -1040,6 +1050,8 @@ function ChatAreaContent({
     onGenerateModeChange,
     // Hide all selectors (for OpenClaw devices)
     hideSelectors,
+    // Whether the task's device has been deleted
+    isTaskDeviceDeleted,
   }
 
   return (

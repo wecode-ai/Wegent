@@ -5,7 +5,8 @@
 'use client'
 
 import React, { useRef, useState, useCallback } from 'react'
-import { Upload, Sparkles } from 'lucide-react'
+import Link from 'next/link'
+import { Upload, Sparkles, Plus } from 'lucide-react'
 import ChatInput from './ChatInput'
 import InputBadgeDisplay from './InputBadgeDisplay'
 import ExternalApiParamsInput from '../params/ExternalApiParamsInput'
@@ -16,6 +17,7 @@ import { QuoteCard } from '../text-selection'
 import { ConnectionStatusBanner } from './ConnectionStatusBanner'
 import type { Team, ChatTipItem, TaskType } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
+import { paths } from '@/config/paths'
 import type { SkillSelectorPopoverRef } from '../selector/SkillSelectorPopover'
 
 export interface ChatInputCardProps extends Omit<
@@ -76,6 +78,9 @@ export interface ChatInputCardProps extends Omit<
   // Reason why input is disabled (e.g., device offline). Shows as placeholder text.
   disabledReason?: string
 
+  // Whether the task's device has been deleted (shows clickable prompt overlay)
+  isTaskDeviceDeleted?: boolean
+
   // Hide all selectors (for OpenClaw devices) - only show text input + send button
   hideSelectors?: boolean
 }
@@ -121,6 +126,7 @@ export function ChatInputCard({
   inputControlsRef,
   hasNoTeams = false,
   disabledReason,
+  isTaskDeviceDeleted = false,
   hideSelectors,
   // ChatInputControls props
   selectedModel,
@@ -257,6 +263,20 @@ export function ChatInputCard({
             </div>
             <p className="text-lg font-medium text-primary">释放以上传文件</p>
             <p className="text-sm text-text-muted mt-1">支持 PDF, Word, TXT, Markdown 等格式</p>
+          </div>
+        )}
+
+        {/* Device Deleted Overlay - shows clickable prompt when task's device is deleted */}
+        {isTaskDeviceDeleted && (
+          <div className="absolute inset-0 z-40 rounded-3xl bg-base/95 backdrop-blur-sm flex flex-col items-center justify-center transition-all">
+            <p className="text-sm text-text-muted mb-3">{t('devices:device_deleted_hint')}</p>
+            <Link
+              href={paths.chat.getHref()}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-full bg-primary text-white text-sm font-medium hover:bg-primary/90 transition-colors"
+            >
+              <Plus className="w-4 h-4" />
+              <span>{t('devices:start_new_chat')}</span>
+            </Link>
           </div>
         )}
 

@@ -48,16 +48,29 @@ export function ChatPageMobile() {
   const { selectedDeviceId, devices } = useDevices()
   const selectedDevice = devices.find(d => d.device_id === selectedDeviceId)
 
+  // For existing tasks, also check the task's device_id
+  const taskDevice = selectedTaskDetail?.device_id
+    ? devices.find(d => d.device_id === selectedTaskDetail.device_id)
+    : null
+  const isTaskDeviceDeleted =
+    selectedTaskDetail?.device_id &&
+    !devices.some(d => d.device_id === selectedTaskDetail.device_id)
+  const isTaskDeviceOffline = taskDevice?.status === 'offline'
+
   // Determine taskType based on device selection
   // When a device is selected, use 'task' mode (same as /devices/chat)
   // Otherwise, use 'chat' mode
   const taskType = selectedDeviceId ? 'task' : 'chat'
 
   // Compute disabled reason for device mode
-  const disabledReason =
-    selectedDeviceId && (!selectedDevice || selectedDevice.status === 'offline')
+  // Consider both currently selected device and task's associated device
+  const disabledReason = isTaskDeviceDeleted
+    ? t('devices:device_deleted_hint')
+    : isTaskDeviceOffline
       ? t('devices:device_offline_cannot_send')
-      : undefined
+      : selectedDeviceId && (!selectedDevice || selectedDevice.status === 'offline')
+        ? t('devices:device_offline_cannot_send')
+        : undefined
 
   // Get current task title for top navigation
   const currentTaskTitle = selectedTaskDetail?.title

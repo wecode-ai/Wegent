@@ -327,6 +327,13 @@ export function DeviceSelectorTab({
       : null
   }, [devices, selectedDeviceId, hasMessages, taskDeviceId])
 
+  // Check if the task was associated with a device that has been deleted
+  const isTaskDeviceDeleted = useMemo(() => {
+    if (!hasMessages || !taskDeviceId) return false
+    // If taskDeviceId exists but device not found in devices list, it means the device was deleted
+    return !devices.some(device => device.device_id === taskDeviceId)
+  }, [hasMessages, taskDeviceId, devices])
+
   useEffect(() => {
     if (hasMessages || isLoading || autoSelectionInitializedRef.current) {
       return
@@ -450,6 +457,40 @@ export function DeviceSelectorTab({
 
   // Read-only mode for existing chats
   if (hasMessages) {
+    // When device is deleted, don't show any selector - the prompt will be shown in the input area
+    if (isTaskDeviceDeleted) {
+      return null
+    }
+
+    // If task has device_id but device not found (and not deleted), don't show "Public Mode"
+    // This handles the case where devices list is still loading or data inconsistency
+    if (taskDeviceId && !selectedDevice) {
+      // Show a loading/unknown state instead of misleading "Public Mode"
+      return (
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div
+                className={cn(
+                  'flex items-center gap-1.5 px-2 py-1.5 rounded-md',
+                  'bg-surface border border-border',
+                  'text-xs text-text-secondary',
+                  className
+                )}
+              >
+                <Monitor className="w-3.5 h-3.5" />
+                <span className="truncate max-w-[160px]">{t('local_device_prefix')}...</span>
+                <span className="w-1.5 h-1.5 rounded-full bg-gray-400" />
+              </div>
+            </TooltipTrigger>
+            <TooltipContent side="top">
+              <p>{t('device_offline_hint')}</p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      )
+    }
+
     return (
       <TooltipProvider>
         <Tooltip>
