@@ -9,6 +9,7 @@ import {
   listWorkQueues,
   listQueueMessages,
   getUnreadMessageCount,
+  ensureDefaultQueue,
   type WorkQueue,
   type QueueMessage,
   type QueueMessageStatus,
@@ -84,10 +85,24 @@ export function InboxProvider({ children }: InboxProviderProps) {
   // Unread count state
   const [unreadCount, setUnreadCount] = useState<UnreadCountResponse | null>(null)
 
+  // Ensure default queue exists state (to prevent multiple calls)
+  const [hasEnsuredDefault, setHasEnsuredDefault] = useState(false)
+
   // Load queues
   const refreshQueues = useCallback(async () => {
     setQueuesLoading(true)
     try {
+      // Ensure default queue exists on first load
+      if (!hasEnsuredDefault) {
+        try {
+          await ensureDefaultQueue()
+          setHasEnsuredDefault(true)
+        } catch (error) {
+          // Log but don't block - the user might still have queues
+          console.error('Failed to ensure default queue:', error)
+        }
+      }
+
       const response = await listWorkQueues()
       setQueues(response.items)
       // Auto-select default queue or first queue
@@ -103,7 +118,7 @@ export function InboxProvider({ children }: InboxProviderProps) {
     } finally {
       setQueuesLoading(false)
     }
-  }, [])
+  }, [hasEnsuredDefault])
 
   // Load messages for selected queue
   const loadMessages = useCallback(

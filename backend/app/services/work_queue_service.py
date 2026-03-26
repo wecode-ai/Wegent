@@ -48,6 +48,37 @@ class WorkQueueService:
     """Service for managing work queues."""
 
     WORK_QUEUE_KIND = "WorkQueue"
+    SYSTEM_USER_NAME = "system"
+    SYSTEM_USER_EMAIL = "system@wecode.ai"
+
+    # Welcome message content in different languages
+    WELCOME_MESSAGE_ZH = """👋 欢迎使用 Inbox！
+
+Inbox 是你的个人消息收件箱，你可以在这里接收来自其他用户或团队的消息。
+
+**主要功能：**
+• 接收其他用户转发给你的对话消息
+• 管理和处理收到的消息
+• 将重要消息保存到你的队列中
+
+**如何接收消息：**
+其他用户可以在对话中选择消息，然后通过「转发」功能将消息发送到你的 Inbox。
+
+开始使用吧！"""
+
+    WELCOME_MESSAGE_EN = """👋 Welcome to Inbox!
+
+Inbox is your personal message inbox where you can receive messages from other users or teams.
+
+**Key Features:**
+• Receive conversation messages forwarded by other users
+• Manage and process received messages
+• Save important messages to your queue
+
+**How to Receive Messages:**
+Other users can select messages in a conversation and forward them to your Inbox using the "Forward" feature.
+
+Get started!"""
 
     def get_db(self) -> Session:
         """Get database session."""
@@ -563,10 +594,20 @@ class WorkQueueService:
         If user has no public queue, creates a new one named 'inbox'.
         If 'inbox' already exists but is not public, updates it to be public.
         """
+        queue, _ = self.ensure_default_queue_with_status(user_id)
+        return queue
+
+    def ensure_default_queue_with_status(self, user_id: int) -> Tuple[Kind, bool]:
+        """Ensure user has a public queue that others can send to.
+
+        Returns a tuple of (queue, is_newly_created).
+        If user has no public queue, creates a new one named 'inbox'.
+        If 'inbox' already exists but is not public, updates it to be public.
+        """
         # First check if user already has a public queue
         public_queue = self.get_user_public_default_queue(user_id)
         if public_queue:
-            return public_queue
+            return public_queue, False
 
         with self.get_db() as db:
             # Check if 'inbox' already exists (might be private)
@@ -593,7 +634,7 @@ class WorkQueueService:
                 logger.info(
                     f"Updated existing inbox to public: id={existing_inbox.id}, user_id={user_id}"
                 )
-                return existing_inbox
+                return existing_inbox, False
 
         # Create new public inbox
         inbox_data = WorkQueueCreate(
@@ -608,7 +649,96 @@ class WorkQueueService:
         self.set_default_queue(user_id, response.id)
 
         logger.info(f"Created public inbox: id={response.id}, user_id={user_id}")
-        return self.get_queue_by_id(response.id)
+        return self.get_queue_by_id(response.id), True
+
+    def get_or_create_system_user(self) -> User:
+        """Get the system user or create it if it doesn't exist."""
+        with self.get_db() as db:
+            system_user = (
+                db.query(User).filter(User.user_name == self.SYSTEM_USER_NAME).first()
+            )
+
+            if system_user:
+                return system_user
+
+            # Create system user
+            # Use a placeholder password hash since system user won't login
+            from app.core.security import get_password_hash
+
+            system_user = User(
+                user_name=self.SYSTEM_USER_NAME,
+                email=self.SYSTEM_USER_EMAIL,
+                password_hash=get_password_hash("system-placeholder-not-for-login"),
+                is_active=False,  # System user should not be able to login
+                role="system",
+                auth_source="system",
+            )
+            db.add(system_user)
+            db.commit()
+            db.refresh(system_user)
+
+            logger.info(f"Created system user: id={system_user.id}")
+            return system_user
+
+    def ensure_default_queue_with_welcome(
+        self, user_id: int, language: str = "en"
+    ) -> Tuple[WorkQueueResponse, bool]:
+        """Ensure user has a default public inbox and create welcome message if new.
+
+        Args:
+            user_id: The user ID
+            language: Preferred language ('zh' for Chinese, 'en' for English)
+
+        Returns:
+            Tuple of (WorkQueueResponse, is_newly_created)
+        """
+        queue, is_new = self.ensure_default_queue_with_status(user_id)
+
+        if is_new and queue:
+            # Create welcome message for new inbox
+            self._create_welcome_message(queue.id, user_id, language)
+
+        return self._build_queue_response(queue), is_new
+
+    def _create_welcome_message(
+        self, queue_id: int, user_id: int, language: str = "en"
+    ) -> None:
+        """Create a welcome message for a new inbox."""
+        system_user = self.get_or_create_system_user()
+
+        # Select message content based on language
+        if language.lower().startswith("zh"):
+            content = self.WELCOME_MESSAGE_ZH
+        else:
+            content = self.WELCOME_MESSAGE_EN
+
+        with self.get_db() as db:
+            welcome_message = QueueMessage(
+                queue_id=queue_id,
+                sender_user_id=system_user.id,
+                recipient_user_id=user_id,
+                source_task_id=0,  # No source task for system messages
+                source_subtask_ids=[],
+                content_snapshot=[
+                    {
+                        "role": "ASSISTANT",
+                        "content": content,
+                        "senderUserName": self.SYSTEM_USER_NAME,
+                        "createdAt": datetime.utcnow().isoformat(),
+                    }
+                ],
+                note="",
+                priority=QueueMessagePriority.NORMAL,
+                status=QueueMessageStatus.UNREAD,
+                process_result={},
+                process_task_id=0,
+            )
+            db.add(welcome_message)
+            db.commit()
+
+            logger.info(
+                f"Created welcome message for user {user_id} in queue {queue_id}"
+            )
 
 
 class QueueMessageService:

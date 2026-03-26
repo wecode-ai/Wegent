@@ -191,6 +191,12 @@ export interface RecentContactsListResponse {
   total: number
 }
 
+// Ensure default queue response
+export interface EnsureDefaultQueueResponse {
+  queue: WorkQueue
+  isNewlyCreated: boolean
+}
+
 // API Functions
 
 // Work Queue Management
@@ -311,4 +317,9 @@ export async function getUserPublicQueues(userId: number): Promise<UserPublicQue
 export async function getRecentContacts(limit?: number): Promise<RecentContactsListResponse> {
   const query = limit ? `?limit=${limit}` : ''
   return apiClient.get<RecentContactsListResponse>(`/users/recent-contacts${query}`)
+}
+
+// Ensure Default Queue
+export async function ensureDefaultQueue(): Promise<EnsureDefaultQueueResponse> {
+  return apiClient.post<EnsureDefaultQueueResponse>('/work-queues/ensure-default')
 }

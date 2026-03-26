@@ -362,3 +362,11 @@ class UnreadCountResponse(BaseModel):
     byQueue: Dict[int, int] = Field(
         default_factory=dict, description="Unread count by queue ID"
     )
+
+
+# Ensure default queue response
+class EnsureDefaultQueueResponse(BaseModel):
+    """Response model for ensure-default endpoint."""
+
+    queue: WorkQueueResponse
+    isNewlyCreated: bool

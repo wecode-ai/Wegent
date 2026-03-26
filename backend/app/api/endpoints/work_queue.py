@@ -6,7 +6,7 @@
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
@@ -17,6 +17,7 @@ from app.schemas.work_queue import (
     BatchMessageIds,
     BatchOperationResult,
     BatchStatusUpdate,
+    EnsureDefaultQueueResponse,
     ForwardMessageRequest,
     ForwardMessageResponse,
     PublicQueueResponse,
@@ -66,6 +67,33 @@ async def list_work_queues(
     """List all work queues for the current user."""
     queues = work_queue_service.list_queues(current_user.id)
     return WorkQueueListResponse(items=queues, total=len(queues))
+
+
+@router.post("/ensure-default", response_model=EnsureDefaultQueueResponse)
+async def ensure_default_queue(
+    accept_language: Optional[str] = Header(None, alias="Accept-Language"),
+    current_user: User = Depends(security.get_current_user),
+):
+    """Ensure the user has a default public inbox queue.
+
+    If the user doesn't have a default public queue, creates one named 'inbox'
+    and inserts a system welcome message. This endpoint is idempotent - calling
+    it multiple times will not create duplicate queues or messages.
+
+    Returns the queue and whether it was newly created.
+    """
+    # Parse language from Accept-Language header
+    language = "en"
+    if accept_language:
+        # Extract primary language (e.g., "zh-CN,zh;q=0.9,en;q=0.8" -> "zh")
+        primary_lang = accept_language.split(",")[0].split("-")[0].lower()
+        if primary_lang in ("zh", "cn"):
+            language = "zh"
+
+    queue, is_new = work_queue_service.ensure_default_queue_with_welcome(
+        current_user.id, language
+    )
+    return EnsureDefaultQueueResponse(queue=queue, isNewlyCreated=is_new)
 
 
 @router.get("/messages/unread-count", response_model=UnreadCountResponse)

@@ -3,6 +3,10 @@
   "page_title": "Work Queue",
   "empty": "No messages",
   "empty_description": "Forwarded messages will appear here",
+  "welcome": {
+    "title": "Welcome to Inbox!",
+    "description": "This is your personal message inbox where you can receive messages from other users or teams."
+  },
   "queues": {
     "title": "Queues",
     "default": "Default Queue",

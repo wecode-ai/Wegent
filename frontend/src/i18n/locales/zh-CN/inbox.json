@@ -3,6 +3,10 @@
   "page_title": "工作队列",
   "empty": "暂无消息",
   "empty_description": "收到的转发消息将显示在这里",
+  "welcome": {
+    "title": "欢迎使用 Inbox！",
+    "description": "这是你的个人消息收件箱，你可以在这里接收来自其他用户或团队的消息。"
+  },
   "queues": {
     "title": "队列",
     "default": "默认队列",
