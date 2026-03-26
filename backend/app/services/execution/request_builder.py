@@ -310,6 +310,7 @@ class TaskRequestBuilder:
             history_limit=history_limit,
             new_session=new_session,
             collaboration_model=collaboration_model,
+            mode=collaboration_model,
             auth_token=auth_token,
             backend_url=settings.BACKEND_INTERNAL_URL,
             attachments=attachments or [],
