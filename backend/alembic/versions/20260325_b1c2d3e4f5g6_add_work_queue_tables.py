@@ -74,7 +74,11 @@ def upgrade() -> None:
                 comment="Snapshot of message content including text and attachments",
             ),
             sa.Column(
-                "note", sa.Text(), nullable=True, comment="Sender's note/comment"
+                "note",
+                sa.Text(),
+                nullable=False,
+                server_default="",
+                comment="Sender's note/comment",
             ),
             sa.Column(
                 "priority",
@@ -100,14 +104,16 @@ def upgrade() -> None:
             sa.Column(
                 "process_result",
                 sa.JSON(),
-                nullable=True,
+                nullable=False,
+                server_default="{}",
                 comment="AI processing result",
             ),
             sa.Column(
                 "process_task_id",
                 sa.Integer(),
-                nullable=True,
-                comment="Task ID created for processing",
+                nullable=False,
+                server_default="0",
+                comment="Task ID created for processing (0 = not processed)",
             ),
             sa.Column(
                 "created_at",
@@ -126,7 +132,8 @@ def upgrade() -> None:
             sa.Column(
                 "processed_at",
                 sa.DateTime(),
-                nullable=True,
+                nullable=False,
+                server_default=sa.func.now(),
                 comment="Processing completion time",
             ),
         )
