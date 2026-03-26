@@ -12,7 +12,7 @@ import { useIsMobile, useIsDesktop } from './hooks/useMediaQuery'
 import TaskTitleDropdown from './TaskTitleDropdown'
 import { TaskDetail } from '@/types/api'
 type TopNavigationProps = {
-  activePage?: 'chat' | 'code' | 'wiki' | 'dashboard' | 'devices' | 'evaluation'
+  activePage?: 'chat' | 'code' | 'wiki' | 'dashboard' | 'devices' | 'flow' | 'inbox' | 'evaluation'
   variant?: 'with-sidebar' | 'standalone'
   showLogo?: boolean
   title?: string

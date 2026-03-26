@@ -46,7 +46,7 @@ import {
 interface TaskSidebarProps {
   isMobileSidebarOpen: boolean
   setIsMobileSidebarOpen: (open: boolean) => void
-  pageType?: 'chat' | 'code' | 'flow' | 'knowledge' | 'devices' | 'evaluation'
+  pageType?: 'chat' | 'code' | 'flow' | 'knowledge' | 'devices' | 'inbox' | 'evaluation'
   isCollapsed?: boolean
   onToggleCollapsed?: () => void
   // Search dialog control from parent (for global shortcut support)
