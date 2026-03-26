@@ -204,6 +204,8 @@ export interface MessageBubbleProps {
   shareToken?: string
   /** Current task type to determine which model category to show in regenerate popover */
   taskType?: TaskType
+  /** Callback when user clicks forward button - receives the subtaskId of the message to forward */
+  onForwardClick?: (subtaskId: number) => void
 }
 
 // Component for rendering a paragraph with hover action button
@@ -352,6 +354,7 @@ const MessageBubble = memo(
     onReEdit,
     shareToken,
     taskType,
+    onForwardClick,
   }: MessageBubbleProps) {
     // Use trace hook for telemetry (auto-includes user and task context)
     const { trace } = useTraceAction()
@@ -754,6 +757,8 @@ const MessageBubble = memo(
               )}
               showReEdit={canShowReEdit(msg, isGroupChat, onReEdit)}
               onReEditClick={onReEdit ? () => onReEdit(msg) : undefined}
+              showForward={!!selectedTaskDetail?.id && !!msg.subtaskId && !!onForwardClick}
+              onForwardClick={() => msg.subtaskId && onForwardClick?.(msg.subtaskId)}
             />
           )}
         </>
@@ -1534,6 +1539,10 @@ const MessageBubble = memo(
                           )}
                           showReEdit={canShowReEdit(msg, isGroupChat, onReEdit)}
                           onReEditClick={onReEdit ? () => onReEdit(msg) : undefined}
+                          showForward={
+                            !!selectedTaskDetail?.id && !!msg.subtaskId && !!onForwardClick
+                          }
+                          onForwardClick={() => msg.subtaskId && onForwardClick?.(msg.subtaskId)}
                         />
                       )}
                     </>

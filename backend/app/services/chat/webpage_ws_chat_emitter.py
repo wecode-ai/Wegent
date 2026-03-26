@@ -623,6 +623,53 @@ class WebPageSocketEmitter:
         )
         logger.debug(f"[WS] emit unread:count user={user_id} count={count}")
 
+    async def emit_queue_message_received(
+        self,
+        user_id: int,
+        message_id: int,
+        queue_id: int,
+        queue_name: str,
+        sender_id: int,
+        sender_name: str,
+        preview: str,
+        priority: str,
+        created_at: str,
+    ) -> None:
+        """
+        Emit queue:message_received event to user room.
+
+        This notifies the user that a new message has been received in their work queue.
+
+        Args:
+            user_id: Target user ID (recipient)
+            message_id: Queue message ID
+            queue_id: Work queue ID
+            queue_name: Work queue name
+            sender_id: Sender user ID
+            sender_name: Sender username
+            preview: Message content preview
+            priority: Message priority
+            created_at: Creation timestamp
+        """
+        await self.sio.emit(
+            ServerEvents.QUEUE_MESSAGE_RECEIVED,
+            {
+                "message_id": message_id,
+                "queue_id": queue_id,
+                "queue_name": queue_name,
+                "sender_id": sender_id,
+                "sender_name": sender_name,
+                "preview": preview,
+                "priority": priority,
+                "created_at": created_at,
+            },
+            room=f"user:{user_id}",
+            namespace=self.namespace,
+        )
+        logger.debug(
+            f"[WS] emit queue:message_received user={user_id} message={message_id} queue={queue_id}"
+        )
+
     async def emit_task_app_update(
         self,
         task_id: int,
