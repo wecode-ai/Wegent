@@ -4,7 +4,15 @@
 
 'use client'
 
-import React, { createContext, useContext, useState, useCallback, useEffect, useMemo } from 'react'
+import React, {
+  createContext,
+  useContext,
+  useState,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+} from 'react'
 import {
   listWorkQueues,
   listQueueMessages,
@@ -85,18 +93,18 @@ export function InboxProvider({ children }: InboxProviderProps) {
   // Unread count state
   const [unreadCount, setUnreadCount] = useState<UnreadCountResponse | null>(null)
 
-  // Ensure default queue exists state (to prevent multiple calls)
-  const [hasEnsuredDefault, setHasEnsuredDefault] = useState(false)
+  // Ensure default queue exists ref (to prevent multiple calls without affecting callback identity)
+  const hasEnsuredDefaultRef = useRef(false)
 
   // Load queues
   const refreshQueues = useCallback(async () => {
     setQueuesLoading(true)
     try {
       // Ensure default queue exists on first load
-      if (!hasEnsuredDefault) {
+      if (!hasEnsuredDefaultRef.current) {
         try {
           await ensureDefaultQueue()
-          setHasEnsuredDefault(true)
+          hasEnsuredDefaultRef.current = true
         } catch (error) {
           // Log but don't block - the user might still have queues
           console.error('Failed to ensure default queue:', error)
@@ -118,7 +126,7 @@ export function InboxProvider({ children }: InboxProviderProps) {
     } finally {
       setQueuesLoading(false)
     }
-  }, [hasEnsuredDefault])
+  }, [])
 
   // Load messages for selected queue
   const loadMessages = useCallback(

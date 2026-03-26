@@ -603,6 +603,8 @@ Get started!"""
         Returns a tuple of (queue, is_newly_created).
         If user has no public queue, creates a new one named 'inbox'.
         If 'inbox' already exists but is not public, updates it to be public.
+
+        This method is idempotent and handles race conditions gracefully.
         """
         # First check if user already has a public queue
         public_queue = self.get_user_public_default_queue(user_id)
@@ -636,49 +638,108 @@ Get started!"""
                 )
                 return existing_inbox, False
 
-        # Create new public inbox
+        # Try to create new public inbox, handle race condition gracefully
         inbox_data = WorkQueueCreate(
             name="inbox",
             displayName="Inbox",
             description="Default public inbox for receiving messages",
             visibility=QueueVisibility.PUBLIC,
         )
-        response = self.create_queue(user_id, inbox_data)
 
-        # Set as default
-        self.set_default_queue(user_id, response.id)
-
-        logger.info(f"Created public inbox: id={response.id}, user_id={user_id}")
-        return self.get_queue_by_id(response.id), True
+        try:
+            response = self.create_queue(user_id, inbox_data)
+            # Set as default
+            self.set_default_queue(user_id, response.id)
+            logger.info(f"Created public inbox: id={response.id}, user_id={user_id}")
+            return self.get_queue_by_id(response.id), True
+        except ConflictException:
+            # Race condition: another request created the inbox first
+            # Re-fetch the existing queue
+            logger.info(
+                f"Inbox already created by concurrent request for user_id={user_id}"
+            )
+            existing_queue = self.get_user_public_default_queue(user_id)
+            if existing_queue:
+                return existing_queue, False
+            # Fallback: try to get inbox by name
+            with self.get_db() as db:
+                inbox = (
+                    db.query(Kind)
+                    .filter(
+                        Kind.user_id == user_id,
+                        Kind.kind == self.WORK_QUEUE_KIND,
+                        Kind.namespace == "default",
+                        Kind.name == "inbox",
+                        Kind.is_active == True,
+                    )
+                    .first()
+                )
+                if inbox:
+                    return inbox, False
+            # Should not reach here, but return a safe default
+            raise
 
     def get_or_create_system_user(self) -> User:
-        """Get the system user or create it if it doesn't exist."""
+        """Get the system user or create it if it doesn't exist.
+
+        Uses auth_source='system' and role='system' as the immutable markers
+        for system user identification. Handles race conditions gracefully.
+        """
         with self.get_db() as db:
+            # Query by auth_source and role for more robust identification
             system_user = (
-                db.query(User).filter(User.user_name == self.SYSTEM_USER_NAME).first()
+                db.query(User)
+                .filter(User.auth_source == "system", User.role == "system")
+                .first()
             )
 
             if system_user:
                 return system_user
 
+            # Also check by user_name for backward compatibility
+            system_user = (
+                db.query(User).filter(User.user_name == self.SYSTEM_USER_NAME).first()
+            )
+            if system_user:
+                return system_user
+
             # Create system user
             # Use a placeholder password hash since system user won't login
+            from sqlalchemy.exc import IntegrityError
+
             from app.core.security import get_password_hash
 
-            system_user = User(
-                user_name=self.SYSTEM_USER_NAME,
-                email=self.SYSTEM_USER_EMAIL,
-                password_hash=get_password_hash("system-placeholder-not-for-login"),
-                is_active=False,  # System user should not be able to login
-                role="system",
-                auth_source="system",
-            )
-            db.add(system_user)
-            db.commit()
-            db.refresh(system_user)
-
-            logger.info(f"Created system user: id={system_user.id}")
-            return system_user
+            try:
+                system_user = User(
+                    user_name=self.SYSTEM_USER_NAME,
+                    email=self.SYSTEM_USER_EMAIL,
+                    password_hash=get_password_hash("system-placeholder-not-for-login"),
+                    is_active=False,  # System user should not be able to login
+                    role="system",
+                    auth_source="system",
+                )
+                db.add(system_user)
+                db.commit()
+                db.refresh(system_user)
+                logger.info(f"Created system user: id={system_user.id}")
+                return system_user
+            except IntegrityError:
+                # Race condition: another request created the system user first
+                db.rollback()
+                logger.info("System user already created by concurrent request")
+                system_user = (
+                    db.query(User)
+                    .filter(User.auth_source == "system", User.role == "system")
+                    .first()
+                )
+                if system_user:
+                    return system_user
+                # Fallback to user_name
+                return (
+                    db.query(User)
+                    .filter(User.user_name == self.SYSTEM_USER_NAME)
+                    .first()
+                )
 
     def ensure_default_queue_with_welcome(
         self, user_id: int, language: str = "en"
@@ -703,16 +764,42 @@ Get started!"""
     def _create_welcome_message(
         self, queue_id: int, user_id: int, language: str = "en"
     ) -> None:
-        """Create a welcome message for a new inbox."""
-        system_user = self.get_or_create_system_user()
+        """Create a welcome message for a new inbox.
 
-        # Select message content based on language
-        if language.lower().startswith("zh"):
-            content = self.WELCOME_MESSAGE_ZH
-        else:
-            content = self.WELCOME_MESSAGE_EN
+        This method is idempotent - it checks if a welcome message from
+        the system user already exists before creating a new one.
+        """
+        system_user = self.get_or_create_system_user()
+        if not system_user:
+            logger.warning(
+                "Could not get or create system user, skipping welcome message"
+            )
+            return
 
         with self.get_db() as db:
+            # Check if welcome message already exists (idempotency)
+            existing_message = (
+                db.query(QueueMessage)
+                .filter(
+                    QueueMessage.queue_id == queue_id,
+                    QueueMessage.sender_user_id == system_user.id,
+                    QueueMessage.source_task_id
+                    == 0,  # System messages have no source task
+                )
+                .first()
+            )
+            if existing_message:
+                logger.info(
+                    f"Welcome message already exists for queue {queue_id}, skipping"
+                )
+                return
+
+            # Select message content based on language
+            if language.lower().startswith("zh"):
+                content = self.WELCOME_MESSAGE_ZH
+            else:
+                content = self.WELCOME_MESSAGE_EN
+
             welcome_message = QueueMessage(
                 queue_id=queue_id,
                 sender_user_id=system_user.id,
