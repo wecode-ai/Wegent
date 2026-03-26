@@ -260,6 +260,28 @@ class QueueMessagePriorityUpdate(BaseModel):
     priority: QueueMessagePriority
 
 
+# Batch operation schemas
+class BatchMessageIds(BaseModel):
+    """Request model for batch message operations."""
+
+    messageIds: List[int] = Field(..., min_length=1, max_length=100)
+
+
+class BatchStatusUpdate(BaseModel):
+    """Request model for batch updating message status."""
+
+    messageIds: List[int] = Field(..., min_length=1, max_length=100)
+    status: QueueMessageStatus
+
+
+class BatchOperationResult(BaseModel):
+    """Response model for batch operations."""
+
+    successCount: int
+    failedCount: int
+    failedIds: List[int] = Field(default_factory=list)
+
+
 # Message forwarding schemas
 class ForwardRecipient(BaseModel):
     """Recipient for message forwarding."""

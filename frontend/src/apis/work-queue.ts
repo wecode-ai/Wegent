@@ -124,6 +124,13 @@ export interface QueueMessageListResponse {
   unreadCount: number
 }
 
+// Batch operation types
+export interface BatchOperationResult {
+  successCount: number
+  failedCount: number
+  failedIds: number[]
+}
+
 export interface UnreadCountResponse {
   total: number
   byQueue: Record<number, number>
@@ -265,6 +272,23 @@ export async function updateMessagePriority(
 
 export async function deleteQueueMessage(messageId: number): Promise<void> {
   return apiClient.delete(`/queue-messages/${messageId}`)
+}
+
+// Batch Operations
+export async function batchUpdateMessageStatus(
+  messageIds: number[],
+  status: QueueMessageStatus
+): Promise<BatchOperationResult> {
+  return apiClient.post<BatchOperationResult>('/queue-messages/batch/status', {
+    messageIds,
+    status,
+  })
+}
+
+export async function batchDeleteMessages(messageIds: number[]): Promise<BatchOperationResult> {
+  return apiClient.post<BatchOperationResult>('/queue-messages/batch/delete', {
+    messageIds,
+  })
 }
 
 export async function getUnreadMessageCount(): Promise<UnreadCountResponse> {

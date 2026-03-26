@@ -455,6 +455,44 @@ class WorkQueueService:
             # Return the first queue if no default is set
             return queues[0] if queues else None
 
+    def get_user_public_default_queue(self, user_id: int) -> Optional[Kind]:
+        """Get user's default public queue that others can send to.
+
+        This method prioritizes:
+        1. A public queue marked as default
+        2. Any public queue
+        3. None (caller should create a default public queue)
+        """
+        with self.get_db() as db:
+            queues = (
+                db.query(Kind)
+                .filter(
+                    Kind.user_id == user_id,
+                    Kind.kind == self.WORK_QUEUE_KIND,
+                    Kind.namespace == "default",
+                    Kind.is_active == True,
+                )
+                .all()
+            )
+
+            # First, try to find a public queue marked as default
+            for q in queues:
+                spec = q.json.get("spec", {})
+                if (
+                    spec.get("isDefault")
+                    and spec.get("visibility") == QueueVisibility.PUBLIC.value
+                ):
+                    return q
+
+            # Then, try to find any public queue
+            for q in queues:
+                spec = q.json.get("spec", {})
+                if spec.get("visibility") == QueueVisibility.PUBLIC.value:
+                    return q
+
+            # No public queue found
+            return None
+
     def get_user_public_queues(self, target_user_id: int) -> List[Dict[str, Any]]:
         """Get public queues of a user (for message forwarding)."""
         with self.get_db() as db:
@@ -520,36 +558,57 @@ class WorkQueueService:
         return False
 
     def ensure_default_queue(self, user_id: int) -> Kind:
-        """Ensure user has at least one queue, creating default if needed."""
+        """Ensure user has a public queue that others can send to.
+
+        If user has no public queue, creates a new one named 'inbox'.
+        If 'inbox' already exists but is not public, updates it to be public.
+        """
+        # First check if user already has a public queue
+        public_queue = self.get_user_public_default_queue(user_id)
+        if public_queue:
+            return public_queue
+
         with self.get_db() as db:
-            # Check if user has any queues
-            existing = (
+            # Check if 'inbox' already exists (might be private)
+            existing_inbox = (
                 db.query(Kind)
                 .filter(
                     Kind.user_id == user_id,
                     Kind.kind == self.WORK_QUEUE_KIND,
                     Kind.namespace == "default",
+                    Kind.name == "inbox",
                     Kind.is_active == True,
                 )
                 .first()
             )
 
-            if existing:
-                return existing
+            if existing_inbox:
+                # Update existing inbox to be public
+                spec = existing_inbox.json.get("spec", {})
+                spec["visibility"] = QueueVisibility.PUBLIC.value
+                existing_inbox.json["spec"] = spec
+                existing_inbox.updated_at = datetime.now()
+                db.commit()
+                db.refresh(existing_inbox)
+                logger.info(
+                    f"Updated existing inbox to public: id={existing_inbox.id}, user_id={user_id}"
+                )
+                return existing_inbox
 
-            # Create default queue
-            default_data = WorkQueueCreate(
-                name="inbox",
-                displayName="Inbox",
-                description="Default work queue",
-                visibility=QueueVisibility.PUBLIC,
-            )
-            response = self.create_queue(user_id, default_data)
+        # Create new public inbox
+        inbox_data = WorkQueueCreate(
+            name="inbox",
+            displayName="Inbox",
+            description="Default public inbox for receiving messages",
+            visibility=QueueVisibility.PUBLIC,
+        )
+        response = self.create_queue(user_id, inbox_data)
 
-            # Set as default
-            self.set_default_queue(user_id, response.id)
+        # Set as default
+        self.set_default_queue(user_id, response.id)
 
-            return self.get_queue_by_id(response.id)
+        logger.info(f"Created public inbox: id={response.id}, user_id={user_id}")
+        return self.get_queue_by_id(response.id)
 
 
 class QueueMessageService:
@@ -800,6 +859,88 @@ class QueueMessageService:
 
             return total, by_queue
 
+    def batch_update_status(
+        self, user_id: int, message_ids: List[int], status: QueueMessageStatus
+    ) -> Tuple[int, int, List[int]]:
+        """Batch update message status.
+
+        Returns:
+            Tuple of (success_count, failed_count, failed_ids)
+        """
+        with self.get_db() as db:
+            # Get all messages that belong to the user
+            messages = (
+                db.query(QueueMessage)
+                .filter(
+                    QueueMessage.id.in_(message_ids),
+                    QueueMessage.recipient_user_id == user_id,
+                )
+                .all()
+            )
+
+            found_ids = {m.id for m in messages}
+            failed_ids = [mid for mid in message_ids if mid not in found_ids]
+
+            # Update all found messages
+            now = datetime.now()
+            for message in messages:
+                message.status = status
+                message.updated_at = now
+                if status == QueueMessageStatus.PROCESSED:
+                    message.processed_at = now
+
+            db.commit()
+
+            success_count = len(messages)
+            failed_count = len(failed_ids)
+
+            logger.info(
+                f"Batch updated message status: user_id={user_id}, "
+                f"status={status}, success={success_count}, failed={failed_count}"
+            )
+
+            return success_count, failed_count, failed_ids
+
+    def batch_delete_messages(
+        self, user_id: int, message_ids: List[int]
+    ) -> Tuple[int, int, List[int]]:
+        """Batch archive (soft delete) messages.
+
+        Returns:
+            Tuple of (success_count, failed_count, failed_ids)
+        """
+        with self.get_db() as db:
+            # Get all messages that belong to the user
+            messages = (
+                db.query(QueueMessage)
+                .filter(
+                    QueueMessage.id.in_(message_ids),
+                    QueueMessage.recipient_user_id == user_id,
+                )
+                .all()
+            )
+
+            found_ids = {m.id for m in messages}
+            failed_ids = [mid for mid in message_ids if mid not in found_ids]
+
+            # Archive all found messages
+            now = datetime.now()
+            for message in messages:
+                message.status = QueueMessageStatus.ARCHIVED
+                message.updated_at = now
+
+            db.commit()
+
+            success_count = len(messages)
+            failed_count = len(failed_ids)
+
+            logger.info(
+                f"Batch deleted messages: user_id={user_id}, "
+                f"success={success_count}, failed={failed_count}"
+            )
+
+            return success_count, failed_count, failed_ids
+
 
 class ContactService:
     """Service for managing recent contacts."""
@@ -811,8 +952,12 @@ class ContactService:
     def record_contact(self, user_id: int, contact_user_id: int) -> None:
         """Record a contact interaction."""
         if user_id == contact_user_id:
+            logger.debug(f"Skipping self-contact: user_id={user_id}")
             return
 
+        logger.info(
+            f"Recording contact: user_id={user_id}, contact_user_id={contact_user_id}"
+        )
         with self.get_db() as db:
             contact = (
                 db.query(RecentContact)

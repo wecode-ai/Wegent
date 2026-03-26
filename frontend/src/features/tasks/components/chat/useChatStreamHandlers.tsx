@@ -500,30 +500,44 @@ export function useChatStreamHandlers({
       try {
         // Convert selected contexts to backend format
         // Each context item contains type and data fields
+        // Note: queue_message contexts are handled separately - their content is prepended to the message
         const contextItems: Array<{
           type: 'knowledge_base' | 'table' | 'selected_documents'
           data: Record<string, unknown>
-        }> = selectedContexts.map(ctx => {
-          if (ctx.type === 'knowledge_base') {
+        }> = selectedContexts
+          .filter(ctx => ctx.type !== 'queue_message')
+          .map(ctx => {
+            if (ctx.type === 'knowledge_base') {
+              return {
+                type: 'knowledge_base' as const,
+                data: {
+                  knowledge_id: ctx.id,
+                  name: ctx.name,
+                  document_count: ctx.document_count,
+                },
+              }
+            }
+            // ctx.type === 'table'
             return {
-              type: 'knowledge_base' as const,
+              type: 'table' as const,
               data: {
-                knowledge_id: ctx.id,
+                document_id: (ctx as { document_id: number }).document_id,
                 name: ctx.name,
-                document_count: ctx.document_count,
+                source_config: (ctx as { source_config?: { url?: string } }).source_config,
               },
             }
-          }
-          // ctx.type === 'table'
-          return {
-            type: 'table' as const,
-            data: {
-              document_id: ctx.document_id,
-              name: ctx.name,
-              source_config: ctx.source_config,
-            },
-          }
-        })
+          })
+
+        // Handle queue_message contexts - prepend their content to the message
+        // This allows the AI to see the forwarded message content
+        let messageWithQueueContent = finalMessage
+        const queueMessageContexts = selectedContexts.filter(ctx => ctx.type === 'queue_message')
+        if (queueMessageContexts.length > 0) {
+          const queueContents = queueMessageContexts
+            .map(ctx => (ctx as import('@/types/context').QueueMessageContext).fullContent)
+            .join('\n\n---\n\n')
+          messageWithQueueContent = `${queueContents}\n\n---\n\n${finalMessage}`
+        }
 
         // Add selected document IDs as a context for notebook mode
         // This allows direct content injection of selected documents
@@ -596,7 +610,7 @@ export function useChatStreamHandlers({
 
         const tempTaskId = await contextSendMessage(
           {
-            message: finalMessage,
+            message: messageWithQueueContent,
             team_id: selectedTeam?.id ?? 0,
             task_id: selectedTaskDetail?.id,
             model_id: modelId,
@@ -626,7 +640,7 @@ export function useChatStreamHandlers({
             generate_params: generateParams,
           },
           {
-            pendingUserMessage: message,
+            pendingUserMessage: messageWithQueueContent,
             pendingAttachments: attachments,
             pendingContexts: pendingContexts.length > 0 ? pendingContexts : undefined,
             immediateTaskId: immediateTaskId,
