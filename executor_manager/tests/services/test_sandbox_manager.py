@@ -745,8 +745,20 @@ class TestSandboxManager:
     ):
         """Test heartbeat check detects dead executors."""
         manager = sandbox_manager_with_mock_redis
-        mock_redis_client.zrange.return_value = ["12345"]
-        mock_redis_client.hget.return_value = sample_sandbox_redis_data
+
+        # Create async mock Redis client for repository async methods
+        mock_async_redis = MagicMock()
+        mock_async_redis.ping = AsyncMock(return_value=True)
+        mock_async_redis.zrange = AsyncMock(return_value=["12345"])
+        mock_async_redis.hget = AsyncMock(return_value=sample_sandbox_redis_data)
+
+        # Mock the async client getter to return our async mock
+        mocker.patch.object(
+            manager._repository,
+            "_get_async_client",
+            new_callable=AsyncMock,
+            return_value=mock_async_redis,
+        )
 
         mock_heartbeat = MagicMock()
         # Mock async methods used by _check_heartbeats
@@ -778,7 +790,6 @@ class TestSandboxManager:
     ):
         """Test heartbeat check detects dead executor even when heartbeat key expired."""
         manager = sandbox_manager_with_mock_redis
-        mock_redis_client.zrange.return_value = ["12345"]
 
         # Create sandbox data with old created_at (older than grace period)
         old_created_at = 1704067200.0  # Much older than 60s grace period
@@ -788,6 +799,7 @@ class TestSandboxManager:
                 "sandbox_id": "12345",
                 "container_name": "wegent-task-testuser-12345",
                 "base_url": "http://localhost:10001",
+                "status": "running",
                 "created_at": old_created_at,
                 "last_activity_at": last_activity,
                 "shell_type": "ClaudeCode",
@@ -796,7 +808,20 @@ class TestSandboxManager:
                 "metadata": sample_sandbox_metadata,
             }
         )
-        mock_redis_client.hget.return_value = old_sandbox_data
+
+        # Create async mock Redis client for repository async methods
+        mock_async_redis = MagicMock()
+        mock_async_redis.ping = AsyncMock(return_value=True)
+        mock_async_redis.zrange = AsyncMock(return_value=["12345"])
+        mock_async_redis.hget = AsyncMock(return_value=old_sandbox_data)
+
+        # Mock the async client getter to return our async mock
+        mocker.patch.object(
+            manager._repository,
+            "_get_async_client",
+            new_callable=AsyncMock,
+            return_value=mock_async_redis,
+        )
 
         mock_heartbeat = MagicMock()
         # Mock async methods used by _check_heartbeats

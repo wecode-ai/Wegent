@@ -425,6 +425,12 @@ export function DeviceMonitorPanel() {
                             {t('admin:device_monitor.columns.ip')}: {device.client_ip}
                           </span>
                         )}
+                        {device.created_at && (
+                          <span>
+                            {t('admin:device_monitor.columns.created_at')}:{' '}
+                            {new Date(device.created_at).toLocaleString()}
+                          </span>
+                        )}
                       </div>
                     </div>
                     {/* Action Buttons */}

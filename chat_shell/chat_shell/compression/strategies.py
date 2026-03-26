@@ -25,6 +25,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
 
+from chat_shell.messages.utils import group_tool_call_messages
+
 from .config import CompressionConfig
 from .token_counter import TokenCounter
 
@@ -658,6 +660,28 @@ class HistoryTruncationStrategy(CompressionStrategy):
         first_to_keep = config.first_messages_to_keep
         last_to_keep = config.last_messages_to_keep
 
+        # Adjust boundaries to avoid splitting tool call groups.
+        # If the boundary falls on a tool response, extend forward/backward
+        # to keep the entire group together.
+        while (
+            first_to_keep < len(conversation_messages)
+            and conversation_messages[first_to_keep].get("role") == "tool"
+        ):
+            first_to_keep += 1
+
+        last_start = len(conversation_messages) - last_to_keep
+        if (
+            last_start > 0
+            and last_start < len(conversation_messages)
+            and conversation_messages[last_start].get("role") == "tool"
+        ):
+            while (
+                last_start > 0
+                and conversation_messages[last_start].get("role") == "tool"
+            ):
+                last_start -= 1
+            last_to_keep = len(conversation_messages) - last_start
+
         # If conversation is small enough, no truncation possible
         if len(conversation_messages) <= (first_to_keep + last_to_keep):
             return messages, {"messages_removed": 0}
@@ -685,6 +709,14 @@ class HistoryTruncationStrategy(CompressionStrategy):
             if tokens_removed >= tokens_to_reduce:
                 break
             tokens_removed += msg_tokens
+            messages_to_remove += 1
+
+        # Ensure removal doesn't leave orphaned tool responses at start of kept middle
+        while (
+            messages_to_remove < len(middle_messages)
+            and middle_messages[messages_to_remove].get("role") == "tool"
+        ):
+            tokens_removed += middle_message_tokens[messages_to_remove][1]
             messages_to_remove += 1
 
         # Keep remaining middle messages
