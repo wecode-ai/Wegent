@@ -21,7 +21,8 @@ import {
 // Tabs component imported but using custom tab implementation for drawer
 import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
-import { ExamInstructionsMarkdown } from '@wecode/components/evaluation/exam/ExamInstructionsMarkdown'
+import { SubmitHintMarkdown } from '@wecode/components/evaluation/exam/SubmitHintMarkdown'
+import EnhancedMarkdown from '@/components/common/EnhancedMarkdown'
 import { getAuthorTopic, updateAuthorTopic } from '@wecode/api/evaluation-author'
 import { downloadEvaluationFile } from '@wecode/api/evaluation-shared'
 import { TopicVisibility, type Topic } from '@wecode/types/evaluation'
@@ -74,6 +75,10 @@ export function ConfigDrawer({ isOpen, topicId, onClose, onTopicUpdate }: Config
   const [examMinutes, setExamMinutes] = useState(50)
   const [reviewMinutes, setReviewMinutes] = useState(5)
 
+  // Submit hint config state
+  const [submitHint, setSubmitHint] = useState('')
+  const [showSubmitHintPreview, setShowSubmitHintPreview] = useState(false)
+
   // Video upload state
   const [videoAttachment, setVideoAttachment] = useState<ExamVideoAttachment | null>(null)
   const [videoUploadProgress, setVideoUploadProgress] = useState(0)
@@ -114,6 +119,9 @@ export function ConfigDrawer({ isOpen, topicId, onClose, onTopicUpdate }: Config
 
       // Load video attachment from extra_data
       setVideoAttachment((extraData?.video as ExamVideoAttachment) || null)
+
+      // Load submit hint from extra_data
+      setSubmitHint((extraData?.submit_hint as string) || '')
 
       setInitialLoaded(true)
     } catch (_error) {
@@ -172,6 +180,7 @@ export function ConfigDrawer({ isOpen, topicId, onClose, onTopicUpdate }: Config
             review: reviewMinutes,
           },
           video: videoAttachment || undefined,
+          submit_hint: submitHint.trim() || undefined,
         },
       })
 
@@ -623,7 +632,7 @@ export function ConfigDrawer({ isOpen, topicId, onClose, onTopicUpdate }: Config
                   {showInstructionsPreview ? (
                     <div className="min-h-[120px] rounded-lg border border-gray-200 bg-gray-50 p-4">
                       {instructions.trim() ? (
-                        <ExamInstructionsMarkdown content={instructions} />
+                        <EnhancedMarkdown source={instructions} theme="light" />
                       ) : (
                         <p className="text-gray-400">{t('topics.no_instructions')}</p>
                       )}
@@ -640,6 +649,58 @@ export function ConfigDrawer({ isOpen, topicId, onClose, onTopicUpdate }: Config
                     />
                   )}
                   <p className="text-xs text-gray-500">{t('topics.instructions_hint')}</p>
+                </div>
+
+                {/* Submit Hint */}
+                <div className="space-y-2 mt-6">
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="submitHint">{t('topics.submit_hint', '交卷提示')}</Label>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setShowSubmitHintPreview(!showSubmitHintPreview)}
+                      disabled={saving}
+                    >
+                      {showSubmitHintPreview ? (
+                        <>
+                          <EyeOff className="mr-1 h-4 w-4" />
+                          {t('common:actions.edit')}
+                        </>
+                      ) : (
+                        <>
+                          <Eye className="mr-1 h-4 w-4" />
+                          {t('questions.preview', 'Preview')}
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                  {showSubmitHintPreview ? (
+                    <div className="min-h-[80px] rounded-lg border border-gray-200 bg-gray-50 p-4">
+                      {submitHint.trim() ? (
+                        <SubmitHintMarkdown content={submitHint} className="text-sm" />
+                      ) : null}
+                    </div>
+                  ) : (
+                    <Textarea
+                      id="submitHint"
+                      value={submitHint}
+                      onChange={e => setSubmitHint(e.target.value)}
+                      placeholder={t(
+                        'topics.submit_hint_placeholder',
+                        '请输入交卷提示，支持 Markdown 格式'
+                      )}
+                      rows={4}
+                      className="font-mono text-sm"
+                      disabled={saving}
+                    />
+                  )}
+                  <p className="text-xs text-gray-500">
+                    {t(
+                      'topics.submit_hint_hint',
+                      '支持 Markdown 格式，将在交卷预览、确认交卷、考试已结束等位置展示'
+                    )}
+                  </p>
                 </div>
               </div>
             </div>

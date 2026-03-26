@@ -103,7 +103,10 @@
     "video_invalid_type": "Please select a valid video file",
     "video_play": "Play",
     "video_download": "Download",
-    "video_download_started": "Download started"
+    "video_download_started": "Download started",
+    "submit_hint": "Submission Hint",
+    "submit_hint_placeholder": "Enter a hint to display on the submission page (Markdown supported)",
+    "submit_hint_hint": "Supports Markdown formatting. Will be shown on preview submission, confirm submission, and exam ended pages"
   },
   "versions": {
     "current": "Current",

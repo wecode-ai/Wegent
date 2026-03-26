@@ -49,6 +49,7 @@ import {
   TimeWarningModal,
 } from './index'
 import { ExamTopicDetail } from './ExamTopicDetail'
+import { SubmitHintMarkdown } from './SubmitHintMarkdown'
 import type { PermissionState, DynamicQuestionDataMap } from './ai-assessment-types'
 import { createInitialDynamicQuestionDataMap } from './ai-assessment-types'
 import {
@@ -221,6 +222,7 @@ export function ExamPage({ topicId }: ExamPageProps) {
   } | null>(null)
   const [topicInstructions, setTopicInstructions] = useState<string>('')
   const [topicVideo, setTopicVideo] = useState<ExamVideoAttachment | undefined>(undefined)
+  const [topicSubmitHint, setTopicSubmitHint] = useState<string>('')
 
   const examData = useMemo(
     () => buildExamData(topicConfig, questions, topicName, topicDescription),
@@ -368,6 +370,11 @@ export function ExamPage({ topicId }: ExamPageProps) {
           // Load video from extra_data
           if (extraData.video && typeof extraData.video === 'object') {
             setTopicVideo(extraData.video as ExamVideoAttachment)
+          }
+
+          // Load submit hint from extra_data
+          if (typeof extraData.submit_hint === 'string') {
+            setTopicSubmitHint(extraData.submit_hint)
           }
 
           if (isExamTopicConfig(data.topic.extra_data)) {
@@ -863,31 +870,38 @@ export function ExamPage({ topicId }: ExamPageProps) {
                 ))}
               </div>
 
-              <div className="text-sm text-gray-400 mb-5 text-center">
-                <p>
-                  {t('exam.submit.file_limit', {
-                    count: (() => {
-                      const currentData = questionData[currentQuestionId!]
-                      if (!currentData) return 0
-                      const answerFiles = Object.values(currentData.answers || {}).reduce(
-                        (sum, answer) => sum + (answer.files?.length || 0),
-                        0
-                      )
-                      return answerFiles
-                    })(),
-                  })}
-                </p>
-              </div>
-
-              <div className="flex flex-col items-center gap-4">
+              <div className="flex flex-col items-center space-y-4">
+                <div className="text-sm text-gray-500 text-center">
+                  <p>
+                    {t('exam.submit.file_limit', {
+                      count: (() => {
+                        const currentData = questionData[currentQuestionId!]
+                        if (!currentData) return 0
+                        const answerFiles = Object.values(currentData.answers || {}).reduce(
+                          (sum, answer) => sum + (answer.files?.length || 0),
+                          0
+                        )
+                        return answerFiles
+                      })(),
+                    })}
+                  </p>
+                </div>
+                {topicSubmitHint && (
+                  <div className="w-full max-w-3xl mx-auto text-center text-gray-500">
+                    <SubmitHintMarkdown content={topicSubmitHint} />
+                  </div>
+                )}
                 <div className="text-sm text-gray-500 text-center">
                   <p>{t('exam.submit.confirm_description')}</p>
-                  <p className="text-xs text-gray-400 mt-1">{t('exam.submit.confirm_hint')}</p>
+                  <p className="text-xs text-gray-500 mt-1">{t('exam.submit.confirm_hint')}</p>
                 </div>
+              </div>
+
+              <div className="flex justify-center">
                 <button
                   onClick={() => setShowPreviewConfirmModal(true)}
                   disabled={isTransitioning || !isSubmitReady}
-                  className={`px-10 py-3.5 text-lg font-bold rounded-2xl transition-all active:scale-[0.98] ${
+                  className={`mt-4 px-10 py-3.5 text-lg font-bold rounded-2xl transition-all active:scale-[0.98] ${
                     isSubmitReady
                       ? 'bg-[#DF2029] hover:bg-[#c81d25] text-white shadow-lg shadow-red-200/50 hover:shadow-red-300/60'
                       : 'bg-gray-100 text-gray-400 cursor-not-allowed'
@@ -903,7 +917,12 @@ export function ExamPage({ topicId }: ExamPageProps) {
         {examPhase === 'review' && (
           <section className="animate-[slideDown_0.35s_ease-out]">
             <div className="bg-white rounded-3xl shadow-sm border border-gray-100 p-7 sm:p-9">
-              <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
+              {topicSubmitHint && (
+                <div className="w-full max-w-3xl mx-auto text-center text-gray-500">
+                  <SubmitHintMarkdown content={topicSubmitHint} />
+                </div>
+              )}
+              <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mt-4">
                 <button
                   onClick={returnToExam}
                   disabled={isTransitioning}
@@ -923,7 +942,18 @@ export function ExamPage({ topicId }: ExamPageProps) {
           </section>
         )}
 
-        {isCompleted && <CompletedState examDurationSeconds={examDurationSeconds} />}
+        {isCompleted && (
+          <CompletedState
+            examDurationSeconds={examDurationSeconds}
+            hint={
+              topicSubmitHint ? (
+                <div className="w-full max-w-3xl mx-auto text-center text-gray-500">
+                  <SubmitHintMarkdown content={topicSubmitHint} />
+                </div>
+              ) : null
+            }
+          />
+        )}
 
         <div className="h-10" />
       </main>
