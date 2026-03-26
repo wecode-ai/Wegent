@@ -22,6 +22,7 @@ from app.models.subtask import SenderType, Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.kind import Bot, Task, Team
+from app.services.readers import KindType, kindReader
 
 logger = logging.getLogger(__name__)
 
@@ -92,16 +93,12 @@ def get_bot_ids_from_team(db: Session, team: Kind) -> List[int]:
     bot_ids = []
 
     for member in team_crd.spec.members:
-        bot = (
-            db.query(Kind)
-            .filter(
-                Kind.user_id == team.user_id,
-                Kind.kind == "Bot",
-                Kind.name == member.botRef.name,
-                Kind.namespace == member.botRef.namespace,
-                Kind.is_active,
-            )
-            .first()
+        bot = kindReader.get_by_name_and_namespace(
+            db,
+            team.user_id,
+            KindType.BOT,
+            member.botRef.namespace,
+            member.botRef.name,
         )
         if bot:
             bot_ids.append(bot.id)

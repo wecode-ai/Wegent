@@ -154,6 +154,9 @@ export interface Subscription {
   source_subscription_display_name?: string
   source_owner_username?: string
   rental_count?: number
+  // Trigger config validation status
+  trigger_config_valid?: boolean
+  trigger_config_error?: string
   created_at: string
   updated_at: string
 }
@@ -236,6 +239,7 @@ export interface SubscriptionUpdateRequest {
 export interface SubscriptionListResponse {
   total: number
   items: Subscription[]
+  invalid_schedule_count?: number
 }
 
 // Background execution record

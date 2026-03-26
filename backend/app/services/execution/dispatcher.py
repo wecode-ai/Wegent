@@ -49,6 +49,25 @@ from .router import CommunicationMode, ExecutionRouter, ExecutionTarget
 logger = logging.getLogger(__name__)
 
 
+class InvalidToolCallEventError(ValueError):
+    """Raised when a Responses API tool event is missing its correlation ID."""
+
+
+def _require_non_empty_tool_use_id(tool_use_id: Any, *, context: str) -> str:
+    """Return a validated tool-use ID or raise for blank/missing values."""
+    if tool_use_id is None:
+        value = ""
+    elif isinstance(tool_use_id, str):
+        value = tool_use_id
+    else:
+        value = str(tool_use_id)
+
+    if not value.strip():
+        raise InvalidToolCallEventError(f"{context}: missing non-empty tool_use_id")
+
+    return value
+
+
 def extract_completed_result(response_data: dict) -> dict:
     """Build a result dict from a ``response.completed`` payload.
 
@@ -163,11 +182,15 @@ class ResponsesAPIEventParser:
 
         elif event_type == ResponsesAPIStreamEvents.FUNCTION_CALL_ARGUMENTS_DONE.value:
             # function_call_arguments.done -> TOOL_RESULT
+            tool_use_id = _require_non_empty_tool_use_id(
+                data.get("call_id") or data.get("item_id"),
+                context="function_call_arguments.done",
+            )
             return ExecutionEvent(
                 type=EventType.TOOL_RESULT,
                 task_id=task_id,
                 subtask_id=subtask_id,
-                tool_use_id=data.get("call_id", data.get("item_id")),
+                tool_use_id=tool_use_id,
                 tool_output=data.get("output"),
                 data={"blocks": data.get("blocks", [])},
                 message_id=message_id,
@@ -192,7 +215,10 @@ class ResponsesAPIEventParser:
             item = data.get("item", {})
             if item.get("type") == "function_call":
                 # Extract function call info from item
-                call_id = item.get("call_id") or item.get("id", "")
+                call_id = _require_non_empty_tool_use_id(
+                    item.get("call_id") or item.get("id"),
+                    context="response.output_item.added(function_call)",
+                )
                 name = item.get("name", "")
                 # Arguments may be empty string initially, parse if present
                 arguments_str = item.get("arguments", "")
