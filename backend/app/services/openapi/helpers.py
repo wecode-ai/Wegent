@@ -80,12 +80,14 @@ def parse_wegent_tools(tools: Optional[List[WegentTool]]) -> Dict[str, Any]:
         - mcp_servers: dict (custom MCP server configurations, format: {name: config})
         - preload_skills: list (skills to preload for the bot)
         - workspace: dict (git workspace info for code tasks, contains git_url, branch, git_repo, git_domain)
+        - knowledge_base_names: list (knowledge base names in 'namespace#name' format)
     """
     result: Dict[str, Any] = {
         "enable_chat_bot": False,
         "mcp_servers": {},
         "preload_skills": [],
         "workspace": None,
+        "knowledge_base_names": [],
     }
     if tools:
         for tool in tools:
@@ -124,7 +126,46 @@ def parse_wegent_tools(tools: Optional[List[WegentTool]]) -> Dict[str, Any]:
             elif tool.type == "skill" and tool.preload_skills:
                 # Add skills to preload_skills list
                 result["preload_skills"].extend(tool.preload_skills)
+            elif tool.type == "knowledge_base" and tool.knowledge_base_names:
+                # Parse and validate knowledge base names
+                for kb_name in tool.knowledge_base_names:
+                    parsed = parse_knowledge_base_name(kb_name)
+                    result["knowledge_base_names"].append(parsed)
     return result
+
+
+def parse_knowledge_base_name(kb_name: str) -> Dict[str, str]:
+    """
+    Parse knowledge base name in 'namespace#name' format.
+
+    Args:
+        kb_name: Knowledge base name string in format 'namespace#name'
+                 or just 'name' (defaults to 'default' namespace)
+
+    Returns:
+        Dict with 'namespace' and 'name' keys
+
+    Raises:
+        HTTPException: If the format is invalid
+    """
+    if not kb_name:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Knowledge base name cannot be empty",
+        )
+
+    parts = kb_name.split("#")
+    if len(parts) == 2:
+        return {"namespace": parts[0], "name": parts[1]}
+    elif len(parts) == 1:
+        # Default to 'default' namespace if not specified
+        return {"namespace": "default", "name": parts[0]}
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid knowledge base name format: '{kb_name}'. "
+            f"Expected format: 'namespace#name' or 'name'",
+        )
 
 
 def _extract_repo_from_url(git_url: str) -> Optional[str]:

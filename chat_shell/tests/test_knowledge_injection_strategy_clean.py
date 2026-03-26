@@ -287,9 +287,13 @@ class TestKnowledgeBaseToolClean:
             }
 
             with patch.object(
-                tool, "_retrieve_chunks_via_http", new_callable=AsyncMock
+                tool, "_retrieve_with_strategy_via_http", new_callable=AsyncMock
             ) as mock_retrieve:
-                mock_retrieve.return_value = {}
+                mock_retrieve.return_value = {
+                    "mode": "rag_retrieval",
+                    "records": [],
+                    "total": 0,
+                }
 
                 result = await tool._arun("test query")
 
@@ -299,21 +303,78 @@ class TestKnowledgeBaseToolClean:
                 assert result_dict.get("count", 0) == 0
 
     @pytest.mark.asyncio
-    async def test_retrieve_chunks_from_all_kbs_empty(self):
-        """Test _retrieve_chunks_from_all_kbs with empty results."""
+    async def test_backend_routed_retrieval_empty(self):
+        """Test Backend-routed retrieval returns empty grouped chunks."""
         tool = KnowledgeBaseTool()
         tool.knowledge_base_ids = [1]
-        tool.db_session = MagicMock()
+        tool.db_session = None
 
-        # Mock the entire method to avoid import issues
-        with patch.object(tool, "_retrieve_chunks_from_all_kbs") as mock_method:
-            mock_method.return_value = {}
+        with patch.object(
+            tool, "_retrieve_with_strategy_via_http", new_callable=AsyncMock
+        ) as mock_retrieve:
+            mock_retrieve.return_value = {
+                "mode": "rag_retrieval",
+                "records": [],
+                "total": 0,
+            }
 
-            kb_chunks = await tool._retrieve_chunks_from_all_kbs("test query", 5)
+            route_mode, kb_chunks = await tool._retrieve_with_strategy_from_all_kbs(
+                "test query", 5
+            )
 
-            assert kb_chunks == {}
+        assert route_mode == "rag_retrieval"
+        assert kb_chunks == {}
 
-    def test_format_direct_injection_result(self):
+    @pytest.mark.asyncio
+    async def test_retrieve_with_strategy_via_http_sends_runtime_budget(self):
+        """HTTP retrieve should send runtime token budget for Backend routing."""
+        tool = KnowledgeBaseTool()
+        tool.knowledge_base_ids = [1]
+        tool.current_messages = [{"role": "user", "content": "hello"}]
+        tool.context_window = 200000
+        tool.model_id = "claude-3-5-sonnet"
+        tool.user_subtask_id = 123
+        tool.user_id = 456
+
+        mock_response = MagicMock(status_code=200)
+        mock_response.json.return_value = {
+            "mode": "rag_retrieval",
+            "records": [],
+            "total": 0,
+        }
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_async_client = AsyncMock()
+        mock_async_client.__aenter__.return_value = mock_client
+        mock_async_client.__aexit__.return_value = None
+
+        with patch("httpx.AsyncClient", return_value=mock_async_client):
+            await tool._retrieve_with_strategy_via_http("test query", 5)
+
+        payload = mock_client.post.await_args.kwargs["json"]
+        runtime_context = payload["runtime_context"]
+        assert runtime_context["context_window"] == 200000
+        assert runtime_context["max_direct_chunks"] == tool.max_direct_chunks
+        assert runtime_context["used_context_tokens"] > 0
+        assert runtime_context["reserved_output_tokens"] == 4096
+        assert runtime_context["context_buffer_ratio"] == tool.context_buffer_ratio
+        persistence_context = payload["persistence_context"]
+        assert persistence_context["user_subtask_id"] == 123
+        assert persistence_context["user_id"] == 456
+        assert persistence_context["restricted_mode"] is False
+
+    def test_build_runtime_context_uses_effective_context_window(self):
+        """Runtime context should fall back to the effective model budget."""
+        tool = KnowledgeBaseTool()
+        tool.model_id = "claude-3-5-sonnet"
+        tool.context_window = None
+
+        runtime_context = tool._build_runtime_context()
+
+        assert runtime_context["context_window"] == tool._get_effective_context_window()
+
+    @pytest.mark.asyncio
+    async def test_format_direct_injection_result(self):
         """Test _format_direct_injection_result."""
         tool = KnowledgeBaseTool()
 
@@ -323,7 +384,9 @@ class TestKnowledgeBaseToolClean:
             "decision_details": {"strategy": "all_or_nothing"},
         }
 
-        result = tool._format_direct_injection_result(injection_result, "test query")
+        result = await tool._format_direct_injection_result(
+            injection_result, "test query"
+        )
 
         result_dict = json.loads(result)
         assert result_dict["mode"] == "direct_injection"

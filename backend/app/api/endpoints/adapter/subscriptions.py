@@ -34,6 +34,7 @@ from app.schemas.subscription import (
 )
 from app.services.subscription import subscription_service
 from app.services.subscription.follow_service import subscription_follow_service
+from app.services.subscription.helpers import validate_subscription_for_read
 from app.services.subscription.notification_service import (
     subscription_notification_service,
 )
@@ -249,7 +250,7 @@ def get_stale_executions(
             .first()
         )
         if subscription:
-            subscription_crd = Subscription.model_validate(subscription.json)
+            subscription_crd = validate_subscription_for_read(subscription.json)
             internal = subscription.json.get("_internal", {})
             exec_dict["subscription_name"] = subscription.name
             exec_dict["subscription_display_name"] = subscription_crd.spec.displayName

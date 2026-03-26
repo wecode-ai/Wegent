@@ -104,6 +104,26 @@ def resolve_prompt_template(
     return result
 
 
+def validate_subscription_for_read(subscription_json: Dict[str, Any]) -> Subscription:
+    """Validate subscription JSON for read paths with legacy trigger compatibility."""
+    try:
+        return Subscription.model_validate(subscription_json)
+    except Exception as e:
+        error_str = str(e)
+        if (
+            "Interval must be at least" in error_str
+            or "Cron interval must be at least" in error_str
+        ):
+            # Import here to avoid circular imports.
+            from app.services.subscription import subscription_service
+
+            fixed_json = subscription_service._fix_invalid_trigger_config_for_read(
+                subscription_json
+            )
+            return Subscription.model_validate(fixed_json)
+        raise
+
+
 def build_subscription_crd(
     subscription_in: SubscriptionCreate,
     team: Kind,

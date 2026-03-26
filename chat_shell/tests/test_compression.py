@@ -734,8 +734,9 @@ class TestHistoryTruncationStrategy:
         ]
         assert len(truncation_notices) == 1
 
-        # OpenAI should keep role="system" (original behavior)
-        assert truncation_notices[0]["role"] == "system"
+        # Non-Anthropic should also use alternation-safe roles (not system)
+        # to avoid issues when provider detection is inaccurate
+        assert truncation_notices[0]["role"] in ("user", "assistant")
 
     def test_no_truncation_for_short_history(self):
         """Test that short history is not truncated."""

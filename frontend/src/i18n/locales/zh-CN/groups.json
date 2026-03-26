@@ -140,7 +140,7 @@
     },
     "roleDescriptions": {
       "Reporter": "只能查看群组资源，无法进行任何修改操作，可离开群组",
-      "Developer": "可查看、创建、编辑群组资源，可离开群组，但无法删除资源或管理成员",
+      "Developer": "可查看、编辑群组资源，可离开群组，但无法删除资源或管理成员",
       "Maintainer": "拥有除删除群组和转让Owner外的所有权限",
       "MaintainerDetails": {
         "title": "包括：",

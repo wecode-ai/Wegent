@@ -17,7 +17,9 @@ Key changes from the original trigger_ai_response:
 """
 
 import logging
-from typing import TYPE_CHECKING, Any, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
+
+from fastapi import HTTPException
 
 from app.db.session import SessionLocal
 from app.models.kind import Kind
@@ -142,6 +144,7 @@ async def build_execution_request(
     enable_clarification: bool = False,
     preload_skills: Optional[list] = None,
     previous_bot_id: Optional[int] = None,
+    knowledge_base_names: Optional[List[Dict[str, str]]] = None,
 ):
     """Build ExecutionRequest without dispatching.
 
@@ -164,6 +167,7 @@ async def build_execution_request(
         enable_web_search: Whether to enable web search (default: False)
         enable_clarification: Whether to enable clarification mode (default: False)
         preload_skills: Optional list of skills to preload
+        knowledge_base_names: Optional list of KB names in {'namespace': str, 'name': str} format
 
     Returns:
         ExecutionRequest ready for dispatch
@@ -278,9 +282,29 @@ async def build_execution_request(
         # Note: This is different from request.subtask_id which is the assistant subtask.
         request.user_subtask_id = user_subtask_id
 
+        # Process knowledge base names from API request (OpenAPI v1/responses)
+        # This creates SubtaskContext records for KBs specified in the request
+        processed_subtask_id = None
+        if knowledge_base_names:
+            processed_subtask_id = (
+                user_subtask_id if user_subtask_id else assistant_subtask.id
+            )
+            logger.info(
+                "[build_execution_request] Will create KB contexts for subtask_id: %d (user_subtask_id was %s)",
+                processed_subtask_id,
+                str(user_subtask_id),
+            )
+            await _create_kb_contexts_from_api_request(
+                db, user.id, processed_subtask_id, knowledge_base_names
+            )
+
         # Process contexts (attachments, knowledge bases, etc.)
-        if user_subtask_id:
-            request = await _process_contexts(db, request, user_subtask_id, user.id)
+        # If we created KB contexts, we need to process them regardless of whether it's user_subtask or assistant subtask
+        context_subtask_id = (
+            user_subtask_id if user_subtask_id else processed_subtask_id
+        )
+        if context_subtask_id:
+            request = await _process_contexts(db, request, context_subtask_id, user.id)
 
         return request
 
@@ -346,3 +370,46 @@ async def _process_contexts(
     )
 
     return request
+
+
+async def _create_kb_contexts_from_api_request(
+    db: "Session",
+    user_id: int,
+    user_subtask_id: int,
+    knowledge_base_names: List[Dict[str, str]],
+) -> None:
+    """Create SubtaskContext records for knowledge bases from API request.
+
+    This function creates KB contexts for OpenAPI v1/responses requests
+    that specify knowledge_base_names in the tools field. The created
+    contexts are then processed by the existing RAG pipeline.
+
+    Args:
+        db: Database session
+        user_id: User ID for permission checking
+        user_subtask_id: User subtask ID to attach contexts to
+        knowledge_base_names: List of dicts with 'namespace' and 'name' keys
+    """
+    from app.services.openapi.kb_context import KnowledgeBaseContextCreator
+
+    try:
+        creator = KnowledgeBaseContextCreator(db, user_id)
+        contexts = creator.create_contexts(user_subtask_id, knowledge_base_names)
+        logger.info(
+            "[build_execution_request] Created %d KB contexts from API request "
+            "for subtask %d",
+            len(contexts),
+            user_subtask_id,
+        )
+    except HTTPException:
+        # Re-raise HTTPException from KnowledgeBaseNameResolver to propagate
+        # permission errors (403) and not-found errors (404) to the caller
+        raise
+    except Exception as e:
+        # Log error but don't fail the request - KB context creation is best-effort
+        logger.warning(
+            "[build_execution_request] Failed to create KB contexts from API request "
+            "for subtask %d: %s",
+            user_subtask_id,
+            e,
+        )

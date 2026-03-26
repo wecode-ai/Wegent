@@ -169,15 +169,11 @@ class TestDetectProvider:
         assert _detect_provider("google", "anything") == "google"
         assert _detect_provider("gemini", "anything") == "google"
 
-    def test_model_id_prefix_detection(self):
+    def test_unknown_model_type_defaults_to_openai(self):
+        """Unknown model_type always defaults to openai (no model_id fallback)."""
         assert _detect_provider("unknown", "gpt-4o") == "openai"
-        assert _detect_provider("unknown", "o1-preview") == "openai"
-        assert _detect_provider("unknown", "o3-mini") == "openai"
-        assert _detect_provider("unknown", "claude-3-sonnet") == "anthropic"
-        assert _detect_provider("unknown", "gemini-1.5-pro") == "google"
-
-    def test_unknown_defaults_to_openai(self):
-        """Unknown provider defaults to openai for OpenAI-compatible APIs."""
+        assert _detect_provider("unknown", "claude-3-sonnet") == "openai"
+        assert _detect_provider("unknown", "gemini-1.5-pro") == "openai"
         assert _detect_provider("unknown", "kimi-k2.5") == "openai"
         assert _detect_provider("unknown", "deepseek-chat") == "openai"
 

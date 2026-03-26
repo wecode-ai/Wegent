@@ -121,7 +121,12 @@ class MessageCompressor:
         self.model_id = model_id
         self.config = config or CompressionConfig.from_settings()
         self.model_context = get_model_context_config(model_id, model_config)
-        self.token_counter = TokenCounter(model_id)
+
+        # Extract model_type from model_config for accurate provider detection.
+        # model_type (e.g. "claude", "openai") is the authoritative source
+        # because the same model_id can be served by multiple protocols.
+        model_type = model_config.get("model") if model_config else None
+        self.token_counter = TokenCounter(model_id, model_type=model_type)
 
         # Default strategies in order of application (from least to most disruptive)
         self.strategies = strategies or [

@@ -35,6 +35,7 @@ from app.services.subscription.helpers import (
     build_trigger_config,
     calculate_next_execution_time,
     extract_trigger_config,
+    validate_subscription_for_read,
 )
 from app.services.subscription.market_access import (
     can_view_market_subscription,
@@ -104,7 +105,7 @@ class SubscriptionMarketService:
         # Filter for market visibility subscriptions
         market_subscriptions = []
         for sub in subscriptions:
-            subscription_crd = Subscription.model_validate(sub.json)
+            subscription_crd = validate_subscription_for_read(sub.json)
             visibility = getattr(
                 subscription_crd.spec, "visibility", SubscriptionVisibility.PRIVATE
             )
@@ -125,7 +126,7 @@ class SubscriptionMarketService:
             search_lower = search.lower()
             filtered = []
             for sub in market_subscriptions:
-                subscription_crd = Subscription.model_validate(sub.json)
+                subscription_crd = validate_subscription_for_read(sub.json)
                 display_name = subscription_crd.spec.displayName.lower()
                 description = (subscription_crd.spec.description or "").lower()
                 if search_lower in display_name or search_lower in description:
@@ -138,7 +139,7 @@ class SubscriptionMarketService:
         # Convert to response and collect rental counts
         result_items = []
         for sub in market_subscriptions:
-            subscription_crd = Subscription.model_validate(sub.json)
+            subscription_crd = validate_subscription_for_read(sub.json)
             internal = sub.json.get("_internal", {})
 
             # Get owner username
@@ -215,7 +216,7 @@ class SubscriptionMarketService:
         if not subscription:
             raise HTTPException(status_code=404, detail="Subscription not found")
 
-        subscription_crd = Subscription.model_validate(subscription.json)
+        subscription_crd = validate_subscription_for_read(subscription.json)
         visibility = getattr(
             subscription_crd.spec, "visibility", SubscriptionVisibility.PRIVATE
         )
@@ -307,7 +308,7 @@ class SubscriptionMarketService:
         if not source:
             raise HTTPException(status_code=404, detail="Source subscription not found")
 
-        source_crd = Subscription.model_validate(source.json)
+        source_crd = validate_subscription_for_read(source.json)
         visibility = getattr(
             source_crd.spec, "visibility", SubscriptionVisibility.PRIVATE
         )
@@ -543,7 +544,7 @@ class SubscriptionMarketService:
         # Convert to response
         result = []
         for rental in rentals:
-            rental_crd = Subscription.model_validate(rental.json)
+            rental_crd = validate_subscription_for_read(rental.json)
             internal = rental.json.get("_internal", {})
 
             # Parse execution times

@@ -9,6 +9,7 @@ import uuid
 import pytest
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.core.security import get_password_hash
 from app.models.kind import Kind
@@ -178,3 +179,46 @@ def test_rent_subscription_returns_403_for_non_whitelist_user(
         )
 
     assert exc_info.value.status_code == 403
+
+
+def test_discover_market_subscriptions_handles_legacy_invalid_interval(
+    test_db: Session, test_user: User
+):
+    """Discover should not crash when market subscription has legacy invalid interval."""
+    team = _create_team(test_db, test_user.id, name=f"team-{uuid.uuid4().hex[:6]}")
+    service = SubscriptionService()
+    suffix = uuid.uuid4().hex[:8]
+
+    created = service.create_subscription(
+        test_db,
+        subscription_in=SubscriptionCreate(
+            name=f"market-legacy-{suffix}",
+            namespace="default",
+            display_name="Market Legacy Interval",
+            task_type="collection",
+            visibility=SubscriptionVisibility.MARKET,
+            trigger_type="interval",
+            trigger_config={"value": 15, "unit": "minutes"},
+            team_id=team.id,
+            prompt_template="market legacy interval prompt",
+        ),
+        user_id=test_user.id,
+    )
+
+    subscription = (
+        test_db.query(Kind)
+        .filter(Kind.id == created.id, Kind.kind == "Subscription")
+        .first()
+    )
+    assert subscription is not None
+
+    subscription.json["spec"]["trigger"]["interval"]["value"] = 1
+    flag_modified(subscription, "json")
+    test_db.commit()
+
+    items, _ = subscription_market_service.discover_market_subscriptions(
+        test_db,
+        user_id=test_user.id,
+    )
+
+    assert any(item.id == created.id for item in items)

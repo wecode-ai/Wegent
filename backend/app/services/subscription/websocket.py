@@ -17,10 +17,8 @@ from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.models.subscription import BackgroundExecution
-from app.schemas.subscription import (
-    BackgroundExecutionStatus,
-    Subscription,
-)
+from app.schemas.subscription import BackgroundExecutionStatus
+from app.services.subscription.helpers import validate_subscription_for_read
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +60,7 @@ def emit_background_execution_update(
             .first()
         )
         if subscription:
-            subscription_crd = Subscription.model_validate(subscription.json)
+            subscription_crd = validate_subscription_for_read(subscription.json)
             subscription_name = subscription.name
             subscription_display_name = subscription_crd.spec.displayName
             task_type = subscription_crd.spec.taskType.value

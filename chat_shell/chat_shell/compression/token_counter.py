@@ -24,6 +24,8 @@ from typing import Any
 
 import tiktoken
 
+from chat_shell.models.providers import detect_provider
+
 logger = logging.getLogger(__name__)
 
 # Cache for tiktoken encodings
@@ -139,33 +141,6 @@ def _count_tokens_for_messages(model_id: str, messages: list[dict[str, Any]]) ->
     return total_tokens
 
 
-def _detect_provider(model_id: str) -> str:
-    """Detect the provider based on model identifier.
-
-    Args:
-        model_id: Model identifier string
-
-    Returns:
-        Provider name: "openai", "anthropic", "google", or "unknown"
-    """
-    model_id_lower = model_id.lower()
-
-    # Anthropic models
-    if any(prefix in model_id_lower for prefix in ["claude", "anthropic"]):
-        return "anthropic"
-
-    # Google models
-    if any(prefix in model_id_lower for prefix in ["gemini", "palm", "bison"]):
-        return "google"
-
-    # OpenAI models (most gpt-*, o1*, o3* patterns)
-    if any(prefix in model_id_lower for prefix in ["gpt-", "o1", "o3"]):
-        return "openai"
-
-    # Default to unknown if no pattern matches
-    return "unknown"
-
-
 class TokenCounter:
     """Token counter for various model providers using tiktoken.
 
@@ -179,14 +154,22 @@ class TokenCounter:
         token_count = counter.count_messages(messages)
     """
 
-    def __init__(self, model_name: str | None = None, model_id: str | None = None):
+    def __init__(
+        self,
+        model_name: str | None = None,
+        model_id: str | None = None,
+        model_type: str | None = None,
+    ):
         """Initialize token counter.
 
         Args:
             model_name: Model identifier for provider detection (preferred)
             model_id: Deprecated alias for model_name (for backward compatibility)
+            model_type: Model protocol type (e.g. "claude", "openai", "gemini").
+                This is the authoritative source for provider detection.
         """
         self.model_id = model_id or model_name or "gpt-4"
+        self._model_type = model_type
         self._encoding: tiktoken.Encoding | None = None
 
     @property
@@ -201,9 +184,12 @@ class TokenCounter:
         """Get the detected provider for the model.
 
         Returns:
-            Provider name: "openai", "anthropic", "google", or "unknown"
+            Provider name: "openai", "anthropic", "google".
+
+        Raises:
+            ValueError: If model_type was not provided and cannot be resolved.
         """
-        return _detect_provider(self.model_id)
+        return detect_provider(self._model_type or self.model_id)
 
     def count_text(self, text: str) -> int:
         """Count tokens in a text string.

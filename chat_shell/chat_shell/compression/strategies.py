@@ -733,55 +733,20 @@ class HistoryTruncationStrategy(CompressionStrategy):
 
         # Build result with truncation notice if any messages were removed
         if messages_to_remove > 0:
-            is_anthropic = token_counter.provider == "anthropic"
+            # Use alternation-safe approach for ALL providers.
+            # Never insert a system-role notice in the middle — Anthropic
+            # rejects non-consecutive system messages, and provider detection
+            # may be inaccurate for other providers too.
+            prev_role = first_messages[-1]["role"] if first_messages else None
+            following = kept_middle if kept_middle else last_messages
+            next_role = following[0]["role"] if following else None
 
-            if is_anthropic:
-                # Anthropic requires strict user/assistant alternation and
-                # no non-leading system messages. Adapt the notice role based
-                # on adjacent messages.
-                prev_role = first_messages[-1]["role"] if first_messages else None
-                following = kept_middle if kept_middle else last_messages
-                next_role = following[0]["role"] if following else None
-
-                if prev_role == next_role and prev_role is not None:
-                    # Odd removal broke alternation (e.g., user→[removed]→user).
-                    # Insert notice with opposite role to bridge the gap.
-                    notice_role = "assistant" if prev_role == "user" else "user"
-                    truncation_notice_msg = {
-                        "role": notice_role,
-                        "content": self.TRUNCATION_NOTICE,
-                    }
-                    result = (
-                        system_messages
-                        + first_messages
-                        + [truncation_notice_msg]
-                        + kept_middle
-                        + last_messages
-                    )
-                elif following:
-                    # Alternation is intact. Merge notice into the next message
-                    # to avoid inserting a message that breaks alternation.
-                    orig_content = following[0]["content"]
-                    if isinstance(orig_content, list):
-                        # Content is a list of blocks (e.g., user message with
-                        # time block). Prepend notice as a new text block.
-                        merged = [
-                            {"type": "text", "text": self.TRUNCATION_NOTICE}
-                        ] + orig_content
-                    else:
-                        merged = self.TRUNCATION_NOTICE + "\n\n" + orig_content
-                    following[0] = {**following[0], "content": merged}
-                    result = (
-                        system_messages + first_messages + kept_middle + last_messages
-                    )
-                else:
-                    # No messages after the truncation point
-                    result = system_messages + first_messages
-            else:
-                # Non-Anthropic models (OpenAI, Google, etc.) support
-                # system messages anywhere, so keep original behavior.
+            if prev_role == next_role and prev_role is not None:
+                # Odd removal broke alternation (e.g., user→[removed]→user).
+                # Insert notice with opposite role to bridge the gap.
+                notice_role = "assistant" if prev_role == "user" else "user"
                 truncation_notice_msg = {
-                    "role": "system",
+                    "role": notice_role,
                     "content": self.TRUNCATION_NOTICE,
                 }
                 result = (
@@ -791,6 +756,23 @@ class HistoryTruncationStrategy(CompressionStrategy):
                     + kept_middle
                     + last_messages
                 )
+            elif following:
+                # Alternation is intact. Merge notice into the next message
+                # to avoid inserting a message that breaks alternation.
+                orig_content = following[0]["content"]
+                if isinstance(orig_content, list):
+                    # Content is a list of blocks (e.g., user message with
+                    # time block). Prepend notice as a new text block.
+                    merged = [
+                        {"type": "text", "text": self.TRUNCATION_NOTICE}
+                    ] + orig_content
+                else:
+                    merged = self.TRUNCATION_NOTICE + "\n\n" + orig_content
+                following[0] = {**following[0], "content": merged}
+                result = system_messages + first_messages + kept_middle + last_messages
+            else:
+                # No messages after the truncation point
+                result = system_messages + first_messages
         else:
             result = messages
 

@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from executor.config import config
+from executor.platform_compat import sanitize_ld_library_path
 from shared.logger import setup_logger
 
 if TYPE_CHECKING:
@@ -123,11 +124,9 @@ class DeviceExtensionHandler:
     ) -> dict[str, Any]:
         env = os.environ.copy()
 
-        # Fix PyInstaller LD_LIBRARY_PATH issue: restore original system library path
-        # so subprocess tools (e.g., openssl) use correct system libraries instead of
-        # PyInstaller's bundled versions which may be incompatible.
-        if "LD_LIBRARY_PATH_ORIG" in env:
-            env["LD_LIBRARY_PATH"] = env["LD_LIBRARY_PATH_ORIG"]
+        # Fix PyInstaller LD_LIBRARY_PATH issue for child processes.
+        # See: https://pyinstaller.org/en/stable/common-issues-and-pitfalls.html
+        sanitize_ld_library_path(env)
 
         env["WEGENT_EXTENSION_NAME"] = extension_name
         env["WEGENT_EXTENSION_ACTION"] = action

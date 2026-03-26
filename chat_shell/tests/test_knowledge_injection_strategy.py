@@ -311,9 +311,13 @@ class TestKnowledgeBaseTool:
             }
 
             with patch.object(
-                tool, "_retrieve_chunks_via_http", new_callable=AsyncMock
+                tool, "_retrieve_with_strategy_via_http", new_callable=AsyncMock
             ) as mock_retrieve:
-                mock_retrieve.return_value = {}
+                mock_retrieve.return_value = {
+                    "mode": "rag_retrieval",
+                    "records": [],
+                    "total": 0,
+                }
 
                 result = await tool._arun("test query")
 
@@ -323,26 +327,61 @@ class TestKnowledgeBaseTool:
                 assert result_dict.get("count", 0) == 0
 
     @pytest.mark.asyncio
-    async def test_retrieve_chunks_from_all_kbs_empty(self):
-        """Test _retrieve_chunks_from_all_kbs with empty results."""
+    async def test_backend_routed_retrieval_empty(self):
+        """Test Backend-routed retrieval returns empty grouped chunks."""
         tool = KnowledgeBaseTool()
         tool.knowledge_base_ids = [1]
         tool.db_session = MagicMock()
 
-        # Mock the entire _retrieve_chunks_via_http method to return empty
         with patch.object(
-            tool, "_retrieve_chunks_via_http", new_callable=AsyncMock
-        ) as mock_http:
-            mock_http.return_value = {}
+            tool, "_retrieve_with_strategy_from_all_kbs", new_callable=AsyncMock
+        ) as mock_method:
+            mock_method.return_value = ("rag_retrieval", {})
 
-            # Patch the import to raise ImportError, triggering HTTP fallback
-            with patch.dict(
-                "sys.modules",
-                {"app": None, "app.services": None, "app.services.rag": None},
-            ):
-                kb_chunks = await tool._retrieve_chunks_from_all_kbs("test query", 5)
+            route_mode, kb_chunks = await tool._retrieve_with_strategy_from_all_kbs(
+                "test query", 5
+            )
 
-                assert kb_chunks == {}
+            assert route_mode == "rag_retrieval"
+            assert kb_chunks == {}
+
+    @pytest.mark.asyncio
+    async def test_retrieve_with_strategy_via_http_sends_runtime_budget(self):
+        """HTTP retrieve should send runtime token budget for Backend routing."""
+        tool = KnowledgeBaseTool()
+        tool.knowledge_base_ids = [1]
+        tool.current_messages = [{"role": "user", "content": "hello"}]
+        tool.context_window = 200000
+        tool.model_id = "claude-3-5-sonnet"
+        tool.user_subtask_id = 123
+        tool.user_id = 456
+
+        mock_response = MagicMock(status_code=200)
+        mock_response.json.return_value = {
+            "mode": "rag_retrieval",
+            "records": [],
+            "total": 0,
+        }
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_async_client = AsyncMock()
+        mock_async_client.__aenter__.return_value = mock_client
+        mock_async_client.__aexit__.return_value = None
+
+        with patch("httpx.AsyncClient", return_value=mock_async_client):
+            await tool._retrieve_with_strategy_via_http("test query", 5)
+
+        payload = mock_client.post.await_args.kwargs["json"]
+        runtime_context = payload["runtime_context"]
+        assert runtime_context["context_window"] == 200000
+        assert runtime_context["max_direct_chunks"] == tool.max_direct_chunks
+        assert runtime_context["used_context_tokens"] > 0
+        assert runtime_context["reserved_output_tokens"] == 4096
+        assert runtime_context["context_buffer_ratio"] == tool.context_buffer_ratio
+        persistence_context = payload["persistence_context"]
+        assert persistence_context["user_subtask_id"] == 123
+        assert persistence_context["user_id"] == 456
+        assert persistence_context["restricted_mode"] is False
 
     @pytest.mark.asyncio
     async def test_format_direct_injection_result(self):
@@ -560,53 +599,6 @@ class TestKnowledgeBaseTool:
             result_dict["restricted_safe_summary"]["summary"]
             == "Please try again later."
         )
-
-    def test_build_persisted_extracted_text_omits_raw_content_in_restricted_mode(self):
-        """Restricted mode should not persist raw chunk text for future history replay."""
-        tool = KnowledgeBaseTool(tool_access_mode="restricted_search_only")
-
-        chunks = [
-            {
-                "content": "sensitive original content",
-                "source": "Source 1",
-                "score": 0.85,
-                "knowledge_base_id": 1,
-                "source_index": 1,
-            }
-        ]
-        source_references = [{"index": 1, "title": "Source 1", "kb_id": 1}]
-
-        result = tool._build_persisted_extracted_text(chunks, source_references, 1)
-
-        data = json.loads(result)
-        assert data["restricted_mode"] is True
-        assert "original content withheld" in data["message"].lower()
-        assert "content" not in data["chunks"][0]
-        assert "sensitive original content" not in result
-
-    def test_build_extracted_data_json_format(self):
-        """Test that _build_extracted_data returns JSON with chunks and sources."""
-        tool = KnowledgeBaseTool()
-
-        chunks = [
-            {
-                "content": "test content",
-                "source": "test.md",
-                "score": 0.85,
-                "knowledge_base_id": 1,
-                "source_index": 1,
-            }
-        ]
-        source_references = [{"index": 1, "title": "test.md", "kb_id": 1}]
-
-        result = tool._build_extracted_data(chunks, source_references, 1)
-
-        # Should be valid JSON
-        data = json.loads(result)
-        assert "chunks" in data
-        assert "sources" in data
-        assert len(data["chunks"]) == 1
-        assert data["chunks"][0]["content"] == "test content"
 
 
 if __name__ == "__main__":

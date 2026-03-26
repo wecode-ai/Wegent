@@ -45,6 +45,7 @@ from app.services.subscription.helpers import (
     create_or_get_workspace,
     extract_trigger_config,
     resolve_workspace_repo_fields,
+    validate_subscription_for_read,
 )
 from app.services.subscription.market_access import (
     filter_existing_market_whitelist_user_ids,
@@ -912,7 +913,7 @@ class SubscriptionService:
         """
         from app.core.config import settings
 
-        subscription_crd = Subscription.model_validate(subscription.json)
+        subscription_crd = validate_subscription_for_read(subscription.json)
         timeout_seconds = getattr(
             subscription_crd.spec,
             "timeoutSeconds",
