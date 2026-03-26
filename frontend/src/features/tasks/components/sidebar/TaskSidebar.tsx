@@ -23,6 +23,7 @@ import {
   ChevronUp,
   Settings2,
   Monitor,
+  Inbox,
   ClipboardCheck,
 } from 'lucide-react'
 import { useTaskContext } from '@/features/tasks/contexts/taskContext'
@@ -42,6 +43,7 @@ import {
   useProjectContext,
   DroppableHistory,
 } from '@/features/projects'
+import { useInboxUnreadCount } from '@/features/inbox'
 
 interface TaskSidebarProps {
   isMobileSidebarOpen: boolean
@@ -94,6 +96,9 @@ export default function TaskSidebar({
   } = useTaskContext()
   const scrollRef = useRef<HTMLDivElement>(null)
 
+  // Inbox unread count
+  const { unreadCount: inboxUnreadCount } = useInboxUnreadCount()
+
   // Use external state for search dialog (controlled by parent page)
   const setIsSearchDialogOpen = onSearchDialogOpenChange ?? (() => {})
 
@@ -120,7 +125,7 @@ export default function TaskSidebar({
   // Navigation buttons - show evaluation only for admin users
   const isAdmin = user?.role === 'admin'
   // Define type explicitly to include all possible buttonPageType values
-  type ButtonPageType = 'chat' | 'code' | 'flow' | 'knowledge' | 'devices' | 'evaluation'
+  type ButtonPageType = 'chat' | 'code' | 'flow' | 'knowledge' | 'devices' | 'inbox' | 'evaluation'
   interface NavigationButton {
     label: string
     icon: typeof Workflow
@@ -128,6 +133,7 @@ export default function TaskSidebar({
     isActive: boolean
     tooltip?: string
     buttonPageType: ButtonPageType
+    unreadCount?: number
   }
 
   const navigationButtons: NavigationButton[] = useMemo(() => {
@@ -160,6 +166,14 @@ export default function TaskSidebar({
         path: paths.devices.getHref(),
         isActive: pageType === 'devices',
         buttonPageType: 'devices' as const,
+      },
+      {
+        label: t('common:navigation.inbox'),
+        icon: Inbox,
+        path: paths.inbox.getHref(),
+        isActive: pageType === 'inbox',
+        buttonPageType: 'inbox',
+        unreadCount: inboxUnreadCount,
       },
     ]
     // Only show evaluation nav item for admin users
@@ -369,7 +383,7 @@ export default function TaskSidebar({
                 <Button
                   variant="ghost"
                   onClick={() => handleNavigationClick(btn.path, btn.isActive, btn.buttonPageType)}
-                  className={`w-full justify-start px-3 h-9 text-sm rounded-md transition-all duration-200 ${
+                  className={`w-full justify-between px-3 h-9 text-sm rounded-md transition-all duration-200 ${
                     btn.isActive
                       ? 'bg-primary/10 text-primary font-medium hover:bg-primary/15'
                       : 'text-text-primary hover:bg-[rgb(238,238,238)] dark:hover:bg-white/10 hover:scale-[1.02]'
@@ -388,6 +402,12 @@ export default function TaskSidebar({
                       {btn.label}
                     </span>
                   </span>
+                  {/* Unread count badge */}
+                  {btn.unreadCount !== undefined && btn.unreadCount > 0 && (
+                    <span className="flex items-center justify-center min-w-[18px] h-[18px] px-1.5 text-[11px] font-medium bg-red-500 text-white rounded-full">
+                      {btn.unreadCount > 99 ? '99+' : btn.unreadCount}
+                    </span>
+                  )}
                 </Button>
                 {/* Show "New Task" button on hover when in code mode */}
                 {btn.isActive && btn.tooltip && (

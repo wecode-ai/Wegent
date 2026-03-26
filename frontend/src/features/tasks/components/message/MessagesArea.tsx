@@ -40,6 +40,10 @@ import { taskApis } from '@/apis/tasks'
 import { subtaskApis } from '@/apis/subtasks'
 import { TaskMembersPanel } from '../group-chat'
 import { useUser } from '@/features/common/UserContext'
+import {
+  ForwardMessageDialog,
+  type ForwardableMessage,
+} from '@/features/inbox/components/ForwardMessageDialog'
 import { useUnifiedMessages, type DisplayMessage } from '../../hooks/useUnifiedMessages'
 import { useChatStreamContext } from '../../contexts/chatStreamContext'
 import { useTraceAction } from '@/hooks/useTraceAction'
@@ -259,6 +263,12 @@ function MessagesArea({
 
   // Regenerate state
   const [isRegenerating, setIsRegenerating] = useState(false)
+
+  // Forward message dialog state
+  const [isForwardDialogOpen, setIsForwardDialogOpen] = useState(false)
+  const [forwardInitialSubtaskId, setForwardInitialSubtaskId] = useState<number | undefined>(
+    undefined
+  )
 
   // Correction mode state
   const [correctionResults, setCorrectionResults] = useState<Map<number, CorrectionResponse>>(
@@ -1087,6 +1097,34 @@ function MessagesArea({
     [appliedCorrections]
   )
 
+  // Convert messages to ForwardableMessage format for the forward dialog
+  const forwardableMessages = useMemo((): ForwardableMessage[] => {
+    return messages
+      .filter(msg => msg.subtaskId && msg.status === 'completed')
+      .map(msg => {
+        // Remove markdown prefix from AI messages if present
+        let content = msg.content
+        if (msg.type === 'ai' && content.startsWith('${$$}$')) {
+          content = content.substring(6)
+        }
+
+        return {
+          subtaskId: msg.subtaskId!,
+          type: msg.type,
+          content,
+          timestamp: msg.timestamp,
+          botName: msg.botName,
+          senderUserName: msg.senderUserName,
+        }
+      })
+  }, [messages])
+
+  // Handle forward button click from MessageBubble
+  const handleForwardClick = useCallback((subtaskId: number) => {
+    setForwardInitialSubtaskId(subtaskId)
+    setIsForwardDialogOpen(true)
+  }, [])
+
   // Pre-compute the last AI message subtaskId to avoid O(n²) complexity in render loop
   const lastAiMessageSubtaskId = useMemo(() => {
     for (let i = messages.length - 1; i >= 0; i--) {
@@ -1267,6 +1305,7 @@ function MessagesArea({
                   onUseAsReference={onUseAsReference}
                   onReEdit={onReEdit}
                   taskType={selectedTaskDetail?.task_type}
+                  onForwardClick={handleForwardClick}
                 />
               </div>
             )
@@ -1306,6 +1345,17 @@ function MessagesArea({
           currentUserId={user.id}
           onLeave={handleLeaveGroupChat}
           onMembersChanged={handleMembersChanged}
+        />
+      )}
+
+      {/* Forward Message Dialog */}
+      {selectedTaskDetail?.id && (
+        <ForwardMessageDialog
+          taskId={selectedTaskDetail.id}
+          subtaskIds={forwardInitialSubtaskId ? [forwardInitialSubtaskId] : undefined}
+          open={isForwardDialogOpen}
+          onOpenChange={setIsForwardDialogOpen}
+          allMessages={forwardableMessages}
         />
       )}
     </div>

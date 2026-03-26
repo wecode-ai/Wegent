@@ -5,10 +5,10 @@
 'use client'
 
 import React from 'react'
-import { X, Database, Table2 } from 'lucide-react'
+import { X, Database, Table2, MessageSquare } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { ContextItem } from '@/types/context'
+import type { ContextItem, QueueMessageContext } from '@/types/context'
 import { formatDocumentCount } from '@/lib/i18n-helpers'
 
 interface ContextBadgeProps {
@@ -27,6 +27,8 @@ const getContextIcon = (type: ContextItem['type']) => {
       return Database
     case 'table':
       return Table2
+    case 'queue_message':
+      return MessageSquare
     // Future context types will be added here
     // case 'person': return User;
     // case 'bot': return Bot;
@@ -51,6 +53,8 @@ export default function ContextBadge({
         return 'border-primary bg-primary/10 text-primary'
       case 'table':
         return 'border-blue-500 bg-blue-500/10 text-blue-600'
+      case 'queue_message':
+        return 'border-orange-500 bg-orange-500/10 text-orange-600'
       default:
         return 'border-primary bg-primary/10 text-primary'
     }
@@ -66,6 +70,18 @@ export default function ContextBadge({
 
   const isClickable = !disableUrlClick && context.type === 'table' && context.source_config?.url
 
+  // Get remove button color based on context type
+  const getRemoveButtonColor = () => {
+    switch (context.type) {
+      case 'table':
+        return 'text-blue-600 hover:text-blue-600 hover:bg-blue-500/20'
+      case 'queue_message':
+        return 'text-orange-600 hover:text-orange-600 hover:bg-orange-500/20'
+      default:
+        return 'text-primary hover:text-primary hover:bg-primary/20'
+    }
+  }
+
   return (
     <div
       className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border ${getBadgeColor()} ${
@@ -77,7 +93,7 @@ export default function ContextBadge({
       title={isClickable ? t('knowledge:document.document.openLink') : undefined}
     >
       <Icon className="h-4 w-4 flex-shrink-0" />
-      <div className="flex flex-col min-w-0 max-w-[150px]">
+      <div className="flex flex-col min-w-0 max-w-[200px]">
         <span className="text-xs font-medium truncate" title={context.name}>
           {context.name}
         </span>
@@ -91,6 +107,12 @@ export default function ContextBadge({
             {new URL(context.source_config.url).hostname}
           </span>
         )}
+        {context.type === 'queue_message' && (
+          <span className="text-xs opacity-70 truncate">
+            {t('inbox:message.from', { name: (context as QueueMessageContext).senderName })} ·{' '}
+            {(context as QueueMessageContext).messageCount} {t('inbox:message.messages_count')}
+          </span>
+        )}
       </div>
       <Button
         type="button"
@@ -100,11 +122,7 @@ export default function ContextBadge({
           e.stopPropagation()
           onRemove()
         }}
-        className={`h-5 w-5 ml-1 hover:bg-opacity-20 ${
-          context.type === 'table'
-            ? 'text-blue-600 hover:text-blue-600 hover:bg-blue-500/20'
-            : 'text-primary hover:text-primary hover:bg-primary/20'
-        }`}
+        className={`h-5 w-5 ml-1 hover:bg-opacity-20 ${getRemoveButtonColor()}`}
         aria-label={`Remove ${context.name}`}
       >
         <X className="h-3 w-3" />

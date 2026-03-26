@@ -20,7 +20,8 @@
     "save": "Save",
     "cancel": "Cancel",
     "re_edit": "Re-edit",
-    "re_edit_tooltip": "Re-edit"
+    "re_edit_tooltip": "Re-edit",
+    "forward": "Forward"
   },
   "edit": {
     "tooltip": "Edit message",
@@ -102,6 +103,7 @@
     "lines": "lines",
     "video_generation": "Video Generation"
   },
+  "message_count": "messages",
   "thinking": {
     "tool_group": "Tool Group",
     "tools": "tools",

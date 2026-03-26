@@ -15,6 +15,7 @@ import {
   type UnreadCountResponse,
 } from '@/apis/work-queue'
 import { useSocket } from '@/contexts/SocketContext'
+import { triggerInboxUnreadRefresh } from '../hooks'
 
 interface InboxContextValue {
   // Queues
@@ -179,6 +180,8 @@ export function InboxProvider({ children }: InboxProviderProps) {
       }
       // Update unread count
       refreshUnreadCount()
+      // Trigger global refresh for TaskSidebar's unread count
+      triggerInboxUnreadRefresh()
       // Update queue unread count
       setQueues(prev =>
         prev.map(q =>
@@ -201,6 +204,8 @@ export function InboxProvider({ children }: InboxProviderProps) {
             : m
         )
       )
+      // Trigger global refresh for TaskSidebar's unread count
+      triggerInboxUnreadRefresh()
     }
 
     socket.on('queue:message_received', handleMessageReceived)

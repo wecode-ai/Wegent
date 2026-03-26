@@ -25,7 +25,7 @@
     "auto_process": "Auto Process",
     "auto_process_enabled": "Enable auto processing",
     "auto_process_team": "Processing Agent",
-    "trigger_mode": "Trigger Mode",
+    "trigger_mode": "Processing Mode",
     "trigger_immediate": "Immediate",
     "trigger_manual": "Manual",
     "trigger_scheduled": "Scheduled",
@@ -43,6 +43,11 @@
     "create_failed": "Failed to create queue",
     "update_failed": "Failed to update queue",
     "delete_failed": "Failed to delete queue"
+  },
+  "message": {
+    "from": "From {{name}}",
+    "messages_count": "messages",
+    "forwarded_message": "Forwarded Message"
   },
   "messages": {
     "title": "Messages",
@@ -101,10 +106,24 @@
     "send": "Send",
     "sending": "Sending...",
     "success": "Message forwarded successfully",
+    "success_to_self": "Message saved to queue",
     "failed": "Failed to forward message",
     "no_recipients": "Please select at least one recipient",
     "select_queue": "Select Queue",
-    "default_queue": "Default Queue"
+    "select_self_queue": "Select Target Queue",
+    "default_queue": "Default Queue",
+    "no_queues": "No queues available. Please create a queue first.",
+    "start_chat": "Start Chat",
+    "mode": {
+      "others": "Forward to Others",
+      "self": "Save to Todo",
+      "chat": "Start Chat"
+    },
+    "self_description": "Save the message to your work queue for later processing or automatic handling by an agent.",
+    "chat_description": "Start a new conversation based on the current message content. You can choose a different agent to continue the discussion.",
+    "select_messages": "Select Messages",
+    "select_all": "Select All",
+    "deselect_all": "Deselect All"
   },
   "settings": {
     "title": "Queue Settings",
@@ -115,5 +134,20 @@
   "actions": {
     "refresh": "Refresh",
     "settings": "Settings"
+  },
+  "batch": {
+    "select": "Select",
+    "selected": "{{count}} selected",
+    "mark_read": "Mark Read",
+    "mark_unread": "Mark Unread",
+    "archive": "Archive",
+    "delete": "Delete",
+    "process": "Process",
+    "mark_read_success": "Marked {{count}} messages as read",
+    "mark_unread_success": "Marked {{count}} messages as unread",
+    "archive_success": "Archived {{count}} messages",
+    "delete_success": "Deleted {{count}} messages",
+    "delete_confirm_title": "Delete selected messages?",
+    "delete_confirm_message": "{{count}} messages will be deleted. This action cannot be undone."
   }
 }

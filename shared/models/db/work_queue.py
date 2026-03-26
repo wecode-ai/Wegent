@@ -4,13 +4,19 @@
 
 """Work Queue database models for message forwarding and processing."""
 
+from datetime import datetime, timezone
+
 from sqlalchemy import JSON, Column, DateTime
 from sqlalchemy import Enum as SQLEnum
 from sqlalchemy import Index, Integer, Text
-from sqlalchemy.sql import func
 
 from .base import Base
 from .enums import QueueMessagePriority, QueueMessageStatus
+
+
+def utc_now():
+    """Return current UTC time."""
+    return datetime.now(timezone.utc)
 
 
 class QueueMessage(Base):
@@ -41,13 +47,19 @@ class QueueMessage(Base):
     )
     note = Column(Text, nullable=True, comment="Sender's note/comment")
     priority = Column(
-        SQLEnum(QueueMessagePriority),
+        SQLEnum(
+            QueueMessagePriority,
+            values_callable=lambda x: [e.value for e in x],
+        ),
         nullable=False,
         default=QueueMessagePriority.NORMAL,
         index=True,
     )
     status = Column(
-        SQLEnum(QueueMessageStatus),
+        SQLEnum(
+            QueueMessageStatus,
+            values_callable=lambda x: [e.value for e in x],
+        ),
         nullable=False,
         default=QueueMessageStatus.UNREAD,
         index=True,
@@ -56,8 +68,8 @@ class QueueMessage(Base):
     process_task_id = Column(
         Integer, nullable=True, comment="Task ID created for processing"
     )
-    created_at = Column(DateTime, default=func.now(), index=True)
-    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    created_at = Column(DateTime, default=utc_now, index=True)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
     processed_at = Column(DateTime, nullable=True, comment="Processing completion time")
 
     __table_args__ = (
@@ -82,7 +94,7 @@ class RecentContact(Base):
     contact_user_id = Column(
         Integer, nullable=False, index=True, comment="Contact user ID"
     )
-    last_contact_at = Column(DateTime, default=func.now(), comment="Last contact time")
+    last_contact_at = Column(DateTime, default=utc_now, comment="Last contact time")
     contact_count = Column(Integer, nullable=False, default=1, comment="Contact count")
 
     __table_args__ = (
