@@ -744,7 +744,7 @@ Get started!"""
     def ensure_default_queue_with_welcome(
         self, user_id: int, language: str = "en"
     ) -> Tuple[WorkQueueResponse, bool]:
-        """Ensure user has a default public inbox and create welcome message if new.
+        """Ensure user has a default public inbox and create welcome message if needed.
 
         Args:
             user_id: The user ID
@@ -752,11 +752,18 @@ Get started!"""
 
         Returns:
             Tuple of (WorkQueueResponse, is_newly_created)
+
+        Note:
+            Welcome message creation is idempotent and will be attempted even for
+            existing queues to handle partial failure recovery (e.g., if queue was
+            created but welcome message failed in a previous attempt).
         """
         queue, is_new = self.ensure_default_queue_with_status(user_id)
 
-        if is_new and queue:
-            # Create welcome message for new inbox
+        if queue:
+            # Always try to create welcome message - _create_welcome_message is idempotent
+            # and will skip if message already exists. This handles recovery from
+            # partial failures where queue was created but welcome message failed.
             self._create_welcome_message(queue.id, user_id, language)
 
         return self._build_queue_response(queue), is_new
