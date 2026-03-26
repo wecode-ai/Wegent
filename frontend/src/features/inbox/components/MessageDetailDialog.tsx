@@ -4,16 +4,11 @@
 
 'use client'
 
-import { ExternalLink, User, Clock, MessageSquare, FileText } from 'lucide-react'
+import { User, Clock, MessageSquare, FileText } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { formatUTCDate } from '@/lib/utils'
 import type { QueueMessage, QueueMessageStatus, QueueMessagePriority } from '@/apis/work-queue'
@@ -64,8 +59,7 @@ export function MessageDetailDialog({
 
   if (!message) return null
 
-  const canProcess =
-    message.status !== 'processed' && message.status !== 'processing'
+  const canProcess = message.status !== 'processed' && message.status !== 'processing'
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -128,41 +122,43 @@ export function MessageDetailDialog({
             </div>
             <ScrollArea className="h-[300px]">
               <div className="p-3 space-y-3">
-                {message.contentSnapshot?.map((item, index) => (
-                  <div
-                    key={index}
-                    className={cn(
-                      'rounded-lg p-3',
-                      item.role === 'USER' ? 'bg-primary/5 ml-4' : 'bg-surface mr-4'
-                    )}
-                  >
-                    <div className="flex items-center gap-2 mb-1 text-xs text-text-muted">
-                      <span className="font-medium">
-                        {item.role === 'USER'
-                          ? item.senderUserName || 'User'
-                          : 'Assistant'}
-                      </span>
-                      {item.createdAt && <span>· {formatUTCDate(item.createdAt)}</span>}
-                    </div>
-                    <p className="text-sm whitespace-pre-wrap">{item.content}</p>
-
-                    {/* Attachments */}
-                    {item.attachments && item.attachments.length > 0 && (
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        {item.attachments.map((attachment, attIndex) => (
-                          <Badge key={attIndex} variant="info" className="text-xs">
-                            {attachment.name}
-                            {attachment.file_size && (
-                              <span className="ml-1 text-text-muted">
-                                ({Math.round(attachment.file_size / 1024)}KB)
-                              </span>
-                            )}
-                          </Badge>
-                        ))}
+                {message.contentSnapshot?.map((item, index) => {
+                  // Support both uppercase (USER) and lowercase (user) role values
+                  const isUserRole = item.role?.toUpperCase() === 'USER'
+                  return (
+                    <div
+                      key={index}
+                      className={cn(
+                        'rounded-lg p-3',
+                        isUserRole ? 'bg-primary/5 ml-4' : 'bg-surface mr-4'
+                      )}
+                    >
+                      <div className="flex items-center gap-2 mb-1 text-xs text-text-muted">
+                        <span className="font-medium">
+                          {isUserRole ? item.senderUserName || 'User' : 'Assistant'}
+                        </span>
+                        {item.createdAt && <span>· {formatUTCDate(item.createdAt)}</span>}
                       </div>
-                    )}
-                  </div>
-                ))}
+                      <p className="text-sm whitespace-pre-wrap">{item.content}</p>
+
+                      {/* Attachments */}
+                      {item.attachments && item.attachments.length > 0 && (
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {item.attachments.map((attachment, attIndex) => (
+                            <Badge key={attIndex} variant="info" className="text-xs">
+                              {attachment.name}
+                              {attachment.file_size && (
+                                <span className="ml-1 text-text-muted">
+                                  ({Math.round(attachment.file_size / 1024)}KB)
+                                </span>
+                              )}
+                            </Badge>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
               </div>
             </ScrollArea>
           </div>
@@ -184,17 +180,8 @@ export function MessageDetailDialog({
           )}
 
           {/* Actions */}
-          <div className="flex items-center justify-between pt-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => window.open(`/chat?task=${message.sourceTaskId}`, '_blank')}
-            >
-              <ExternalLink className="mr-1.5 h-4 w-4" />
-              {t('messages.view_original')}
-            </Button>
-
-            {canProcess && (
+          {canProcess && (
+            <div className="flex items-center justify-end pt-2">
               <Button
                 variant="primary"
                 size="sm"
@@ -205,8 +192,8 @@ export function MessageDetailDialog({
               >
                 {t('messages.process')}
               </Button>
-            )}
-          </div>
+            </div>
+          )}
         </div>
       </DialogContent>
     </Dialog>

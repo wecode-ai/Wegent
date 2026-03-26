@@ -6,14 +6,12 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import TopNavigation from '@/features/layout/TopNavigation'
 import {
   TaskSidebar,
   ResizableSidebar,
   CollapsedSidebarButtons,
 } from '@/features/tasks/components/sidebar'
 import { InboxProvider, InboxPage as InboxPageContent } from '@/features/inbox'
-import { useTranslation } from '@/hooks/useTranslation'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import '@/app/tasks/tasks.css'
 import '@/features/common/scrollbar.css'
@@ -25,7 +23,6 @@ import '@/features/common/scrollbar.css'
  * Allows users to view and manage forwarded messages.
  */
 export default function InboxPage() {
-  const { t } = useTranslation('inbox')
   const router = useRouter()
 
   // Mobile detection
@@ -77,20 +74,9 @@ export default function InboxPage() {
           />
         </ResizableSidebar>
 
-        <div className="flex-1 flex flex-col min-w-0">
-          {/* Top navigation */}
-          <TopNavigation
-            activePage="inbox"
-            variant="with-sidebar"
-            title={t('title')}
-            onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
-            isSidebarCollapsed={isCollapsed}
-          />
-
-          {/* Main content area - Inbox page content */}
-          <div className="flex-1 overflow-hidden">
-            <InboxPageContent />
-          </div>
+        {/* Main content area - Inbox page content */}
+        <div className="flex-1 overflow-hidden">
+          <InboxPageContent />
         </div>
       </div>
     </InboxProvider>

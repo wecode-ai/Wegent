@@ -10,7 +10,6 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
-import { Switch } from '@/components/ui/switch'
 import {
   Dialog,
   DialogContent,
@@ -54,12 +53,7 @@ export function QueueEditDialog({ queue, open, onOpenChange }: QueueEditDialogPr
   const [displayName, setDisplayName] = useState('')
   const [description, setDescription] = useState('')
   const [visibility, setVisibility] = useState<QueueVisibility>('private')
-  const [autoProcessEnabled, setAutoProcessEnabled] = useState(false)
   const [triggerMode, setTriggerMode] = useState<TriggerMode>('manual')
-  const [scheduleInterval, setScheduleInterval] = useState(30)
-  const [replyToSender, setReplyToSender] = useState(false)
-  const [saveInQueue, setSaveInQueue] = useState(true)
-  const [sendNotification, setSendNotification] = useState(false)
 
   const [loading, setLoading] = useState(false)
 
@@ -70,24 +64,14 @@ export function QueueEditDialog({ queue, open, onOpenChange }: QueueEditDialogPr
       setDisplayName(queue.displayName)
       setDescription(queue.description || '')
       setVisibility(queue.visibility)
-      setAutoProcessEnabled(queue.autoProcess?.enabled || false)
       setTriggerMode(queue.autoProcess?.triggerMode || 'manual')
-      setScheduleInterval(queue.autoProcess?.scheduleInterval || 30)
-      setReplyToSender(queue.resultFeedback?.replyToSender || false)
-      setSaveInQueue(queue.resultFeedback?.saveInQueue ?? true)
-      setSendNotification(queue.resultFeedback?.sendNotification || false)
     } else if (open && !queue) {
       // Reset to defaults for new queue
       setName('')
       setDisplayName('')
       setDescription('')
       setVisibility('private')
-      setAutoProcessEnabled(false)
       setTriggerMode('manual')
-      setScheduleInterval(30)
-      setReplyToSender(false)
-      setSaveInQueue(true)
-      setSendNotification(false)
     }
   }, [open, queue])
 
@@ -109,17 +93,9 @@ export function QueueEditDialog({ queue, open, onOpenChange }: QueueEditDialogPr
           displayName,
           description: description || undefined,
           visibility,
-          autoProcess: autoProcessEnabled
-            ? {
-                enabled: true,
-                triggerMode,
-                scheduleInterval: triggerMode === 'scheduled' ? scheduleInterval : undefined,
-              }
-            : { enabled: false, triggerMode: 'manual' },
-          resultFeedback: {
-            replyToSender,
-            saveInQueue,
-            sendNotification,
+          autoProcess: {
+            enabled: false,
+            triggerMode,
           },
         }
         await updateWorkQueue(queue.id, updateData)
@@ -130,17 +106,9 @@ export function QueueEditDialog({ queue, open, onOpenChange }: QueueEditDialogPr
           displayName,
           description: description || undefined,
           visibility,
-          autoProcess: autoProcessEnabled
-            ? {
-                enabled: true,
-                triggerMode,
-                scheduleInterval: triggerMode === 'scheduled' ? scheduleInterval : undefined,
-              }
-            : undefined,
-          resultFeedback: {
-            replyToSender,
-            saveInQueue,
-            sendNotification,
+          autoProcess: {
+            enabled: false,
+            triggerMode,
           },
         }
         await createWorkQueue(createData)
@@ -161,9 +129,7 @@ export function QueueEditDialog({ queue, open, onOpenChange }: QueueEditDialogPr
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle>
-            {isEditing ? t('queues.edit') : t('queues.create')}
-          </DialogTitle>
+          <DialogTitle>{isEditing ? t('queues.edit') : t('queues.create')}</DialogTitle>
         </DialogHeader>
 
         <div className="space-y-4 py-4">
@@ -216,95 +182,27 @@ export function QueueEditDialog({ queue, open, onOpenChange }: QueueEditDialogPr
               <SelectContent>
                 <SelectItem value="private">{t('queues.visibility_private')}</SelectItem>
                 <SelectItem value="public">{t('queues.visibility_public')}</SelectItem>
-                <SelectItem value="group_visible">{t('queues.visibility_group_visible')}</SelectItem>
+                <SelectItem value="group_visible">
+                  {t('queues.visibility_group_visible')}
+                </SelectItem>
                 <SelectItem value="invite_only">{t('queues.visibility_invite_only')}</SelectItem>
               </SelectContent>
             </Select>
           </div>
 
-          {/* Auto process */}
-          <div className="space-y-3 rounded-lg border p-3">
-            <div className="flex items-center justify-between">
-              <Label htmlFor="autoProcess">{t('queues.auto_process')}</Label>
-              <Switch
-                id="autoProcess"
-                checked={autoProcessEnabled}
-                onCheckedChange={setAutoProcessEnabled}
-                data-testid="queue-auto-process-switch"
-              />
-            </div>
-
-            {autoProcessEnabled && (
-              <div className="space-y-3 pt-2">
-                <div className="space-y-2">
-                  <Label>{t('queues.trigger_mode')}</Label>
-                  <Select
-                    value={triggerMode}
-                    onValueChange={v => setTriggerMode(v as TriggerMode)}
-                  >
-                    <SelectTrigger data-testid="queue-trigger-mode-select">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="immediate">{t('queues.trigger_immediate')}</SelectItem>
-                      <SelectItem value="manual">{t('queues.trigger_manual')}</SelectItem>
-                      <SelectItem value="scheduled">{t('queues.trigger_scheduled')}</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                {triggerMode === 'scheduled' && (
-                  <div className="space-y-2">
-                    <Label htmlFor="interval">{t('queues.schedule_interval')}</Label>
-                    <Input
-                      id="interval"
-                      type="number"
-                      min={15}
-                      value={scheduleInterval}
-                      onChange={e => {
-                        const val = parseInt(e.target.value, 10)
-                        if (!isNaN(val)) setScheduleInterval(val)
-                      }}
-                      data-testid="queue-schedule-interval-input"
-                    />
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* Result feedback */}
-          <div className="space-y-3 rounded-lg border p-3">
-            <Label>{t('queues.result_feedback')}</Label>
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-sm">{t('queues.reply_to_sender')}</span>
-                <Switch
-                  checked={replyToSender}
-                  onCheckedChange={setReplyToSender}
-                  data-testid="queue-reply-sender-switch"
-                />
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm">{t('queues.save_in_queue')}</span>
-                <Switch
-                  checked={saveInQueue}
-                  onCheckedChange={setSaveInQueue}
-                  data-testid="queue-save-queue-switch"
-                />
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm">{t('queues.send_notification')}</span>
-                <Switch
-                  checked={sendNotification}
-                  onCheckedChange={setSendNotification}
-                  data-testid="queue-send-notification-switch"
-                />
-              </div>
-            </div>
+          {/* Trigger Mode (Processing Mode) */}
+          <div className="space-y-2">
+            <Label>{t('queues.trigger_mode')}</Label>
+            <Select value={triggerMode} onValueChange={v => setTriggerMode(v as TriggerMode)}>
+              <SelectTrigger data-testid="queue-trigger-mode-select">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="manual">{t('queues.trigger_manual')}</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
         </div>
-
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             {t('common:actions.cancel')}

@@ -20,7 +20,8 @@
     "save": "保存",
     "cancel": "取消",
     "re_edit": "重新编辑",
-    "re_edit_tooltip": "重新编辑"
+    "re_edit_tooltip": "重新编辑",
+    "forward": "转发"
   },
   "edit": {
     "tooltip": "编辑消息",
@@ -102,6 +103,7 @@
     "lines": "行",
     "video_generation": "视频生成"
   },
+  "message_count": "条消息",
   "shared_task": {
     "share_task": "分享",
     "sharing": "分享中...",

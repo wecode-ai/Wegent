@@ -22,7 +22,7 @@ import { allBotsHavePredefinedModel } from '../selector/ModelSelector'
 import { QuoteProvider, SelectionTooltip, useQuote } from '../text-selection'
 import type { Team, SubtaskContextBrief, TaskType } from '@/types/api'
 import type { Model } from '../../hooks/useModelSelection'
-import type { ContextItem } from '@/types/context'
+import type { ContextItem, QueueMessageContext } from '@/types/context'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useRouter } from 'next/navigation'
 import { useTaskContext } from '../../contexts/taskContext'
@@ -35,6 +35,7 @@ import { useAttachmentUpload } from '../hooks/useAttachmentUpload'
 import { useSchemeMessageActions } from '@/lib/scheme'
 import { useSkillSelector } from '../../hooks/useSkillSelector'
 import { useModelSelection } from '../../hooks/useModelSelection'
+import { QueueMessageHandler } from '@/features/inbox'
 
 /**
  * Threshold in pixels for determining when to collapse selectors.
@@ -631,6 +632,23 @@ function ChatAreaContent({
   const selectedContextsRef = useRef(chatState.selectedContexts)
   selectedContextsRef.current = chatState.selectedContexts
 
+  // Handle queue message loaded from inbox - adds the message(s) as context(s)
+  // Supports both single message and batch processing
+  const handleQueueMessageLoaded = useCallback(
+    (queueMessageContexts: QueueMessageContext[]) => {
+      // Add the queue message contexts to selectedContexts
+      const currentContexts = selectedContextsRef.current
+      // Filter out duplicates
+      const newContexts = queueMessageContexts.filter(
+        ctx => !currentContexts.some(c => c.type === 'queue_message' && c.id === ctx.id)
+      )
+      if (newContexts.length > 0) {
+        setSelectedContexts([...currentContexts, ...newContexts])
+      }
+    },
+    [setSelectedContexts]
+  )
+
   // Load prompt from sessionStorage - single remaining useEffect
   useEffect(() => {
     if (hasMessages) return
@@ -1048,6 +1066,11 @@ function ChatAreaContent({
       className="flex-1 flex flex-col min-h-0 w-full relative"
       style={{ height: '100%', boxSizing: 'border-box' }}
     >
+      {/* Queue Message Handler - processes process_message URL parameter from inbox */}
+      {taskType === 'chat' && (
+        <QueueMessageHandler onQueueMessageLoaded={handleQueueMessageLoaded} />
+      )}
+
       {/* Pipeline Stage Indicator - shows current stage progress for pipeline mode */}
       {hasMessages && selectedTaskDetail?.id && (
         <PipelineStageIndicator

@@ -5,7 +5,7 @@
 'use client'
 
 import { useState } from 'react'
-import { Inbox, Plus, Settings, Star, MoreHorizontal, Edit, Trash2, CheckCircle } from 'lucide-react'
+import { Inbox, Plus, Star, MoreHorizontal, Edit, Trash2, CheckCircle } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -25,7 +25,6 @@ interface QueueSidebarProps {
   onEditQueue: (queue: WorkQueue) => void
   onDeleteQueue: (queue: WorkQueue) => void
   onSetDefault: (queue: WorkQueue) => void
-  onSettings: () => void
 }
 
 export function QueueSidebar({
@@ -33,10 +32,10 @@ export function QueueSidebar({
   onEditQueue,
   onDeleteQueue,
   onSetDefault,
-  onSettings,
 }: QueueSidebarProps) {
   const { t } = useTranslation('inbox')
-  const { queues, queuesLoading, selectedQueueId, setSelectedQueueId, unreadCount } = useInboxContext()
+  const { queues, queuesLoading, selectedQueueId, setSelectedQueueId, unreadCount } =
+    useInboxContext()
   const [hoveredQueueId, setHoveredQueueId] = useState<number | null>(null)
 
   const totalUnread = unreadCount?.total || 0
@@ -54,26 +53,15 @@ export function QueueSidebar({
             </Badge>
           )}
         </div>
-        <div className="flex items-center gap-1">
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8"
-            onClick={onCreateQueue}
-            data-testid="create-queue-button"
-          >
-            <Plus className="h-4 w-4" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8"
-            onClick={onSettings}
-            data-testid="queue-settings-button"
-          >
-            <Settings className="h-4 w-4" />
-          </Button>
-        </div>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8"
+          onClick={onCreateQueue}
+          data-testid="create-queue-button"
+        >
+          <Plus className="h-4 w-4" />
+        </Button>
       </div>
 
       {/* Queue List */}

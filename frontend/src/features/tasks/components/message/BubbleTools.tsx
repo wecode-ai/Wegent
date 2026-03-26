@@ -5,7 +5,7 @@
 'use client'
 
 import React, { useState } from 'react'
-import { Copy, Check, ThumbsUp, ThumbsDown, Pencil, RefreshCw, History } from 'lucide-react'
+import { Copy, Check, ThumbsUp, ThumbsDown, Pencil, RefreshCw, History, Send } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -121,6 +121,46 @@ export const EditButton = ({
   return button
 }
 
+// ForwardButton component for forwarding messages to work queue
+export const ForwardButton = ({
+  onForward,
+  className,
+  tooltip,
+  disabled,
+}: {
+  onForward: () => void
+  className?: string
+  tooltip?: string
+  disabled?: boolean
+}) => {
+  const button = (
+    <Button
+      variant="ghost"
+      size="icon"
+      onClick={onForward}
+      disabled={disabled}
+      className={
+        className ??
+        'h-[30px] w-[30px] !rounded-full bg-fill-tert hover:!bg-fill-sec disabled:opacity-50'
+      }
+      data-testid="forward-message-button"
+    >
+      <Send className="h-3.5 w-3.5 text-text-muted" />
+    </Button>
+  )
+
+  if (tooltip) {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>{button}</TooltipTrigger>
+        <TooltipContent>{tooltip}</TooltipContent>
+      </Tooltip>
+    )
+  }
+
+  return button
+}
+
 export interface BubbleToolsProps {
   contentToCopy: string
   tools?: Array<{
@@ -154,6 +194,10 @@ export interface BubbleToolsProps {
   onReEditClick?: () => void
   /** Whether re-edit button should be shown */
   showReEdit?: boolean
+  /** Handler for forward button click - opens forward message dialog */
+  onForwardClick?: () => void
+  /** Whether forward button should be shown */
+  showForward?: boolean
 }
 
 // Bubble toolbar: supports copy button, feedback buttons, and extensible tool buttons
@@ -171,6 +215,8 @@ const BubbleTools = ({
   renderRegenerateButton,
   onReEditClick,
   showReEdit,
+  onForwardClick,
+  showForward,
 }: BubbleToolsProps) => {
   const { t } = useTranslation()
 
@@ -269,6 +315,14 @@ const BubbleTools = ({
         </TooltipTrigger>
         <TooltipContent>{feedbackLabels?.dislike || 'Dislike'}</TooltipContent>
       </Tooltip>
+      {/* Forward button - for forwarding AI messages to work queue */}
+      {showForward && onForwardClick && (
+        <ForwardButton
+          onForward={onForwardClick}
+          tooltip={t('chat:actions.forward') || 'Forward'}
+          className="h-[30px] w-[30px] !rounded-full bg-fill-tert hover:!bg-fill-sec"
+        />
+      )}
       {/* Additional tool buttons (e.g., download) */}
       {tools.map(tool => (
         <Tooltip key={tool.key}>

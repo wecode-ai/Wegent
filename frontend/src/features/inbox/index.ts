@@ -10,4 +10,6 @@ export {
   QueueEditDialog,
   InboxPage,
   ForwardMessageDialog,
+  QueueMessageHandler,
 } from './components'
+export { useInboxUnreadCount, triggerInboxUnreadRefresh } from './hooks'

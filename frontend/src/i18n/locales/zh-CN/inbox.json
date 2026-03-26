@@ -1,5 +1,5 @@
 {
-  "title": "收件箱",
+  "title": "待办",
   "page_title": "工作队列",
   "empty": "暂无消息",
   "empty_description": "收到的转发消息将显示在这里",
@@ -25,9 +25,9 @@
     "auto_process": "自动处理",
     "auto_process_enabled": "启用自动处理",
     "auto_process_team": "处理智能体",
-    "trigger_mode": "触发模式",
+    "trigger_mode": "处理模式",
     "trigger_immediate": "立即处理",
-    "trigger_manual": "手动处理",
+    "trigger_manual": "手动",
     "trigger_scheduled": "定时处理",
     "schedule_interval": "调度间隔（分钟）",
     "result_feedback": "结果反馈",
@@ -43,6 +43,11 @@
     "create_failed": "队列创建失败",
     "update_failed": "队列更新失败",
     "delete_failed": "队列删除失败"
+  },
+  "message": {
+    "from": "来自 {{name}}",
+    "messages_count": "条消息",
+    "forwarded_message": "转发的消息"
   },
   "messages": {
     "title": "消息",
@@ -101,10 +106,24 @@
     "send": "发送",
     "sending": "发送中...",
     "success": "消息转发成功",
+    "success_to_self": "消息已保存到队列",
     "failed": "消息转发失败",
     "no_recipients": "请选择至少一个收件人",
     "select_queue": "选择队列",
-    "default_queue": "默认队列"
+    "select_self_queue": "选择目标队列",
+    "default_queue": "默认队列",
+    "no_queues": "暂无队列，请先创建队列",
+    "start_chat": "开始聊天",
+    "mode": {
+      "others": "转发给他人",
+      "self": "保存到待办",
+      "chat": "开始聊天"
+    },
+    "self_description": "将消息保存到自己的工作队列中，方便稍后处理或让智能体自动处理。",
+    "chat_description": "基于当前消息内容开始一个新的对话，可以选择不同的智能体继续讨论。",
+    "select_messages": "选择消息",
+    "select_all": "全选",
+    "deselect_all": "取消全选"
   },
   "settings": {
     "title": "队列设置",
@@ -115,5 +134,20 @@
   "actions": {
     "refresh": "刷新",
     "settings": "设置"
+  },
+  "batch": {
+    "select": "选择",
+    "selected": "已选择 {{count}} 项",
+    "mark_read": "标记已读",
+    "mark_unread": "标记未读",
+    "archive": "归档",
+    "delete": "删除",
+    "process": "处理",
+    "mark_read_success": "已将 {{count}} 条消息标记为已读",
+    "mark_unread_success": "已将 {{count}} 条消息标记为未读",
+    "archive_success": "已归档 {{count}} 条消息",
+    "delete_success": "已删除 {{count}} 条消息",
+    "delete_confirm_title": "确定要删除选中的消息吗？",
+    "delete_confirm_message": "将删除 {{count}} 条消息，此操作不可撤销。"
   }
 }

@@ -19,16 +19,23 @@ import {
 } from '@/components/ui/alert-dialog'
 import { toast } from 'sonner'
 import { useInboxContext } from '../contexts/inboxContext'
+import { triggerInboxUnreadRefresh } from '../hooks'
 import { QueueSidebar } from './QueueSidebar'
 import { MessageList } from './MessageList'
 import { MessageDetailDialog } from './MessageDetailDialog'
 import { QueueEditDialog } from './QueueEditDialog'
-import { deleteWorkQueue, setDefaultQueue, type WorkQueue, type QueueMessage } from '@/apis/work-queue'
+import {
+  deleteWorkQueue,
+  setDefaultQueue,
+  updateMessageStatus,
+  type WorkQueue,
+  type QueueMessage,
+} from '@/apis/work-queue'
 
 export function InboxPage() {
   const { t } = useTranslation('inbox')
   const router = useRouter()
-  const { refreshQueues } = useInboxContext()
+  const { refreshQueues, refreshMessages, refreshUnreadCount } = useInboxContext()
 
   // Queue edit dialog
   const [editQueueDialogOpen, setEditQueueDialogOpen] = useState(false)
@@ -95,17 +102,27 @@ export function InboxPage() {
     [refreshQueues, t]
   )
 
-  // Handle queue settings
-  const handleSettings = useCallback(() => {
-    // Navigate to settings page or open settings dialog
-    router.push('/settings')
-  }, [router])
+  // Handle view message - also mark as read if unread
+  const handleViewMessage = useCallback(
+    async (message: QueueMessage) => {
+      setSelectedMessage(message)
+      setMessageDetailDialogOpen(true)
 
-  // Handle view message
-  const handleViewMessage = useCallback((message: QueueMessage) => {
-    setSelectedMessage(message)
-    setMessageDetailDialogOpen(true)
-  }, [])
+      // Auto mark as read when viewing
+      if (message.status === 'unread') {
+        try {
+          await updateMessageStatus(message.id, 'read')
+          // Refresh messages, queues, and unread count to update the UI
+          await Promise.all([refreshMessages(), refreshQueues(), refreshUnreadCount()])
+          // Trigger global refresh for TaskSidebar's unread count
+          triggerInboxUnreadRefresh()
+        } catch (error) {
+          console.error('Failed to mark message as read:', error)
+        }
+      }
+    },
+    [refreshMessages, refreshQueues, refreshUnreadCount]
+  )
 
   // Handle process message
   const handleProcessMessage = useCallback(
@@ -113,6 +130,16 @@ export function InboxPage() {
       // Navigate to chat page to process the message
       // Pass the message content as initial context
       router.push(`/chat?process_message=${message.id}`)
+    },
+    [router]
+  )
+
+  // Handle batch process messages
+  const handleBatchProcessMessages = useCallback(
+    (messageIds: number[]) => {
+      if (messageIds.length === 0) return
+      // Navigate to chat page with comma-separated message IDs
+      router.push(`/chat?process_message=${messageIds.join(',')}`)
     },
     [router]
   )
@@ -126,13 +153,16 @@ export function InboxPage() {
           onEditQueue={handleEditQueue}
           onDeleteQueue={handleDeleteQueue}
           onSetDefault={handleSetDefault}
-          onSettings={handleSettings}
         />
       </div>
 
       {/* Message list */}
       <div className="flex-1 min-w-0">
-        <MessageList onViewMessage={handleViewMessage} onProcessMessage={handleProcessMessage} />
+        <MessageList
+          onViewMessage={handleViewMessage}
+          onProcessMessage={handleProcessMessage}
+          onBatchProcessMessages={handleBatchProcessMessages}
+        />
       </div>
 
       {/* Queue edit dialog */}

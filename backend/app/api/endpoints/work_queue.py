@@ -14,6 +14,9 @@ from app.core import security
 from app.core.exceptions import ConflictException, ForbiddenException, NotFoundException
 from app.models.user import User
 from app.schemas.work_queue import (
+    BatchMessageIds,
+    BatchOperationResult,
+    BatchStatusUpdate,
     ForwardMessageRequest,
     ForwardMessageResponse,
     PublicQueueResponse,
@@ -236,6 +239,41 @@ async def delete_queue_message(
         queue_message_service.delete_message(current_user.id, message_id)
     except NotFoundException as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+
+# ==================== Batch Operations ====================
+
+
+@messages_router.post("/batch/status", response_model=BatchOperationResult)
+async def batch_update_message_status(
+    data: BatchStatusUpdate,
+    current_user: User = Depends(security.get_current_user),
+):
+    """Batch update message status."""
+    success_count, failed_count, failed_ids = queue_message_service.batch_update_status(
+        current_user.id, data.messageIds, data.status
+    )
+    return BatchOperationResult(
+        successCount=success_count,
+        failedCount=failed_count,
+        failedIds=failed_ids,
+    )
+
+
+@messages_router.post("/batch/delete", response_model=BatchOperationResult)
+async def batch_delete_messages(
+    data: BatchMessageIds,
+    current_user: User = Depends(security.get_current_user),
+):
+    """Batch delete (archive) messages."""
+    success_count, failed_count, failed_ids = (
+        queue_message_service.batch_delete_messages(current_user.id, data.messageIds)
+    )
+    return BatchOperationResult(
+        successCount=success_count,
+        failedCount=failed_count,
+        failedIds=failed_ids,
+    )
 
 
 # ==================== Message Forwarding ====================

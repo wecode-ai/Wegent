@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useState } from 'react'
+import { useState, useCallback, useMemo } from 'react'
 import {
   CheckCircle2,
   Circle,
@@ -17,12 +17,14 @@ import {
   ArrowUpCircle,
   ArrowRightCircle,
   ArrowDownCircle,
-  ExternalLink,
   Play,
+  CheckSquare,
+  X,
 } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -52,12 +54,15 @@ import {
 } from '@/components/ui/alert-dialog'
 import { cn } from '@/lib/utils'
 import { useInboxContext } from '../contexts/inboxContext'
+import { triggerInboxUnreadRefresh } from '../hooks'
 import { formatUTCDate } from '@/lib/utils'
 import { toast } from 'sonner'
 import {
   updateMessageStatus,
   updateMessagePriority,
   deleteQueueMessage,
+  batchUpdateMessageStatus,
+  batchDeleteMessages,
   type QueueMessage,
   type QueueMessageStatus,
   type QueueMessagePriority,
@@ -66,6 +71,7 @@ import {
 interface MessageListProps {
   onViewMessage: (message: QueueMessage) => void
   onProcessMessage: (message: QueueMessage) => void
+  onBatchProcessMessages?: (messageIds: number[]) => void
 }
 
 const statusConfig: Record<QueueMessageStatus, { icon: React.ReactNode; color: string }> = {
@@ -82,13 +88,19 @@ const priorityConfig: Record<QueueMessagePriority, { icon: React.ReactNode; colo
   low: { icon: <ArrowDownCircle className="h-4 w-4" />, color: 'text-blue-500' },
 }
 
-export function MessageList({ onViewMessage, onProcessMessage }: MessageListProps) {
+export function MessageList({
+  onViewMessage,
+  onProcessMessage,
+  onBatchProcessMessages,
+}: MessageListProps) {
   const { t } = useTranslation('inbox')
   const {
     messages,
     messagesLoading,
     messagesTotal,
     refreshMessages,
+    refreshQueues,
+    refreshUnreadCount,
     loadMoreMessages,
     statusFilter,
     setStatusFilter,
@@ -101,13 +113,147 @@ export function MessageList({ onViewMessage, onProcessMessage }: MessageListProp
   const [actionLoading, setActionLoading] = useState<number | null>(null)
   const [deleteConfirmMessage, setDeleteConfirmMessage] = useState<QueueMessage | null>(null)
 
+  // Multi-select state
+  const [selectionMode, setSelectionMode] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
+  const [batchActionLoading, setBatchActionLoading] = useState(false)
+  const [batchDeleteConfirmOpen, setBatchDeleteConfirmOpen] = useState(false)
+
   const selectedQueue = queues.find(q => q.id === selectedQueueId)
+
+  // Calculate selection state
+  const allSelected = useMemo(() => {
+    return messages.length > 0 && messages.every(m => selectedIds.has(m.id))
+  }, [messages, selectedIds])
+
+  const someSelected = useMemo(() => {
+    return messages.some(m => selectedIds.has(m.id)) && !allSelected
+  }, [messages, selectedIds, allSelected])
+
+  // Toggle selection mode
+  const toggleSelectionMode = useCallback(() => {
+    if (selectionMode) {
+      // Exit selection mode and clear selections
+      setSelectedIds(new Set())
+    }
+    setSelectionMode(!selectionMode)
+  }, [selectionMode])
+
+  // Toggle single message selection
+  const toggleMessageSelection = useCallback((messageId: number, e: React.MouseEvent) => {
+    e.stopPropagation()
+    setSelectedIds(prev => {
+      const newSet = new Set(prev)
+      if (newSet.has(messageId)) {
+        newSet.delete(messageId)
+      } else {
+        newSet.add(messageId)
+      }
+      return newSet
+    })
+  }, [])
+
+  // Toggle all messages selection
+  const toggleAllSelection = useCallback(() => {
+    if (allSelected) {
+      setSelectedIds(new Set())
+    } else {
+      setSelectedIds(new Set(messages.map(m => m.id)))
+    }
+  }, [allSelected, messages])
+
+  // Batch mark as read
+  const handleBatchMarkAsRead = useCallback(async () => {
+    if (selectedIds.size === 0) return
+
+    setBatchActionLoading(true)
+    try {
+      const result = await batchUpdateMessageStatus(Array.from(selectedIds), 'read')
+      await Promise.all([refreshMessages(), refreshQueues(), refreshUnreadCount()])
+      // Trigger global refresh for TaskSidebar's unread count
+      triggerInboxUnreadRefresh()
+      toast.success(t('batch.mark_read_success', { count: result.successCount }))
+      setSelectedIds(new Set())
+      setSelectionMode(false)
+    } catch (error) {
+      console.error('Failed to batch mark as read:', error)
+      toast.error(t('common:errors.generic'))
+    } finally {
+      setBatchActionLoading(false)
+    }
+  }, [selectedIds, refreshMessages, refreshQueues, refreshUnreadCount, t])
+
+  // Batch mark as unread
+  const handleBatchMarkAsUnread = useCallback(async () => {
+    if (selectedIds.size === 0) return
+
+    setBatchActionLoading(true)
+    try {
+      const result = await batchUpdateMessageStatus(Array.from(selectedIds), 'unread')
+      await Promise.all([refreshMessages(), refreshQueues(), refreshUnreadCount()])
+      // Trigger global refresh for TaskSidebar's unread count
+      triggerInboxUnreadRefresh()
+      toast.success(t('batch.mark_unread_success', { count: result.successCount }))
+      setSelectedIds(new Set())
+      setSelectionMode(false)
+    } catch (error) {
+      console.error('Failed to batch mark as unread:', error)
+      toast.error(t('common:errors.generic'))
+    } finally {
+      setBatchActionLoading(false)
+    }
+  }, [selectedIds, refreshMessages, refreshQueues, refreshUnreadCount, t])
+
+  // Batch archive
+  const handleBatchArchive = useCallback(async () => {
+    if (selectedIds.size === 0) return
+
+    setBatchActionLoading(true)
+    try {
+      const result = await batchUpdateMessageStatus(Array.from(selectedIds), 'archived')
+      await Promise.all([refreshMessages(), refreshQueues(), refreshUnreadCount()])
+      // Trigger global refresh for TaskSidebar's unread count
+      triggerInboxUnreadRefresh()
+      toast.success(t('batch.archive_success', { count: result.successCount }))
+      setSelectedIds(new Set())
+      setSelectionMode(false)
+    } catch (error) {
+      console.error('Failed to batch archive:', error)
+      toast.error(t('common:errors.generic'))
+    } finally {
+      setBatchActionLoading(false)
+    }
+  }, [selectedIds, refreshMessages, refreshQueues, refreshUnreadCount, t])
+
+  // Batch delete
+  const handleBatchDelete = useCallback(async () => {
+    if (selectedIds.size === 0) return
+
+    setBatchActionLoading(true)
+    try {
+      const result = await batchDeleteMessages(Array.from(selectedIds))
+      await Promise.all([refreshMessages(), refreshQueues(), refreshUnreadCount()])
+      // Trigger global refresh for TaskSidebar's unread count
+      triggerInboxUnreadRefresh()
+      toast.success(t('batch.delete_success', { count: result.successCount }))
+      setSelectedIds(new Set())
+      setSelectionMode(false)
+    } catch (error) {
+      console.error('Failed to batch delete:', error)
+      toast.error(t('common:errors.generic'))
+    } finally {
+      setBatchActionLoading(false)
+      setBatchDeleteConfirmOpen(false)
+    }
+  }, [selectedIds, refreshMessages, refreshQueues, refreshUnreadCount, t])
 
   const handleStatusChange = async (message: QueueMessage, newStatus: QueueMessageStatus) => {
     setActionLoading(message.id)
     try {
       await updateMessageStatus(message.id, newStatus)
       await refreshMessages()
+      // Trigger global refresh for TaskSidebar's unread count when status changes
+      triggerInboxUnreadRefresh()
       toast.success(t(`messages.status.${newStatus}`))
     } catch (error) {
       console.error('Failed to update message status:', error)
@@ -164,43 +310,151 @@ export function MessageList({ onViewMessage, onProcessMessage }: MessageListProp
       {/* Header */}
       <div className="flex items-center justify-between border-b border-border px-4 py-3">
         <div className="flex items-center gap-2">
-          <h3 className="font-medium">
-            {selectedQueue?.displayName || t('messages.title')}
-          </h3>
-          {messagesTotal > 0 && (
-            <span className="text-sm text-text-muted">({messagesTotal})</span>
+          {selectionMode ? (
+            <>
+              <Checkbox
+                checked={allSelected}
+                ref={node => {
+                  if (node) {
+                    // Set indeterminate state for partial selection
+                    const input = node.querySelector('input')
+                    if (input) {
+                      input.indeterminate = someSelected
+                    }
+                  }
+                }}
+                onCheckedChange={toggleAllSelection}
+                data-testid="select-all-checkbox"
+              />
+              <span className="text-sm text-text-muted">
+                {t('batch.selected', { count: selectedIds.size })}
+              </span>
+            </>
+          ) : (
+            <>
+              <h3 className="font-medium">{selectedQueue?.displayName || t('messages.title')}</h3>
+              {messagesTotal > 0 && (
+                <span className="text-sm text-text-muted">({messagesTotal})</span>
+              )}
+            </>
           )}
         </div>
 
         <div className="flex items-center gap-2">
-          {/* Status filter */}
-          <Select
-            value={statusFilter}
-            onValueChange={value => setStatusFilter(value as QueueMessageStatus | 'all')}
-          >
-            <SelectTrigger className="h-8 w-[120px]" data-testid="status-filter">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">{t('messages.filter.all')}</SelectItem>
-              <SelectItem value="unread">{t('messages.filter.unread')}</SelectItem>
-              <SelectItem value="read">{t('messages.filter.read')}</SelectItem>
-              <SelectItem value="processing">{t('messages.filter.processing')}</SelectItem>
-              <SelectItem value="processed">{t('messages.filter.processed')}</SelectItem>
-              <SelectItem value="archived">{t('messages.filter.archived')}</SelectItem>
-            </SelectContent>
-          </Select>
+          {selectionMode ? (
+            <>
+              {/* Batch actions */}
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleBatchMarkAsRead}
+                disabled={selectedIds.size === 0 || batchActionLoading}
+                data-testid="batch-mark-read"
+              >
+                <Eye className="mr-1 h-4 w-4" />
+                {t('batch.mark_read')}
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleBatchMarkAsUnread}
+                disabled={selectedIds.size === 0 || batchActionLoading}
+                data-testid="batch-mark-unread"
+              >
+                <EyeOff className="mr-1 h-4 w-4" />
+                {t('batch.mark_unread')}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleBatchArchive}
+                  disabled={selectedIds.size === 0 || batchActionLoading}
+                  data-testid="batch-archive"
+                >
+                  <Archive className="mr-1 h-4 w-4" />
+                  {t('batch.archive')}
+                </Button>
+                {onBatchProcessMessages && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => onBatchProcessMessages(Array.from(selectedIds))}
+                    disabled={selectedIds.size === 0 || batchActionLoading}
+                    className="text-primary hover:text-primary"
+                    data-testid="batch-process"
+                  >
+                    <Play className="mr-1 h-4 w-4" />
+                    {t('batch.process')}
+                  </Button>
+                )}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setBatchDeleteConfirmOpen(true)}
+                  disabled={selectedIds.size === 0 || batchActionLoading}
+                  className="text-destructive hover:text-destructive"
+                  data-testid="batch-delete"
+                >
+                  <Trash2 className="mr-1 h-4 w-4" />
+                  {t('batch.delete')}
+                </Button>
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={toggleSelectionMode}
+                data-testid="exit-selection-mode"
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </>
+          ) : (
+            <>
+              {/* Selection mode toggle */}
+              {messages.length > 0 && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={toggleSelectionMode}
+                  data-testid="enter-selection-mode"
+                >
+                  <CheckSquare className="mr-1 h-4 w-4" />
+                  {t('batch.select')}
+                </Button>
+              )}
 
-          {/* Sort order */}
-          <Select value={sortOrder} onValueChange={value => setSortOrder(value as 'asc' | 'desc')}>
-            <SelectTrigger className="h-8 w-[120px]" data-testid="sort-order">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="desc">{t('messages.sort.newest')}</SelectItem>
-              <SelectItem value="asc">{t('messages.sort.oldest')}</SelectItem>
-            </SelectContent>
-          </Select>
+              {/* Status filter */}
+              <Select
+                value={statusFilter}
+                onValueChange={value => setStatusFilter(value as QueueMessageStatus | 'all')}
+              >
+                <SelectTrigger className="h-8 w-[120px]" data-testid="status-filter">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">{t('messages.filter.all')}</SelectItem>
+                  <SelectItem value="unread">{t('messages.filter.unread')}</SelectItem>
+                  <SelectItem value="read">{t('messages.filter.read')}</SelectItem>
+                  <SelectItem value="processing">{t('messages.filter.processing')}</SelectItem>
+                  <SelectItem value="processed">{t('messages.filter.processed')}</SelectItem>
+                  <SelectItem value="archived">{t('messages.filter.archived')}</SelectItem>
+                </SelectContent>
+              </Select>
+
+              {/* Sort order */}
+              <Select
+                value={sortOrder}
+                onValueChange={value => setSortOrder(value as 'asc' | 'desc')}
+              >
+                <SelectTrigger className="h-8 w-[120px]" data-testid="sort-order">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="desc">{t('messages.sort.newest')}</SelectItem>
+                  <SelectItem value="asc">{t('messages.sort.oldest')}</SelectItem>
+                </SelectContent>
+              </Select>
+            </>
+          )}
         </div>
       </div>
 
@@ -222,18 +476,37 @@ export function MessageList({ onViewMessage, onProcessMessage }: MessageListProp
               const priority = priorityConfig[message.priority]
               const preview = getMessagePreview(message)
 
+              const isSelected = selectedIds.has(message.id)
+
               return (
                 <div
                   key={message.id}
                   className={cn(
                     'flex items-start gap-3 px-4 py-3 hover:bg-surface/50 cursor-pointer transition-colors',
-                    message.status === 'unread' && 'bg-primary/5'
+                    message.status === 'unread' && 'bg-primary/5',
+                    isSelected && 'bg-primary/10'
                   )}
-                  onClick={() => onViewMessage(message)}
+                  onClick={
+                    selectionMode
+                      ? e => toggleMessageSelection(message.id, e)
+                      : () => onViewMessage(message)
+                  }
                   data-testid={`message-item-${message.id}`}
                 >
-                  {/* Status indicator */}
-                  <div className={cn('mt-1 flex-shrink-0', status.color)}>{status.icon}</div>
+                  {/* Checkbox or Status indicator */}
+                  {selectionMode ? (
+                    <div
+                      className="mt-1 flex-shrink-0"
+                      onClick={e => toggleMessageSelection(message.id, e)}
+                    >
+                      <Checkbox
+                        checked={isSelected}
+                        data-testid={`message-checkbox-${message.id}`}
+                      />
+                    </div>
+                  ) : (
+                    <div className={cn('mt-1 flex-shrink-0', status.color)}>{status.icon}</div>
+                  )}
 
                   {/* Message content */}
                   <div className="flex-1 min-w-0">
@@ -256,7 +529,7 @@ export function MessageList({ onViewMessage, onProcessMessage }: MessageListProp
                     <p className="text-sm text-text-secondary mt-1 line-clamp-2">{preview}</p>
                     <div className="flex items-center gap-2 mt-2 text-xs text-text-muted">
                       <span>
-                        {message.contentSnapshot?.length || 0} {t('chat:messages')}
+                        {message.contentSnapshot?.length || 0} {t('chat:message_count')}
                       </span>
                       {message.processedAt && (
                         <>
@@ -294,18 +567,6 @@ export function MessageList({ onViewMessage, onProcessMessage }: MessageListProp
                             {t('messages.process')}
                           </DropdownMenuItem>
                         )}
-
-                        {/* View original */}
-                        <DropdownMenuItem
-                          onClick={() =>
-                            window.open(`/chat?task=${message.sourceTaskId}`, '_blank')
-                          }
-                        >
-                          <ExternalLink className="mr-2 h-4 w-4" />
-                          {t('messages.view_original')}
-                        </DropdownMenuItem>
-
-                        <DropdownMenuSeparator />
 
                         {/* Status actions */}
                         {message.status === 'unread' ? (
@@ -397,6 +658,30 @@ export function MessageList({ onViewMessage, onProcessMessage }: MessageListProp
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
               {t('common:actions.delete')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Batch delete confirmation dialog */}
+      <AlertDialog open={batchDeleteConfirmOpen} onOpenChange={setBatchDeleteConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t('batch.delete_confirm_title')}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t('batch.delete_confirm_message', { count: selectedIds.size })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={batchActionLoading}>
+              {t('common:actions.cancel')}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleBatchDelete}
+              disabled={batchActionLoading}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {batchActionLoading ? t('common:actions.loading') : t('common:actions.delete')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

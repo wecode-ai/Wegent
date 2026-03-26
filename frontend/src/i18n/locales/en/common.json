@@ -215,6 +215,7 @@
     "copy_markdown": "Copy markdown content",
     "task_status": "Task Status:",
     "bot": "Bot",
+    "you": "You",
     "subtask_completed": "Subtask completed",
     "subtask_failed": "Subtask failed:",
     "unknown_error": "Unknown error",
