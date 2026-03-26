@@ -35,6 +35,14 @@ from app.models.task import TaskResource
 # Import User last as it may have relationships to other models
 from app.models.user import User
 from app.models.wiki import WikiContent, WikiGeneration, WikiProject
+from app.models.work_queue import (
+    QueueMessage,
+    QueueMessagePriority,
+    QueueMessageStatus,
+    QueueVisibility,
+    RecentContact,
+    TriggerMode,
+)
 from app.schemas.namespace import GroupRole
 
 __all__ = [
@@ -64,4 +72,11 @@ __all__ = [
     "GroupRole",
     "ResourceRole",
     "MemberStatus",
+    # Work Queue models
+    "QueueMessage",
+    "RecentContact",
+    "QueueVisibility",
+    "QueueMessageStatus",
+    "QueueMessagePriority",
+    "TriggerMode",
 ]

@@ -90,6 +90,11 @@ class ServerEvents:
     PET_STAGE_EVOLVED = "pet:stage_evolved"
     PET_TRAITS_UPDATED = "pet:traits_updated"
 
+    # Work queue events (to user room)
+    QUEUE_MESSAGE_RECEIVED = "queue:message_received"  # New message in queue
+    QUEUE_MESSAGE_PROCESSED = "queue:message_processed"  # Message processed
+    QUEUE_REPLY_RECEIVED = "queue:reply_received"  # Received reply from processing
+
 
 # ============================================================
 # Client -> Server Payloads
@@ -554,6 +559,44 @@ class BackgroundExecutionUpdatePayload(BaseModel):
     trigger_reason: Optional[str] = Field(None, description="Trigger reason")
     created_at: str = Field(..., description="Creation timestamp")
     updated_at: str = Field(..., description="Last update timestamp")
+
+
+# ============================================================
+# Work Queue Event Payloads
+# ============================================================
+
+
+class QueueMessageReceivedPayload(BaseModel):
+    """Payload for queue:message_received event."""
+
+    message_id: int = Field(..., description="Queue message ID")
+    queue_id: int = Field(..., description="Work queue ID")
+    queue_name: str = Field(..., description="Work queue name")
+    sender_id: int = Field(..., description="Sender user ID")
+    sender_name: str = Field(..., description="Sender username")
+    preview: str = Field(..., description="Message content preview")
+    priority: str = Field(..., description="Message priority")
+    created_at: str = Field(..., description="Creation timestamp")
+
+
+class QueueMessageProcessedPayload(BaseModel):
+    """Payload for queue:message_processed event."""
+
+    message_id: int = Field(..., description="Queue message ID")
+    queue_id: int = Field(..., description="Work queue ID")
+    status: str = Field(..., description="New message status")
+    process_task_id: Optional[int] = Field(None, description="Processing task ID")
+    result_preview: Optional[str] = Field(None, description="Processing result preview")
+
+
+class QueueReplyReceivedPayload(BaseModel):
+    """Payload for queue:reply_received event."""
+
+    original_message_id: int = Field(..., description="Original forwarded message ID")
+    reply_from_user_id: int = Field(..., description="User who processed the message")
+    reply_from_user_name: str = Field(..., description="Username of processor")
+    reply_content: str = Field(..., description="Reply content")
+    created_at: str = Field(..., description="Reply timestamp")
 
 
 # ============================================================
