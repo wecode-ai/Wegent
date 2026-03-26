@@ -227,14 +227,14 @@ class QueueMessageResponse(BaseModel):
     sourceTaskId: int
     sourceSubtaskIds: List[int]
     contentSnapshot: List[MessageContentSnapshot]
-    note: Optional[str] = None
+    note: str = ""
     priority: QueueMessagePriority
     status: QueueMessageStatus
-    processResult: Optional[Dict[str, Any]] = None
-    processTaskId: Optional[int] = None
+    processResult: Dict[str, Any] = Field(default_factory=dict)
+    processTaskId: int = 0
     createdAt: datetime
     updatedAt: datetime
-    processedAt: Optional[datetime] = None
+    processedAt: datetime
 
     class Config:
         from_attributes = True

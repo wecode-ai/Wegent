@@ -750,8 +750,11 @@ class QueueMessageService:
                 source_task_id=data.source_task_id,
                 source_subtask_ids=data.source_subtask_ids,
                 content_snapshot=[msg.model_dump() for msg in data.content_snapshot],
-                note=data.note,
+                note=data.note
+                or "",  # Use empty string if note is None (DB constraint)
                 priority=data.priority,
+                process_result={},  # Default empty dict (DB constraint: NOT NULL)
+                process_task_id=0,  # Default 0 means not processed (DB constraint: NOT NULL)
             )
             db.add(db_message)
             db.commit()

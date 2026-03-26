@@ -45,7 +45,7 @@ class QueueMessage(Base):
         nullable=False,
         comment="Snapshot of message content including text and attachments",
     )
-    note = Column(Text, nullable=True, comment="Sender's note/comment")
+    note = Column(Text, nullable=False, default="", comment="Sender's note/comment")
     priority = Column(
         SQLEnum(
             QueueMessagePriority,
@@ -64,13 +64,20 @@ class QueueMessage(Base):
         default=QueueMessageStatus.UNREAD,
         index=True,
     )
-    process_result = Column(JSON, nullable=True, comment="AI processing result")
-    process_task_id = Column(
-        Integer, nullable=True, comment="Task ID created for processing"
+    process_result = Column(
+        JSON, nullable=False, default=dict, comment="AI processing result"
     )
-    created_at = Column(DateTime, default=utc_now, index=True)
-    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
-    processed_at = Column(DateTime, nullable=True, comment="Processing completion time")
+    process_task_id = Column(
+        Integer,
+        nullable=False,
+        default=0,
+        comment="Task ID created for processing (0 = not processed)",
+    )
+    created_at = Column(DateTime, nullable=False, default=utc_now, index=True)
+    updated_at = Column(DateTime, nullable=False, default=utc_now, onupdate=utc_now)
+    processed_at = Column(
+        DateTime, nullable=False, default=utc_now, comment="Processing completion time"
+    )
 
     __table_args__ = (
         Index("ix_queue_messages_queue_status", "queue_id", "status"),
