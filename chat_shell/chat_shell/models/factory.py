@@ -23,25 +23,9 @@ from langchain_openai import ChatOpenAI
 from shared.telemetry.decorators import add_span_event, trace_sync
 
 from .openai_reasoning import ChatOpenAIWithReasoning
+from .providers import PROVIDER_ALIASES, detect_provider
 
 logger = logging.getLogger(__name__)
-
-# Provider detection: (prefixes, provider_name)
-_PROVIDER_PATTERNS = [
-    (("gpt-", "o1-", "o3-", "chatgpt-"), "openai"),
-    (("claude-",), "anthropic"),
-    (("gemini-",), "google"),
-]
-
-# Provider type aliases
-_PROVIDER_ALIASES = {
-    "openai": "openai",
-    "gpt": "openai",
-    "anthropic": "anthropic",
-    "claude": "anthropic",
-    "google": "google",
-    "gemini": "google",
-}
 
 # Allowed think_config keys per provider, mapped directly to constructor params.
 # NOTE: Only keys that are safe as direct constructor params belong here.
@@ -85,22 +69,19 @@ def _extract_think_params(provider: str, think_config: dict | None) -> dict:
 
 
 def _detect_provider(model_type: str, model_id: str) -> str:
-    """Detect provider from model type or model ID."""
-    # Check model_type alias first
-    if provider := _PROVIDER_ALIASES.get(model_type.lower()):
-        return provider
+    """Detect provider from model type.
 
-    # Fall back to model_id prefix detection
-    model_lower = model_id.lower()
-    for prefixes, provider in _PROVIDER_PATTERNS:
-        if any(model_lower.startswith(p.lower()) for p in prefixes):
-            return provider
-
-    # Default to OpenAI for unknown models (common for OpenAI-compatible APIs)
-    logger.warning(
-        "Unknown provider for %s/%s, defaulting to OpenAI", model_type, model_id
-    )
-    return "openai"
+    Delegates to the shared :func:`detect_provider`.  Falls back to
+    ``"openai"`` when ``model_type`` is not recognized (common for
+    OpenAI-compatible APIs).
+    """
+    try:
+        return detect_provider(model_type)
+    except ValueError:
+        logger.warning(
+            "Unknown provider for %s/%s, defaulting to OpenAI", model_type, model_id
+        )
+        return "openai"
 
 
 def _mask_api_key(api_key: str) -> str:
@@ -285,9 +266,7 @@ class LangChainModelFactory:
                 # For Anthropic: thinking mode requires temperature=1
                 if provider == "anthropic" and "thinking" in think_params:
                     params["temperature"] = 1.0
-                    logger.info(
-                        "Anthropic thinking enabled: forcing temperature=1.0"
-                    )
+                    logger.info("Anthropic thinking enabled: forcing temperature=1.0")
 
                 # For OpenAI-compatible providers: use reasoning-aware subclass
                 # to capture reasoning_content from non-standard deltas
@@ -314,9 +293,7 @@ class LangChainModelFactory:
         if use_reasoning_wrapper and model_class is ChatOpenAI:
             model_class = ChatOpenAIWithReasoning
 
-        add_span_event(
-            "instantiating_model_class", {"class": model_class.__name__}
-        )
+        add_span_event("instantiating_model_class", {"class": model_class.__name__})
         model = model_class(**params)
         add_span_event("model_instance_created")
         return model
@@ -339,7 +316,9 @@ class LangChainModelFactory:
         return cls.create_from_config(
             {
                 "model_id": model_name,
-                "model": _detect_provider("", model_name),
+                "model": PROVIDER_ALIASES.get(
+                    model_name.split("-")[0].lower(), "openai"
+                ),
                 "api_key": api_key,
                 "base_url": base_url or "",
             },
@@ -350,17 +329,18 @@ class LangChainModelFactory:
     def get_provider(model_id: str) -> str | None:
         """Get provider name for a model ID.
 
+        Uses the model_id prefix (e.g. ``"gpt-"`` -> ``"openai"``) as a
+        convenience lookup.  For accurate detection, prefer
+        :func:`detect_provider` with ``model_type``.
+
         Args:
             model_id: Model identifier
 
         Returns:
             Provider name ("openai", "anthropic", "google") or None if unknown
         """
-        model_lower = model_id.lower()
-        for prefixes, provider in _PROVIDER_PATTERNS:
-            if any(model_lower.startswith(p.lower()) for p in prefixes):
-                return provider
-        return None
+        prefix = model_id.split("-")[0].lower()
+        return PROVIDER_ALIASES.get(prefix)
 
     @classmethod
     def is_supported(cls, model_id: str) -> bool:

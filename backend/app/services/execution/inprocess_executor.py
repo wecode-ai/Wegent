@@ -28,7 +28,7 @@ from shared.models import (
 from shared.models.responses_api import ResponsesAPIStreamEvents
 from shared.models.responses_api_emitter import EventTransport
 
-from .dispatcher import extract_completed_result
+from .dispatcher import _require_non_empty_tool_use_id, extract_completed_result
 from .emitters import ResultEmitter
 
 logger = logging.getLogger(__name__)
@@ -163,7 +163,10 @@ class EmitterBridgeTransport(EventTransport):
             if item.get("type") == "function_call":
                 import json
 
-                call_id = item.get("call_id") or item.get("id", "")
+                call_id = _require_non_empty_tool_use_id(
+                    item.get("call_id") or item.get("id"),
+                    context="response.output_item.added(function_call)",
+                )
                 name = item.get("name", "")
                 arguments_str = item.get("arguments", "")
                 arguments = {}
@@ -190,11 +193,15 @@ class EmitterBridgeTransport(EventTransport):
 
         # function_call_arguments.done -> TOOL_RESULT
         elif event_type == ResponsesAPIStreamEvents.FUNCTION_CALL_ARGUMENTS_DONE.value:
+            tool_use_id = _require_non_empty_tool_use_id(
+                data.get("call_id") or data.get("item_id"),
+                context="function_call_arguments.done",
+            )
             return ExecutionEvent(
                 type=EventType.TOOL_RESULT.value,
                 task_id=self.task_id,
                 subtask_id=self.subtask_id,
-                tool_use_id=data.get("call_id", data.get("item_id")),
+                tool_use_id=tool_use_id,
                 tool_output=data.get("output"),
                 data={"blocks": data.get("blocks", [])},
                 message_id=message_id,

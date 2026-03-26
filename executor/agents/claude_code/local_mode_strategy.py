@@ -28,7 +28,7 @@ from typing import Any, Dict, Tuple
 
 from executor.agents.claude_code.mode_strategy import ExecutionModeStrategy
 from executor.config import config
-from executor.platform_compat import get_permissions_manager
+from executor.platform_compat import get_permissions_manager, sanitize_ld_library_path
 from shared.logger import setup_logger
 
 logger = setup_logger("local_mode_strategy")
@@ -129,9 +129,13 @@ class LocalModeStrategy(ExecutionModeStrategy):
             # Ensure all values are strings (required by SDK)
             updated_options["env"] = {k: str(v) for k, v in merged_env.items()}
 
+        # Fix PyInstaller LD_LIBRARY_PATH issue for child processes.
+        # See: https://pyinstaller.org/en/stable/common-issues-and-pitfalls.html
+        env = updated_options.get("env", {})
+        sanitize_ld_library_path(env)
+
         # Set CLAUDE_CONFIG_DIR to redirect all config reads/writes
         # This affects settings.json, claude.json, and skills locations
-        env = updated_options.get("env", {})
         env["CLAUDE_CONFIG_DIR"] = config_dir
 
         # Add ANTHROPIC_CUSTOM_HEADERS if configured via environment variable

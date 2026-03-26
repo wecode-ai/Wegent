@@ -53,6 +53,7 @@ from app.services.subscription.helpers import (
     build_workspace_repo_cache,
     extract_trigger_config,
     resolve_workspace_repo_fields,
+    validate_subscription_for_read,
 )
 
 logger = logging.getLogger(__name__)
@@ -60,6 +61,12 @@ logger = logging.getLogger(__name__)
 
 class SubscriptionFollowService:
     """Service class for subscription follow operations."""
+
+    def _validate_subscription_for_read(
+        self, subscription_json: Dict[str, Any]
+    ) -> Subscription:
+        """Validate subscription JSON for read paths with legacy trigger compatibility."""
+        return validate_subscription_for_read(subscription_json)
 
     def follow_subscription(
         self,
@@ -107,7 +114,7 @@ class SubscriptionFollowService:
             )
 
         # Check visibility
-        subscription_crd = Subscription.model_validate(subscription.json)
+        subscription_crd = self._validate_subscription_for_read(subscription.json)
         visibility = getattr(
             subscription_crd.spec, "visibility", SubscriptionVisibility.PRIVATE
         )
@@ -857,7 +864,7 @@ class SubscriptionFollowService:
             .all()
         )
 
-        subscription_crd = Subscription.model_validate(subscription.json)
+        subscription_crd = self._validate_subscription_for_read(subscription.json)
         owner = db.query(User).filter(User.id == subscription.user_id).first()
 
         items = []
@@ -929,7 +936,7 @@ class SubscriptionFollowService:
             if not subscription:
                 continue
 
-            subscription_crd = Subscription.model_validate(subscription.json)
+            subscription_crd = self._validate_subscription_for_read(subscription.json)
             owner = db.query(User).filter(User.id == subscription.user_id).first()
             inviter = (
                 db.query(User).filter(User.id == follow.invited_by_user_id).first()
@@ -1086,7 +1093,7 @@ class SubscriptionFollowService:
         # Filter to public only
         public_subscriptions = []
         for sub in subscriptions:
-            sub_crd = Subscription.model_validate(sub.json)
+            sub_crd = self._validate_subscription_for_read(sub.json)
             visibility = getattr(
                 sub_crd.spec, "visibility", SubscriptionVisibility.PRIVATE
             )
@@ -1109,7 +1116,7 @@ class SubscriptionFollowService:
                 db, subscription_id=sub.id, user_id=user_id
             )
             owner = db.query(User).filter(User.id == sub.user_id).first()
-            sub_crd = Subscription.model_validate(sub.json)
+            sub_crd = self._validate_subscription_for_read(sub.json)
 
             subscription_data.append(
                 {
@@ -1224,7 +1231,7 @@ class SubscriptionFollowService:
         workspace_repo_cache: Optional[Dict[int, Dict[str, Optional[Any]]]] = None,
     ) -> SubscriptionInDB:
         """Convert Kind to SubscriptionInDB with follow info."""
-        subscription_crd = Subscription.model_validate(subscription.json)
+        subscription_crd = self._validate_subscription_for_read(subscription.json)
         internal = subscription.json.get("_internal", {})
 
         # Build webhook URL

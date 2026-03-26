@@ -27,6 +27,8 @@ interface SubscriptionContextType {
   setSelectedSubscription: (subscription: Subscription | null) => void
   refreshSubscriptions: () => Promise<void>
   loadMoreSubscriptions: () => Promise<void>
+  // Invalid schedule count for displaying warning banner
+  invalidScheduleCount: number
 
   // Executions (Timeline)
   executions: BackgroundExecution[]
@@ -102,6 +104,9 @@ export function SubscriptionProvider({ children }: SubscriptionProviderProps) {
   // Silent executions toggle - default to false (hide silent executions)
   const [showSilentExecutions, setShowSilentExecutions] = useState(false)
 
+  // Invalid schedule count
+  const [invalidScheduleCount, setInvalidScheduleCount] = useState(0)
+
   // Fetch subscriptions
   const refreshSubscriptions = useCallback(async () => {
     setSubscriptionsLoading(true)
@@ -113,6 +118,7 @@ export function SubscriptionProvider({ children }: SubscriptionProviderProps) {
       setSubscriptions(response.items)
       setSubscriptionsTotal(response.total)
       setSubscriptionsPage(1)
+      setInvalidScheduleCount(response.invalid_schedule_count || 0)
     } catch (error) {
       console.error('Failed to fetch subscriptions:', error)
     } finally {
@@ -295,6 +301,7 @@ export function SubscriptionProvider({ children }: SubscriptionProviderProps) {
         setSelectedSubscription,
         refreshSubscriptions,
         loadMoreSubscriptions,
+        invalidScheduleCount,
         executions,
         executionsLoading,
         executionsRefreshing,

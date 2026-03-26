@@ -90,6 +90,95 @@ class ToolCallTruncatedError(Exception):
         super().__init__(f"Tool call truncated: {reason}")
 
 
+class InvalidToolMessageSequenceError(ValueError):
+    """Raised when tool-call linkage is invalid for any LLM protocol.
+
+    The chat_shell internally uses OpenAI-style message dicts as the canonical
+    representation before they are adapted to OpenAI Chat Completions,
+    OpenAI Responses API, Anthropic Messages API, or Gemini API.
+    """
+
+
+def _require_non_empty_tool_id(tool_id: Any, context: str) -> str:
+    """Return a validated tool ID or raise if it is missing/blank."""
+    if tool_id is None:
+        value = ""
+    elif isinstance(tool_id, str):
+        value = tool_id
+    else:
+        value = str(tool_id)
+
+    if not value.strip():
+        raise InvalidToolMessageSequenceError(f"{context} must be a non-empty string")
+
+    return value
+
+
+def _validate_tool_message_sequence(
+    messages: list[dict[str, Any]], *, context: str
+) -> None:
+    """Validate tool-call / tool-result linkage before provider adaptation.
+
+    This fail-fast check applies to all protocols because the canonical message
+    sequence is shared before it is adapted for OpenAI Chat Completions,
+    OpenAI Responses API, Anthropic Messages API, or Gemini API.
+    """
+    pending_tool_calls: dict[str, int] = {}
+
+    for index, message in enumerate(messages):
+        role = message.get("role")
+
+        if role == "assistant":
+            tool_calls = message.get("tool_calls") or []
+            for tool_index, tool_call in enumerate(tool_calls):
+                if not isinstance(tool_call, dict):
+                    raise InvalidToolMessageSequenceError(
+                        f"{context}: assistant message at index {index} has invalid "
+                        f"tool_calls[{tool_index}] payload"
+                    )
+
+                tool_id = _require_non_empty_tool_id(
+                    tool_call.get("id"),
+                    f"{context}: assistant message at index {index} tool_calls[{tool_index}].id",
+                )
+
+                if tool_id in pending_tool_calls:
+                    raise InvalidToolMessageSequenceError(
+                        f"{context}: duplicate unresolved tool_call id {tool_id!r} "
+                        f"at assistant message index {index}"
+                    )
+
+                pending_tool_calls[tool_id] = index
+
+        elif role == "tool":
+            tool_call_id = _require_non_empty_tool_id(
+                message.get("tool_call_id"),
+                f"{context}: tool message at index {index} tool_call_id",
+            )
+
+            if tool_call_id not in pending_tool_calls:
+                raise InvalidToolMessageSequenceError(
+                    f"{context}: tool message at index {index} references unknown "
+                    f"tool_call_id {tool_call_id!r}"
+                )
+
+            del pending_tool_calls[tool_call_id]
+
+    if pending_tool_calls:
+        unresolved = ", ".join(repr(tool_id) for tool_id in pending_tool_calls)
+        raise InvalidToolMessageSequenceError(
+            f"{context}: assistant tool_calls without matching tool results: {unresolved}"
+        )
+
+
+def _convert_validated_messages(
+    messages: list[dict[str, Any]], *, context: str
+) -> list[BaseMessage]:
+    """Validate canonical message linkage, then convert to LangChain messages."""
+    _validate_tool_message_sequence(messages, context=context)
+    return convert_to_messages(messages)
+
+
 def _serialize_messages_chain(messages: list[BaseMessage]) -> list[dict[str, Any]]:
     """Serialize LangChain messages to OpenAI-compatible dicts for history persistence.
 
@@ -107,7 +196,10 @@ def _serialize_messages_chain(messages: list[BaseMessage]) -> list[dict[str, Any
             if msg.tool_calls:
                 entry["tool_calls"] = [
                     {
-                        "id": tc.get("id", ""),
+                        "id": _require_non_empty_tool_id(
+                            tc.get("id"),
+                            "serialized messages_chain: assistant tool_calls[].id",
+                        ),
                         "type": "function",
                         "function": {
                             "name": tc.get("name", ""),
@@ -135,11 +227,23 @@ def _serialize_messages_chain(messages: list[BaseMessage]) -> list[dict[str, Any
                     if isinstance(msg.content, str)
                     else json.dumps(msg.content)
                 ),
-                "tool_call_id": msg.tool_call_id or "",
+                "tool_call_id": _require_non_empty_tool_id(
+                    msg.tool_call_id,
+                    "serialized messages_chain: tool message tool_call_id",
+                ),
             }
             if msg.name:
                 entry["name"] = msg.name
             chain.append(entry)
+    return chain
+
+
+def _serialize_validated_messages_chain(
+    messages: list[BaseMessage],
+) -> list[dict[str, Any]]:
+    """Serialize a generated turn and fail fast on broken tool-call linkage."""
+    chain = _serialize_messages_chain(messages)
+    _validate_tool_message_sequence(chain, context="serialized messages_chain")
     return chain
 
 
@@ -201,7 +305,10 @@ class LangGraphAgentBuilder:
         """Execute via astream_events and capture final state plus optional events."""
 
         agent = self._build_agent()
-        lc_messages = convert_to_messages(messages)
+        lc_messages = _convert_validated_messages(
+            messages,
+            context="agent execution input messages",
+        )
         exec_config = {"configurable": config} if config else None
 
         all_events: list[dict[str, Any]] = []
@@ -674,7 +781,10 @@ class LangGraphAgentBuilder:
             State updates as they occur
         """
         agent = self._build_agent()
-        lc_messages = convert_to_messages(messages)
+        lc_messages = _convert_validated_messages(
+            messages,
+            context="stream_execute input messages",
+        )
 
         exec_config = {"configurable": config} if config else None
 
@@ -727,7 +837,10 @@ class LangGraphAgentBuilder:
         add_span_event("building_agent_completed")
 
         add_span_event("convert_to_messages_started", {"message_count": len(messages)})
-        lc_messages = convert_to_messages(messages)
+        lc_messages = _convert_validated_messages(
+            messages,
+            context="stream_tokens input messages",
+        )
         add_span_event(
             "convert_to_messages_completed", {"lc_message_count": len(lc_messages)}
         )
@@ -1148,7 +1261,9 @@ class LangGraphAgentBuilder:
             # Only keep new messages generated in this turn (skip input messages)
             if _collected_state_messages:
                 new_msgs = _collected_state_messages[len(lc_messages) :]
-                self._last_messages_chain = _serialize_messages_chain(new_msgs)
+                self._last_messages_chain = _serialize_validated_messages_chain(
+                    new_msgs
+                )
             else:
                 self._last_messages_chain = []
 
@@ -1226,7 +1341,9 @@ class LangGraphAgentBuilder:
             # Persist partial messages chain before re-raising
             if _collected_state_messages:
                 new_msgs = _collected_state_messages[len(lc_messages) :]
-                self._last_messages_chain = _serialize_messages_chain(new_msgs)
+                self._last_messages_chain = _serialize_validated_messages_chain(
+                    new_msgs
+                )
             raise
 
         except GraphRecursionError as e:
@@ -1240,7 +1357,9 @@ class LangGraphAgentBuilder:
             # Persist messages chain from iterations before the limit
             if _collected_state_messages:
                 new_msgs = _collected_state_messages[len(lc_messages) :]
-                self._last_messages_chain = _serialize_messages_chain(new_msgs)
+                self._last_messages_chain = _serialize_validated_messages_chain(
+                    new_msgs
+                )
 
             # Build messages with the limit reached notice
             # Add a human message to prompt the model to provide final response

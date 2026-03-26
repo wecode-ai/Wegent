@@ -5,5 +5,6 @@
 """Chat Shell messages module."""
 
 from .converter import MessageConverter
+from .utils import group_tool_call_messages
 
-__all__ = ["MessageConverter"]
+__all__ = ["MessageConverter", "group_tool_call_messages"]

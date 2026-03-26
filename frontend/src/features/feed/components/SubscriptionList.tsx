@@ -31,6 +31,7 @@ import {
   VolumeX,
   Webhook,
   XCircle,
+  AlertTriangle,
 } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Button } from '@/components/ui/button'
@@ -134,6 +135,7 @@ export function SubscriptionList({
     refreshSubscriptions,
     loadMoreSubscriptions,
     refreshExecutions,
+    invalidScheduleCount,
   } = useSubscriptionContext()
 
   const [deleteConfirmSubscription, setDeleteConfirmSubscription] = useState<Subscription | null>(
@@ -335,6 +337,21 @@ export function SubscriptionList({
 
   return (
     <div className="flex h-full flex-col">
+      {/* Invalid Schedule Warning Banner */}
+      {invalidScheduleCount > 0 && (
+        <div className="bg-amber-50 border-b border-amber-200 px-4 py-3">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-amber-800">
+                {t('invalid_schedule_banner_title', { count: invalidScheduleCount })}
+              </p>
+              <p className="text-xs text-amber-700 mt-1">{t('invalid_schedule_banner_desc')}</p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* List */}
       <div className="flex-1 overflow-y-auto">
         {subscriptionsLoading && subscriptions.length === 0 ? (
@@ -368,6 +385,31 @@ export function SubscriptionList({
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
                           <span className="truncate font-medium">{subscription.display_name}</span>
+                          {/* Invalid schedule warning badge */}
+                          {subscription.trigger_config_valid === false && (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Badge variant="error" className="text-xs cursor-help">
+                                  <AlertCircle className="h-3 w-3 mr-1" />
+                                  {t('invalid_schedule')}
+                                </Badge>
+                              </TooltipTrigger>
+                              <TooltipContent side="top" className="max-w-xs">
+                                <div className="space-y-1">
+                                  <p className="font-medium">
+                                    {t('invalid_schedule_tooltip_title')}
+                                  </p>
+                                  <p className="text-xs text-muted-foreground">
+                                    {subscription.trigger_config_error ||
+                                      t('invalid_schedule_tooltip_desc')}
+                                  </p>
+                                  <p className="text-xs text-muted-foreground">
+                                    {t('invalid_schedule_action')}
+                                  </p>
+                                </div>
+                              </TooltipContent>
+                            </Tooltip>
+                          )}
                           <Badge
                             variant={
                               subscription.task_type === 'execution' ? 'default' : 'secondary'
@@ -386,7 +428,9 @@ export function SubscriptionList({
                               <span>·</span>
                               <span>
                                 {t('next_execution')}:{' '}
-                                {formatNextExecution(subscription.next_execution_time)}
+                                {subscription.trigger_config_valid === false
+                                  ? t('execution_disabled')
+                                  : formatNextExecution(subscription.next_execution_time)}
                               </span>
                             </>
                           )}

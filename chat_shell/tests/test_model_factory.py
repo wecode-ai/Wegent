@@ -23,10 +23,10 @@ from chat_shell.models.factory import (
 )
 from chat_shell.models.openai_reasoning import ChatOpenAIWithReasoning
 
-
 # ---------------------------------------------------------------------------
 # _extract_think_params
 # ---------------------------------------------------------------------------
+
 
 class TestExtractThinkParams:
     """Tests for _extract_think_params function."""
@@ -35,9 +35,12 @@ class TestExtractThinkParams:
 
     def test_anthropic_thinking_enabled(self):
         """Anthropic: standard extended thinking config."""
-        result = _extract_think_params("anthropic", {
-            "thinking": {"type": "enabled", "budget_tokens": 10000},
-        })
+        result = _extract_think_params(
+            "anthropic",
+            {
+                "thinking": {"type": "enabled", "budget_tokens": 10000},
+            },
+        )
         assert result == {"thinking": {"type": "enabled", "budget_tokens": 10000}}
 
     def test_anthropic_effort(self):
@@ -47,10 +50,13 @@ class TestExtractThinkParams:
 
     def test_anthropic_ignores_unknown_keys(self):
         """Anthropic: keys not in whitelist are silently dropped."""
-        result = _extract_think_params("anthropic", {
-            "thinking": {"type": "enabled", "budget_tokens": 5000},
-            "reasoning_effort": "high",  # not an Anthropic key
-        })
+        result = _extract_think_params(
+            "anthropic",
+            {
+                "thinking": {"type": "enabled", "budget_tokens": 5000},
+                "reasoning_effort": "high",  # not an Anthropic key
+            },
+        )
         assert result == {"thinking": {"type": "enabled", "budget_tokens": 5000}}
         assert "reasoning_effort" not in result
 
@@ -64,35 +70,47 @@ class TestExtractThinkParams:
     def test_openai_reasoning_dict_goes_to_extra_body(self):
         """OpenAI/OpenRouter: reasoning dict goes to extra_body to avoid
         implicitly activating the Responses API format in langchain."""
-        result = _extract_think_params("openai", {
-            "reasoning": {"effort": "high", "summary": "auto"},
-        })
+        result = _extract_think_params(
+            "openai",
+            {
+                "reasoning": {"effort": "high", "summary": "auto"},
+            },
+        )
         assert result == {
             "extra_body": {"reasoning": {"effort": "high", "summary": "auto"}}
         }
 
     def test_openai_unknown_keys_go_to_extra_body(self):
         """OpenAI-compatible (Kimi): unknown keys go into extra_body."""
-        result = _extract_think_params("openai", {
-            "thinking": {"type": "enabled"},
-        })
+        result = _extract_think_params(
+            "openai",
+            {
+                "thinking": {"type": "enabled"},
+            },
+        )
         assert result == {"extra_body": {"thinking": {"type": "enabled"}}}
 
     def test_openai_mixed_known_and_unknown(self):
         """OpenAI: mix of whitelisted + unknown keys."""
-        result = _extract_think_params("openai", {
-            "reasoning_effort": "medium",
-            "thinking": {"type": "enabled"},
-        })
+        result = _extract_think_params(
+            "openai",
+            {
+                "reasoning_effort": "medium",
+                "thinking": {"type": "enabled"},
+            },
+        )
         assert result["reasoning_effort"] == "medium"
         assert result["extra_body"] == {"thinking": {"type": "enabled"}}
 
     def test_openai_reasoning_and_effort_mixed(self):
         """OpenAI: reasoning dict + reasoning_effort → both handled correctly."""
-        result = _extract_think_params("openai", {
-            "reasoning_effort": "medium",
-            "reasoning": {"effort": "high"},
-        })
+        result = _extract_think_params(
+            "openai",
+            {
+                "reasoning_effort": "medium",
+                "reasoning": {"effort": "high"},
+            },
+        )
         assert result["reasoning_effort"] == "medium"
         assert result["extra_body"] == {"reasoning": {"effort": "high"}}
 
@@ -110,10 +128,13 @@ class TestExtractThinkParams:
 
     def test_google_ignores_unknown_keys(self):
         """Google: unknown keys are silently dropped (no extra_body)."""
-        result = _extract_think_params("google", {
-            "thinking_level": "high",
-            "reasoning_effort": "medium",
-        })
+        result = _extract_think_params(
+            "google",
+            {
+                "thinking_level": "high",
+                "reasoning_effort": "medium",
+            },
+        )
         assert result == {"thinking_level": "high"}
 
     # -- Unknown / edge cases --
@@ -136,6 +157,7 @@ class TestExtractThinkParams:
 # _detect_provider
 # ---------------------------------------------------------------------------
 
+
 class TestDetectProvider:
     """Tests for _detect_provider function."""
 
@@ -147,15 +169,11 @@ class TestDetectProvider:
         assert _detect_provider("google", "anything") == "google"
         assert _detect_provider("gemini", "anything") == "google"
 
-    def test_model_id_prefix_detection(self):
+    def test_unknown_model_type_defaults_to_openai(self):
+        """Unknown model_type always defaults to openai (no model_id fallback)."""
         assert _detect_provider("unknown", "gpt-4o") == "openai"
-        assert _detect_provider("unknown", "o1-preview") == "openai"
-        assert _detect_provider("unknown", "o3-mini") == "openai"
-        assert _detect_provider("unknown", "claude-3-sonnet") == "anthropic"
-        assert _detect_provider("unknown", "gemini-1.5-pro") == "google"
-
-    def test_unknown_defaults_to_openai(self):
-        """Unknown provider defaults to openai for OpenAI-compatible APIs."""
+        assert _detect_provider("unknown", "claude-3-sonnet") == "openai"
+        assert _detect_provider("unknown", "gemini-1.5-pro") == "openai"
         assert _detect_provider("unknown", "kimi-k2.5") == "openai"
         assert _detect_provider("unknown", "deepseek-chat") == "openai"
 
@@ -163,6 +181,7 @@ class TestDetectProvider:
 # ---------------------------------------------------------------------------
 # LangChainModelFactory.create_from_config with think_config
 # ---------------------------------------------------------------------------
+
 
 class TestCreateFromConfigThinkConfig:
     """Tests for think_config integration in create_from_config."""
@@ -293,6 +312,7 @@ class TestCreateFromConfigThinkConfig:
 # Temperature from model_config
 # ---------------------------------------------------------------------------
 
+
 class TestCreateFromConfigTemperature:
     """Tests for temperature from model_config in create_from_config."""
 
@@ -318,7 +338,9 @@ class TestCreateFromConfigTemperature:
     @patch("chat_shell.models.factory.trace_sync", lambda **kw: lambda fn: fn)
     def test_anthropic_temperature_from_config(self, _span):
         """Anthropic: temperature from model_config applied."""
-        config = self._base_config(provider="anthropic", model_id="claude-3-sonnet", temperature=0.5)
+        config = self._base_config(
+            provider="anthropic", model_id="claude-3-sonnet", temperature=0.5
+        )
         model = LangChainModelFactory.create_from_config(config)
         assert model.temperature == 0.5
 
@@ -326,7 +348,9 @@ class TestCreateFromConfigTemperature:
     @patch("chat_shell.models.factory.trace_sync", lambda **kw: lambda fn: fn)
     def test_google_temperature_from_config(self, _span):
         """Google: temperature from model_config applied."""
-        config = self._base_config(provider="google", model_id="gemini-2.5-pro", temperature=0.8)
+        config = self._base_config(
+            provider="google", model_id="gemini-2.5-pro", temperature=0.8
+        )
         model = LangChainModelFactory.create_from_config(config)
         assert model.temperature == 0.8
 

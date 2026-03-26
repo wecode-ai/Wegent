@@ -26,11 +26,13 @@ from app.models.subscription import BackgroundExecution
 from app.schemas.subscription import (
     BackgroundExecutionInDB,
     BackgroundExecutionStatus,
-    Subscription,
     SubscriptionStatus,
     SubscriptionVisibility,
 )
-from app.services.subscription.helpers import resolve_prompt_template
+from app.services.subscription.helpers import (
+    resolve_prompt_template,
+    validate_subscription_for_read,
+)
 from app.services.subscription.state_machine import (
     OptimisticLockError,
     is_terminal_state,
@@ -68,7 +70,7 @@ class BackgroundExecutionManager:
         Returns:
             BackgroundExecutionInDB object
         """
-        subscription_crd = Subscription.model_validate(subscription.json)
+        subscription_crd = validate_subscription_for_read(subscription.json)
         internal = subscription.json.get("_internal", {})
 
         # For rental subscriptions, get promptTemplate from source subscription
@@ -88,7 +90,9 @@ class BackgroundExecutionManager:
                     .first()
                 )
                 if source_subscription:
-                    source_crd = Subscription.model_validate(source_subscription.json)
+                    source_crd = validate_subscription_for_read(
+                        source_subscription.json
+                    )
                     # Use source subscription's promptTemplate
                     prompt_template = source_crd.spec.promptTemplate
                     logger.info(
@@ -248,7 +252,7 @@ class BackgroundExecutionManager:
             .first()
         )
         if subscription:
-            subscription_crd = Subscription.model_validate(subscription.json)
+            subscription_crd = validate_subscription_for_read(subscription.json)
             exec_dict["subscription_name"] = subscription.name
             exec_dict["subscription_display_name"] = subscription_crd.spec.displayName
             exec_dict["task_type"] = subscription_crd.spec.taskType.value
@@ -373,7 +377,7 @@ class BackgroundExecutionManager:
                 .first()
             )
             if subscription:
-                subscription_crd = Subscription.model_validate(subscription.json)
+                subscription_crd = validate_subscription_for_read(subscription.json)
                 # Check visibility field - PUBLIC means it's a public subscription
                 is_public_subscription = (
                     subscription_crd.spec.visibility == SubscriptionVisibility.PUBLIC
@@ -465,7 +469,7 @@ class BackgroundExecutionManager:
         subscription_cache = {}
         team_refs = {}
         for subscription in subscriptions:
-            subscription_crd = Subscription.model_validate(subscription.json)
+            subscription_crd = validate_subscription_for_read(subscription.json)
             subscription_cache[subscription.id] = {
                 "name": subscription.name,
                 "display_name": subscription_crd.spec.displayName,
@@ -561,7 +565,7 @@ class BackgroundExecutionManager:
             .first()
         )
         if subscription:
-            subscription_crd = Subscription.model_validate(subscription.json)
+            subscription_crd = validate_subscription_for_read(subscription.json)
             exec_dict["subscription_name"] = subscription.name
             exec_dict["subscription_display_name"] = subscription_crd.spec.displayName
             exec_dict["task_type"] = subscription_crd.spec.taskType.value
@@ -803,7 +807,7 @@ class BackgroundExecutionManager:
             )
             return
 
-        subscription_crd = Subscription.model_validate(subscription.json)
+        subscription_crd = validate_subscription_for_read(subscription.json)
         subscription_display_name = (
             subscription_crd.spec.displayName or subscription.name
         )
@@ -888,7 +892,7 @@ class BackgroundExecutionManager:
         # Preserve _internal field before updating
         internal = subscription.json.get("_internal", {})
 
-        subscription_crd = Subscription.model_validate(subscription.json)
+        subscription_crd = validate_subscription_for_read(subscription.json)
         if subscription_crd.status is None:
             subscription_crd.status = SubscriptionStatus()
 

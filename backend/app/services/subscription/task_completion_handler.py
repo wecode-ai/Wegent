@@ -31,6 +31,7 @@ from app.models.kind import Kind
 from app.models.subscription import BackgroundExecution
 from app.schemas.subscription import BackgroundExecutionStatus
 from app.services.subscription.execution import background_execution_manager
+from app.services.subscription.helpers import validate_subscription_for_read
 from app.services.subscription.notification_dispatcher import (
     subscription_notification_dispatcher,
 )
@@ -268,9 +269,8 @@ class SubscriptionTaskCompletionHandler:
 
             # Get display names
             from app.schemas.kind import Team
-            from app.schemas.subscription import Subscription
 
-            subscription_crd = Subscription.model_validate(subscription.json)
+            subscription_crd = validate_subscription_for_read(subscription.json)
             subscription_display_name = (
                 subscription_crd.spec.displayName or subscription.name
             )

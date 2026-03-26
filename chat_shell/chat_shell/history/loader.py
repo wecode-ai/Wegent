@@ -22,6 +22,7 @@ import logging
 from typing import Any, Optional
 
 from chat_shell.core.config import settings
+from chat_shell.messages.utils import group_tool_call_messages as _group_messages
 from shared.prompts.constants import parse_prompt_blocks
 
 logger = logging.getLogger(__name__)
@@ -875,6 +876,11 @@ def _truncate_history(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
     This is used for group chat to reduce prompt length while retaining
     the start of the conversation and the most recent context.
+
+    Tool-call groups (assistant with ``tool_calls`` + tool responses) are
+    treated as atomic units so that truncation never splits a group.
+    The actual number of messages kept may slightly exceed ``first_n + last_n``
+    to preserve group integrity.
     """
 
     first_n = settings.GROUP_CHAT_HISTORY_FIRST_MESSAGES
@@ -887,6 +893,34 @@ def _truncate_history(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
     if len(history) <= first_n + last_n:
         return history
 
-    # Handle edge case: history[-0:] returns full list, not empty list
-    tail = history[-last_n:] if last_n > 0 else []
-    return [*history[:first_n], *tail]
+    groups = _group_messages(history)
+
+    # Determine which groups to keep from the head (first_n messages)
+    head_count = 0
+    head_groups = 0
+    for g in groups:
+        if head_count >= first_n:
+            break
+        head_count += len(g)
+        head_groups += 1
+
+    # Determine which groups to keep from the tail (last_n messages)
+    tail_count = 0
+    tail_groups = 0
+    for g in reversed(groups):
+        if tail_count >= last_n:
+            break
+        tail_count += len(g)
+        tail_groups += 1
+
+    # If head + tail covers all groups, return as-is
+    if head_groups + tail_groups >= len(groups):
+        return history
+
+    head = groups[:head_groups]
+    tail = groups[len(groups) - tail_groups :] if tail_groups > 0 else []
+
+    result: list[dict[str, Any]] = []
+    for g in [*head, *tail]:
+        result.extend(g)
+    return result

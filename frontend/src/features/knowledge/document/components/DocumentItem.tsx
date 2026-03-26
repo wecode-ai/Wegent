@@ -162,6 +162,18 @@ export function DocumentItem({
   const displayName =
     isWeb && document.name.endsWith('.md') ? document.name.slice(0, -3) : document.name
 
+  // Helper function to determine if document is indexing
+  // Document is considered "indexing" when:
+  // - isReindexing prop is true (explicit reindexing in progress), OR
+  // - status is 'enabled' (legacy check), OR
+  // - is_active is false AND it's not a table (new document being indexed)
+  // Note: We don't check ragConfigured here because even if RAG is not configured,
+  // the document is still in "indexing" state (waiting for indexing). The backend
+  // will skip actual indexing if RAG is not configured, but the UI should show
+  // "indexing" to indicate the document is not yet active.
+  const isIndexing =
+    isReindexing || document.status === 'enabled' || (!document.is_active && !isTable)
+
   const handleRowClick = () => {
     onViewDetail?.(document)
   }
@@ -244,7 +256,7 @@ export function DocumentItem({
                 className="w-1 h-1 rounded-full flex-shrink-0 bg-green-500"
                 title={t('knowledge:document.document.indexStatus.available')}
               />
-            ) : isReindexing ? (
+            ) : isIndexing ? (
               <TooltipProvider>
                 <Tooltip delayDuration={200}>
                   <TooltipTrigger asChild>
@@ -458,7 +470,7 @@ export function DocumentItem({
           <Badge variant="success" size="sm" className="whitespace-nowrap">
             {t('knowledge:document.document.indexStatus.available')}
           </Badge>
-        ) : isReindexing ? (
+        ) : isIndexing ? (
           <TooltipProvider>
             <Tooltip delayDuration={200}>
               <TooltipTrigger asChild>
