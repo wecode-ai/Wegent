@@ -4,7 +4,16 @@
 
 'use client'
 
-import { ArrowLeft, Settings, GraduationCap, Globe, Lock, FileText, Send } from 'lucide-react'
+import {
+  ArrowLeft,
+  Settings,
+  GraduationCap,
+  Globe,
+  Lock,
+  FileText,
+  Send,
+  ExternalLink,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -29,6 +38,7 @@ export function TopicHeader({
   onBack,
   onEditConfig,
   onPublish,
+  onViewExam,
   isLoading = false,
   isPublishing = false,
 }: TopicHeaderProps) {
@@ -111,6 +121,20 @@ export function TopicHeader({
 
             {/* Status badge */}
             <Badge variant={statusBadge.variant}>{statusBadge.label}</Badge>
+
+            {/* View exam button - only for published topics */}
+            {topic.status === TopicStatus.PUBLISHED && onViewExam && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={onViewExam}
+                disabled={isLoading}
+                className="shrink-0 border-emerald-200 text-emerald-600 hover:bg-emerald-50 hover:text-emerald-700"
+              >
+                <ExternalLink className="mr-1.5 h-4 w-4" />
+                {t('exam.start_exam')}
+              </Button>
+            )}
 
             {/* Exam mode badge */}
             {isExamMode && (
