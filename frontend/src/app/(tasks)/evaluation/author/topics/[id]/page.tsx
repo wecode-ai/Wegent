@@ -178,6 +178,11 @@ function TopicDetailContent() {
     }
   }, [topic, topicId, toast, t])
 
+  // Handle view exam - open respondent exam page in new tab
+  const handleViewExam = useCallback(() => {
+    window.open(`/evaluation/respondent/topics/${topicId}/exam`, '_blank')
+  }, [topicId])
+
   // Loading state
   if (loading) {
     return (
@@ -217,6 +222,7 @@ function TopicDetailContent() {
         onBack={handleBack}
         onEditConfig={handleEditConfig}
         onPublish={handlePublish}
+        onViewExam={handleViewExam}
         isLoading={loading}
         isPublishing={isPublishing}
       />
