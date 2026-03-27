@@ -381,7 +381,8 @@ export function ForwardMessageDialog({
   }
 
   // Truncate message content for display
-  const truncateContent = (content: string, maxLength: number = 80) => {
+  const truncateContent = (content: string | undefined, maxLength: number = 80) => {
+    if (!content) return ''
     // Remove markdown prefix if present
     let text = content
     if (text.startsWith('${$$}$')) {
