@@ -599,7 +599,7 @@ function MessagesArea({
         .filter(msg => msg.status === 'completed') // Only export completed messages
         .map(msg => {
           // Remove markdown prefix from AI messages if present
-          let content = msg.content
+          let content = msg.content || ''
           if (msg.type === 'ai' && content.startsWith('${$$}$')) {
             content = content.substring(6)
           }
@@ -1103,7 +1103,7 @@ function MessagesArea({
       .filter(msg => msg.subtaskId && msg.status === 'completed')
       .map(msg => {
         // Remove markdown prefix from AI messages if present
-        let content = msg.content
+        let content = msg.content || ''
         if (msg.type === 'ai' && content.startsWith('${$$}$')) {
           content = content.substring(6)
         }
