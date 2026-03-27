@@ -310,6 +310,15 @@ class DockerExecutor(Executor):
             context=f"existing container: {executor_name}",
         )
 
+    def _should_keep_failed_validation_container(self, task: Dict[str, Any]) -> bool:
+        """Whether to keep failed validation containers for debugging."""
+        is_validation_task = get_metadata_field(task, "type") == "validation"
+        if not is_validation_task:
+            return False
+
+        keep_flag = os.getenv("VALIDATION_KEEP_FAILED_CONTAINER", "false").lower()
+        return keep_flag in ("1", "true", "yes", "on")
+
     def _get_container_port(
         self, executor_name: str
     ) -> tuple[Optional[int], Optional[str]]:
@@ -375,13 +384,20 @@ class DockerExecutor(Executor):
                 self.dispatch_task_to_instance(task, executor_name, ready_info)
             except Exception:
                 # Avoid leaking an idle container when initial dispatch fails.
-                try:
-                    delete_container(executor_name)
-                except Exception as cleanup_error:
-                    logger.warning(
-                        f"Failed to cleanup container {executor_name} after "
-                        f"initial dispatch failure: {cleanup_error}"
+                if self._should_keep_failed_validation_container(task):
+                    logger.info(
+                        "Keeping failed validation container %s for debugging "
+                        "(VALIDATION_KEEP_FAILED_CONTAINER=true)",
+                        executor_name,
                     )
+                else:
+                    try:
+                        delete_container(executor_name)
+                    except Exception as cleanup_error:
+                        logger.warning(
+                            f"Failed to cleanup container {executor_name} after "
+                            f"initial dispatch failure: {cleanup_error}"
+                        )
                 raise
 
     def create_instance(
@@ -588,18 +604,35 @@ class DockerExecutor(Executor):
         Raises:
             RuntimeError: If request dispatch fails after retries
         """
-        max_retries = max(
-            int(os.getenv("EXECUTOR_INITIAL_DISPATCH_MAX_RETRIES", "3")),
-            1,
-        )
-        retry_interval = max(
-            float(os.getenv("EXECUTOR_INITIAL_DISPATCH_RETRY_INTERVAL", "1")),
-            0,
-        )
-        request_timeout = max(
-            float(os.getenv("EXECUTOR_INITIAL_DISPATCH_TIMEOUT", "10")),
-            0.1,
-        )
+        is_validation_task = get_metadata_field(task, "type") == "validation"
+        if is_validation_task:
+            # Validation tasks may spend longer in start callback path.
+            # Use dedicated limits to avoid false timeout and duplicate dispatches.
+            max_retries = max(
+                int(os.getenv("VALIDATION_INITIAL_DISPATCH_MAX_RETRIES", "1")),
+                1,
+            )
+            retry_interval = max(
+                float(os.getenv("VALIDATION_INITIAL_DISPATCH_RETRY_INTERVAL", "1")),
+                0,
+            )
+            request_timeout = max(
+                float(os.getenv("VALIDATION_INITIAL_DISPATCH_TIMEOUT", "60")),
+                0.1,
+            )
+        else:
+            max_retries = max(
+                int(os.getenv("EXECUTOR_INITIAL_DISPATCH_MAX_RETRIES", "3")),
+                1,
+            )
+            retry_interval = max(
+                float(os.getenv("EXECUTOR_INITIAL_DISPATCH_RETRY_INTERVAL", "1")),
+                0,
+            )
+            request_timeout = max(
+                float(os.getenv("EXECUTOR_INITIAL_DISPATCH_TIMEOUT", "10")),
+                0.1,
+            )
         last_error = "unknown error"
 
         for attempt in range(1, max_retries + 1):
@@ -727,14 +760,21 @@ class DockerExecutor(Executor):
                     )
 
                     # Clean up the failed container
-                    try:
-                        self.subprocess.run(
-                            ["docker", "rm", "-f", executor_name],
-                            capture_output=True,
-                            timeout=10,
+                    if self._should_keep_failed_validation_container(task):
+                        logger.info(
+                            "Keeping exited validation container %s for debugging "
+                            "(VALIDATION_KEEP_FAILED_CONTAINER=true)",
+                            executor_name,
                         )
-                    except Exception:
-                        pass
+                    else:
+                        try:
+                            self.subprocess.run(
+                                ["docker", "rm", "-f", executor_name],
+                                capture_output=True,
+                                timeout=10,
+                            )
+                        except Exception:
+                            pass
 
                     # Raise exception to mark task as failed
                     raise RuntimeError(f"Container exited immediately: {error_msg}")
@@ -1005,9 +1045,16 @@ class DockerExecutor(Executor):
             cmd: Docker command list to extend
             task: Task dictionary containing task info and sandbox_metadata
         """
-        # Skip validation tasks - they are short-lived and don't need heartbeat
         task_type = get_metadata_field(task, "type", "online")
-        if task_type == "validation":
+        is_validation = task_type == "validation"
+
+        # For validation tasks, only set EXECUTOR_MANAGER_HEARTBEAT_BASE_URL for callback
+        # Skip other heartbeat settings as validation tasks are short-lived
+        if is_validation:
+            callback_url = build_callback_url(task)
+            if callback_url and "/callback" in callback_url:
+                base_url = callback_url.replace("/callback", "")
+                cmd.extend(["-e", f"EXECUTOR_MANAGER_HEARTBEAT_BASE_URL={base_url}"])
             return
 
         is_sandbox = task_type == "sandbox"

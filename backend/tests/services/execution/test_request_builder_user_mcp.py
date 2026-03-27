@@ -211,3 +211,52 @@ class TestUserScopedMcpInjection:
 
         assert len(result) == 4
         assert result == ([], [], [], {})
+
+    def test_resolve_shell_info_cache_isolated_by_shell_ref(self, test_db, mocker):
+        builder = TaskRequestBuilder(test_db)
+
+        bot_one = SimpleNamespace(
+            json={
+                "kind": "Bot",
+                "metadata": {"name": "bot-one", "namespace": "default"},
+                "spec": {
+                    "ghostRef": {"name": "ghost-a", "namespace": "default"},
+                    "shellRef": {"name": "shell-a", "namespace": "default"},
+                },
+            }
+        )
+        bot_two = SimpleNamespace(
+            json={
+                "kind": "Bot",
+                "metadata": {"name": "bot-two", "namespace": "default"},
+                "spec": {
+                    "ghostRef": {"name": "ghost-b", "namespace": "default"},
+                    "shellRef": {"name": "shell-b", "namespace": "default"},
+                },
+            }
+        )
+
+        shell_a = SimpleNamespace(
+            json={
+                "kind": "Shell",
+                "metadata": {"name": "shell-a", "namespace": "default"},
+                "spec": {"shellType": "ClaudeCode", "baseImage": "img-a"},
+            }
+        )
+        shell_b = SimpleNamespace(
+            json={
+                "kind": "Shell",
+                "metadata": {"name": "shell-b", "namespace": "default"},
+                "spec": {"shellType": "Agno", "baseImage": "img-b"},
+            }
+        )
+
+        mock_query = mocker.Mock()
+        mock_query.filter.return_value.first.side_effect = [shell_a, shell_b]
+        mocker.patch.object(builder.db, "query", return_value=mock_query)
+
+        shell_info_one = builder._resolve_shell_info(bot_one, user_id=1)
+        shell_info_two = builder._resolve_shell_info(bot_two, user_id=1)
+
+        assert shell_info_one == {"shell_type": "ClaudeCode", "base_image": "img-a"}
+        assert shell_info_two == {"shell_type": "Agno", "base_image": "img-b"}

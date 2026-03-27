@@ -5,9 +5,82 @@
  * Command-line interface for browser automation
  */
 
+import * as fs from "node:fs";
 import { executeBrowserTool } from "./tool.js";
 
+const LINUX_GUI_ENV_DEFAULTS = {
+  DISPLAY: ":0",
+  WAYLAND_DISPLAY: "wayland-0",
+} as const;
+
+function getLinuxRuntimeDir(): string {
+  if (process.env.XDG_RUNTIME_DIR) {
+    return process.env.XDG_RUNTIME_DIR;
+  }
+
+  const uid = typeof process.getuid === "function" ? process.getuid() : 1000;
+  return `/run/user/${uid}`;
+}
+
+function getLinuxDbusSessionBusAddress(): string {
+  if (process.env.DBUS_SESSION_BUS_ADDRESS) {
+    return process.env.DBUS_SESSION_BUS_ADDRESS;
+  }
+
+  return `unix:path=${getLinuxRuntimeDir()}/bus`;
+}
+
+function resolveLinuxXauthority(): string | null {
+  const runtimeDir = getLinuxRuntimeDir();
+
+  try {
+    const candidates = fs
+      .readdirSync(runtimeDir)
+      .filter((name) => name.startsWith(".mutter-Xwaylandauth."));
+
+    if (candidates.length === 0) {
+      return null;
+    }
+
+    candidates.sort();
+    return `${runtimeDir}/${candidates[candidates.length - 1]}`;
+  } catch {
+    return null;
+  }
+}
+
+function applyLinuxGuiEnvDefaults(): void {
+  if (process.platform !== "linux") {
+    return;
+  }
+
+  if (!process.env.DISPLAY) {
+    process.env.DISPLAY = LINUX_GUI_ENV_DEFAULTS.DISPLAY;
+  }
+
+  if (!process.env.WAYLAND_DISPLAY) {
+    process.env.WAYLAND_DISPLAY = LINUX_GUI_ENV_DEFAULTS.WAYLAND_DISPLAY;
+  }
+
+  if (!process.env.XDG_RUNTIME_DIR) {
+    process.env.XDG_RUNTIME_DIR = getLinuxRuntimeDir();
+  }
+
+  if (!process.env.DBUS_SESSION_BUS_ADDRESS) {
+    process.env.DBUS_SESSION_BUS_ADDRESS = getLinuxDbusSessionBusAddress();
+  }
+
+  if (!process.env.XAUTHORITY) {
+    const xauthority = resolveLinuxXauthority();
+    if (xauthority) {
+      process.env.XAUTHORITY = xauthority;
+    }
+  }
+}
+
 async function main() {
+  applyLinuxGuiEnvDefaults();
+
   const input = process.argv[2];
 
   if (!input || input === "--help" || input === "-h") {
