@@ -16,6 +16,8 @@ export interface TopicHeaderProps {
   onEditConfig: () => void
   /** Callback when publish button is clicked */
   onPublish?: () => void
+  /** Callback when view exam button is clicked (for published topics) */
+  onViewExam?: () => void
   /** Whether the edit button is loading */
   isLoading?: boolean
   /** Whether the publish action is in progress */

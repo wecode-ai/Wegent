@@ -419,22 +419,8 @@ class SubscriptionService:
         if not subscription:
             raise HTTPException(status_code=404, detail="Subscription not found")
 
-        # Try to validate, if fails due to invalid trigger config, fix it for reading
-        try:
-            subscription_crd = Subscription.model_validate(subscription.json)
-        except Exception as e:
-            error_str = str(e)
-            if (
-                "Interval must be at least" in error_str
-                or "Cron interval must be at least" in error_str
-            ):
-                # Fix invalid trigger config for reading
-                fixed_json = self._fix_invalid_trigger_config_for_read(
-                    subscription.json
-                )
-                subscription_crd = Subscription.model_validate(fixed_json)
-            else:
-                raise
+        # Validate subscription with legacy trigger compatibility
+        subscription_crd = validate_subscription_for_read(subscription.json)
 
         internal = subscription.json.get("_internal", {})
         update_data = subscription_in.model_dump(exclude_unset=True)
@@ -754,21 +740,8 @@ class SubscriptionService:
         if not subscription:
             raise HTTPException(status_code=404, detail="Subscription not found")
 
-        # Try to validate, if fails due to invalid trigger config, fix it for reading
-        try:
-            subscription_crd = Subscription.model_validate(subscription.json)
-        except Exception as e:
-            error_str = str(e)
-            if (
-                "Interval must be at least" in error_str
-                or "Cron interval must be at least" in error_str
-            ):
-                fixed_json = self._fix_invalid_trigger_config_for_read(
-                    subscription.json
-                )
-                subscription_crd = Subscription.model_validate(fixed_json)
-            else:
-                raise
+        # Validate subscription with legacy trigger compatibility
+        subscription_crd = validate_subscription_for_read(subscription.json)
 
         internal = subscription.json.get("_internal", {})
 
@@ -1095,7 +1068,7 @@ class SubscriptionService:
         trigger_config_valid = True
         trigger_config_error = None
         try:
-            subscription_crd = Subscription.model_validate(subscription.json)
+            subscription_crd = validate_subscription_for_read(subscription.json)
         except Exception as e:
             # Check if it's a trigger config validation error
             error_str = str(e)

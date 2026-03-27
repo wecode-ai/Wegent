@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 
 from app.core.celery_app import celery_app
 from app.core.config import settings
+from app.services.subscription.helpers import validate_subscription_for_read
 
 logger = logging.getLogger(__name__)
 
@@ -124,7 +125,7 @@ def _load_subscription_execution_context(
         logger.error(f"[subscription_tasks] Subscription {subscription_id} not found")
         return None
 
-    subscription_crd = Subscription.model_validate(subscription.json)
+    subscription_crd = validate_subscription_for_read(subscription.json)
     internal = subscription.json.get("_internal", {})
     trigger_type = internal.get("trigger_type", "unknown")
 
@@ -160,7 +161,7 @@ def _load_subscription_execution_context(
             )
             return None
 
-        source_crd = Subscription.model_validate(source_subscription.json)
+        source_crd = validate_subscription_for_read(source_subscription.json)
         source_internal = source_subscription.json.get("_internal", {})
 
         # Verify source is still market visibility
@@ -802,35 +803,11 @@ def check_due_subscriptions(self):
                                 f"(processed {offset + idx}/{total_due})"
                             )
                         try:
-                            subscription_crd = Subscription.model_validate(
+                            subscription_crd = validate_subscription_for_read(
                                 subscription.json
                             )
                             internal = subscription.json.get("_internal", {})
                             trigger_type = internal.get("trigger_type")
-                        except Exception as e:
-                            # Check if it's a trigger config validation error (interval too short)
-                            error_str = str(e)
-                            if (
-                                "Interval must be at least" in error_str
-                                or "Cron interval must be at least" in error_str
-                            ):
-                                logger.warning(
-                                    f"[subscription_tasks] Skipping subscription {subscription.id} ({subscription.name}): "
-                                    f"invalid trigger config - {error_str}"
-                                )
-                                # Update next_execution_time to prevent immediate retry
-                                try:
-                                    _update_next_execution_time(
-                                        db,
-                                        subscription,
-                                        None,
-                                        internal.get("trigger_type"),
-                                    )
-                                except Exception:
-                                    pass
-                                continue
-                            # Re-raise if it's not a trigger config issue
-                            raise
 
                             # Determine trigger reason
                             trigger_reason = _get_trigger_reason(
@@ -1631,7 +1608,7 @@ def check_due_subscriptions_sync():
             dispatched = 0
             for subscription in due_subscriptions:
                 try:
-                    subscription_crd = Subscription.model_validate(subscription.json)
+                    subscription_crd = validate_subscription_for_read(subscription.json)
                     internal = subscription.json.get("_internal", {})
                     trigger_type = internal.get("trigger_type")
 
