@@ -166,8 +166,8 @@ async def _run_monitor_check():
                     "skipping notification"
                 )
         finally:
-            # Release the distributed lock
-            await release_monitor_lock(redis_client)
+            # ensure next task exec after 10minute
+            pass
 
     finally:
         if redis_client:
