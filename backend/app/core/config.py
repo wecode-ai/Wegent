@@ -529,6 +529,14 @@ class Settings(BaseSettings):
     DINGTALK_FALLBACK_URL: str = ""
     ERP_API_KEY: str = ""
 
+    # Aidesk authentication configuration
+    # Shared secret key for signature verification (must match 口袋 App)
+    AIDESK_SECRET_KEY: str = ""
+    # Timestamp validation window in seconds (default: 300 seconds = 5 minutes)
+    AIDESK_TIMESTAMP_WINDOW: int = 300
+    # Enable/disable Aidesk authentication
+    AIDESK_AUTH_ENABLED: bool = True
+
     @classmethod
     def settings_customise_sources(
         cls,

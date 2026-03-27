@@ -2,21 +2,28 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from fastapi import APIRouter, Depends, Query, HTTPException, Header, Request
-from sqlalchemy.orm import Session
-import httpx
-import xml.etree.ElementTree as ET
+import json
 import logging
+import uuid
+import xml.etree.ElementTree as ET
 from urllib.parse import quote
 
-from app.api.dependencies import get_db
-from app.core.security import create_access_token
-from app.core import security
-from app.models.user import User
-from app.schemas.user import LoginResponse, UserUpdate, Token
-from app.services.user import user_service
-from wecode.service.get_user_gitinfo import get_user_gitinfo
+import httpx
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from pydantic import BaseModel
 from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.api.dependencies import get_db
+from app.core import security
+from app.core.security import create_access_token, get_password_hash
+from app.models.user import User
+from app.schemas.user import LoginResponse, Token, UserUpdate
+from app.services.k_batch import apply_default_resources_sync
+from app.services.user import user_service
+from wecode.config.aidesk_config import aidesk_config
+from wecode.service.aidesk_auth_service import aidesk_auth_service
+from wecode.service.get_user_gitinfo import get_user_gitinfo
 
 
 router = APIRouter()
@@ -227,3 +234,123 @@ async def generate_user_token(
     logger.info(f"Generated user token for: {user_name}, expires in {expires_minutes} minutes")
 
     return Token(access_token=access_token, token_type="bearer")
+
+
+# Aidesk authentication models
+class AideskLoginRequest(BaseModel):
+    """Aidesk login request body."""
+
+    source: str
+    username: str
+    timestamp: str
+    sign: str
+
+
+class AideskLoginResponse(BaseModel):
+    """Aidesk login response."""
+
+    access_token: str
+    token_type: str = "bearer"
+    user: dict
+
+
+@router.post("/aidesk/login")
+async def aidesk_login(
+    request: Request,
+    body: AideskLoginRequest,
+    db: Session = Depends(get_db),
+) -> AideskLoginResponse:
+    """
+    Aidesk SSO login endpoint.
+
+    Validates signature from 口袋 App WebView and returns JWT token.
+
+    Args:
+        request: FastAPI request object
+        body: Aidesk login request containing source, username, timestamp, and sign
+
+    Returns:
+        AideskLoginResponse: Access token and user info
+
+    Raises:
+        HTTPException: If authentication fails
+    """
+    logger = logging.getLogger("aidesk_login")
+
+    # Check if aidesk auth is enabled
+    if not aidesk_config.auth_enabled:
+        logger.warning("[Aidesk] Auth is disabled")
+        raise HTTPException(status_code=403, detail="Aidesk authentication is disabled")
+
+    # Verify source
+    if body.source != "aidesk":
+        logger.warning(f"[Aidesk] Invalid source: {body.source}")
+        raise HTTPException(status_code=400, detail="Invalid source")
+
+    # Verify signature
+    is_valid, error_msg = aidesk_auth_service.verify_signature(
+        source=body.source,
+        username=body.username,
+        timestamp=body.timestamp,
+        sign=body.sign,
+    )
+
+    if not is_valid:
+        logger.warning(f"[Aidesk] Auth failed for user={body.username}: {error_msg}")
+        raise HTTPException(status_code=401, detail=error_msg)
+
+    # Find or create user
+    user_name = body.username.strip()
+    user = db.scalar(select(User).where(User.user_name == user_name))
+
+    if not user:
+        # Create new user with auth_source="oidc" to allow OIDC login
+        logger.info(f"[Aidesk] Creating new user: {user_name}")
+        new_user = User(
+            user_name=user_name,
+            email=f"{user_name}@aidesk.user",  # Placeholder email
+            password_hash=get_password_hash(str(uuid.uuid4())),
+            git_info=[],
+            is_active=True,
+            preferences=json.dumps({}),
+            auth_source="oidc",  # Use oidc to allow OIDC login
+        )
+        db.add(new_user)
+        db.commit()
+        db.refresh(new_user)
+        user = new_user
+
+        # Apply default resources for new users
+        try:
+            apply_default_resources_sync(new_user.id)
+        except Exception as e:
+            logger.warning(
+                f"[Aidesk] Failed to apply default resources for user {new_user.id}: {e}"
+            )
+    else:
+        # Update auth_source if needed (set to oidc to allow OIDC login)
+        if user.auth_source == "unknown":
+            logger.info(f"[Aidesk] Updating auth_source for user: {user_name}")
+            user.auth_source = "oidc"
+            db.commit()
+
+    # Check if user is active
+    if not user.is_active:
+        logger.warning(f"[Aidesk] User not active: {user_name}")
+        raise HTTPException(status_code=400, detail="User is not active")
+
+    # Generate JWT token
+    access_token = security.create_access_token(data={"sub": user.user_name})
+
+    logger.info(f"[Aidesk] User logged in successfully: {user.user_name}")
+
+    return AideskLoginResponse(
+        access_token=access_token,
+        user={
+            "id": user.id,
+            "user_name": user.user_name,
+            "email": user.email,
+            "role": user.role,
+            "auth_source": user.auth_source,
+        },
+    )
