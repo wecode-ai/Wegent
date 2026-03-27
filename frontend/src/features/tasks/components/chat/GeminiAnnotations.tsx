@@ -29,7 +29,8 @@ export function GeminiAnnotations({ annotations, className = '' }: GeminiAnnotat
   }
 
   // Extract domain from URL for display
-  const getDomain = (url: string): string => {
+  const getDomain = (url: string | undefined): string => {
+    if (!url) return ''
     try {
       const urlObj = new URL(url)
       return urlObj.hostname.replace('www.', '')
