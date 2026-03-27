@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
 import logging
 import os
 import re
@@ -26,6 +27,18 @@ logger = logging.getLogger(__name__)
 # Redis key prefix and TTL for validation status
 VALIDATION_STATUS_KEY_PREFIX = "shell_validation:"
 VALIDATION_STATUS_TTL = 300  # 5 minutes
+# Delay before cleaning up validation container after successful validation.
+# Default is immediate cleanup (0 seconds). Keeps backward compatibility with
+# the previous variable name.
+VALIDATION_CONTAINER_CLEANUP_DELAY_SECONDS = int(
+    os.getenv(
+        "VALIDATION_SUCCESS_CLEANUP_DELAY_SECONDS",
+        os.getenv("VALIDATION_CONTAINER_CLEANUP_DELAY_SECONDS", "0"),
+    )
+)
+VALIDATION_SUBMIT_TIMEOUT_SECONDS = float(
+    os.getenv("VALIDATION_SUBMIT_TIMEOUT_SECONDS", "90")
+)
 
 
 # Request/Response Models
@@ -745,7 +758,9 @@ async def validate_image(
 
         # Call executor manager's validate-image API with validation_id
         # Use AsyncClient to avoid blocking the event loop
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(
+            timeout=VALIDATION_SUBMIT_TIMEOUT_SECONDS
+        ) as client:
             response = await client.post(
                 validate_url,
                 json={
@@ -796,18 +811,24 @@ async def validate_image(
         logger.error(f"Timeout submitting validation task for image: {image}")
         await _update_validation_status(
             validation_id,
-            status="completed",
-            stage="Error",
-            progress=100,
-            valid=False,
-            error_message="Request timed out while submitting validation task",
+            status="submitted",
+            stage="Submission timed out, validation may still be running",
+            progress=15,
+            valid=None,
+            error_message=(
+                "Submission request timed out. Validation may still be in progress; "
+                "continue polling status."
+            ),
         )
         return ImageValidationResponse(
-            status="error",
-            message="Request timed out while submitting validation task",
+            status="submitted",
+            message=(
+                "Validation submission timed out, but task may still be running. "
+                "Please continue polling."
+            ),
             validationId=validation_id,
-            valid=False,
-            errors=["Validation request timed out"],
+            valid=None,
+            errors=["Validation submission timed out; continue polling"],
         )
     except httpx.RequestError as e:
         logger.error(f"Error calling executor manager: {e}")
@@ -970,9 +991,10 @@ async def update_validation_status(
                 status_code=500, detail="Failed to update validation status"
             )
 
-        # Cleanup validation container if validation is completed
+        # Cleanup validation container if validation is completed.
+        # Run cleanup asynchronously to avoid blocking callback response.
         if request.executor_name and request.valid is True:
-            await _cleanup_validation_container(request.executor_name)
+            asyncio.create_task(_cleanup_validation_container(request.executor_name))
 
         return {"status": "success", "message": "Validation status updated"}
     except HTTPException:
@@ -996,6 +1018,14 @@ async def _cleanup_validation_container(executor_name: str) -> None:
     if not executor_name:
         logger.warning("No executor_name provided for cleanup")
         return
+
+    if VALIDATION_CONTAINER_CLEANUP_DELAY_SECONDS > 0:
+        logger.info(
+            "Delaying validation container cleanup by %s seconds: %s",
+            VALIDATION_CONTAINER_CLEANUP_DELAY_SECONDS,
+            executor_name,
+        )
+        await asyncio.sleep(VALIDATION_CONTAINER_CLEANUP_DELAY_SECONDS)
 
     executor_manager_url = os.getenv("EXECUTOR_MANAGER_URL", "http://localhost:8001")
     delete_url = f"{executor_manager_url}/executor-manager/executor/delete"

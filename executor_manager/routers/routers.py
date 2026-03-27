@@ -13,10 +13,12 @@ Callback endpoint uses pure transparent proxy pattern - forwards all events
 to backend's callback endpoint without processing.
 """
 
+import asyncio
 import os
 import time
 import uuid
 from typing import Any, Dict, Optional
+from urllib.parse import urlparse
 
 import httpx
 from fastapi import APIRouter, Body, FastAPI, HTTPException, Request, Response
@@ -39,6 +41,7 @@ from shared.telemetry.context import (
 )
 from shared.telemetry.context.large_data import log_json_body
 from shared.utils.http_client import traced_async_client
+from shared.utils.ip_util import get_host_ip
 
 # Setup logger
 logger = setup_logger(__name__)
@@ -831,6 +834,21 @@ async def _update_validation_status_from_callback(
         )
 
 
+async def _run_validation_task_in_background(
+    validation_task: Dict[str, Any], validation_task_id: int, image: str
+) -> None:
+    """Run validation task submission in background to avoid blocking HTTP handlers."""
+    try:
+        await asyncio.to_thread(task_processor.process_tasks, [validation_task])
+        logger.info(
+            f"Validation task submitted: task_id={validation_task_id}, image={image}"
+        )
+    except Exception as e:
+        # Clean up registry entry if background submission fails.
+        _validation_task_registry.pop(validation_task_id, None)
+        logger.error(f"Failed to submit validation task for {image}: {e}")
+
+
 @api_router.post("/images/validate")
 async def validate_image(request: ValidateImageRequest, http_request: Request):
     """
@@ -885,65 +903,78 @@ async def validate_image(request: ValidateImageRequest, http_request: Request):
         int(time.time() * 1000) % 1000000
     )  # Negative ID for validation tasks
 
+    # Build validation task in OpenAI Responses API format (same as normal code tasks)
+    # Build callback URL from environment variables
+    callback_host = os.getenv("CALLBACK_HOST", get_host_ip())
+    callback_port = os.getenv("CALLBACK_PORT", "8001")
+    parsed = urlparse(
+        callback_host if "://" in callback_host else f"http://{callback_host}"
+    )
+    callback_scheme = parsed.scheme or "http"
+    callback_hostname = parsed.hostname or callback_host
+    callback_effective_port = parsed.port or callback_port
+    callback_url = (
+        f"{callback_scheme}://{callback_hostname}:{callback_effective_port}"
+        f"/executor-manager/callback"
+    )
+
     validation_task = {
-        "task_id": validation_task_id,
-        "subtask_id": 1,
-        "task_title": f"Image Validation: {request.shell_name or image}",
-        "subtask_title": f"Validating {shell_type} dependencies",
-        "type": "validation",
-        "bot": [
-            {
-                "agent_name": "ImageValidator",
-                "base_image": image,  # Use the target image for validation
-            }
-        ],
-        "user": {
-            "name": request.user_name or "validator",
-        },
-        "validation_params": {
-            "shell_type": shell_type,
-            "image": image,
-            "shell_name": request.shell_name or "",
-            "validation_id": validation_id,  # Pass validation_id for callback forwarding
+        "model": "ImageValidator",  # Dummy model for validation agent
+        "input": f"Validate {shell_type} image: {image}",
+        "instructions": f"You are an ImageValidator agent. Validate that the base image is compatible with {shell_type} shell type.",
+        "stream": False,
+        "background": True,  # Validation runs in background
+        "metadata": {
+            "task_id": validation_task_id,
+            "subtask_id": 1,
+            "task_title": f"Image Validation: {request.shell_name or image}",
+            "subtask_title": f"Validating {shell_type} dependencies",
+            "type": "validation",
+            "user_name": request.user_name or "validator",
+            "user": {"name": request.user_name or "validator"},
+            "bot": [
+                {
+                    "agent_name": "ImageValidator",
+                    "base_image": image,
+                }
+            ],
+            "validation_params": {
+                "shell_type": shell_type,
+                "image": image,
+                "shell_name": request.shell_name or "",
+                "validation_id": validation_id,
+            },
+            "callback_url": callback_url,  # Set callback_url for executor container
         },
         "executor_image": os.getenv("EXECUTOR_IMAGE", ""),
     }
 
-    try:
-        # Clean stale registry entries before registering new one
-        _cleanup_stale_validation_entries()
+    # Clean stale registry entries before registering new one
+    _cleanup_stale_validation_entries()
 
-        # Register for callback interception so we can update Redis
-        # validation status when the terminal callback event arrives
-        _validation_task_registry[validation_task_id] = {
-            "validation_id": validation_id,
-            "shell_type": shell_type,
-            "image": image,
-            "created_at": time.time(),
-        }
+    # Register for callback interception so we can update Redis
+    # validation status when the terminal callback event arrives
+    _validation_task_registry[validation_task_id] = {
+        "validation_id": validation_id,
+        "shell_type": shell_type,
+        "image": image,
+        "created_at": time.time(),
+    }
 
-        # Submit validation task using the task processor
-        task_processor.process_tasks([validation_task])
+    # Submit in background to keep this endpoint responsive.
+    asyncio.create_task(
+        _run_validation_task_in_background(validation_task, validation_task_id, image)
+    )
 
-        logger.info(
-            f"Validation task submitted: task_id={validation_task_id}, validation_id={validation_id}, image={image}"
-        )
+    logger.info(
+        f"Validation task queued: task_id={validation_task_id}, validation_id={validation_id}, image={image}"
+    )
 
-        return {
-            "status": "submitted",
-            "message": f"Validation task submitted. Results will be returned via callback.",
-            "validation_task_id": validation_task_id,
-        }
-
-    except Exception as e:
-        logger.error(f"Failed to submit validation task for {image}: {e}")
-        return {
-            "status": "error",
-            "message": f"Failed to submit validation task: {str(e)}",
-            "valid": False,
-            "checks": [],
-            "errors": [str(e)],
-        }
+    return {
+        "status": "submitted",
+        "message": "Validation task submitted. Results will be returned via callback.",
+        "validation_task_id": validation_task_id,
+    }
 
 
 @api_router.post("/tasks/cancel")

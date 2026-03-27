@@ -6,7 +6,7 @@
 
 import logging
 import secrets
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy import and_, func
@@ -379,13 +379,13 @@ class WorkQueueService:
                     "role": "ASSISTANT",
                     "content": WELCOME_MESSAGE_ZH,
                     "senderUserName": "wegent",
-                    "createdAt": datetime.now().isoformat(),
+                    "createdAt": datetime.now(timezone.utc).isoformat(),
                 },
                 {
                     "role": "ASSISTANT",
                     "content": WELCOME_MESSAGE_EN,
                     "senderUserName": "wegent",
-                    "createdAt": datetime.now().isoformat(),
+                    "createdAt": datetime.now(timezone.utc).isoformat(),
                 },
             ],
             note="",

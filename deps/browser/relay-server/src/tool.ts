@@ -27,12 +27,6 @@ import { fileURLToPath } from "node:url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const DEFAULT_BROWSER_PREFIX = path.join(os.homedir(), ".wegent-executor", "browser");
-
-function getBrowserPrefix(): string {
-  return process.env.BROWSER_PREFIX || DEFAULT_BROWSER_PREFIX;
-}
-
 function getExtensionPath(): string {
   // Check multiple possible locations
   const possiblePaths = [
@@ -86,22 +80,55 @@ function getChromePath(): string | null {
   return null;
 }
 
-function isChromeRunningWithProfile(): boolean {
-  const userDataDir = path.join(getBrowserPrefix(), "chrome-profile");
+function isChromeRunning(): boolean {
+  const userDataDir = getChromeUserDataDir();
   const lockFile = path.join(userDataDir, "SingletonLock");
-  // On macOS/Linux, SingletonLock is a symlink when Chrome is running
-  // On Windows, it's a file
   try {
     const stats = fs.lstatSync(lockFile);
-    return stats.isSymbolicLink() || stats.isFile();
+    if (!stats.isSymbolicLink() && !stats.isFile()) {
+      return false;
+    }
+
+    // Verify the process is actually alive via SingletonLock symlink target: <hostname>-<pid>
+    if (stats.isSymbolicLink()) {
+      const target = fs.readlinkSync(lockFile);
+      const match = target.match(/-(\d+)$/);
+      if (match) {
+        try {
+          process.kill(Number(match[1]), 0);
+        } catch {
+          try { fs.unlinkSync(lockFile); } catch { /* ignore */ }
+          return false;
+        }
+      }
+    }
+
+    return true;
   } catch {
     return false;
   }
 }
 
+function getChromeUserDataDir(): string {
+  const defaultDir = path.join(os.homedir(), ".config", "google-chrome");
+  if (fs.existsSync(defaultDir)) {
+    return defaultDir;
+  }
+  return path.join(os.homedir(), ".wegent-executor", "browser", "chrome-profile");
+}
+
+function getChromeLaunchArgs(url?: string): string[] {
+  return [
+    `--user-data-dir=${getChromeUserDataDir()}`,
+    "--no-first-run",
+    "--no-default-browser-check",
+    url || "about:blank",
+  ];
+}
+
 function launchBrowserWithInstructions(url?: string): { launched: boolean; message: string } {
-  // Don't launch if Chrome is already running with our profile
-  if (isChromeRunningWithProfile()) {
+  // Don't launch if Chrome is already running
+  if (isChromeRunning()) {
     return {
       launched: false,
       message: "Chrome is already running. Please click the extension icon on a tab to attach.",
@@ -116,19 +143,8 @@ function launchBrowserWithInstructions(url?: string): { launched: boolean; messa
     };
   }
 
-  const userDataDir = path.join(getBrowserPrefix(), "chrome-profile");
-  // Use provided URL, or open a blank page if none provided
-  const targetUrl = url || "about:blank";
-
-  const args = [
-    `--user-data-dir=${userDataDir}`,
-    "--no-first-run",
-    "--no-default-browser-check",
-    targetUrl,
-  ];
-
   try {
-    const child = spawn(chromePath, args, {
+    const child = spawn(chromePath, getChromeLaunchArgs(url), {
       detached: true,
       stdio: "ignore",
     });
@@ -183,7 +199,8 @@ function openExtensionsPage(): { opened: boolean; message: string } {
   // For other platforms, return instructions
   return {
     opened: false,
-    message: `Please install the extension manually:
+    message: `If the extension is already installed, open a normal web page in Chrome and click the extension icon to attach.
+If it is not installed yet:
 1. Go to chrome://extensions
 2. Enable "Developer mode" (top right toggle)
 3. Click "Load unpacked"
@@ -208,6 +225,22 @@ function openUrlInChrome(url: string): void {
     } catch {
       // Ignore errors
     }
+    return;
+  }
+
+  const chromePath = process.env.CHROME_PATH || getChromePath();
+  if (!chromePath) {
+    return;
+  }
+
+  try {
+    const child = spawn(chromePath, getChromeLaunchArgs(url), {
+      detached: true,
+      stdio: "ignore",
+    });
+    child.unref();
+  } catch {
+    // Ignore errors
   }
 }
 
@@ -405,9 +438,6 @@ async function tryEnsureConnected(params: BrowserToolParams): Promise<{
   connected: boolean;
   error?: string;
 }> {
-  const initialAttachWaitMs = 2500;
-  const graceAttachWaitMs = 1500;
-
   const status = await getStatus();
 
   if (!status.relayRunning) {
@@ -421,7 +451,7 @@ async function tryEnsureConnected(params: BrowserToolParams): Promise<{
     return { connected: true };
   }
 
-  const chromeRunning = isChromeRunningWithProfile();
+  const chromeRunning = isChromeRunning();
   const targetUrl = (params.action === "open" || params.action === "navigate") ? params.url : undefined;
 
   if (!chromeRunning) {
@@ -435,6 +465,11 @@ async function tryEnsureConnected(params: BrowserToolParams): Promise<{
     // Extension may auto-attach to the new tab
     openUrlInChrome(targetUrl);
   }
+
+  // Cold-starting Chrome on cloud desktops can take noticeably longer than opening a new
+  // tab in an already-running browser, so use a wider wait window for first launch.
+  const initialAttachWaitMs = chromeRunning ? 5000 : 12000;
+  const graceAttachWaitMs = chromeRunning ? 3000 : 5000;
 
   // Wait for extension to attach.
   // Extension auto-attach can be slightly delayed after browser/tab activation.
@@ -727,7 +762,7 @@ export async function executeBrowserTool(params: BrowserToolParams): Promise<Bro
 
       if (params.ensure) {
         const ensureUrl = typeof params.url === "string" ? params.url : undefined;
-        const running = isChromeRunningWithProfile();
+        const running = isChromeRunning();
         if (!running) {
           const launchResult = launchBrowserWithInstructions(ensureUrl);
           launched = launchResult.launched;
@@ -736,7 +771,7 @@ export async function executeBrowserTool(params: BrowserToolParams): Promise<Bro
           openUrlInChrome(ensureUrl);
         }
         waitedForAttach = true;
-        await waitForConnection(5000);
+        await waitForConnection(running ? 5000 : 12000);
       }
 
       const status = await getStatus();

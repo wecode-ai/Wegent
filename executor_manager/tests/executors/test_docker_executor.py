@@ -325,6 +325,85 @@ class TestDockerExecutor:
     @patch.dict(
         os.environ,
         {
+            "VALIDATION_KEEP_FAILED_CONTAINER": "true",
+        },
+        clear=False,
+    )
+    @patch("executor_manager.executors.docker.executor.delete_container")
+    def test_create_new_container_keeps_validation_container_on_dispatch_failure(
+        self, mock_delete_container, executor
+    ):
+        """Validation containers should be kept on startup failure when debug flag is enabled."""
+        validation_task = {
+            "task_id": 123,
+            "subtask_id": 1,
+            "user": {"name": "validator"},
+            "executor_image": "test/executor:latest",
+            "type": "validation",
+            "bot": [{"base_image": "test/base:latest"}],
+        }
+        status = {"executor_name": "validation-executor"}
+        task_info = executor._extract_task_info(validation_task)
+
+        with (
+            patch.object(executor, "create_instance"),
+            patch.object(
+                executor,
+                "wait_instance_ready",
+                side_effect=RuntimeError("container not ready"),
+            ),
+        ):
+            with pytest.raises(RuntimeError, match="container not ready"):
+                executor._create_new_container(validation_task, task_info, status)
+
+        mock_delete_container.assert_not_called()
+
+    @patch.dict(
+        os.environ,
+        {
+            "VALIDATION_KEEP_FAILED_CONTAINER": "true",
+        },
+        clear=False,
+    )
+    def test_check_container_health_keeps_failed_validation_container_when_enabled(
+        self, executor, mock_subprocess
+    ):
+        """Validation health check should not remove exited container when debug flag is enabled."""
+        task = {
+            "task_id": 123,
+            "subtask_id": 1,
+            "type": "validation",
+            "validation_params": {"validation_id": "vid-1"},
+        }
+
+        mock_subprocess.run.side_effect = [
+            MagicMock(returncode=0, stdout="exited\n"),  # container status
+            MagicMock(returncode=0, stdout="executor crashed\n"),  # logs
+            MagicMock(returncode=0, stdout="1\n"),  # exit code
+        ]
+
+        with (
+            patch("executor_manager.executors.docker.executor.time.sleep"),
+            patch.object(
+                executor,
+                "_report_validation_stage",
+            ),
+        ):
+            with pytest.raises(RuntimeError, match="Container exited immediately"):
+                executor._check_container_health(
+                    task, "validation-executor", is_validation_task=True
+                )
+
+        rm_calls = [
+            call_args
+            for call_args in mock_subprocess.run.call_args_list
+            if call_args[0][0][:3] == ["docker", "rm", "-f"]
+        ]
+        assert len(rm_calls) == 0
+
+    @patch.dict(
+        os.environ,
+        {
             "EXECUTOR_READY_MAX_RETRIES": "2",
             "EXECUTOR_READY_INTERVAL": "0",
             "EXECUTOR_READY_SUCCESS_THRESHOLD": "1",
@@ -396,6 +475,36 @@ class TestDockerExecutor:
             )
 
         assert mock_send.call_count == 2
+
+    @patch.dict(
+        os.environ,
+        {
+            "VALIDATION_INITIAL_DISPATCH_TIMEOUT": "60",
+            "VALIDATION_INITIAL_DISPATCH_MAX_RETRIES": "1",
+            "VALIDATION_INITIAL_DISPATCH_RETRY_INTERVAL": "0",
+        },
+        clear=False,
+    )
+    def test_dispatch_initial_task_uses_validation_specific_limits(self, executor):
+        """Validation initial dispatch should use dedicated timeout/retry settings."""
+        validation_task = {
+            "task_id": 123,
+            "subtask_id": 1,
+            "type": "validation",
+        }
+        success_response = MagicMock()
+        success_response.status_code = 200
+
+        with patch.object(
+            executor, "_send_task_to_container", return_value=success_response
+        ) as mock_send:
+            executor._dispatch_initial_task_to_new_container(
+                validation_task, "validation-executor", 8080
+            )
+
+        mock_send.assert_called_once_with(
+            validation_task, "host.docker.internal", 8080, timeout=60.0
+        )
 
     @patch("executor_manager.executors.docker.utils.subprocess.run")
     def test_delete_executor_success(self, mock_run, executor):

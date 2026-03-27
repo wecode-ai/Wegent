@@ -356,8 +356,17 @@ function onDebuggerDetach(source, reason) {
 
 chrome.action.onClicked.addListener(() => void connectOrToggleForActiveTab())
 
-chrome.runtime.onInstalled.addListener(() => {
-  void chrome.runtime.openOptionsPage()
+chrome.runtime.onInstalled.addListener((details) => {
+  // Only open options page for user-initiated installs (from chrome://extensions).
+  // Skip when loaded via --load-extension to avoid blocking auto-attach.
+  if (details.reason === 'install') {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabsList) => {
+      const url = tabsList?.[0]?.url || ''
+      if (url.startsWith('chrome://extensions')) {
+        void chrome.runtime.openOptionsPage()
+      }
+    })
+  }
 })
 
 function scheduleAutoAttach(delayMs) {
