@@ -303,17 +303,17 @@ Thanks to the following developers for their contributions and efforts to make t
         </a>
     </td>
     <td align="center">
-        <a href="https://github.com/icycrystal4">
-            <img src="https://avatars.githubusercontent.com/u/946207?v=4" width="80;" alt="icycrystal4"/>
-            <br />
-            <sub><b>Icycrystal4</b></sub>
-        </a>
-    </td>
-    <td align="center">
         <a href="https://github.com/moqimoqidea">
             <img src="https://avatars.githubusercontent.com/u/39821951?v=4" width="80;" alt="moqimoqidea"/>
             <br />
             <sub><b>Moqimoqidea</b></sub>
+        </a>
+    </td>
+    <td align="center">
+        <a href="https://github.com/icycrystal4">
+            <img src="https://avatars.githubusercontent.com/u/946207?v=4" width="80;" alt="icycrystal4"/>
+            <br />
+            <sub><b>Icycrystal4</b></sub>
         </a>
     </td>
     <td align="center">
@@ -360,10 +360,17 @@ Thanks to the following developers for their contributions and efforts to make t
         </a>
     </td>
     <td align="center">
-        <a href="https://github.com/LiDaiyan">
-            <img src="https://avatars.githubusercontent.com/u/36092701?v=4" width="80;" alt="LiDaiyan"/>
+        <a href="https://github.com/flyhope">
+            <img src="https://avatars.githubusercontent.com/u/5442948?v=4" width="80;" alt="flyhope"/>
             <br />
-            <sub><b>Li Daiyan</b></sub>
+            <sub><b>李枨煊</b></sub>
+        </a>
+    </td>
+    <td align="center">
+        <a href="https://github.com/jolestar">
+            <img src="https://avatars.githubusercontent.com/u/77268?v=4" width="80;" alt="jolestar"/>
+            <br />
+            <sub><b>Jolestar</b></sub>
         </a>
     </td>
     <td align="center">
@@ -374,10 +381,10 @@ Thanks to the following developers for their contributions and efforts to make t
         </a>
     </td>
     <td align="center">
-        <a href="https://github.com/jolestar">
-            <img src="https://avatars.githubusercontent.com/u/77268?v=4" width="80;" alt="jolestar"/>
+        <a href="https://github.com/LiDaiyan">
+            <img src="https://avatars.githubusercontent.com/u/36092701?v=4" width="80;" alt="LiDaiyan"/>
             <br />
-            <sub><b>Jolestar</b></sub>
+            <sub><b>Li Daiyan</b></sub>
         </a>
     </td>
     <td align="center">
@@ -393,15 +400,15 @@ Thanks to the following developers for their contributions and efforts to make t
             <br />
             <sub><b>Jake Zhang</b></sub>
         </a>
-    </td>
+    </td></tr>
+<tr>
     <td align="center">
         <a href="https://github.com/DeadLion">
             <img src="https://avatars.githubusercontent.com/u/2594907?v=4" width="80;" alt="DeadLion"/>
             <br />
             <sub><b>Jasper Zhong</b></sub>
         </a>
-    </td></tr>
-<tr>
+    </td>
     <td align="center">
         <a href="https://github.com/rayzhang0603">
             <img src="https://avatars.githubusercontent.com/u/2917437?v=4" width="80;" alt="rayzhang0603"/>
@@ -431,6 +438,13 @@ Thanks to the following developers for their contributions and efforts to make t
         </a>
     </td>
     <td align="center">
+        <a href="https://github.com/code-wangdi">
+            <img src="https://avatars.githubusercontent.com/u/11024395?v=4" width="80;" alt="code-wangdi"/>
+            <br />
+            <sub><b>code-wangdi</b></sub>
+        </a>
+    </td>
+    <td align="center">
         <a href="https://github.com/graindt">
             <img src="https://avatars.githubusercontent.com/u/3962041?v=4" width="80;" alt="graindt"/>
             <br />
@@ -443,7 +457,8 @@ Thanks to the following developers for their contributions and efforts to make t
             <br />
             <sub><b>Qingcheng</b></sub>
         </a>
-    </td>
+    </td></tr>
+<tr>
     <td align="center">
         <a href="https://github.com/salt-hai">
             <img src="https://avatars.githubusercontent.com/u/43851000?v=4" width="80;" alt="salt-hai"/>
@@ -455,7 +470,7 @@ Thanks to the following developers for their contributions and efforts to make t
         <a href="https://github.com/wxcfox">
             <img src="https://avatars.githubusercontent.com/u/33141411?v=4" width="80;" alt="wxcfox"/>
             <br />
-            <sub><b>wxcfox</b></sub>
+            <sub><b>Wxcfox</b></sub>
         </a>
     </td></tr>
 </table>
