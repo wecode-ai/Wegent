@@ -232,6 +232,27 @@ def subtask_to_messages(
         ]
 
     # Assistant messages ---------------------------------------------------
+    # For FAILED assistant subtasks, only keep result.value when present.
+    # Do not expand messages_chain for failed turns to avoid injecting
+    # tool-call artifacts or partial chain state into model history.
+    if subtask.status == SubtaskStatus.FAILED:
+        if subtask.role != SubtaskRole.ASSISTANT:
+            return []
+        result = subtask.result if isinstance(subtask.result, dict) else {}
+        content = result.get("value", "")
+        if not content:
+            return []
+        return [
+            MessageResponse(
+                id=str(subtask.id),
+                role="assistant",
+                content=content,
+                created_at=(
+                    subtask.created_at.isoformat() if subtask.created_at else None
+                ),
+            )
+        ]
+
     result = subtask.result if isinstance(subtask.result, dict) else {}
     created_at = subtask.created_at.isoformat() if subtask.created_at else None
 
@@ -736,7 +757,11 @@ async def get_chat_history(
     When limit is specified, returns the most recent N messages (not the oldest N).
     """
     session_type, task_id = parse_session_id(session_id)
-    history_statuses = [SubtaskStatus.COMPLETED, SubtaskStatus.CANCELLED]
+    history_statuses = [
+        SubtaskStatus.COMPLETED,
+        SubtaskStatus.CANCELLED,
+        SubtaskStatus.FAILED,
+    ]
 
     if session_type != "task":
         raise HTTPException(
@@ -755,7 +780,8 @@ async def get_chat_history(
     )
 
     # Build query for subtasks - include terminal history messages.
-    # Keep FAILED excluded to avoid loading errored assistant turns into context.
+    # FAILED assistant turns are conditionally included in subtask_to_messages:
+    # only when result.value exists.
     query = db.query(Subtask).filter(
         Subtask.task_id == task_id,
         Subtask.status.in_(history_statuses),

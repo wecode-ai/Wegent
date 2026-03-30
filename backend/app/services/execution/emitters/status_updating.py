@@ -353,10 +353,30 @@ class StatusUpdatingEmitter(ResultEmitter):
         from app.services.chat.storage.db import db_handler
 
         try:
+            # Keep partial streaming output even when execution fails.
+            accumulated_content = await session_manager.get_accumulated_content(
+                self._subtask_id
+            )
+            blocks = await session_manager.finalize_and_get_blocks(self._subtask_id)
+
+            result: Optional[Dict[str, Any]] = None
+            if accumulated_content:
+                result = {"value": accumulated_content}
+
+            if blocks:
+                if result is None:
+                    result = {}
+                result["blocks"] = blocks
+                logger.info(
+                    f"[StatusUpdatingEmitter] Added {len(blocks)} blocks to failed result "
+                    f"for subtask {self._subtask_id}"
+                )
+
             # Update subtask status to FAILED with executor info for container reuse
             await db_handler.update_subtask_status(
                 self._subtask_id,
                 "FAILED",
+                result=result,
                 error=error_message,
                 executor_name=self._executor_name,
                 executor_namespace=self._executor_namespace,
@@ -374,7 +394,7 @@ class StatusUpdatingEmitter(ResultEmitter):
             )
 
             # Publish TaskCompletedEvent for unified handling
-            await self._publish_task_completed_event("FAILED", None, error_message)
+            await self._publish_task_completed_event("FAILED", result, error_message)
 
         except Exception as e:
             logger.error(
