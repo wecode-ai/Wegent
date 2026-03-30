@@ -20,11 +20,11 @@ export interface HimalayaMailConfigResponse {
   config_path?: string | null
 }
 
-export const himalayaMailApis = {
+export const sinaMailApis = {
   async createConfig(
     deviceId: string,
     payload: HimalayaMailConfigRequest
   ): Promise<HimalayaMailConfigResponse> {
-    return apiClient.post(`/devices/${encodeURIComponent(deviceId)}/himalaya-mail-config`, payload)
+    return apiClient.post(`/devices/${encodeURIComponent(deviceId)}/sina-mail-config`, payload)
   },
 }

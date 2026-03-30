@@ -27,20 +27,19 @@ if (!getScheme('modal-himalaya-access-guide')) {
     examples: ['wegent://modal/himalaya-access-guide'],
   })
 }
-
-if (!getRegisteredModal('himalaya-mail-config')) {
+if (!getRegisteredModal('sina-mail-config')) {
   registerModal({
-    id: 'himalaya-mail-config',
+    id: 'sina-mail-config',
     component: HimalayaMailConfigDialog,
   })
 }
 
-if (!getScheme('modal-himalaya-mail-config')) {
+if (!getScheme('modal-sina-mail-config')) {
   registerModalScheme({
-    schemeId: 'modal-himalaya-mail-config',
-    modalType: 'himalaya-mail-config',
-    pattern: 'wegent://modal/himalaya-mail-config',
-    description: 'Open Himalaya mail configuration dialog',
-    examples: ['wegent://modal/himalaya-mail-config'],
+    schemeId: 'modal-sina-mail-config',
+    modalType: 'sina-mail-config',
+    pattern: 'wegent://modal/sina-mail-config',
+    description: 'Open Sina mail configuration dialog',
+    examples: ['wegent://modal/sina-mail-config'],
   })
 }
