@@ -5,7 +5,7 @@
 """add knowledge document index state
 
 Revision ID: b1c2d3e4f607
-Revises: a7b8c9d0e1f3
+Revises: b1c2d3e4f5g6
 Create Date: 2026-03-26
 
 Add business-level indexing state fields to knowledge_documents so duplicate
