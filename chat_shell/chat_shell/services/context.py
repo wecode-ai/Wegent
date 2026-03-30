@@ -425,6 +425,7 @@ class ChatContext:
             user_selected_skills=self._request.user_selected_skills,
             user_name=self._request.user_name,
             auth_token=self._request.auth_token,
+            skill_identity_token=self._request.skill_identity_token,
             task_data=self._request,
         )
         add_span_event(

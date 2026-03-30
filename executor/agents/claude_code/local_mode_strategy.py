@@ -104,6 +104,7 @@ class LocalModeStrategy(ExecutionModeStrategy):
         options: Dict[str, Any],
         config_dir: str,
         env_config: Dict[str, Any],
+        task_identity_env: Dict[str, Any],
     ) -> Dict[str, Any]:
         """Configure SDK client with environment variables for sensitive data.
 
@@ -116,22 +117,20 @@ class LocalModeStrategy(ExecutionModeStrategy):
             options: Existing client options
             config_dir: Task-specific config directory
             env_config: Sensitive configuration (ANTHROPIC_AUTH_TOKEN, etc.)
+            task_identity_env: Task-scoped identity env variables
 
         Returns:
             Updated options with env configuration
         """
         updated_options = options.copy()
-
-        # Merge env config (contains ANTHROPIC_AUTH_TOKEN, ANTHROPIC_MODEL, etc.)
-        if env_config:
-            existing_env = updated_options.get("env", {})
-            merged_env = {**existing_env, **env_config}
-            # Ensure all values are strings (required by SDK)
-            updated_options["env"] = {k: str(v) for k, v in merged_env.items()}
+        existing_env = dict(updated_options.get("env", {}))
+        merged_env = {**existing_env, **env_config, **task_identity_env}
+        # Ensure all values are strings (required by SDK)
+        updated_options["env"] = {k: str(v) for k, v in merged_env.items()}
 
         # Fix PyInstaller LD_LIBRARY_PATH issue for child processes.
         # See: https://pyinstaller.org/en/stable/common-issues-and-pitfalls.html
-        env = updated_options.get("env", {})
+        env = dict(updated_options.get("env", {}))
         sanitize_ld_library_path(env)
 
         # Set CLAUDE_CONFIG_DIR to redirect all config reads/writes

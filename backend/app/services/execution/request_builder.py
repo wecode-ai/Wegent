@@ -21,6 +21,7 @@ from app.core.config import settings
 from app.models.subtask import Subtask
 from app.models.task import TaskResource
 from app.schemas.kind import Bot, Ghost, Shell, Team
+from app.services.auth import create_skill_identity_token
 from app.services.mcp_provider_registry import list_mcp_providers
 from app.services.readers import KindType, kindReader
 from app.services.user_mcp_service import user_mcp_service
@@ -240,6 +241,7 @@ class TaskRequestBuilder:
 
         # Generate auth token first (needed for MCP server authentication)
         auth_token = self._generate_auth_token(task, subtask, user)
+        skill_identity_token = self._generate_skill_identity_token(task, subtask, user)
 
         # Build MCP servers configuration (with auto-injection for subscription tasks)
         mcp_servers = self._build_mcp_servers(
@@ -313,6 +315,7 @@ class TaskRequestBuilder:
             collaboration_model=collaboration_model,
             mode=collaboration_model,
             auth_token=auth_token,
+            skill_identity_token=skill_identity_token,
             backend_url=settings.BACKEND_INTERNAL_URL,
             attachments=attachments or [],
             is_subscription=is_subscription,
@@ -1995,4 +1998,19 @@ class TaskRequestBuilder:
             subtask_id=subtask.id,
             user_id=user.id,
             user_name=user.user_name,
+        )
+
+    def _generate_skill_identity_token(
+        self, task: TaskResource, subtask: Subtask, user: User
+    ) -> str:
+        """Generate a dedicated skill identity token for business HTTP calls."""
+        task_json = task.json if isinstance(task.json, dict) else {}
+        task_labels = (task_json.get("metadata", {}) or {}).get("labels", {}) or {}
+        runtime_type = "sandbox" if task_labels.get("type") == "sandbox" else "executor"
+        runtime_name = subtask.executor_name or f"task-{task.id}-subtask-{subtask.id}"
+        return create_skill_identity_token(
+            user_id=user.id,
+            user_name=user.user_name,
+            runtime_type=runtime_type,
+            runtime_name=runtime_name,
         )
