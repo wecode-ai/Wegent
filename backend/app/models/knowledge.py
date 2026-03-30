@@ -24,6 +24,7 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
+    TypeDecorator,
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -55,6 +56,30 @@ class DocumentIndexStatus(str, PyEnum):
     INDEXING = "indexing"
     SUCCESS = "success"
     FAILED = "failed"
+
+
+class DocumentIndexStatusType(TypeDecorator):
+    """Persist index status as VARCHAR while exposing Python enums to business code."""
+
+    impl = String(32)
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        """Convert enum values to strings before writing to the database."""
+        if value is None:
+            return None
+        if isinstance(value, DocumentIndexStatus):
+            return value.value
+        return DocumentIndexStatus(value).value
+
+    def process_result_value(self, value, dialect):
+        """Convert stored strings back into business enums when loading rows."""
+        if value is None:
+            return None
+        try:
+            return DocumentIndexStatus(value)
+        except ValueError:
+            return value
 
 
 class KnowledgeDocument(Base):
@@ -89,9 +114,7 @@ class KnowledgeDocument(Base):
         Boolean, nullable=False, default=False
     )  # Default to False, set to True after indexing completes
     index_status = Column(
-        SQLEnum(
-            DocumentIndexStatus, values_callable=lambda obj: [e.value for e in obj]
-        ),
+        DocumentIndexStatusType(),
         nullable=False,
         default=DocumentIndexStatus.NOT_INDEXED,
     )

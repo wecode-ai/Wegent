@@ -21,14 +21,7 @@ down_revision = "b1c2d3e4f5g6"
 branch_labels = None
 depends_on = None
 
-INDEX_STATUS_ENUM = sa.Enum(
-    "not_indexed",
-    "queued",
-    "indexing",
-    "success",
-    "failed",
-    name="documentindexstatus",
-)
+INDEX_STATUS_TYPE = sa.String(length=32)
 
 
 def upgrade() -> None:
@@ -44,7 +37,7 @@ def upgrade() -> None:
             "knowledge_documents",
             sa.Column(
                 "index_status",
-                INDEX_STATUS_ENUM,
+                INDEX_STATUS_TYPE,
                 nullable=False,
                 server_default="not_indexed",
             ),
@@ -53,14 +46,8 @@ def upgrade() -> None:
         op.alter_column(
             "knowledge_documents",
             "index_status",
-            existing_type=sa.Enum(
-                "queued",
-                "indexing",
-                "success",
-                "failed",
-                name="documentindexstatus",
-            ),
-            type_=INDEX_STATUS_ENUM,
+            existing_type=sa.String(length=32),
+            type_=INDEX_STATUS_TYPE,
             existing_nullable=False,
             server_default="not_indexed",
         )
@@ -105,6 +92,3 @@ def downgrade() -> None:
     for column_name in ["index_generation", "index_status"]:
         if column_name in existing_columns:
             op.drop_column("knowledge_documents", column_name)
-
-    if conn.dialect.name == "postgresql":
-        INDEX_STATUS_ENUM.drop(conn, checkfirst=True)
