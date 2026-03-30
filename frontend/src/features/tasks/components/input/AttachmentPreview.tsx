@@ -5,16 +5,19 @@
 'use client'
 
 import React, { useCallback, useState } from 'react'
-import { Download, X, ZoomIn, ZoomOut, RotateCw, Loader2 } from 'lucide-react'
+import { Download, X, ZoomIn, ZoomOut, RotateCw, Loader2, Eye } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   formatFileSize,
   getFileIcon,
   downloadAttachment,
   isImageExtension,
+  isHtmlExtension,
 } from '@/apis/attachments'
 import type { Attachment } from '@/types/api'
 import { useAttachmentImage } from '@/hooks/useAttachmentImage'
+import { FilePreviewDialog } from '@/components/common/FilePreview'
+import { useTranslation } from '@/hooks/useTranslation'
 
 interface AttachmentPreviewProps {
   /** Attachment data */
@@ -41,6 +44,7 @@ function ImageLightbox({
   onClose: () => void
   onDownload: () => void
 }) {
+  const { t } = useTranslation('common')
   const [scale, setScale] = useState(1)
   const [rotation, setRotation] = useState(0)
 
@@ -108,7 +112,7 @@ function ImageLightbox({
           size="icon"
           onClick={handleZoomOut}
           className="h-10 w-10 bg-black/50 hover:bg-black/70 text-white"
-          title="缩小 (-)"
+          title={`${t('actions.zoom_out')} (-)`}
         >
           <ZoomOut className="h-5 w-5" />
         </Button>
@@ -120,7 +124,7 @@ function ImageLightbox({
           size="icon"
           onClick={handleZoomIn}
           className="h-10 w-10 bg-black/50 hover:bg-black/70 text-white"
-          title="放大 (+)"
+          title={`${t('actions.zoom_in')} (+)`}
         >
           <ZoomIn className="h-5 w-5" />
         </Button>
@@ -129,7 +133,7 @@ function ImageLightbox({
           size="icon"
           onClick={handleRotate}
           className="h-10 w-10 bg-black/50 hover:bg-black/70 text-white"
-          title="旋转 (R)"
+          title={`${t('actions.rotate')} (R)`}
         >
           <RotateCw className="h-5 w-5" />
         </Button>
@@ -138,7 +142,7 @@ function ImageLightbox({
           size="icon"
           onClick={onDownload}
           className="h-10 w-10 bg-black/50 hover:bg-black/70 text-white"
-          title="下载"
+          title={t('actions.download')}
         >
           <Download className="h-5 w-5" />
         </Button>
@@ -147,7 +151,7 @@ function ImageLightbox({
           size="icon"
           onClick={onClose}
           className="h-10 w-10 bg-black/50 hover:bg-black/70 text-white"
-          title="关闭 (Esc)"
+          title={`${t('actions.close')} (Esc)`}
         >
           <X className="h-5 w-5" />
         </Button>
@@ -182,7 +186,9 @@ export default function AttachmentPreview({
   compact = false,
   shareToken,
 }: AttachmentPreviewProps) {
+  const { t } = useTranslation('common')
   const [showLightbox, setShowLightbox] = useState(false)
+  const [showPreviewDialog, setShowPreviewDialog] = useState(false)
 
   const handleDownload = useCallback(async () => {
     try {
@@ -200,8 +206,17 @@ export default function AttachmentPreview({
     setShowLightbox(false)
   }, [])
 
+  const handlePreviewClick = useCallback(() => {
+    setShowPreviewDialog(true)
+  }, [])
+
+  const handleClosePreviewDialog = useCallback(() => {
+    setShowPreviewDialog(false)
+  }, [])
+
   const icon = getFileIcon(attachment.file_extension)
   const isImage = isImageExtension(attachment.file_extension)
+  const isHtml = isHtmlExtension(attachment.file_extension)
 
   // Use authenticated image fetching
   const {
@@ -284,7 +299,7 @@ export default function AttachmentPreview({
                       handleDownload()
                     }}
                     className="h-6 w-6 text-white hover:bg-white/20 flex-shrink-0"
-                    title="下载"
+                    title={t('actions.download')}
                   >
                     <Download className="h-4 w-4" />
                   </Button>
@@ -305,6 +320,96 @@ export default function AttachmentPreview({
     }
   }
 
+  // HTML files - show preview button
+  if (isHtml) {
+    if (compact) {
+      return (
+        <>
+          <div className="inline-flex items-center gap-1.5 px-2 py-1 bg-muted rounded-md border border-border text-xs">
+            <span>{icon}</span>
+            <span className="truncate max-w-[120px]" title={attachment.filename}>
+              {attachment.filename}
+            </span>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              onClick={handlePreviewClick}
+              className="h-4 w-4 p-0 hover:bg-transparent"
+              title={t('actions.preview')}
+            >
+              <Eye className="h-3 w-3 text-text-muted" />
+            </Button>
+            {showDownload && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                onClick={handleDownload}
+                className="h-4 w-4 p-0 hover:bg-transparent"
+                title={t('actions.download')}
+              >
+                <Download className="h-3 w-3 text-text-muted" />
+              </Button>
+            )}
+          </div>
+          <FilePreviewDialog
+            open={showPreviewDialog}
+            onClose={handleClosePreviewDialog}
+            attachmentId={attachment.id}
+            filename={attachment.filename}
+            mimeType={attachment.mime_type}
+            fileSize={attachment.file_size}
+            shareToken={shareToken}
+            canShare={!shareToken}
+          />
+        </>
+      )
+    }
+
+    return (
+      <>
+        <div className="flex items-center gap-3 p-3 bg-muted rounded-lg border border-border mb-2 max-w-full">
+          <span className="text-2xl flex-shrink-0">{icon}</span>
+          <div className="flex-1 min-w-0 overflow-hidden">
+            <div className="font-medium text-sm truncate" title={attachment.filename}>
+              {attachment.filename}
+            </div>
+            <div className="text-xs text-text-muted">
+              {formatFileSize(attachment.file_size)}
+              <button
+                type="button"
+                onClick={handlePreviewClick}
+                className="ml-2 text-link hover:underline"
+              >
+                {t('attachment.click_to_preview')}
+              </button>
+              {showDownload && (
+                <button
+                  type="button"
+                  onClick={handleDownload}
+                  className="ml-2 text-link hover:underline"
+                >
+                  {t('actions.download')}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+        <FilePreviewDialog
+          open={showPreviewDialog}
+          onClose={handleClosePreviewDialog}
+          attachmentId={attachment.id}
+          filename={attachment.filename}
+          mimeType={attachment.mime_type}
+          fileSize={attachment.file_size}
+          shareToken={shareToken}
+          canShare={!shareToken}
+        />
+      </>
+    )
+  }
+
   // Fallback to original file icon display for non-image types or image load errors
   if (compact) {
     return (
@@ -320,7 +425,7 @@ export default function AttachmentPreview({
             size="icon"
             onClick={handleDownload}
             className="h-4 w-4 p-0 hover:bg-transparent"
-            title="下载"
+            title={t('actions.download')}
           >
             <Download className="h-3 w-3 text-text-muted" />
           </Button>
@@ -339,8 +444,12 @@ export default function AttachmentPreview({
         <div className="text-xs text-text-muted">
           {formatFileSize(attachment.file_size)}
           {showDownload && (
-            <button onClick={handleDownload} className="ml-2 text-link hover:underline">
-              点击下载
+            <button
+              type="button"
+              onClick={handleDownload}
+              className="ml-2 text-link hover:underline"
+            >
+              {t('attachment.click_to_download')}
             </button>
           )}
         </div>
