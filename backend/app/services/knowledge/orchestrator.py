@@ -1209,6 +1209,8 @@ class KnowledgeOrchestrator:
                 document=document,
                 user=user,
                 trigger_summary=False,  # Don't re-generate summary on update
+                allow_if_success=True,
+                replace_active=True,
             )
 
         return {
@@ -1260,7 +1262,9 @@ class KnowledgeOrchestrator:
         user: User,
         trigger_summary: bool = True,
         splitter_config: Optional[Dict[str, Any]] = None,
-    ) -> None:
+        allow_if_success: bool = False,
+        replace_active: bool = False,
+    ) -> Dict[str, Any]:
         """
         Schedule RAG indexing for a document via Celery.
 
@@ -1274,7 +1278,13 @@ class KnowledgeOrchestrator:
             user: Current user
             trigger_summary: Whether to trigger summary after indexing
             splitter_config: Optional splitter configuration dict
+            allow_if_success: Whether to re-queue a document that already succeeded
+            replace_active: Whether to supersede an in-flight indexing generation
         """
+        from app.services.knowledge.index_state_machine import (
+            mark_document_index_enqueue_failed,
+            prepare_document_index_enqueue,
+        )
         from app.services.knowledge.indexing import is_organization_namespace
         from app.tasks.knowledge_tasks import index_document_task
 
@@ -1285,7 +1295,10 @@ class KnowledgeOrchestrator:
             logger.info(
                 f"[Orchestrator] Skipping indexing for document {document.id}: no retrieval_config"
             )
-            return
+            return {
+                "scheduled": False,
+                "reason": "missing_retrieval_config",
+            }
 
         retriever_name = retrieval_config.get("retriever_name")
         retriever_namespace = retrieval_config.get("retriever_namespace", "default")
@@ -1296,7 +1309,10 @@ class KnowledgeOrchestrator:
                 f"[Orchestrator] Incomplete retrieval_config for KB {knowledge_base.id}: "
                 f"retriever_name={retriever_name}, embedding_config={embedding_config}"
             )
-            return
+            return {
+                "scheduled": False,
+                "reason": "incomplete_retrieval_config",
+            }
 
         embedding_model_name = embedding_config.get("model_name")
         embedding_model_namespace = embedding_config.get("model_namespace", "default")
@@ -1305,7 +1321,10 @@ class KnowledgeOrchestrator:
             logger.warning(
                 f"[Orchestrator] Missing embedding model_name in KB {knowledge_base.id}"
             )
-            return
+            return {
+                "scheduled": False,
+                "reason": "missing_embedding_model",
+            }
 
         # Determine index owner user_id
         if knowledge_base.namespace == "default":
@@ -1322,25 +1341,71 @@ class KnowledgeOrchestrator:
             f"index_owner_user_id={index_owner_user_id}"
         )
 
-        # Schedule indexing via Celery
-        async_result = index_document_task.delay(
-            knowledge_base_id=str(knowledge_base.id),
-            attachment_id=document.attachment_id,
-            retriever_name=retriever_name,
-            retriever_namespace=retriever_namespace,
-            embedding_model_name=embedding_model_name,
-            embedding_model_namespace=embedding_model_namespace,
-            user_id=index_owner_user_id,
-            user_name=user.user_name,
+        enqueue_decision = prepare_document_index_enqueue(
+            db=db,
             document_id=document.id,
-            splitter_config_dict=splitter_config,
-            trigger_summary=trigger_summary,
+            allow_if_success=allow_if_success,
+            replace_active=replace_active,
         )
+        if not enqueue_decision.should_enqueue:
+            logger.info(
+                f"[Orchestrator] Skipping Celery enqueue for document {document.id}: "
+                f"reason={enqueue_decision.reason}, previous_status={enqueue_decision.previous_status}"
+            )
+            return {
+                "scheduled": False,
+                "reason": enqueue_decision.reason,
+                "index_generation": enqueue_decision.generation,
+            }
+
+        generation = enqueue_decision.generation
+        if generation is None:
+            message = (
+                "[Orchestrator] prepare_document_index_enqueue returned "
+                f"should_enqueue=True but generation is None for document {document.id}"
+            )
+            logger.error(message)
+            raise RuntimeError(message)
+
+        try:
+            async_result = index_document_task.delay(
+                knowledge_base_id=str(knowledge_base.id),
+                attachment_id=document.attachment_id,
+                retriever_name=retriever_name,
+                retriever_namespace=retriever_namespace,
+                embedding_model_name=embedding_model_name,
+                embedding_model_namespace=embedding_model_namespace,
+                user_id=index_owner_user_id,
+                user_name=user.user_name,
+                document_id=document.id,
+                index_generation=generation,
+                splitter_config_dict=splitter_config,
+                trigger_summary=trigger_summary,
+            )
+        except Exception as exc:
+            mark_document_index_enqueue_failed(
+                db=db,
+                document_id=document.id,
+                generation=generation,
+            )
+            logger.error(
+                f"[Orchestrator] Failed to enqueue RAG indexing task for document {document.id}: {exc}",
+                exc_info=True,
+            )
+            raise
+
         logger.info(
             f"[Orchestrator] RAG indexing task enqueued: "
             f"document_id={document.id}, attachment_id={document.attachment_id}, "
-            f"kb_id={knowledge_base.id}, celery_task_id={async_result.id}"
+            f"kb_id={knowledge_base.id}, index_generation={generation}, "
+            f"celery_task_id={async_result.id}"
         )
+        return {
+            "scheduled": True,
+            "reason": "scheduled",
+            "index_generation": generation,
+            "task_id": async_result.id,
+        }
 
     def reindex_document(
         self,
@@ -1373,7 +1438,6 @@ class KnowledgeOrchestrator:
             extract_rag_config_from_knowledge_base,
             get_rag_indexing_skip_reason,
         )
-        from app.tasks.knowledge_tasks import index_document_task
 
         # Get document with access check
         document = (
@@ -1411,31 +1475,47 @@ class KnowledgeOrchestrator:
                 "Knowledge base has no or incomplete retrieval configuration"
             )
 
-        # Schedule re-indexing via Celery
-        async_result = index_document_task.delay(
-            knowledge_base_id=str(document.kind_id),
-            attachment_id=document.attachment_id,
-            retriever_name=rag_params.retriever_name,
-            retriever_namespace=rag_params.retriever_namespace,
-            embedding_model_name=rag_params.embedding_model_name,
-            embedding_model_namespace=rag_params.embedding_model_namespace,
-            user_id=rag_params.kb_index_info.index_owner_user_id,
-            user_name=user.user_name,
-            document_id=document.id,
-            splitter_config_dict=document.splitter_config,
+        schedule_result = self._schedule_indexing_celery(
+            db=db,
+            knowledge_base=knowledge_base,
+            document=document,
+            user=user,
             trigger_summary=trigger_summary,
+            splitter_config=document.splitter_config,
+            allow_if_success=True,
         )
+        if not schedule_result["scheduled"]:
+            reason = schedule_result["reason"]
+            reason_messages = {
+                "already_in_progress": "Reindex already in progress",
+                "already_indexed": "Document is already indexed",
+                "document_not_found": "Document not found",
+            }
+            message = reason_messages.get(reason, f"Reindex skipped: {reason}")
+            logger.info(
+                f"[Orchestrator] Reindex skipped for document {document.id}: "
+                f"reason={reason}, message={message}"
+            )
+            return {
+                "success": True,
+                "document_id": document.id,
+                "message": message,
+                "skipped": True,
+                "reason": reason,
+            }
 
         logger.info(
             f"[Orchestrator] Scheduled reindex via Celery for document {document.id}: "
-            f"celery_task_id={async_result.id}, attachment_id={document.attachment_id}, "
-            f"kb_id={document.kind_id}"
+            f"celery_task_id={schedule_result['task_id']}, attachment_id={document.attachment_id}, "
+            f"kb_id={document.kind_id}, index_generation={schedule_result['index_generation']}"
         )
 
         return {
             "success": True,
             "document_id": document.id,
             "message": "Reindex started",
+            "skipped": False,
+            "index_generation": schedule_result["index_generation"],
         }
 
     async def create_web_document(
@@ -1568,6 +1648,8 @@ class KnowledgeOrchestrator:
                     document=document,
                     user=user,
                     trigger_summary=trigger_summary,
+                    allow_if_success=True,
+                    replace_active=True,
                 )
 
             return {
@@ -1755,6 +1837,8 @@ class KnowledgeOrchestrator:
                         document=document,
                         user=user,
                         trigger_summary=trigger_summary,
+                        allow_if_success=True,
+                        replace_active=True,
                     )
 
             return {
