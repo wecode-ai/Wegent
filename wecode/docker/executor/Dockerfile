@@ -59,7 +59,7 @@ WORKDIR /app
 # Configure npm registry for China
 RUN npm config set registry https://registry.npmmirror.com
 
-RUN npm install -g @anthropic-ai/claude-code@2.1.33
+RUN npm install -g @anthropic-ai/claude-code@2.1.85
 
 # Install uv from PyPI using Aliyun mirror
 RUN pip install --no-cache-dir uv -i http://mirrors.cloud.aliyuncs.com/pypi/simple/ --trusted-host mirrors.cloud.aliyuncs.com && \
