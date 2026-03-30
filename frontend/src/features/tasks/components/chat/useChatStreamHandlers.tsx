@@ -258,7 +258,13 @@ export function useChatStreamHandlers({
   // Use useTaskStateMachine to properly subscribe to state changes
   // This ensures isStreaming updates when chat:done is received
   // IMPORTANT: All streaming state comes from the state machine - no local state variables
-  const { state: taskState, isStreaming } = useTaskStateMachine(effectiveTaskIdForState)
+  const { state: taskState, isStreaming: isMachineStreaming } =
+    useTaskStateMachine(effectiveTaskIdForState)
+
+  // Keep "stop" state aligned with backend task lifecycle:
+  // a task can stay RUNNING even when no stream chunk is currently arriving.
+  // In that window, UI should still block sending and show stop action.
+  const isStreaming = isMachineStreaming || selectedTaskDetail?.status === 'RUNNING'
 
   // Alias for backward compatibility - both refer to the same state machine value
   const isSubtaskStreaming = isStreaming
@@ -282,7 +288,6 @@ export function useChatStreamHandlers({
     if (taskIdToStop && taskIdToStop > 0) {
       const team =
         typeof selectedTaskDetail?.team === 'object' ? selectedTaskDetail.team : undefined
-      // Pass undefined for subtasks - contextStopStream will get streaming info from state machine
       await contextStopStream(taskIdToStop, undefined, team)
     }
   }, [currentDisplayTaskId, pendingTaskId, contextStopStream, selectedTaskDetail?.team])
@@ -718,6 +723,7 @@ export function useChatStreamHandlers({
       refreshTasks,
       searchParams,
       router,
+      pathname,
       showRepositorySelector,
       selectedRepo,
       selectedBranch,
