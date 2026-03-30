@@ -2,7 +2,36 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-export type PreviewType = 'image' | 'pdf' | 'text' | 'video' | 'audio' | 'office' | 'unknown'
+export type PreviewType =
+  | 'image'
+  | 'pdf'
+  | 'text'
+  | 'video'
+  | 'audio'
+  | 'office'
+  | 'html'
+  | 'unknown'
+
+/**
+ * Check if MIME type indicates an HTML file
+ */
+export function isHtmlMimeType(mimeType: string): boolean {
+  return mimeType === 'text/html' || mimeType === 'application/xhtml+xml'
+}
+
+/**
+ * Check if filename indicates an HTML file
+ */
+export function isHtmlFilename(filename: string): boolean {
+  return /\.(html|htm|html5)$/i.test(filename)
+}
+
+/**
+ * Check if file is an HTML file based on MIME type or filename
+ */
+export function isHtmlFile(mimeType: string, filename: string): boolean {
+  return isHtmlMimeType(mimeType) || isHtmlFilename(filename)
+}
 
 /**
  * Check if file type is previewable
@@ -17,6 +46,10 @@ export function isFilePreviewable(mimeType: string, filename: string): boolean {
   if (mimeType.startsWith('video/')) return true
   // Audio
   if (mimeType.startsWith('audio/')) return true
+  // HTML files
+  if (isHtmlFile(mimeType, filename)) {
+    return true
+  }
   // Text files
   if (
     mimeType.startsWith('text/') ||
@@ -24,7 +57,7 @@ export function isFilePreviewable(mimeType: string, filename: string): boolean {
     mimeType === 'application/javascript' ||
     mimeType === 'application/xml' ||
     filename.match(
-      /\.(txt|md|json|js|ts|jsx|tsx|py|java|go|rs|cpp|c|h|hpp|css|scss|less|html|htm|xml|yaml|yml|sh|bash|zsh|ps1|sql|log)$/i
+      /\.(txt|md|json|js|ts|jsx|tsx|py|java|go|rs|cpp|c|h|hpp|css|scss|less|xml|yaml|yml|sh|bash|zsh|ps1|sql|log)$/i
     )
   ) {
     return true
@@ -55,6 +88,11 @@ export function getPreviewType(mimeType: string, filename: string): PreviewType 
   if (mimeType === 'application/pdf') return 'pdf'
   if (mimeType.startsWith('video/')) return 'video'
   if (mimeType.startsWith('audio/')) return 'audio'
+  // HTML files - render in preview mode
+  if (isHtmlFile(mimeType, filename)) {
+    return 'html'
+  }
+  // Text files
   if (
     mimeType.startsWith('text/') ||
     mimeType === 'application/json' ||
@@ -62,7 +100,7 @@ export function getPreviewType(mimeType: string, filename: string): PreviewType 
     mimeType === 'application/typescript' ||
     mimeType === 'application/xml' ||
     filename.match(
-      /\.(txt|md|json|js|ts|jsx|tsx|py|java|go|rs|cpp|c|h|hpp|css|scss|less|html|htm|xml|yaml|yml|sh|bash|zsh|ps1|sql|log)$/i
+      /\.(txt|md|json|js|ts|jsx|tsx|py|java|go|rs|cpp|c|h|hpp|css|scss|less|xml|yaml|yml|sh|bash|zsh|ps1|sql|log)$/i
     )
   ) {
     return 'text'

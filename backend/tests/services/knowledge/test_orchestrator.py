@@ -4,6 +4,7 @@
 
 """Tests for KnowledgeOrchestrator service layer."""
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
@@ -414,6 +415,238 @@ class TestKnowledgeOrchestrator:
                     user=mock_user,
                     document_id=1,
                 )
+
+    def test_schedule_indexing_celery_skips_duplicate_enqueue(
+        self, orchestrator, mock_db, mock_user
+    ):
+        """Test duplicate enqueue requests are skipped before hitting Celery."""
+        mock_kb = MagicMock()
+        mock_kb.id = 1
+        mock_kb.namespace = "default"
+        mock_kb.json = {
+            "spec": {
+                "retrievalConfig": {
+                    "retriever_name": "retriever-1",
+                    "retriever_namespace": "default",
+                    "embedding_config": {
+                        "model_name": "embedding-1",
+                        "model_namespace": "default",
+                    },
+                }
+            }
+        }
+
+        mock_document = MagicMock()
+        mock_document.id = 10
+        mock_document.attachment_id = 20
+
+        with patch(
+            "app.services.knowledge.index_state_machine.prepare_document_index_enqueue"
+        ) as mock_prepare:
+            mock_prepare.return_value = SimpleNamespace(
+                should_enqueue=False,
+                generation=3,
+                reason="already_in_progress",
+                previous_status="indexing",
+            )
+            with patch(
+                "app.tasks.knowledge_tasks.index_document_task.delay"
+            ) as mock_delay:
+                result = orchestrator._schedule_indexing_celery(
+                    db=mock_db,
+                    knowledge_base=mock_kb,
+                    document=mock_document,
+                    user=mock_user,
+                )
+
+        mock_delay.assert_not_called()
+
+        assert result["scheduled"] is False
+        assert result["reason"] == "already_in_progress"
+
+    def test_schedule_indexing_celery_enqueues_with_generation(
+        self, orchestrator, mock_db, mock_user
+    ):
+        """Test a queued indexing task carries the new business generation."""
+        mock_kb = MagicMock()
+        mock_kb.id = 1
+        mock_kb.namespace = "default"
+        mock_kb.json = {
+            "spec": {
+                "retrievalConfig": {
+                    "retriever_name": "retriever-1",
+                    "retriever_namespace": "default",
+                    "embedding_config": {
+                        "model_name": "embedding-1",
+                        "model_namespace": "default",
+                    },
+                }
+            }
+        }
+
+        mock_document = MagicMock()
+        mock_document.id = 10
+        mock_document.attachment_id = 20
+
+        with patch(
+            "app.services.knowledge.index_state_machine.prepare_document_index_enqueue"
+        ) as mock_prepare:
+            mock_prepare.return_value = SimpleNamespace(
+                should_enqueue=True,
+                generation=7,
+                reason="scheduled",
+                previous_status="failed",
+            )
+
+            with patch(
+                "app.tasks.knowledge_tasks.index_document_task.delay"
+            ) as mock_delay:
+                mock_delay.return_value = SimpleNamespace(id="celery-task-1")
+
+                result = orchestrator._schedule_indexing_celery(
+                    db=mock_db,
+                    knowledge_base=mock_kb,
+                    document=mock_document,
+                    user=mock_user,
+                )
+
+        assert result["scheduled"] is True
+        assert result["index_generation"] == 7
+        mock_delay.assert_called_once()
+        assert mock_delay.call_args.kwargs["index_generation"] == 7
+
+    def test_schedule_indexing_celery_raises_when_generation_missing(
+        self, orchestrator, mock_db, mock_user
+    ):
+        """Test enqueue decisions without generation fail explicitly."""
+        mock_kb = MagicMock()
+        mock_kb.id = 1
+        mock_kb.namespace = "default"
+        mock_kb.json = {
+            "spec": {
+                "retrievalConfig": {
+                    "retriever_name": "retriever-1",
+                    "retriever_namespace": "default",
+                    "embedding_config": {
+                        "model_name": "embedding-1",
+                        "model_namespace": "default",
+                    },
+                }
+            }
+        }
+
+        mock_document = MagicMock()
+        mock_document.id = 10
+        mock_document.attachment_id = 20
+
+        with patch(
+            "app.services.knowledge.index_state_machine.prepare_document_index_enqueue"
+        ) as mock_prepare:
+            mock_prepare.return_value = SimpleNamespace(
+                should_enqueue=True,
+                generation=None,
+                reason="scheduled",
+                previous_status="failed",
+            )
+
+            with pytest.raises(RuntimeError, match="generation is None"):
+                orchestrator._schedule_indexing_celery(
+                    db=mock_db,
+                    knowledge_base=mock_kb,
+                    document=mock_document,
+                    user=mock_user,
+                )
+
+    def test_reindex_document_returns_reason_specific_skip_message(
+        self, orchestrator, mock_db, mock_user
+    ):
+        """Test reindex returns a precise skip message for uncommon reasons."""
+        mock_document = MagicMock()
+        mock_document.id = 1
+        mock_document.kind_id = 2
+        mock_document.source_type = DocumentSourceType.FILE.value
+        mock_document.file_extension = "txt"
+        mock_document.file_size = 1024
+        mock_document.splitter_config = {}
+
+        mock_kb = MagicMock()
+
+        with patch.object(mock_db, "query") as mock_query:
+            mock_query.return_value.filter.return_value.first.return_value = (
+                mock_document
+            )
+            with patch(
+                "app.services.knowledge.orchestrator.KnowledgeService.get_knowledge_base",
+                return_value=(mock_kb, True),
+            ):
+                with patch(
+                    "app.services.knowledge.indexing.extract_rag_config_from_knowledge_base",
+                    return_value=MagicMock(),
+                ):
+                    with patch.object(
+                        orchestrator,
+                        "_schedule_indexing_celery",
+                        return_value={
+                            "scheduled": False,
+                            "reason": "document_not_found",
+                            "index_generation": None,
+                        },
+                    ):
+                        result = orchestrator.reindex_document(
+                            db=mock_db,
+                            user=mock_user,
+                            document_id=1,
+                        )
+
+        assert result["skipped"] is True
+        assert result["reason"] == "document_not_found"
+        assert result["message"] == "Document not found"
+
+    def test_reindex_document_allows_requeue_for_successful_documents(
+        self, orchestrator, mock_db, mock_user
+    ):
+        """Test explicit reindex requests bypass the success-state skip rule."""
+        mock_document = MagicMock()
+        mock_document.id = 1
+        mock_document.kind_id = 2
+        mock_document.source_type = DocumentSourceType.FILE.value
+        mock_document.file_extension = "txt"
+        mock_document.file_size = 1024
+        mock_document.splitter_config = {}
+
+        mock_kb = MagicMock()
+
+        with patch.object(mock_db, "query") as mock_query:
+            mock_query.return_value.filter.return_value.first.return_value = (
+                mock_document
+            )
+            with patch(
+                "app.services.knowledge.orchestrator.KnowledgeService.get_knowledge_base",
+                return_value=(mock_kb, True),
+            ):
+                with patch(
+                    "app.services.knowledge.indexing.extract_rag_config_from_knowledge_base",
+                    return_value=MagicMock(),
+                ):
+                    with patch.object(
+                        orchestrator,
+                        "_schedule_indexing_celery",
+                        return_value={
+                            "scheduled": True,
+                            "reason": "scheduled",
+                            "task_id": "task-1",
+                            "index_generation": 8,
+                        },
+                    ) as mock_schedule:
+                        result = orchestrator.reindex_document(
+                            db=mock_db,
+                            user=mock_user,
+                            document_id=1,
+                        )
+
+        assert result["message"] == "Reindex started"
+        assert result["index_generation"] == 8
+        assert mock_schedule.call_args.kwargs["allow_if_success"] is True
 
 
 class TestIndexingPolicy:

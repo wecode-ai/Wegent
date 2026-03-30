@@ -266,6 +266,14 @@ class Settings(BaseSettings):
         3  # RUNNING executions older than this will be marked FAILED
     )
 
+    # Knowledge indexing protection configuration
+    KNOWLEDGE_INDEX_LOCK_TIMEOUT_SECONDS: int = 120
+    KNOWLEDGE_INDEX_LOCK_EXTEND_INTERVAL_SECONDS: int = 30
+    KNOWLEDGE_INDEX_LOCK_RETRY_DELAY_SECONDS: int = 15
+    KNOWLEDGE_INDEX_LOCK_MAX_RETRIES: int = 1
+    KNOWLEDGE_INDEX_STALE_QUEUED_SECONDS: int = 600
+    KNOWLEDGE_INDEX_STALE_INDEXING_SECONDS: int = 2700
+
     # Circuit breaker configuration
     CIRCUIT_BREAKER_FAIL_MAX: int = 5  # Open circuit after 5 consecutive failures
     CIRCUIT_BREAKER_RESET_TIMEOUT: int = 60  # Try to recover after 60 seconds
