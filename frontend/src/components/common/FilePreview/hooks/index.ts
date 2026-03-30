@@ -4,3 +4,8 @@
 
 export { useFileBlob } from './useFileBlob'
 export { useExcelParser, type ExcelSheet } from './useExcelParser'
+export {
+  useAttachmentShare,
+  type UseAttachmentShareOptions,
+  type UseAttachmentShareReturn,
+} from './useAttachmentShare'
