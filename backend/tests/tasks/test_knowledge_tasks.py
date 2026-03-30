@@ -152,7 +152,10 @@ def test_index_document_task_marks_skip_result_as_failed():
     assert result["index_generation"] == 5
 
 
-def test_index_document_task_enqueues_summary_after_finalize():
+def test_index_document_task_enqueues_summary_after_finalize(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(settings, "SUMMARY_ENABLED", True)
     start_decision = MagicMock(should_execute=True, reason="started")
     success_finalize_mock = MagicMock(return_value=True)
     summary_delay_mock = MagicMock()

@@ -1482,6 +1482,7 @@ class KnowledgeOrchestrator:
             user=user,
             trigger_summary=trigger_summary,
             splitter_config=document.splitter_config,
+            allow_if_success=True,
         )
         if not schedule_result["scheduled"]:
             reason = schedule_result["reason"]
@@ -1836,6 +1837,8 @@ class KnowledgeOrchestrator:
                         document=document,
                         user=user,
                         trigger_summary=trigger_summary,
+                        allow_if_success=True,
+                        replace_active=True,
                     )
 
             return {
