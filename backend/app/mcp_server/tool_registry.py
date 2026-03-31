@@ -12,6 +12,7 @@ designed for independent tool functions that use KnowledgeOrchestrator
 service layer, avoiding the complexity of FastAPI dependency injection.
 """
 
+import asyncio
 import inspect
 import json
 import logging
@@ -86,8 +87,12 @@ def _register_tool(
     # Get parameter names for filtering call kwargs
     mcp_param_names = [p["name"] for p in parameters]
 
-    # Create wrapper that handles token_info injection
-    def tool_wrapper(**kwargs: Any) -> str:
+    # Create wrapper that handles token_info injection.
+    # IMPORTANT: This wrapper is async so that FastMCP calls it as a coroutine
+    # and does NOT block the event loop.  The synchronous tool function (func)
+    # is dispatched to the default thread-pool executor so long-running calls
+    # (e.g. image generation) never freeze FastAPI's event loop.
+    async def tool_wrapper(**kwargs: Any) -> str:
         ctx = get_mcp_context()
         if not ctx or not ctx.token_info:
             return json.dumps({"error": "Authentication required"})
@@ -99,8 +104,15 @@ def _register_tool(
             # Inject token_info
             call_kwargs["token_info"] = ctx.token_info
 
-            # Call original function
-            result = func(**call_kwargs)
+            # Run the synchronous tool function in the default thread-pool
+            # executor so the event loop remains free to serve other requests
+            # while potentially slow tools (image generation, knowledge search)
+            # are running.
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(
+                None,
+                lambda: func(**call_kwargs),
+            )
 
             # Serialize result
             return _serialize_result(result)

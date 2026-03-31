@@ -2,22 +2,20 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""
-Schemas for Himalaya mail configuration requests.
-"""
+"""Schemas for mail configuration requests."""
 
 from typing import Literal
 
 from pydantic import BaseModel, Field
 
 
-class HimalayaMailConfigRequest(BaseModel):
-    """Request schema for generating a Himalaya config on a local device."""
+class MailConfigRequest(BaseModel):
+    """Request schema for generating a mail config on a local device."""
 
     task_id: int = Field(
         ...,
         gt=0,
-        description="Task ID whose skill workspace contains the Himalaya extension",
+        description="Task ID whose skill workspace contains the mail extension",
     )
     account_prefix: str = Field(
         ...,
@@ -36,14 +34,14 @@ class HimalayaMailConfigRequest(BaseModel):
     )
 
 
-class HimalayaMailConfigResponse(BaseModel):
-    """Response schema for Himalaya config generation."""
+class MailConfigResponse(BaseModel):
+    """Response schema for mail config generation."""
 
     success: bool = Field(..., description="Whether the config was generated")
     message: str = Field(..., description="Human-readable result message")
     account_name: str | None = Field(
         default=None,
-        description="Generated Himalaya account name",
+        description="Generated mail account name",
     )
     config_path: str | None = Field(
         default=None,
