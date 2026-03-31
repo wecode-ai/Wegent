@@ -9,11 +9,13 @@
 import json
 import os
 import re
+from copy import deepcopy
 from typing import Any, Dict
 
 from shared.logger import setup_logger
 from shared.models.execution import ExecutionRequest
 from shared.utils.sensitive_data_masker import mask_sensitive_data
+from shared.utils.task_identity import build_task_identity_context
 
 logger = setup_logger("agno_config_utils")
 
@@ -314,7 +316,7 @@ class ConfigManager:
                     options[key] = bot_config[key]
         elif bot_config and isinstance(bot_config, list):
             # Handle bot array - use the first bot configuration
-            team_members = list(bot_config)
+            team_members = deepcopy(bot_config)
             options["team_members"] = team_members
 
             logger.info(f"Found bot array with {len(bot_config)} bots")
@@ -328,6 +330,18 @@ class ConfigManager:
                         continue
                     if key in first_bot and first_bot[key] is not None:
                         options[key] = first_bot[key]
+
+        # Inject task-scoped skill identity env for this execution only.
+        task_identity_env = build_task_identity_context(task_data)
+        if task_identity_env:
+            for member in options.get("team_members", []):
+                if not isinstance(member, dict):
+                    continue
+                agent_config = member.setdefault("agent_config", {})
+                raw_env = agent_config.get("env", {})
+                env = dict(raw_env) if isinstance(raw_env, dict) else {}
+                env.update(task_identity_env)
+                agent_config["env"] = {k: str(v) for k, v in env.items()}
 
         logger.info(f"Extracted Agno options: {mask_sensitive_data(options)}")
         return options

@@ -29,6 +29,7 @@ class SkillToolContext:
         skill_config: Skill-specific configuration from SKILL.md
         user_name: Username for identifying the user
         auth_token: JWT token for API authentication (e.g., attachment upload/download)
+        skill_identity_token: JWT token for skill identity verification
     """
 
     task_id: int
@@ -39,6 +40,7 @@ class SkillToolContext:
     skill_config: dict[str, Any] = field(default_factory=dict)
     user_name: str = ""
     auth_token: str = ""  # JWT token for API authentication
+    skill_identity_token: str = ""  # JWT token for skill identity verification
 
     def get_config(self, key: str, default: Any = None) -> Any:
         """Get a configuration value from skill config.

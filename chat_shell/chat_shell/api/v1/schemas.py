@@ -280,6 +280,10 @@ class Metadata(BaseModel):
         None,
         description="JWT token for API authentication (e.g., attachment upload/download)",
     )
+    skill_identity_token: Optional[str] = Field(
+        None,
+        description="JWT token for skill identity verification",
+    )
     # Subscription task flag - when True, SilentExitTool will be added
     is_subscription: Optional[bool] = Field(
         False,

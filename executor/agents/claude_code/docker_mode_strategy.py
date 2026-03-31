@@ -95,6 +95,7 @@ class DockerModeStrategy(ExecutionModeStrategy):
         options: Dict[str, Any],
         config_dir: str,
         env_config: Dict[str, Any],
+        task_identity_env: Dict[str, Any],
     ) -> Dict[str, Any]:
         """Configure SDK client with default behavior.
 
@@ -105,12 +106,19 @@ class DockerModeStrategy(ExecutionModeStrategy):
             options: Existing client options
             config_dir: Config directory (unused - SDK uses default)
             env_config: Environment config (unused - written to settings.json)
+            task_identity_env: Task-scoped identity env variables
 
         Returns:
-            Options unchanged (default SDK behavior)
+            Options with task identity env merged
         """
-        # Docker mode uses default SDK behavior - no modifications needed
-        return options
+        updated_options = options.copy()
+        existing_env = dict(updated_options.get("env", {}))
+        merged_env = {**existing_env, **env_config, **task_identity_env}
+
+        if merged_env:
+            updated_options["env"] = {k: str(v) for k, v in merged_env.items()}
+
+        return updated_options
 
     def get_skills_directory(self, config_dir: str = None) -> str:
         """Get the default skills directory.
