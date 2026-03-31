@@ -110,3 +110,14 @@ class TaskResource(Base):
             "mysql_collate": "utf8mb4_unicode_ci",
         },
     )
+
+    @classmethod
+    def is_active_query(cls):
+        """Return query filter for active task states (active and subscription).
+
+        Usage:
+            db.query(TaskResource).filter(
+                TaskResource.is_active.in_(TaskResource.is_active_query())
+            )
+        """
+        return [cls.STATE_ACTIVE, cls.STATE_SUBSCRIPTION]
