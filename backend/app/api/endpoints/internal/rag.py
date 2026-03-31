@@ -737,7 +737,11 @@ async def read_document(
         Document content with pagination info
     """
     try:
-        from app.services.rag.document_read_service import document_read_service
+        from app.services.rag.document_read_service import (
+            DOCUMENT_READ_ERROR_ACCESS_DENIED,
+            DOCUMENT_READ_ERROR_NOT_FOUND,
+            document_read_service,
+        )
 
         results = document_read_service.read_documents(
             db=db,
@@ -748,12 +752,9 @@ async def read_document(
         )
         result = results[0] if results else None
 
-        if not result or result.get("error") == "Document not found":
+        if not result or result.get("error_code") == DOCUMENT_READ_ERROR_NOT_FOUND:
             raise HTTPException(status_code=404, detail="Document not found")
-        if (
-            result.get("error")
-            == "Access denied: document not in allowed knowledge bases"
-        ):
+        if result.get("error_code") == DOCUMENT_READ_ERROR_ACCESS_DENIED:
             raise HTTPException(
                 status_code=403,
                 detail="Access denied: document not in allowed knowledge bases",

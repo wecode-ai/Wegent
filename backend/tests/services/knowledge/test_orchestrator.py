@@ -317,6 +317,36 @@ class TestKnowledgeOrchestrator:
                 document_id=9,
             )
 
+    def test_read_document_content_uses_error_code_for_missing_document(
+        self, orchestrator, mock_db, mock_user
+    ):
+        """Test read_document_content maps stable missing-document error codes."""
+        document = SimpleNamespace(id=9, name="roadmap", kind_id=77)
+        mock_db.query.return_value.filter.return_value.first.return_value = document
+
+        with patch(
+            "app.services.knowledge.orchestrator.KnowledgeService"
+        ) as mock_kb_service:
+            mock_kb_service.get_knowledge_base.return_value = (MagicMock(id=77), True)
+
+            with patch(
+                "app.services.knowledge.orchestrator.document_read_service"
+            ) as mock_read_service:
+                mock_read_service.read_documents.return_value = [
+                    {
+                        "id": 9,
+                        "error": "reader payload changed",
+                        "error_code": "DOCUMENT_NOT_FOUND",
+                    }
+                ]
+
+                with pytest.raises(ValueError, match="Document not found"):
+                    orchestrator.read_document_content(
+                        db=mock_db,
+                        user=mock_user,
+                        document_id=9,
+                    )
+
     def test_read_document_content_raises_when_reader_returns_empty_results(
         self, orchestrator, mock_db, mock_user
     ):
@@ -462,26 +492,38 @@ class TestKnowledgeOrchestrator:
     async def test_get_document_detail_skips_content_when_disabled(
         self, orchestrator, mock_db, mock_user
     ):
-        """Test get_document_detail skips optional content and summary aggregation."""
+        """Test get_document_detail still validates access when payload sections are disabled."""
+        document = SimpleNamespace(id=9, name="roadmap", kind_id=77)
+
         with patch.object(
-            orchestrator, "read_document_content"
-        ) as mock_read_document_content:
-            with patch(
-                "app.services.knowledge.summary_service.get_summary_service"
-            ) as mock_get_summary_service:
-                result = await orchestrator.get_document_detail(
-                    db=mock_db,
-                    user=mock_user,
-                    document_id=9,
-                    include_content=False,
-                    include_summary=False,
-                )
+            orchestrator,
+            "_get_document_with_access_or_raise",
+            return_value=document,
+        ) as mock_get_document:
+            with patch.object(
+                orchestrator, "read_document_content"
+            ) as mock_read_document_content:
+                with patch(
+                    "app.services.knowledge.summary_service.get_summary_service"
+                ) as mock_get_summary_service:
+                    result = await orchestrator.get_document_detail(
+                        db=mock_db,
+                        user=mock_user,
+                        document_id=9,
+                        include_content=False,
+                        include_summary=False,
+                    )
 
         assert result.document_id == 9
         assert result.content is None
         assert result.content_length is None
         assert result.truncated is None
         assert result.summary is None
+        mock_get_document.assert_called_once_with(
+            db=mock_db,
+            user=mock_user,
+            document_id=9,
+        )
         mock_read_document_content.assert_not_called()
         mock_get_summary_service.assert_not_called()
 

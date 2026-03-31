@@ -41,7 +41,10 @@ from app.schemas.knowledge import (
     ResourceScope,
 )
 from app.services.knowledge.knowledge_service import KnowledgeService
-from app.services.rag.document_read_service import document_read_service
+from app.services.rag.document_read_service import (
+    DOCUMENT_READ_ERROR_NOT_FOUND,
+    document_read_service,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -726,7 +729,7 @@ class KnowledgeOrchestrator:
         )
         result = results[0] if results else None
 
-        if not result or result.get("error") == "Document not found":
+        if not result or result.get("error_code") == DOCUMENT_READ_ERROR_NOT_FOUND:
             raise ValueError("Document not found")
         if result.get("error"):
             raise ValueError(result["error"])
@@ -754,17 +757,16 @@ class KnowledgeOrchestrator:
         limit: int = MAX_DOCUMENT_READ_LIMIT,
     ) -> DocumentDetailResponse:
         """Aggregate optional document content and summary into a detail response."""
+        self._get_document_with_access_or_raise(
+            db=db,
+            user=user,
+            document_id=document_id,
+        )
+
         content = None
         content_length = None
         truncated = None
         summary = None
-
-        if include_content or include_summary:
-            self._get_document_with_access_or_raise(
-                db=db,
-                user=user,
-                document_id=document_id,
-            )
 
         if include_content:
             paged = self.read_document_content(

@@ -32,12 +32,26 @@ def test_standalone_detail_uses_orchestrator(
     ) as mock_detail:
         response = test_client.get(
             "/api/knowledge-documents/9/detail",
+            params={
+                "include_content": "true",
+                "include_summary": "false",
+            },
             headers=_auth_header(test_token),
         )
 
     assert response.status_code == 200
-    assert response.json() == payload
+    assert response.json() == {
+        "document_id": 9,
+        "content": "abcd",
+        "content_length": 10,
+        "truncated": True,
+    }
     mock_detail.assert_awaited_once()
+    assert mock_detail.await_args.kwargs["document_id"] == 9
+    assert mock_detail.await_args.kwargs["include_content"] is True
+    assert mock_detail.await_args.kwargs["include_summary"] is False
+    assert mock_detail.await_args.kwargs["offset"] == 0
+    assert mock_detail.await_args.kwargs["limit"] == 100000
 
 
 def test_kb_scoped_detail_uses_orchestrator(
@@ -84,6 +98,11 @@ def test_kb_scoped_detail_uses_orchestrator(
     assert response.status_code == 200
     assert response.json() == payload
     mock_detail.assert_awaited_once()
+    assert mock_detail.await_args.kwargs["document_id"] == 9
+    assert mock_detail.await_args.kwargs["include_content"] is True
+    assert mock_detail.await_args.kwargs["include_summary"] is True
+    assert mock_detail.await_args.kwargs["offset"] == 0
+    assert mock_detail.await_args.kwargs["limit"] == 100000
 
 
 def test_standalone_detail_maps_not_found_error_to_404(
@@ -133,6 +152,11 @@ def test_standalone_detail_omits_unrequested_fields(
         "summary": {"summary": "hello"},
     }
     mock_detail.assert_awaited_once()
+    assert mock_detail.await_args.kwargs["document_id"] == 9
+    assert mock_detail.await_args.kwargs["include_content"] is False
+    assert mock_detail.await_args.kwargs["include_summary"] is True
+    assert mock_detail.await_args.kwargs["offset"] == 0
+    assert mock_detail.await_args.kwargs["limit"] == 100000
 
 
 def test_kb_scoped_detail_rejects_document_outside_requested_kb(

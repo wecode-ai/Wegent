@@ -575,9 +575,11 @@ class DocumentContentReadResponse(BaseModel):
     document_id: int = Field(..., description="Document ID")
     name: str = Field(..., description="Document name")
     content: str = Field(..., description="Document content (partial)")
-    total_length: int = Field(..., description="Total document length in characters")
-    offset: int = Field(..., description="Actual start position")
-    returned_length: int = Field(..., description="Number of characters returned")
+    total_length: int = Field(
+        ..., ge=0, description="Total document length in characters"
+    )
+    offset: int = Field(..., ge=0, description="Actual start position")
+    returned_length: int = Field(..., ge=0, description="Number of characters returned")
     has_more: bool = Field(..., description="Whether more content is available")
     kb_id: int = Field(..., description="Knowledge base ID")
 

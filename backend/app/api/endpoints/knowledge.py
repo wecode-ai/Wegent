@@ -47,7 +47,10 @@ from app.services.knowledge import (
     KnowledgeService,
     knowledge_base_qa_service,
 )
-from app.services.knowledge.orchestrator import knowledge_orchestrator
+from app.services.knowledge.orchestrator import (
+    MAX_DOCUMENT_READ_LIMIT,
+    knowledge_orchestrator,
+)
 from shared.telemetry.decorators import (
     add_span_event,
     capture_trace_context,
@@ -780,6 +783,8 @@ async def get_document_detail_standalone(
             document_id=document_id,
             include_content=include_content,
             include_summary=include_summary,
+            offset=0,
+            limit=MAX_DOCUMENT_READ_LIMIT,
         )
         return _serialize_standalone_document_detail(
             detail,
@@ -1141,6 +1146,8 @@ async def get_document_detail(
             document_id=doc_id,
             include_content=include_content,
             include_summary=include_summary,
+            offset=0,
+            limit=MAX_DOCUMENT_READ_LIMIT,
         )
     except ValueError as error:
         _raise_document_detail_http_error(error)

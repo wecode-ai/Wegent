@@ -241,6 +241,11 @@ class TestKnowledgeTool:
     def test_read_document_content_uses_shared_default_limit_constant(self):
         """Test that read_document_content reuses the shared default limit constant."""
         module = get_knowledge_module()
-        source = inspect.getsource(module.read_document_content)
+        target = getattr(
+            module.read_document_content,
+            "__wrapped__",
+            module.read_document_content,
+        )
+        default_limit = inspect.signature(target).parameters["limit"].default
 
-        assert "limit: int = 100000" not in source
+        assert default_limit == module.MAX_DOCUMENT_READ_LIMIT

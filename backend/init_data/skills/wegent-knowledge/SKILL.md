@@ -104,7 +104,7 @@ You now have access to Wegent Knowledge Base management tools.
    ```
 
 5. Update document content:
-   ```
+   ```text
    update_document_content(
      document_id=456,
      content="Updated notes with new information...",
@@ -113,7 +113,7 @@ You now have access to Wegent Knowledge Base management tools.
    ```
 
 6. Read long document content incrementally:
-   ```
+   ```text
    read_document_content(
      document_id=456,
      offset=0
