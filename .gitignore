@@ -94,6 +94,7 @@ coverage/
 .claude/settings.local.json
 .history
 .wegentrc
+.worktrees/
 
 # PyInstaller
 *.spec

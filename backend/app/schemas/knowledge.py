@@ -569,6 +569,19 @@ class DocumentDetailResponse(BaseModel):
     summary: Optional[dict] = Field(None, description="Document summary object")
 
 
+class DocumentContentReadResponse(BaseModel):
+    """Schema for raw document content reads with pagination metadata."""
+
+    document_id: int = Field(..., description="Document ID")
+    name: str = Field(..., description="Document name")
+    content: str = Field(..., description="Document content (partial)")
+    total_length: int = Field(..., description="Total document length in characters")
+    offset: int = Field(..., description="Actual start position")
+    returned_length: int = Field(..., description="Number of characters returned")
+    has_more: bool = Field(..., description="Whether more content is available")
+    kb_id: int = Field(..., description="Knowledge base ID")
+
+
 class DocumentContentUpdate(BaseModel):
     """Schema for updating document content (TEXT type only)."""
 
