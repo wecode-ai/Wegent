@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """
-WeCode device endpoints for Himalaya mail configuration.
+WeCode device endpoints for Sina mail configuration.
 """
 
 import logging
@@ -25,8 +25,8 @@ from wecode.schemas.himalaya_mail import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-HIMALAYA_EXTENSION_NAME = "himalaya-mail"
-HIMALAYA_EXTENSION_SCRIPT_PATH = "scripts/himalaya-executor-ext.sh"
+SINA_MAIL_EXTENSION_NAME = "sina-mail"
+SINA_MAIL_EXTENSION_SCRIPT_PATH = "scripts/sina-mail-executor-ext.sh"
 
 
 def _load_owned_device(db: Session, user_id: int, device_id: str):
@@ -54,16 +54,16 @@ def _load_owned_device(db: Session, user_id: int, device_id: str):
 
 
 @router.post(
-    "/{device_id}/himalaya-mail-config",
+    "/{device_id}/sina-mail-config",
     response_model=HimalayaMailConfigResponse,
 )
-async def create_himalaya_mail_config(
+async def create_sina_mail_config(
     device_id: str,
     request: HimalayaMailConfigRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ) -> HimalayaMailConfigResponse:
-    """Generate a Himalaya config file on a connected device."""
+    """Generate a Sina mail config file on a connected device."""
 
     user_id = current_user.id
     _, device_type = _load_owned_device(db, user_id, device_id)
@@ -87,7 +87,7 @@ async def create_himalaya_mail_config(
     try:
         payload = request.model_dump(exclude={"task_id"})
         logger.info(
-            "[Himalaya Mail Config] Sending device:run_extension to socket_id=%s, "
+            "[Sina Mail Config] Sending device:run_extension to socket_id=%s, "
             "device_id=%s, task_id=%s",
             socket_id,
             device_id,
@@ -97,8 +97,8 @@ async def create_himalaya_mail_config(
             "device:run_extension",
             {
                 "task_id": request.task_id,
-                "extension_name": HIMALAYA_EXTENSION_NAME,
-                "script_path": HIMALAYA_EXTENSION_SCRIPT_PATH,
+                "extension_name": SINA_MAIL_EXTENSION_NAME,
+                "script_path": SINA_MAIL_EXTENSION_SCRIPT_PATH,
                 "action": "configure",
                 "payload": payload,
             },
@@ -107,24 +107,24 @@ async def create_himalaya_mail_config(
             timeout=60,
         )
         logger.info(
-            "[Himalaya Mail Config] Received response from device: type=%s, value=%s",
+            "[Sina Mail Config] Received response from device: type=%s, value=%s",
             type(response).__name__,
             response if isinstance(response, dict) else repr(response)[:200],
         )
     except Exception as exc:
         logger.exception(
-            "[Himalaya Mail Config] Failed to dispatch command: user_id=%s, device_id=%s",
+            "[Sina Mail Config] Failed to dispatch command: user_id=%s, device_id=%s",
             user_id,
             device_id,
         )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Failed to configure Himalaya mail: {exc}",
+            detail=f"Failed to configure Sina mail: {exc}",
         ) from exc
 
     if response is None:
         logger.warning(
-            "[Himalaya Mail Config] No response from device (timeout or not connected): "
+            "[Sina Mail Config] No response from device (timeout or not connected): "
             "socket_id=%s, device_id=%s",
             socket_id,
             device_id,
@@ -136,7 +136,7 @@ async def create_himalaya_mail_config(
 
     if not isinstance(response, dict):
         logger.warning(
-            "[Himalaya Mail Config] Invalid response type from device: type=%s, value=%s",
+            "[Sina Mail Config] Invalid response type from device: type=%s, value=%s",
             type(response).__name__,
             repr(response)[:200],
         )
@@ -146,7 +146,7 @@ async def create_himalaya_mail_config(
         )
 
     success = bool(response.get("success"))
-    message = str(response.get("message") or "Failed to configure Himalaya mail")
+    message = str(response.get("message") or "Failed to configure Sina mail")
     if not success:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

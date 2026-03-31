@@ -32,7 +32,7 @@ import {
 import type { ModalParams, RegisteredModalProps } from '@/lib/scheme/modal-registry'
 import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
-import { himalayaMailApis, type HimalayaMailDomain } from '@wecode/apis'
+import { sinaMailApis, type HimalayaMailDomain } from '@wecode/apis'
 
 const EMAIL_DOMAIN_OPTIONS: HimalayaMailDomain[] = ['@staff.sina.com.cn', '@staff.weibo.com']
 const ONLINE_DEVICE_STATUSES = new Set<DeviceInfo['status']>(['online', 'busy'])
@@ -231,7 +231,7 @@ export function HimalayaMailConfigDialog({ open, onOpenChange, params }: Registe
 
     try {
       setSaving(true)
-      await himalayaMailApis.createConfig(selectedDeviceId, {
+      await sinaMailApis.createConfig(selectedDeviceId, {
         task_id: taskId,
         account_prefix: resolvedAccountPrefix,
         email_domain: emailDomain,

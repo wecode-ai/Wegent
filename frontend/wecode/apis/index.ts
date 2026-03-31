@@ -7,5 +7,5 @@
  */
 
 export * from './cloud-devices'
-export * from './himalaya-mail'
+export * from './sina-mail'
 export * from './mail-token'
