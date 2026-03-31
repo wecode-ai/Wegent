@@ -15,7 +15,7 @@ from app.services.rag.storage.chunk_metadata import ChunkMetadata
 
 
 class _FakeStorageBackend(BaseStorageBackend):
-    SUPPORTED_RETRIEVAL_METHODS = ["vector"]
+    SUPPORTED_RETRIEVAL_METHODS = ("vector",)
 
     def __init__(self):
         super().__init__({})
