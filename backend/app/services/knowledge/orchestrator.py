@@ -26,9 +26,12 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
+from app.models.knowledge import KnowledgeDocument
 from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.knowledge import (
+    DocumentContentReadResponse,
+    DocumentDetailResponse,
     KnowledgeBaseCreate,
     KnowledgeBaseListResponse,
     KnowledgeBaseResponse,
@@ -38,10 +41,25 @@ from app.schemas.knowledge import (
     ResourceScope,
 )
 from app.services.knowledge.knowledge_service import KnowledgeService
+from app.services.rag.document_read_service import (
+    DOCUMENT_READ_ERROR_NOT_FOUND,
+    document_read_service,
+)
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_TEXT_FILE_EXTENSION = "txt"
+MAX_DOCUMENT_READ_LIMIT = 100000
+REQUIRED_DOCUMENT_READ_KEYS = (
+    "id",
+    "name",
+    "content",
+    "total_length",
+    "offset",
+    "returned_length",
+    "has_more",
+    "kb_id",
+)
 
 
 def _normalize_file_extension(file_extension: Optional[str]) -> str:
@@ -67,6 +85,27 @@ def _build_filename(name: str, file_extension: str) -> str:
     """Build a safe filename for attachment upload."""
     ext = _normalize_file_extension(file_extension)
     return f"{name}.{ext}"
+
+
+def _validate_document_read_paging(offset: int, limit: int) -> None:
+    """Validate raw document read paging arguments."""
+    if offset < 0:
+        raise ValueError("offset must be greater than or equal to 0")
+    if limit <= 0:
+        raise ValueError("limit must be greater than 0")
+    if limit > MAX_DOCUMENT_READ_LIMIT:
+        raise ValueError(
+            f"limit must be less than or equal to {MAX_DOCUMENT_READ_LIMIT}"
+        )
+
+
+def _validate_document_read_result_payload(result: Dict[str, Any]) -> None:
+    """Validate the reader payload contains all required paginator fields."""
+    missing_keys = [key for key in REQUIRED_DOCUMENT_READ_KEYS if key not in result]
+    if missing_keys:
+        raise ValueError(
+            "Incomplete document read payload: missing " + ", ".join(missing_keys)
+        )
 
 
 class KnowledgeOrchestrator:
@@ -620,6 +659,144 @@ class KnowledgeOrchestrator:
         return KnowledgeDocumentListResponse(
             total=len(documents),
             items=[KnowledgeDocumentResponse.model_validate(doc) for doc in documents],
+        )
+
+    def _get_document_with_access_or_raise(
+        self,
+        db: Session,
+        user: User,
+        document_id: int,
+    ) -> KnowledgeDocument:
+        """Fetch a document and validate its knowledge-base level access."""
+        document = (
+            db.query(KnowledgeDocument)
+            .filter(KnowledgeDocument.id == document_id)
+            .first()
+        )
+        if not document:
+            raise ValueError("Document not found")
+
+        knowledge_base, has_access = KnowledgeService.get_knowledge_base(
+            db=db,
+            knowledge_base_id=document.kind_id,
+            user_id=user.id,
+        )
+        if not knowledge_base:
+            raise ValueError("Knowledge base not found")
+        if not has_access:
+            raise ValueError("Access denied to this document")
+
+        return document
+
+    def read_document_content(
+        self,
+        db: Session,
+        user: User,
+        document_id: int,
+        offset: int = 0,
+        limit: int = MAX_DOCUMENT_READ_LIMIT,
+    ) -> DocumentContentReadResponse:
+        """
+        Read raw document content with offset/limit pagination.
+
+        Args:
+            db: Database session
+            user: Current user
+            document_id: Document ID
+            offset: Read start offset
+            limit: Maximum number of characters to return
+
+        Returns:
+            DocumentContentReadResponse
+
+        Raises:
+            ValueError: If paging is invalid, the document is missing, or access fails
+        """
+        _validate_document_read_paging(offset=offset, limit=limit)
+
+        document = self._get_document_with_access_or_raise(
+            db=db,
+            user=user,
+            document_id=document_id,
+        )
+
+        results = document_read_service.read_documents(
+            db=db,
+            document_ids=[document_id],
+            offset=offset,
+            limit=limit,
+            knowledge_base_ids=[document.kind_id],
+        )
+        result = results[0] if results else None
+
+        if not result or result.get("error_code") == DOCUMENT_READ_ERROR_NOT_FOUND:
+            raise ValueError("Document not found")
+        if result.get("error"):
+            raise ValueError(result["error"])
+        _validate_document_read_result_payload(result)
+
+        return DocumentContentReadResponse(
+            document_id=result["id"],
+            name=result["name"],
+            content=result["content"],
+            total_length=result["total_length"],
+            offset=result["offset"],
+            returned_length=result["returned_length"],
+            has_more=result["has_more"],
+            kb_id=result["kb_id"],
+        )
+
+    async def get_document_detail(
+        self,
+        db: Session,
+        user: User,
+        document_id: int,
+        include_content: bool = True,
+        include_summary: bool = True,
+        offset: int = 0,
+        limit: int = MAX_DOCUMENT_READ_LIMIT,
+    ) -> DocumentDetailResponse:
+        """Aggregate optional document content and summary into a detail response."""
+        self._get_document_with_access_or_raise(
+            db=db,
+            user=user,
+            document_id=document_id,
+        )
+
+        content = None
+        content_length = None
+        truncated = None
+        summary = None
+
+        if include_content:
+            paged = self.read_document_content(
+                db=db,
+                user=user,
+                document_id=document_id,
+                offset=offset,
+                limit=limit,
+            )
+            content = paged.content
+            content_length = paged.total_length
+            truncated = (paged.offset > 0) or paged.has_more
+
+        if include_summary:
+            from app.services.knowledge.summary_service import get_summary_service
+
+            summary_service = get_summary_service(db)
+            summary_result = await summary_service.get_document_summary(document_id)
+            summary = (
+                summary_result.model_dump()
+                if hasattr(summary_result, "model_dump")
+                else summary_result
+            )
+
+        return DocumentDetailResponse(
+            document_id=document_id,
+            content=content,
+            content_length=content_length,
+            truncated=truncated,
+            summary=summary,
         )
 
     def get_knowledge_base(

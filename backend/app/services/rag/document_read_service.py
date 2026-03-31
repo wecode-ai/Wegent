@@ -14,6 +14,9 @@ from app.models.subtask_context import SubtaskContext
 
 logger = logging.getLogger(__name__)
 
+DOCUMENT_READ_ERROR_NOT_FOUND = "DOCUMENT_NOT_FOUND"
+DOCUMENT_READ_ERROR_ACCESS_DENIED = "DOCUMENT_ACCESS_DENIED"
+
 
 class DocumentReadService:
     """Read knowledge documents and optionally persist kb_head usage."""
@@ -164,7 +167,13 @@ class DocumentReadService:
         for document_id in document_ids:
             document = documents_by_id.get(document_id)
             if document is None:
-                results.append({"id": document_id, "error": "Document not found"})
+                results.append(
+                    {
+                        "id": document_id,
+                        "error": "Document not found",
+                        "error_code": DOCUMENT_READ_ERROR_NOT_FOUND,
+                    }
+                )
                 continue
 
             if allowed_kb_ids and document.kind_id not in allowed_kb_ids:
@@ -178,6 +187,7 @@ class DocumentReadService:
                     {
                         "id": document_id,
                         "error": "Access denied: document not in allowed knowledge bases",
+                        "error_code": DOCUMENT_READ_ERROR_ACCESS_DENIED,
                     }
                 )
                 continue

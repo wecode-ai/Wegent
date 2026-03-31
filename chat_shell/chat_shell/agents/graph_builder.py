@@ -902,6 +902,46 @@ class LangGraphAgentBuilder:
                             t.name for t in getattr(self, "all_tools", []) or []
                         ],
                     )
+                    try:
+                        event_meta = event.get("metadata") or {}
+                        data = event.get("data") or {}
+                        payload_input = data.get("input") or {}
+                        payload_messages = payload_input.get("messages") or []
+                        if not isinstance(payload_messages, list):
+                            payload_messages = []
+
+                        role_counts: dict[str, int] = {}
+                        last_user_content = ""
+                        for msg in payload_messages:
+                            if not isinstance(msg, dict):
+                                continue
+                            role = str(msg.get("role", "unknown"))
+                            role_counts[role] = role_counts.get(role, 0) + 1
+                            if role == "user":
+                                content = msg.get("content", "")
+                                if isinstance(content, str) and content.strip():
+                                    last_user_content = content.strip()
+
+                        task_id = event_meta.get("task_id")
+                        subtask_id = event_meta.get("subtask_id")
+                        logger.info(
+                            "[MODEL_REQUEST_SUMMARY] model=%s task_id=%s subtask_id=%s "
+                            "message_count=%d roles=%s last_user=%s",
+                            event.get("name", "unknown"),
+                            task_id,
+                            subtask_id,
+                            len(payload_messages),
+                            json.dumps(role_counts, ensure_ascii=False),
+                            (
+                                last_user_content[:500]
+                                if len(last_user_content) > 500
+                                else last_user_content
+                            ),
+                        )
+                    except Exception:
+                        logger.exception(
+                            "[MODEL_REQUEST_SUMMARY] Failed to summarize model request event"
+                        )
 
                 # Log streaming completion event (much less verbose)
                 if kind == "on_chat_model_stream":

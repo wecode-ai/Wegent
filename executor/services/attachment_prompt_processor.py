@@ -12,7 +12,7 @@ and builds image content blocks for vision support.
 import base64
 import logging
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Union
 
 logger = logging.getLogger(__name__)
 
@@ -36,10 +36,12 @@ class AttachmentPromptProcessor:
     @classmethod
     def process_prompt(
         cls,
-        prompt: str,
+        prompt: Union[str, list[dict[str, Any]]],
         success_attachments: List[Dict[str, Any]],
         failed_attachments: List[Dict[str, Any]],
-    ) -> str:
+        task_id: int | None = None,
+        subtask_id: int | None = None,
+    ) -> Union[str, list[dict[str, Any]]]:
         """
         Process prompt to replace attachment references with local paths
         and add warnings for failed downloads.
@@ -52,8 +54,6 @@ class AttachmentPromptProcessor:
         Returns:
             Processed prompt with replacements and warnings
         """
-        processed_prompt = prompt
-
         # Build id -> attachment mapping for successful downloads
         id_to_attachment = {att["id"]: att for att in success_attachments}
 
@@ -72,20 +72,63 @@ class AttachmentPromptProcessor:
             else:
                 return f"[Attachment {att_id} unavailable]"
 
-        processed_prompt = cls.ATTACHMENT_REF_PATTERN.sub(replace_ref, processed_prompt)
+        def rewrite_text(text: str) -> str:
+            processed_text = cls.ATTACHMENT_REF_PATTERN.sub(replace_ref, text)
 
-        # Add warning for failed attachments at the end of prompt
-        if failed_attachments:
-            warning_lines = [
-                "\n\n⚠️ The following attachments failed to download and are unavailable:"
-            ]
-            for att in failed_attachments:
-                filename = att.get("original_filename", "unknown")
-                error = att.get("error", "Unknown error")
-                warning_lines.append(f"- {filename} (Error: {error})")
-            processed_prompt += "\n".join(warning_lines)
+            for att in success_attachments:
+                local_path = att.get("local_path", "")
+                if not local_path:
+                    continue
 
-        return processed_prompt
+                sandbox_path = cls._build_sandbox_path(
+                    task_id=task_id,
+                    subtask_id=att.get("subtask_id", subtask_id),
+                    filename=att.get("original_filename", ""),
+                )
+                if sandbox_path:
+                    processed_text = processed_text.replace(
+                        f"File Path(already in sandbox): {sandbox_path}",
+                        f"Local File Path: {local_path}",
+                    )
+                    processed_text = processed_text.replace(sandbox_path, local_path)
+
+            if failed_attachments:
+                warning_lines = [
+                    "\n\n⚠️ The following attachments failed to download and are unavailable:"
+                ]
+                for att in failed_attachments:
+                    filename = att.get("original_filename", "unknown")
+                    error = att.get("error", "Unknown error")
+                    warning_lines.append(f"- {filename} (Error: {error})")
+                processed_text += "\n".join(warning_lines)
+
+            return processed_text
+
+        if isinstance(prompt, list):
+            processed_blocks: list[dict[str, Any]] = []
+            for block in prompt:
+                updated_block = block.copy()
+                if updated_block.get("type") in ("input_text", "text") and isinstance(
+                    updated_block.get("text"), str
+                ):
+                    updated_block["text"] = rewrite_text(updated_block["text"])
+                processed_blocks.append(updated_block)
+            return processed_blocks
+
+        return rewrite_text(prompt)
+
+    @staticmethod
+    def _build_sandbox_path(
+        task_id: int | None,
+        subtask_id: int | None,
+        filename: str,
+    ) -> str | None:
+        """Build the backend-injected sandbox path for attachment text blocks."""
+        if task_id is None or subtask_id is None:
+            return None
+
+        safe_name = filename.replace("\n", "").replace("\r", "")
+        return f"/home/user/{task_id}:executor:attachments/{subtask_id}/{safe_name}"
 
     @classmethod
     def build_attachment_context(
@@ -97,7 +140,6 @@ class AttachmentPromptProcessor:
 
         Args:
             success_attachments: Successfully downloaded attachments
-
         Returns:
             Context string describing available attachments and their paths,
             wrapped in <attachment> tags

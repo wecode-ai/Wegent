@@ -266,6 +266,14 @@ async def get_chat_history(
         is_http,
     )
 
+    if limit is not None and limit <= 0:
+        logger.info(
+            "[history] get_chat_history: history disabled by limit=%s for task_id=%d",
+            limit,
+            task_id,
+        )
+        return []
+
     if is_http:
         history = await _load_history_from_remote(
             task_id, is_group_chat, exclude_after_message_id, limit

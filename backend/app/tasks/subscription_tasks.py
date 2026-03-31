@@ -27,6 +27,7 @@ from sqlalchemy.orm import Session
 from app.core.celery_app import celery_app
 from app.core.config import settings
 from app.services.subscription.helpers import validate_subscription_for_read
+from shared.telemetry.context import get_request_id, set_request_context
 
 logger = logging.getLogger(__name__)
 
@@ -269,6 +270,27 @@ def _load_subscription_execution_context(
     )
 
 
+def _init_subscription_request_context(
+    subscription_id: int,
+    execution_id: int,
+    explicit_request_id: Optional[str] = None,
+    source: str = "subscription",
+) -> str:
+    """Initialize request context for subscription execution logging."""
+    if explicit_request_id:
+        request_id = explicit_request_id
+    else:
+        current_request_id = get_request_id()
+        request_id = (
+            current_request_id
+            if current_request_id
+            else f"sub-{source}-{subscription_id}-{execution_id}"
+        )
+
+    set_request_context(request_id)
+    return request_id
+
+
 def _load_workspace_info(db: Session, workspace_id: Optional[int]) -> WorkspaceInfo:
     """Load workspace information if workspace_id is specified."""
     from app.core.constants import KIND_WORKSPACE
@@ -495,9 +517,7 @@ async def _create_subscription_task(
             .filter(
                 TaskResource.id == ctx.bound_task_id,
                 TaskResource.kind == "Task",
-                TaskResource.is_active.in_(
-                    [TaskResource.STATE_ACTIVE, TaskResource.STATE_SUBSCRIPTION]
-                ),
+                TaskResource.is_active.in_(TaskResource.is_active_query()),
             )
             .first()
         )
@@ -1241,6 +1261,19 @@ def execute_subscription_task(
 
     with get_db_session() as db:
         try:
+            request_id = _init_subscription_request_context(
+                subscription_id=subscription_id,
+                execution_id=execution_id,
+                source="celery",
+            )
+            logger.info(
+                "[subscription_tasks] request context initialized: "
+                "subscription_id=%d, execution_id=%d, request_id=%s",
+                subscription_id,
+                execution_id,
+                request_id,
+            )
+
             # Load all required entities
             ctx = _load_subscription_execution_context(
                 db, subscription_id, execution_id
@@ -1331,6 +1364,12 @@ def execute_subscription_task(
                     from app.models.task import TaskResource
                     from app.models.user import User
 
+                    _init_subscription_request_context(
+                        subscription_id=subscription_id,
+                        execution_id=execution_id,
+                        explicit_request_id=request_id,
+                        source="celery-thread",
+                    )
                     thread_loop = asyncio.new_event_loop()
                     asyncio.set_event_loop(thread_loop)
                     try:
@@ -1693,6 +1732,19 @@ def execute_subscription_task_sync(
 
     with get_db_session() as db:
         try:
+            request_id = _init_subscription_request_context(
+                subscription_id=subscription_id,
+                execution_id=execution_id,
+                source="sync",
+            )
+            logger.info(
+                "[subscription_tasks] request context initialized (sync): "
+                "subscription_id=%d, execution_id=%d, request_id=%s",
+                subscription_id,
+                execution_id,
+                request_id,
+            )
+
             # Load all required entities
             ctx = _load_subscription_execution_context(
                 db, subscription_id, execution_id
@@ -1782,6 +1834,12 @@ def execute_subscription_task_sync(
                     from app.models.task import TaskResource
                     from app.models.user import User
 
+                    _init_subscription_request_context(
+                        subscription_id=subscription_id,
+                        execution_id=execution_id,
+                        explicit_request_id=request_id,
+                        source="sync-thread",
+                    )
                     thread_loop = asyncio.new_event_loop()
                     asyncio.set_event_loop(thread_loop)
                     try:

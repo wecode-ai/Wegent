@@ -43,6 +43,7 @@ from executor.agents.claude_code.multimodal_prompt import (
     save_vision_images,
 )
 from executor.agents.claude_code.progress_state_manager import ProgressStateManager
+from executor.agents.claude_code.prompt_enrichment import inject_kb_meta_prompt
 from executor.agents.claude_code.response_processor import (
     process_response,
 )
@@ -652,6 +653,14 @@ class ClaudeCodeAgent(Agent):
                     logger.info(
                         f"Added skill emphasis for {len(user_selected_skills)} user-selected skills: {user_selected_skills}"
                     )
+                prompt = inject_kb_meta_prompt(
+                    prompt,
+                    self.task_data.kb_meta_prompt,
+                    executor_mode=config.EXECUTOR_MODE,
+                    is_user_selected_kb=self.task_data.is_user_selected_kb,
+                )
+                if self.task_data.kb_meta_prompt and config.EXECUTOR_MODE == "local":
+                    logger.info("Injected kb_meta_prompt into ClaudeCode query prompt")
                 if self.options.get("cwd"):
                     cwd_text = "\nCurrent working directory: " + self.options.get("cwd")
                     git_url = self.task_data.git_url
@@ -674,6 +683,19 @@ class ClaudeCodeAgent(Agent):
                         logger.info(
                             f"Added skill emphasis for {len(user_selected_skills)} user-selected skills: {user_selected_skills}"
                         )
+                    prompt = inject_kb_meta_prompt(
+                        prompt,
+                        self.task_data.kb_meta_prompt,
+                        executor_mode=config.EXECUTOR_MODE,
+                        is_user_selected_kb=self.task_data.is_user_selected_kb,
+                    )
+                    if (
+                        self.task_data.kb_meta_prompt
+                        and config.EXECUTOR_MODE == "local"
+                    ):
+                        logger.info(
+                            "Injected kb_meta_prompt into ClaudeCode query prompt"
+                        )
                     if self.options.get("cwd"):
                         cwd_text = "\nCurrent working directory: " + self.options.get(
                             "cwd"
@@ -693,6 +715,19 @@ class ClaudeCodeAgent(Agent):
                         prompt = skill_emphasis + "\n\n" + prompt
                         logger.info(
                             f"Added skill emphasis for {len(user_selected_skills)} user-selected skills: {user_selected_skills}"
+                        )
+                    prompt = inject_kb_meta_prompt(
+                        prompt,
+                        self.task_data.kb_meta_prompt,
+                        executor_mode=config.EXECUTOR_MODE,
+                        is_user_selected_kb=self.task_data.is_user_selected_kb,
+                    )
+                    if (
+                        self.task_data.kb_meta_prompt
+                        and config.EXECUTOR_MODE == "local"
+                    ):
+                        logger.info(
+                            "Injected kb_meta_prompt into ClaudeCode query prompt"
                         )
                     if self.options.get("cwd"):
                         prompt = (

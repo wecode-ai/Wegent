@@ -13,6 +13,7 @@ Note: Agent creation is NOT handled here - it belongs to the service layer.
 """
 
 import asyncio
+import json
 import logging
 from dataclasses import dataclass, field
 from typing import Any
@@ -240,6 +241,21 @@ class ChatContext:
         """Load chat history asynchronously."""
         from chat_shell.history import get_chat_history
 
+        request_history = (
+            list(self._request.history)
+            if isinstance(self._request.history, list) and self._request.history
+            else []
+        )
+        if self._request.stateless:
+            logger.info(
+                "[CHAT_CONTEXT] Using request-provided history for stateless request: "
+                "task_id=%d, subtask_id=%d, count=%d",
+                self._request.task_id,
+                self._request.subtask_id,
+                len(request_history),
+            )
+            return request_history
+
         # Use user_message_id to exclude current user message (and all messages after it)
         # If user_message_id is not provided, infer it from message_id:
         # message_id is assistant_subtask.message_id, user message is message_id - 1
@@ -278,6 +294,19 @@ class ChatContext:
             len(history),
             history_limit,
         )
+        if (
+            not history
+            and request_history
+            and (history_limit is None or history_limit > 0)
+        ):
+            logger.info(
+                "[CHAT_CONTEXT] Falling back to request-provided history: task_id=%d, "
+                "subtask_id=%d, count=%d",
+                self._request.task_id,
+                self._request.subtask_id,
+                len(request_history),
+            )
+            return request_history
         return history
 
     @trace_async(
@@ -693,6 +722,36 @@ class ChatContext:
         extra_tools = (
             list(self._request.extra_tools) if self._request.extra_tools else []
         )
+        logger.info(
+            "[CHAT_CONTEXT] Building extra tools: task_id=%d subtask_id=%d enable_tools=%s "
+            "enable_web_search=%s is_subscription=%s preset_extra_tools=%d",
+            self._request.task_id,
+            self._request.subtask_id,
+            self._request.enable_tools,
+            self._request.enable_web_search,
+            self._request.is_subscription,
+            len(extra_tools),
+        )
+        if not self._request.enable_tools:
+            if extra_tools:
+                tool_names = [
+                    tool.name for tool in extra_tools if hasattr(tool, "name")
+                ]
+                logger.info(
+                    "[CHAT_CONTEXT] Returning preset extra tools only because enable_tools=false: "
+                    "task_id=%d subtask_id=%d tool_names=%s",
+                    self._request.task_id,
+                    self._request.subtask_id,
+                    json.dumps(tool_names, ensure_ascii=False),
+                )
+            else:
+                logger.info(
+                    "[CHAT_CONTEXT] Skipping builtin/skill/mcp tools because enable_tools=false: "
+                    "task_id=%d subtask_id=%d",
+                    self._request.task_id,
+                    self._request.subtask_id,
+                )
+            return extra_tools
 
         # === Builtin Tools ===
 
@@ -834,5 +893,22 @@ class ChatContext:
         mcp_tools, _ = mcp_result
         if mcp_tools:
             extra_tools.extend(mcp_tools)
+
+        tool_names = [tool.name for tool in extra_tools if hasattr(tool, "name")]
+        logger.info(
+            "[CHAT_CONTEXT] Built extra tools: task_id=%d subtask_id=%d count=%d tool_names=%s",
+            self._request.task_id,
+            self._request.subtask_id,
+            len(extra_tools),
+            json.dumps(tool_names, ensure_ascii=False),
+        )
+        if not self._request.enable_tools and tool_names:
+            logger.warning(
+                "[CHAT_CONTEXT] enable_tools=false but tools were still attached: "
+                "task_id=%d subtask_id=%d tool_names=%s",
+                self._request.task_id,
+                self._request.subtask_id,
+                json.dumps(tool_names, ensure_ascii=False),
+            )
 
         return extra_tools

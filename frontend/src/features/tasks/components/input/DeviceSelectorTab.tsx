@@ -17,7 +17,7 @@
  */
 
 import { useMemo, useRef, useEffect, useCallback, useState } from 'react'
-import type { MouseEvent } from 'react'
+import type { KeyboardEvent, MouseEvent } from 'react'
 import { useDevices } from '@/contexts/DeviceContext'
 import { useUser } from '@/features/common/UserContext'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -59,6 +59,19 @@ interface DeviceSelectorTabProps {
 /**
  * Device card component for the selector grid
  */
+function handleSelectableCardKeyDown(
+  event: KeyboardEvent<HTMLDivElement>,
+  isDisabled: boolean,
+  onSelect: () => void
+) {
+  if (isDisabled) return
+
+  if (event.key === 'Enter' || event.key === ' ') {
+    event.preventDefault()
+    onSelect()
+  }
+}
+
 function DeviceCard({
   device,
   isSelected,
@@ -80,10 +93,12 @@ function DeviceCard({
   const isDisabled = disabled || isFull || isOffline
 
   return (
-    <button
-      type="button"
+    <div
+      role="button"
+      tabIndex={isDisabled ? -1 : 0}
+      aria-disabled={isDisabled}
       onClick={() => !isDisabled && onSelect()}
-      disabled={isDisabled}
+      onKeyDown={event => handleSelectableCardKeyDown(event, isDisabled, onSelect)}
       data-testid={`device-card-${device.device_id}`}
       className={cn(
         'group relative flex flex-col p-3 rounded-lg border-2 transition-all text-left w-full min-h-[88px]',
@@ -144,7 +159,7 @@ function DeviceCard({
           </button>
         )}
       </div>
-    </button>
+    </div>
   )
 }
 
@@ -167,10 +182,12 @@ function CloudModeCard({
   const { t } = useTranslation('devices')
 
   return (
-    <button
-      type="button"
+    <div
+      role="button"
+      tabIndex={disabled ? -1 : 0}
+      aria-disabled={disabled}
       onClick={() => !disabled && onSelect()}
-      disabled={disabled}
+      onKeyDown={event => handleSelectableCardKeyDown(event, disabled, onSelect)}
       data-testid="cloud-mode-card"
       className={cn(
         'group relative flex flex-col p-3 rounded-lg border-2 transition-all text-left w-full min-h-[88px]',
@@ -213,7 +230,7 @@ function CloudModeCard({
           </button>
         )}
       </div>
-    </button>
+    </div>
   )
 }
 

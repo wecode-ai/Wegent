@@ -114,9 +114,9 @@ class DockerModeStrategy(ExecutionModeStrategy):
         updated_options = options.copy()
         existing_env = dict(updated_options.get("env", {}))
         merged_env = {**existing_env, **env_config, **task_identity_env}
-
-        if merged_env:
-            updated_options["env"] = {k: str(v) for k, v in merged_env.items()}
+        runtime_env = {k: str(v) for k, v in merged_env.items()}
+        runtime_env["SKILLS_DIR"] = self.get_skills_directory()
+        updated_options["env"] = runtime_env
 
         return updated_options
 

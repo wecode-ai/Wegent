@@ -351,6 +351,12 @@ class Settings(BaseSettings):
     # - "fallback": Try direct connection first, use proxy only if direct fails
     # Default is "fallback" for better reliability
     WEBSCRAPER_PROXY_MODE: str = "fallback"
+    # Web scraper site-specific configuration
+    # Configuration for specific sites that require special handling
+    # due to anti-bot detection, dynamic content loading, or navigation patterns
+    # Format: JSON object with site URL patterns as keys
+    # WEB_SCRAPER_SITE_CONFIG={"Example.com":{"wait_until":"networkidle","page_timeout":30000,"delay_before_return_html":3.0}}
+    WEB_SCRAPER_SITE_CONFIG: str = "{}"
 
     # Web search configuration
     WEB_SEARCH_ENABLED: bool = False  # Enable/disable web search feature

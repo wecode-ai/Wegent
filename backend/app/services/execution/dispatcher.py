@@ -506,6 +506,31 @@ class ExecutionDispatcher:
         model_config = request.model_config or {}
         return model_config.get("modelType", "llm")
 
+    @staticmethod
+    def _resolve_request_id(
+        request: ExecutionRequest,
+        metadata: dict[str, Any],
+    ) -> tuple[str, str]:
+        """Resolve request_id for backend -> chat_shell correlation.
+
+        Priority:
+        1. Existing metadata.request_id (already propagated)
+        2. request.request_id
+        3. Generated fallback: req_{subtask_id}
+
+        Returns:
+            tuple: (request_id, source)
+        """
+        metadata_request_id = str(metadata.get("request_id", "")).strip()
+        if metadata_request_id:
+            return metadata_request_id, "metadata"
+
+        request_request_id = str(getattr(request, "request_id", "")).strip()
+        if request_request_id:
+            return request_request_id, "request"
+
+        return f"req_{request.subtask_id}", "generated"
+
     async def dispatch_with_composite(
         self,
         request: ExecutionRequest,
@@ -596,10 +621,11 @@ class ExecutionDispatcher:
         # Convert ExecutionRequest to OpenAI format
         openai_request = OpenAIRequestConverter.from_execution_request(request)
 
-        # Ensure request_id is set in metadata for cancellation support
-        # This must match the format used in _cancel_sse: f"req_{subtask_id}"
+        # Ensure request_id is set in metadata for backend -> chat_shell correlation.
+        # Preserve existing request_id if provided by upstream backend request context.
         metadata = openai_request.get("metadata", {})
-        metadata["request_id"] = f"req_{request.subtask_id}"
+        request_id, request_id_source = self._resolve_request_id(request, metadata)
+        metadata["request_id"] = request_id
         openai_request["metadata"] = metadata
 
         # Get tools from openai_request (includes MCP servers converted to tools)
@@ -608,7 +634,7 @@ class ExecutionDispatcher:
         logger.info(
             f"[ExecutionDispatcher] Sending OpenAI request: model={openai_request.get('model')}, "
             f"task_id={request.task_id}, subtask_id={request.subtask_id}, "
-            f"tools_count={len(tools)}"
+            f"tools_count={len(tools)}, request_id={request_id}, request_id_source={request_id_source}"
         )
 
         # Stream response using OpenAI client
@@ -636,6 +662,7 @@ class ExecutionDispatcher:
         event_count = 0
         last_cancel_check = 0
         cancelled = False
+        terminal_event_type = ""
 
         try:
             # Process streaming events
@@ -691,6 +718,15 @@ class ExecutionDispatcher:
                 )
 
                 if parsed_event:
+                    logger.info(
+                        "[ExecutionDispatcher] Parsed SSE event -> internal event: "
+                        "task_id=%d, subtask_id=%d, request_id=%s, sse_event=%s, internal_event=%s",
+                        request.task_id,
+                        request.subtask_id,
+                        request_id,
+                        event_type,
+                        parsed_event.type,
+                    )
                     await emitter.emit(parsed_event)
 
                 # Break out of loop on terminal events
@@ -701,10 +737,11 @@ class ExecutionDispatcher:
                     ResponsesAPIStreamEvents.ERROR.value,
                     ResponsesAPIStreamEvents.RESPONSE_INCOMPLETE.value,
                 ):
+                    terminal_event_type = event_type
                     logger.info(
                         f"[ExecutionDispatcher] Terminal event received, breaking stream loop: "
                         f"task_id={request.task_id}, subtask_id={request.subtask_id}, "
-                        f"event_type={event_type}"
+                        f"event_type={event_type}, request_id={request_id}"
                     )
                     break
 
@@ -719,11 +756,22 @@ class ExecutionDispatcher:
                     )
                 )
 
+            if not cancelled and not terminal_event_type:
+                logger.warning(
+                    "[ExecutionDispatcher] SSE stream ended without terminal event: "
+                    "task_id=%d, subtask_id=%d, request_id=%s, total_events=%d",
+                    request.task_id,
+                    request.subtask_id,
+                    request_id,
+                    event_count,
+                )
+
             # Log when stream iteration completes
             logger.info(
                 f"[ExecutionDispatcher] SSE stream completed: "
                 f"task_id={request.task_id}, subtask_id={request.subtask_id}, "
-                f"total_events={event_count}, cancelled={cancelled}"
+                f"total_events={event_count}, cancelled={cancelled}, "
+                f"terminal_event_type={terminal_event_type or 'none'}, request_id={request_id}"
             )
         finally:
             # Unregister stream to clean up
@@ -1284,10 +1332,13 @@ class ExecutionDispatcher:
         """
         url = f"{target.url}/v1/responses/error"
         try:
+            request_id, _ = self._resolve_request_id(
+                request, {"request_id": getattr(request, "request_id", "")}
+            )
             await self.http_client.post(
                 url,
                 json={
-                    "request_id": f"req_{request.subtask_id}",
+                    "request_id": request_id,
                     "error": error_message,
                 },
             )

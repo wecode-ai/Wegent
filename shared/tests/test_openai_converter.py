@@ -69,15 +69,22 @@ def test_round_trip_preserves_skill_reference_metadata():
     assert converted.preload_skill_refs == request.preload_skill_refs
 
 
-def test_round_trip_preserves_skill_identity_token():
-    request = ExecutionRequest(
-        task_id=4303,
-        subtask_id=5929,
-        skill_identity_token="skill-jwt",
-    )
+def test_to_execution_request_preserves_message_history_and_stateless_flag():
+    openai_request = {
+        "model": "test-model",
+        "input": [
+            {"role": "user", "content": "第一条用户消息"},
+            {"role": "user", "content": "第二条用户消息"},
+        ],
+        "metadata": {
+            "stateless": True,
+            "enable_tools": False,
+        },
+    }
 
-    openai_request = OpenAIRequestConverter.from_execution_request(request)
-    converted = OpenAIRequestConverter.to_execution_request(openai_request)
+    request = OpenAIRequestConverter.to_execution_request(openai_request)
 
-    assert openai_request["metadata"]["skill_identity_token"] == "skill-jwt"
-    assert converted.skill_identity_token == "skill-jwt"
+    assert request.stateless is True
+    assert request.enable_tools is False
+    assert request.history == [{"role": "user", "content": "第一条用户消息"}]
+    assert request.prompt == "第二条用户消息"

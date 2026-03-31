@@ -9,9 +9,11 @@ Verifies that skill MCP extraction, type normalization, and reachability
 filtering work correctly when preparing MCP servers for Claude Code executor.
 """
 
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from app.services.execution.request_builder import TaskRequestBuilder
+from shared.models.execution import ExecutionRequest
 
 
 class TestExtractSkillMcpToList:
@@ -130,6 +132,29 @@ class TestExtractSkillMcpToList:
         ]
         result = TaskRequestBuilder._extract_skill_mcp_to_list(configs)
         assert result == []
+
+    def test_selected_kb_skill_keeps_unprefixed_server_name(self):
+        configs = [
+            {
+                "name": "wegent-knowledge",
+                "mcpServers": {
+                    "wegent-knowledge": {
+                        "type": "streamable-http",
+                        "url": "http://mcp.example.com/kb",
+                    }
+                },
+            }
+        ]
+
+        result = TaskRequestBuilder._extract_skill_mcp_to_list(configs)
+
+        assert result == [
+            {
+                "name": "wegent-knowledge",
+                "type": "streamable-http",
+                "url": "http://mcp.example.com/kb",
+            }
+        ]
 
 
 class TestNormalizeMcpTypesForClaudeCode:
@@ -357,3 +382,78 @@ class TestPrepareMcpForClaudeCode:
 
         assert len(bot_config["mcp_servers"]) == 1
         assert bot_config["mcp_servers"][0]["name"] == "ghost-server"
+
+
+class TestResolveRequestPreloadSkills:
+    """Tests for late skill resolution after context processing."""
+
+    @patch.object(
+        TaskRequestBuilder,
+        "_check_mcp_server_reachable",
+        return_value=True,
+    )
+    def test_selected_kb_skill_resolves_into_request_and_claude_mcp(self, mock_check):
+        builder = TaskRequestBuilder.__new__(TaskRequestBuilder)
+        request = ExecutionRequest(
+            task_id=1273,
+            subtask_id=1709,
+            knowledge_base_ids=[1408],
+            is_user_selected_kb=True,
+            skill_names=["browser"],
+            skill_configs=[{"name": "browser"}],
+            preload_skills=["wegent-knowledge"],
+            user_selected_skills=["wegent-knowledge"],
+            bot=[
+                {
+                    "shell_type": "ClaudeCode",
+                    "skills": ["browser"],
+                    "mcp_servers": [],
+                }
+            ],
+        )
+        bot = SimpleNamespace(name="chat-bot")
+        team = SimpleNamespace(namespace="default")
+
+        builder._get_bot_skills = lambda **kwargs: (
+            [
+                {"name": "browser"},
+                {
+                    "name": "wegent-knowledge",
+                    "mcpServers": {
+                        "wegent-knowledge": {
+                            "type": "streamable-http",
+                            "url": "${{backend_url}}/mcp/knowledge/sse",
+                        }
+                    },
+                },
+            ],
+            ["wegent-knowledge"],
+            ["wegent-knowledge"],
+            {
+                "wegent-knowledge": {
+                    "skill_id": 99,
+                    "namespace": "default",
+                    "is_public": True,
+                }
+            },
+        )
+
+        result = builder.resolve_request_preload_skills(
+            request=request,
+            bot=bot,
+            team=team,
+            user_id=7,
+        )
+
+        assert result.skill_names == ["browser", "wegent-knowledge"]
+        assert result.preload_skills == ["wegent-knowledge"]
+        assert result.user_selected_skills == ["wegent-knowledge"]
+        assert result.skill_refs["wegent-knowledge"]["is_public"] is True
+        assert "wegent-knowledge" in result.bot[0]["skills"]
+        assert result.bot[0]["mcp_servers"] == [
+            {
+                "name": "wegent-knowledge",
+                "type": "http",
+                "url": "${{backend_url}}/mcp/knowledge/sse",
+            }
+        ]
