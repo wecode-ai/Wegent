@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import type { Team, GitRepoInfo, GitBranch, TaskDetail } from '@/types/api'
+import type { Team, GitRepoInfo, GitBranch, TaskDetail, TaskType } from '@/types/api'
 import { taskApis, CreateTaskRequest } from '@/apis/tasks'
 
 /**
@@ -36,6 +36,18 @@ export function isChatShell(team: Team | null): boolean {
   }
 
   return false
+}
+
+export function canUseChatContexts(taskType: TaskType | undefined, team: Team | null): boolean {
+  if (taskType === 'code') {
+    return false
+  }
+
+  if (taskType === 'task') {
+    return true
+  }
+
+  return isChatShell(team)
 }
 
 /**

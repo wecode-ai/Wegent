@@ -27,7 +27,7 @@ import type {
 } from '@/types/api'
 import type { ContextItem } from '@/types/context'
 import type { UnifiedSkill } from '@/apis/skills'
-import { isChatShell } from '../../service/messageService'
+import { canUseChatContexts, isChatShell } from '../../service/messageService'
 import { supportsAttachments } from '../../service/attachmentService'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { MobileChatInputControls } from './MobileChatInputControls'
@@ -256,6 +256,7 @@ export function ChatInputControls({
   // Always use compact mode (icon only) to save space
   const shouldUseCompactQuota = true
   const isMobile = useIsMobile()
+  const showChatContexts = canUseChatContexts(taskType, selectedTeam)
 
   // Determine the send button state
   const renderSendButton = () => {
@@ -330,6 +331,7 @@ export function ChatInputControls({
     return (
       <MobileChatInputControls
         selectedTeam={selectedTeam}
+        taskType={taskType}
         selectedModel={selectedModel}
         setSelectedModel={setSelectedModel}
         forceOverride={forceOverride}
@@ -520,7 +522,7 @@ export function ChatInputControls({
             )}
 
             {/* Context Selection - only show for chat shell */}
-            {isChatShell(selectedTeam) && (
+            {showChatContexts && (
               <ChatContextInput
                 selectedContexts={selectedContexts}
                 onContextsChange={setSelectedContexts}

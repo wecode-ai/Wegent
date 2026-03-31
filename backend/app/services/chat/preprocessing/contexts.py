@@ -312,7 +312,9 @@ def _process_attachment_context(
         # Text document - get formatted content with attachment index
         # The content is wrapped in <attachment> XML tags by context_service
         doc_prefix = context_service.build_document_text_prefix(
-            context, task_id=task_id, subtask_id=subtask_id
+            context,
+            task_id=task_id,
+            subtask_id=subtask_id,
         )
         if doc_prefix:
             text_contents.append(f"[Attachment {idx}]\n{doc_prefix}")
@@ -848,7 +850,6 @@ async def prepare_contexts_for_chat(
             Used for selected_documents injection threshold calculation.
             If None, uses default value (128000).
         model_config: Optional model configuration used by restricted KB safe summary.
-
     Returns:
         ChatContextsResult with processed message, table info, and KB results.
     """
@@ -891,7 +892,10 @@ async def prepare_contexts_for_chat(
 
     # 1. Process attachment contexts - inject into message
     final_message = await _process_attachment_contexts_for_message(
-        attachment_contexts, message, task_id=task_id, subtask_id=user_subtask_id
+        attachment_contexts,
+        message,
+        task_id=task_id,
+        subtask_id=user_subtask_id,
     )
 
     # 2. Process knowledge base contexts - create tools
@@ -1022,7 +1026,6 @@ async def _process_attachment_contexts_for_message(
         message: Original user message
         task_id: Optional task ID for building sandbox path
         subtask_id: Optional subtask ID for building sandbox path
-
     Returns:
         Message with attachment contents prepended, or OpenAI Responses API
         format vision content list for images

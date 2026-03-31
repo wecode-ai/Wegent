@@ -15,6 +15,7 @@ To improve cache hit rate, we split “dynamic metadata” out of the system pro
 - Keep the **system prompt fully static** whenever possible so it can be cached.
 - Inject all request-scoped metadata as a separate **human/user message**.
 - Make the mechanism extensible: internal deployments can append `weibo_context` or other dynamic blocks in the same place.
+- Keep **tool-routing rules and policy** inside static prompt templates rather than dynamic context.
 
 ## Message Structure
 
@@ -50,6 +51,7 @@ messages.append(current_user_message_with_datetime_suffix)
 - Backend builds `kb_meta_prompt` from historical contexts (KB name/ID/summary/topics, etc.).
 - Backend writes it into the unified protocol [`ExecutionRequest`](shared/models/execution.py:46) as `kb_meta_prompt`.
 - Chat Shell injects it into messages as `dynamic_context`.
+- `kb_meta_prompt` should carry **request-scoped facts only**. It should not duplicate KB workflow rules, tool policy, or response policy that already belongs in static prompt templates.
 
 ### Restricted mode: safe kb_meta_prompt
 

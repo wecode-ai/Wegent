@@ -4,7 +4,10 @@
 
 """Tests for skill deployment resolution strategy."""
 
-from executor.agents.claude_code.skill_deployer import resolve_skill_download_map
+from executor.agents.claude_code.skill_deployer import (
+    build_skill_emphasis_prompt,
+    resolve_skill_download_map,
+)
 
 
 def test_resolve_skill_download_map_prefers_skill_config_and_preload_override():
@@ -62,3 +65,11 @@ def test_resolve_skill_download_map_prefers_explicit_refs_over_skill_configs():
     )
 
     assert resolved["conflict-skill"]["skill_id"] == 222
+
+
+def test_build_skill_emphasis_prompt_prioritizes_selected_kb_skill():
+    prompt = build_skill_emphasis_prompt(["wegent-knowledge"])
+
+    assert "wegent-knowledge" in prompt
+    assert "selected knowledge bases" in prompt.lower()
+    assert "before web search" in prompt.lower()
