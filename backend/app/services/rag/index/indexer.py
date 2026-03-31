@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional
 from llama_index.core import Document, SimpleDirectoryReader
 
 from app.schemas.rag import SplitterConfig
+from app.services.rag.preprocess import sanitize_text_for_indexing
 from app.services.rag.splitter import SemanticSplitter, SentenceSplitter, SmartSplitter
 from app.services.rag.splitter.factory import create_splitter
 from app.services.rag.storage.base import BaseStorageBackend
@@ -66,6 +67,29 @@ def sanitize_metadata(metadata: Dict[str, Any]) -> Dict[str, Any]:
             if value is not None:
                 sanitized[key] = str(value) if not isinstance(value, str) else value
     return sanitized
+
+
+def sanitize_documents(documents: List[Document]) -> List[Document]:
+    """Sanitize document text before chunking."""
+    sanitized_documents: List[Document] = []
+    for doc in documents:
+        result = sanitize_text_for_indexing(doc.text)
+        if result.replacements_count > 0:
+            add_span_event(
+                "rag.indexer.documents.sanitized",
+                {
+                    "replacements_count": str(result.replacements_count),
+                    "replacement_summary": str(result.replacement_summary),
+                },
+            )
+
+        payload = doc.model_dump()
+        payload["text"] = result.text
+        if payload.get("text_resource"):
+            payload["text_resource"]["text"] = result.text
+        sanitized_documents.append(Document(**payload))
+
+    return sanitized_documents
 
 
 class DocumentIndexer:
@@ -214,6 +238,8 @@ class DocumentIndexer:
         # This removes complex nested structures from PPTX/DOCX metadata
         for doc in documents:
             doc.metadata = sanitize_metadata(doc.metadata)
+
+        documents = sanitize_documents(documents)
 
         # Split documents into nodes
         nodes = self.splitter.split_documents(documents)

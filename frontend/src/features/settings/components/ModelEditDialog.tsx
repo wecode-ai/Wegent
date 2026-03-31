@@ -6,6 +6,7 @@
 
 import React, { useState, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
@@ -46,6 +47,10 @@ import {
   toImageGenerationConfig,
   fromImageGenerationConfig,
 } from './model-config'
+import {
+  buildEmbeddingConfig,
+  hasImageInputCapability,
+} from '@/features/settings/utils/embedding-model-config'
 
 // Model form data that can be used by callers
 export interface ModelFormData {
@@ -68,6 +73,7 @@ export interface ModelFormData {
   sttTranscriptionFormat?: 'text' | 'srt' | 'vtt'
   embeddingDimensions?: number
   embeddingEncodingFormat?: 'float' | 'base64'
+  embeddingSupportsImageInput?: boolean
   rerankTopN?: number
   rerankReturnDocuments?: boolean
   // Video-specific configs
@@ -336,6 +342,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
   const [embeddingEncodingFormat, setEmbeddingEncodingFormat] = useState<'float' | 'base64'>(
     'float'
   )
+  const [embeddingSupportsImageInput, setEmbeddingSupportsImageInput] = useState(false)
   // Rerank
   const [rerankTopN, setRerankTopN] = useState<number | undefined>(undefined)
   const [rerankReturnDocuments, setRerankReturnDocuments] = useState(true)
@@ -431,6 +438,11 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
           setEmbeddingEncodingFormat(
             (effectiveInitialData.embeddingConfig.encoding_format as 'float' | 'base64') || 'float'
           )
+          setEmbeddingSupportsImageInput(
+            hasImageInputCapability(effectiveInitialData.embeddingConfig)
+          )
+        } else {
+          setEmbeddingSupportsImageInput(false)
         }
         if (effectiveInitialData.rerankConfig) {
           setRerankTopN(effectiveInitialData.rerankConfig.top_n)
@@ -491,6 +503,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         setSttTranscriptionFormat('text')
         setEmbeddingDimensions(undefined)
         setEmbeddingEncodingFormat('float')
+        setEmbeddingSupportsImageInput(false)
         setRerankTopN(undefined)
         setRerankReturnDocuments(true)
         // Reset video-specific configs
@@ -522,22 +535,35 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
   // For embedding/rerank/image, only show "Custom..." option since they don't use preset LLM models
   // For openai-responses, use the same model options as openai
   // For video models, use provider-specific options
-  const baseModelOptions =
-    modelCategoryType === 'embedding' ||
-    modelCategoryType === 'rerank' ||
-    modelCategoryType === 'image'
-      ? [{ value: 'custom', label: 'Custom...' }]
-      : modelCategoryType === 'video'
-        ? providerType === 'seedance'
-          ? SEEDANCE_MODEL_OPTIONS
-          : [{ value: 'custom', label: 'Custom...' }]
-        : providerType === 'openai' || providerType === 'openai-responses'
-          ? OPENAI_MODEL_OPTIONS
-          : providerType === 'gemini'
-            ? GEMINI_MODEL_OPTIONS
-            : providerType === 'gemini-deep-research'
-              ? GEMINI_DEEP_RESEARCH_MODEL_OPTIONS
-              : ANTHROPIC_MODEL_OPTIONS
+  const baseModelOptions = React.useMemo(() => {
+    if (
+      modelCategoryType === 'embedding' ||
+      modelCategoryType === 'rerank' ||
+      modelCategoryType === 'image'
+    ) {
+      return [{ value: 'custom', label: 'Custom...' }]
+    }
+
+    if (modelCategoryType === 'video') {
+      return providerType === 'seedance'
+        ? SEEDANCE_MODEL_OPTIONS
+        : [{ value: 'custom', label: 'Custom...' }]
+    }
+
+    if (providerType === 'openai' || providerType === 'openai-responses') {
+      return OPENAI_MODEL_OPTIONS
+    }
+
+    if (providerType === 'gemini') {
+      return GEMINI_MODEL_OPTIONS
+    }
+
+    if (providerType === 'gemini-deep-research') {
+      return GEMINI_DEEP_RESEARCH_MODEL_OPTIONS
+    }
+
+    return ANTHROPIC_MODEL_OPTIONS
+  }, [modelCategoryType, providerType])
 
   // Merge fetched models with base options
   const modelOptions = React.useMemo(() => {
@@ -983,10 +1009,11 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
 
       const embeddingConfig: EmbeddingConfig | undefined =
         modelCategoryType === 'embedding'
-          ? {
+          ? buildEmbeddingConfig({
               dimensions: embeddingDimensions,
-              encoding_format: embeddingEncodingFormat,
-            }
+              encodingFormat: embeddingEncodingFormat,
+              supportsImageInput: embeddingSupportsImageInput,
+            })
           : undefined
 
       const rerankConfig: RerankConfig | undefined =
@@ -1122,6 +1149,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         sttTranscriptionFormat,
         embeddingDimensions,
         embeddingEncodingFormat,
+        embeddingSupportsImageInput,
         rerankTopN,
         rerankReturnDocuments,
         // Video-specific configs (derive defaults from capabilities)
@@ -1642,6 +1670,25 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
                       <SelectItem value="base64">Base64</SelectItem>
                     </SelectContent>
                   </Select>
+                </div>
+              </div>
+              <div className="flex items-start space-x-3">
+                <Checkbox
+                  id="embedding_supports_image_input"
+                  data-testid="embedding-image-input-checkbox"
+                  checked={embeddingSupportsImageInput}
+                  onCheckedChange={checked => setEmbeddingSupportsImageInput(Boolean(checked))}
+                />
+                <div className="space-y-1">
+                  <Label
+                    htmlFor="embedding_supports_image_input"
+                    className="text-sm font-medium cursor-pointer"
+                  >
+                    {t('common:models.embedding_supports_image_input')}
+                  </Label>
+                  <p className="text-xs text-text-muted">
+                    {t('common:models.embedding_supports_image_input_hint')}
+                  </p>
                 </div>
               </div>
             </div>

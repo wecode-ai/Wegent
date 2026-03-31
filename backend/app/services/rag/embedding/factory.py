@@ -16,6 +16,10 @@ from app.models.kind import Kind
 from app.services.chat.config.model_resolver import (
     build_default_headers_with_placeholders,
 )
+from app.services.rag.embedding.capabilities import (
+    embedding_supports_image_input,
+    normalize_additional_input_modalities,
+)
 from app.services.rag.embedding.custom import CustomEmbedding
 from shared.utils.crypto import decrypt_api_key
 
@@ -171,9 +175,22 @@ def create_embedding_model_from_crd(
     # This is used by Milvus to create collections with the correct dimension
     embedding_config = spec.get("embeddingConfig", {})
     dimensions = embedding_config.get("dimensions") if embedding_config else None
+    additional_input_modalities = normalize_additional_input_modalities(
+        embedding_config.get("additional_input_modalities")
+        if embedding_config
+        else None
+    )
     if dimensions:
         logger.info(
             f"[EmbeddingFactory] Model '{model_name}' has configured dimensions: {dimensions}"
+        )
+    if additional_input_modalities:
+        logger.info(
+            "[EmbeddingFactory] Model '%s' additional input modalities: %s "
+            "(supports_image_input=%s)",
+            model_name,
+            additional_input_modalities,
+            embedding_supports_image_input(additional_input_modalities),
         )
 
     # Build embedding config based on protocol
