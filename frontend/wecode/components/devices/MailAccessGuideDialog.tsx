@@ -38,7 +38,7 @@ function getCloudMachineCount(devices: DeviceInfo[]) {
   ).size
 }
 
-export function HimalayaAccessGuideDialog({ open, onOpenChange }: RegisteredModalProps) {
+export function MailAccessGuideDialog({ open, onOpenChange }: RegisteredModalProps) {
   const router = useRouter()
   const { t } = useTranslation('devices')
   const { toast } = useToast()
@@ -153,7 +153,7 @@ export function HimalayaAccessGuideDialog({ open, onOpenChange }: RegisteredModa
                     type="button"
                     onClick={() => handleDeviceSelect(device.device_id, device.name)}
                     disabled={isFull}
-                    data-testid={`himalaya-access-device-${device.device_id}`}
+                    data-testid={`mail-access-device-${device.device_id}`}
                     className="flex w-full items-center gap-3 rounded-lg border border-border bg-base px-4 py-3 text-left transition-colors hover:bg-surface disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {device.device_type === 'cloud' ? (
