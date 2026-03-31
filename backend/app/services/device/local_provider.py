@@ -447,23 +447,15 @@ class LocalDeviceProvider(BaseDeviceProvider):
         info = await self._get_online_info(user_id, device_id)
         return info is not None
 
-    async def get_slot_usage(
-        self,
-        db: Session,
-        user_id: int,
-        device_id: str,
+    @staticmethod
+    def _build_slot_usage(
+        db: Session, running_task_ids: Optional[List[int]]
     ) -> Dict[str, Any]:
-        """Get slot usage information for a device."""
+        """Build slot usage payload from reported task IDs."""
         from app.models.task import TaskResource
 
-        # Get device online info from Redis (includes running_task_ids)
-        device_info = await self._get_online_info(user_id, device_id)
+        running_task_ids = running_task_ids or []
 
-        running_task_ids = []
-        if device_info and "running_task_ids" in device_info:
-            running_task_ids = device_info["running_task_ids"]
-
-        # Query task details from database
         running_tasks = []
         if running_task_ids:
             tasks = (
@@ -507,6 +499,39 @@ class LocalDeviceProvider(BaseDeviceProvider):
             "max": MAX_DEVICE_SLOTS,
             "running_tasks": running_tasks,
         }
+
+    async def get_slot_usage(
+        self,
+        db: Session,
+        user_id: int,
+        device_id: str,
+    ) -> Dict[str, Any]:
+        """Get slot usage information for a device."""
+        # Get device online info from Redis (includes running_task_ids)
+        device_info = await self._get_online_info(user_id, device_id)
+
+        running_task_ids = []
+        if device_info and "running_task_ids" in device_info:
+            running_task_ids = device_info["running_task_ids"]
+
+        return self._build_slot_usage(db, running_task_ids)
+
+    def get_slot_usage_sync(
+        self,
+        db: Session,
+        user_id: int,
+        device_id: str,
+    ) -> Dict[str, Any]:
+        """Get slot usage information for sync callers."""
+        device_info = cache_manager.get_sync(
+            self.generate_online_key(user_id, device_id)
+        )
+
+        running_task_ids = []
+        if device_info and "running_task_ids" in device_info:
+            running_task_ids = device_info["running_task_ids"]
+
+        return self._build_slot_usage(db, running_task_ids)
 
     async def update_status(
         self,
