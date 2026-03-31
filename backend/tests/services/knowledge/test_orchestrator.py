@@ -4,6 +4,7 @@
 
 """Tests for KnowledgeOrchestrator service layer."""
 
+import inspect
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
@@ -224,6 +225,13 @@ class TestKnowledgeOrchestrator:
             with pytest.raises(ValueError, match="Knowledge base not found"):
                 orchestrator.list_documents(mock_db, mock_user, knowledge_base_id=999)
 
+    def test_document_access_helper_and_reader_are_defined_once(self):
+        """KnowledgeOrchestrator should not carry duplicate document-access methods."""
+        source = inspect.getsource(KnowledgeOrchestrator)
+
+        assert source.count("def _get_document_with_access_or_raise(") == 1
+        assert source.count("def read_document_content(") == 1
+
     def test_read_document_content_returns_paginated_payload(
         self, orchestrator, mock_db, mock_user
     ):
@@ -234,6 +242,7 @@ class TestKnowledgeOrchestrator:
         with patch(
             "app.services.knowledge.orchestrator.KnowledgeService"
         ) as mock_kb_service:
+            mock_kb_service.get_document.return_value = document
             mock_kb_service.get_knowledge_base.return_value = (MagicMock(id=77), True)
 
             with patch(
