@@ -20,6 +20,7 @@ from app.api.endpoints import (
     quota,
     repository,
     share,
+    skill_identity,
     skill_market,
     subtasks,
     tables,
@@ -177,6 +178,7 @@ api_router.include_router(
 api_router.include_router(
     skill_market.router, prefix="/skill-market", tags=["skill-market"]
 )
+api_router.include_router(skill_identity.router, tags=["skill-identity"])
 api_router.include_router(k_router)
 
 # Internal API endpoints (for service-to-service communication)

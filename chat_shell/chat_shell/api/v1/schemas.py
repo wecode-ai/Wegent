@@ -280,6 +280,10 @@ class Metadata(BaseModel):
         None,
         description="JWT token for API authentication (e.g., attachment upload/download)",
     )
+    skill_identity_token: Optional[str] = Field(
+        None,
+        description="JWT token for skill identity verification",
+    )
     # Subscription task flag - when True, SilentExitTool will be added
     is_subscription: Optional[bool] = Field(
         False,
@@ -385,7 +389,9 @@ class ResponseRequest(BaseModel):
     )
 
     # Generation parameters
-    temperature: Optional[float] = Field(None, ge=0.0, le=2.0, description="Sampling temperature")
+    temperature: Optional[float] = Field(
+        None, ge=0.0, le=2.0, description="Sampling temperature"
+    )
     max_tokens: int = Field(32768, ge=1, description="Max output tokens")
 
     # Input (flexible format)

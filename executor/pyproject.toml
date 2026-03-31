@@ -12,7 +12,7 @@ dependencies = [
     "ag-ui-protocol==0.1.8",
     "agno==2.1.5",
     "anthropic==0.67.0",
-    "claude-agent-sdk==0.1.31",
+    "claude-agent-sdk==0.1.51",
     "cryptography==46.0.3",
     "dacite>=1.8.0",
     "fastapi==0.109.1",

@@ -816,12 +816,19 @@ async def create_public_share_link(
     Returns:
         Public share URL and expiration time
     """
-    # Verify the attachment exists and current user has access to it
-    try:
-        context = _get_attachment_context(db, attachment_id, current_user)
-    except HTTPException:
+    # Get the attachment context
+    context = context_service.get_context_optional(
+        db=db,
+        context_id=attachment_id,
+    )
+
+    if context is None or context.context_type != ContextType.ATTACHMENT.value:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+
+    # Only the attachment owner (uploader) can create public share links
+    if context.user_id != current_user.id:
         raise HTTPException(
-            status_code=404, detail="Attachment not found or access denied"
+            status_code=403, detail="Only the attachment owner can create share links"
         )
 
     # Generate public share token

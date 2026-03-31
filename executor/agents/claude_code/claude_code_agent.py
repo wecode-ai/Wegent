@@ -57,6 +57,7 @@ from executor.agents.claude_code.skill_deployer import (
     setup_coordinate_mode,
 )
 from executor.config import config
+from executor.services.task_identity import build_task_identity_context
 from executor.tasks.resource_manager import ResourceManager
 from executor.tasks.task_state_manager import TaskState, TaskStateManager
 from shared.logger import setup_logger
@@ -812,10 +813,12 @@ class ClaudeCodeAgent(Agent):
 
         # Delegate mode-specific configuration to strategy
         if self._claude_config_dir:
+            task_identity_env = build_task_identity_context(self.task_data)
             self.options = self._mode_strategy.configure_client_options(
                 options=self.options,
                 config_dir=self._claude_config_dir,
                 env_config=self._claude_env_config,
+                task_identity_env=task_identity_env,
             )
 
         # Check if there's a saved session ID to resume

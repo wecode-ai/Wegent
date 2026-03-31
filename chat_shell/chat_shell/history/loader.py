@@ -428,7 +428,7 @@ def _load_history_from_db_sync(
             .outerjoin(User, Subtask.sender_user_id == User.id)
             .filter(
                 Subtask.task_id == task_id,
-                Subtask.status == SubtaskStatus.COMPLETED,
+                Subtask.status.in_([SubtaskStatus.COMPLETED, SubtaskStatus.FAILED]),
             )
         )
 
@@ -688,6 +688,14 @@ def _build_history_messages(
     elif subtask.role == SubtaskRole.ASSISTANT:
         if not subtask.result or not isinstance(subtask.result, dict):
             return []
+
+        # For FAILED assistant subtasks, only include result.value (if any).
+        # Do not expand messages_chain for failed turns.
+        if subtask.status == SubtaskStatus.FAILED:
+            content = subtask.result.get("value", "")
+            if not content:
+                return []
+            return [{"role": "assistant", "content": content}]
 
         # If messages_chain is available, use it to reconstruct the full
         # conversation turn (tool calls, tool results, and final response).

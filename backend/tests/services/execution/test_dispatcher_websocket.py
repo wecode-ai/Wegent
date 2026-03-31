@@ -52,3 +52,44 @@ async def test_dispatch_websocket_schedules_socket_emit_in_main_loop():
     emitter.emit_start.assert_awaited_once()
     run_in_main_loop_mock.assert_awaited_once()
     sio.emit.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_websocket_passes_skill_identity_token_in_payload():
+    """WebSocket dispatch should forward skill identity token to device payload."""
+    dispatcher = ExecutionDispatcher()
+    request = MagicMock()
+    request.task_id = 1
+    request.subtask_id = 2
+    request.message_id = 3
+    request.user = {"id": 9}
+    request.to_dict.return_value = {
+        "task_id": 1,
+        "subtask_id": 2,
+        "skill_identity_token": "skill-jwt",
+    }
+
+    target = ExecutionTarget(
+        mode=CommunicationMode.WEBSOCKET,
+        namespace="/local-executor",
+        event="task:execute",
+        room="device:9:device-1",
+    )
+    emitter = AsyncMock()
+
+    with (
+        patch.object(
+            dispatcher,
+            "_set_subtask_executor",
+            AsyncMock(),
+        ),
+        patch.object(
+            dispatcher,
+            "_emit_socketio_in_main_loop",
+            AsyncMock(),
+        ) as emit_mock,
+    ):
+        await dispatcher._dispatch_websocket(request, target, emitter)
+
+    payload = emit_mock.await_args.args[2]
+    assert payload["skill_identity_token"] == "skill-jwt"

@@ -98,6 +98,7 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "secret-key"
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 7 * 24 * 60  # 7 days in minutes
+    SKILL_IDENTITY_TOKEN_EXPIRE_MINUTES: int = 10 * 24 * 60  # 10 days in minutes
 
     # OIDC state configuration
     OIDC_STATE_SECRET_KEY: str = "test"
@@ -255,6 +256,14 @@ class Settings(BaseSettings):
     FLOW_STALE_RUNNING_HOURS: int = (
         3  # RUNNING executions older than this will be marked FAILED
     )
+
+    # Knowledge indexing protection configuration
+    KNOWLEDGE_INDEX_LOCK_TIMEOUT_SECONDS: int = 120
+    KNOWLEDGE_INDEX_LOCK_EXTEND_INTERVAL_SECONDS: int = 30
+    KNOWLEDGE_INDEX_LOCK_RETRY_DELAY_SECONDS: int = 15
+    KNOWLEDGE_INDEX_LOCK_MAX_RETRIES: int = 1
+    KNOWLEDGE_INDEX_STALE_QUEUED_SECONDS: int = 600
+    KNOWLEDGE_INDEX_STALE_INDEXING_SECONDS: int = 2700
 
     # Circuit breaker configuration
     CIRCUIT_BREAKER_FAIL_MAX: int = 5  # Open circuit after 5 consecutive failures

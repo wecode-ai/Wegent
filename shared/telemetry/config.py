@@ -346,14 +346,15 @@ def get_excluded_urls_regex() -> str:
     This is useful for passing to FastAPIInstrumentor's excluded_urls parameter.
 
     Note: FastAPIInstrumentor expects a comma-separated string of regex patterns,
-    not a single combined regex. Each pattern is matched independently using re.search().
+    not a single combined regex. Each pattern is matched independently using re.search()
+    against the FULL URL (e.g., "http://localhost:8000/health"), not just the path.
 
     Returns:
         str: Comma-separated regex patterns for excluded URLs
 
     Example:
         >>> get_excluded_urls_regex()
-        '^/$,^/health$,^/healthz$,^/ready$,^/metrics$,^/api/docs$,^/api/openapi\\.json$,/api/quota/.*,^/favicon\\.ico$'
+        '.*/$, .*/health$, .*/healthz$, .*/ready$, .*/metrics$, .*/api/docs$, .*/api/openapi\\.json$, .*/api/quota/.*, .*/favicon\\.ico$, .*/executor-manager/sandboxes/.*/heartbeat$, .*/executor-manager/tasks/.*/heartbeat$'
     """
     config = get_otel_config()
     if not config.excluded_urls:
@@ -361,17 +362,28 @@ def get_excluded_urls_regex() -> str:
 
     # Convert patterns to regex format suitable for FastAPIInstrumentor
     # FastAPIInstrumentor expects comma-separated patterns, not | separated
+    # Note: OpenTelemetry's ExcludeList.url_disabled() matches against FULL URL
+    # (e.g., "http://localhost:8000/health"), so patterns should use .*/ prefix
+    # to match after the host:port portion of the URL
     regex_patterns = []
     for pattern in config.excluded_urls:
-        if pattern.startswith("^") or pattern.endswith("$"):
-            # Already a regex pattern (starts with ^ or ends with $), use as-is
-            regex_patterns.append(pattern)
+        if pattern.startswith("^") and pattern.endswith("$"):
+            # Regex pattern with both anchors: ^/health$ -> .*/health$
+            inner = pattern[1:-1]  # Remove ^ and $
+            regex_patterns.append(f".*{inner}$")
+        elif pattern.startswith("^"):
+            # Regex pattern with start anchor only: ^/api/ -> .*/api/
+            inner = pattern[1:]  # Remove ^
+            regex_patterns.append(f".*{inner}")
+        elif pattern.endswith("$"):
+            # Regex pattern with end anchor only: /heartbeat$ -> .*/heartbeat$
+            regex_patterns.append(f".*{pattern}")
         elif pattern.endswith("*"):
-            # Wildcard pattern: /api/* -> /api/.*
-            regex_patterns.append(f"{pattern[:-1]}.*")
+            # Wildcard pattern: /api/* -> .*/api/.*
+            inner = pattern[:-1]  # Remove *
+            regex_patterns.append(f".*{inner}.*")
         else:
-            # Exact match: add ^ and $ anchors for exact path matching
-            # This ensures /health only matches /health, not /healthcheck
-            regex_patterns.append(f"^{pattern}$")
+            # Exact match: /health -> .*/health$
+            regex_patterns.append(f".*{pattern}$")
 
     return ",".join(regex_patterns)

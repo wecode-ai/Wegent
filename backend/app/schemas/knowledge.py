@@ -41,6 +41,16 @@ class DocumentSourceType(str, Enum):
     WEB = "web"
 
 
+class DocumentIndexStatus(str, Enum):
+    """Business status enumeration for document indexing."""
+
+    NOT_INDEXED = "not_indexed"
+    QUEUED = "queued"
+    INDEXING = "indexing"
+    SUCCESS = "success"
+    FAILED = "failed"
+
+
 class ResourceScope(str, Enum):
     """Resource scope for filtering."""
 
@@ -342,6 +352,8 @@ class KnowledgeDocumentResponse(BaseModel):
     status: DocumentStatus
     user_id: int
     is_active: bool
+    index_status: DocumentIndexStatus
+    index_generation: int
     splitter_config: Optional[SplitterConfig] = None
     source_type: DocumentSourceType = DocumentSourceType.FILE
     source_config: Optional[dict] = None

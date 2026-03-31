@@ -160,13 +160,15 @@ function PublicDownloadContent() {
   }
 
   return (
-    <FilePreviewPage
-      fileBlob={attachmentInfo.fileData}
-      filename={attachmentInfo.filename}
-      mimeType={attachmentInfo.mime_type}
-      fileSize={attachmentInfo.file_size}
-      onClose={handleClose}
-    />
+    <div className="h-screen">
+      <FilePreviewPage
+        fileBlob={attachmentInfo.fileData}
+        filename={attachmentInfo.filename}
+        mimeType={attachmentInfo.mime_type}
+        fileSize={attachmentInfo.file_size}
+        onClose={handleClose}
+      />
+    </div>
   )
 }
 

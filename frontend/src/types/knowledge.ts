@@ -16,6 +16,8 @@ export type DocumentStatus = 'enabled' | 'disabled'
 
 export type DocumentSourceType = 'file' | 'text' | 'table' | 'web'
 
+export type DocumentIndexStatus = 'not_indexed' | 'queued' | 'indexing' | 'success' | 'failed'
+
 export type KnowledgeResourceScope = 'personal' | 'organization' | 'group' | 'all'
 
 // Retrieval Config types
@@ -164,6 +166,8 @@ export interface KnowledgeDocument {
   status: DocumentStatus
   user_id: number
   is_active: boolean
+  index_status: DocumentIndexStatus
+  index_generation: number
   splitter_config?: SplitterConfig
   source_type: DocumentSourceType
   source_config: Record<string, unknown>

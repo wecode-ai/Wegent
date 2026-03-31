@@ -262,6 +262,17 @@ class TestSandboxManager:
 
         assert task["workspace_ref"] == "workspace-xyz"
 
+    def test_build_sandbox_task_propagates_skill_identity_token(
+        self, sandbox_manager_with_mock_redis, sample_sandbox
+    ):
+        """Test building task forwards skill identity token for container env injection."""
+        manager = sandbox_manager_with_mock_redis
+        sample_sandbox.metadata["skill_identity_token"] = "skill-jwt"
+
+        task = manager._build_sandbox_task(sample_sandbox)
+
+        assert task["skill_identity_token"] == "skill-jwt"
+
     # ----- get_sandbox Tests -----
 
     @pytest.mark.asyncio

@@ -12,8 +12,59 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from app.core.security import create_access_token, get_password_hash
 from app.models.kind import Kind
+from app.models.namespace import Namespace
+from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.user import User
+
+
+def _create_user(test_db: Session, username: str, email: str) -> User:
+    user = User(
+        user_name=username,
+        password_hash=get_password_hash(f"{username}-password"),
+        email=email,
+        is_active=True,
+        git_info=None,
+    )
+    test_db.add(user)
+    test_db.commit()
+    test_db.refresh(user)
+    return user
+
+
+def _create_group(test_db: Session, owner: User, name: str) -> Namespace:
+    group = Namespace(
+        name=name,
+        display_name=name,
+        owner_user_id=owner.id,
+        visibility="internal",
+        description="test group",
+        level="group",
+        is_active=True,
+    )
+    test_db.add(group)
+    test_db.commit()
+    test_db.refresh(group)
+    return group
+
+
+def _add_group_member(
+    test_db: Session, group: Namespace, user: User, role: str
+) -> None:
+    member = ResourceMember(
+        resource_type="Namespace",
+        resource_id=group.id,
+        user_id=user.id,
+        role=role,
+        status=MemberStatus.APPROVED.value,
+        invited_by_user_id=group.owner_user_id,
+        share_link_id=0,
+        reviewed_by_user_id=group.owner_user_id,
+        copied_resource_id=0,
+    )
+    test_db.add(member)
+    test_db.commit()
 
 
 @pytest.mark.api
@@ -432,6 +483,127 @@ tags: ["api", "test"]
         )
 
         # Admin should be able to delete any skill
+        assert delete_response.status_code == 204
+
+    def test_group_owner_can_update_member_skill(
+        self,
+        test_client: TestClient,
+        test_db: Session,
+        test_user: User,
+        test_token: str,
+    ):
+        group_name = "skill-owner-update-group"
+        group = _create_group(test_db, test_user, group_name)
+        _add_group_member(test_db, group, test_user, "Owner")
+
+        member = _create_user(
+            test_db,
+            username="skillmember-update",
+            email="skillmember-update@example.com",
+        )
+        _add_group_member(test_db, group, member, "Developer")
+        member_token = create_access_token(data={"sub": member.user_name})
+
+        original_md = "---\ndescription: Original group skill\nversion: '1.0.0'\n---\n"
+        original_zip = self.create_test_zip(original_md, "group-owned-skill")
+        create_response = test_client.post(
+            "/api/v1/kinds/skills/upload",
+            headers={"Authorization": f"Bearer {member_token}"},
+            data={"name": "group-owned-skill", "namespace": group_name},
+            files={
+                "file": (
+                    "group-owned-skill.zip",
+                    io.BytesIO(original_zip),
+                    "application/zip",
+                )
+            },
+        )
+        assert create_response.status_code == 201
+        skill_id = create_response.json()["metadata"]["labels"]["id"]
+
+        updated_md = "---\ndescription: Updated by group owner\nversion: '2.0.0'\n---\n"
+        updated_zip = self.create_test_zip(updated_md, "group-owned-skill")
+        update_response = test_client.put(
+            f"/api/v1/kinds/skills/{skill_id}",
+            headers={"Authorization": f"Bearer {test_token}"},
+            files={
+                "file": (
+                    "group-owned-skill.zip",
+                    io.BytesIO(updated_zip),
+                    "application/zip",
+                )
+            },
+        )
+
+        assert update_response.status_code == 200
+        payload = update_response.json()
+        assert payload["spec"]["description"] == "Updated by group owner"
+        assert payload["spec"]["version"] == "2.0.0"
+
+    def test_group_owner_can_remove_references_then_delete_member_skill(
+        self,
+        test_client: TestClient,
+        test_db: Session,
+        test_user: User,
+        test_token: str,
+    ):
+        group_name = "skill-owner-delete-group"
+        group = _create_group(test_db, test_user, group_name)
+        _add_group_member(test_db, group, test_user, "Owner")
+
+        member = _create_user(
+            test_db,
+            username="skillmember-delete",
+            email="skillmember-delete@example.com",
+        )
+        _add_group_member(test_db, group, member, "Developer")
+        member_token = create_access_token(data={"sub": member.user_name})
+
+        skill_md = "---\ndescription: Group skill for delete flow\n---\n"
+        skill_zip = self.create_test_zip(skill_md, "group-delete-skill")
+        create_response = test_client.post(
+            "/api/v1/kinds/skills/upload",
+            headers={"Authorization": f"Bearer {member_token}"},
+            data={"name": "group-delete-skill", "namespace": group_name},
+            files={
+                "file": (
+                    "group-delete-skill.zip",
+                    io.BytesIO(skill_zip),
+                    "application/zip",
+                )
+            },
+        )
+        assert create_response.status_code == 201
+        skill_id = create_response.json()["metadata"]["labels"]["id"]
+
+        ghost_json = {
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Ghost",
+            "metadata": {"name": "member-group-ghost", "namespace": group_name},
+            "spec": {"systemPrompt": "Test", "skills": ["group-delete-skill"]},
+        }
+        member_ghost = Kind(
+            user_id=member.id,
+            kind="Ghost",
+            name="member-group-ghost",
+            namespace=group_name,
+            json=ghost_json,
+            is_active=True,
+        )
+        test_db.add(member_ghost)
+        test_db.commit()
+
+        remove_response = test_client.post(
+            f"/api/v1/kinds/skills/{skill_id}/remove-references",
+            headers={"Authorization": f"Bearer {test_token}"},
+        )
+        assert remove_response.status_code == 200
+        assert remove_response.json()["removed_count"] == 1
+
+        delete_response = test_client.delete(
+            f"/api/v1/kinds/skills/{skill_id}",
+            headers={"Authorization": f"Bearer {test_token}"},
+        )
         assert delete_response.status_code == 204
 
 

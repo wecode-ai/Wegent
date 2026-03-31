@@ -43,7 +43,14 @@
     "copy": "Copy",
     "copied": "Copied",
     "loadMore": "Load More",
-    "configure": "Configure"
+    "configure": "Configure",
+    "download": "Download",
+    "share": "Share",
+    "preview": "Preview",
+    "generating": "Generating...",
+    "zoom_in": "Zoom In",
+    "zoom_out": "Zoom Out",
+    "rotate": "Rotate"
   },
   "errors": {
     "request_failed": "LLM API request failed, please click retry"
@@ -1312,8 +1319,20 @@
     "supported_types": "PDF, Word, Excel, TXT, Markdown, Images, HTML, Code files",
     "html_preview": "HTML Preview",
     "click_to_preview": "Click to preview",
+    "click_to_download": "Click to download",
     "characters": "chars",
-    "upload_tooltip": "Supported file types: Documents (PDF, Word, PPT, Excel), Images, Code files and text files\nMax file size: {{size}} MB"
+    "upload_tooltip": "Supported file types: Documents (PDF, Word, PPT, Excel), Images, HTML, Markdown, Code files and text files\nHTML and Markdown files will be rendered with preview\nMax file size: {{size}} MB",
+    "share": {
+      "link_copied_title": "Share Link Copied",
+      "link_copied_description": "Link valid for 7 days. Paste and send to others.",
+      "generate_failed_title": "Failed to Generate Share Link",
+      "retry": "Please try again later"
+    },
+    "html": {
+      "source_mode": "Source",
+      "load_failed": "Preview Load Failed",
+      "view_source": "View Source"
+    }
   },
   "editor": {
     "vim": {
