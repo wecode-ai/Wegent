@@ -1155,6 +1155,41 @@ class TestContextServiceFormatting:
         assert "URL: /api/attachments/12345/download" in prefix
         assert "This is the extracted PDF content." in prefix
 
+    def test_build_document_text_prefix_without_sandbox_path(self):
+        """Device tasks should omit sandbox path metadata from attachment prefix."""
+        from app.models.subtask_context import (
+            ContextStatus,
+            ContextType,
+            SubtaskContext,
+        )
+        from app.services.context import context_service
+
+        context = SubtaskContext(
+            subtask_id=0,
+            user_id=1,
+            context_type=ContextType.ATTACHMENT.value,
+            name="test.pdf",
+            status=ContextStatus.READY.value,
+            extracted_text="This is the extracted PDF content.",
+            text_length=35,
+            type_data={
+                "original_filename": "test.pdf",
+                "mime_type": "application/pdf",
+                "file_size": 2621440,
+            },
+        )
+        context.id = 12345
+
+        prefix = context_service.build_document_text_prefix(
+            context,
+            task_id=100,
+            subtask_id=200,
+        )
+
+        assert prefix is not None
+        assert "URL: /api/attachments/12345/download" in prefix
+        assert "File Path(already in sandbox)" in prefix
+
     def test_build_document_text_prefix_with_truncation(self):
         """Test building document text prefix with truncation notice"""
         from app.models.subtask_context import (

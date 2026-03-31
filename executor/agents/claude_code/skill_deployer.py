@@ -203,6 +203,18 @@ The user has explicitly selected the following skills for this task. You should 
 ---
 
 """
+    if "wegent-knowledge" in user_selected_skills:
+        emphasis_prompt += """## Selected Knowledge Base Priority
+
+The user explicitly selected the Wegent knowledge-base skill for this request.
+When selected knowledge bases are present:
+- Use the selected knowledge bases as the primary source for request content.
+- Use Wegent knowledge tools before web search or other external lookup.
+- Only fall back to web search when the user explicitly asks for external or current web information, or when the selected knowledge bases cannot answer the request.
+
+---
+
+"""
     return emphasis_prompt
 
 
