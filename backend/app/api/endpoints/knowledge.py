@@ -718,10 +718,11 @@ async def update_document_content(
     db: Session = Depends(get_db),
 ) -> dict:
     """
-    Update document content (TEXT type only).
+    Update document content for text documents and editable plain-text files.
 
-    Updates the extracted_text field and triggers RAG re-indexing via Celery.
-    Only Owner or Maintainer of the knowledge base can update documents.
+    Overwrites the underlying attachment content and triggers RAG re-indexing
+    via Celery. Only Owner or Maintainer of the knowledge base can update
+    documents.
 
     Returns:
         Success message with document_id

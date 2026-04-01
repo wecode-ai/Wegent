@@ -56,7 +56,7 @@ You now have access to Wegent Knowledge Base management tools.
   - limit: Maximum number of characters to return (uses the backend default when omitted)
   - returns: content slice, total_length, returned_length, has_more, kb_id
 
-- **update_document_content**: Update a document's content (TEXT type documents only)
+- **update_document_content**: Update a document's content for text documents and editable plain-text files
   - document_id: Document ID to update
   - content: New content (replaces existing content)
   - trigger_reindex: Whether to trigger RAG re-indexing (default: true)
@@ -67,6 +67,7 @@ You now have access to Wegent Knowledge Base management tools.
 - After creating or updating documents, indexing happens asynchronously
 - Documents may show status "pending" until indexing completes
 - For web scraping, the URL content is fetched and stored as document content
+- `update_document_content` supports `text` documents and plain-text file documents such as `txt`, `md`, and `markdown`; binary files like `pdf` or `docx` still require creating or replacing the source file instead of inline editing
 - Default behavior: if user doesn't specify scope, use `scope="all"` directly (no extra confirmation).
 - Avoid loops: if a tool call fails, report the error once and stop retrying/re-loading the skill unless the user changes inputs.
 - Long documents should be read incrementally: start with the backend default limit, then continue with `offset = previous_offset + previous_returned_length` while `has_more=true`

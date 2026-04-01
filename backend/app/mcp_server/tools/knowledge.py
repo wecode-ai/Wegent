@@ -363,7 +363,7 @@ def read_document_content(
 
 @mcp_tool(
     name="update_document_content",
-    description="Update document content. Only supports TEXT type documents.",
+    description="Update document content for text documents and editable plain-text files such as txt, md, and markdown.",
     server="knowledge",
     param_descriptions={
         "document_id": "Document ID to update",
@@ -380,8 +380,9 @@ def update_document_content(
     """
     Update document content.
 
-    Only supports TEXT type documents. Re-indexing is scheduled via Celery
-    if trigger_reindex=True.
+    Supports text documents and editable plain-text file documents such as
+    txt, md, and markdown. Binary file documents are not editable through
+    this tool. Re-indexing is scheduled via Celery if trigger_reindex=True.
 
     Args:
         token_info: Task token information containing user context

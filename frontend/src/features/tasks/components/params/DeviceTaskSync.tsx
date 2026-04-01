@@ -33,11 +33,11 @@ export default function DeviceTaskSync() {
       return
     }
 
-    // Task has no device_id — keep current selection as-is
-    // This handles:
-    // 1. Newly created task where device_id hasn't been saved yet (race condition)
-    // 2. Cloud executor tasks where device selection should not be affected
+    // Task has no device_id — clear device selection to match cloud mode
     if (!selectedTaskDetail.device_id) {
+      if (selectedDeviceId) {
+        setSelectedDeviceId(null)
+      }
       lastProcessedTaskIdRef.current = selectedTaskDetail.id
       return
     }

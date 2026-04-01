@@ -257,3 +257,13 @@ class TestKnowledgeTool:
         default_limit = inspect.signature(target).parameters["limit"].default
 
         assert default_limit == module.MAX_DOCUMENT_READ_LIMIT
+
+    def test_update_document_content_description_mentions_editable_text_files(self):
+        """Tool description should reflect support for editable text file documents."""
+        module = get_knowledge_module()
+
+        tool_info = module.update_document_content._mcp_tool_info
+
+        assert "TEXT type documents" not in tool_info["description"]
+        assert "txt" in tool_info["description"]
+        assert "md" in tool_info["description"]
