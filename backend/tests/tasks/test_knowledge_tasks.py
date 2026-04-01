@@ -5,7 +5,7 @@
 """Tests for knowledge Celery tasks."""
 
 from contextlib import ExitStack, contextmanager, nullcontext
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -150,6 +150,61 @@ def test_index_document_task_marks_skip_result_as_failed():
     assert result["status"] == "skipped"
     assert result["reason"] == "unsupported_document"
     assert result["index_generation"] == 5
+
+
+def test_index_document_task_routes_indexing_through_gateway():
+    start_decision = MagicMock(should_execute=True, reason="started")
+    success_finalize_mock = MagicMock(return_value=True)
+
+    with _task_request_context(retries=0), ExitStack() as stack:
+        stack.enter_context(
+            patch(
+                "app.tasks.knowledge_tasks.distributed_lock.acquire_watchdog_context",
+                return_value=_lock_context(True),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.services.knowledge.index_state_machine.mark_document_index_started",
+                return_value=start_decision,
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.services.knowledge.index_state_machine.mark_document_index_succeeded",
+                success_finalize_mock,
+            )
+        )
+        mock_resolve = stack.enter_context(
+            patch(
+                "app.services.knowledge.indexing.RagRuntimeResolver.build_index_runtime_spec",
+                return_value=object(),
+            )
+        )
+        mock_index = stack.enter_context(
+            patch(
+                "app.services.knowledge.indexing.LocalRagGateway.index_document",
+                new_callable=AsyncMock,
+                return_value={
+                    "status": "success",
+                    "document_id": 4,
+                    "knowledge_base_id": "1",
+                    "chunks_data": {"total_count": 8},
+                },
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.tasks.knowledge_tasks.SessionLocal",
+                side_effect=_session_factory(),
+            )
+        )
+
+        result = index_document_task.run(**_task_kwargs())
+
+    assert result["status"] == "success"
+    mock_resolve.assert_called_once()
+    mock_index.assert_awaited_once()
 
 
 def test_index_document_task_enqueues_summary_after_finalize(

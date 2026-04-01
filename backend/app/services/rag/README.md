@@ -12,6 +12,28 @@ This document describes the architecture design of the Retriever abstraction for
 4. **Dify-style API**: Reference Dify External Knowledge API design for standardized interface
 5. **Metadata Filtering**: Support advanced filtering based on metadata conditions
 
+## Modular Data Plane Foundation
+
+The current Backend-side RAG foundation is now split into control-plane contracts and local data-plane execution seams:
+
+- `runtime_specs.py`: stable `IndexRuntimeSpec` and `QueryRuntimeSpec` contracts used below control-plane orchestration.
+- `runtime_resolver.py`: converts Backend KB / retriever / embedding / owner context into runtime specs.
+- `gateway.py`: `RagGateway` protocol for control-plane-to-data-plane dispatch.
+- `local_gateway.py`: `LocalRagGateway` implementation that delegates to `local_data_plane`.
+- `local_data_plane/`: local execution adapters for retrieval and indexing while Backend remains the only control plane.
+
+The boundary is intentional:
+
+- Backend keeps persistence metadata, task state, permission checks, and CRD resolution.
+- Runtime specs stay free of ORM objects, DB sessions, and task-only fields such as `user_subtask_id`.
+
+Follow-up work is intentionally not implemented in this foundation layer:
+
+- `summary_vector_index`
+- `tableRAG`
+- restricted mediator migration
+- remote `rag_service` extraction
+
 ## Architecture Components
 
 ### 1. Retriever CRD Schema

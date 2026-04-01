@@ -64,6 +64,43 @@ class TestGetAllChunksFromKnowledgeBase:
 
 @pytest.mark.unit
 class TestRetrieveForChatShell:
+    def test_internal_retrieve_endpoint_uses_gateway_runtime_spec(self, test_client):
+        payload = {
+            "query": "test",
+            "knowledge_base_ids": [123],
+            "max_results": 5,
+            "route_mode": "auto",
+            "runtime_context": {
+                "context_window": 10000,
+                "used_context_tokens": 100,
+                "reserved_output_tokens": 4096,
+                "context_buffer_ratio": 0.1,
+                "max_direct_chunks": 500,
+            },
+        }
+
+        with (
+            patch(
+                "app.api.endpoints.internal.rag.RagRuntimeResolver.build_query_runtime_spec",
+                return_value=object(),
+            ) as mock_resolve,
+            patch(
+                "app.api.endpoints.internal.rag.LocalRagGateway.query",
+                new_callable=AsyncMock,
+                return_value={
+                    "mode": "rag_retrieval",
+                    "records": [],
+                    "total": 0,
+                    "total_estimated_tokens": 0,
+                },
+            ) as mock_query,
+        ):
+            response = test_client.post("/api/internal/rag/retrieve", json=payload)
+
+        assert response.status_code == 200
+        mock_resolve.assert_called_once()
+        mock_query.assert_awaited_once()
+
     @pytest.mark.asyncio
     async def test_auto_route_returns_direct_injection_records(self):
         """Backend should route to all-chunks when KB estimate fits context."""

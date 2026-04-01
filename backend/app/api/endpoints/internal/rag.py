@@ -17,6 +17,9 @@ from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
+from app.services.rag.local_gateway import LocalRagGateway
+from app.services.rag.retrieval_service import RetrievalService
+from app.services.rag.runtime_resolver import RagRuntimeResolver
 
 # Constants for document reading pagination
 DEFAULT_READ_DOC_LIMIT = 50_000  # Default characters to return
@@ -25,6 +28,8 @@ MAX_READ_DOC_LIMIT = 500_000  # Maximum characters allowed per request
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/rag", tags=["internal-rag"])
+runtime_resolver = RagRuntimeResolver()
+rag_gateway = LocalRagGateway()
 
 
 class DirectInjectionRuntimeContext(BaseModel):
@@ -157,9 +162,6 @@ async def internal_retrieve(
         Retrieval results with records
     """
     try:
-        from app.services.rag.retrieval_service import RetrievalService
-
-        retrieval_service = RetrievalService()
         knowledge_base_ids = request.knowledge_base_ids or []
         if request.knowledge_base_id is not None:
             knowledge_base_ids = [request.knowledge_base_id]
@@ -174,18 +176,14 @@ async def internal_retrieve(
         runtime_context = request.runtime_context
         persistence_context = request.persistence_context
 
-        result = await retrieval_service.retrieve_for_chat_shell(
-            query=request.query,
+        runtime_spec = runtime_resolver.build_query_runtime_spec(
             knowledge_base_ids=knowledge_base_ids,
-            db=db,
+            query=request.query,
             max_results=request.max_results,
             document_ids=request.document_ids,
-            user_name=request.user_name,
             route_mode=request.route_mode,
             user_id=persistence_context.user_id if persistence_context else None,
-            user_subtask_id=(
-                persistence_context.user_subtask_id if persistence_context else None
-            ),
+            user_name=request.user_name,
             context_window=runtime_context.context_window if runtime_context else None,
             used_context_tokens=(
                 runtime_context.used_context_tokens if runtime_context else 0
@@ -203,6 +201,13 @@ async def internal_retrieve(
                 persistence_context.restricted_mode if persistence_context else False
             ),
         )
+        result = await rag_gateway.query(
+            runtime_spec,
+            db=db,
+            user_subtask_id=(
+                persistence_context.user_subtask_id if persistence_context else None
+            ),
+        )
 
         records = result.get("records", [])
 
@@ -210,12 +215,12 @@ async def internal_retrieve(
         total_content_chars = sum(len(r.get("content", "")) for r in records)
         total_content_kb = total_content_chars / 1024
         available_for_kb = (
-            retrieval_service._calculate_ratio_based_direct_injection_budget(
+            RetrievalService._calculate_ratio_based_direct_injection_budget(
                 runtime_context.context_window if runtime_context else None
             )
         )
         available_injection_tokens = (
-            retrieval_service._calculate_available_injection_tokens(
+            RetrievalService._calculate_available_injection_tokens(
                 context_window=(
                     runtime_context.context_window if runtime_context else None
                 ),
