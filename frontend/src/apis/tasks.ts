@@ -5,6 +5,7 @@
 import { apiClient } from './client'
 import { getToken } from './user'
 import { Task, PaginationParams, TaskStatus, SuccessMessage, TaskDetail } from '../types/api'
+import { getApiBaseUrl } from '@/lib/runtime-config'
 
 // Task Request/Response Types
 export interface CreateTaskRequest {
@@ -220,6 +221,30 @@ export interface TaskSkillsResponse {
   team_namespace: string
   skills: string[]
   preload_skills: string[]
+}
+
+export interface GeneratePromptDraftRequest {
+  model?: string
+  source?: string
+  current_prompt?: string
+  regenerate?: boolean
+}
+
+export interface GeneratePromptDraftResponse {
+  title: string
+  prompt: string
+  model: string
+  version: number
+  created_at: string
+}
+
+export interface GeneratePromptDraftStreamEvent {
+  type: 'prompt_delta' | 'prompt_done' | 'title_done' | 'completed' | 'error'
+  delta?: string
+  prompt?: string
+  title?: string
+  message?: string
+  data?: GeneratePromptDraftResponse
 }
 
 // Task Services
@@ -443,6 +468,112 @@ export const taskApis = {
    */
   getTaskSkills: async (taskId: number): Promise<TaskSkillsResponse> => {
     return apiClient.get(`/tasks/${taskId}/skills`)
+  },
+
+  generatePromptDraft: async (
+    taskId: number,
+    request: GeneratePromptDraftRequest = {}
+  ): Promise<GeneratePromptDraftResponse> => {
+    return apiClient.post(`/tasks/${taskId}/prompt-drafts/generate`, request)
+  },
+
+  generatePromptDraftStream: async (
+    taskId: number,
+    request: GeneratePromptDraftRequest = {},
+    handlers?: {
+      onEvent?: (event: GeneratePromptDraftStreamEvent) => void
+      signal?: AbortSignal
+    }
+  ): Promise<GeneratePromptDraftResponse> => {
+    const token = getToken()
+    const response = await fetch(
+      `${getApiBaseUrl()}/tasks/${taskId}/prompt-drafts/generate/stream`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify(request),
+        signal: handlers?.signal,
+      }
+    )
+
+    if (!response.ok) {
+      const errorText = await response.text()
+      let errorMsg = errorText
+      try {
+        const json = JSON.parse(errorText)
+        if (json && typeof json.detail === 'string') {
+          errorMsg = json.detail
+        }
+      } catch {
+        // Keep original error text.
+      }
+      throw new Error(errorMsg)
+    }
+
+    const reader = response.body?.getReader()
+    if (!reader) {
+      throw new Error('Stream reader is not available')
+    }
+
+    const decoder = new TextDecoder()
+    let buffer = ''
+    let promptText = ''
+    let titleText = ''
+    let completed: GeneratePromptDraftResponse | null = null
+
+    while (true) {
+      const { value, done } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+
+      const parts = buffer.split('\n\n')
+      buffer = parts.pop() ?? ''
+
+      for (const part of parts) {
+        const dataLines = part
+          .split('\n')
+          .filter(line => line.startsWith('data:'))
+          .map(line => line.slice(5).trim())
+        if (dataLines.length === 0) continue
+
+        const payload = dataLines.join('\n')
+        if (!payload) continue
+
+        try {
+          const event = JSON.parse(payload) as GeneratePromptDraftStreamEvent
+          handlers?.onEvent?.(event)
+
+          if (event.type === 'prompt_delta' && event.delta) {
+            promptText += event.delta
+          } else if (event.type === 'prompt_done' && event.prompt) {
+            promptText = event.prompt
+          } else if (event.type === 'title_done' && event.title) {
+            titleText = event.title
+          } else if (event.type === 'completed' && event.data) {
+            completed = event.data
+          }
+        } catch {
+          // Ignore malformed stream payloads to keep UI resilient.
+        }
+      }
+    }
+
+    if (completed) return completed
+
+    if (!promptText || !titleText) {
+      throw new Error('Prompt draft stream ended without completed result')
+    }
+
+    return {
+      title: titleText,
+      prompt: promptText,
+      model: request.model || '',
+      version: 1,
+      created_at: new Date().toISOString(),
+    }
   },
 
   /**

@@ -221,6 +221,7 @@ class TestLocalModeStrategy:
             == task_identity_env["WEGENT_SKILL_USER_NAME"]
         )
         assert result["env"]["CLAUDE_CONFIG_DIR"] == config_dir
+        assert result["env"]["SKILLS_DIR"] == "/workspace/12345/.claude/skills"
 
     def test_configure_client_options_sets_claude_config_dir(self, strategy):
         """Test that CLAUDE_CONFIG_DIR is set correctly."""
@@ -230,6 +231,7 @@ class TestLocalModeStrategy:
         result = strategy.configure_client_options(options, config_dir, {}, {})
 
         assert result["env"]["CLAUDE_CONFIG_DIR"] == config_dir
+        assert result["env"]["SKILLS_DIR"] == "/workspace/12345/.claude/skills"
 
     def test_configure_client_options_adds_anthropic_custom_headers(self, strategy):
         """Test that ANTHROPIC_CUSTOM_HEADERS is added when configured."""
@@ -417,6 +419,7 @@ class TestDockerModeStrategy:
         assert result["env"]["SOME_VAR"] == "value"
         assert result["env"]["WEGENT_SKILL_IDENTITY_TOKEN"] == "skill-jwt"
         assert result["env"]["WEGENT_SKILL_USER_NAME"] == "alice"
+        assert result["env"]["SKILLS_DIR"] == strategy.get_skills_directory()
         assert original_options["env"] == {"SOME_VAR": "value"}
         assert "WEGENT_SKILL_IDENTITY_TOKEN" not in os.environ
 

@@ -170,6 +170,73 @@ def _extract_stream_attributes(
     return attrs
 
 
+def _summarize_openai_input(input_data: Union[str, list[dict]]) -> dict[str, object]:
+    """Build a compact log summary for Responses API input."""
+    if isinstance(input_data, str):
+        text = input_data.strip()
+        return {
+            "input_type": "string",
+            "message_count": 1 if text else 0,
+            "roles": {},
+            "last_user": text[:500],
+        }
+
+    if not isinstance(input_data, list):
+        return {
+            "input_type": type(input_data).__name__,
+            "message_count": 0,
+            "roles": {},
+            "last_user": "",
+        }
+
+    role_counts: dict[str, int] = {}
+    last_user = ""
+    for item in input_data:
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("role") or "unknown")
+        role_counts[role] = role_counts.get(role, 0) + 1
+        if role != "user":
+            continue
+        content = item.get("content", "")
+        if isinstance(content, str) and content.strip():
+            last_user = content.strip()[:500]
+
+    return {
+        "input_type": "messages",
+        "message_count": len(input_data),
+        "roles": role_counts,
+        "last_user": last_user,
+    }
+
+
+def _summarize_execution_request(
+    execution_request: ExecutionRequest,
+) -> dict[str, object]:
+    """Build a compact log summary after OpenAI request conversion."""
+    role_counts: dict[str, int] = {}
+    for msg in execution_request.history:
+        if not isinstance(msg, dict):
+            continue
+        role = str(msg.get("role") or "unknown")
+        role_counts[role] = role_counts.get(role, 0) + 1
+
+    prompt_preview = ""
+    if isinstance(execution_request.prompt, str):
+        prompt_preview = execution_request.prompt.strip()[:500]
+
+    return {
+        "history_count": len(execution_request.history),
+        "history_roles": role_counts,
+        "prompt_preview": prompt_preview,
+        "system_prompt_preview": (execution_request.system_prompt or "")[:300],
+        "enable_tools": execution_request.enable_tools,
+        "enable_web_search": execution_request.enable_web_search,
+        "is_subscription": execution_request.is_subscription,
+        "stateless": execution_request.stateless,
+    }
+
+
 # ============================================================
 # Stream Response Generator
 # ============================================================
@@ -226,6 +293,32 @@ async def _stream_response(
         "model_config": request.model_config_data or {},
     }
     execution_request = OpenAIRequestConverter.to_execution_request(openai_dict)
+
+    request_summary = _summarize_openai_input(request.input)
+    logger.info(
+        "[RESPONSE] OpenAI request summary: model=%s input_type=%s message_count=%s roles=%s "
+        "last_user=%s metadata=%s",
+        request.model,
+        request_summary["input_type"],
+        request_summary["message_count"],
+        json.dumps(request_summary["roles"], ensure_ascii=False),
+        request_summary["last_user"],
+        json.dumps(request.metadata or {}, ensure_ascii=False),
+    )
+    execution_summary = _summarize_execution_request(execution_request)
+    logger.info(
+        "[RESPONSE] ExecutionRequest summary: history_count=%s history_roles=%s "
+        "prompt_preview=%s system_prompt_preview=%s enable_tools=%s enable_web_search=%s "
+        "is_subscription=%s stateless=%s",
+        execution_summary["history_count"],
+        json.dumps(execution_summary["history_roles"], ensure_ascii=False),
+        execution_summary["prompt_preview"],
+        execution_summary["system_prompt_preview"],
+        execution_summary["enable_tools"],
+        execution_summary["enable_web_search"],
+        execution_summary["is_subscription"],
+        execution_summary["stateless"],
+    )
 
     logger.info(
         "[RESPONSE] Processing request: task_id=%d, subtask_id=%d, model=%s",

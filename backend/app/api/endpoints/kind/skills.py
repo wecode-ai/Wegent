@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
@@ -94,6 +94,14 @@ class PublicSkillCreate(BaseModel):
     author: Optional[str] = None
     tags: Optional[List[str]] = None
 
+    @field_validator("version", mode="before")
+    @classmethod
+    def validate_version(cls, v):
+        """Convert float/int version to string to handle YAML parsing."""
+        if v is None:
+            return v
+        return str(v)
+
 
 class PublicSkillUpdate(BaseModel):
     """Schema for updating a public skill"""
@@ -103,6 +111,14 @@ class PublicSkillUpdate(BaseModel):
     version: Optional[str] = None
     author: Optional[str] = None
     tags: Optional[List[str]] = None
+
+    @field_validator("version", mode="before")
+    @classmethod
+    def validate_version(cls, v):
+        """Convert float/int version to string to handle YAML parsing."""
+        if v is None:
+            return v
+        return str(v)
 
 
 class InvokeSkillRequest(BaseModel):
@@ -146,6 +162,14 @@ class UnifiedSkillResponse(BaseModel):
     )
     created_at: Any
     updated_at: Any
+
+    @field_validator("version", mode="before")
+    @classmethod
+    def validate_version(cls, v):
+        """Convert float/int version to string to handle YAML parsing."""
+        if v is None:
+            return v
+        return str(v)
 
 
 @router.post("/upload", response_model=Skill, status_code=201)

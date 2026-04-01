@@ -38,6 +38,57 @@
       "running": "{{count}} 个任务进行中",
       "unread": "{{count}} 条未读消息"
     },
-    "allClear": "所有任务已完成！"
+    "allClear": "所有任务已完成！",
+    "promptDraft": {
+      "cta": "帮我记住这种协作方式",
+      "subtext": "将当前对话提炼成提示词草案"
+    }
+  },
+  "promptDraft": {
+    "hint": "要帮你总结一下吗？",
+    "dialogTitle": "提炼当前对话为提示词",
+    "dialogDescription": "从当前会话中提炼可复用规则，生成可继续微调的提示词草案。",
+    "modelLabel": "模型",
+    "modelPlaceholder": "使用默认模型",
+    "modelSearch": "搜索模型...",
+    "noModelFound": "未找到模型",
+    "useDefaultModel": "使用默认模型",
+    "loading": "正在整理这段对话里的协作习惯和方法...",
+    "resultTitle": "标题",
+    "resultPrompt": "Prompt",
+    "versions": "版本记录",
+    "currentVersion": "当前版本",
+    "currentVersionLabel": "当前版本会作为后续重新生成和微调的基准。",
+    "keepOld": "保留旧版",
+    "useNew": "采用新版",
+    "rollback": "回滚到此版本",
+    "compareToCurrent": "与当前版本对比",
+    "generate": "开始生成",
+    "regenerate": "重新生成",
+    "copyPrompt": "复制提示词",
+    "copied": "已复制",
+    "clear": "清空草案",
+    "close": "关闭",
+    "generateFailed": "提示词生成失败",
+    "copySuccess": "提示词已复制",
+    "copyFailed": "复制提示词失败",
+    "source": {
+      "initial": "首次生成",
+      "regenerate": "重新生成",
+      "rollback": "回滚"
+    },
+    "compare": {
+      "title": "重新生成结果对比",
+      "historyTitle": "历史版本对比",
+      "summary": "变更统计",
+      "previous": "上一版",
+      "next": "新版",
+      "current": "当前版本",
+      "selected": "所选历史版本",
+      "diff": "差异视图",
+      "empty": "暂无可对比内容",
+      "cancel": "取消对比",
+      "rollbackToSelected": "回滚到所选版本"
+    }
   }
 }

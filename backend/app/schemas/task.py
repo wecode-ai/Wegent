@@ -254,3 +254,22 @@ class TaskSkillsResponse(BaseModel):
     team_namespace: str = "default"
     skills: List[str] = []  # All bot skills (deduplicated)
     preload_skills: List[str] = []  # Skills to preload
+
+
+class PromptDraftGenerateRequest(BaseModel):
+    """Request body for generating a prompt draft from a task conversation."""
+
+    model: Optional[str] = None
+    source: Optional[str] = None
+    current_prompt: Optional[str] = None
+    regenerate: bool = False
+
+
+class PromptDraftGenerateResponse(BaseModel):
+    """Response body for prompt draft generation."""
+
+    title: str
+    prompt: str
+    model: str
+    version: int = 1
+    created_at: datetime

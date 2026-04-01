@@ -215,6 +215,7 @@ async def build_execution_request(
     """
     from app.services.execution import TaskRequestBuilder
     from shared.models import ExecutionRequest
+    from shared.telemetry.context import get_request_id
 
     logger.info(
         "[build_execution_request] Building request: task_id=%d, subtask_id=%d",
@@ -322,6 +323,20 @@ async def build_execution_request(
         # Always propagate user_subtask_id for downstream persistence (e.g., KB tool results).
         # Note: This is different from request.subtask_id which is the assistant subtask.
         request.user_subtask_id = user_subtask_id
+
+        # Propagate backend request_id for cross-service log correlation.
+        # Fallback to deterministic subtask-based ID when request context is unavailable.
+        current_request_id = get_request_id()
+        request.request_id = (
+            current_request_id if current_request_id else f"req_{assistant_subtask.id}"
+        )
+        logger.info(
+            "[build_execution_request] request_id assigned: task_id=%d, subtask_id=%d, request_id=%s, source=%s",
+            task.id,
+            assistant_subtask.id,
+            request.request_id,
+            "context" if current_request_id else "generated",
+        )
 
         # Process knowledge base names from API request (OpenAPI v1/responses)
         # This creates SubtaskContext records for KBs specified in the request
