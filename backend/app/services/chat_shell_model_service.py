@@ -38,6 +38,10 @@ def _merge_metadata(metadata: dict[str, Any] | None) -> dict[str, Any]:
 
 def extract_response_text(response: Any) -> str:
     """Extract plain text from OpenAI Responses API response payload."""
+    import logging
+
+    logger = logging.getLogger(__name__)
+
     if response is None:
         return ""
 
@@ -54,6 +58,9 @@ def extract_response_text(response: Any) -> str:
     if hasattr(response, "output_text"):
         output_text = getattr(response, "output_text")
         if isinstance(output_text, str) and output_text.strip():
+            logger.info(
+                f"[extract_response_text] from output_text: {output_text[:100]}"
+            )
             return output_text.strip()
 
     if hasattr(response, "model_dump"):
@@ -73,14 +80,22 @@ def extract_response_text(response: Any) -> str:
             text = content_block.get("text")
             if isinstance(text, str) and text.strip():
                 texts.append(text.strip())
-    return "\n".join(texts).strip()
+    result = "\n".join(texts).strip()
+    logger.info(
+        f"[extract_response_text] from output array: {result[:100]}, texts count: {len(texts)}"
+    )
+    return result
 
 
 def _extract_text_from_sse_blob(raw: str) -> str:
     """Best-effort parser for SSE payload accidentally returned as plain text."""
     events: list[dict[str, Any]] = []
-    events.extend(_parse_sse_events_from_data_lines(raw))
-    events.extend(_parse_sse_events_from_blob(raw))
+    # 只使用一种解析方式，避免重复
+    parsed = _parse_sse_events_from_data_lines(raw)
+    if parsed:
+        events.extend(parsed)
+    else:
+        events.extend(_parse_sse_events_from_blob(raw))
 
     deltas: list[str] = []
     completed_text: str = ""
