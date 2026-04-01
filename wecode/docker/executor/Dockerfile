@@ -59,7 +59,7 @@ WORKDIR /app
 # Configure npm registry for China
 RUN npm config set registry https://registry.npmmirror.com
 
-RUN npm install -g @anthropic-ai/claude-code@2.1.33
+RUN npm install -g @anthropic-ai/claude-code@2.1.85
 
 # Install uv from PyPI using Aliyun mirror
 RUN pip install --no-cache-dir uv -i http://mirrors.cloud.aliyuncs.com/pypi/simple/ --trusted-host mirrors.cloud.aliyuncs.com && \
@@ -74,6 +74,8 @@ ENV PATH="/usr/local/bin:${PATH}"
 # Set claude code environment variables
 ENV CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
 ENV CLAUDE_CODE_INCLUDE_CO_AUTHORED_BY="false"
+ENV CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY=1
+ENV CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK=1
 
 ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
@@ -124,4 +126,3 @@ ENV CUSTOM_CONFIG='{"wecode_config": "executor.wecode.config.config.WeCodeConfig
 
 # Run the standalone binary
 CMD ["/app/executor"]
-

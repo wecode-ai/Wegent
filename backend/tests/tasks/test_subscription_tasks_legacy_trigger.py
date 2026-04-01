@@ -6,6 +6,7 @@
 
 import uuid
 from datetime import datetime, timezone
+from unittest.mock import MagicMock, patch
 
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
@@ -78,7 +79,12 @@ def test_check_due_subscriptions_handles_legacy_invalid_interval(
     test_db.commit()
 
     # This should not raise an exception, it should handle the invalid config gracefully
-    result = check_due_subscriptions_sync()
+    # Mock get_db_session to use test_db instead of connecting to MySQL
+    # Note: get_db_session is imported inside the function, so we patch at source
+    with patch("app.db.session.get_db_session") as mock_session:
+        mock_session.return_value.__enter__ = MagicMock(return_value=test_db)
+        mock_session.return_value.__exit__ = MagicMock(return_value=False)
+        result = check_due_subscriptions_sync()
 
     # The subscription should be processed (not skipped due to validation error)
     # Due to the invalid interval, it will be fixed and processed
@@ -124,7 +130,12 @@ def test_check_due_subscriptions_skips_disabled_subscriptions(
     flag_modified(subscription, "json")
     test_db.commit()
 
-    result = check_due_subscriptions_sync()
+    # Mock get_db_session to use test_db instead of connecting to MySQL
+    # Note: get_db_session is imported inside the function, so we patch at source
+    with patch("app.db.session.get_db_session") as mock_session:
+        mock_session.return_value.__enter__ = MagicMock(return_value=test_db)
+        mock_session.return_value.__exit__ = MagicMock(return_value=False)
+        result = check_due_subscriptions_sync()
 
     # Disabled subscription should not be counted as due
     assert result["due_subscriptions"] == 0

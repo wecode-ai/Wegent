@@ -45,9 +45,7 @@ class TaskMemberService:
             .filter(
                 TaskResource.id == task_id,
                 TaskResource.kind == "Task",
-                TaskResource.is_active.in_(
-                    [TaskResource.STATE_ACTIVE, TaskResource.STATE_SUBSCRIPTION]
-                ),
+                TaskResource.is_active.in_(TaskResource.is_active_query()),
             )
             .first()
         )

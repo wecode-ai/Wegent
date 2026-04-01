@@ -176,12 +176,15 @@
       },
       "indexStatus": {
         "available": "Indexed",
+        "notIndexed": "Not Indexed",
+        "notIndexedHint": "This document has not been indexed yet, so AI currently falls back to other tools to browse its content.",
         "unavailable": "Index Unavailable",
         "unavailableHint": "AI will use other tools to browse documents (slightly less efficient than quick retrieval)",
         "indexing": "Indexing",
         "indexingHint": "Index is being generated. Refresh the page later to check the latest status."
       },
       "reindex": "Reindex",
+      "index": "Start Indexing",
       "reindexing": "Reindexing...",
       "reindexSuccess": "Reindex started",
       "reindexFailed": "Failed to start reindex",

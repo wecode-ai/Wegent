@@ -32,9 +32,9 @@ import {
 import type { ModalParams, RegisteredModalProps } from '@/lib/scheme/modal-registry'
 import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
-import { himalayaMailApis, type HimalayaMailDomain } from '@wecode/apis'
+import { mailApis, type MailDomain } from '@wecode/apis'
 
-const EMAIL_DOMAIN_OPTIONS: HimalayaMailDomain[] = ['@staff.sina.com.cn', '@staff.weibo.com']
+const EMAIL_DOMAIN_OPTIONS: MailDomain[] = ['@staff.sina.com.cn', '@staff.weibo.com']
 const ONLINE_DEVICE_STATUSES = new Set<DeviceInfo['status']>(['online', 'busy'])
 
 function getSelectableDevices(devices: DeviceInfo[]) {
@@ -114,7 +114,7 @@ function formatCurrentDeviceLabel(device: DeviceInfo) {
   return device.name
 }
 
-export function HimalayaMailConfigDialog({ open, onOpenChange, params }: RegisteredModalProps) {
+export function MailConfigDialog({ open, onOpenChange, params }: RegisteredModalProps) {
   const { t } = useTranslation('devices')
   const { toast } = useToast()
   // Get task context if available (may be null if used outside TaskContextProvider)
@@ -126,7 +126,7 @@ export function HimalayaMailConfigDialog({ open, onOpenChange, params }: Registe
   const [selectedDeviceId, setSelectedDeviceId] = useState('')
   const [lockedDeviceId, setLockedDeviceId] = useState('')
   const [accountPrefix, setAccountPrefix] = useState('')
-  const [emailDomain, setEmailDomain] = useState<HimalayaMailDomain>('@staff.sina.com.cn')
+  const [emailDomain, setEmailDomain] = useState<MailDomain>('@staff.sina.com.cn')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [taskId, setTaskId] = useState<number | null>(null)
@@ -231,7 +231,7 @@ export function HimalayaMailConfigDialog({ open, onOpenChange, params }: Registe
 
     try {
       setSaving(true)
-      await himalayaMailApis.createConfig(selectedDeviceId, {
+      await mailApis.createConfig(selectedDeviceId, {
         task_id: taskId,
         account_prefix: resolvedAccountPrefix,
         email_domain: emailDomain,
@@ -278,25 +278,25 @@ export function HimalayaMailConfigDialog({ open, onOpenChange, params }: Registe
                   {t('mail_config.current_device_label')}
                 </Label>
                 <div
-                  id="himalaya-mail-current-device"
+                  id="mail-current-device"
                   className="flex-1 min-h-[44px] rounded-md border border-border bg-surface px-3 py-2 text-sm text-text-primary"
-                  data-testid="himalaya-mail-current-device-input"
+                  data-testid="mail-current-device-input"
                 >
                   {lockedDevice ? formatCurrentDeviceLabel(lockedDevice) : ''}
                 </div>
               </div>
             ) : (
               <Fragment>
-                <Label htmlFor="himalaya-mail-device-select">{t('mail_config.device_label')}</Label>
+                <Label htmlFor="mail-device-select">{t('mail_config.device_label')}</Label>
                 <Select
                   value={selectedDeviceId}
                   onValueChange={setSelectedDeviceId}
                   disabled={loadingDevices || saving || selectableDevices.length === 0}
                 >
                   <SelectTrigger
-                    id="himalaya-mail-device-select"
+                    id="mail-device-select"
                     className="h-11 min-w-[44px]"
-                    data-testid="himalaya-mail-device-select"
+                    data-testid="mail-device-select"
                   >
                     <SelectValue placeholder={t('mail_config.device_placeholder')} />
                   </SelectTrigger>
@@ -320,30 +320,30 @@ export function HimalayaMailConfigDialog({ open, onOpenChange, params }: Registe
 
           <div className="flex items-center gap-3">
             <Label
-              htmlFor="himalaya-mail-account-input"
+              htmlFor="mail-account-input"
               className="w-20 shrink-0 text-sm font-medium text-text-primary"
             >
               {t('mail_config.account_label')}
             </Label>
             <div className="flex flex-1 gap-2">
               <Input
-                id="himalaya-mail-account-input"
+                id="mail-account-input"
                 type="text"
                 value={accountPrefix}
                 readOnly
                 placeholder={loadingIdentity ? t('mail_config.loading_account') : ''}
                 autoComplete="username"
                 disabled={saving || loadingIdentity}
-                data-testid="himalaya-mail-account-input"
+                data-testid="mail-account-input"
               />
               <Select
                 value={emailDomain}
-                onValueChange={value => setEmailDomain(value as HimalayaMailDomain)}
+                onValueChange={value => setEmailDomain(value as MailDomain)}
                 disabled={saving}
               >
                 <SelectTrigger
                   className="h-11 w-[220px] min-w-[44px]"
-                  data-testid="himalaya-mail-email-domain-select"
+                  data-testid="mail-email-domain-select"
                 >
                   <SelectValue />
                 </SelectTrigger>
@@ -360,14 +360,14 @@ export function HimalayaMailConfigDialog({ open, onOpenChange, params }: Registe
 
           <div className="flex items-center gap-3">
             <Label
-              htmlFor="himalaya-mail-password-input"
+              htmlFor="mail-password-input"
               className="w-20 shrink-0 text-sm font-medium text-text-primary"
             >
               {t('mail_config.password_label')}
             </Label>
             <div className="relative flex-1">
               <Input
-                id="himalaya-mail-password-input"
+                id="mail-password-input"
                 type={showPassword ? 'text' : 'password'}
                 value={password}
                 onChange={event => setPassword(event.target.value)}
@@ -380,7 +380,7 @@ export function HimalayaMailConfigDialog({ open, onOpenChange, params }: Registe
                   (!currentSelectedDevice && selectableDevices.length === 0)
                 }
                 className="pr-10"
-                data-testid="himalaya-mail-password-input"
+                data-testid="mail-password-input"
               />
               <button
                 type="button"
@@ -395,7 +395,7 @@ export function HimalayaMailConfigDialog({ open, onOpenChange, params }: Registe
                   !taskId ||
                   (!currentSelectedDevice && selectableDevices.length === 0)
                 }
-                data-testid="toggle-himalaya-mail-password-visibility-button"
+                data-testid="toggle-mail-password-visibility-button"
               >
                 {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
               </button>
@@ -409,7 +409,7 @@ export function HimalayaMailConfigDialog({ open, onOpenChange, params }: Registe
             type="button"
             onClick={() => onOpenChange(false)}
             disabled={saving}
-            data-testid="cancel-himalaya-mail-config-button"
+            data-testid="cancel-mail-config-button"
           >
             {t('cancel')}
           </Button>
@@ -418,7 +418,7 @@ export function HimalayaMailConfigDialog({ open, onOpenChange, params }: Registe
             type="button"
             onClick={handleSave}
             disabled={isSaveDisabled}
-            data-testid="save-himalaya-mail-config-button"
+            data-testid="save-mail-config-button"
           >
             {saving ? (
               <>

@@ -26,6 +26,7 @@ from app.models.kind import Kind
 from app.models.subtask import Subtask
 from app.models.task import TaskResource
 from app.models.user import User
+from app.services.context import context_service
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -35,6 +36,44 @@ if TYPE_CHECKING:
     from shared.models.execution import ExecutionRequest
 
 logger = logging.getLogger(__name__)
+SELECTED_KB_PRELOAD_SKILL = "wegent-knowledge"
+
+
+def _build_executor_attachment_payload(context: Any) -> dict[str, Any]:
+    """Serialize an attachment context for executor-side downloading."""
+    return {
+        "id": context.id,
+        "original_filename": context.original_filename,
+        "mime_type": context.mime_type,
+        "file_size": context.file_size,
+        "subtask_id": context.subtask_id,
+    }
+
+
+def _ensure_selected_kb_skill_priority(request: "ExecutionRequest") -> None:
+    """Ensure selected-KB requests both preload and prioritize the KB skill."""
+    if not request.knowledge_base_ids or not request.is_user_selected_kb:
+        return
+
+    preload_skills = list(request.preload_skills or [])
+    if SELECTED_KB_PRELOAD_SKILL not in preload_skills:
+        preload_skills.append(SELECTED_KB_PRELOAD_SKILL)
+        request.preload_skills = preload_skills
+        logger.info(
+            "[ai_trigger_unified] Added preload skill '%s' for selected KBs: %s",
+            SELECTED_KB_PRELOAD_SKILL,
+            request.knowledge_base_ids,
+        )
+
+    user_selected_skills = list(request.user_selected_skills or [])
+    if SELECTED_KB_PRELOAD_SKILL not in user_selected_skills:
+        user_selected_skills.append(SELECTED_KB_PRELOAD_SKILL)
+        request.user_selected_skills = user_selected_skills
+        logger.info(
+            "[ai_trigger_unified] Added user-selected skill '%s' for selected KBs: %s",
+            SELECTED_KB_PRELOAD_SKILL,
+            request.knowledge_base_ids,
+        )
 
 
 async def trigger_ai_response_unified(
@@ -102,6 +141,7 @@ async def trigger_ai_response_unified(
         team=team,
         user=user,
         message=message,
+        device_id=device_id,
         payload=payload,
         user_subtask_id=user_subtask_id,
         history_limit=history_limit,
@@ -134,6 +174,7 @@ async def build_execution_request(
     team: Kind,
     user: User,
     message: Union[str, list],
+    device_id: Optional[str] = None,
     payload: Any = None,
     user_subtask_id: Optional[int] = None,
     history_limit: Optional[int] = None,
@@ -174,6 +215,7 @@ async def build_execution_request(
     """
     from app.services.execution import TaskRequestBuilder
     from shared.models import ExecutionRequest
+    from shared.telemetry.context import get_request_id
 
     logger.info(
         "[build_execution_request] Building request: task_id=%d, subtask_id=%d",
@@ -282,6 +324,20 @@ async def build_execution_request(
         # Note: This is different from request.subtask_id which is the assistant subtask.
         request.user_subtask_id = user_subtask_id
 
+        # Propagate backend request_id for cross-service log correlation.
+        # Fallback to deterministic subtask-based ID when request context is unavailable.
+        current_request_id = get_request_id()
+        request.request_id = (
+            current_request_id if current_request_id else f"req_{assistant_subtask.id}"
+        )
+        logger.info(
+            "[build_execution_request] request_id assigned: task_id=%d, subtask_id=%d, request_id=%s, source=%s",
+            task.id,
+            assistant_subtask.id,
+            request.request_id,
+            "context" if current_request_id else "generated",
+        )
+
         # Process knowledge base names from API request (OpenAPI v1/responses)
         # This creates SubtaskContext records for KBs specified in the request
         processed_subtask_id = None
@@ -304,7 +360,29 @@ async def build_execution_request(
             user_subtask_id if user_subtask_id else processed_subtask_id
         )
         if context_subtask_id:
-            request = await _process_contexts(db, request, context_subtask_id, user.id)
+            request = await _process_contexts(
+                db,
+                request,
+                context_subtask_id,
+                user.id,
+            )
+            if (
+                device_id
+                and request.knowledge_base_ids
+                and request.is_user_selected_kb
+                and SELECTED_KB_PRELOAD_SKILL not in (request.skill_names or [])
+            ):
+                from app.schemas.kind import Team as TeamCRD
+
+                team_crd = TeamCRD.model_validate(team.json)
+                bot = builder._get_bot_for_subtask(assistant_subtask, team, team_crd)
+                if bot:
+                    request = builder.resolve_request_preload_skills(
+                        request=request,
+                        bot=bot,
+                        team=team,
+                        user_id=user.id,
+                    )
 
         return request
 
@@ -325,7 +403,6 @@ async def _process_contexts(
         request: ExecutionRequest to enhance
         user_subtask_id: User subtask ID for context retrieval
         user_id: User ID for context retrieval
-
     Returns:
         Enhanced ExecutionRequest with context information
     """
@@ -354,19 +431,25 @@ async def _process_contexts(
     request.system_prompt = ctx.kb.enhanced_system_prompt
     request.table_contexts = ctx.table_contexts
     request.kb_meta_prompt = ctx.kb.kb_meta_prompt
+    request.attachments = [
+        _build_executor_attachment_payload(context)
+        for context in context_service.get_attachments_by_subtask(db, user_subtask_id)
+    ]
     if ctx.kb.knowledge_base_ids:
         request.knowledge_base_ids = ctx.kb.knowledge_base_ids
         request.is_user_selected_kb = ctx.kb.is_user_selected_kb
         request.kb_tool_access_mode = ctx.kb.kb_tool_access_mode
         if ctx.kb.document_ids:
             request.document_ids = ctx.kb.document_ids
+        _ensure_selected_kb_skill_priority(request)
 
     logger.info(
         "[ai_trigger_unified] Context processing completed: "
-        "user_subtask_id=%d, knowledge_base_ids=%s, table_contexts_count=%d",
+        "user_subtask_id=%d, knowledge_base_ids=%s, table_contexts_count=%d, attachments=%d",
         user_subtask_id,
         request.knowledge_base_ids,
         len(ctx.table_contexts),
+        len(request.attachments),
     )
 
     return request

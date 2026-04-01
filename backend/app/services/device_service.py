@@ -212,6 +212,14 @@ class DeviceService:
         return await provider.get_slot_usage(db, user_id, device_id)
 
     @staticmethod
+    def get_device_slot_usage(
+        db: Session, user_id: int, device_id: str
+    ) -> Dict[str, Any]:
+        """Get slot usage information for a device from sync code paths."""
+        provider = DeviceService._get_provider(DeviceType.LOCAL)
+        return provider.get_slot_usage_sync(db, user_id, device_id)
+
+    @staticmethod
     def is_update_available(current: Optional[str], latest: str) -> bool:
         """Check if update is available using semantic version comparison.
 

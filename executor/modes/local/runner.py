@@ -256,6 +256,14 @@ class LocalRunner:
     async def enqueue_task(self, task_data: ExecutionRequest) -> None:
         """Add a task to the execution queue."""
         task_id = task_data.task_id
+
+        # Override backend_url with local executor's reachable URL.
+        # The backend sets backend_url to BACKEND_INTERNAL_URL which may be a
+        # Docker-internal address (e.g. http://backend:8000) unreachable from
+        # the local executor. Use the executor's own WEGENT_BACKEND_URL instead.
+        if config.WEGENT_BACKEND_URL:
+            task_data.backend_url = config.WEGENT_BACKEND_URL.rstrip("/")
+
         logger.info(f"Enqueuing task: task_id={task_id}")
         await self.task_queue.put(task_data)
 

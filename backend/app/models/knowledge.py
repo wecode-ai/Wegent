@@ -24,7 +24,7 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
-    Text,
+    TypeDecorator,
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -46,6 +46,40 @@ class DocumentSourceType(str, PyEnum):
     TEXT = "text"  # Pasted text
     TABLE = "table"  # External table (DingTalk, Feishu, etc.)
     WEB = "web"  # Web page (scraped URL)
+
+
+class DocumentIndexStatus(str, PyEnum):
+    """Business status for document indexing lifecycle."""
+
+    NOT_INDEXED = "not_indexed"
+    QUEUED = "queued"
+    INDEXING = "indexing"
+    SUCCESS = "success"
+    FAILED = "failed"
+
+
+class DocumentIndexStatusType(TypeDecorator):
+    """Persist index status as VARCHAR while exposing Python enums to business code."""
+
+    impl = String(32)
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        """Convert enum values to strings before writing to the database."""
+        if value is None:
+            return None
+        if isinstance(value, DocumentIndexStatus):
+            return value.value
+        return DocumentIndexStatus(value).value
+
+    def process_result_value(self, value, dialect):
+        """Convert stored strings back into business enums when loading rows."""
+        if value is None:
+            return None
+        try:
+            return DocumentIndexStatus(value)
+        except ValueError:
+            return value
 
 
 class KnowledgeDocument(Base):
@@ -79,6 +113,12 @@ class KnowledgeDocument(Base):
     is_active = Column(
         Boolean, nullable=False, default=False
     )  # Default to False, set to True after indexing completes
+    index_status = Column(
+        DocumentIndexStatusType(),
+        nullable=False,
+        default=DocumentIndexStatus.NOT_INDEXED,
+    )
+    index_generation = Column(Integer, nullable=False, default=0)
     splitter_config = Column(
         JSON, nullable=False, default={}
     )  # Splitter configuration for document chunking

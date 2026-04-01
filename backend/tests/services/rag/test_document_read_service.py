@@ -131,11 +131,16 @@ class TestDocumentReadService:
             )
 
         assert results[0]["id"] == 11
-        assert results[1] == {"id": 99, "error": "Document not found"}
+        assert results[1] == {
+            "id": 99,
+            "error": "Document not found",
+            "error_code": "DOCUMENT_NOT_FOUND",
+        }
         assert (
             results[2]["error"]
             == "Access denied: document not in allowed knowledge bases"
         )
+        assert results[2]["error_code"] == "DOCUMENT_ACCESS_DENIED"
 
         mock_get_context_map.assert_called_once_with(
             db=db,

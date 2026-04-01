@@ -24,14 +24,25 @@ import {
   DropdownMenuTrigger,
   DropdownMenuSeparator,
 } from '@/components/ui/dropdown'
-import type { Team, GitRepoInfo, GitBranch as GitBranchType, TaskDetail } from '@/types/api'
+import type {
+  Team,
+  GitRepoInfo,
+  GitBranch as GitBranchType,
+  TaskDetail,
+  TaskType,
+} from '@/types/api'
 import type { ContextItem } from '@/types/context'
 import type { UnifiedSkill } from '@/apis/skills'
-import { isChatShell, teamRequiresWorkspace } from '../../service/messageService'
+import {
+  canUseChatContexts,
+  isChatShell,
+  teamRequiresWorkspace,
+} from '../../service/messageService'
 import { supportsAttachments } from '../../service/attachmentService'
 import SkillSelectorPopover from '../selector/SkillSelectorPopover'
 
 export interface MobileChatInputControlsProps {
+  taskType?: TaskType
   // Team and Model
   selectedTeam: Team | null
   selectedModel: Model | null
@@ -106,6 +117,7 @@ export interface MobileChatInputControlsProps {
  * Optimized layout for mobile devices with dropdown menu
  */
 export function MobileChatInputControls({
+  taskType,
   selectedTeam,
   selectedModel,
   setSelectedModel,
@@ -151,6 +163,7 @@ export function MobileChatInputControls({
   hideSelectors,
 }: MobileChatInputControlsProps) {
   const [moreMenuOpen, setMoreMenuOpen] = useState(false)
+  const showChatContexts = canUseChatContexts(taskType, selectedTeam)
 
   // Render send button based on state
   const renderSendButton = () => {
@@ -233,7 +246,7 @@ export function MobileChatInputControls({
           <AttachmentButton onFileSelect={onFileSelect} disabled={isLoading || isStreaming} />
         )}
         {/* Context (Knowledge base) */}
-        {isChatShell(selectedTeam) && (
+        {showChatContexts && (
           <ChatContextInput
             selectedContexts={selectedContexts}
             onContextsChange={setSelectedContexts}

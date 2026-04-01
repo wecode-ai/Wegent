@@ -67,3 +67,24 @@ def test_round_trip_preserves_skill_reference_metadata():
 
     assert converted.skill_refs == request.skill_refs
     assert converted.preload_skill_refs == request.preload_skill_refs
+
+
+def test_to_execution_request_preserves_message_history_and_stateless_flag():
+    openai_request = {
+        "model": "test-model",
+        "input": [
+            {"role": "user", "content": "第一条用户消息"},
+            {"role": "user", "content": "第二条用户消息"},
+        ],
+        "metadata": {
+            "stateless": True,
+            "enable_tools": False,
+        },
+    }
+
+    request = OpenAIRequestConverter.to_execution_request(openai_request)
+
+    assert request.stateless is True
+    assert request.enable_tools is False
+    assert request.history == [{"role": "user", "content": "第一条用户消息"}]
+    assert request.prompt == "第二条用户消息"

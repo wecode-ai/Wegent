@@ -200,22 +200,38 @@ class TestLocalModeStrategy:
             "ANTHROPIC_MODEL": "claude-model",
         }
         config_dir = "/workspace/12345/.claude"
+        task_identity_env = {
+            "WEGENT_SKILL_IDENTITY_TOKEN": "skill-jwt",
+            "WEGENT_SKILL_USER_NAME": "alice",
+        }
 
-        result = strategy.configure_client_options(options, config_dir, env_config)
+        result = strategy.configure_client_options(
+            options, config_dir, env_config, task_identity_env
+        )
 
         assert "EXISTING_VAR" in result["env"]
         assert "ANTHROPIC_AUTH_TOKEN" in result["env"]
         assert "ANTHROPIC_MODEL" in result["env"]
+        assert (
+            result["env"]["WEGENT_SKILL_IDENTITY_TOKEN"]
+            == task_identity_env["WEGENT_SKILL_IDENTITY_TOKEN"]
+        )
+        assert (
+            result["env"]["WEGENT_SKILL_USER_NAME"]
+            == task_identity_env["WEGENT_SKILL_USER_NAME"]
+        )
         assert result["env"]["CLAUDE_CONFIG_DIR"] == config_dir
+        assert result["env"]["SKILLS_DIR"] == "/workspace/12345/.claude/skills"
 
     def test_configure_client_options_sets_claude_config_dir(self, strategy):
         """Test that CLAUDE_CONFIG_DIR is set correctly."""
         options = {"cwd": "/workspace"}
         config_dir = "/workspace/12345/.claude"
 
-        result = strategy.configure_client_options(options, config_dir, {})
+        result = strategy.configure_client_options(options, config_dir, {}, {})
 
         assert result["env"]["CLAUDE_CONFIG_DIR"] == config_dir
+        assert result["env"]["SKILLS_DIR"] == "/workspace/12345/.claude/skills"
 
     def test_configure_client_options_adds_anthropic_custom_headers(self, strategy):
         """Test that ANTHROPIC_CUSTOM_HEADERS is added when configured."""
@@ -224,7 +240,7 @@ class TestLocalModeStrategy:
         custom_headers = "x-custom-user: test\nx-custom-source: executor"
 
         with patch("executor.config.config.ANTHROPIC_CUSTOM_HEADERS", custom_headers):
-            result = strategy.configure_client_options(options, config_dir, {})
+            result = strategy.configure_client_options(options, config_dir, {}, {})
 
         assert result["env"]["ANTHROPIC_CUSTOM_HEADERS"] == custom_headers
 
@@ -234,9 +250,34 @@ class TestLocalModeStrategy:
         config_dir = "/workspace/12345/.claude"
 
         with patch("executor.config.config.ANTHROPIC_CUSTOM_HEADERS", ""):
-            result = strategy.configure_client_options(options, config_dir, {})
+            result = strategy.configure_client_options(options, config_dir, {}, {})
 
         assert "ANTHROPIC_CUSTOM_HEADERS" not in result["env"]
+
+    def test_configure_client_options_refreshes_task_identity_without_mutating_input(
+        self, strategy
+    ):
+        """Task identity env should refresh per call without mutating base options."""
+        options = {"cwd": "/workspace", "env": {"EXISTING_VAR": "value"}}
+        config_dir = "/workspace/12345/.claude"
+
+        first = strategy.configure_client_options(
+            options,
+            config_dir,
+            {},
+            {"WEGENT_SKILL_IDENTITY_TOKEN": "token-1"},
+        )
+        second = strategy.configure_client_options(
+            options,
+            config_dir,
+            {},
+            {"WEGENT_SKILL_IDENTITY_TOKEN": "token-2"},
+        )
+
+        assert options["env"] == {"EXISTING_VAR": "value"}
+        assert first["env"]["WEGENT_SKILL_IDENTITY_TOKEN"] == "token-1"
+        assert second["env"]["WEGENT_SKILL_IDENTITY_TOKEN"] == "token-2"
+        assert "WEGENT_SKILL_IDENTITY_TOKEN" not in os.environ
 
     def test_get_skills_directory_with_config_dir(self, strategy):
         """Test skills directory within task config dir."""
@@ -354,19 +395,33 @@ class TestDockerModeStrategy:
 
             assert env_config == {}
 
-    def test_configure_client_options_unchanged(self, strategy):
-        """Test that options are returned unchanged in Docker mode."""
+    def test_configure_client_options_injects_task_identity_env(self, strategy):
+        """Docker mode should inject task identity env for task-scoped child context."""
         original_options = {
             "cwd": "/workspace",
             "env": {"SOME_VAR": "value"},
             "max_turns": 10,
         }
+        task_identity_env = {
+            "WEGENT_SKILL_IDENTITY_TOKEN": "skill-jwt",
+            "WEGENT_SKILL_USER_NAME": "alice",
+        }
 
         result = strategy.configure_client_options(
-            options=original_options.copy(), config_dir="/irrelevant", env_config={}
+            options=original_options,
+            config_dir="/irrelevant",
+            env_config={},
+            task_identity_env=task_identity_env,
         )
 
-        assert result == original_options
+        assert result["cwd"] == original_options["cwd"]
+        assert result["max_turns"] == original_options["max_turns"]
+        assert result["env"]["SOME_VAR"] == "value"
+        assert result["env"]["WEGENT_SKILL_IDENTITY_TOKEN"] == "skill-jwt"
+        assert result["env"]["WEGENT_SKILL_USER_NAME"] == "alice"
+        assert result["env"]["SKILLS_DIR"] == strategy.get_skills_directory()
+        assert original_options["env"] == {"SOME_VAR": "value"}
+        assert "WEGENT_SKILL_IDENTITY_TOKEN" not in os.environ
 
     def test_get_skills_directory(self, strategy, temp_home):
         """Test default ~/.claude/skills directory."""

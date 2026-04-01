@@ -26,6 +26,7 @@ from app.api.endpoints import (
     quota,
     repository,
     share,
+    skill_identity,
     skill_market,
     subtasks,
     tables,
@@ -48,6 +49,7 @@ from app.api.endpoints.adapter import (
     bots,
     chat,
     dify,
+    model_runtime,
     models,
     retrievers,
     shells,
@@ -130,6 +132,9 @@ api_router.include_router(
 api_router.include_router(repository.router, prefix="/git", tags=["repository"])
 api_router.include_router(quota.router, prefix="/quota", tags=["quota"])
 api_router.include_router(dify.router, prefix="/dify", tags=["dify"])
+api_router.include_router(
+    model_runtime.router, prefix="/model-runtime", tags=["model-runtime"]
+)
 api_router.include_router(retrievers.router, prefix="/retrievers", tags=["retrievers"])
 api_router.include_router(wiki.router, prefix="/wiki", tags=["wiki"])
 api_router.include_router(
@@ -155,6 +160,11 @@ api_router.include_router(
     knowledge.summary_router,
     prefix="/knowledge-bases",
     tags=["knowledge-summary"],
+)
+api_router.include_router(
+    knowledge.knowledge_router,
+    prefix="/knowledge",
+    tags=["knowledge"],
 )
 # Unified share endpoints (Team, Task, KnowledgeBase)
 api_router.include_router(share.router, prefix="/share", tags=["share"])
@@ -189,6 +199,7 @@ api_router.include_router(
 api_router.include_router(
     skill_market.router, prefix="/skill-market", tags=["skill-market"]
 )
+api_router.include_router(skill_identity.router, tags=["skill-identity"])
 api_router.include_router(k_router)
 
 # Internal API endpoints (for service-to-service communication)

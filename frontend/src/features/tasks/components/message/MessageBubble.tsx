@@ -322,6 +322,18 @@ function canShowReEdit(
   return isCompleted && isNotRunning
 }
 
+function getCopyableContent(rawContent: string): string {
+  const content = (rawContent ?? '').trim()
+  if (!content) return ''
+
+  if (!content.includes('${$$}$')) {
+    return content
+  }
+
+  const [, result] = content.split('${$$}$')
+  return (result || '').trim()
+}
+
 const MessageBubble = memo(
   function MessageBubble({
     msg,
@@ -558,7 +570,8 @@ const MessageBubble = memo(
     const renderMarkdownResult = (rawResult: string, promptPart?: string) => {
       const trimmed = (rawResult ?? '').trim()
       const fencedMatch = trimmed.match(/^```(?:\s*(?:markdown|md))?\s*\n([\s\S]*?)\n```$/)
-      let normalizedResult = fencedMatch ? fencedMatch[1] : trimmed
+      const rawMarkdownResult = fencedMatch ? fencedMatch[1] : trimmed
+      let normalizedResult = rawMarkdownResult
 
       // Pre-process markdown to handle edge cases where ** is followed by punctuation
       // Markdown parsers don't recognize **'text'** or **text**。 as bold
@@ -695,7 +708,7 @@ const MessageBubble = memo(
           {/* Hide BubbleTools during streaming */}
           {!isStreaming && (
             <BubbleTools
-              contentToCopy={`${promptPart ? promptPart + '\n\n' : ''}${normalizedResult}`}
+              contentToCopy={`${promptPart ? promptPart + '\n\n' : ''}${rawMarkdownResult}`}
               onCopySuccess={() => trace.copy(msg.type, msg.subtaskId)}
               tools={[
                 {
@@ -703,7 +716,7 @@ const MessageBubble = memo(
                   title: t('messages.download') || 'Download',
                   icon: <Download className="h-4 w-4 text-text-muted" />,
                   onClick: () => {
-                    const blob = new Blob([`${normalizedResult}`], {
+                    const blob = new Blob([`${rawMarkdownResult}`], {
                       type: 'text/plain;charset=utf-8',
                     })
                     const url = URL.createObjectURL(blob)
@@ -1473,7 +1486,7 @@ const MessageBubble = memo(
                       {/* Hide BubbleTools during streaming */}
                       {!isStreaming && (
                         <BubbleTools
-                          contentToCopy={msg.content || ''}
+                          contentToCopy={getCopyableContent(msg.content || '')}
                           onCopySuccess={() => trace.copy(msg.type, msg.subtaskId)}
                           tools={[
                             {
@@ -1481,7 +1494,7 @@ const MessageBubble = memo(
                               title: t('messages.download') || 'Download',
                               icon: <Download className="h-4 w-4 text-text-muted" />,
                               onClick: () => {
-                                const blob = new Blob([msg.content || ''], {
+                                const blob = new Blob([getCopyableContent(msg.content || '')], {
                                   type: 'text/plain;charset=utf-8',
                                 })
                                 const url = URL.createObjectURL(blob)

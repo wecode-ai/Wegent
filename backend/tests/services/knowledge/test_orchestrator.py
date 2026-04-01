@@ -4,7 +4,9 @@
 
 """Tests for KnowledgeOrchestrator service layer."""
 
-from unittest.mock import MagicMock, Mock, patch
+import inspect
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
@@ -223,6 +225,422 @@ class TestKnowledgeOrchestrator:
             with pytest.raises(ValueError, match="Knowledge base not found"):
                 orchestrator.list_documents(mock_db, mock_user, knowledge_base_id=999)
 
+    def test_document_access_helper_and_reader_are_defined_once(self):
+        """KnowledgeOrchestrator should not carry duplicate document-access methods."""
+        source = inspect.getsource(KnowledgeOrchestrator)
+
+        assert source.count("def _get_document_with_access_or_raise(") == 1
+        assert source.count("def read_document_content(") == 1
+
+    def test_read_document_content_returns_paginated_payload(
+        self, orchestrator, mock_db, mock_user
+    ):
+        """Test read_document_content returns the paginated raw content payload."""
+        document = SimpleNamespace(id=9, name="roadmap", kind_id=77)
+        mock_db.query.return_value.filter.return_value.first.return_value = document
+
+        with patch(
+            "app.services.knowledge.orchestrator.KnowledgeService"
+        ) as mock_kb_service:
+            mock_kb_service.get_document.return_value = document
+            mock_kb_service.get_knowledge_base.return_value = (MagicMock(id=77), True)
+
+            with patch(
+                "app.services.knowledge.orchestrator.document_read_service"
+            ) as mock_read_service:
+                mock_read_service.read_documents.return_value = [
+                    {
+                        "id": 9,
+                        "name": "roadmap",
+                        "content": "cdef",
+                        "total_length": 10,
+                        "offset": 2,
+                        "returned_length": 4,
+                        "has_more": True,
+                        "kb_id": 77,
+                    }
+                ]
+
+                result = orchestrator.read_document_content(
+                    db=mock_db,
+                    user=mock_user,
+                    document_id=9,
+                    offset=2,
+                    limit=4,
+                )
+
+        assert result.document_id == 9
+        assert result.name == "roadmap"
+        assert result.content == "cdef"
+        assert result.total_length == 10
+        assert result.offset == 2
+        assert result.returned_length == 4
+        assert result.has_more is True
+        assert result.kb_id == 77
+        mock_kb_service.get_knowledge_base.assert_called_once_with(
+            db=mock_db,
+            knowledge_base_id=77,
+            user_id=mock_user.id,
+        )
+        mock_read_service.read_documents.assert_called_once_with(
+            db=mock_db,
+            document_ids=[9],
+            offset=2,
+            limit=4,
+            knowledge_base_ids=[77],
+        )
+
+    @pytest.mark.parametrize(
+        ("offset", "limit", "message"),
+        [
+            (-1, 1, "offset must be greater than or equal to 0"),
+            (0, 0, "limit must be greater than 0"),
+            (0, 100001, "limit must be less than or equal to 100000"),
+        ],
+    )
+    def test_read_document_content_rejects_invalid_paging_args(
+        self, orchestrator, mock_db, mock_user, offset, limit, message
+    ):
+        """Test read_document_content validates offset and limit."""
+        with pytest.raises(ValueError, match=message):
+            orchestrator.read_document_content(
+                db=mock_db,
+                user=mock_user,
+                document_id=9,
+                offset=offset,
+                limit=limit,
+            )
+
+        mock_db.query.assert_not_called()
+
+    def test_read_document_content_raises_for_missing_document(
+        self, orchestrator, mock_db, mock_user
+    ):
+        """Test read_document_content raises ValueError when document is missing."""
+        mock_db.query.return_value.filter.return_value.first.return_value = None
+
+        with pytest.raises(ValueError, match="Document not found"):
+            orchestrator.read_document_content(
+                db=mock_db,
+                user=mock_user,
+                document_id=9,
+            )
+
+    def test_read_document_content_uses_error_code_for_missing_document(
+        self, orchestrator, mock_db, mock_user
+    ):
+        """Test read_document_content maps stable missing-document error codes."""
+        document = SimpleNamespace(id=9, name="roadmap", kind_id=77)
+        mock_db.query.return_value.filter.return_value.first.return_value = document
+
+        with patch(
+            "app.services.knowledge.orchestrator.KnowledgeService"
+        ) as mock_kb_service:
+            mock_kb_service.get_knowledge_base.return_value = (MagicMock(id=77), True)
+
+            with patch(
+                "app.services.knowledge.orchestrator.document_read_service"
+            ) as mock_read_service:
+                mock_read_service.read_documents.return_value = [
+                    {
+                        "id": 9,
+                        "error": "reader payload changed",
+                        "error_code": "DOCUMENT_NOT_FOUND",
+                    }
+                ]
+
+                with pytest.raises(ValueError, match="Document not found"):
+                    orchestrator.read_document_content(
+                        db=mock_db,
+                        user=mock_user,
+                        document_id=9,
+                    )
+
+    def test_read_document_content_raises_when_reader_returns_empty_results(
+        self, orchestrator, mock_db, mock_user
+    ):
+        """Test read_document_content raises when the reader returns no rows."""
+        document = SimpleNamespace(id=9, name="roadmap", kind_id=77)
+        mock_db.query.return_value.filter.return_value.first.return_value = document
+
+        with patch(
+            "app.services.knowledge.orchestrator.KnowledgeService"
+        ) as mock_kb_service:
+            mock_kb_service.get_knowledge_base.return_value = (MagicMock(id=77), True)
+
+            with patch(
+                "app.services.knowledge.orchestrator.document_read_service"
+            ) as mock_read_service:
+                mock_read_service.read_documents.return_value = []
+
+                with pytest.raises(ValueError, match="Document not found"):
+                    orchestrator.read_document_content(
+                        db=mock_db,
+                        user=mock_user,
+                        document_id=9,
+                    )
+
+    def test_read_document_content_raises_reader_error(
+        self, orchestrator, mock_db, mock_user
+    ):
+        """Test read_document_content surfaces reader access errors unchanged."""
+        document = SimpleNamespace(id=9, name="roadmap", kind_id=77)
+        mock_db.query.return_value.filter.return_value.first.return_value = document
+
+        with patch(
+            "app.services.knowledge.orchestrator.KnowledgeService"
+        ) as mock_kb_service:
+            mock_kb_service.get_knowledge_base.return_value = (MagicMock(id=77), True)
+
+            with patch(
+                "app.services.knowledge.orchestrator.document_read_service"
+            ) as mock_read_service:
+                mock_read_service.read_documents.return_value = [
+                    {
+                        "id": 9,
+                        "error": "Access denied: document not in allowed knowledge bases",
+                    }
+                ]
+
+                with pytest.raises(
+                    ValueError,
+                    match="Access denied: document not in allowed knowledge bases",
+                ):
+                    orchestrator.read_document_content(
+                        db=mock_db,
+                        user=mock_user,
+                        document_id=9,
+                    )
+
+    def test_read_document_content_raises_for_incomplete_reader_payload(
+        self, orchestrator, mock_db, mock_user
+    ):
+        """Test read_document_content rejects incomplete reader payloads."""
+        document = SimpleNamespace(id=9, name="roadmap", kind_id=77)
+        mock_db.query.return_value.filter.return_value.first.return_value = document
+
+        with patch(
+            "app.services.knowledge.orchestrator.KnowledgeService"
+        ) as mock_kb_service:
+            mock_kb_service.get_knowledge_base.return_value = (MagicMock(id=77), True)
+
+            with patch(
+                "app.services.knowledge.orchestrator.document_read_service"
+            ) as mock_read_service:
+                mock_read_service.read_documents.return_value = [
+                    {
+                        "id": 9,
+                        "name": "roadmap",
+                        "content": "cdef",
+                        "offset": 2,
+                        "kb_id": 77,
+                    }
+                ]
+
+                with pytest.raises(
+                    ValueError,
+                    match="Incomplete document read payload: missing total_length, returned_length, has_more",
+                ):
+                    orchestrator.read_document_content(
+                        db=mock_db,
+                        user=mock_user,
+                        document_id=9,
+                    )
+
+    @pytest.mark.asyncio
+    async def test_get_document_detail_maps_content_length_and_truncated(
+        self, orchestrator, mock_db, mock_user
+    ):
+        """Test get_document_detail maps paged content and async summary."""
+        paged = SimpleNamespace(
+            document_id=9,
+            name="roadmap",
+            content="abcd",
+            total_length=10,
+            offset=0,
+            returned_length=4,
+            has_more=True,
+            kb_id=77,
+        )
+        summary_service = MagicMock()
+        summary_service.get_document_summary = AsyncMock(
+            return_value={"summary": "hello"}
+        )
+
+        with patch.object(
+            orchestrator, "read_document_content", return_value=paged
+        ) as mock_read_document_content:
+            with patch(
+                "app.services.knowledge.summary_service.get_summary_service",
+                return_value=summary_service,
+            ) as mock_get_summary_service:
+                result = await orchestrator.get_document_detail(
+                    db=mock_db,
+                    user=mock_user,
+                    document_id=9,
+                    include_content=True,
+                    include_summary=True,
+                )
+
+        assert result.document_id == 9
+        assert result.content == "abcd"
+        assert result.content_length == 10
+        assert result.truncated is True
+        assert result.summary == {"summary": "hello"}
+        mock_read_document_content.assert_called_once_with(
+            db=mock_db,
+            user=mock_user,
+            document_id=9,
+            offset=0,
+            limit=100000,
+        )
+        mock_get_summary_service.assert_called_once_with(mock_db)
+        summary_service.get_document_summary.assert_awaited_once_with(9)
+
+    @pytest.mark.asyncio
+    async def test_get_document_detail_skips_content_when_disabled(
+        self, orchestrator, mock_db, mock_user
+    ):
+        """Test get_document_detail still validates access when payload sections are disabled."""
+        document = SimpleNamespace(id=9, name="roadmap", kind_id=77)
+
+        with patch.object(
+            orchestrator,
+            "_get_document_with_access_or_raise",
+            return_value=document,
+        ) as mock_get_document:
+            with patch.object(
+                orchestrator, "read_document_content"
+            ) as mock_read_document_content:
+                with patch(
+                    "app.services.knowledge.summary_service.get_summary_service"
+                ) as mock_get_summary_service:
+                    result = await orchestrator.get_document_detail(
+                        db=mock_db,
+                        user=mock_user,
+                        document_id=9,
+                        include_content=False,
+                        include_summary=False,
+                    )
+
+        assert result.document_id == 9
+        assert result.content is None
+        assert result.content_length is None
+        assert result.truncated is None
+        assert result.summary is None
+        mock_get_document.assert_called_once_with(
+            db=mock_db,
+            user=mock_user,
+            document_id=9,
+        )
+        mock_read_document_content.assert_not_called()
+        mock_get_summary_service.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_get_document_detail_summary_only_validates_access_before_fetching(
+        self, orchestrator, mock_db, mock_user
+    ):
+        """Test summary-only detail requests still enforce document authorization."""
+        document = SimpleNamespace(id=9, name="roadmap", kind_id=77)
+        mock_db.query.return_value.filter.return_value.first.return_value = document
+
+        summary_service = MagicMock()
+        summary_service.get_document_summary = AsyncMock(
+            return_value={"summary": "hello"}
+        )
+
+        with patch(
+            "app.services.knowledge.orchestrator.KnowledgeService"
+        ) as mock_kb_service:
+            mock_kb_service.get_knowledge_base.return_value = (MagicMock(id=77), False)
+
+            with patch(
+                "app.services.knowledge.summary_service.get_summary_service",
+                return_value=summary_service,
+            ):
+                with pytest.raises(ValueError, match="Access denied to this document"):
+                    await orchestrator.get_document_detail(
+                        db=mock_db,
+                        user=mock_user,
+                        document_id=9,
+                        include_content=False,
+                        include_summary=True,
+                    )
+
+        summary_service.get_document_summary.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_get_document_detail_converts_summary_model_dump(
+        self, orchestrator, mock_db, mock_user
+    ):
+        """Test get_document_detail normalizes summary objects via model_dump."""
+        document = SimpleNamespace(id=9, name="roadmap", kind_id=77)
+        mock_db.query.return_value.filter.return_value.first.return_value = document
+
+        summary_result = Mock()
+        summary_result.model_dump.return_value = {"summary": "hello"}
+
+        summary_service = MagicMock()
+        summary_service.get_document_summary = AsyncMock(return_value=summary_result)
+
+        with patch(
+            "app.services.knowledge.orchestrator.KnowledgeService"
+        ) as mock_kb_service:
+            mock_kb_service.get_knowledge_base.return_value = (MagicMock(id=77), True)
+
+            with patch(
+                "app.services.knowledge.summary_service.get_summary_service",
+                return_value=summary_service,
+            ):
+                result = await orchestrator.get_document_detail(
+                    db=mock_db,
+                    user=mock_user,
+                    document_id=9,
+                    include_content=False,
+                    include_summary=True,
+                )
+
+        assert result.summary == {"summary": "hello"}
+        summary_result.model_dump.assert_called_once_with()
+
+    @pytest.mark.asyncio
+    async def test_get_document_detail_marks_non_zero_offset_as_truncated(
+        self, orchestrator, mock_db, mock_user
+    ):
+        """Test get_document_detail treats non-zero offsets as truncated content."""
+        paged = SimpleNamespace(
+            document_id=9,
+            name="roadmap",
+            content="cd",
+            total_length=10,
+            offset=2,
+            returned_length=2,
+            has_more=False,
+            kb_id=77,
+        )
+
+        with patch.object(
+            orchestrator, "read_document_content", return_value=paged
+        ) as mock_read_document_content:
+            result = await orchestrator.get_document_detail(
+                db=mock_db,
+                user=mock_user,
+                document_id=9,
+                include_content=True,
+                include_summary=False,
+                offset=2,
+                limit=2,
+            )
+
+        assert result.truncated is True
+        mock_read_document_content.assert_called_once_with(
+            db=mock_db,
+            user=mock_user,
+            document_id=9,
+            offset=2,
+            limit=2,
+        )
+
     def test_create_document_with_text_content(self, orchestrator, mock_db, mock_user):
         """Test create_document_with_content with text source type."""
         with patch(
@@ -414,6 +832,238 @@ class TestKnowledgeOrchestrator:
                     user=mock_user,
                     document_id=1,
                 )
+
+    def test_schedule_indexing_celery_skips_duplicate_enqueue(
+        self, orchestrator, mock_db, mock_user
+    ):
+        """Test duplicate enqueue requests are skipped before hitting Celery."""
+        mock_kb = MagicMock()
+        mock_kb.id = 1
+        mock_kb.namespace = "default"
+        mock_kb.json = {
+            "spec": {
+                "retrievalConfig": {
+                    "retriever_name": "retriever-1",
+                    "retriever_namespace": "default",
+                    "embedding_config": {
+                        "model_name": "embedding-1",
+                        "model_namespace": "default",
+                    },
+                }
+            }
+        }
+
+        mock_document = MagicMock()
+        mock_document.id = 10
+        mock_document.attachment_id = 20
+
+        with patch(
+            "app.services.knowledge.index_state_machine.prepare_document_index_enqueue"
+        ) as mock_prepare:
+            mock_prepare.return_value = SimpleNamespace(
+                should_enqueue=False,
+                generation=3,
+                reason="already_in_progress",
+                previous_status="indexing",
+            )
+            with patch(
+                "app.tasks.knowledge_tasks.index_document_task.delay"
+            ) as mock_delay:
+                result = orchestrator._schedule_indexing_celery(
+                    db=mock_db,
+                    knowledge_base=mock_kb,
+                    document=mock_document,
+                    user=mock_user,
+                )
+
+        mock_delay.assert_not_called()
+
+        assert result["scheduled"] is False
+        assert result["reason"] == "already_in_progress"
+
+    def test_schedule_indexing_celery_enqueues_with_generation(
+        self, orchestrator, mock_db, mock_user
+    ):
+        """Test a queued indexing task carries the new business generation."""
+        mock_kb = MagicMock()
+        mock_kb.id = 1
+        mock_kb.namespace = "default"
+        mock_kb.json = {
+            "spec": {
+                "retrievalConfig": {
+                    "retriever_name": "retriever-1",
+                    "retriever_namespace": "default",
+                    "embedding_config": {
+                        "model_name": "embedding-1",
+                        "model_namespace": "default",
+                    },
+                }
+            }
+        }
+
+        mock_document = MagicMock()
+        mock_document.id = 10
+        mock_document.attachment_id = 20
+
+        with patch(
+            "app.services.knowledge.index_state_machine.prepare_document_index_enqueue"
+        ) as mock_prepare:
+            mock_prepare.return_value = SimpleNamespace(
+                should_enqueue=True,
+                generation=7,
+                reason="scheduled",
+                previous_status="failed",
+            )
+
+            with patch(
+                "app.tasks.knowledge_tasks.index_document_task.delay"
+            ) as mock_delay:
+                mock_delay.return_value = SimpleNamespace(id="celery-task-1")
+
+                result = orchestrator._schedule_indexing_celery(
+                    db=mock_db,
+                    knowledge_base=mock_kb,
+                    document=mock_document,
+                    user=mock_user,
+                )
+
+        assert result["scheduled"] is True
+        assert result["index_generation"] == 7
+        mock_delay.assert_called_once()
+        assert mock_delay.call_args.kwargs["index_generation"] == 7
+
+    def test_schedule_indexing_celery_raises_when_generation_missing(
+        self, orchestrator, mock_db, mock_user
+    ):
+        """Test enqueue decisions without generation fail explicitly."""
+        mock_kb = MagicMock()
+        mock_kb.id = 1
+        mock_kb.namespace = "default"
+        mock_kb.json = {
+            "spec": {
+                "retrievalConfig": {
+                    "retriever_name": "retriever-1",
+                    "retriever_namespace": "default",
+                    "embedding_config": {
+                        "model_name": "embedding-1",
+                        "model_namespace": "default",
+                    },
+                }
+            }
+        }
+
+        mock_document = MagicMock()
+        mock_document.id = 10
+        mock_document.attachment_id = 20
+
+        with patch(
+            "app.services.knowledge.index_state_machine.prepare_document_index_enqueue"
+        ) as mock_prepare:
+            mock_prepare.return_value = SimpleNamespace(
+                should_enqueue=True,
+                generation=None,
+                reason="scheduled",
+                previous_status="failed",
+            )
+
+            with pytest.raises(RuntimeError, match="generation is None"):
+                orchestrator._schedule_indexing_celery(
+                    db=mock_db,
+                    knowledge_base=mock_kb,
+                    document=mock_document,
+                    user=mock_user,
+                )
+
+    def test_reindex_document_returns_reason_specific_skip_message(
+        self, orchestrator, mock_db, mock_user
+    ):
+        """Test reindex returns a precise skip message for uncommon reasons."""
+        mock_document = MagicMock()
+        mock_document.id = 1
+        mock_document.kind_id = 2
+        mock_document.source_type = DocumentSourceType.FILE.value
+        mock_document.file_extension = "txt"
+        mock_document.file_size = 1024
+        mock_document.splitter_config = {}
+
+        mock_kb = MagicMock()
+
+        with patch.object(mock_db, "query") as mock_query:
+            mock_query.return_value.filter.return_value.first.return_value = (
+                mock_document
+            )
+            with patch(
+                "app.services.knowledge.orchestrator.KnowledgeService.get_knowledge_base",
+                return_value=(mock_kb, True),
+            ):
+                with patch(
+                    "app.services.knowledge.indexing.extract_rag_config_from_knowledge_base",
+                    return_value=MagicMock(),
+                ):
+                    with patch.object(
+                        orchestrator,
+                        "_schedule_indexing_celery",
+                        return_value={
+                            "scheduled": False,
+                            "reason": "document_not_found",
+                            "index_generation": None,
+                        },
+                    ):
+                        result = orchestrator.reindex_document(
+                            db=mock_db,
+                            user=mock_user,
+                            document_id=1,
+                        )
+
+        assert result["skipped"] is True
+        assert result["reason"] == "document_not_found"
+        assert result["message"] == "Document not found"
+
+    def test_reindex_document_allows_requeue_for_successful_documents(
+        self, orchestrator, mock_db, mock_user
+    ):
+        """Test explicit reindex requests bypass the success-state skip rule."""
+        mock_document = MagicMock()
+        mock_document.id = 1
+        mock_document.kind_id = 2
+        mock_document.source_type = DocumentSourceType.FILE.value
+        mock_document.file_extension = "txt"
+        mock_document.file_size = 1024
+        mock_document.splitter_config = {}
+
+        mock_kb = MagicMock()
+
+        with patch.object(mock_db, "query") as mock_query:
+            mock_query.return_value.filter.return_value.first.return_value = (
+                mock_document
+            )
+            with patch(
+                "app.services.knowledge.orchestrator.KnowledgeService.get_knowledge_base",
+                return_value=(mock_kb, True),
+            ):
+                with patch(
+                    "app.services.knowledge.indexing.extract_rag_config_from_knowledge_base",
+                    return_value=MagicMock(),
+                ):
+                    with patch.object(
+                        orchestrator,
+                        "_schedule_indexing_celery",
+                        return_value={
+                            "scheduled": True,
+                            "reason": "scheduled",
+                            "task_id": "task-1",
+                            "index_generation": 8,
+                        },
+                    ) as mock_schedule:
+                        result = orchestrator.reindex_document(
+                            db=mock_db,
+                            user=mock_user,
+                            document_id=1,
+                        )
+
+        assert result["message"] == "Reindex started"
+        assert result["index_generation"] == 8
+        assert mock_schedule.call_args.kwargs["allow_if_success"] is True
 
 
 class TestIndexingPolicy:

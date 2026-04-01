@@ -803,68 +803,72 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
    */
   const stopStream = useCallback(
     async (taskId: number, backupSubtasks?: TaskDetailSubtask[], team?: Team): Promise<void> => {
-      const machine = taskStateManager.get(taskId)
-      if (!machine || machine.getState().status !== 'streaming') {
+      const machine = taskStateManager.getOrCreate(taskId)
+      if (!machine) {
         return
       }
 
       machine.setStopping(true)
+      try {
+        const state = machine.getState()
+        let subtaskId = state.streamingSubtaskId
 
-      const state = machine.getState()
-      let subtaskId = state.streamingSubtaskId
-
-      // Find running subtask from backup if needed
-      let runningSubtask: TaskDetailSubtask | undefined
-      if (!subtaskId && backupSubtasks && backupSubtasks.length > 0) {
-        runningSubtask = backupSubtasks
-          .filter(st => st.role === 'ASSISTANT' && st.status === 'RUNNING')
-          .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0]
-        if (runningSubtask) {
-          subtaskId = runningSubtask.id
-        }
-      } else if (subtaskId && backupSubtasks) {
-        runningSubtask = backupSubtasks.find(st => st.id === subtaskId)
-        if (!runningSubtask) {
+        // Find running subtask from backup if needed
+        let runningSubtask: TaskDetailSubtask | undefined
+        if (!subtaskId && backupSubtasks && backupSubtasks.length > 0) {
           runningSubtask = backupSubtasks
             .filter(st => st.role === 'ASSISTANT' && st.status === 'RUNNING')
             .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0]
-        }
-      }
-
-      // Get partial content
-      let partialContent = ''
-      if (subtaskId) {
-        const aiMessageId = generateMessageId('ai', subtaskId)
-        const aiMessage = state.messages.get(aiMessageId)
-        partialContent = aiMessage?.content || ''
-      }
-
-      // Get shell type
-      let shellType = runningSubtask?.bots?.[0]?.shell_type
-      if (!shellType && team) {
-        shellType = team.bots?.[0]?.bot?.shell_type
-        if (!shellType && team.agent_type?.toLowerCase() === 'chat') {
-          shellType = 'Chat'
-        }
-      }
-
-      // Call backend to cancel
-      if (subtaskId) {
-        try {
-          const result = await cancelChatStream(subtaskId, partialContent, shellType)
-          if (result.error) {
-            console.error('[ChatStreamContext] Failed to cancel stream:', result.error)
+          if (runningSubtask) {
+            subtaskId = runningSubtask.id
           }
-        } catch (error) {
-          console.error('[ChatStreamContext] Exception during cancelChatStream:', error)
+        } else if (subtaskId && backupSubtasks) {
+          runningSubtask = backupSubtasks.find(st => st.id === subtaskId)
+          if (!runningSubtask) {
+            runningSubtask = backupSubtasks
+              .filter(st => st.role === 'ASSISTANT' && st.status === 'RUNNING')
+              .sort(
+                (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+              )[0]
+          }
         }
-      }
 
-      // Update state machine - mark as cancelled
-      if (subtaskId) {
-        machine.handleChatCancelled(subtaskId)
+        // Get partial content
+        let partialContent = ''
+        if (subtaskId) {
+          const aiMessageId = generateMessageId('ai', subtaskId)
+          const aiMessage = state.messages.get(aiMessageId)
+          partialContent = aiMessage?.content || ''
+        }
+
+        // Get shell type
+        let shellType = runningSubtask?.bots?.[0]?.shell_type
+        if (!shellType && team) {
+          shellType = team.bots?.[0]?.bot?.shell_type
+          if (!shellType && team.agent_type?.toLowerCase() === 'chat') {
+            shellType = 'Chat'
+          }
+        }
+
+        // Call backend to cancel
+        if (subtaskId) {
+          try {
+            const result = await cancelChatStream(subtaskId, partialContent, shellType)
+            if (result.error) {
+              console.error('[ChatStreamContext] Failed to cancel stream:', result.error)
+            }
+          } catch (error) {
+            console.error('[ChatStreamContext] Exception during cancelChatStream:', error)
+          }
+        }
+
+        // Update state machine - mark as cancelled
+        if (subtaskId) {
+          machine.handleChatCancelled(subtaskId)
+        }
+      } finally {
+        machine.setStopping(false)
       }
-      machine.setStopping(false)
     },
     [cancelChatStream]
   )

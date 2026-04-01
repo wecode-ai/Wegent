@@ -13,16 +13,20 @@
  * Shows thinking bubble when AI is generating output.
  */
 
-import React, { useState, useRef, useEffect, useCallback } from 'react'
+import React, { useState, useRef, useEffect, useCallback, useContext } from 'react'
 import { X } from 'lucide-react'
 import { usePet } from '@/features/pet/contexts/PetContext'
+import { useTranslation } from '@/hooks/useTranslation'
 import { PetAvatar } from './PetAvatar'
 import { PetNotificationPanel } from './PetNotificationPanel'
 import { ExpGainAnimation } from './ExpGainAnimation'
 import { EvolutionAnimation } from './EvolutionAnimation'
 import { ThinkingBubble } from './ThinkingBubble'
+import { PromptDraftDialog } from '@/features/prompt-draft/components/PromptDraftDialog'
+import { usePromptDraftHint } from '@/features/prompt-draft/hooks/usePromptDraftHint'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { cn } from '@/lib/utils'
+import { TaskContext } from '@/features/tasks/contexts/taskContext'
 
 const POSITION_STORAGE_KEY = 'pet-widget-position'
 const DEFAULT_POSITION = { x: 16, y: 16 } // from bottom-right
@@ -33,6 +37,7 @@ interface Position {
 }
 
 export function PetWidget() {
+  const { t } = useTranslation('pet')
   const {
     pet,
     animationState,
@@ -46,7 +51,12 @@ export function PetWidget() {
   const [isHovered, setIsHovered] = useState(false)
   const [isDragging, setIsDragging] = useState(false)
   const [position, setPosition] = useState<Position>(DEFAULT_POSITION)
+  const [openPromptDraftDialog, setOpenPromptDraftDialog] = useState(false)
   const widgetRef = useRef<HTMLDivElement>(null)
+  const hoverCloseTimerRef = useRef<number | null>(null)
+  const taskContext = useContext(TaskContext)
+  const selectedTaskId = taskContext?.selectedTask?.id ?? null
+  const showPromptHint = usePromptDraftHint(selectedTaskId)
   const dragStartRef = useRef<{
     mouseX: number
     mouseY: number
@@ -80,6 +90,8 @@ export function PetWidget() {
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
       if (isMobile) return
+      const target = e.target as HTMLElement
+      if (target.closest('[data-pet-interactive="true"]')) return
       e.preventDefault()
       setIsDragging(true)
       dragStartRef.current = {
@@ -91,6 +103,36 @@ export function PetWidget() {
     },
     [isMobile, position]
   )
+
+  const clearHoverCloseTimer = useCallback(() => {
+    if (hoverCloseTimerRef.current !== null) {
+      window.clearTimeout(hoverCloseTimerRef.current)
+      hoverCloseTimerRef.current = null
+    }
+  }, [])
+
+  const scheduleHoverClose = useCallback(() => {
+    clearHoverCloseTimer()
+    hoverCloseTimerRef.current = window.setTimeout(() => {
+      setIsHovered(false)
+      hoverCloseTimerRef.current = null
+    }, 180)
+  }, [clearHoverCloseTimer])
+
+  const handleWidgetMouseEnter = useCallback(() => {
+    clearHoverCloseTimer()
+    setIsHovered(true)
+  }, [clearHoverCloseTimer])
+
+  const handleWidgetMouseLeave = useCallback(() => {
+    scheduleHoverClose()
+  }, [scheduleHoverClose])
+
+  useEffect(() => {
+    return () => {
+      clearHoverCloseTimer()
+    }
+  }, [clearHoverCloseTimer])
 
   // Handle mouse move for dragging
   useEffect(() => {
@@ -162,8 +204,8 @@ export function PetWidget() {
           bottom: position.y,
         }}
         onMouseDown={handleMouseDown}
-        onMouseEnter={() => setIsHovered(true)}
-        onMouseLeave={() => setIsHovered(false)}
+        onMouseEnter={handleWidgetMouseEnter}
+        onMouseLeave={handleWidgetMouseLeave}
       >
         {/* Close button */}
         <button
@@ -183,6 +225,11 @@ export function PetWidget() {
 
         {/* Pet avatar */}
         <div className="relative">
+          {showPromptHint && (
+            <div className="absolute -top-10 right-0 text-xs bg-surface border border-border rounded-md px-2 py-1 shadow-sm whitespace-nowrap">
+              {taskContext ? t('promptDraft.hint') : ''}
+            </div>
+          )}
           <PetAvatar pet={pet} animationState={animationState} isMobile={isMobile} />
 
           {/* Thinking bubble when AI is generating */}
@@ -196,8 +243,17 @@ export function PetWidget() {
 
         {/* Notification panel on hover */}
         {isHovered && !isDragging && (
-          <div className="absolute bottom-full right-0 mb-2">
-            <PetNotificationPanel pet={pet} />
+          <div
+            data-pet-interactive="true"
+            className="absolute bottom-full right-0 pb-2"
+            onMouseEnter={handleWidgetMouseEnter}
+            onMouseLeave={handleWidgetMouseLeave}
+          >
+            <PetNotificationPanel
+              pet={pet}
+              canGeneratePromptDraft={!!selectedTaskId}
+              onOpenPromptDraft={() => setOpenPromptDraftDialog(true)}
+            />
           </div>
         )}
       </div>
@@ -210,6 +266,12 @@ export function PetWidget() {
           onComplete={clearPendingEvolution}
         />
       )}
+
+      <PromptDraftDialog
+        open={openPromptDraftDialog}
+        onOpenChange={setOpenPromptDraftDialog}
+        taskId={selectedTaskId}
+      />
     </>
   )
 }

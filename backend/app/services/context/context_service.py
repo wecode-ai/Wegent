@@ -613,7 +613,6 @@ class ContextService:
             context: SubtaskContext record with extracted_text
             task_id: Optional task ID for building sandbox path
             subtask_id: Optional subtask ID for building sandbox path
-
         Returns:
             Formatted text prefix without XML tags, or None if no extracted text
         """

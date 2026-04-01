@@ -41,6 +41,16 @@ class DocumentSourceType(str, Enum):
     WEB = "web"
 
 
+class DocumentIndexStatus(str, Enum):
+    """Business status enumeration for document indexing."""
+
+    NOT_INDEXED = "not_indexed"
+    QUEUED = "queued"
+    INDEXING = "indexing"
+    SUCCESS = "success"
+    FAILED = "failed"
+
+
 class ResourceScope(str, Enum):
     """Resource scope for filtering."""
 
@@ -342,6 +352,8 @@ class KnowledgeDocumentResponse(BaseModel):
     status: DocumentStatus
     user_id: int
     is_active: bool
+    index_status: DocumentIndexStatus
+    index_generation: int
     splitter_config: Optional[SplitterConfig] = None
     source_type: DocumentSourceType = DocumentSourceType.FILE
     source_config: Optional[dict] = None
@@ -555,6 +567,21 @@ class DocumentDetailResponse(BaseModel):
     )
     truncated: Optional[bool] = Field(None, description="Whether content was truncated")
     summary: Optional[dict] = Field(None, description="Document summary object")
+
+
+class DocumentContentReadResponse(BaseModel):
+    """Schema for raw document content reads with pagination metadata."""
+
+    document_id: int = Field(..., description="Document ID")
+    name: str = Field(..., description="Document name")
+    content: str = Field(..., description="Document content (partial)")
+    total_length: int = Field(
+        ..., ge=0, description="Total document length in characters"
+    )
+    offset: int = Field(..., ge=0, description="Actual start position")
+    returned_length: int = Field(..., ge=0, description="Number of characters returned")
+    has_more: bool = Field(..., description="Whether more content is available")
+    kb_id: int = Field(..., description="Knowledge base ID")
 
 
 class DocumentContentUpdate(BaseModel):

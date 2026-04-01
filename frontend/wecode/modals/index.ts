@@ -8,39 +8,38 @@ import { getScheme } from '@/lib/scheme'
 import { getRegisteredModal, registerModal } from '@/lib/scheme/modal-registry'
 import { registerModalScheme } from '@/lib/scheme/modals'
 
-import { HimalayaAccessGuideDialog } from '@wecode/components/devices/HimalayaAccessGuideDialog'
-import { HimalayaMailConfigDialog } from '@wecode/components/devices/HimalayaMailConfigDialog'
+import { MailAccessGuideDialog } from '@wecode/components/devices/MailAccessGuideDialog'
+import { MailConfigDialog } from '@wecode/components/devices/MailConfigDialog'
 
-if (!getRegisteredModal('himalaya-access-guide')) {
+if (!getRegisteredModal('mail-access-guide')) {
   registerModal({
-    id: 'himalaya-access-guide',
-    component: HimalayaAccessGuideDialog,
+    id: 'mail-access-guide',
+    component: MailAccessGuideDialog,
   })
 }
 
-if (!getScheme('modal-himalaya-access-guide')) {
+if (!getScheme('modal-mail-access-guide')) {
   registerModalScheme({
-    schemeId: 'modal-himalaya-access-guide',
-    modalType: 'himalaya-access-guide',
-    pattern: 'wegent://modal/himalaya-access-guide',
-    description: 'Open Himalaya device access guide dialog',
-    examples: ['wegent://modal/himalaya-access-guide'],
+    schemeId: 'modal-mail-access-guide',
+    modalType: 'mail-access-guide',
+    pattern: 'wegent://modal/mail-access-guide',
+    description: 'Open mail device access guide dialog',
+    examples: ['wegent://modal/mail-access-guide'],
   })
 }
-
-if (!getRegisteredModal('himalaya-mail-config')) {
+if (!getRegisteredModal('mail-config')) {
   registerModal({
-    id: 'himalaya-mail-config',
-    component: HimalayaMailConfigDialog,
+    id: 'mail-config',
+    component: MailConfigDialog,
   })
 }
 
-if (!getScheme('modal-himalaya-mail-config')) {
+if (!getScheme('modal-mail-config')) {
   registerModalScheme({
-    schemeId: 'modal-himalaya-mail-config',
-    modalType: 'himalaya-mail-config',
-    pattern: 'wegent://modal/himalaya-mail-config',
-    description: 'Open Himalaya mail configuration dialog',
-    examples: ['wegent://modal/himalaya-mail-config'],
+    schemeId: 'modal-mail-config',
+    modalType: 'mail-config',
+    pattern: 'wegent://modal/mail-config',
+    description: 'Open mail configuration dialog',
+    examples: ['wegent://modal/mail-config'],
   })
 }

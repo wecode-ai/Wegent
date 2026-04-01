@@ -15,6 +15,7 @@ Chat Shell 在与大模型交互时，**system prompt 往往更容易触发 prom
 - **System prompt 保持静态**，尽可能可被缓存。
 - 所有“动态元信息”通过一条独立的 **human/user message** 注入。
 - 机制通用：内网可在同一位置追加 `weibo_context` 等其他动态内容。
+- **工具路由规则和策略** 应保留在静态 prompt 模板中，不应混入 dynamic context。
 
 ## 消息结构
 
@@ -50,6 +51,7 @@ messages.append(current_user_message_with_datetime_suffix)
 - Backend 负责根据历史上下文构建 `kb_meta_prompt`（知识库名称/ID/摘要/主题等）。
 - Backend 将 `kb_meta_prompt` 写入统一协议 [`ExecutionRequest`](shared/models/execution.py:46) 的同名字段。
 - Chat Shell 在构建 messages 时，将其注入为 dynamic_context。
+- `kb_meta_prompt` 应只承载**请求级事实信息**，不应重复承载已经属于静态 prompt 模板的 KB 工作流规则、工具策略或回答策略。
 
 ### Restricted 模式：安全版 kb_meta_prompt
 

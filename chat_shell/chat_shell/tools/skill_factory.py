@@ -142,6 +142,7 @@ async def prepare_skill_tools(
     user_selected_skills: Optional[list[str]] = None,
     user_name: str = "",
     auth_token: str = "",
+    skill_identity_token: str = "",
     task_data: Optional[ExecutionRequest] = None,
 ) -> tuple[list[Any], list[Any]]:
     """
@@ -182,6 +183,7 @@ async def prepare_skill_tools(
                              in the system prompt to encourage the model to prioritize them.
         user_name: Username for identifying the user
         auth_token: JWT token for API authentication (e.g., attachment upload/download)
+        skill_identity_token: JWT token for skill identity verification
         task_data: Optional task data for MCP variable substitution
 
     Returns:
@@ -342,6 +344,7 @@ async def prepare_skill_tools(
             skill_config=skill_config,
             user_name=user_name,
             auth_token=auth_token,
+            skill_identity_token=skill_identity_token,
         )
 
         # Create tools using the registry

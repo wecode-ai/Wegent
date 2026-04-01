@@ -43,6 +43,7 @@ from executor.agents.claude_code.multimodal_prompt import (
     save_vision_images,
 )
 from executor.agents.claude_code.progress_state_manager import ProgressStateManager
+from executor.agents.claude_code.prompt_enrichment import inject_kb_meta_prompt
 from executor.agents.claude_code.response_processor import (
     process_response,
 )
@@ -57,6 +58,7 @@ from executor.agents.claude_code.skill_deployer import (
     setup_coordinate_mode,
 )
 from executor.config import config
+from executor.services.task_identity import build_task_identity_context
 from executor.tasks.resource_manager import ResourceManager
 from executor.tasks.task_state_manager import TaskState, TaskStateManager
 from shared.logger import setup_logger
@@ -666,6 +668,14 @@ class ClaudeCodeAgent(Agent):
                     logger.info(
                         f"Added skill emphasis for {len(user_selected_skills)} user-selected skills: {user_selected_skills}"
                     )
+                prompt = inject_kb_meta_prompt(
+                    prompt,
+                    self.task_data.kb_meta_prompt,
+                    executor_mode=config.EXECUTOR_MODE,
+                    is_user_selected_kb=self.task_data.is_user_selected_kb,
+                )
+                if self.task_data.kb_meta_prompt and config.EXECUTOR_MODE == "local":
+                    logger.info("Injected kb_meta_prompt into ClaudeCode query prompt")
                 if self.options.get("cwd"):
                     cwd_text = "\nCurrent working directory: " + self.options.get("cwd")
                     git_url = self.task_data.git_url
@@ -688,6 +698,19 @@ class ClaudeCodeAgent(Agent):
                         logger.info(
                             f"Added skill emphasis for {len(user_selected_skills)} user-selected skills: {user_selected_skills}"
                         )
+                    prompt = inject_kb_meta_prompt(
+                        prompt,
+                        self.task_data.kb_meta_prompt,
+                        executor_mode=config.EXECUTOR_MODE,
+                        is_user_selected_kb=self.task_data.is_user_selected_kb,
+                    )
+                    if (
+                        self.task_data.kb_meta_prompt
+                        and config.EXECUTOR_MODE == "local"
+                    ):
+                        logger.info(
+                            "Injected kb_meta_prompt into ClaudeCode query prompt"
+                        )
                     if self.options.get("cwd"):
                         cwd_text = "\nCurrent working directory: " + self.options.get(
                             "cwd"
@@ -707,6 +730,19 @@ class ClaudeCodeAgent(Agent):
                         prompt = skill_emphasis + "\n\n" + prompt
                         logger.info(
                             f"Added skill emphasis for {len(user_selected_skills)} user-selected skills: {user_selected_skills}"
+                        )
+                    prompt = inject_kb_meta_prompt(
+                        prompt,
+                        self.task_data.kb_meta_prompt,
+                        executor_mode=config.EXECUTOR_MODE,
+                        is_user_selected_kb=self.task_data.is_user_selected_kb,
+                    )
+                    if (
+                        self.task_data.kb_meta_prompt
+                        and config.EXECUTOR_MODE == "local"
+                    ):
+                        logger.info(
+                            "Injected kb_meta_prompt into ClaudeCode query prompt"
                         )
                     if self.options.get("cwd"):
                         prompt = (
@@ -827,10 +863,12 @@ class ClaudeCodeAgent(Agent):
 
         # Delegate mode-specific configuration to strategy
         if self._claude_config_dir:
+            task_identity_env = build_task_identity_context(self.task_data)
             self.options = self._mode_strategy.configure_client_options(
                 options=self.options,
                 config_dir=self._claude_config_dir,
                 env_config=self._claude_env_config,
+                task_identity_env=task_identity_env,
             )
 
         # Check if there's a saved session ID to resume

@@ -145,6 +145,17 @@ export function DocumentItem({
   // Check document source type
   const isTable = document.source_type === 'table'
   const isWeb = document.source_type === 'web'
+  const isNotIndexed = document.index_status === 'not_indexed'
+  const isIndexFailed = document.index_status === 'failed'
+  const isBackendIndexing =
+    document.index_status === 'queued' || document.index_status === 'indexing'
+  const showIndexingState = isReindexing || isBackendIndexing
+  const canReindex =
+    ragConfigured &&
+    !isTable &&
+    !!onReindex &&
+    (isIndexFailed || isNotIndexed) &&
+    !showIndexingState
 
   // Check if Excel file exceeds size limit (2MB)
   const EXCEL_FILE_SIZE_LIMIT = 2 * 1024 * 1024 // 2MB
@@ -162,21 +173,26 @@ export function DocumentItem({
   const displayName =
     isWeb && document.name.endsWith('.md') ? document.name.slice(0, -3) : document.name
 
-  // Helper function to determine if document is indexing
-  // Document is considered "indexing" when:
-  // - isReindexing prop is true (explicit reindexing in progress), OR
-  // - status is 'enabled' (legacy check), OR
-  // - is_active is false AND it's not a table (new document being indexed)
-  // Note: We don't check ragConfigured here because even if RAG is not configured,
-  // the document is still in "indexing" state (waiting for indexing). The backend
-  // will skip actual indexing if RAG is not configured, but the UI should show
-  // "indexing" to indicate the document is not yet active.
-  const isIndexing =
-    isReindexing || document.status === 'enabled' || (!document.is_active && !isTable)
-
   const handleRowClick = () => {
     onViewDetail?.(document)
   }
+
+  let unavailableHint = t('knowledge:document.document.indexStatus.unavailableHint')
+  if (isExcelExceedingSizeLimit) {
+    unavailableHint = t('knowledge:document.document.excelFileSizeExceeded', {
+      extension: document.file_extension,
+      limit: 2,
+      size: (document.file_size / (1024 * 1024)).toFixed(2),
+    })
+  } else if (isNotIndexed) {
+    unavailableHint = t('knowledge:document.document.indexStatus.notIndexedHint')
+  }
+
+  const unavailableLabel = isNotIndexed
+    ? t('knowledge:document.document.indexStatus.notIndexed')
+    : t('knowledge:document.document.indexStatus.unavailable')
+
+  const unavailableDotColor = isNotIndexed ? 'bg-slate-400' : 'bg-yellow-500'
 
   // Compact mode: Card layout for sidebar (notebook mode)
   if (compact) {
@@ -256,7 +272,7 @@ export function DocumentItem({
                 className="w-1 h-1 rounded-full flex-shrink-0 bg-green-500"
                 title={t('knowledge:document.document.indexStatus.available')}
               />
-            ) : isIndexing ? (
+            ) : showIndexingState ? (
               <TooltipProvider>
                 <Tooltip delayDuration={200}>
                   <TooltipTrigger asChild>
@@ -273,20 +289,12 @@ export function DocumentItem({
               <TooltipProvider>
                 <Tooltip delayDuration={200}>
                   <TooltipTrigger asChild>
-                    <span className="w-1 h-1 rounded-full flex-shrink-0 bg-yellow-500 cursor-help" />
+                    <span
+                      className={`w-1 h-1 rounded-full flex-shrink-0 cursor-help ${unavailableDotColor}`}
+                    />
                   </TooltipTrigger>
                   <TooltipContent side="top" className="max-w-xs">
-                    <p className="text-xs">
-                      {isExcelExceedingSizeLimit
-                        ? t('knowledge:document.document.excelFileSizeExceeded', {
-                            extension: document.file_extension,
-                            limit: 2,
-                            size: (document.file_size / (1024 * 1024)).toFixed(2),
-                          })
-                        : !ragConfigured
-                          ? t('knowledge:document.document.indexStatus.unavailableHint')
-                          : t('knowledge:document.document.indexStatus.unavailableHint')}
-                    </p>
+                    <p className="text-xs">{unavailableHint}</p>
                   </TooltipContent>
                 </Tooltip>
               </TooltipProvider>
@@ -335,14 +343,16 @@ export function DocumentItem({
                         : t('knowledge:document.upload.web.refetch')}
                     </DropdownMenuItem>
                   )}
-                  {ragConfigured && !document.is_active && !isTable && onReindex && (
-                    <DropdownMenuItem onClick={handleReindex} disabled={isReindexing}>
+                  {canReindex && (
+                    <DropdownMenuItem onClick={handleReindex} disabled={showIndexingState}>
                       <RotateCcw
-                        className={`w-3.5 h-3.5 mr-2 ${isReindexing ? 'animate-spin' : ''}`}
+                        className={`w-3.5 h-3.5 mr-2 ${showIndexingState ? 'animate-spin' : ''}`}
                       />
-                      {isReindexing
+                      {showIndexingState
                         ? t('knowledge:document.document.reindexing')
-                        : t('knowledge:document.document.reindex')}
+                        : isNotIndexed
+                          ? t('knowledge:document.document.index')
+                          : t('knowledge:document.document.reindex')}
                     </DropdownMenuItem>
                   )}
                   {showDownload && (
@@ -470,7 +480,7 @@ export function DocumentItem({
           <Badge variant="success" size="sm" className="whitespace-nowrap">
             {t('knowledge:document.document.indexStatus.available')}
           </Badge>
-        ) : isIndexing ? (
+        ) : showIndexingState ? (
           <TooltipProvider>
             <Tooltip delayDuration={200}>
               <TooltipTrigger asChild>
@@ -497,22 +507,12 @@ export function DocumentItem({
               <TooltipTrigger asChild>
                 <span>
                   <Badge variant="warning" size="sm" className="whitespace-nowrap cursor-help">
-                    {t('knowledge:document.document.indexStatus.unavailable')}
+                    {unavailableLabel}
                   </Badge>
                 </span>
               </TooltipTrigger>
               <TooltipContent side="top" className="max-w-xs">
-                <p className="text-xs">
-                  {isExcelExceedingSizeLimit
-                    ? t('knowledge:document.document.excelFileSizeExceeded', {
-                        extension: document.file_extension,
-                        limit: 2,
-                        size: (document.file_size / (1024 * 1024)).toFixed(2),
-                      })
-                    : !ragConfigured
-                      ? t('knowledge:document.document.indexStatus.unavailableHint')
-                      : t('knowledge:document.document.indexStatus.unavailableHint')}
-                </p>
+                <p className="text-xs">{unavailableHint}</p>
               </TooltipContent>
             </Tooltip>
           </TooltipProvider>
@@ -542,22 +542,22 @@ export function DocumentItem({
             </button>
           )}
           {/* Reindex button - only when RAG configured and document not indexed */}
-          {ragConfigured && !document.is_active && !isTable && onReindex && (
+          {canReindex && (
             <button
               className={`p-1.5 rounded-md transition-colors ${
-                isReindexing
+                showIndexingState
                   ? 'text-primary cursor-not-allowed'
                   : 'text-text-muted hover:text-primary hover:bg-primary/10'
               }`}
               onClick={handleReindex}
-              disabled={isReindexing}
+              disabled={showIndexingState}
               title={
-                isReindexing
+                showIndexingState
                   ? t('knowledge:document.document.reindexing')
                   : t('knowledge:document.document.reindex')
               }
             >
-              <RotateCcw className={`w-4 h-4 ${isReindexing ? 'animate-spin' : ''}`} />
+              <RotateCcw className={`w-4 h-4 ${showIndexingState ? 'animate-spin' : ''}`} />
             </button>
           )}
           {/* Download button - only for file documents with attachment */}

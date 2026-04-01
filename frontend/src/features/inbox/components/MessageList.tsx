@@ -299,10 +299,11 @@ export function MessageList({
     if (!snapshot || snapshot.length === 0) return ''
     // Get the last user message
     const lastUserMessage = [...snapshot].reverse().find(m => m.role === 'USER')
-    if (lastUserMessage) {
+    if (lastUserMessage && lastUserMessage.content) {
       return lastUserMessage.content.substring(0, 200)
     }
-    return snapshot[0].content.substring(0, 200)
+    const firstContent = snapshot[0]?.content
+    return firstContent ? firstContent.substring(0, 200) : ''
   }
 
   return (

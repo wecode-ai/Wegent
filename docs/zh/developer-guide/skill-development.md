@@ -118,6 +118,8 @@ Skill 系统在不同的 Shell 类型中有不同的实现方式：
 | `clear_cache` | `true` | `false` |
 | `skip_existing` | `false` | `true` |
 
+ClaudeCode 运行时会额外注入环境变量 `SKILLS_DIR`，指向当前任务的 skills 根目录。Skill 指令中如果需要执行 `scripts/xxx.sh`，应解析为绝对路径，例如 `bash "$SKILLS_DIR/<skill-name>/scripts/xxx.sh"`，不要依赖仓库当前工作目录。
+
 ### 关键组件
 
 1. **SkillDownloader** (`executor/services/api_client.py`)

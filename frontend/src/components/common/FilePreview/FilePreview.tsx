@@ -14,6 +14,7 @@ import {
   AudioPreview,
   ExcelPreview,
   WordPreview,
+  HtmlPreview,
   UnknownPreview,
 } from './preview-renderers'
 import { useFileBlob, useExcelParser } from './hooks'
@@ -38,6 +39,10 @@ export interface FilePreviewProps {
   onClose?: () => void
   /** Whether to show toolbar (for fullscreen mode) */
   showToolbar?: boolean
+  /** HTML preview mode: false = preview, true = source (controlled) */
+  htmlIsSourceMode?: boolean
+  /** Callback when HTML preview mode changes */
+  onHtmlViewModeChange?: (isSourceMode: boolean) => void
 }
 
 /**
@@ -54,6 +59,8 @@ export function FilePreview({
   onDownload,
   onClose,
   showToolbar = true,
+  htmlIsSourceMode,
+  onHtmlViewModeChange,
 }: FilePreviewProps) {
   const [textContent, setTextContent] = useState<string>('')
   const previewType = getPreviewType(mimeType, filename)
@@ -62,12 +69,12 @@ export function FilePreview({
 
   const { sheets, parseExcel } = useExcelParser()
 
-  // Parse text and Excel content when blob is available
+  // Parse text, HTML and Excel content when blob is available
   useEffect(() => {
     if (!blob) return
 
     const parseContent = async () => {
-      if (previewType === 'text') {
+      if (previewType === 'text' || previewType === 'html') {
         try {
           const text = await blob.text()
           setTextContent(text)
@@ -129,6 +136,16 @@ export function FilePreview({
 
     case 'text':
       return <TextPreview content={textContent} filename={filename} />
+
+    case 'html':
+      return (
+        <HtmlPreview
+          content={textContent}
+          filename={filename}
+          isSourceMode={htmlIsSourceMode}
+          onViewModeChange={onHtmlViewModeChange}
+        />
+      )
 
     case 'video':
       return blobUrl ? <VideoPreview url={blobUrl} /> : null
