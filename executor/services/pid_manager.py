@@ -15,6 +15,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Optional
 
+from executor.config.config import WEGENT_EXECUTOR_HOME
 from executor.platform_compat import IS_WINDOWS
 
 logger = logging.getLogger(__name__)
@@ -40,9 +41,9 @@ class PIDManager:
         """Initialize PID manager.
 
         Args:
-            pid_dir: Directory for PID files. Defaults to ~/.wegent-executor
+            pid_dir: Directory for PID files. Defaults to WEGENT_EXECUTOR_HOME
         """
-        self.pid_dir = pid_dir or (Path.home() / ".wegent-executor")
+        self.pid_dir = pid_dir or Path(WEGENT_EXECUTOR_HOME).expanduser()
 
     def write_pid_file(self, version: str) -> Path:
         """Write PID file with current process information.

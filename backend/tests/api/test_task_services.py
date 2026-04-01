@@ -66,6 +66,32 @@ class TestTaskServicesAPI:
         response = ServiceResponse()
         assert response.app == {}
 
+    def test_prompt_draft_generate_request_schema(self):
+        """Test PromptDraftGenerateRequest schema."""
+        from app.schemas.task import PromptDraftGenerateRequest
+
+        request = PromptDraftGenerateRequest(model="gpt-5.4", source="pet_panel")
+        assert request.model == "gpt-5.4"
+        assert request.source == "pet_panel"
+
+    def test_prompt_draft_generate_response_schema(self):
+        """Test PromptDraftGenerateResponse schema."""
+        from datetime import datetime, timezone
+
+        from app.schemas.task import PromptDraftGenerateResponse
+
+        response = PromptDraftGenerateResponse(
+            title="协作提示词",
+            prompt="你是产品协作助手，负责帮助我沉淀协作方式。",
+            model="gpt-5.4",
+            version=1,
+            created_at=datetime(2026, 3, 28, 12, 0, 0, tzinfo=timezone.utc),
+        )
+        assert response.title == "协作提示词"
+        assert response.prompt.startswith("你是")
+        assert response.model == "gpt-5.4"
+        assert response.version == 1
+
 
 class TestInternalServicesAPI:
     """Test cases for internal services API endpoints."""

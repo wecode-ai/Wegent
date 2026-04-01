@@ -693,8 +693,10 @@ Options:
   -e, --executor-image IMG      Executor image (default: $DEFAULT_EXECUTOR_IMAGE)
   --socket-url URL              Socket direct url (auto-computed from BACKEND_PORT)
   --init                        Interactive configuration initialization
-  --stop                        Stop all services
-  --restart                     Restart all services
+  --stop [services...]          Stop services (default: all). Can specify multiple:
+                                backend|be|api, frontend|fe|ui, chat_shell|cs|chat, executor_manager|em|executor
+  -g, --graceful                Use graceful shutdown with stop/restart (SIGTERM, wait 30s, then SIGKILL)
+  --restart [services...]       Restart services (default: all)
   --status                      Check service status
   -h, --help                    Show help information
 
@@ -726,7 +728,12 @@ Examples:
   $0 -p 8080                            # Specify frontend port as 8080
   $0 -e my-executor:latest              # Specify custom executor image
   $0 --socket-url http://192.168.1.100:8000  # Specify socket URL with your IP
-  $0 --stop                             # Stop all services
+  $0 --stop                             # Stop all services (force kill)
+  $0 --stop backend frontend            # Stop only backend and frontend
+  $0 --stop be cs                       # Stop backend and chat_shell (short names)
+  $0 --stop --graceful                  # Stop with graceful shutdown
+  $0 --restart --graceful               # Restart with graceful shutdown
+  $0 --restart backend --graceful       # Restart only backend gracefully
 
 EOF
 }
@@ -775,13 +782,29 @@ case $1 in
     --stop)
         ACTION="stop"
         shift
+        # Collect service names to stop (if any)
+        STOP_SERVICES=()
+        while [[ $# -gt 0 ]] && [[ "$1" != --* ]] && [[ "$1" != -* ]]; do
+            STOP_SERVICES+=("$1")
+            shift
+        done
         ;;
     --restart)
         ACTION="restart"
         shift
+        # Collect service names to restart (if any)
+        STOP_SERVICES=()
+        while [[ $# -gt 0 ]] && [[ "$1" != --* ]] && [[ "$1" != -* ]]; do
+            STOP_SERVICES+=("$1")
+            shift
+        done
         ;;
     --status)
         ACTION="status"
+        shift
+        ;;
+    -g|--graceful)
+        GRACEFUL_STOP="true"
         shift
         ;;
     -h|--help)
@@ -916,12 +939,64 @@ check_all_ports() {
     return 0
 }
 
-# Stop all services
+# Stop services (all or specified)
+# Usage: stop_services <graceful> [service1 service2 ...]
+# Services: backend, frontend, chat_shell, executor_manager
 stop_services() {
-    echo -e "${YELLOW}Stopping all Wegent services...${NC}"
+    local graceful="${1:-false}"
+    shift
 
-    local services=("backend" "frontend" "chat_shell" "executor_manager")
-    local service_ports=("$BACKEND_PORT" "$WEGENT_FRONTEND_PORT" "$CHAT_SHELL_PORT" "$EXECUTOR_MANAGER_PORT")
+    # Define all services and their ports
+    local all_services=("backend" "frontend" "chat_shell" "executor_manager")
+    local all_ports=("$BACKEND_PORT" "$WEGENT_FRONTEND_PORT" "$CHAT_SHELL_PORT" "$EXECUTOR_MANAGER_PORT")
+
+    # Determine which services to stop
+    local services=()
+    local service_ports=()
+
+    if [ $# -eq 0 ]; then
+        # No specific services provided, stop all
+        services=("${all_services[@]}")
+        service_ports=("${all_ports[@]}")
+    else
+        # Parse specified services
+        for svc in "$@"; do
+            case "$svc" in
+                backend|be|api)
+                    services+=("backend")
+                    service_ports+=("$BACKEND_PORT")
+                    ;;
+                frontend|fe|ui)
+                    services+=("frontend")
+                    service_ports+=("$WEGENT_FRONTEND_PORT")
+                    ;;
+                chat_shell|cs|chat)
+                    services+=("chat_shell")
+                    service_ports+=("$CHAT_SHELL_PORT")
+                    ;;
+                executor_manager|em|executor)
+                    services+=("executor_manager")
+                    service_ports+=("$EXECUTOR_MANAGER_PORT")
+                    ;;
+                *)
+                    echo -e "${RED}Unknown service: $svc${NC}"
+                    echo -e "Valid services: backend|be|api, frontend|fe|ui, chat_shell|cs|chat, executor_manager|em|executor"
+                    return 1
+                    ;;
+            esac
+        done
+    fi
+
+    if [ ${#services[@]} -eq 0 ]; then
+        echo -e "${YELLOW}No services to stop${NC}"
+        return 0
+    fi
+
+    if [ "$graceful" = "true" ]; then
+        echo -e "${YELLOW}Gracefully stopping services: ${services[*]}${NC}"
+    else
+        echo -e "${YELLOW}Stopping services: ${services[*]}${NC}"
+    fi
 
     # First: try to stop via PID files
     for service in "${services[@]}"; do
@@ -930,25 +1005,156 @@ stop_services() {
             local pid=$(cat "$pid_file")
             if kill -0 "$pid" 2>/dev/null; then
                 echo -e "  Stopping $service (PID: $pid)..."
-                # Kill the process group first
-                kill -9 -- -"$pid" 2>/dev/null || true
-                # Kill the process itself
-                kill -9 "$pid" 2>/dev/null || true
+
+                # For backend service in graceful mode, call shutdown API first (like K8s preStop hook)
+                if [ "$graceful" = "true" ] && [ "$service" = "backend" ]; then
+                    local backend_port="${service_ports[0]}"
+                    echo -e "    Calling /api/shutdown/wait (K8s preStop style)..."
+                    curl -s -X POST "http://localhost:${backend_port}/api/shutdown/wait" -m 30 2>/dev/null || true
+                    echo ""
+                fi
+
+                if [ "$graceful" = "true" ]; then
+                    # Graceful shutdown: send SIGTERM to process group, wait, then SIGKILL if needed
+                    kill -TERM -- -"$pid" 2>/dev/null || true
+                    kill -TERM "$pid" 2>/dev/null || true
+                else
+                    # Force kill: SIGKILL immediately
+                    kill -9 -- -"$pid" 2>/dev/null || true
+                    kill -9 "$pid" 2>/dev/null || true
+                fi
             fi
-            rm -f "$pid_file"
         fi
     done
 
-    # Second: force kill any processes still occupying our ports
-    for port in "${service_ports[@]}"; do
-        local pids=$(lsof -Pi :$port -sTCP:LISTEN -t 2>/dev/null | tr '\n' ' ')
-        if [ -n "$pids" ]; then
-            echo -e "  Force killing processes on port $port: $pids"
-            echo "$pids" | xargs kill -9 2>/dev/null || true
-        fi
+    # If graceful mode, wait for processes to exit and ports to be released
+    # Similar to K8s terminationGracePeriodSeconds behavior
+    if [ "$graceful" = "true" ]; then
+        local wait_time=0
+        local max_wait=60  # K8s uses 700s, but local dev uses 60s
+        local all_stopped=false
+
+        # Give processes a moment to start shutting down
+        sleep 0.5
+
+        while [ $wait_time -lt $max_wait ]; do
+            all_stopped=true
+
+            # Check if any service still has processes running OR ports occupied
+            local i=0
+            for service in "${services[@]}"; do
+                local pid_file="$PID_DIR/${service}.pid"
+                local port="${service_ports[$i]}"
+                local service_stopped=true
+
+                # Check if main process still exists
+                if [ -f "$pid_file" ]; then
+                    local pid=$(cat "$pid_file")
+                    if kill -0 "$pid" 2>/dev/null; then
+                        all_stopped=false
+                        service_stopped=false
+                    fi
+                fi
+
+                # Check if port is still occupied (child processes may still be using it)
+                if lsof -Pi :$port -sTCP:LISTEN -t >/dev/null 2>&1; then
+                    all_stopped=false
+                    service_stopped=false
+                fi
+
+                # Log which service is still stopping (only on first few iterations or last)
+                if [ "$service_stopped" = false ] && [ $wait_time -lt 3 ]; then
+                    echo -e "    ${YELLOW}•${NC} $service still stopping..."
+                fi
+
+                i=$((i + 1))
+            done
+
+            if [ "$all_stopped" = true ]; then
+                if [ $wait_time -gt 0 ]; then
+                    echo ""
+                fi
+                echo -e "  ${GREEN}✓${NC} Services stopped gracefully (${wait_time}s)"
+                break
+            fi
+
+            sleep 1
+            wait_time=$((wait_time + 1))
+            echo -e "  Waiting for services to stop... (${wait_time}s/${max_wait}s)"
+        done
+
+        # Force kill any remaining processes and clean up ports
+        local i=0
+        for service in "${services[@]}"; do
+            local pid_file="$PID_DIR/${service}.pid"
+            local port="${service_ports[$i]}"
+
+            # Kill main process if still running
+            if [ -f "$pid_file" ]; then
+                local pid=$(cat "$pid_file")
+                if kill -0 "$pid" 2>/dev/null; then
+                    echo -e "  ${YELLOW}Force killing $service process after graceful timeout${NC}"
+                    kill -9 -- -"$pid" 2>/dev/null || true
+                    kill -9 "$pid" 2>/dev/null || true
+                fi
+            fi
+
+            # Force kill any processes still occupying the port
+            local pids=$(lsof -Pi :$port -sTCP:LISTEN -t 2>/dev/null | tr '\n' ' ')
+            if [ -n "$pids" ]; then
+                echo -e "  ${YELLOW}Force killing processes on port $port after graceful timeout${NC}"
+                echo "$pids" | xargs kill -9 2>/dev/null || true
+            fi
+
+            i=$((i + 1))
+        done
+    fi
+
+    # Clean up PID files
+    for service in "${services[@]}"; do
+        rm -f "$PID_DIR/${service}.pid"
     done
 
-    sleep 1
+    # Force kill any processes still occupying our ports (safety net)
+    # Skip this in graceful mode to allow services to shutdown cleanly
+    if [ "$graceful" != "true" ]; then
+        for port in "${service_ports[@]}"; do
+            local pids=$(lsof -Pi :$port -sTCP:LISTEN -t 2>/dev/null | tr '\n' ' ')
+            if [ -n "$pids" ]; then
+                echo -e "  Force killing processes on port $port: $pids"
+                echo "$pids" | xargs kill -9 2>/dev/null || true
+            fi
+        done
+        sleep 1
+    else
+        # In graceful mode, wait for ports to be fully released (including TIME_WAIT cleanup)
+        # This is important for restart to work properly
+        local port_wait_time=0
+        local max_port_wait=10
+        local all_ports_free=false
+
+        echo -e "  Waiting for ports to be released..."
+        while [ $port_wait_time -lt $max_port_wait ]; do
+            all_ports_free=true
+            for port in "${service_ports[@]}"; do
+                if lsof -Pi :$port -sTCP:LISTEN -t >/dev/null 2>&1; then
+                    all_ports_free=false
+                    break
+                fi
+            done
+
+            if [ "$all_ports_free" = true ]; then
+                break
+            fi
+
+            sleep 1
+            port_wait_time=$((port_wait_time + 1))
+        done
+
+        if [ "$all_ports_free" != true ]; then
+            echo -e "  ${YELLOW}Warning: Some ports still in use after graceful shutdown${NC}"
+        fi
+    fi
 
     # Verify all ports are free
     local ports_freed=1
@@ -960,7 +1166,7 @@ stop_services() {
     done
 
     if [ $ports_freed -eq 1 ]; then
-        echo -e "${GREEN}All services stopped${NC}"
+        echo -e "${GREEN}Services stopped: ${services[*]}${NC}"
     else
         echo -e "${YELLOW}Some ports could not be freed. You may need to kill processes manually:${NC}"
         echo -e "  ${BLUE}lsof -i :PORT${NC} && ${BLUE}kill -9 PID${NC}"
@@ -1070,6 +1276,43 @@ check_service_health() {
 
 # Start all services
 start_services() {
+    # Parse arguments: if services specified, only start those
+    local specified_services=()
+    local start_backend=false
+    local start_frontend=false
+    local start_chat_shell=false
+    local start_executor_manager=false
+
+    if [ $# -eq 0 ]; then
+        # No specific services, start all
+        start_backend=true
+        start_frontend=true
+        start_chat_shell=true
+        start_executor_manager=true
+    else
+        # Parse specified services
+        for svc in "$@"; do
+            case "$svc" in
+                backend|be|api)
+                    start_backend=true
+                    specified_services+=("backend")
+                    ;;
+                frontend|fe|ui)
+                    start_frontend=true
+                    specified_services+=("frontend")
+                    ;;
+                chat_shell|cs|chat)
+                    start_chat_shell=true
+                    specified_services+=("chat_shell")
+                    ;;
+                executor_manager|em|executor)
+                    start_executor_manager=true
+                    specified_services+=("executor_manager")
+                    ;;
+            esac
+        done
+    fi
+
     # Check if config file exists, if not, run init wizard first
     if [ ! -f "$CONFIG_FILE" ]; then
         echo -e "${YELLOW}╔════════════════════════════════════════════════════════╗${NC}"
@@ -1142,31 +1385,72 @@ start_services() {
     # Check if WEGENT_SOCKET_URL IP matches local IP
     check_socket_url_ip
 
-    # Check port conflicts
+    # Check port conflicts only for services being started
     echo -e "${BLUE}Checking port usage...${NC}"
-    if ! check_all_ports; then
+    local port_conflict=false
+
+    if [ "$start_backend" = true ] && ! check_port "$BACKEND_PORT" "backend"; then
+        port_conflict=true
+        echo -e "  ${RED}●${NC} Port $BACKEND_PORT (Backend) is already in use"
+    fi
+    if [ "$start_chat_shell" = true ] && ! check_port "$CHAT_SHELL_PORT" "chat_shell"; then
+        port_conflict=true
+        echo -e "  ${RED}●${NC} Port $CHAT_SHELL_PORT (Chat Shell) is already in use"
+    fi
+    if [ "$start_executor_manager" = true ] && ! check_port "$EXECUTOR_MANAGER_PORT" "executor_manager"; then
+        port_conflict=true
+        echo -e "  ${RED}●${NC} Port $EXECUTOR_MANAGER_PORT (Executor Manager) is already in use"
+    fi
+    if [ "$start_frontend" = true ] && ! check_port "$WEGENT_FRONTEND_PORT" "frontend"; then
+        port_conflict=true
+        echo -e "  ${RED}●${NC} Port $WEGENT_FRONTEND_PORT (Frontend) is already in use"
+    fi
+
+    if [ "$port_conflict" = true ]; then
+        echo ""
+        echo -e "${YELLOW}Solutions:${NC}"
+        echo -e "  1. Stop the process occupying the port:"
+        echo -e "     ${BLUE}lsof -i :PORT${NC}  # View occupying process"
+        echo -e "     ${BLUE}kill -9 PID${NC}    # Stop process"
+        echo ""
+        echo -e "  2. Or run ${BLUE}./start.sh --stop${NC} to stop previously started services"
+        echo ""
+        echo -e "  3. If frontend port conflicts, specify another port:"
+        echo -e "     ${BLUE}./start.sh -p 3001${NC}"
         exit 1
     fi
-    echo -e "${GREEN}✓ All ports available${NC}"
+    echo -e "${GREEN}✓ All required ports available${NC}"
     echo ""
 
     # Sync Python dependencies
     echo -e "${BLUE}Checking Python dependencies...${NC}"
-    sync_python_deps "backend" "Backend"
-    sync_python_deps "chat_shell" "Chat Shell"
-    sync_python_deps "executor_manager" "Executor Manager"
+    if [ "$start_backend" = true ]; then
+        sync_python_deps "backend" "Backend"
+    fi
+    if [ "$start_chat_shell" = true ]; then
+        sync_python_deps "chat_shell" "Chat Shell"
+    fi
+    if [ "$start_executor_manager" = true ]; then
+        sync_python_deps "executor_manager" "Executor Manager"
+    fi
     echo ""
 
     # Check Python env
     echo -e "${BLUE}Checking Python env...${NC}"
-    check_python_env "backend" "Backend"
-    check_python_env "chat_shell" "Chat Shell"
+    if [ "$start_backend" = true ]; then
+        check_python_env "backend" "Backend"
+    fi
+    if [ "$start_chat_shell" = true ]; then
+        check_python_env "chat_shell" "Chat Shell"
+    fi
     echo ""
 
     # Check frontend dependencies
-    echo -e "${BLUE}Checking frontend dependencies...${NC}"
-    check_frontend_dependencies
-    echo ""
+    if [ "$start_frontend" = true ]; then
+        echo -e "${BLUE}Checking frontend dependencies...${NC}"
+        check_frontend_dependencies
+        echo ""
+    fi
 
     echo -e "${BLUE}Starting services...${NC}"
 
@@ -1175,78 +1459,94 @@ start_services() {
     local RELOAD_EXCLUDE="--reload-exclude '.venv/*' --reload-exclude '__pycache__/*' --reload-exclude '*.pyc' --reload-exclude '.git/*'"
 
     # 1. Start Backend
-    # EXECUTOR_MANAGER_URL: URL for backend to call executor_manager
-    # CHAT_SHELL_URL: URL for backend to call chat_shell service
-    # LOG_LEVEL: Application log level (DEBUG enables debug logging)
-    # --reload-dir: Watch shared module for changes (editable dependency)
-    # --reload-exclude: Exclude .venv and __pycache__ to reduce CPU usage
-    start_service "backend" "backend" \
-        "export EXECUTOR_MANAGER_URL=$EXECUTOR_MANAGER_URL && export CHAT_SHELL_URL=http://localhost:$CHAT_SHELL_PORT && export BACKEND_INTERNAL_URL=http://localhost:$BACKEND_PORT && export LOG_LEVEL=DEBUG && source .venv/bin/activate && uvicorn app.main:app --reload --reload-dir . --reload-dir ../shared $RELOAD_EXCLUDE --host 0.0.0.0 --port $BACKEND_PORT --log-level debug"
+    if [ "$start_backend" = true ]; then
+        # EXECUTOR_MANAGER_URL: URL for backend to call executor_manager
+        # CHAT_SHELL_URL: URL for backend to call chat_shell service
+        # LOG_LEVEL: Application log level (DEBUG enables debug logging)
+        # --reload-dir: Watch shared module for changes (editable dependency)
+        # --reload-exclude: Exclude .venv and __pycache__ to reduce CPU usage
+        start_service "backend" "backend" \
+            "export EXECUTOR_MANAGER_URL=$EXECUTOR_MANAGER_URL && export CHAT_SHELL_URL=http://localhost:$CHAT_SHELL_PORT && export BACKEND_INTERNAL_URL=http://localhost:$BACKEND_PORT && export LOG_LEVEL=DEBUG && source .venv/bin/activate && uvicorn app.main:app --reload --reload-dir . --reload-dir ../shared $RELOAD_EXCLUDE --host 0.0.0.0 --port $BACKEND_PORT --log-level debug"
+    fi
 
     # 2. Start Chat Shell
-    # EXECUTOR_MANAGER_URL: URL for chat_shell to call executor_manager (for sandbox operations)
-    # --reload-dir: Watch shared module for changes (editable dependency)
-    # --reload-exclude: Exclude .venv and __pycache__ to reduce CPU usage
-    start_service "chat_shell" "chat_shell" \
-        "export CHAT_SHELL_MODE=http && export CHAT_SHELL_STORAGE_TYPE=remote && export CHAT_SHELL_REMOTE_STORAGE_URL=http://localhost:$BACKEND_PORT/api/internal && export EXECUTOR_MANAGER_URL=$EXECUTOR_MANAGER_URL && source .venv/bin/activate && .venv/bin/python -m uvicorn chat_shell.main:app --reload --reload-dir . --reload-dir ../shared $RELOAD_EXCLUDE --host 0.0.0.0 --port $CHAT_SHELL_PORT --log-level debug"
+    if [ "$start_chat_shell" = true ]; then
+        # EXECUTOR_MANAGER_URL: URL for chat_shell to call executor_manager (for sandbox operations)
+        # --reload-dir: Watch shared module for changes (editable dependency)
+        # --reload-exclude: Exclude .venv and __pycache__ to reduce CPU usage
+        start_service "chat_shell" "chat_shell" \
+            "export CHAT_SHELL_MODE=http && export CHAT_SHELL_STORAGE_TYPE=remote && export CHAT_SHELL_REMOTE_STORAGE_URL=http://localhost:$BACKEND_PORT/api/internal && export EXECUTOR_MANAGER_URL=$EXECUTOR_MANAGER_URL && source .venv/bin/activate && .venv/bin/python -m uvicorn chat_shell.main:app --reload --reload-dir . --reload-dir ../shared $RELOAD_EXCLUDE --host 0.0.0.0 --port $CHAT_SHELL_PORT --log-level debug"
+    fi
 
     # 3. Start Executor Manager
-    # TASK_API_DOMAIN: URL for executor_manager to call backend (uses local IP so docker containers can access)
-    # DOCKER_HOST_ADDR=localhost so executor_manager can access docker containers
-    # CALLBACK_HOST: URL for executor containers to call back to executor_manager (uses local IP so docker containers can access)
-    # --reload-dir: Watch shared module for changes (editable dependency)
-    # --reload-exclude: Exclude .venv and __pycache__ to reduce CPU usage
-    local CALLBACK_HOST="http://$LOCAL_IP:$EXECUTOR_MANAGER_PORT"
-    start_service "executor_manager" "executor_manager" \
-        "export EXECUTOR_IMAGE=$EXECUTOR_IMAGE && export TASK_API_DOMAIN=$TASK_API_DOMAIN && export DOCKER_HOST_ADDR=localhost && export NETWORK=wegent-network && export CALLBACK_HOST=$CALLBACK_HOST && source .venv/bin/activate && uvicorn main:app --reload --reload-dir . --reload-dir ../shared $RELOAD_EXCLUDE --host 0.0.0.0 --port $EXECUTOR_MANAGER_PORT --log-level debug"
+    if [ "$start_executor_manager" = true ]; then
+        # TASK_API_DOMAIN: URL for executor_manager to call backend (uses local IP so docker containers can access)
+        # DOCKER_HOST_ADDR=localhost so executor_manager can access docker containers
+        # CALLBACK_HOST: URL for executor containers to call back to executor_manager (uses local IP so docker containers can access)
+        # --reload-dir: Watch shared module for changes (editable dependency)
+        # --reload-exclude: Exclude .venv and __pycache__ to reduce CPU usage
+        local CALLBACK_HOST="http://$LOCAL_IP:$EXECUTOR_MANAGER_PORT"
+        start_service "executor_manager" "executor_manager" \
+            "export EXECUTOR_IMAGE=$EXECUTOR_IMAGE && export TASK_API_DOMAIN=$TASK_API_DOMAIN && export DOCKER_HOST_ADDR=localhost && export NETWORK=wegent-network && export CALLBACK_HOST=$CALLBACK_HOST && source .venv/bin/activate && uvicorn main:app --reload --reload-dir . --reload-dir ../shared $RELOAD_EXCLUDE --host 0.0.0.0 --port $EXECUTOR_MANAGER_PORT --log-level debug"
+    fi
 
     # 4. Start Frontend (run in background)
-    echo -e "  Starting ${BLUE}frontend${NC}..."
-    cd "$SCRIPT_DIR/frontend"
+    if [ "$start_frontend" = true ]; then
+        echo -e "  Starting ${BLUE}frontend${NC}..."
+        cd "$SCRIPT_DIR/frontend"
 
-    # Set environment variables (use same names as docker-compose)
-    export RUNTIME_INTERNAL_API_URL=http://localhost:$BACKEND_PORT
-    export RUNTIME_SOCKET_DIRECT_URL=$WEGENT_SOCKET_URL
+        # Set environment variables (use same names as docker-compose)
+        export RUNTIME_INTERNAL_API_URL=http://localhost:$BACKEND_PORT
+        export RUNTIME_SOCKET_DIRECT_URL=$WEGENT_SOCKET_URL
 
-    # Build the frontend startup command
-    # In WSL, use full path to node to ensure we use the correct nvm-installed version
-    # instead of potentially using Windows node or a different version
-    local frontend_cmd="PORT=$WEGENT_FRONTEND_PORT npm run dev"
-    
-    if is_wsl; then
-        # Get the full path to node from the current shell (which has nvm loaded)
-        local node_path=$(command -v node)
-        if [ -n "$node_path" ]; then
-            # Set PATH to use the nvm node directory
-            local node_dir=$(dirname "$node_path")
-            frontend_cmd="PATH=$node_dir:\$PATH $frontend_cmd"
+        # Build the frontend startup command
+        # In WSL, use full path to node to ensure we use the correct nvm-installed version
+        # instead of potentially using Windows node or a different version
+        local frontend_cmd="PORT=$WEGENT_FRONTEND_PORT npm run dev"
+
+        if is_wsl; then
+            # Get the full path to node from the current shell (which has nvm loaded)
+            local node_path=$(command -v node)
+            if [ -n "$node_path" ]; then
+                # Set PATH to use the nvm node directory
+                local node_dir=$(dirname "$node_path")
+                frontend_cmd="PATH=$node_dir:\$PATH $frontend_cmd"
+            fi
         fi
+
+        # Start frontend in background
+        nohup bash -c "$frontend_cmd" > "$PID_DIR/frontend.log" 2>&1 &
+        local frontend_pid=$!
+        echo $frontend_pid > "$PID_DIR/frontend.pid"
+
+        sleep 3
+
+        if kill -0 "$frontend_pid" 2>/dev/null; then
+            echo -e "    ${GREEN}✓${NC} frontend started (PID: $frontend_pid)"
+        else
+            echo -e "    ${RED}✗${NC} frontend failed to start, check log: $PID_DIR/frontend.log"
+        fi
+
+        cd "$SCRIPT_DIR"
     fi
-
-    # Start frontend in background
-    nohup bash -c "$frontend_cmd" > "$PID_DIR/frontend.log" 2>&1 &
-    local frontend_pid=$!
-    echo $frontend_pid > "$PID_DIR/frontend.pid"
-
-    sleep 3
-
-    if kill -0 "$frontend_pid" 2>/dev/null; then
-        echo -e "    ${GREEN}✓${NC} frontend started (PID: $frontend_pid)"
-    else
-        echo -e "    ${RED}✗${NC} frontend failed to start, check log: $PID_DIR/frontend.log"
-    fi
-
-    cd "$SCRIPT_DIR"
 
     echo ""
     echo -e "${BLUE}Performing health checks...${NC}"
 
-    # Health check for all services
+    # Health check only for started services
     local failed=0
-    check_service_health "backend" $BACKEND_PORT "/health" || failed=1
-    check_service_health "chat_shell" $CHAT_SHELL_PORT "/health" || failed=1
-    check_service_health "executor_manager" $EXECUTOR_MANAGER_PORT "/health" || failed=1
-    check_service_health "frontend" $WEGENT_FRONTEND_PORT "" || failed=1
+    if [ "$start_backend" = true ]; then
+        check_service_health "backend" $BACKEND_PORT "/health" || failed=1
+    fi
+    if [ "$start_chat_shell" = true ]; then
+        check_service_health "chat_shell" $CHAT_SHELL_PORT "/health" || failed=1
+    fi
+    if [ "$start_executor_manager" = true ]; then
+        check_service_health "executor_manager" $EXECUTOR_MANAGER_PORT "/health" || failed=1
+    fi
+    if [ "$start_frontend" = true ]; then
+        check_service_health "frontend" $WEGENT_FRONTEND_PORT "" || failed=1
+    fi
 
     echo ""
     if [ $failed -eq 1 ]; then
@@ -1263,17 +1563,26 @@ start_services() {
     fi
 
     echo -e "${GREEN}════════════════════════════════════════════════════════${NC}"
-    echo -e "${GREEN}All services started successfully!${NC}"
+    if [ $# -eq 0 ]; then
+        echo -e "${GREEN}All services started successfully!${NC}"
+    else
+        echo -e "${GREEN}Services started: ${specified_services[*]}${NC}"
+    fi
     echo ""
-    echo -e "${GREEN}🌐 Access URLs:${NC}"
-    echo -e "  Local Frontend:  ${BLUE}http://localhost:$WEGENT_FRONTEND_PORT${NC}"
-    echo -e "  Remote Frontend: ${BLUE}http://$(get_local_ip):$WEGENT_FRONTEND_PORT${NC}"
-    echo -e "  Socket URL:      ${BLUE}$WEGENT_SOCKET_URL${NC}"
-    echo ""
-    echo -e "${YELLOW}📋 Share with others for remote access:${NC}"
-    echo -e "  Frontend URL: ${BLUE}http://$(get_local_ip):$WEGENT_FRONTEND_PORT${NC}"
-    echo -e "  Socket URL:   ${BLUE}$WEGENT_SOCKET_URL${NC}"
-    echo ""
+
+    # Only show URLs if frontend is started or if starting all
+    if [ "$start_frontend" = true ]; then
+        echo -e "${GREEN}🌐 Access URLs:${NC}"
+        echo -e "  Local Frontend:  ${BLUE}http://localhost:$WEGENT_FRONTEND_PORT${NC}"
+        echo -e "  Remote Frontend: ${BLUE}http://$(get_local_ip):$WEGENT_FRONTEND_PORT${NC}"
+        echo -e "  Socket URL:      ${BLUE}$WEGENT_SOCKET_URL${NC}"
+        echo ""
+        echo -e "${YELLOW}📋 Share with others for remote access:${NC}"
+        echo -e "  Frontend URL: ${BLUE}http://$(get_local_ip):$WEGENT_FRONTEND_PORT${NC}"
+        echo -e "  Socket URL:   ${BLUE}$WEGENT_SOCKET_URL${NC}"
+        echo ""
+    fi
+
     echo -e "${YELLOW}Common Commands:${NC}"
     echo -e "  $0 --status    Check service status"
     echo -e "  $0 --stop      Stop all services"
@@ -1296,11 +1605,20 @@ case $ACTION in
         init_config
         ;;
     stop)
-        stop_services
+        if [ ${#STOP_SERVICES[@]} -eq 0 ]; then
+            stop_services "${GRACEFUL_STOP:-false}"
+        else
+            stop_services "${GRACEFUL_STOP:-false}" "${STOP_SERVICES[@]}"
+        fi
         ;;
     restart)
-        stop_services
-        start_services
+        if [ ${#STOP_SERVICES[@]} -eq 0 ]; then
+            stop_services "${GRACEFUL_STOP:-false}"
+            start_services
+        else
+            stop_services "${GRACEFUL_STOP:-false}" "${STOP_SERVICES[@]}"
+            start_services "${STOP_SERVICES[@]}"
+        fi
         ;;
     status)
         show_status

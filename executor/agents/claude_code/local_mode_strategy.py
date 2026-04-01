@@ -136,6 +136,7 @@ class LocalModeStrategy(ExecutionModeStrategy):
         # Set CLAUDE_CONFIG_DIR to redirect all config reads/writes
         # This affects settings.json, claude.json, and skills locations
         env["CLAUDE_CONFIG_DIR"] = config_dir
+        env["SKILLS_DIR"] = self.get_skills_directory(config_dir)
 
         # Add ANTHROPIC_CUSTOM_HEADERS if configured via environment variable
         if config.ANTHROPIC_CUSTOM_HEADERS:

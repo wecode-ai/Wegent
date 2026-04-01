@@ -142,6 +142,7 @@ class ExecutionRequest:
     )
     is_group_chat: bool = False
     history_limit: Optional[int] = None
+    stateless: bool = False
     new_session: bool = False
     collaboration_model: str = "single"
     mode: Optional[str] = (

@@ -96,12 +96,21 @@ async def execute_subscription_unified(
     """
     from app.services.chat.trigger.unified import build_execution_request
     from app.services.execution import CommunicationMode, ExecutionRouter
+    from shared.telemetry.context import get_request_id, set_request_context
+
+    current_request_id = get_request_id()
+    request_id = (
+        current_request_id
+        if current_request_id
+        else f"sub-unified-{execution_data.subscription_id}-{execution_data.execution_id}"
+    )
+    set_request_context(request_id)
 
     logger.info(
         f"[execute_subscription_unified] Starting execution: "
         f"subscription_id={execution_data.subscription_id}, "
         f"execution_id={execution_data.execution_id}, "
-        f"task_id={execution_data.task_id}"
+        f"task_id={execution_data.task_id}, request_id={request_id}"
     )
 
     # Build execution request with preload_skills from subscription

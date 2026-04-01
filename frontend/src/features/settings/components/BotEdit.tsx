@@ -26,7 +26,7 @@ import McpConfigSection from './McpConfigSection'
 import SkillManagementModal from './skills/SkillManagementModal'
 import { RichSkillSelector } from './skills/RichSkillSelector'
 import DifyBotConfig from './DifyBotConfig'
-import { PromptFineTuneDialog } from './prompt-fine-tune'
+import PromptFineTuneDialog from '@/features/prompt-tune/components/PromptFineTuneDialog'
 
 import { Bot } from '@/types/api'
 import { botApis, CreateBotRequest, SkillRefMeta, UpdateBotRequest } from '@/apis/bots'

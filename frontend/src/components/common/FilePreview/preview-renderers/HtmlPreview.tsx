@@ -7,6 +7,7 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { AlertTriangle } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
+import { TextPreview } from './TextPreview'
 
 export interface HtmlPreviewProps {
   content: string
@@ -25,7 +26,6 @@ export function HtmlPreview({
   const [internalIsSourceMode, setInternalIsSourceMode] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
   const [hasError, setHasError] = useState(false)
-  const [blobUrl, setBlobUrl] = useState<string | null>(null)
 
   const isSourceMode =
     controlledIsSourceMode !== undefined ? controlledIsSourceMode : internalIsSourceMode
@@ -39,18 +39,11 @@ export function HtmlPreview({
 
   const iframeRef = useRef<HTMLIFrameElement>(null)
 
+  // Reset loading state when content changes
   useEffect(() => {
-    if (!isSourceMode && content) {
-      setIsLoading(true)
-      const blob = new Blob([content], { type: 'text/html' })
-      const url = URL.createObjectURL(blob)
-      setBlobUrl(url)
-
-      return () => {
-        URL.revokeObjectURL(url)
-      }
-    }
-  }, [content, isSourceMode])
+    setIsLoading(true)
+    setHasError(false)
+  }, [content])
 
   const handleIframeLoad = () => setIsLoading(false)
   const handleIframeError = () => {
@@ -86,7 +79,7 @@ export function HtmlPreview({
             <iframe
               ref={iframeRef}
               title={filename}
-              src={blobUrl || undefined}
+              srcDoc={content}
               className="w-full h-full border-0"
               sandbox="allow-scripts allow-popups allow-forms"
               onLoad={handleIframeLoad}
@@ -95,11 +88,7 @@ export function HtmlPreview({
             />
           </>
         ) : (
-          <div className="p-4">
-            <pre className="text-sm font-mono text-text-primary bg-surface-secondary dark:bg-gray-800 p-4 rounded-lg overflow-auto whitespace-pre-wrap break-all">
-              <code>{content}</code>
-            </pre>
-          </div>
+          <TextPreview content={content} filename={filename} />
         )}
       </div>
 

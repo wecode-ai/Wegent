@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import io
+import json
 import logging
 import re
 from datetime import datetime
@@ -34,6 +35,8 @@ from app.schemas.shared_task import (
 )
 from app.schemas.task import (
     PipelineStageInfo,
+    PromptDraftGenerateRequest,
+    PromptDraftGenerateResponse,
     TaskCreate,
     TaskDetail,
     TaskInDB,
@@ -42,6 +45,7 @@ from app.schemas.task import (
     TaskSkillsResponse,
     TaskUpdate,
 )
+from app.services import prompt_draft_service
 from app.services.adapters.task_kinds import task_kinds_service
 from app.services.remote_workspace_service import remote_workspace_service
 from app.services.shared_task import shared_task_service
@@ -278,6 +282,100 @@ def get_task_skills(
     return task_kinds_service.get_task_skills(
         db=db, task_id=task_id, user_id=current_user.id
     )
+
+
+@router.post(
+    "/{task_id}/prompt-drafts/generate", response_model=PromptDraftGenerateResponse
+)
+def generate_task_prompt_draft(
+    request: PromptDraftGenerateRequest,
+    task_id: int = Depends(with_task_telemetry),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Generate a prompt draft from current task conversation."""
+    try:
+        return prompt_draft_service.generate_prompt_draft(
+            db=db,
+            task_id=task_id,
+            current_user=current_user,
+            model=request.model,
+            source=request.source,
+            current_prompt=request.current_prompt,
+            regenerate=request.regenerate,
+        )
+    except prompt_draft_service.PromptDraftTaskNotFoundError:
+        raise HTTPException(status_code=404, detail="Task not found")
+    except prompt_draft_service.PromptDraftConversationTooShortError:
+        raise HTTPException(
+            status_code=400, detail="Conversation is too short to generate prompt"
+        )
+    except prompt_draft_service.PromptDraftModelUnavailableError:
+        raise HTTPException(
+            status_code=400,
+            detail="No available model for prompt draft generation",
+        )
+    except prompt_draft_service.PromptDraftGenerationFailedError:
+        raise HTTPException(status_code=502, detail="Prompt draft generation failed")
+    except ValueError as exc:
+        if str(exc) == "task_not_found":
+            raise HTTPException(status_code=404, detail="Task not found")
+        if str(exc) == "model_not_found":
+            raise HTTPException(status_code=400, detail="Model not found")
+        raise
+    except RuntimeError as exc:
+        if str(exc) == "conversation_too_short":
+            raise HTTPException(
+                status_code=400, detail="Conversation is too short to generate prompt"
+            )
+        raise
+
+
+@router.post("/{task_id}/prompt-drafts/generate/stream")
+async def generate_task_prompt_draft_stream(
+    request: PromptDraftGenerateRequest,
+    task_id: int = Depends(with_task_telemetry),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Generate prompt draft as SSE stream events."""
+
+    try:
+        # Pre-check to return 4xx before streaming starts.
+        prompt_draft_service.validate_prompt_draft_context(
+            db=db, task_id=task_id, current_user=current_user, model=request.model
+        )
+    except prompt_draft_service.PromptDraftTaskNotFoundError:
+        raise HTTPException(status_code=404, detail="Task not found")
+    except prompt_draft_service.PromptDraftConversationTooShortError:
+        raise HTTPException(
+            status_code=400, detail="Conversation is too short to generate prompt"
+        )
+    except prompt_draft_service.PromptDraftModelUnavailableError:
+        raise HTTPException(
+            status_code=400,
+            detail="No available model for prompt draft generation",
+        )
+    except ValueError as exc:
+        if str(exc) == "task_not_found":
+            raise HTTPException(status_code=404, detail="Task not found")
+        if str(exc) == "model_not_found":
+            raise HTTPException(status_code=400, detail="Model not found")
+        raise
+
+    async def event_stream():
+        async for event in prompt_draft_service.generate_prompt_draft_stream(
+            db=db,
+            task_id=task_id,
+            current_user=current_user,
+            model=request.model,
+            source=request.source,
+            current_prompt=request.current_prompt,
+            regenerate=request.regenerate,
+        ):
+            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 @router.put("/{task_id}", response_model=TaskInDB)

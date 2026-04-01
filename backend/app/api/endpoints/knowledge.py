@@ -12,7 +12,7 @@ which provides a unified interface for both REST API and MCP tools.
 import asyncio
 import logging
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Union
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy.exc import IntegrityError
@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 from app.api.dependencies import get_db
 from app.core import security
 from app.core.config import settings
+from app.core.security import AuthContext, get_auth_context
 from app.db.session import SessionLocal
 from app.models.user import User
 from app.schemas.knowledge import (
@@ -1556,3 +1557,74 @@ def get_document_chunk(
         document_id=document.id,
         kb_id=document.kind_id,
     )
+
+
+# ============== OpenAPI v1 Knowledge Base Endpoints ==============
+
+# Create a dedicated router for v1/knowledge-base endpoints
+knowledge_router = APIRouter()
+
+
+@knowledge_router.get(
+    "/list",
+    response_model=Union[PersonalKnowledgeBaseGroup, AllGroupedKnowledgeResponse],
+)
+@trace_sync("list_knowledge_bases_v1", "knowledge.api")
+def list_knowledge_bases_v1(
+    scope: str = Query(
+        default="all",
+        description="Scope of knowledge bases to return: 'personal' or 'all'",
+    ),
+    auth_context: AuthContext = Depends(get_auth_context),
+    db: Session = Depends(get_db),
+) -> Union[PersonalKnowledgeBaseGroup, AllGroupedKnowledgeResponse]:
+    """
+    List knowledge bases with flexible authentication.
+
+    This endpoint is compatible with OpenAPI-style authentication,
+    supporting API keys via X-API-Key or Authorization headers,
+    and username specification via wegent-username header for service keys.
+
+    Args:
+        scope: Filter scope for knowledge bases
+            - "personal": Return only personal knowledge bases (created_by_me + shared_with_me)
+            - "all": Return all accessible knowledge bases (personal + groups + organization)
+            - Unrecognized values are treated as "all"
+
+    Returns:
+        - When scope="personal": PersonalKnowledgeBaseGroup schema
+          {
+            "created_by_me": [...],
+            "shared_with_me": [...]
+          }
+        - When scope="all": AllGroupedKnowledgeResponse schema
+          {
+            "personal": {"created_by_me": [...], "shared_with_me": [...]},
+            "groups": [...],
+            "organization": {...},
+            "summary": {...}
+          }
+
+    Authentication:
+        - Personal API key: Returns knowledge bases accessible to the key owner
+        - Service API key: Requires wegent-username header to specify the target user
+    """
+    current_user = auth_context.user
+
+    # Normalize scope: only "personal" is valid, everything else is treated as "all"
+    normalized_scope = scope.lower() if scope else "all"
+    if normalized_scope not in ("personal", "all"):
+        normalized_scope = "all"
+
+    if normalized_scope == "personal":
+        # Return personal knowledge bases grouped by ownership
+        return KnowledgeService.get_personal_knowledge_bases_grouped(
+            db=db,
+            user_id=current_user.id,
+        )
+    else:
+        # Return all accessible knowledge bases grouped by scope
+        return KnowledgeService.get_all_knowledge_bases_grouped(
+            db=db,
+            user_id=current_user.id,
+        )
