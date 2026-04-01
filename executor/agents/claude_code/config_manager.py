@@ -191,6 +191,12 @@ def create_claude_model_config(
         "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": int(
             os.getenv("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "0")
         ),
+        "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY": int(
+            os.getenv("CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY", "1")
+        ),
+        "CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK": int(
+            os.getenv("CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK", "1")
+        ),
     }
 
     base_url = env.get("base_url", "")
