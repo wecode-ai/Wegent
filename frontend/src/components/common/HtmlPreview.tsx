@@ -95,7 +95,7 @@ export default function HtmlPreview({ attachmentId, filename, shareToken }: Html
   }
 
   return (
-    <div className="rounded-lg border border-border overflow-hidden">
+    <div className="rounded-lg border border-border overflow-hidden h-full">
       <HtmlPreviewBase content={content} filename={filename} />
     </div>
   )

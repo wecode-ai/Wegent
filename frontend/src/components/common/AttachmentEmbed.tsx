@@ -99,7 +99,13 @@ export default function AttachmentEmbed({ attachmentId, theme = 'light' }: Attac
           <div className="text-sm text-text-muted">{t('attachment.preview.unavailable')}</div>
         )
       ) : isHtml ? (
-        <HtmlPreview attachmentId={attachmentId} filename={data.filename} shareToken={shareToken} />
+        <div className="h-[500px]">
+          <HtmlPreview
+            attachmentId={attachmentId}
+            filename={data.filename}
+            shareToken={shareToken}
+          />
+        </div>
       ) : previewText ? (
         <>
           <EnhancedMarkdown

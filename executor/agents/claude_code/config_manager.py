@@ -191,6 +191,12 @@ def create_claude_model_config(
         "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": int(
             os.getenv("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "0")
         ),
+        "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY": int(
+            os.getenv("CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY", "1")
+        ),
+        "CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK": int(
+            os.getenv("CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK", "1")
+        ),
     }
 
     base_url = env.get("base_url", "")
@@ -340,10 +346,26 @@ def extract_claude_options(task_data: ExecutionRequest) -> Dict[str, Any]:
                 ),
             )
             # Replace placeholders in MCP servers config with actual values
+            # NOTE: backend_url override for local mode is handled centrally
+            # in LocalRunner.enqueue_task() before any agent processes the task.
+            logger.info(
+                "[MCP] Variable substitution context: backend_url=%s, task_token=%s",
+                task_data.backend_url,
+                f"{task_data.task_token[:20]}..." if task_data.task_token else "EMPTY",
+            )
             mcp_servers = replace_mcp_server_variables(mcp_servers, task_data)
             # Convert list format to dict format for Claude Code SDK
             mcp_servers = _convert_mcp_servers_list_to_dict(mcp_servers)
             bot_config["mcp_servers"] = mcp_servers
+            # Log detailed MCP server configs for debugging
+            for name, cfg in mcp_servers.items():
+                logger.info(
+                    "[MCP] Server '%s': type=%s, url=%s, headers=%s",
+                    name,
+                    cfg.get("type", "?"),
+                    cfg.get("url", "?"),
+                    list(cfg.get("headers", {}).keys()),
+                )
             logger.info(
                 "[MCP] Ghost-level MCP servers after processing: %s",
                 list(mcp_servers.keys()),
@@ -381,12 +403,21 @@ def extract_claude_options(task_data: ExecutionRequest) -> Dict[str, Any]:
 
     # Final summary log
     final_mcp = options.get("mcp_servers", options.get("mcpServers"))
-    if final_mcp:
+    if final_mcp and isinstance(final_mcp, dict):
         logger.info(
             "[MCP] Final MCP servers in options: %s",
-            list(final_mcp.keys()) if isinstance(final_mcp, dict) else final_mcp,
+            list(final_mcp.keys()),
         )
-    else:
+        for name, cfg in final_mcp.items():
+            if isinstance(cfg, dict):
+                logger.info(
+                    "[MCP] Final '%s': type=%s, url=%s, headers=%s",
+                    name,
+                    cfg.get("type", "?"),
+                    cfg.get("url", "?"),
+                    list(cfg.get("headers", {}).keys()),
+                )
+    elif final_mcp:
         logger.info("[MCP] No MCP servers in final options")
 
     return options

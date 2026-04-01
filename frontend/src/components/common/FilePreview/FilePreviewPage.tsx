@@ -5,12 +5,12 @@
 'use client'
 
 import React, { useState } from 'react'
-import { Download, X, Share2, Check, Code, Eye } from 'lucide-react'
+import { Download, X, Code, Eye } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { FilePreview } from './FilePreview'
 import { getPreviewType, formatFileSize } from './utils'
 import { downloadAttachment } from '@/apis/attachments'
-import { useAttachmentShare } from './hooks'
+import { ShareButton } from './components'
 import { useTranslation } from '@/hooks/useTranslation'
 
 export interface FilePreviewPageProps {
@@ -50,15 +50,6 @@ export function FilePreviewPage({
   const isHtml = previewType === 'html'
   const { t } = useTranslation('common')
   const [htmlIsSourceMode, setHtmlIsSourceMode] = useState(false)
-
-  const {
-    isSharing,
-    shared,
-    share: handleShare,
-  } = useAttachmentShare({
-    attachmentId,
-    canShare,
-  })
 
   const handleDownload = async () => {
     if (attachmentId) {
@@ -151,27 +142,12 @@ export function FilePreviewPage({
           )}
           {/* Share button - only show if user can share (owner only) */}
           {canShare && attachmentId && (
-            <Button
+            <ShareButton
+              attachmentId={attachmentId}
+              canShare={canShare}
               variant="outline"
               size="sm"
-              onClick={handleShare}
-              disabled={isSharing}
-              className="h-9 px-2 sm:px-3"
-              title={t('actions.share')}
-            >
-              {shared ? (
-                <Check className="w-4 h-4 sm:mr-2" />
-              ) : (
-                <Share2 className="w-4 h-4 sm:mr-2" />
-              )}
-              <span className="hidden sm:inline">
-                {isSharing
-                  ? t('actions.generating')
-                  : shared
-                    ? t('actions.copied')
-                    : t('actions.share')}
-              </span>
-            </Button>
+            />
           )}
           <Button
             variant="primary"

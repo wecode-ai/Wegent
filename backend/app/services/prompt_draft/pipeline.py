@@ -19,7 +19,6 @@ from app.services.prompt_draft.validation import (
     TITLE_MAX_LENGTH,
     looks_like_meta_prompt,
     normalize_title_text,
-    validate_title_contract,
 )
 
 logger = logging.getLogger(__name__)
@@ -337,32 +336,7 @@ async def generate_title_text(
         )
 
     normalized_title = normalize_title_text(title or "")
-    try:
-        validate_title_contract(normalized_title)
-        return normalized_title
-    except ValueError as exc:
-        if str(exc) not in {"invalid_model_output", "invalid_title_contract"}:
-            raise
-
-    retry_messages = [*input_messages, build_title_retry_message(title or "")]
-    logger.info(
-        "Prompt draft title-generation retry payload: model=%s instructions=%s input_messages=%s metadata=%s model_config=%s",
-        model_id,
-        prompt_instructions,
-        json.dumps(retry_messages, ensure_ascii=False),
-        json.dumps(metadata, ensure_ascii=False),
-        safe_model_config_for_logging(model_config),
-    )
-    retry_title = await chat_shell_model_service.complete_text(
-        model=model_id,
-        input_messages=retry_messages,
-        instructions=prompt_instructions,
-        metadata=metadata,
-        model_config=model_config,
-    )
-    normalized_retry_title = normalize_title_text(retry_title or "")
-    validate_title_contract(normalized_retry_title)
-    return normalized_retry_title
+    return normalized_title
 
 
 async def generate_prompt_draft_stream_result(

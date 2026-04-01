@@ -26,6 +26,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from executor.config.config import WEGENT_EXECUTOR_HOME
+
 logger = logging.getLogger(__name__)
 
 
@@ -254,10 +256,9 @@ def _get_default_config_path() -> Path:
     """Get the default config file path.
 
     Returns:
-        Path to ~/.wegent-executor/device-config.json
+        Path to ${WEGENT_EXECUTOR_HOME}/device-config.json
     """
-    home = Path.home()
-    return home / ".wegent-executor" / "device-config.json"
+    return Path(WEGENT_EXECUTOR_HOME).expanduser() / "device-config.json"
 
 
 def _create_default_config() -> DeviceConfig:

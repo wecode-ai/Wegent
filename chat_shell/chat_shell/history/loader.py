@@ -480,7 +480,7 @@ def _build_history_messages(
     3. Processes knowledge_base contexts with remaining token space
     4. Follows MAX_EXTRACTED_TEXT_LENGTH limit with attachments having priority
     """
-    from app.models.subtask import SubtaskRole
+    from app.models.subtask import SubtaskRole, SubtaskStatus
     from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
 
     if subtask.role == SubtaskRole.USER:

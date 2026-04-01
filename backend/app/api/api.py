@@ -149,6 +149,11 @@ api_router.include_router(
     prefix="/knowledge-bases",
     tags=["knowledge-summary"],
 )
+api_router.include_router(
+    knowledge.knowledge_router,
+    prefix="/knowledge",
+    tags=["knowledge"],
+)
 # Unified share endpoints (Team, Task, KnowledgeBase)
 api_router.include_router(share.router, prefix="/share", tags=["share"])
 api_router.include_router(tables.router, prefix="/tables", tags=["tables"])

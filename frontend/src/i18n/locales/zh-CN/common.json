@@ -1318,9 +1318,20 @@
     "upload_tooltip": "支持的文件类型: 文档(PDF, Word, PPT, Excel), 图片, HTML, Markdown, 代码文件及各类文本文件\nHTML 和 Markdown 文件支持预览渲染\n最大文件大小: {{size}} MB",
     "share": {
       "link_copied_title": "分享链接已复制",
+      "copy_failed_title": "复制到剪贴板失败",
       "link_copied_description": "链接有效期7天，可粘贴发送给他人",
+      "link_copied_with_expiry": "链接有效期至 {{date}}，可粘贴发送给他人",
       "generate_failed_title": "生成分享链接失败",
-      "retry": "请稍后重试"
+      "retry": "请稍后重试",
+      "expiry": {
+        "label": "选择链接有效期",
+        "1day": "1 天",
+        "7days": "7 天",
+        "30days": "30 天",
+        "1year": "1 年",
+        "10years": "10 年",
+        "days": "天"
+      }
     },
     "html": {
       "source_mode": "源码",
