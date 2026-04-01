@@ -4,9 +4,17 @@
 
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
-import { adminApis, AdminDeviceInfo, AdminDeviceStats, DeviceType, BindShell } from '@/apis/admin'
+import {
+  adminApis,
+  AdminDeviceInfo,
+  AdminDeviceStats,
+  DeviceStatus,
+  DeviceType,
+  BindShell,
+  VersionFilterOperator,
+} from '@/apis/admin'
 import { toast } from 'sonner'
 import {
   Monitor,
@@ -34,10 +42,11 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import { cn, isVersionAtLeast } from '@/lib/utils'
+import { cn, isCompleteVersionString, isVersionAtLeast } from '@/lib/utils'
 
 // Minimum version required for auto-upgrade support
 const MIN_AUTO_UPGRADE_VERSION = '1.6.5'
+const FILTER_DEBOUNCE_MS = 600
 
 interface StatCardProps {
   title: string
@@ -124,56 +133,123 @@ export function DeviceMonitorPanel() {
   const [stats, setStats] = useState<AdminDeviceStats | null>(null)
   const [devices, setDevices] = useState<AdminDeviceInfo[]>([])
   const [total, setTotal] = useState(0)
-  const [isLoading, setIsLoading] = useState(true)
+  const [hasLoadedStats, setHasLoadedStats] = useState(false)
+  const [hasLoadedDevices, setHasLoadedDevices] = useState(false)
+  const [isStatsLoading, setIsStatsLoading] = useState(false)
+  const [isDevicesLoading, setIsDevicesLoading] = useState(false)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [actionLoading, setActionLoading] = useState<Record<string, string>>({})
+  const latestDevicesRequestRef = useRef(0)
 
   // Filter states
   const [deviceTypeFilter, setDeviceTypeFilter] = useState<string>('all')
   const [bindShellFilter, setBindShellFilter] = useState<string>('all')
+  const [statusFilter, setStatusFilter] = useState<string>('all')
+  const [versionFilterOp, setVersionFilterOp] = useState<VersionFilterOperator>('lt')
+  const [versionFilter, setVersionFilter] = useState('')
   const [search, setSearch] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
+  const [appliedVersionFilter, setAppliedVersionFilter] = useState('')
   const [page, setPage] = useState(1)
   const limit = 20
+
+  useEffect(() => {
+    if (statusFilter === 'offline' && versionFilter) {
+      setVersionFilter('')
+    }
+  }, [statusFilter, versionFilter])
+
+  const applySearchFilter = useCallback(() => {
+    setPage(1)
+    setDebouncedSearch(search.trim())
+  }, [search])
+
+  const applyVersionFilter = useCallback(() => {
+    const normalizedVersion = versionFilter.trim()
+
+    if (!normalizedVersion) {
+      setPage(1)
+      setAppliedVersionFilter('')
+      return
+    }
+
+    if (!isCompleteVersionString(normalizedVersion)) {
+      return
+    }
+
+    setPage(1)
+    setAppliedVersionFilter(normalizedVersion)
+  }, [versionFilter])
 
   // Debounce search input
   useEffect(() => {
     const timer = setTimeout(() => {
-      setDebouncedSearch(search)
-    }, 300)
+      applySearchFilter()
+    }, FILTER_DEBOUNCE_MS)
     return () => clearTimeout(timer)
-  }, [search])
+  }, [applySearchFilter])
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      applyVersionFilter()
+    }, FILTER_DEBOUNCE_MS)
+    return () => clearTimeout(timer)
+  }, [applyVersionFilter])
 
   const loadStats = useCallback(async () => {
+    setIsStatsLoading(true)
     try {
       const data = await adminApis.getDeviceStats()
       setStats(data)
     } catch (error) {
       console.error('Failed to load device stats:', error)
       toast.error(t('admin:device_monitor.errors.load_stats_failed'))
+    } finally {
+      setIsStatsLoading(false)
+      setHasLoadedStats(true)
     }
   }, [t])
 
   const loadDevices = useCallback(async () => {
+    const requestId = latestDevicesRequestRef.current + 1
+    latestDevicesRequestRef.current = requestId
+    setIsDevicesLoading(true)
+
     try {
       const deviceType = deviceTypeFilter === 'all' ? undefined : (deviceTypeFilter as DeviceType)
       const bindShell = bindShellFilter === 'all' ? undefined : (bindShellFilter as BindShell)
+      const status = statusFilter === 'all' ? undefined : (statusFilter as DeviceStatus)
       const searchTerm = debouncedSearch.trim() || undefined
+      const version = statusFilter === 'offline' ? undefined : (appliedVersionFilter || undefined)
 
-      const data = await adminApis.getDevices(page, limit, deviceType, bindShell, searchTerm)
+      const data = await adminApis.getDevices(
+        page,
+        limit,
+        status,
+        deviceType,
+        bindShell,
+        searchTerm,
+        version ? versionFilterOp : undefined,
+        version
+      )
+      if (requestId !== latestDevicesRequestRef.current) {
+        return
+      }
       setDevices(data.items)
       setTotal(data.total)
     } catch (error) {
+      if (requestId !== latestDevicesRequestRef.current) {
+        return
+      }
       console.error('Failed to load devices:', error)
       toast.error(t('admin:device_monitor.errors.load_failed'))
+    } finally {
+      if (requestId === latestDevicesRequestRef.current) {
+        setIsDevicesLoading(false)
+        setHasLoadedDevices(true)
+      }
     }
-  }, [page, deviceTypeFilter, bindShellFilter, debouncedSearch, t])
-
-  const loadData = useCallback(async () => {
-    setIsLoading(true)
-    await Promise.all([loadStats(), loadDevices()])
-    setIsLoading(false)
-  }, [loadStats, loadDevices])
+  }, [page, statusFilter, deviceTypeFilter, bindShellFilter, debouncedSearch, appliedVersionFilter, versionFilterOp, t])
 
   const handleRefresh = useCallback(async () => {
     setIsRefreshing(true)
@@ -182,12 +258,14 @@ export function DeviceMonitorPanel() {
   }, [loadStats, loadDevices])
 
   useEffect(() => {
-    loadData()
-  }, [loadData])
+    void loadStats()
+  }, [loadStats])
 
   useEffect(() => {
-    setPage(1)
-  }, [deviceTypeFilter, bindShellFilter, debouncedSearch])
+    void loadDevices()
+  }, [loadDevices])
+
+  const isInitialLoading = !hasLoadedStats || !hasLoadedDevices
 
   // Device action handlers
   const handleUpgrade = useCallback(
@@ -271,7 +349,7 @@ export function DeviceMonitorPanel() {
     [actionLoading, t]
   )
 
-  if (isLoading) {
+  if (isInitialLoading) {
     return (
       <div className="flex items-center justify-center py-20">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
@@ -292,7 +370,9 @@ export function DeviceMonitorPanel() {
           <p className="text-text-muted text-sm">{t('admin:device_monitor.description')}</p>
         </div>
         <Button variant="outline" size="icon" onClick={handleRefresh} disabled={isRefreshing}>
-          <RefreshCw className={cn('h-4 w-4', isRefreshing && 'animate-spin')} />
+          <RefreshCw
+            className={cn('h-4 w-4', (isRefreshing || isStatsLoading) && 'animate-spin')}
+          />
         </Button>
       </div>
 
@@ -335,8 +415,8 @@ export function DeviceMonitorPanel() {
       )}
 
       {/* Filters */}
-      <div className="flex flex-col sm:flex-row gap-4">
-        <div className="relative flex-1">
+      <div className="flex flex-col gap-4 lg:flex-row lg:flex-wrap">
+        <div className="relative flex-1 lg:min-w-[280px]">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-text-muted" />
           <Input
             placeholder={t('admin:device_monitor.search_placeholder')}
@@ -346,8 +426,34 @@ export function DeviceMonitorPanel() {
             data-testid="device-search-input"
           />
         </div>
-        <Select value={deviceTypeFilter} onValueChange={setDeviceTypeFilter}>
-          <SelectTrigger className="w-[140px]" data-testid="device-type-filter-select">
+        <Select
+          value={statusFilter}
+          onValueChange={value => {
+            setPage(1)
+            setStatusFilter(value)
+          }}
+        >
+          <SelectTrigger
+            className="w-full sm:w-[140px]"
+            data-testid="device-status-filter-select"
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">{t('admin:device_monitor.filters.all_status')}</SelectItem>
+            <SelectItem value="online">{t('admin:device_monitor.status.online')}</SelectItem>
+            <SelectItem value="offline">{t('admin:device_monitor.status.offline')}</SelectItem>
+            <SelectItem value="busy">{t('admin:device_monitor.status.busy')}</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select
+          value={deviceTypeFilter}
+          onValueChange={value => {
+            setPage(1)
+            setDeviceTypeFilter(value)
+          }}
+        >
+          <SelectTrigger className="w-full sm:w-[140px]" data-testid="device-type-filter-select">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -356,8 +462,14 @@ export function DeviceMonitorPanel() {
             <SelectItem value="cloud">{t('admin:device_monitor.device_type.cloud')}</SelectItem>
           </SelectContent>
         </Select>
-        <Select value={bindShellFilter} onValueChange={setBindShellFilter}>
-          <SelectTrigger className="w-[160px]" data-testid="bind-shell-filter-select">
+        <Select
+          value={bindShellFilter}
+          onValueChange={value => {
+            setPage(1)
+            setBindShellFilter(value)
+          }}
+        >
+          <SelectTrigger className="w-full sm:w-[160px]" data-testid="bind-shell-filter-select">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -370,10 +482,54 @@ export function DeviceMonitorPanel() {
             </SelectItem>
           </SelectContent>
         </Select>
+        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+          <Select
+            value={versionFilterOp}
+            onValueChange={value => {
+              setPage(1)
+              setVersionFilterOp(value as VersionFilterOperator)
+            }}
+            disabled={statusFilter === 'offline'}
+          >
+            <SelectTrigger
+              className="w-full sm:w-[120px]"
+              data-testid="version-operator-filter-select"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="gte">{t('admin:device_monitor.version_filter.operators.gte')}</SelectItem>
+              <SelectItem value="gt">{t('admin:device_monitor.version_filter.operators.gt')}</SelectItem>
+              <SelectItem value="eq">{t('admin:device_monitor.version_filter.operators.eq')}</SelectItem>
+              <SelectItem value="lt">{t('admin:device_monitor.version_filter.operators.lt')}</SelectItem>
+              <SelectItem value="lte">{t('admin:device_monitor.version_filter.operators.lte')}</SelectItem>
+            </SelectContent>
+          </Select>
+          <Input
+            placeholder={t('admin:device_monitor.version_filter.placeholder')}
+            value={versionFilter}
+            onChange={e => setVersionFilter(e.target.value)}
+            className="w-full sm:w-[220px]"
+            data-testid="version-filter-input"
+            disabled={statusFilter === 'offline'}
+          />
+        </div>
       </div>
 
       {/* Device List */}
-      <div className="bg-base border border-border rounded-md p-2 w-full max-h-[50vh] flex flex-col overflow-y-auto">
+      <div
+        className="relative bg-base border border-border rounded-md p-2 w-full max-h-[50vh] flex flex-col overflow-y-auto"
+        aria-busy={isDevicesLoading}
+      >
+        {isDevicesLoading && (
+          <div
+            className="absolute top-3 right-3 z-10 flex items-center gap-2 rounded-md border border-border bg-base/95 px-2 py-1 text-xs text-text-muted backdrop-blur-sm"
+            data-testid="device-list-loading"
+          >
+            <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+            <span>{t('admin:device_monitor.loading')}</span>
+          </div>
+        )}
         {devices.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-12 text-center">
             <Monitor className="w-12 h-12 text-text-muted mb-4" />

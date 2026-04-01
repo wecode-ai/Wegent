@@ -807,6 +807,16 @@
       "all_device_type": "All Types",
       "all_bind_shell": "All Shells"
     },
+    "version_filter": {
+      "placeholder": "Filter by version, e.g. 1.6.5",
+      "operators": {
+        "gt": ">",
+        "gte": ">=",
+        "eq": "=",
+        "lt": "<",
+        "lte": "<="
+      }
+    },
     "status": {
       "online": "Online",
       "offline": "Offline",

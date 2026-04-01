@@ -9,7 +9,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useToast } from '@/hooks/use-toast'
 import { apiClient } from '@/apis/client'
-import { setToken } from '@/apis/user'
+import { setToken, getToken } from '@/apis/user'
 
 interface AideskLoginResponse {
   access_token: string
@@ -56,6 +56,25 @@ export default function AideskTokenHandler() {
 
     // Prevent duplicate processing
     if (isProcessing || processedRef.current) {
+      return
+    }
+
+    // Helper function to clean URL parameters
+    const cleanUrlParams = () => {
+      const url = new URL(window.location.href)
+      url.searchParams.delete('source')
+      url.searchParams.delete('username')
+      url.searchParams.delete('timestamp')
+      url.searchParams.delete('sign')
+      router.replace(url.pathname + url.search)
+    }
+
+    // If user is already logged in, skip aidesk login flow and just clean URL params
+    const existingToken = getToken()
+    if (existingToken) {
+      console.log('[Aidesk] User already logged in, skipping aidesk login flow')
+      processedRef.current = true
+      cleanUrlParams()
       return
     }
 

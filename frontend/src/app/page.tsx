@@ -80,6 +80,9 @@ export default function Home() {
     }
   }
 
+  // Check if user is already logged in - used to skip AideskTokenHandler rendering
+  const isLoggedIn = !!getToken()
+
   // DingTalk mode: show loading while redirecting
   if (isAuthModeDingTalk()) {
     return (
@@ -92,9 +95,21 @@ export default function Home() {
     )
   }
 
+  // If user is already logged in, show loading while redirecting (useEffect will handle redirect)
+  if (isLoggedIn) {
+    return (
+      <div className="flex items-center justify-center h-screen bg-base">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto" />
+          <p className="mt-4 text-text-secondary">正在跳转...</p>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <main className="flex smart-h-screen flex-col items-center justify-center p-8 bg-base relative box-border">
-      {/* Handle Aidesk authentication from 口袋 App */}
+      {/* Handle Aidesk authentication from 口袋 App - only rendered when not logged in */}
       <AideskTokenHandler />
 
       {/* Language Switcher */}

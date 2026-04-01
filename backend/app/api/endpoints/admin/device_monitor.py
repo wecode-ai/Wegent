@@ -6,9 +6,10 @@
 
 import logging
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
+from packaging.version import InvalidVersion, Version
 from pydantic import BaseModel, Field
 from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session
@@ -28,6 +29,7 @@ router = APIRouter(prefix="/device-monitor")
 
 # Stats cache configuration
 _STATS_CACHE = {"data": None, "timestamp": 0, "ttl": 30}  # 30 seconds cache
+VersionFilterOperator = Literal["gt", "gte", "eq", "lt", "lte"]
 
 
 # ==================== Request/Response Models ====================
@@ -257,14 +259,68 @@ def _build_device_info(
     )
 
 
+def _normalize_version_filter(
+    version_op: Optional[VersionFilterOperator], version: Optional[str]
+) -> Optional[tuple[VersionFilterOperator, Version]]:
+    """Normalize version filter query params."""
+    normalized_version = (version or "").strip()
+    if not normalized_version:
+        return None
+
+    try:
+        parsed_version = Version(normalized_version)
+    except InvalidVersion as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid version filter: {normalized_version}",
+        ) from exc
+
+    return (version_op or "gte", parsed_version)
+
+
+def _matches_version_filter(
+    executor_version: Optional[str],
+    version_filter: tuple[VersionFilterOperator, Version],
+) -> bool:
+    """Check whether an executor version matches the requested filter."""
+    if not executor_version:
+        return False
+
+    try:
+        parsed_executor_version = Version(executor_version.strip())
+    except InvalidVersion:
+        logger.warning(
+            f"[DeviceMonitor] Skipping device with invalid executor version: {executor_version}"
+        )
+        return False
+
+    version_op, target_version = version_filter
+    if version_op == "gt":
+        return parsed_executor_version > target_version
+    if version_op == "gte":
+        return parsed_executor_version >= target_version
+    if version_op == "eq":
+        return parsed_executor_version == target_version
+    if version_op == "lt":
+        return parsed_executor_version < target_version
+    return parsed_executor_version <= target_version
+
+
 @router.get("/devices", response_model=AdminDeviceListResponse)
 async def get_all_devices(
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(20, ge=1, le=100, description="Items per page"),
+    status: Optional[DeviceStatusEnum] = Query(None, description="Filter by status"),
     device_type: Optional[str] = Query(None, description="Filter by device type"),
     bind_shell: Optional[str] = Query(None, description="Filter by bind shell"),
     search: Optional[str] = Query(
         None, description="Search by device name, ID or username"
+    ),
+    version_op: Optional[VersionFilterOperator] = Query(
+        None, description="Version comparison operator"
+    ),
+    version: Optional[str] = Query(
+        None, description="Filter online devices by executor version"
     ),
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_admin_user),
@@ -291,6 +347,9 @@ async def get_all_devices(
     Returns:
         AdminDeviceListResponse with paginated devices
     """
+    effective_version = None if status == DeviceStatusEnum.OFFLINE else version
+    normalized_version_filter = _normalize_version_filter(version_op, effective_version)
+
     # Step 1: If search term provided, find matching user IDs first
     search_user_ids: Optional[List[int]] = None
     if search:
@@ -302,29 +361,75 @@ async def get_all_devices(
     # Step 2: Build optimized query with SQL-level filtering
     query = _build_device_query(db, device_type, bind_shell, search, search_user_ids)
 
-    # Step 3: Get total count and paginated results
-    total = query.count()
-    offset = (page - 1) * limit
-    page_kinds = query.offset(offset).limit(limit).all()
+    if normalized_version_filter is None and status is None:
+        # Step 3: Get total count and paginated results
+        total = query.count()
+        offset = (page - 1) * limit
+        page_kinds = query.offset(offset).limit(limit).all()
 
-    # Step 4: Build user map only for current page (not all devices)
-    page_user_ids = list({d.user_id for d in page_kinds})
-    users_map: Dict[int, str] = {}
-    if page_user_ids:
-        users = db.query(User).filter(User.id.in_(page_user_ids)).all()
-        users_map = {u.id: u.user_name for u in users}
+        # Step 4: Build user map only for current page (not all devices)
+        page_user_ids = list({d.user_id for d in page_kinds})
+        users_map: Dict[int, str] = {}
+        if page_user_ids:
+            users = db.query(User).filter(User.id.in_(page_user_ids)).all()
+            users_map = {u.id: u.user_name for u in users}
 
-    # Step 5: Get Redis status for current page only (batch query)
-    online_info_map = await _get_devices_redis_status(page_kinds)
+        # Step 5: Get Redis status for current page only (batch query)
+        online_info_map = await _get_devices_redis_status(page_kinds)
 
-    # Step 6: Build device info list
-    items = []
-    for kind in page_kinds:
+        # Step 6: Build device info list
+        items = []
+        for kind in page_kinds:
+            spec = kind.json.get("spec", {}) if kind.json else {}
+            device_id = spec.get("deviceId", kind.name)
+            redis_key = local_device_provider.generate_online_key(
+                kind.user_id, device_id
+            )
+            online_info = online_info_map.get(redis_key)
+
+            device_info = _build_device_info(kind, users_map, online_info)
+            items.append(device_info)
+
+        return AdminDeviceListResponse(items=items, total=total)
+
+    # Version filtering requires live online info, so filter before pagination.
+    candidate_kinds = query.all()
+    online_info_map = await _get_devices_redis_status(candidate_kinds)
+    filtered_pairs: list[tuple[Kind, Dict[str, Any]]] = []
+
+    for kind in candidate_kinds:
         spec = kind.json.get("spec", {}) if kind.json else {}
         device_id = spec.get("deviceId", kind.name)
         redis_key = local_device_provider.generate_online_key(kind.user_id, device_id)
         online_info = online_info_map.get(redis_key)
 
+        status_val = (
+            online_info.get("status", DeviceStatusEnum.ONLINE.value)
+            if online_info
+            else DeviceStatusEnum.OFFLINE.value
+        )
+        if status is not None and status_val != status.value:
+            continue
+
+        if normalized_version_filter is not None and not _matches_version_filter(
+            online_info.get("executor_version") if online_info else None,
+            normalized_version_filter,
+        ):
+            continue
+
+        filtered_pairs.append((kind, online_info))
+
+    total = len(filtered_pairs)
+    offset = (page - 1) * limit
+    page_pairs = filtered_pairs[offset : offset + limit]
+    page_user_ids = list({kind.user_id for kind, _ in page_pairs})
+    users_map: Dict[int, str] = {}
+    if page_user_ids:
+        users = db.query(User).filter(User.id.in_(page_user_ids)).all()
+        users_map = {u.id: u.user_name for u in users}
+
+    items = []
+    for kind, online_info in page_pairs:
         device_info = _build_device_info(kind, users_map, online_info)
         items.append(device_info)
 
