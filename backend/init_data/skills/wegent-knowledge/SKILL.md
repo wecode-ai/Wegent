@@ -1,6 +1,6 @@
 ---
 description: "Knowledge base management tools for Wegent. Provides capabilities to list, create, and update knowledge bases and documents. Use this skill when the user wants to manage knowledge bases or documents programmatically."
-displayName: "Wegent Knowledge Base"
+displayName: "知识库工具"
 version: "1.0.0"
 author: "Wegent Team"
 tags: ["knowledge", "knowledge-base", "document", "rag"]
@@ -50,6 +50,12 @@ You now have access to Wegent Knowledge Base management tools.
   - trigger_indexing: Whether to trigger RAG indexing (default: true)
   - trigger_summary: Whether to trigger summary generation (default: true)
 
+- **read_document_content**: Read raw document content with offset/limit pagination
+  - document_id: Document ID to read
+  - offset: Character offset to start reading from (default: 0)
+  - limit: Maximum number of characters to return (uses the backend default when omitted)
+  - returns: content slice, total_length, returned_length, has_more, kb_id
+
 - **update_document_content**: Update a document's content (TEXT type documents only)
   - document_id: Document ID to update
   - content: New content (replaces existing content)
@@ -63,6 +69,7 @@ You now have access to Wegent Knowledge Base management tools.
 - For web scraping, the URL content is fetched and stored as document content
 - Default behavior: if user doesn't specify scope, use `scope="all"` directly (no extra confirmation).
 - Avoid loops: if a tool call fails, report the error once and stop retrying/re-loading the skill unless the user changes inputs.
+- Long documents should be read incrementally: start with the backend default limit, then continue with `offset = previous_offset + previous_returned_length` while `has_more=true`
 
 ## Example Workflow
 
@@ -97,10 +104,18 @@ You now have access to Wegent Knowledge Base management tools.
    ```
 
 5. Update document content:
-   ```
+   ```text
    update_document_content(
      document_id=456,
      content="Updated notes with new information...",
      trigger_reindex=true
+   )
+   ```
+
+6. Read long document content incrementally:
+   ```text
+   read_document_content(
+     document_id=456,
+     offset=0
    )
    ```

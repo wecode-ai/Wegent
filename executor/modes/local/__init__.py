@@ -19,12 +19,16 @@ event names (e.g., "response.created", "response.completed", "error").
 This allows backend's DeviceNamespace to route them correctly.
 """
 
+from typing import TYPE_CHECKING, Any
+
 from executor.modes.local.events import (
     ChatEvents,
     DeviceEvents,
     TaskEvents,
 )
-from executor.modes.local.runner import LocalRunner
+
+if TYPE_CHECKING:
+    from executor.modes.local.runner import LocalRunner
 
 __all__ = [
     "LocalRunner",
@@ -33,3 +37,12 @@ __all__ = [
     "TaskEvents",
     "ChatEvents",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    """Lazily import heavy local runtime modules on demand."""
+    if name == "LocalRunner":
+        from executor.modes.local.runner import LocalRunner
+
+        return LocalRunner
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

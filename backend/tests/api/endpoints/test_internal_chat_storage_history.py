@@ -18,7 +18,8 @@ def _create_subtask(
     task_id: int,
     message_id: int,
     status: SubtaskStatus,
-    content: str,
+    content: str | None,
+    result_override: dict | None = None,
 ) -> Subtask:
     subtask = Subtask(
         user_id=user_id,
@@ -32,7 +33,11 @@ def _create_subtask(
         parent_id=0,
         status=status,
         progress=100,
-        result={"value": content},
+        result=(
+            result_override
+            if result_override is not None
+            else ({"value": content} if content is not None else None)
+        ),
         completed_at=datetime.now(),
     )
     db.add(subtask)
@@ -69,7 +74,7 @@ def test_internal_chat_history_includes_cancelled_subtasks(
         task_id=task_id,
         message_id=3,
         status=SubtaskStatus.FAILED,
-        content="failed-message",
+        content=None,
     )
 
     response = test_client.get(f"/api/internal/chat/history/task-{task_id}")
@@ -83,4 +88,57 @@ def test_internal_chat_history_includes_cancelled_subtasks(
     assert [item["content"] for item in messages] == [
         "completed-message",
         "cancelled-message",
+    ]
+
+
+def test_internal_chat_history_includes_failed_only_when_value_exists(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+):
+    task_id = 9531
+    completed = _create_subtask(
+        test_db,
+        user_id=test_user.id,
+        task_id=task_id,
+        message_id=1,
+        status=SubtaskStatus.COMPLETED,
+        content="completed-message",
+    )
+    failed_with_value = _create_subtask(
+        test_db,
+        user_id=test_user.id,
+        task_id=task_id,
+        message_id=2,
+        status=SubtaskStatus.FAILED,
+        content="partial-failed-message",
+        result_override={
+            "value": "partial-failed-message",
+            "messages_chain": [
+                {"role": "assistant", "content": "tool call detail"},
+                {"role": "assistant", "content": "another detail"},
+            ],
+        },
+    )
+    _create_subtask(
+        test_db,
+        user_id=test_user.id,
+        task_id=task_id,
+        message_id=3,
+        status=SubtaskStatus.FAILED,
+        content=None,
+    )
+
+    response = test_client.get(f"/api/internal/chat/history/task-{task_id}")
+
+    assert response.status_code == 200
+    payload = response.json()
+    messages = payload["messages"]
+    assert [item["id"] for item in messages] == [
+        str(completed.id),
+        str(failed_with_value.id),
+    ]
+    assert [item["content"] for item in messages] == [
+        "completed-message",
+        "partial-failed-message",
     ]

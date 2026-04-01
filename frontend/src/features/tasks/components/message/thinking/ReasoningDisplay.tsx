@@ -112,7 +112,7 @@ const ReasoningDisplay = memo(function ReasoningDisplay({
       {isExpanded && (
         <div
           ref={contentRef}
-          className="mt-2 ml-4 pl-4 border-l-2 border-purple-500/20 max-h-[400px] overflow-y-auto"
+          className="mt-2 ml-4 pl-4 border-l-2 border-purple-500/20 max-h-[7.5em] overflow-y-auto"
         >
           <div className="text-sm text-muted-foreground whitespace-pre-wrap break-words font-mono leading-relaxed">
             {reasoningContent}

@@ -21,6 +21,7 @@ from app.core.config import settings
 from app.models.subtask import Subtask
 from app.models.task import TaskResource
 from app.schemas.kind import Bot, Ghost, Shell, Team
+from app.services.auth import create_skill_identity_token
 from app.services.mcp_provider_registry import list_mcp_providers
 from app.services.readers import KindType, kindReader
 from app.services.user_mcp_service import user_mcp_service
@@ -29,6 +30,7 @@ from shared.models.db import Kind, User
 from shared.utils.url_util import domains_match
 
 logger = logging.getLogger(__name__)
+SELECTED_KB_PRELOAD_SKILL = "wegent-knowledge"
 
 
 class TaskRequestBuilder:
@@ -240,6 +242,7 @@ class TaskRequestBuilder:
 
         # Generate auth token first (needed for MCP server authentication)
         auth_token = self._generate_auth_token(task, subtask, user)
+        skill_identity_token = self._generate_skill_identity_token(task, subtask, user)
 
         # Build MCP servers configuration (with auto-injection for subscription tasks)
         mcp_servers = self._build_mcp_servers(
@@ -313,6 +316,7 @@ class TaskRequestBuilder:
             collaboration_model=collaboration_model,
             mode=collaboration_model,
             auth_token=auth_token,
+            skill_identity_token=skill_identity_token,
             backend_url=settings.BACKEND_INTERNAL_URL,
             attachments=attachments or [],
             is_subscription=is_subscription,
@@ -320,6 +324,115 @@ class TaskRequestBuilder:
             trace_context=trace_context,
             executor_name=subtask.executor_name,
         )
+
+    def resolve_request_preload_skills(
+        self,
+        *,
+        request: ExecutionRequest,
+        bot: Kind,
+        team: Kind,
+        user_id: int,
+    ) -> ExecutionRequest:
+        """Resolve request-level preload skills into full skill and MCP config.
+
+        This is used when downstream context processing adds preload skills after the
+        initial build phase, such as selected knowledge bases that must turn into a
+        concrete public skill with ClaudeCode MCP wiring.
+        """
+        requested_skill_names = []
+        for skill_name in [
+            *(request.preload_skills or []),
+            *(request.user_selected_skills or []),
+        ]:
+            if isinstance(skill_name, str) and skill_name not in requested_skill_names:
+                requested_skill_names.append(skill_name)
+
+        if not requested_skill_names:
+            return request
+
+        existing_skill_names = {
+            skill_name
+            for skill_name in (request.skill_names or [])
+            if isinstance(skill_name, str)
+        }
+        missing_skill_names = [
+            skill_name
+            for skill_name in requested_skill_names
+            if skill_name not in existing_skill_names
+        ]
+        if not missing_skill_names:
+            return request
+
+        user_preload_skills = []
+        for skill_name in requested_skill_names:
+            skill_ref = (request.skill_refs or {}).get(skill_name, {})
+            explicit_ref = {
+                "name": skill_name,
+                "namespace": skill_ref.get("namespace", "default"),
+                "is_public": skill_ref.get("is_public", False),
+            }
+
+            if (
+                skill_name == SELECTED_KB_PRELOAD_SKILL
+                and request.knowledge_base_ids
+                and request.is_user_selected_kb
+            ):
+                explicit_ref["namespace"] = "default"
+                explicit_ref["is_public"] = True
+
+            user_preload_skills.append(explicit_ref)
+
+        (
+            resolved_skills,
+            resolved_preload_skills,
+            resolved_user_selected,
+            skill_refs,
+        ) = self._get_bot_skills(
+            bot=bot,
+            team=team,
+            user_id=user_id,
+            user_preload_skills=user_preload_skills,
+        )
+
+        preload_skill_refs = {
+            name: skill_refs[name]
+            for name in resolved_preload_skills
+            if name in skill_refs
+        }
+
+        request.skill_configs = resolved_skills
+        request.skill_names = [skill["name"] for skill in resolved_skills]
+        request.preload_skills = resolved_preload_skills
+        request.user_selected_skills = resolved_user_selected
+        request.skill_refs = skill_refs
+        request.preload_skill_refs = preload_skill_refs
+
+        if not request.bot:
+            return request
+
+        bot_config = request.bot[0]
+        existing_bot_skills = set(bot_config.get("skills", []))
+        for skill_name in missing_skill_names:
+            if skill_name not in existing_bot_skills:
+                bot_config.setdefault("skills", []).append(skill_name)
+                existing_bot_skills.add(skill_name)
+
+        if bot_config.get("shell_type") == "ClaudeCode":
+            new_skill_configs = [
+                skill_config
+                for skill_config in resolved_skills
+                if skill_config.get("name") in missing_skill_names
+            ]
+            if new_skill_configs:
+                self._prepare_mcp_for_claude_code(bot_config, new_skill_configs)
+
+        logger.info(
+            "[TaskRequestBuilder] Resolved request preload skills: added=%s, total_skills=%s",
+            missing_skill_names,
+            request.skill_names,
+        )
+
+        return request
 
     # =========================================================================
     # Bot Resolution (from ChatConfigBuilder)
@@ -1635,7 +1748,9 @@ class TaskRequestBuilder:
         """Extract MCP servers from skill configs in list format.
 
         Each skill may declare mcpServers in dict format. This converts them
-        to list format with prefixed names to avoid cross-skill conflicts.
+        to list format. When the skill name already matches the server name,
+        keep the bare server name so tool calls can reference the natural MCP
+        server identifier without an extra prefix.
 
         Args:
             skill_configs: List of resolved skill config dicts
@@ -1657,8 +1772,13 @@ class TaskRequestBuilder:
             for server_name, server_config in mcp_servers.items():
                 if not isinstance(server_config, dict):
                     continue
+                resolved_name = (
+                    server_name
+                    if skill_name == server_name
+                    else f"{skill_name}_{server_name}"
+                )
                 entry = {
-                    "name": f"{skill_name}_{server_name}",
+                    "name": resolved_name,
                     **server_config,
                 }
                 result.append(entry)
@@ -1995,4 +2115,19 @@ class TaskRequestBuilder:
             subtask_id=subtask.id,
             user_id=user.id,
             user_name=user.user_name,
+        )
+
+    def _generate_skill_identity_token(
+        self, task: TaskResource, subtask: Subtask, user: User
+    ) -> str:
+        """Generate a dedicated skill identity token for business HTTP calls."""
+        task_json = task.json if isinstance(task.json, dict) else {}
+        task_labels = (task_json.get("metadata", {}) or {}).get("labels", {}) or {}
+        runtime_type = "sandbox" if task_labels.get("type") == "sandbox" else "executor"
+        runtime_name = subtask.executor_name or f"task-{task.id}-subtask-{subtask.id}"
+        return create_skill_identity_token(
+            user_id=user.id,
+            user_name=user.user_name,
+            runtime_type=runtime_type,
+            runtime_name=runtime_name,
         )

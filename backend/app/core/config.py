@@ -98,6 +98,7 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "secret-key"
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 7 * 24 * 60  # 7 days in minutes
+    SKILL_IDENTITY_TOKEN_EXPIRE_MINUTES: int = 10 * 24 * 60  # 10 days in minutes
 
     # OIDC state configuration
     OIDC_STATE_SECRET_KEY: str = "test"
@@ -266,6 +267,14 @@ class Settings(BaseSettings):
         3  # RUNNING executions older than this will be marked FAILED
     )
 
+    # Knowledge indexing protection configuration
+    KNOWLEDGE_INDEX_LOCK_TIMEOUT_SECONDS: int = 120
+    KNOWLEDGE_INDEX_LOCK_EXTEND_INTERVAL_SECONDS: int = 30
+    KNOWLEDGE_INDEX_LOCK_RETRY_DELAY_SECONDS: int = 15
+    KNOWLEDGE_INDEX_LOCK_MAX_RETRIES: int = 1
+    KNOWLEDGE_INDEX_STALE_QUEUED_SECONDS: int = 600
+    KNOWLEDGE_INDEX_STALE_INDEXING_SECONDS: int = 2700
+
     # Circuit breaker configuration
     CIRCUIT_BREAKER_FAIL_MAX: int = 5  # Open circuit after 5 consecutive failures
     CIRCUIT_BREAKER_RESET_TIMEOUT: int = 60  # Try to recover after 60 seconds
@@ -352,6 +361,12 @@ class Settings(BaseSettings):
     # - "fallback": Try direct connection first, use proxy only if direct fails
     # Default is "fallback" for better reliability
     WEBSCRAPER_PROXY_MODE: str = "fallback"
+    # Web scraper site-specific configuration
+    # Configuration for specific sites that require special handling
+    # due to anti-bot detection, dynamic content loading, or navigation patterns
+    # Format: JSON object with site URL patterns as keys
+    # WEB_SCRAPER_SITE_CONFIG={"Example.com":{"wait_until":"networkidle","page_timeout":30000,"delay_before_return_html":3.0}}
+    WEB_SCRAPER_SITE_CONFIG: str = "{}"
 
     # Web search configuration
     WEB_SEARCH_ENABLED: bool = False  # Enable/disable web search feature

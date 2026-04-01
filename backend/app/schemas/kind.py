@@ -10,7 +10,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from pydantic import AliasChoices, BaseModel, Field, model_validator
+from pydantic import AliasChoices, BaseModel, Field, field_validator, model_validator
 
 
 # API Format Enum for OpenAI-compatible models
@@ -673,6 +673,14 @@ class SkillSpec(BaseModel):
         "Used to enable updating skills from their original Git source.",
     )
 
+    @field_validator("version", mode="before")
+    @classmethod
+    def validate_version(cls, v):
+        """Convert float/int version to string to handle YAML parsing."""
+        if v is None:
+            return v
+        return str(v)
+
 
 class SkillStatus(Status):
     """Skill status"""
@@ -978,6 +986,14 @@ class GitSkillInfo(BaseModel):
         None, description="Tags from SKILL.md frontmatter"
     )
 
+    @field_validator("version", mode="before")
+    @classmethod
+    def validate_version(cls, v):
+        """Convert float/int version to string to handle YAML parsing."""
+        if v is None:
+            return v
+        return str(v)
+
 
 class GitScanResponse(BaseModel):
     """Response from scanning a Git repository for skills"""
@@ -1067,6 +1083,14 @@ class GitBatchUpdateSuccessItem(BaseModel):
     source: Optional[Dict[str, Any]] = Field(
         None, description="Updated source information"
     )
+
+    @field_validator("version", mode="before")
+    @classmethod
+    def validate_version(cls, v):
+        """Convert float/int version to string to handle YAML parsing."""
+        if v is None:
+            return v
+        return str(v)
 
 
 class GitBatchUpdateSkippedItem(BaseModel):

@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
@@ -38,6 +38,51 @@ from app.services.git_skill import git_skill_service
 router = APIRouter()
 
 
+def _resolve_manageable_skill(
+    db: Session, skill_id: int, current_user: User, action: str
+) -> Kind:
+    """
+    Resolve a skill for management operations with unified permission checks.
+
+    Permission rules:
+    - Skill owner can manage
+    - System admin can manage any skill
+    - Group Owner/Maintainer can manage any skill in their group namespace
+    """
+    from app.services.group_permission import get_effective_role_in_group
+
+    skill_kind = (
+        db.query(Kind)
+        .filter(
+            Kind.id == skill_id,
+            Kind.kind == "Skill",
+            Kind.is_active == True,
+        )
+        .first()
+    )
+
+    if not skill_kind:
+        raise HTTPException(status_code=404, detail="Skill not found")
+
+    if skill_kind.user_id == current_user.id:
+        return skill_kind
+
+    if current_user.role == "admin":
+        return skill_kind
+
+    if skill_kind.namespace != "default":
+        user_role = get_effective_role_in_group(
+            db, current_user.id, skill_kind.namespace
+        )
+        if user_role and user_role.value in {"Owner", "Maintainer"}:
+            return skill_kind
+
+    raise HTTPException(
+        status_code=403,
+        detail=f"You don't have permission to {action} this skill",
+    )
+
+
 # Request/Response schemas for new endpoints
 class PublicSkillCreate(BaseModel):
     """Schema for creating a public skill"""
@@ -49,6 +94,14 @@ class PublicSkillCreate(BaseModel):
     author: Optional[str] = None
     tags: Optional[List[str]] = None
 
+    @field_validator("version", mode="before")
+    @classmethod
+    def validate_version(cls, v):
+        """Convert float/int version to string to handle YAML parsing."""
+        if v is None:
+            return v
+        return str(v)
+
 
 class PublicSkillUpdate(BaseModel):
     """Schema for updating a public skill"""
@@ -58,6 +111,14 @@ class PublicSkillUpdate(BaseModel):
     version: Optional[str] = None
     author: Optional[str] = None
     tags: Optional[List[str]] = None
+
+    @field_validator("version", mode="before")
+    @classmethod
+    def validate_version(cls, v):
+        """Convert float/int version to string to handle YAML parsing."""
+        if v is None:
+            return v
+        return str(v)
 
 
 class InvokeSkillRequest(BaseModel):
@@ -101,6 +162,14 @@ class UnifiedSkillResponse(BaseModel):
     )
     created_at: Any
     updated_at: Any
+
+    @field_validator("version", mode="before")
+    @classmethod
+    def validate_version(cls, v):
+        """Convert float/int version to string to handle YAML parsing."""
+        if v is None:
+            return v
+        return str(v)
 
 
 @router.post("/upload", response_model=Skill, status_code=201)
@@ -240,7 +309,7 @@ def list_skills(
                     .filter(
                         TaskResource.id == task_id,
                         TaskResource.kind == "Task",
-                        TaskResource.is_active == TaskResource.STATE_ACTIVE,
+                        TaskResource.is_active.in_(TaskResource.is_active_query()),
                     )
                     .first()
                 )
@@ -1182,7 +1251,7 @@ def download_skill(
                 .filter(
                     TaskResource.id == task_id,
                     TaskResource.kind == "Task",
-                    TaskResource.is_active == TaskResource.STATE_ACTIVE,
+                    TaskResource.is_active.in_(TaskResource.is_active_query()),
                 )
                 .first()
             )
@@ -1238,8 +1307,15 @@ def remove_skill_references(
     This allows the Skill to be deleted afterwards.
     Returns the count of removed references and affected Ghost names.
     """
+    skill_kind = _resolve_manageable_skill(
+        db=db,
+        skill_id=skill_id,
+        current_user=current_user,
+        action="remove references from",
+    )
+
     result = skill_kinds_service.remove_skill_references(
-        db=db, skill_id=skill_id, user_id=current_user.id
+        db=db, skill_id=skill_id, user_id=skill_kind.user_id
     )
     return result
 
@@ -1256,8 +1332,15 @@ def remove_single_skill_reference(
 
     Returns success status and the affected Ghost name.
     """
+    skill_kind = _resolve_manageable_skill(
+        db=db,
+        skill_id=skill_id,
+        current_user=current_user,
+        action="remove references from",
+    )
+
     result = skill_kinds_service.remove_single_skill_reference(
-        db=db, skill_id=skill_id, ghost_id=ghost_id, user_id=current_user.id
+        db=db, skill_id=skill_id, ghost_id=ghost_id, user_id=skill_kind.user_id
     )
     return result
 
@@ -1277,9 +1360,16 @@ def update_skill_from_git(
     Returns:
         Dict with updated skill info including id, name, version, and source
     """
+    skill_kind = _resolve_manageable_skill(
+        db=db,
+        skill_id=skill_id,
+        current_user=current_user,
+        action="update",
+    )
+
     result = git_skill_service.update_skill_from_git(
         skill_id=skill_id,
-        user_id=current_user.id,
+        user_id=skill_kind.user_id,
         db=db,
     )
     return result
@@ -1313,10 +1403,17 @@ async def update_skill(
     file_content = await file.read()
 
     # Update skill
+    skill_kind = _resolve_manageable_skill(
+        db=db,
+        skill_id=skill_id,
+        current_user=current_user,
+        action="update",
+    )
+
     skill = skill_kinds_service.update_skill(
         db=db,
         skill_id=skill_id,
-        user_id=current_user.id,
+        user_id=skill_kind.user_id,
         file_content=file_content,
         file_name=file.filename,
     )
@@ -1340,46 +1437,12 @@ def delete_skill(
 
     Returns 400 error if the Skill is referenced by any Ghost.
     """
-    from app.services.group_permission import get_effective_role_in_group
-
-    # First, get the skill to check its namespace and owner
-    skill_kind = (
-        db.query(Kind)
-        .filter(
-            Kind.id == skill_id,
-            Kind.kind == "Skill",
-            Kind.is_active == True,
-        )
-        .first()
+    skill_kind = _resolve_manageable_skill(
+        db=db,
+        skill_id=skill_id,
+        current_user=current_user,
+        action="delete",
     )
-
-    if not skill_kind:
-        raise HTTPException(status_code=404, detail="Skill not found")
-
-    # Check permissions
-    can_delete = False
-
-    # 1. User can delete their own skills
-    if skill_kind.user_id == current_user.id:
-        can_delete = True
-
-    # 2. System admin can delete any skill
-    elif current_user.role == "admin":
-        can_delete = True
-
-    # 3. Group admin (Owner/Maintainer) can delete any skill in their group
-    elif skill_kind.namespace != "default":
-        user_role = get_effective_role_in_group(
-            db, current_user.id, skill_kind.namespace
-        )
-        if user_role in ["Owner", "Maintainer"]:
-            can_delete = True
-
-    if not can_delete:
-        raise HTTPException(
-            status_code=403,
-            detail="You don't have permission to delete this skill",
-        )
 
     # Use the original user_id for deletion to bypass the service-level check
     skill_kinds_service.delete_skill(

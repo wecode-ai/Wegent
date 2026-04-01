@@ -434,3 +434,39 @@ class TestPrepareSkillToolsWithMcp:
         tools, clients = result
         assert isinstance(tools, list)
         assert isinstance(clients, list)
+
+    @pytest.mark.asyncio
+    async def test_prepare_skill_tools_passes_skill_identity_token_to_context(self):
+        """Test skill identity token is preserved in SkillToolContext."""
+        skill_configs = [
+            {
+                "name": "test_skill",
+                "description": "A test skill",
+                "tools": [{"name": "dummy", "provider": "dummy"}],
+            }
+        ]
+
+        captured_context = None
+        mock_registry = MagicMock()
+
+        def _capture_context(_skill_config, context):
+            nonlocal captured_context
+            captured_context = context
+            return []
+
+        mock_registry.create_tools_for_skill.side_effect = _capture_context
+
+        with patch(
+            "chat_shell.skills.SkillToolRegistry.get_instance",
+            return_value=mock_registry,
+        ):
+            await prepare_skill_tools(
+                task_id=1,
+                subtask_id=2,
+                user_id=3,
+                skill_configs=skill_configs,
+                skill_identity_token="skill-jwt",
+            )
+
+        assert captured_context is not None
+        assert captured_context.skill_identity_token == "skill-jwt"

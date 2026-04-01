@@ -77,7 +77,6 @@ def upgrade() -> None:
                 "note",
                 sa.Text(),
                 nullable=False,
-                server_default="",
                 comment="Sender's note/comment",
             ),
             sa.Column(
@@ -105,7 +104,6 @@ def upgrade() -> None:
                 "process_result",
                 sa.JSON(),
                 nullable=False,
-                server_default="{}",
                 comment="AI processing result",
             ),
             sa.Column(

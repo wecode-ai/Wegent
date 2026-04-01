@@ -26,9 +26,12 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
+from app.models.knowledge import KnowledgeDocument
 from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.knowledge import (
+    DocumentContentReadResponse,
+    DocumentDetailResponse,
     KnowledgeBaseCreate,
     KnowledgeBaseListResponse,
     KnowledgeBaseResponse,
@@ -38,10 +41,25 @@ from app.schemas.knowledge import (
     ResourceScope,
 )
 from app.services.knowledge.knowledge_service import KnowledgeService
+from app.services.rag.document_read_service import (
+    DOCUMENT_READ_ERROR_NOT_FOUND,
+    document_read_service,
+)
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_TEXT_FILE_EXTENSION = "txt"
+MAX_DOCUMENT_READ_LIMIT = 100000
+REQUIRED_DOCUMENT_READ_KEYS = (
+    "id",
+    "name",
+    "content",
+    "total_length",
+    "offset",
+    "returned_length",
+    "has_more",
+    "kb_id",
+)
 
 
 def _normalize_file_extension(file_extension: Optional[str]) -> str:
@@ -67,6 +85,27 @@ def _build_filename(name: str, file_extension: str) -> str:
     """Build a safe filename for attachment upload."""
     ext = _normalize_file_extension(file_extension)
     return f"{name}.{ext}"
+
+
+def _validate_document_read_paging(offset: int, limit: int) -> None:
+    """Validate raw document read paging arguments."""
+    if offset < 0:
+        raise ValueError("offset must be greater than or equal to 0")
+    if limit <= 0:
+        raise ValueError("limit must be greater than 0")
+    if limit > MAX_DOCUMENT_READ_LIMIT:
+        raise ValueError(
+            f"limit must be less than or equal to {MAX_DOCUMENT_READ_LIMIT}"
+        )
+
+
+def _validate_document_read_result_payload(result: Dict[str, Any]) -> None:
+    """Validate the reader payload contains all required paginator fields."""
+    missing_keys = [key for key in REQUIRED_DOCUMENT_READ_KEYS if key not in result]
+    if missing_keys:
+        raise ValueError(
+            "Incomplete document read payload: missing " + ", ".join(missing_keys)
+        )
 
 
 class KnowledgeOrchestrator:
@@ -620,6 +659,144 @@ class KnowledgeOrchestrator:
         return KnowledgeDocumentListResponse(
             total=len(documents),
             items=[KnowledgeDocumentResponse.model_validate(doc) for doc in documents],
+        )
+
+    def _get_document_with_access_or_raise(
+        self,
+        db: Session,
+        user: User,
+        document_id: int,
+    ) -> KnowledgeDocument:
+        """Fetch a document and validate its knowledge-base level access."""
+        document = (
+            db.query(KnowledgeDocument)
+            .filter(KnowledgeDocument.id == document_id)
+            .first()
+        )
+        if not document:
+            raise ValueError("Document not found")
+
+        knowledge_base, has_access = KnowledgeService.get_knowledge_base(
+            db=db,
+            knowledge_base_id=document.kind_id,
+            user_id=user.id,
+        )
+        if not knowledge_base:
+            raise ValueError("Knowledge base not found")
+        if not has_access:
+            raise ValueError("Access denied to this document")
+
+        return document
+
+    def read_document_content(
+        self,
+        db: Session,
+        user: User,
+        document_id: int,
+        offset: int = 0,
+        limit: int = MAX_DOCUMENT_READ_LIMIT,
+    ) -> DocumentContentReadResponse:
+        """
+        Read raw document content with offset/limit pagination.
+
+        Args:
+            db: Database session
+            user: Current user
+            document_id: Document ID
+            offset: Read start offset
+            limit: Maximum number of characters to return
+
+        Returns:
+            DocumentContentReadResponse
+
+        Raises:
+            ValueError: If paging is invalid, the document is missing, or access fails
+        """
+        _validate_document_read_paging(offset=offset, limit=limit)
+
+        document = self._get_document_with_access_or_raise(
+            db=db,
+            user=user,
+            document_id=document_id,
+        )
+
+        results = document_read_service.read_documents(
+            db=db,
+            document_ids=[document_id],
+            offset=offset,
+            limit=limit,
+            knowledge_base_ids=[document.kind_id],
+        )
+        result = results[0] if results else None
+
+        if not result or result.get("error_code") == DOCUMENT_READ_ERROR_NOT_FOUND:
+            raise ValueError("Document not found")
+        if result.get("error"):
+            raise ValueError(result["error"])
+        _validate_document_read_result_payload(result)
+
+        return DocumentContentReadResponse(
+            document_id=result["id"],
+            name=result["name"],
+            content=result["content"],
+            total_length=result["total_length"],
+            offset=result["offset"],
+            returned_length=result["returned_length"],
+            has_more=result["has_more"],
+            kb_id=result["kb_id"],
+        )
+
+    async def get_document_detail(
+        self,
+        db: Session,
+        user: User,
+        document_id: int,
+        include_content: bool = True,
+        include_summary: bool = True,
+        offset: int = 0,
+        limit: int = MAX_DOCUMENT_READ_LIMIT,
+    ) -> DocumentDetailResponse:
+        """Aggregate optional document content and summary into a detail response."""
+        self._get_document_with_access_or_raise(
+            db=db,
+            user=user,
+            document_id=document_id,
+        )
+
+        content = None
+        content_length = None
+        truncated = None
+        summary = None
+
+        if include_content:
+            paged = self.read_document_content(
+                db=db,
+                user=user,
+                document_id=document_id,
+                offset=offset,
+                limit=limit,
+            )
+            content = paged.content
+            content_length = paged.total_length
+            truncated = (paged.offset > 0) or paged.has_more
+
+        if include_summary:
+            from app.services.knowledge.summary_service import get_summary_service
+
+            summary_service = get_summary_service(db)
+            summary_result = await summary_service.get_document_summary(document_id)
+            summary = (
+                summary_result.model_dump()
+                if hasattr(summary_result, "model_dump")
+                else summary_result
+            )
+
+        return DocumentDetailResponse(
+            document_id=document_id,
+            content=content,
+            content_length=content_length,
+            truncated=truncated,
+            summary=summary,
         )
 
     def get_knowledge_base(
@@ -1209,6 +1386,8 @@ class KnowledgeOrchestrator:
                 document=document,
                 user=user,
                 trigger_summary=False,  # Don't re-generate summary on update
+                allow_if_success=True,
+                replace_active=True,
             )
 
         return {
@@ -1260,7 +1439,9 @@ class KnowledgeOrchestrator:
         user: User,
         trigger_summary: bool = True,
         splitter_config: Optional[Dict[str, Any]] = None,
-    ) -> None:
+        allow_if_success: bool = False,
+        replace_active: bool = False,
+    ) -> Dict[str, Any]:
         """
         Schedule RAG indexing for a document via Celery.
 
@@ -1274,7 +1455,13 @@ class KnowledgeOrchestrator:
             user: Current user
             trigger_summary: Whether to trigger summary after indexing
             splitter_config: Optional splitter configuration dict
+            allow_if_success: Whether to re-queue a document that already succeeded
+            replace_active: Whether to supersede an in-flight indexing generation
         """
+        from app.services.knowledge.index_state_machine import (
+            mark_document_index_enqueue_failed,
+            prepare_document_index_enqueue,
+        )
         from app.services.knowledge.indexing import is_organization_namespace
         from app.tasks.knowledge_tasks import index_document_task
 
@@ -1285,7 +1472,10 @@ class KnowledgeOrchestrator:
             logger.info(
                 f"[Orchestrator] Skipping indexing for document {document.id}: no retrieval_config"
             )
-            return
+            return {
+                "scheduled": False,
+                "reason": "missing_retrieval_config",
+            }
 
         retriever_name = retrieval_config.get("retriever_name")
         retriever_namespace = retrieval_config.get("retriever_namespace", "default")
@@ -1296,7 +1486,10 @@ class KnowledgeOrchestrator:
                 f"[Orchestrator] Incomplete retrieval_config for KB {knowledge_base.id}: "
                 f"retriever_name={retriever_name}, embedding_config={embedding_config}"
             )
-            return
+            return {
+                "scheduled": False,
+                "reason": "incomplete_retrieval_config",
+            }
 
         embedding_model_name = embedding_config.get("model_name")
         embedding_model_namespace = embedding_config.get("model_namespace", "default")
@@ -1305,7 +1498,10 @@ class KnowledgeOrchestrator:
             logger.warning(
                 f"[Orchestrator] Missing embedding model_name in KB {knowledge_base.id}"
             )
-            return
+            return {
+                "scheduled": False,
+                "reason": "missing_embedding_model",
+            }
 
         # Determine index owner user_id
         if knowledge_base.namespace == "default":
@@ -1322,25 +1518,71 @@ class KnowledgeOrchestrator:
             f"index_owner_user_id={index_owner_user_id}"
         )
 
-        # Schedule indexing via Celery
-        async_result = index_document_task.delay(
-            knowledge_base_id=str(knowledge_base.id),
-            attachment_id=document.attachment_id,
-            retriever_name=retriever_name,
-            retriever_namespace=retriever_namespace,
-            embedding_model_name=embedding_model_name,
-            embedding_model_namespace=embedding_model_namespace,
-            user_id=index_owner_user_id,
-            user_name=user.user_name,
+        enqueue_decision = prepare_document_index_enqueue(
+            db=db,
             document_id=document.id,
-            splitter_config_dict=splitter_config,
-            trigger_summary=trigger_summary,
+            allow_if_success=allow_if_success,
+            replace_active=replace_active,
         )
+        if not enqueue_decision.should_enqueue:
+            logger.info(
+                f"[Orchestrator] Skipping Celery enqueue for document {document.id}: "
+                f"reason={enqueue_decision.reason}, previous_status={enqueue_decision.previous_status}"
+            )
+            return {
+                "scheduled": False,
+                "reason": enqueue_decision.reason,
+                "index_generation": enqueue_decision.generation,
+            }
+
+        generation = enqueue_decision.generation
+        if generation is None:
+            message = (
+                "[Orchestrator] prepare_document_index_enqueue returned "
+                f"should_enqueue=True but generation is None for document {document.id}"
+            )
+            logger.error(message)
+            raise RuntimeError(message)
+
+        try:
+            async_result = index_document_task.delay(
+                knowledge_base_id=str(knowledge_base.id),
+                attachment_id=document.attachment_id,
+                retriever_name=retriever_name,
+                retriever_namespace=retriever_namespace,
+                embedding_model_name=embedding_model_name,
+                embedding_model_namespace=embedding_model_namespace,
+                user_id=index_owner_user_id,
+                user_name=user.user_name,
+                document_id=document.id,
+                index_generation=generation,
+                splitter_config_dict=splitter_config,
+                trigger_summary=trigger_summary,
+            )
+        except Exception as exc:
+            mark_document_index_enqueue_failed(
+                db=db,
+                document_id=document.id,
+                generation=generation,
+            )
+            logger.error(
+                f"[Orchestrator] Failed to enqueue RAG indexing task for document {document.id}: {exc}",
+                exc_info=True,
+            )
+            raise
+
         logger.info(
             f"[Orchestrator] RAG indexing task enqueued: "
             f"document_id={document.id}, attachment_id={document.attachment_id}, "
-            f"kb_id={knowledge_base.id}, celery_task_id={async_result.id}"
+            f"kb_id={knowledge_base.id}, index_generation={generation}, "
+            f"celery_task_id={async_result.id}"
         )
+        return {
+            "scheduled": True,
+            "reason": "scheduled",
+            "index_generation": generation,
+            "task_id": async_result.id,
+        }
 
     def reindex_document(
         self,
@@ -1373,7 +1615,6 @@ class KnowledgeOrchestrator:
             extract_rag_config_from_knowledge_base,
             get_rag_indexing_skip_reason,
         )
-        from app.tasks.knowledge_tasks import index_document_task
 
         # Get document with access check
         document = (
@@ -1411,31 +1652,47 @@ class KnowledgeOrchestrator:
                 "Knowledge base has no or incomplete retrieval configuration"
             )
 
-        # Schedule re-indexing via Celery
-        async_result = index_document_task.delay(
-            knowledge_base_id=str(document.kind_id),
-            attachment_id=document.attachment_id,
-            retriever_name=rag_params.retriever_name,
-            retriever_namespace=rag_params.retriever_namespace,
-            embedding_model_name=rag_params.embedding_model_name,
-            embedding_model_namespace=rag_params.embedding_model_namespace,
-            user_id=rag_params.kb_index_info.index_owner_user_id,
-            user_name=user.user_name,
-            document_id=document.id,
-            splitter_config_dict=document.splitter_config,
+        schedule_result = self._schedule_indexing_celery(
+            db=db,
+            knowledge_base=knowledge_base,
+            document=document,
+            user=user,
             trigger_summary=trigger_summary,
+            splitter_config=document.splitter_config,
+            allow_if_success=True,
         )
+        if not schedule_result["scheduled"]:
+            reason = schedule_result["reason"]
+            reason_messages = {
+                "already_in_progress": "Reindex already in progress",
+                "already_indexed": "Document is already indexed",
+                "document_not_found": "Document not found",
+            }
+            message = reason_messages.get(reason, f"Reindex skipped: {reason}")
+            logger.info(
+                f"[Orchestrator] Reindex skipped for document {document.id}: "
+                f"reason={reason}, message={message}"
+            )
+            return {
+                "success": True,
+                "document_id": document.id,
+                "message": message,
+                "skipped": True,
+                "reason": reason,
+            }
 
         logger.info(
             f"[Orchestrator] Scheduled reindex via Celery for document {document.id}: "
-            f"celery_task_id={async_result.id}, attachment_id={document.attachment_id}, "
-            f"kb_id={document.kind_id}"
+            f"celery_task_id={schedule_result['task_id']}, attachment_id={document.attachment_id}, "
+            f"kb_id={document.kind_id}, index_generation={schedule_result['index_generation']}"
         )
 
         return {
             "success": True,
             "document_id": document.id,
             "message": "Reindex started",
+            "skipped": False,
+            "index_generation": schedule_result["index_generation"],
         }
 
     async def create_web_document(
@@ -1568,6 +1825,8 @@ class KnowledgeOrchestrator:
                     document=document,
                     user=user,
                     trigger_summary=trigger_summary,
+                    allow_if_success=True,
+                    replace_active=True,
                 )
 
             return {
@@ -1755,6 +2014,8 @@ class KnowledgeOrchestrator:
                         document=document,
                         user=user,
                         trigger_summary=trigger_summary,
+                        allow_if_success=True,
+                        replace_active=True,
                     )
 
             return {

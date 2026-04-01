@@ -31,6 +31,7 @@ Usage:
 
 import logging
 from contextlib import contextmanager
+from threading import Event, Thread
 from typing import Generator, Optional
 
 import redis
@@ -203,6 +204,51 @@ class DistributedLock:
         try:
             yield acquired
         finally:
+            if acquired:
+                self.release(lock_name)
+
+    @contextmanager
+    def acquire_watchdog_context(
+        self,
+        lock_name: str,
+        expire_seconds: int = 60,
+        extend_interval_seconds: int = 30,
+    ) -> Generator[bool, None, None]:
+        """
+        Acquire a lock and keep extending it in the background.
+
+        This is useful for long-running tasks whose execution time is unknown.
+        If the process exits unexpectedly, the watchdog thread also stops and
+        the lock will expire naturally after expire_seconds.
+        """
+        acquired = self.acquire(lock_name, expire_seconds)
+        stop_event = Event()
+        watchdog_thread: Optional[Thread] = None
+
+        if (
+            acquired
+            and self.redis_client is not None
+            and extend_interval_seconds > 0
+            and extend_interval_seconds < expire_seconds
+        ):
+
+            def _watchdog() -> None:
+                while not stop_event.wait(extend_interval_seconds):
+                    self.extend(lock_name, expire_seconds)
+
+            watchdog_thread = Thread(
+                target=_watchdog,
+                name=f"distributed-lock-watchdog:{lock_name}",
+                daemon=True,
+            )
+            watchdog_thread.start()
+
+        try:
+            yield acquired
+        finally:
+            stop_event.set()
+            if watchdog_thread is not None:
+                watchdog_thread.join(timeout=1)
             if acquired:
                 self.release(lock_name)
 

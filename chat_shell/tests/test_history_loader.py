@@ -4,10 +4,13 @@
 
 from types import SimpleNamespace
 
+import pytest
+
 from chat_shell.history.loader import (
     _build_knowledge_base_text_prefix,
     _extract_user_text,
     _truncate_history,
+    get_chat_history,
 )
 
 
@@ -158,3 +161,35 @@ class TestTruncateHistory:
         assert truncated[2]["tool_call_id"] == "call_1"
         assert truncated[3]["tool_calls"][0]["id"] == "call_2"
         assert truncated[4]["tool_call_id"] == "call_2"
+
+
+class TestGetChatHistory:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("is_http_mode", [True, False])
+    async def test_limit_zero_returns_empty_without_loading(
+        self, monkeypatch, is_http_mode
+    ):
+        monkeypatch.setattr(
+            "chat_shell.history.loader._is_http_mode", lambda: is_http_mode
+        )
+
+        async def _should_not_call_async(*args, **kwargs):
+            raise AssertionError("history loader should not be called when limit <= 0")
+
+        monkeypatch.setattr(
+            "chat_shell.history.loader._load_history_from_remote",
+            _should_not_call_async,
+        )
+        monkeypatch.setattr(
+            "chat_shell.history.loader._load_history_from_db",
+            _should_not_call_async,
+        )
+
+        history = await get_chat_history(
+            task_id=1,
+            is_group_chat=False,
+            exclude_after_message_id=None,
+            limit=0,
+        )
+
+        assert history == []

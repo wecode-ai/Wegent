@@ -209,6 +209,7 @@ class SandboxManager:
         timeout: int = DEFAULT_SANDBOX_TIMEOUT,
         bot_config: list = None,
         auth_token: str = "",
+        skill_identity_token: str = "",
     ):
         """Initialize sandbox manager.
 
@@ -221,6 +222,7 @@ class SandboxManager:
             timeout: Sandbox timeout in seconds (default: 30 minutes)
             bot_config: Bot configuration list (optional)
             auth_token: API auth token for skill downloads (optional)
+            skill_identity_token: JWT token for skill identity verification (optional)
         """
         self.task_id = task_id
         self.user_id = user_id
@@ -228,6 +230,7 @@ class SandboxManager:
         self.timeout = timeout
         self.bot_config = bot_config or []
         self.auth_token = auth_token
+        self.skill_identity_token = skill_identity_token
 
         # Ensure E2B SDK is patched
         patch_e2b_sdk()
@@ -241,6 +244,7 @@ class SandboxManager:
         timeout: int = DEFAULT_SANDBOX_TIMEOUT,
         bot_config: list = None,
         auth_token: str = "",
+        skill_identity_token: str = "",
     ) -> "SandboxManager":
         """Get or create a singleton SandboxManager instance for the given task_id.
 
@@ -251,6 +255,7 @@ class SandboxManager:
             timeout: Sandbox timeout in seconds (default: 30 minutes)
             bot_config: Bot configuration list (optional)
             auth_token: API auth token for skill downloads (optional)
+            skill_identity_token: JWT token for skill identity verification (optional)
 
         Returns:
             SandboxManager instance for the task_id
@@ -258,9 +263,22 @@ class SandboxManager:
         if task_id not in cls._instances:
             logger.info(f"[SandboxManager] Creating new instance for task_id={task_id}")
             cls._instances[task_id] = cls(
-                task_id, user_id, user_name, timeout, bot_config, auth_token
+                task_id,
+                user_id,
+                user_name,
+                timeout,
+                bot_config,
+                auth_token,
+                skill_identity_token,
             )
         else:
+            instance = cls._instances[task_id]
+            if auth_token:
+                instance.auth_token = auth_token
+            if skill_identity_token:
+                instance.skill_identity_token = skill_identity_token
+            if bot_config:
+                instance.bot_config = bot_config
             logger.debug(
                 f"[SandboxManager] Reusing existing instance for task_id={task_id}"
             )
@@ -330,6 +348,9 @@ class SandboxManager:
             if self.auth_token:
                 metadata["auth_token"] = self.auth_token
 
+            if self.skill_identity_token:
+                metadata["skill_identity_token"] = self.skill_identity_token
+
             # Serialize bot_config to JSON string if available
             # E2B SDK only accepts string values in metadata
             if self.bot_config:
@@ -396,6 +417,7 @@ try:
             default_shell_type: Default shell type (ClaudeCode, Agno, etc.)
             timeout: Execution timeout in seconds
             auth_token: API auth token for skill downloads
+            skill_identity_token: JWT token for skill identity verification
         """
 
         # Injected dependencies - set when creating the tool instance
@@ -406,6 +428,7 @@ try:
         user_name: str = ""
         bot_config: list = []  # Bot config list [{shell_type, agent_config}, ...]
         auth_token: str = ""  # API auth token for skill downloads
+        skill_identity_token: str = ""  # JWT token for skill identity verification
 
         # Configuration
         default_shell_type: str = "ClaudeCode"
@@ -430,6 +453,7 @@ try:
                 timeout=DEFAULT_SANDBOX_TIMEOUT,
                 bot_config=self.bot_config,
                 auth_token=self.auth_token,
+                skill_identity_token=self.skill_identity_token,
             )
 
         def kill_sandbox(self) -> None:

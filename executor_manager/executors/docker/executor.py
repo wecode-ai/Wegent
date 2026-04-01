@@ -50,6 +50,7 @@ from shared.models.openai_converter import get_metadata_field
 from shared.status import TaskStatus
 from shared.telemetry.config import get_otel_config
 from shared.utils.http_client import traced_session, traced_sync_client
+from shared.utils.task_identity import build_task_identity_env
 
 logger = setup_logger(__name__)
 
@@ -955,6 +956,13 @@ class DockerExecutor(Executor):
                 f"{DOCKER_SOCKET_PATH}:{DOCKER_SOCKET_PATH}",
             ]
         )
+
+        identity_env = build_task_identity_env(
+            skill_identity_token=get_metadata_field(task, "skill_identity_token"),
+            user_name=user_name,
+        )
+        for key, value in identity_env.items():
+            cmd.extend(["-e", f"{key}={value}"])
 
         # If using custom base_image, mount executor binary from Named Volume
         if base_image:

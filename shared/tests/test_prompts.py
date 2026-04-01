@@ -34,11 +34,16 @@ class TestKBPromptConstants:
         """KB_PROMPT_STRICT should contain strict mode instructions."""
         from shared.prompts import KB_PROMPT_STRICT
 
-        # Check for key phrases in strict mode (Intent Routing approach)
-        assert "MUST NOT" in KB_PROMPT_STRICT  # Critical rule for strict mode
+        # Check for core strict-mode behavior without pinning to stale wording
+        strict_lower = KB_PROMPT_STRICT.lower()
         assert "knowledge_base_search" in KB_PROMPT_STRICT
-        assert "ONLY" in KB_PROMPT_STRICT or "only" in KB_PROMPT_STRICT
-        assert "Intent Routing" in KB_PROMPT_STRICT  # New routing approach
+        assert "Intent Routing" in KB_PROMPT_STRICT
+        assert "knowledge base selection / metadata" in strict_lower
+        assert "question that must be answered from documents" in strict_lower
+        assert "must not answer without searching first" in strict_lower
+        assert "general knowledge" in strict_lower
+        assert "selected knowledge base content only" in strict_lower
+        assert "knowledge base management" in strict_lower
 
     def test_kb_prompt_relaxed_contains_required_content(self):
         """KB_PROMPT_RELAXED should contain relaxed mode instructions."""
@@ -98,21 +103,16 @@ class TestKBPromptConstants:
         """Restricted Analyst prompt should allow safe search-only analysis."""
         from shared.prompts import KB_PROMPT_RESTRICTED_ANALYST
 
+        restricted_lower = KB_PROMPT_RESTRICTED_ANALYST.lower()
         assert "knowledge_base_search" in KB_PROMPT_RESTRICTED_ANALYST
         assert "MUST NOT use `kb_ls` or `kb_head`" in KB_PROMPT_RESTRICTED_ANALYST
-        assert "exact numbers" in KB_PROMPT_RESTRICTED_ANALYST
-        assert "high-level" in KB_PROMPT_RESTRICTED_ANALYST
+        assert "high-level analysis" in KB_PROMPT_RESTRICTED_ANALYST
         assert "protected source material" in KB_PROMPT_RESTRICTED_ANALYST
-        assert "MUST NOT quote, translate, restate" in KB_PROMPT_RESTRICTED_ANALYST
-        assert "safe summary artifact" in KB_PROMPT_RESTRICTED_ANALYST
-        assert "restricted_safe_summary" in KB_PROMPT_RESTRICTED_ANALYST
-        assert "protected in the knowledge base" in KB_PROMPT_RESTRICTED_ANALYST
         assert "Intent Routing (DO THIS FIRST)" in KB_PROMPT_RESTRICTED_ANALYST
-        assert "Before calling `knowledge_base_search`" in KB_PROMPT_RESTRICTED_ANALYST
-        assert "What is in the current knowledge base?" in KB_PROMPT_RESTRICTED_ANALYST
-        assert "DO NOT call `knowledge_base_search`" in KB_PROMPT_RESTRICTED_ANALYST
-        assert "MUST NOT enumerate or explain the protected-content policy itself" in (
-            KB_PROMPT_RESTRICTED_ANALYST
+        assert "safe analytical questions" in restricted_lower
+        assert "questions about the knowledge base itself" in restricted_lower
+        assert "must not enumerate or explain the protected-content policy itself" in (
+            restricted_lower
         )
 
 

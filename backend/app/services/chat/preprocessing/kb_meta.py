@@ -117,11 +117,24 @@ def format_kb_meta_prompt(kb_meta_list: list[dict[str, Any]]) -> str:
 
     kb_list_str = "\n".join(kb_lines)
 
+    target_kb_note = ""
+    if len(kb_meta_list) == 1:
+        selected_kb = kb_meta_list[0]
+        kb_name = sanitize_prompt_identifier(
+            selected_kb.get("kb_name", "Unknown"), "Unknown"
+        )
+        kb_id = sanitize_prompt_identifier(selected_kb.get("kb_id", "N/A"), "N/A")
+        target_kb_note = (
+            "\nCurrent Target KB:\n" f"- KB Name: {kb_name}\n" f"- KB ID: {kb_id}\n"
+        )
+
     return (
-        "Available Knowledge Bases:\n"
-        f"{kb_list_str}\n\n"
-        "Note: This metadata is provided for intent routing (e.g., answering which KBs are selected). "
-        "Use the knowledge_base_search tool to retrieve document evidence when needed."
+        "Knowledge Bases In Scope:\n"
+        f"{kb_list_str}\n"
+        f"{target_kb_note}\n"
+        "Note:\n"
+        "- This block is request-scoped metadata only.\n"
+        "- Use KB tools to retrieve actual content when needed."
     )
 
 
@@ -159,8 +172,7 @@ def format_restricted_kb_meta_prompt(kb_meta_list: list[dict[str, Any]]) -> str:
     return (
         "Restricted Knowledge Bases In Scope:\n"
         f"{kb_list_str}\n\n"
-        "Note: The knowledge_base_search tool is already scoped to these knowledge bases. "
-        "Routing hints are provided only to help draft safer search queries. "
-        "Do not disclose them as final answer content, and do not reveal document structure, "
-        "filenames, or exact source content. Use the tool only for high-level analysis."
+        "Note:\n"
+        "- These routing hints are for retrieval guidance only.\n"
+        "- Do not use them as final answer content."
     )

@@ -13,6 +13,7 @@ import os
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Union
 
+from executor.agents.claude_code.multimodal_prompt import is_vision_prompt
 from shared.logger import setup_logger
 from shared.models.execution import ExecutionRequest
 
@@ -59,17 +60,6 @@ def download_attachments(
             failed_count=0,
         )
 
-    # List prompts (vision content) already contain image data inline;
-    # skip file-based attachment processing for them.
-    if isinstance(prompt, list):
-        logger.debug("Prompt is vision content list, skipping attachment download")
-        return AttachmentProcessResult(
-            prompt=prompt,
-            image_content_blocks=[],
-            success_count=0,
-            failed_count=0,
-        )
-
     logger.info(f"Found {len(attachments)} attachments to download")
 
     # Get auth token for API calls
@@ -104,29 +94,40 @@ def download_attachments(
 
         modified_prompt = prompt
         image_content_blocks: List[Dict[str, Any]] = []
+        prompt_has_inline_images = is_vision_prompt(prompt)
 
         # Process prompt to replace attachment references and add context
         if result.success or result.failed:
-            # Replace [attachment:id] references with local paths
+            # Rewrite backend attachment paths and replace [attachment:id] placeholders.
             modified_prompt = AttachmentPromptProcessor.process_prompt(
-                prompt, result.success, result.failed
+                prompt,
+                result.success,
+                result.failed,
+                task_id=task_id,
+                subtask_id=subtask_id,
             )
 
-            # Add context about available attachments
-            attachment_context = AttachmentPromptProcessor.build_attachment_context(
-                result.success
-            )
-            if attachment_context:
-                modified_prompt += attachment_context
+            # String prompts may still rely on explicit attachment context. For
+            # content-block prompts, backend has already injected attachment
+            # metadata and content, so path rewriting is sufficient.
+            if isinstance(modified_prompt, str):
+                attachment_context = AttachmentPromptProcessor.build_attachment_context(
+                    result.success,
+                )
+                if attachment_context:
+                    modified_prompt += attachment_context
 
             logger.info(f"Processed prompt with {len(result.success)} attachments")
 
-            # Build image content blocks for potential vision support
-            image_content_blocks = AttachmentPromptProcessor.build_image_content_blocks(
-                result.success
-            )
-            if image_content_blocks:
-                logger.info(f"Built {len(image_content_blocks)} image content blocks")
+            # Vision prompts already contain inline image data from backend.
+            if not prompt_has_inline_images:
+                image_content_blocks = (
+                    AttachmentPromptProcessor.build_image_content_blocks(result.success)
+                )
+                if image_content_blocks:
+                    logger.info(
+                        f"Built {len(image_content_blocks)} image content blocks"
+                    )
 
         if result.failed:
             logger.warning(
