@@ -431,12 +431,21 @@
     "services": {
       "docs": {
         "title": "钉钉文档",
-        "description": "为默认智能体启用钉钉文档和表格 MCP 能力。",
+        "description": "为默认智能体启用钉钉文档 MCP 能力。",
         "default_name": "钉钉文档",
         "enable_label": "启用钉钉文档 MCP",
         "enable_hint": "启用后，Wegent 会将你的钉钉文档 MCP 自动注入到支持的智能体中。",
         "save_success": "钉钉文档配置已保存",
         "save_failed": "保存钉钉文档配置失败"
+      },
+      "table": {
+        "title": "钉钉表格",
+        "description": "为默认智能体启用钉钉表格 MCP 能力。",
+        "default_name": "钉钉表格",
+        "enable_label": "启用钉钉表格 MCP",
+        "enable_hint": "启用后，Wegent 会将你的钉钉表格 MCP 自动注入到支持的智能体中。",
+        "save_success": "钉钉表格配置已保存",
+        "save_failed": "保存钉钉表格配置失败"
       },
       "ai_table": {
         "title": "钉钉AI表格",
