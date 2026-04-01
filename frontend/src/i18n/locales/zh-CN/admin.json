@@ -807,6 +807,16 @@
       "all_device_type": "全部类型",
       "all_bind_shell": "全部 Shell"
     },
+    "version_filter": {
+      "placeholder": "按版本筛选，如 1.6.5",
+      "operators": {
+        "gt": ">",
+        "gte": ">=",
+        "eq": "=",
+        "lt": "<",
+        "lte": "<="
+      }
+    },
     "status": {
       "online": "在线",
       "offline": "离线",

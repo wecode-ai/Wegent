@@ -8,6 +8,21 @@ import type { ReactNode } from 'react'
 
 import { ChatPageDesktop } from '@/app/(tasks)/chat/ChatPageDesktop'
 
+// Mock window.matchMedia for useIsDesktop hook
+Object.defineProperty(window, 'matchMedia', {
+  writable: true,
+  value: jest.fn().mockImplementation((query: string) => ({
+    matches: query === '(min-width: 1024px)', // Simulate desktop screen
+    media: query,
+    onchange: null,
+    addListener: jest.fn(),
+    removeListener: jest.fn(),
+    addEventListener: jest.fn(),
+    removeEventListener: jest.fn(),
+    dispatchEvent: jest.fn(),
+  })),
+})
+
 jest.mock('next/navigation', () => ({
   useSearchParams: () => ({
     get: () => null,
