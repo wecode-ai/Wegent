@@ -13,7 +13,7 @@ from app.services.user_mcp_service import user_mcp_service
 class TestUserScopedMcpInjection:
     """Tests for DingTalk Docs MCP injection."""
 
-    def test_load_user_mcp_servers_returns_provider_server_when_enabled(self):
+    def test_build_request_task_data_injects_decrypted_user_mcps(self):
         preferences = user_mcp_service.dump_preferences(
             user_mcp_service.set_provider_service_config(
                 None,
@@ -25,37 +25,60 @@ class TestUserScopedMcpInjection:
         )
         user = SimpleNamespace(preferences=preferences)
 
-        servers = TaskRequestBuilder._load_user_mcp_servers(user)
+        task_data = TaskRequestBuilder._build_request_task_data(user)
 
-        assert servers == [
-            {
-                "name": "dingtalk_docs",
-                "url": "https://example.com/mcp?token=secret",
-                "type": "streamable-http",
+        assert task_data == {
+            "user_mcps": {
+                "dingtalk": {
+                    "services": {
+                        "docs": {
+                            "enabled": True,
+                            "credentials": {
+                                "url": "https://example.com/mcp?token=secret"
+                            },
+                        }
+                    }
+                }
             }
-        ]
+        }
 
-    def test_merge_user_mcp_into_bot_config_only_updates_supported_shells(self):
-        bot_config_list = [
-            {"shell_type": "ClaudeCode", "mcp_servers": []},
-            {"shell_type": "Chat", "mcp_servers": []},
-        ]
-        user_mcp_servers = [
-            {
-                "name": "dingtalk_docs",
-                "url": "https://example.com/mcp?token=secret",
-                "type": "streamable-http",
-            }
-        ]
-
-        TaskRequestBuilder._merge_user_mcp_into_bot_config(
-            bot_config_list, user_mcp_servers
+    def test_build_request_task_data_filters_disabled_services(self):
+        preferences = user_mcp_service.set_provider_service_config(
+            None,
+            provider_id="dingtalk",
+            service_id="docs",
+            enabled=True,
+            url="https://example.com/mcp?token=secret",
+        )
+        preferences = user_mcp_service.set_provider_service_config(
+            preferences,
+            provider_id="dingtalk",
+            service_id="ai_table",
+            enabled=False,
+            url="https://example.com/table?token=secret",
+        )
+        user = SimpleNamespace(
+            preferences=user_mcp_service.dump_preferences(preferences)
         )
 
-        assert bot_config_list[0]["mcp_servers"] == user_mcp_servers
-        assert bot_config_list[1]["mcp_servers"] == []
+        task_data = TaskRequestBuilder._build_request_task_data(user)
 
-    def test_injects_provider_config_skill_when_message_mentions_provider_and_service_missing(
+        assert task_data == {
+            "user_mcps": {
+                "dingtalk": {
+                    "services": {
+                        "docs": {
+                            "enabled": True,
+                            "credentials": {
+                                "url": "https://example.com/mcp?token=secret"
+                            },
+                        }
+                    }
+                }
+            }
+        }
+
+    def test_injects_service_skill_when_message_mentions_provider_and_service_missing(
         self, test_db
     ):
         builder = TaskRequestBuilder(test_db)
@@ -69,40 +92,202 @@ class TestUserScopedMcpInjection:
 
         assert preload_skills == [
             {
-                "name": "dingtalk-config-guide",
+                "name": "dingtalk-docs",
                 "namespace": "default",
                 "is_public": True,
             }
         ]
 
-    def test_skips_provider_config_skill_when_all_registered_services_are_ready(
+    def test_injects_all_provider_service_skills_for_generic_dingtalk_request(
         self, test_db
     ):
         builder = TaskRequestBuilder(test_db)
+        user = SimpleNamespace(preferences="{}")
+
+        preload_skills = builder._inject_conditional_provider_skills(
+            user=user,
+            message="帮我处理一下钉钉里的内容",
+            preload_skills=[],
+        )
+
+        assert preload_skills == [
+            {
+                "name": "dingtalk-docs",
+                "namespace": "default",
+                "is_public": True,
+            },
+            {
+                "name": "dingtalk-ai-table",
+                "namespace": "default",
+                "is_public": True,
+            },
+        ]
+
+    def test_injects_runtime_skill_when_matching_service_is_ready(self, test_db):
+        builder = TaskRequestBuilder(test_db)
         preferences = user_mcp_service.dump_preferences(
             user_mcp_service.set_provider_service_config(
-                user_mcp_service.set_provider_service_config(
-                    None,
-                    provider_id="dingtalk",
-                    service_id="docs",
-                    enabled=True,
-                    url="https://example.com/docs?token=secret",
-                ),
+                None,
                 provider_id="dingtalk",
-                service_id="ai_table",
+                service_id="docs",
                 enabled=True,
-                url="https://example.com/ai-table?token=secret",
+                url="https://example.com/docs?token=secret",
             )
         )
         user = SimpleNamespace(preferences=preferences)
 
         preload_skills = builder._inject_conditional_provider_skills(
             user=user,
-            message="帮我看一下钉钉表格",
+            message="帮我看一下钉钉文档",
             preload_skills=[],
         )
 
-        assert preload_skills == []
+        assert preload_skills == [
+            {
+                "name": "dingtalk-docs",
+                "namespace": "default",
+                "is_public": True,
+            }
+        ]
+
+    def test_does_not_inject_other_service_when_target_service_matches(self, test_db):
+        builder = TaskRequestBuilder(test_db)
+        preferences = user_mcp_service.dump_preferences(
+            user_mcp_service.set_provider_service_config(
+                None,
+                provider_id="dingtalk",
+                service_id="docs",
+                enabled=True,
+                url="https://example.com/docs?token=secret",
+            )
+        )
+        user = SimpleNamespace(preferences=preferences)
+
+        preload_skills = builder._inject_conditional_provider_skills(
+            user=user,
+            message="总结一下我的钉钉文档",
+            preload_skills=[],
+        )
+
+        assert preload_skills == [
+            {
+                "name": "dingtalk-docs",
+                "namespace": "default",
+                "is_public": True,
+            }
+        ]
+
+    def test_build_skill_data_preserves_mcp_server_placeholders_when_service_ready(
+        self, test_db
+    ):
+        builder = TaskRequestBuilder(test_db)
+        preferences = user_mcp_service.dump_preferences(
+            user_mcp_service.set_provider_service_config(
+                None,
+                provider_id="dingtalk",
+                service_id="docs",
+                enabled=True,
+                url="https://example.com/docs?token=secret",
+            )
+        )
+        user = SimpleNamespace(preferences=preferences)
+        skill = SimpleNamespace(
+            id=101,
+            user_id=0,
+            json={
+                "kind": "Skill",
+                "metadata": {"name": "dingtalk-docs", "namespace": "default"},
+                "spec": {
+                    "description": "DingTalk docs runtime skill",
+                    "bindShells": ["Chat"],
+                    "mcpServers": {
+                        "docs": {
+                            "type": "streamable-http",
+                            "url": "${{task_data.user_mcps.dingtalk.services.docs.credentials.url}}",
+                        }
+                    },
+                },
+            },
+        )
+
+        skill_data = builder._build_skill_data(skill, user=user)
+
+        assert skill_data["mcpServers"] == {
+            "docs": {
+                "type": "streamable-http",
+                "url": "${{task_data.user_mcps.dingtalk.services.docs.credentials.url}}",
+            }
+        }
+
+    def test_build_skill_data_turns_runtime_skill_into_embedded_guide_when_service_missing(
+        self, test_db
+    ):
+        builder = TaskRequestBuilder(test_db)
+        skill = SimpleNamespace(
+            id=101,
+            user_id=0,
+            json={
+                "kind": "Skill",
+                "metadata": {"name": "dingtalk-docs", "namespace": "default"},
+                "spec": {
+                    "description": "DingTalk docs runtime skill",
+                    "prompt": "Use DingTalk docs MCP.",
+                    "bindShells": ["Chat"],
+                    "mcpServers": {
+                        "docs": {
+                            "type": "streamable-http",
+                            "url": "${{task_data.user_mcps.dingtalk.services.docs.credentials.url}}",
+                        }
+                    },
+                },
+            },
+        )
+
+        skill_data = builder._build_skill_data(
+            skill, user=SimpleNamespace(preferences="{}")
+        )
+
+        assert "mcpServers" not in skill_data
+        assert "Configuration Required" in skill_data["prompt"]
+        assert "wegent://modal/mcp-provider-config?provider=dingtalk&service=docs" in (
+            skill_data["prompt"]
+        )
+
+    def test_build_skill_data_does_not_rewrite_non_public_skill_named_like_runtime_skill(
+        self, test_db
+    ):
+        builder = TaskRequestBuilder(test_db)
+        skill = SimpleNamespace(
+            id=301,
+            user_id=7,
+            json={
+                "kind": "Skill",
+                "metadata": {"name": "dingtalk-docs", "namespace": "workspace-team"},
+                "spec": {
+                    "description": "Custom skill",
+                    "prompt": "Custom prompt.",
+                    "bindShells": ["Chat"],
+                    "mcpServers": {
+                        "docs": {
+                            "type": "streamable-http",
+                            "url": "http://custom.example.com/mcp",
+                        }
+                    },
+                },
+            },
+        )
+
+        skill_data = builder._build_skill_data(
+            skill, user=SimpleNamespace(preferences="{}")
+        )
+
+        assert skill_data["prompt"] == "Custom prompt."
+        assert skill_data["mcpServers"] == {
+            "docs": {
+                "type": "streamable-http",
+                "url": "http://custom.example.com/mcp",
+            }
+        }
 
     def test_get_bot_skills_resolves_public_user_preload_skill(self, test_db, mocker):
         builder = TaskRequestBuilder(test_db)
@@ -130,9 +315,7 @@ class TestUserScopedMcpInjection:
                 },
             },
         )
-        skill = SimpleNamespace(
-            name="dingtalk-config-guide", user_id=0, namespace="default"
-        )
+        skill = SimpleNamespace(name="dingtalk-docs", user_id=0, namespace="default")
 
         mock_query = mocker.Mock()
         mock_query.filter.return_value.first.return_value = ghost
@@ -143,7 +326,7 @@ class TestUserScopedMcpInjection:
         mocker.patch.object(
             builder,
             "_build_skill_data",
-            return_value={"name": "dingtalk-config-guide"},
+            return_value={"name": "dingtalk-docs"},
         )
 
         (
@@ -154,10 +337,11 @@ class TestUserScopedMcpInjection:
         ) = builder._get_bot_skills(
             bot=bot,
             team=team,
+            user=SimpleNamespace(preferences="{}"),
             user_id=2,
             user_preload_skills=[
                 {
-                    "name": "dingtalk-config-guide",
+                    "name": "dingtalk-docs",
                     "namespace": "default",
                     "is_public": True,
                 }
@@ -165,17 +349,17 @@ class TestUserScopedMcpInjection:
         )
 
         find_skill_by_ref.assert_called_once_with(
-            "dingtalk-config-guide",
+            "dingtalk-docs",
             "default",
             True,
             2,
             team_namespace="default",
         )
-        assert skills == [{"name": "dingtalk-config-guide"}]
-        assert preload_skills == ["dingtalk-config-guide"]
-        assert user_selected_skills == ["dingtalk-config-guide"]
+        assert skills == [{"name": "dingtalk-docs"}]
+        assert preload_skills == ["dingtalk-docs"]
+        assert user_selected_skills == ["dingtalk-docs"]
         assert skill_refs == {
-            "dingtalk-config-guide": {
+            "dingtalk-docs": {
                 "skill_id": None,
                 "namespace": "default",
                 "is_public": True,
@@ -205,6 +389,7 @@ class TestUserScopedMcpInjection:
         result = builder._get_bot_skills(
             bot=bot,
             team=team,
+            user=SimpleNamespace(preferences="{}"),
             user_id=2,
             user_preload_skills=None,
         )
