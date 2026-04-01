@@ -73,8 +73,23 @@ class APIClient {
       const response = await fetch(url, config)
       // Handle authentication errors
       if (response.status === 401) {
-        removeToken()
         if (typeof window !== 'undefined') {
+          // Check if Aidesk auth params are present - skip redirect to let AideskTokenHandler handle it
+          const params = new URLSearchParams(window.location.search)
+          const hasAideskAuthParams =
+            params.get('source') === 'aidesk' &&
+            !!params.get('username') &&
+            !!params.get('timestamp') &&
+            !!params.get('sign')
+
+          if (hasAideskAuthParams) {
+            // Don't remove token or redirect - let AideskTokenHandler handle authentication
+            throw new Error('Authentication failed')
+          }
+
+          // Only remove token if not in Aidesk auth flow
+          removeToken()
+
           const loginPath = paths.auth.login.getHref()
           if (window.location.pathname === loginPath) {
             window.location.href = loginPath

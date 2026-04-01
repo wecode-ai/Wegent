@@ -13,6 +13,7 @@ import { TaskParamSync, DeviceTaskSync, DeviceParamSync } from '@/features/tasks
 import { TeamShareHandler, TaskShareHandler } from '@/features/tasks/components/share'
 import { InviteJoinHandler } from '@/features/tasks/components/group-chat'
 import OidcTokenHandler from '@/features/login/components/OidcTokenHandler'
+import AideskTokenHandler from '@/features/login/components/AideskTokenHandler'
 import '@/app/tasks/tasks.css'
 import '@/features/common/scrollbar.css'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
@@ -83,6 +84,8 @@ export default function ChatPage() {
 
   return (
     <>
+      {/* Handle Aidesk authentication from 口袋 App */}
+      <AideskTokenHandler />
       {/* Handle OIDC token from URL parameters */}
       <OidcTokenHandler />
       <Suspense>
