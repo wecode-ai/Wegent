@@ -16,6 +16,7 @@ import { GithubStarButton } from '@/features/layout/GithubStarButton'
 import { getLastTab } from '@/utils/userPreferences'
 import { Button } from '@/components/ui/button'
 import { isAuthModeDingTalk } from '@/dingtalk/lib/environment'
+import AideskTokenHandler from '@/features/login/components/AideskTokenHandler'
 
 export default function Home() {
   const router = useRouter()
@@ -25,6 +26,18 @@ export default function Home() {
   useEffect(() => {
     if (isAuthModeDingTalk()) {
       router.replace('/auth/dingtalk')
+    }
+  }, [router])
+
+  // Listen for Aidesk login success event and redirect to chat
+  useEffect(() => {
+    const handleAideskLoginSuccess = () => {
+      router.replace(paths.chat.getHref())
+    }
+
+    window.addEventListener('aidesk-login-success', handleAideskLoginSuccess)
+    return () => {
+      window.removeEventListener('aidesk-login-success', handleAideskLoginSuccess)
     }
   }, [router])
 
@@ -60,6 +73,9 @@ export default function Home() {
 
   return (
     <main className="flex smart-h-screen flex-col items-center justify-center p-8 bg-base relative box-border">
+      {/* Handle Aidesk authentication from 口袋 App */}
+      <AideskTokenHandler />
+
       {/* Language Switcher */}
       <div className="absolute top-4 right-4 flex items-center gap-3">
         <GithubStarButton />
