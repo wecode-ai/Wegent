@@ -92,13 +92,15 @@ def _ensure_attachment_access(db: Session, context, current_user: User) -> None:
                 has_access = True
             else:
                 # Check if user is a task member using ResourceMember
+                # Exclude share records (copied_resource_id > 0), only consider actual group chat members
                 task_member = (
                     db.query(ResourceMember)
                     .filter(
                         ResourceMember.resource_type == ResourceType.TASK,
                         ResourceMember.resource_id == subtask.task_id,
                         ResourceMember.user_id == current_user.id,
-                        ResourceMember.status == MemberStatus.APPROVED,
+                        ResourceMember.status == MemberStatus.APPROVED.value,
+                        ResourceMember.copied_resource_id == 0,
                     )
                     .first()
                 )
@@ -692,13 +694,15 @@ async def get_all_task_attachments(
     from app.models.share_link import ResourceType
 
     is_owner = task.user_id == current_user.id
+    # Exclude share records (copied_resource_id > 0), only consider actual group chat members
     is_member = (
         db.query(ResourceMember)
         .filter(
             ResourceMember.resource_type == ResourceType.TASK,
             ResourceMember.resource_id == task_id,
             ResourceMember.user_id == current_user.id,
-            ResourceMember.status == MemberStatus.APPROVED,
+            ResourceMember.status == MemberStatus.APPROVED.value,
+            ResourceMember.copied_resource_id == 0,
         )
         .first()
         is not None
