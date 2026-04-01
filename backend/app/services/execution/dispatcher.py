@@ -27,6 +27,9 @@ if TYPE_CHECKING:
     from openai import AsyncOpenAI
 
 from app.core.async_utils import run_in_main_loop
+from app.db.session import SessionLocal
+from app.models.subtask import Subtask
+from app.models.task import TaskResource
 from shared.models import (
     EventType,
     ExecutionEvent,
@@ -44,6 +47,7 @@ from .emitters import (
     WebSocketResultEmitter,
 )
 from .polling_dispatcher import dispatch_polling
+from .recovery_service import recovery_service
 from .router import CommunicationMode, ExecutionRouter, ExecutionTarget
 
 logger = logging.getLogger(__name__)
@@ -320,6 +324,8 @@ class ExecutionDispatcher:
         """
         wrapped_emitter = None
         try:
+            await self._recover_executor_if_needed(request)
+
             # Route to execution target
             target = self.router.route(request, device_id)
             logger.info(
@@ -405,6 +411,70 @@ class ExecutionDispatcher:
                     logger.error(
                         f"[ExecutionDispatcher] Failed to close emitter: {close_error}"
                     )
+
+    async def _recover_executor_if_needed(self, request: ExecutionRequest) -> None:
+        """Recover executor state for deleted runtime instances before dispatching."""
+        shell_type = self._get_shell_type(request)
+        if shell_type not in {"ClaudeCode", "Agno"}:
+            return
+
+        db = SessionLocal()
+        try:
+            subtask = db.query(Subtask).filter(Subtask.id == request.subtask_id).first()
+            if not subtask or not subtask.executor_deleted_at:
+                return
+
+            task = (
+                db.query(TaskResource)
+                .filter(
+                    TaskResource.id == request.task_id,
+                    TaskResource.kind == "Task",
+                )
+                .first()
+            )
+            if not task:
+                raise RuntimeError(
+                    f"Task {request.task_id} not found for executor recovery"
+                )
+
+            user_id = request.user.get("id") if request.user else request.user_id
+            user_name = (
+                request.user.get("name")
+                if request.user and request.user.get("name")
+                else request.user_name
+            )
+
+            logger.info(
+                "[ExecutionDispatcher] Recovering deleted executor: "
+                "task_id=%s, subtask_id=%s, executor=%s",
+                request.task_id,
+                request.subtask_id,
+                subtask.executor_name,
+            )
+
+            recovered = await recovery_service.recover(
+                db=db,
+                subtask=subtask,
+                task=task,
+                user_id=user_id,
+                user_name=user_name,
+            )
+            if not recovered:
+                raise RuntimeError(
+                    f"Failed to recover executor for subtask {request.subtask_id}"
+                )
+
+            request.executor_name = subtask.executor_name
+            request.executor_namespace = subtask.executor_namespace
+            logger.info(
+                "[ExecutionDispatcher] Recovered executor: "
+                "task_id=%s, subtask_id=%s, executor=%s",
+                request.task_id,
+                request.subtask_id,
+                request.executor_name,
+            )
+        finally:
+            db.close()
 
     async def _update_subtask_to_running(self, subtask_id: int) -> None:
         """Update subtask status to RUNNING in database.

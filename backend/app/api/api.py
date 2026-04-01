@@ -69,6 +69,7 @@ from app.api.endpoints.internal import (
     skills_router,
     subscriptions_router,
     tables_router,
+    workspace_archives_router,
 )
 
 # RAG internal router is conditionally imported based on STANDALONE_MODE
@@ -218,6 +219,11 @@ api_router.include_router(
 )
 api_router.include_router(
     services_router, prefix="/internal", tags=["internal-services"]
+)
+api_router.include_router(
+    workspace_archives_router,
+    prefix="/internal",
+    tags=["internal-workspace-archives"],
 )
 api_router.include_router(
     subscriptions_router, prefix="/internal", tags=["internal-subscriptions"]

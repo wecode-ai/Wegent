@@ -5,7 +5,7 @@
 import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import List, Set
+from typing import Dict, List, Set, Tuple
 
 from sqlalchemy import and_
 from sqlalchemy.orm import Session
@@ -131,18 +131,58 @@ class JobService(BaseService[Kind, None, None]):
                 )
                 return
 
-            # Deduplicate by (namespace, name)
-            unique_executor_keys: Set[tuple[str, str]] = set()
-            for s in valid_candidates:
-                if s.executor_name:
-                    unique_executor_keys.add((s.executor_namespace, s.executor_name))
+            # Deduplicate by (namespace, name) and collect task info for archiving
+            # Map: (namespace, name) -> (subtask, task) for archive operation
+            executor_task_map: Dict[Tuple[str, str], Tuple[Subtask, TaskResource]] = {}
+            for subtask in valid_candidates:
+                if subtask.executor_name:
+                    key = (subtask.executor_namespace, subtask.executor_name)
+                    if key not in executor_task_map:
+                        # Get task for this subtask
+                        task = (
+                            db.query(TaskResource)
+                            .filter(
+                                TaskResource.id == subtask.task_id,
+                                TaskResource.kind == "Task",
+                                TaskResource.is_active == TaskResource.STATE_ACTIVE,
+                            )
+                            .first()
+                        )
+                        if task:
+                            executor_task_map[key] = (subtask, task)
 
-            if not unique_executor_keys:
+            if not executor_task_map:
                 return
 
             # Use sync version to avoid event loop issues
-            for ns, name in unique_executor_keys:
+            for (ns, name), (subtask, task) in executor_task_map.items():
                 try:
+                    # Archive workspace before deletion (for code tasks)
+                    task_crd = Task.model_validate(task.json)
+                    task_type = (
+                        task_crd.metadata.labels
+                        and task_crd.metadata.labels.get("taskType")
+                        or "chat"
+                    )
+
+                    if task_type == "code":
+                        # Try to archive workspace before deletion
+                        try:
+                            self._archive_workspace_sync(
+                                db=db,
+                                subtask=subtask,
+                                task=task,
+                                executor_name=name,
+                                executor_namespace=ns,
+                            )
+                        except Exception as archive_error:
+                            # Log but continue with deletion
+                            # Recovery will fall back to git clone if archive failed
+                            logger.warning(
+                                f"[executor_job] Failed to archive workspace for task {task.id} "
+                                f"ns={ns} name={name}: {archive_error}"
+                            )
+
                     logger.info(
                         f"[executor_job] Scheduled deleting executor task ns={ns} name={name}"
                     )
@@ -165,6 +205,60 @@ class JobService(BaseService[Kind, None, None]):
                     )
         except Exception as e:
             logger.error(f"[executor_job] cleanup_stale_executors error: {e}")
+
+    def _archive_workspace_sync(
+        self,
+        db: Session,
+        subtask: Subtask,
+        task: TaskResource,
+        executor_name: str,
+        executor_namespace: str,
+    ) -> None:
+        """Archive workspace files before Pod deletion (synchronous wrapper).
+
+        This method wraps the async archive_service.archive_workspace() for use
+        in the synchronous cleanup_stale_executors job.
+
+        Args:
+            db: Database session
+            subtask: Subtask with executor info
+            task: Task resource
+            executor_name: Executor name
+            executor_namespace: Executor namespace
+        """
+        from app.services.workspace_archive import archive_service
+
+        logger.info(
+            f"[executor_job] Archiving workspace for task {task.id}, "
+            f"executor={executor_namespace}/{executor_name}"
+        )
+
+        # Run async archive in new event loop
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            archive_info = loop.run_until_complete(
+                archive_service.archive_workspace(
+                    db=db,
+                    subtask=subtask,
+                    task=task,
+                    executor_name=executor_name,
+                    executor_namespace=executor_namespace,
+                )
+            )
+
+            if archive_info:
+                logger.info(
+                    f"[executor_job] Workspace archived for task {task.id}, "
+                    f"size={archive_info.sizeBytes} bytes"
+                )
+            else:
+                logger.info(
+                    f"[executor_job] Workspace archiving skipped or failed for task {task.id}"
+                )
+        finally:
+            loop.run_until_complete(loop.shutdown_asyncgens())
+            loop.close()
 
 
 job_service = JobService(Kind)

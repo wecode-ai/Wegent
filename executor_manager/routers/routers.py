@@ -1332,5 +1332,175 @@ async def task_heartbeat(task_id: str, http_request: Request):
     return {"status": "ok", "task_id": task_id}
 
 
+# =============================================================================
+# Workspace Archive/Restore APIs
+# =============================================================================
+# These endpoints forward archive and restore requests to executor pods.
+# Used by backend to archive workspace before Pod deletion and restore
+# workspace when user resumes conversation after Pod recreation.
+# =============================================================================
+
+
+class ArchiveExecutorRequest(BaseModel):
+    """Request model for /executor/archive endpoint."""
+
+    task_id: int
+    upload_url: str  # Presigned MinIO upload URL
+    executor_name: str
+    executor_namespace: str
+    max_size_mb: int = 500
+
+
+class RestoreExecutorRequest(BaseModel):
+    """Request model for /executor/restore endpoint."""
+
+    task_id: int
+    download_url: str  # Presigned MinIO download URL
+    executor_name: str
+    executor_namespace: str
+
+
+@api_router.post("/executor/archive")
+async def archive_executor_workspace(
+    request: ArchiveExecutorRequest,
+    http_request: Request,
+):
+    """Archive workspace files before Pod deletion.
+
+    Forwards the archive request to the executor pod, which packages
+    the workspace and uploads directly to MinIO using the presigned URL.
+    """
+    try:
+        client_ip = http_request.client.host if http_request.client else "unknown"
+        logger.info(
+            f"[Archive] Received archive request for task {request.task_id} "
+            f"from {client_ip}, executor={request.executor_namespace}/{request.executor_name}"
+        )
+
+        # Get executor address
+        executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
+        if not hasattr(executor, "get_container_address"):
+            raise HTTPException(
+                status_code=501,
+                detail="Executor address lookup is not supported",
+            )
+
+        result = executor.get_container_address(request.executor_name)
+        status = str(result.get("status", "")).lower()
+        base_url = result.get("base_url")
+
+        if status != "success" or not base_url:
+            raise HTTPException(
+                status_code=404,
+                detail=result.get("error_msg") or "Executor runtime is unavailable",
+            )
+
+        # Forward archive request to executor
+        archive_url = f"{base_url.rstrip('/')}/api/archive"
+        payload = {
+            "task_id": request.task_id,
+            "upload_url": request.upload_url,
+            "max_size_mb": request.max_size_mb,
+        }
+
+        logger.info(f"[Archive] Forwarding to executor: {archive_url}")
+
+        async with traced_async_client(timeout=120.0) as client:
+            response = await client.post(
+                archive_url,
+                json=payload,
+                headers={"Content-Type": "application/json"},
+            )
+            response.raise_for_status()
+            archive_result = response.json()
+
+        logger.info(
+            f"[Archive] Successfully archived task {request.task_id}, "
+            f"size={archive_result.get('size_bytes')} bytes"
+        )
+
+        return archive_result
+
+    except HTTPException:
+        raise
+    except httpx.HTTPError as e:
+        logger.error(f"[Archive] HTTP error for task {request.task_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"HTTP error: {str(e)}")
+    except Exception as e:
+        logger.error(f"[Archive] Error archiving task {request.task_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.post("/executor/restore")
+async def restore_executor_workspace(
+    request: RestoreExecutorRequest,
+    http_request: Request,
+):
+    """Restore workspace files after Pod recreation.
+
+    Forwards the restore request to the executor pod, which downloads
+    the archive from MinIO and extracts it to the workspace directory.
+    """
+    try:
+        client_ip = http_request.client.host if http_request.client else "unknown"
+        logger.info(
+            f"[Restore] Received restore request for task {request.task_id} "
+            f"from {client_ip}, executor={request.executor_namespace}/{request.executor_name}"
+        )
+
+        # Get executor address
+        executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
+        if not hasattr(executor, "get_container_address"):
+            raise HTTPException(
+                status_code=501,
+                detail="Executor address lookup is not supported",
+            )
+
+        result = executor.get_container_address(request.executor_name)
+        status = str(result.get("status", "")).lower()
+        base_url = result.get("base_url")
+
+        if status != "success" or not base_url:
+            raise HTTPException(
+                status_code=404,
+                detail=result.get("error_msg") or "Executor runtime is unavailable",
+            )
+
+        # Forward restore request to executor
+        restore_url = f"{base_url.rstrip('/')}/api/restore"
+        payload = {
+            "task_id": request.task_id,
+            "download_url": request.download_url,
+        }
+
+        logger.info(f"[Restore] Forwarding to executor: {restore_url}")
+
+        async with traced_async_client(timeout=120.0) as client:
+            response = await client.post(
+                restore_url,
+                json=payload,
+                headers={"Content-Type": "application/json"},
+            )
+            response.raise_for_status()
+            restore_result = response.json()
+
+        logger.info(
+            f"[Restore] Successfully restored task {request.task_id}, "
+            f"session={restore_result.get('session_restored')}, "
+            f"git={restore_result.get('git_restored')}"
+        )
+
+        return restore_result
+
+    except HTTPException:
+        raise
+    except httpx.HTTPError as e:
+        logger.error(f"[Restore] HTTP error for task {request.task_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"HTTP error: {str(e)}")
+    except Exception as e:
+        logger.error(f"[Restore] Error restoring task {request.task_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # Mount api_router to app
 app.include_router(api_router)
