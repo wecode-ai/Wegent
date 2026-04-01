@@ -22,15 +22,36 @@ export default function Home() {
   const router = useRouter()
   const { t } = useTranslation('common')
 
-  // DingTalk mode: skip landing page, go directly to auth
+  // Redirect logic with priority: logged in user > DingTalk mode
+  // Also listen for Aidesk login success event
   useEffect(() => {
+    // Helper function to redirect to user's last active tab
+    const redirectToLastTab = () => {
+      const lastTab = getLastTab()
+      if (lastTab === 'code') {
+        router.replace(paths.code.getHref())
+      } else if (lastTab === 'wiki') {
+        router.replace(paths.wiki.getHref())
+      } else {
+        // Default to chat if no preference or preference is chat
+        router.replace(paths.chat.getHref())
+      }
+    }
+
+    // Priority 1: If user is already logged in, redirect directly (skip Aidesk login flow)
+    const token = getToken()
+    if (token) {
+      redirectToLastTab()
+      return
+    }
+
+    // Priority 2: DingTalk mode - redirect to DingTalk auth
     if (isAuthModeDingTalk()) {
       router.replace('/auth/dingtalk')
+      return
     }
-  }, [router])
 
-  // Listen for Aidesk login success event and redirect to chat
-  useEffect(() => {
+    // Listen for Aidesk login success event and redirect to chat
     const handleAideskLoginSuccess = () => {
       router.replace(paths.chat.getHref())
     }
