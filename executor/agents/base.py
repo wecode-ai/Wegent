@@ -295,6 +295,24 @@ class Agent:
         raise NotImplementedError("Subclasses must implement execute()")
 
     async def download_code(self):
+        # Check if git clone should be skipped (e.g., for workspace recovery from archive)
+        skip_git_clone = getattr(self.task_data, "skip_git_clone", False)
+        if skip_git_clone:
+            logger.info(
+                f"Agent[{self.get_name()}][{self.task_id}] skip_git_clone=True, "
+                "workspace will be restored from archive"
+            )
+            # Still set project_path for later use
+            git_url = self.task_data.git_url or ""
+            if git_url:
+                repo_name = git_util.get_repo_name_from_url(git_url)
+                project_path = os.path.join(
+                    config.get_workspace_root(), str(self.task_id), repo_name
+                )
+                if self.project_path is None:
+                    self.project_path = project_path
+            return
+
         git_url = self.task_data.git_url or ""
         if git_url == "":
             logger.info("git url is empty, skip download code")
