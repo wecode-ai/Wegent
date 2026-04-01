@@ -20,9 +20,14 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.models.subtask import Subtask
 from app.models.task import TaskResource
-from app.schemas.kind import Bot, Ghost, Shell, Team
+from app.schemas.kind import Bot, Ghost, Shell
+from app.schemas.kind import Skill as SkillCRD
+from app.schemas.kind import Team
 from app.services.auth import create_skill_identity_token
-from app.services.mcp_provider_registry import list_mcp_providers
+from app.services.mcp_provider_registry import (
+    get_mcp_service_by_skill_name,
+    list_mcp_providers,
+)
 from app.services.readers import KindType, kindReader
 from app.services.user_mcp_service import user_mcp_service
 from shared.models import ExecutionRequest
@@ -201,6 +206,7 @@ class TaskRequestBuilder:
             self._get_bot_skills(
                 bot=bot,
                 team=team,
+                user=user,
                 user_id=user.id,
                 user_preload_skills=user_preload_skills,
             )
@@ -220,10 +226,6 @@ class TaskRequestBuilder:
             override_model_name=override_model_name,
             force_override=force_override,
         )
-
-        user_mcp_servers = self._load_user_mcp_servers(user)
-        if bot_config and user_mcp_servers:
-            self._merge_user_mcp_into_bot_config(bot_config, user_mcp_servers)
 
         # Merge user-selected skills into bot_config so Executor downloads them
         if bot_config and resolved_skills:
@@ -321,6 +323,7 @@ class TaskRequestBuilder:
             attachments=attachments or [],
             is_subscription=is_subscription,
             system_mcp_config=system_mcp_config,
+            task_data=self._build_request_task_data(user),
             trace_context=trace_context,
             executor_name=subtask.executor_name,
         )
@@ -331,7 +334,7 @@ class TaskRequestBuilder:
         request: ExecutionRequest,
         bot: Kind,
         team: Kind,
-        user_id: int,
+        user: User,
     ) -> ExecutionRequest:
         """Resolve request-level preload skills into full skill and MCP config.
 
@@ -363,6 +366,9 @@ class TaskRequestBuilder:
         if not missing_skill_names:
             return request
 
+        if not request.task_data:
+            request.task_data = self._build_request_task_data(user)
+
         user_preload_skills = []
         for skill_name in requested_skill_names:
             skill_ref = (request.skill_refs or {}).get(skill_name, {})
@@ -390,7 +396,8 @@ class TaskRequestBuilder:
         ) = self._get_bot_skills(
             bot=bot,
             team=team,
-            user_id=user_id,
+            user=user,
+            user_id=user.id,
             user_preload_skills=user_preload_skills,
         )
 
@@ -879,6 +886,7 @@ class TaskRequestBuilder:
         self,
         bot: Kind,
         team: Kind,
+        user: User,
         user_id: int,
         user_preload_skills: list | None = None,
     ) -> tuple[list[dict], list[str], list[str], dict[str, dict]]:
@@ -960,7 +968,7 @@ class TaskRequestBuilder:
             for skill_name in ghost_crd.spec.skills:
                 skill = self._find_skill(skill_name, team)
                 if skill:
-                    skill_data = self._build_skill_data(skill)
+                    skill_data = self._build_skill_data(skill, user=user)
                     skills.append(skill_data)
                     existing_skill_names.add(skill_name)
 
@@ -1053,7 +1061,7 @@ class TaskRequestBuilder:
                     team_namespace=team_namespace,
                 )
                 if skill:
-                    skill_data = self._build_skill_data(skill)
+                    skill_data = self._build_skill_data(skill, user=user)
                     skills.append(skill_data)
                     existing_skill_names.add(skill_name)
                     preload_skills.append(skill_name)
@@ -1265,17 +1273,29 @@ class TaskRequestBuilder:
                 )
             return None
 
-    def _build_skill_data(self, skill: Kind) -> dict:
+    @staticmethod
+    def _build_request_task_data(user: User | None) -> dict[str, Any] | None:
+        """Build runtime task data exposed to MCP placeholder substitution."""
+        if not user:
+            return None
+
+        preferences = getattr(user, "preferences", None)
+        user_mcps = user_mcp_service.get_enabled_decrypted_mcp_preferences(preferences)
+        if not user_mcps:
+            return None
+
+        return {"user_mcps": user_mcps}
+
+    def _build_skill_data(self, skill: Kind, *, user: User | None = None) -> dict:
         """Build skill data dictionary from a Skill Kind object.
 
         Args:
             skill: Skill Kind object from database
+            user: Optional user, reserved for future skill runtime expansion
 
         Returns:
             Dictionary containing skill metadata for chat configuration
         """
-        from app.schemas.kind import Skill as SkillCRD
-
         skill_crd = SkillCRD.model_validate(skill.json)
 
         skill_data = {
@@ -1293,6 +1313,32 @@ class TaskRequestBuilder:
 
         if skill_crd.spec.mcpServers:
             skill_data["mcpServers"] = skill_crd.spec.mcpServers
+
+        is_public_default_runtime_skill = (
+            skill.user_id == 0 and skill_crd.metadata.namespace == "default"
+        )
+        runtime_service = (
+            get_mcp_service_by_skill_name(skill_crd.metadata.name)
+            if is_public_default_runtime_skill
+            else None
+        )
+        if runtime_service:
+            provider, service = runtime_service
+            configured_server = None
+            if user:
+                configured_server = user_mcp_service.get_enabled_mcp_server(
+                    getattr(user, "preferences", None),
+                    provider["provider_id"],
+                    service["service_id"],
+                )
+
+            if not configured_server:
+                skill_data.pop("mcpServers", None)
+                skill_data["prompt"] = self._build_unconfigured_provider_skill_prompt(
+                    skill_data.get("prompt"),
+                    provider_id=provider["provider_id"],
+                    service=service,
+                )
 
         if skill_crd.spec.tools:
             skill_data["tools"] = [
@@ -1313,6 +1359,43 @@ class TaskRequestBuilder:
                 )
 
         return skill_data
+
+    @staticmethod
+    def _build_unconfigured_provider_skill_prompt(
+        existing_prompt: str | None,
+        *,
+        provider_id: str,
+        service: dict[str, Any],
+    ) -> str:
+        """Build a guidance-only prompt when a provider skill is not configured."""
+        display_name = service.get("display_name") or service["service_id"]
+        modal_link = (
+            f"wegent://modal/mcp-provider-config?provider={provider_id}"
+            f"&service={service['service_id']}"
+        )
+
+        guidance_prompt = f"""
+## Configuration Required
+
+The current session does not have a usable {display_name} MCP configured.
+
+Required behavior:
+- Do not pretend to access DingTalk data or local files for this request.
+- Tell the user that {display_name} MCP is not available in the current session.
+- Ask the user to click [打开{display_name} MCP 配置弹窗]({modal_link}) to finish configuration.
+- Keep the guidance brief. If the user asks how to get the URL, tell them to get it from the DingTalk MCP page for this service.
+
+Response template:
+当前会话还没有可用的{display_name} MCP，所以我现在不能直接访问这个钉钉能力。
+
+请先点击 [打开{display_name} MCP 配置弹窗]({modal_link}) 完成配置。
+
+配置完成后，再让我继续处理你的钉钉请求。
+""".strip()
+
+        if existing_prompt:
+            return f"{existing_prompt.rstrip()}\n\n{guidance_prompt}"
+        return guidance_prompt
 
     # =========================================================================
     # Bot Configuration Building
@@ -1577,15 +1660,10 @@ class TaskRequestBuilder:
                                 server_entry["env"] = server_config["env"]
                             bot_mcp_servers.append(server_entry)
 
-        user_mcp_servers = self._load_user_mcp_servers(user)
-
-        # Merge system, user, and bot MCP servers (bot takes precedence)
+        # Merge system and bot MCP servers (bot takes precedence)
         # Build a dict to deduplicate by server name
         servers_by_name = {}
         for server in system_mcp_servers:
-            server_name = server.get("name", "server")
-            servers_by_name[server_name] = server
-        for server in user_mcp_servers:
             server_name = server.get("name", "server")
             servers_by_name[server_name] = server
         for server in bot_mcp_servers:
@@ -1596,20 +1674,14 @@ class TaskRequestBuilder:
 
         if merged_servers:
             logger.info(
-                "[TaskRequestBuilder] Built %d MCP servers (system=%d, user=%d, bot=%d): %s",
+                "[TaskRequestBuilder] Built %d MCP servers (system=%d, bot=%d): %s",
                 len(merged_servers),
                 len(system_mcp_servers),
-                len(user_mcp_servers),
                 len(bot_mcp_servers),
                 [s["name"] for s in merged_servers],
             )
 
         return merged_servers
-
-    @staticmethod
-    def _load_user_mcp_servers(user: User) -> list[dict[str, Any]]:
-        """Load user-scoped MCP servers from preferences."""
-        return user_mcp_service.list_mcp_servers(user.preferences)
 
     @staticmethod
     def _extract_prompt_text(message: Union[str, list]) -> str:
@@ -1638,7 +1710,7 @@ class TaskRequestBuilder:
         message: Union[str, list],
         preload_skills: list,
     ) -> list:
-        """Preload provider config guidance skills when relevant and needed."""
+        """Preload provider runtime skills or config guidance skills when relevant."""
         merged_preload_skills = list(preload_skills)
         prompt_text = self._extract_prompt_text(message).strip().lower()
         if not prompt_text:
@@ -1655,51 +1727,30 @@ class TaskRequestBuilder:
             if not keywords or not any(keyword in prompt_text for keyword in keywords):
                 continue
 
-            service_configs = user_mcp_service.list_provider_service_configs(
-                user.preferences, provider["provider_id"]
-            )
-            all_services_ready = all(
-                service.get("enabled") and (service.get("url") or "").strip()
-                for service in service_configs
-            )
-            if all_services_ready:
-                continue
-
-            guidance_skill = provider.get("guidance_skill")
-            if guidance_skill and guidance_skill not in existing_names:
-                merged_preload_skills.append(
-                    {
-                        "name": guidance_skill,
-                        "namespace": "default",
-                        "is_public": True,
-                    }
+            matched_services = [
+                service
+                for service in provider.get("services", {}).values()
+                if any(
+                    keyword in prompt_text
+                    for keyword in (service.get("message_keywords") or ())
                 )
-                existing_names.add(guidance_skill)
+            ]
+            if not matched_services:
+                matched_services = list(provider.get("services", {}).values())
+
+            for service in matched_services:
+                runtime_skill = service.get("skill_name")
+                if runtime_skill and runtime_skill not in existing_names:
+                    merged_preload_skills.append(
+                        {
+                            "name": runtime_skill,
+                            "namespace": "default",
+                            "is_public": True,
+                        }
+                    )
+                    existing_names.add(runtime_skill)
 
         return merged_preload_skills
-
-    @staticmethod
-    def _merge_user_mcp_into_bot_config(
-        bot_config_list: list[dict[str, Any]], user_mcp_servers: list[dict[str, Any]]
-    ) -> None:
-        """Inject user-scoped MCP servers into executor bot configs."""
-        if not user_mcp_servers:
-            return
-
-        supported_shell_types = {"ClaudeCode", "Agno"}
-        for bot_config in bot_config_list:
-            if bot_config.get("shell_type") not in supported_shell_types:
-                continue
-
-            merged_servers = {
-                server.get("name", "server"): server
-                for server in (bot_config.get("mcp_servers") or [])
-                if isinstance(server, dict)
-            }
-            for server in user_mcp_servers:
-                merged_servers[server.get("name", "server")] = dict(server)
-
-            bot_config["mcp_servers"] = list(merged_servers.values())
 
     # =========================================================================
     # Claude Code MCP Processing
@@ -1841,6 +1892,10 @@ class TaskRequestBuilder:
         url = server.get("url", "")
         if not url:
             return False
+
+        # Runtime placeholders are resolved after request build.
+        if "${{" in url and "}}" in url:
+            return True
 
         # URLs pointing to our own backend are always reachable.
         # Checking them with a synchronous HTTP request would deadlock

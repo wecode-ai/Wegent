@@ -360,6 +360,34 @@ class TestPrepareMcpForClaudeCode:
 
         assert bot_config["mcp_servers"] == []
 
+    def test_placeholder_urls_are_preserved(self):
+        builder = TaskRequestBuilder.__new__(TaskRequestBuilder)
+        bot_config = {
+            "shell_type": "ClaudeCode",
+            "mcp_servers": [],
+        }
+        skill_configs = [
+            {
+                "name": "dingtalk-docs",
+                "mcpServers": {
+                    "dingtalk-docs": {
+                        "type": "streamable-http",
+                        "url": "${{task_data.user_mcps.dingtalk.services.docs.credentials.url}}",
+                    },
+                },
+            }
+        ]
+
+        builder._prepare_mcp_for_claude_code(bot_config, skill_configs)
+
+        assert bot_config["mcp_servers"] == [
+            {
+                "name": "dingtalk-docs",
+                "type": "http",
+                "url": "${{task_data.user_mcps.dingtalk.services.docs.credentials.url}}",
+            }
+        ]
+
     @patch.object(
         TaskRequestBuilder,
         "_check_mcp_server_reachable",
@@ -442,7 +470,7 @@ class TestResolveRequestPreloadSkills:
             request=request,
             bot=bot,
             team=team,
-            user_id=7,
+            user=SimpleNamespace(id=7, preferences="{}"),
         )
 
         assert result.skill_names == ["browser", "wegent-knowledge"]

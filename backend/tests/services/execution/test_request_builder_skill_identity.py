@@ -35,7 +35,6 @@ def test_build_generates_skill_identity_token(test_db, mocker):
         "_build_bot_config",
         return_value=[{"shell_type": "Chat", "skills": []}],
     )
-    mocker.patch.object(builder, "_load_user_mcp_servers", return_value=[])
     mocker.patch.object(builder, "_build_mcp_servers", return_value=[])
     mocker.patch.object(builder, "_is_group_chat", return_value=False)
     mocker.patch.object(builder, "_generate_auth_token", return_value="task-jwt")

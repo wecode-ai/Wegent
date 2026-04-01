@@ -15,13 +15,15 @@ class MCPProviderServiceDefinition(TypedDict):
     service_id: str
     server_name: str
     detail_url: str
+    skill_name: str | None
+    display_name: str
+    message_keywords: tuple[str, ...]
 
 
 class MCPProviderDefinition(TypedDict):
     """Static definition for a provider and its supported MCP services."""
 
     provider_id: str
-    guidance_skill: str | None
     message_keywords: tuple[str, ...]
     services: dict[str, MCPProviderServiceDefinition]
 
@@ -29,18 +31,23 @@ class MCPProviderDefinition(TypedDict):
 MCP_PROVIDER_REGISTRY: dict[str, MCPProviderDefinition] = {
     "dingtalk": {
         "provider_id": "dingtalk",
-        "guidance_skill": "dingtalk-config-guide",
         "message_keywords": ("钉钉", "dingtalk"),
         "services": {
             "docs": {
                 "service_id": "docs",
                 "server_name": "dingtalk_docs",
                 "detail_url": "https://mcp.dingtalk.com/#/detail?mcpId=9629",
+                "skill_name": "dingtalk-docs",
+                "display_name": "钉钉文档",
+                "message_keywords": ("文档", "docs", "document"),
             },
             "ai_table": {
                 "service_id": "ai_table",
                 "server_name": "dingtalk_ai_table",
                 "detail_url": "https://mcp.dingtalk.com/#/detail?mcpId=9555",
+                "skill_name": "dingtalk-ai-table",
+                "display_name": "钉钉AI表格",
+                "message_keywords": ("ai表格", "table", "多维表", "notable", "表格"),
             },
         },
     }
@@ -75,3 +82,14 @@ def get_mcp_provider_service(
         return None
 
     return provider["services"].get(service_id)
+
+
+def get_mcp_service_by_skill_name(
+    skill_name: str,
+) -> tuple[MCPProviderDefinition, MCPProviderServiceDefinition] | None:
+    """Look up provider/service metadata by runtime skill name."""
+    for provider in list_mcp_providers():
+        for service in provider["services"].values():
+            if service.get("skill_name") == skill_name:
+                return provider, service
+    return None
