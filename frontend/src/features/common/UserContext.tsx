@@ -42,6 +42,21 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
     userRef.current = user
   }, [user])
 
+  /**
+   * Check if URL contains Aidesk authentication parameters.
+   * If so, skip redirect to let AideskTokenHandler process the authentication first.
+   */
+  const hasAideskAuthParams = (): boolean => {
+    if (typeof window === 'undefined') return false
+    const params = new URLSearchParams(window.location.search)
+    return (
+      params.get('source') === 'aidesk' &&
+      !!params.get('username') &&
+      !!params.get('timestamp') &&
+      !!params.get('sign')
+    )
+  }
+
   const redirectToLogin = () => {
     const loginPath = paths.auth.login.getHref()
     if (typeof window === 'undefined') {
@@ -74,7 +89,10 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
       if (!isAuth) {
         setUser(null)
         setIsLoading(false)
-        redirectToLogin()
+        // Skip redirect if Aidesk auth params are present - let AideskTokenHandler handle it
+        if (!hasAideskAuthParams()) {
+          redirectToLogin()
+        }
         return
       }
 
@@ -87,7 +105,10 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
         title: 'Failed to load user',
       })
       setUser(null)
-      redirectToLogin()
+      // Skip redirect if Aidesk auth params are present
+      if (!hasAideskAuthParams()) {
+        redirectToLogin()
+      }
     } finally {
       setIsLoading(false)
     }
@@ -101,7 +122,13 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
       fetchUser()
     }
 
+    // Listen for Aidesk login success event
+    const handleAideskLoginSuccess = () => {
+      fetchUser()
+    }
+
     window.addEventListener('oidc-login-success', handleOidcLoginSuccess)
+    window.addEventListener('aidesk-login-success', handleAideskLoginSuccess)
 
     // Periodically check if token is expired (check every 10 seconds)
     const tokenCheckInterval = setInterval(() => {
@@ -115,6 +142,7 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
 
     return () => {
       window.removeEventListener('oidc-login-success', handleOidcLoginSuccess)
+      window.removeEventListener('aidesk-login-success', handleAideskLoginSuccess)
       clearInterval(tokenCheckInterval)
     }
     // eslint-disable-next-line
