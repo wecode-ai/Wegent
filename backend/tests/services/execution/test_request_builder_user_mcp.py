@@ -117,10 +117,53 @@ class TestUserScopedMcpInjection:
                 "is_public": True,
             },
             {
+                "name": "dingtalk-table",
+                "namespace": "default",
+                "is_public": True,
+            },
+            {
                 "name": "dingtalk-ai-table",
                 "namespace": "default",
                 "is_public": True,
             },
+        ]
+
+    def test_injects_table_skill_when_message_mentions_dingtalk_sheet(
+        self, test_db
+    ):
+        builder = TaskRequestBuilder(test_db)
+        user = SimpleNamespace(preferences="{}")
+
+        preload_skills = builder._inject_conditional_provider_skills(
+            user=user,
+            message="帮我看看钉钉表格里的工作表和单元格公式",
+            preload_skills=[],
+        )
+
+        assert preload_skills == [
+            {
+                "name": "dingtalk-table",
+                "namespace": "default",
+                "is_public": True,
+            }
+        ]
+
+    def test_injects_only_ai_table_skill_for_ai_table_request(self, test_db):
+        builder = TaskRequestBuilder(test_db)
+        user = SimpleNamespace(preferences="{}")
+
+        preload_skills = builder._inject_conditional_provider_skills(
+            user=user,
+            message="帮我更新钉钉AI表格里的记录和字段",
+            preload_skills=[],
+        )
+
+        assert preload_skills == [
+            {
+                "name": "dingtalk-ai-table",
+                "namespace": "default",
+                "is_public": True,
+            }
         ]
 
     def test_injects_runtime_skill_when_matching_service_is_ready(self, test_db):
