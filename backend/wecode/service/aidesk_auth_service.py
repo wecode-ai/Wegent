@@ -58,7 +58,7 @@ class AideskAuthService:
             if time_diff > self.config.timestamp_window:
                 logger.warning(
                     f"[Aidesk] Timestamp out of window: "
-                    f"request={ts}, server={current_time}, diff={time_diff}"
+                    f"request={ts}, server={current_time}, diff={time_diff},max={self.config.timestamp_window}m"
                 )
                 return False, "Timestamp expired"
         except ValueError:

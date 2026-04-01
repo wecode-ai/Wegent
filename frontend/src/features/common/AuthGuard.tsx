@@ -34,9 +34,18 @@ export default function AuthGuard({ children }: AuthGuardProps) {
       '/auth/dingtalk', // DingTalk authentication page
       '/jump', // Jump page for notification redirects (no auth required)
     ]
+
+    // Check if URL contains Aidesk authentication parameters
+    // If so, skip auth check to let AideskTokenHandler process the authentication first
+    const hasAideskAuthParams =
+      searchParams.get('source') === 'aidesk' &&
+      !!searchParams.get('username') &&
+      !!searchParams.get('timestamp') &&
+      !!searchParams.get('sign')
+
     // Allow download pages (they handle their own auth checks)
     const isAllowedPath = allowedPaths.includes(pathname) || pathname.startsWith('/download/')
-    if (!isAllowedPath) {
+    if (!isAllowedPath && !hasAideskAuthParams) {
       // Use isAuthenticated() to check both token existence and expiry
       const isAuth = userApis.isAuthenticated()
       if (!isAuth) {

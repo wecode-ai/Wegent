@@ -67,15 +67,12 @@ export default function AideskTokenHandler() {
         console.log('[Aidesk] Processing login for user:', username)
 
         // Call backend to verify signature and get token
-        const response = await apiClient.post<AideskLoginResponse>(
-          '/api/internal/auth/aidesk/login',
-          {
-            source,
-            username,
-            timestamp,
-            sign,
-          }
-        )
+        const response = await apiClient.post<AideskLoginResponse>('/internal/auth/aidesk/login', {
+          source,
+          username,
+          timestamp,
+          sign,
+        })
 
         if (response.access_token) {
           // Store token using shared setToken function (same as DingTalk)
@@ -87,26 +84,24 @@ export default function AideskTokenHandler() {
             title: t('common:auth.login_success'),
           })
 
-          // Clean URL parameters
-          const url = new URL(window.location.href)
-          url.searchParams.delete('source')
-          url.searchParams.delete('username')
-          url.searchParams.delete('timestamp')
-          url.searchParams.delete('sign')
+          // Dispatch login success event FIRST to trigger UserContext refresh
+          // This ensures the user state is updated before URL cleanup
+          window.dispatchEvent(new Event('aidesk-login-success'))
 
-          // Replace URL and trigger refresh
-          router.replace(url.pathname + url.search)
-
-          // Dispatch login success event
+          // Clean URL parameters after a short delay to allow UserContext to process
           setTimeout(() => {
-            window.dispatchEvent(new Event('aidesk-login-success'))
-          }, 100)
+            const url = new URL(window.location.href)
+            url.searchParams.delete('source')
+            url.searchParams.delete('username')
+            url.searchParams.delete('timestamp')
+            url.searchParams.delete('sign')
+            router.replace(url.pathname + url.search)
+          }, 200)
         }
       } catch (error: unknown) {
         console.error('[Aidesk] Login failed:', error)
 
-        const errorMessage =
-          error instanceof Error ? error.message : 'Authentication failed'
+        const errorMessage = error instanceof Error ? error.message : 'Authentication failed'
 
         toast({
           variant: 'destructive',

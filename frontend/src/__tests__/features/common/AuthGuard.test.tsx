@@ -37,6 +37,7 @@ describe('AuthGuard', () => {
 
   const mockSearchParams = {
     toString: jest.fn(() => ''),
+    get: jest.fn(() => null),
   }
 
   beforeEach(() => {

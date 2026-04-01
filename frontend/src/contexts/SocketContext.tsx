@@ -311,10 +311,20 @@ export function SocketProvider({ children }: { children: ReactNode }) {
 
       const loginPath = paths.auth.login.getHref()
       if (typeof window !== 'undefined' && window.location.pathname !== loginPath) {
-        // Save current path for redirect after login
-        const currentPath = window.location.pathname + window.location.search
-        sessionStorage.setItem(POST_LOGIN_REDIRECT_KEY, currentPath)
-        window.location.href = loginPath
+        // Check if Aidesk auth params are present - skip redirect to let AideskTokenHandler handle it
+        const params = new URLSearchParams(window.location.search)
+        const hasAideskAuthParams =
+          params.get('source') === 'aidesk' &&
+          !!params.get('username') &&
+          !!params.get('timestamp') &&
+          !!params.get('sign')
+
+        if (!hasAideskAuthParams) {
+          // Save current path for redirect after login
+          const currentPath = window.location.pathname + window.location.search
+          sessionStorage.setItem(POST_LOGIN_REDIRECT_KEY, currentPath)
+          window.location.href = loginPath
+        }
       }
     })
 
@@ -338,10 +348,20 @@ export function SocketProvider({ children }: { children: ReactNode }) {
 
         const loginPath = paths.auth.login.getHref()
         if (typeof window !== 'undefined' && window.location.pathname !== loginPath) {
-          // Save current path for redirect after login (consistent with AUTH_ERROR handler)
-          const currentPath = window.location.pathname + window.location.search
-          sessionStorage.setItem(POST_LOGIN_REDIRECT_KEY, currentPath)
-          window.location.href = loginPath
+          // Check if Aidesk auth params are present - skip redirect to let AideskTokenHandler handle it
+          const params = new URLSearchParams(window.location.search)
+          const hasAideskAuthParams =
+            params.get('source') === 'aidesk' &&
+            !!params.get('username') &&
+            !!params.get('timestamp') &&
+            !!params.get('sign')
+
+          if (!hasAideskAuthParams) {
+            // Save current path for redirect after login (consistent with AUTH_ERROR handler)
+            const currentPath = window.location.pathname + window.location.search
+            sessionStorage.setItem(POST_LOGIN_REDIRECT_KEY, currentPath)
+            window.location.href = loginPath
+          }
         }
       }
     })
