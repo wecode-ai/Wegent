@@ -75,6 +75,18 @@ def _is_organization_namespace(db: Session, namespace_name: str) -> bool:
     return namespace is not None and namespace.level == GroupLevel.organization.value
 
 
+def _build_attachment_filename(name: str, file_extension: str) -> str:
+    """Build a stable attachment filename from document metadata."""
+    normalized_extension = (file_extension or "").strip().lstrip(".")
+    if not normalized_extension:
+        return name
+
+    suffix = f".{normalized_extension}"
+    if name.lower().endswith(suffix.lower()):
+        return name
+    return f"{name}{suffix}"
+
+
 @dataclass
 class DocumentDeleteResult:
     """Result of a document deletion operation.
@@ -1335,9 +1347,9 @@ class KnowledgeService:
         """
         Update document content for TEXT type documents.
 
-        Updates the extracted_text field in SubtaskContext and returns
-        the updated document. RAG re-indexing should be handled separately
-        by the API endpoint.
+        Overwrites the underlying attachment so binary storage, extracted text,
+        and downstream indexing all observe the same content. RAG re-indexing
+        should be handled separately by the API endpoint.
 
         Args:
             db: Database session
@@ -1352,6 +1364,7 @@ class KnowledgeService:
             ValueError: If document is not TEXT type or permission denied
         """
         from app.models.subtask_context import SubtaskContext
+        from app.services.context import context_service
 
         doc = KnowledgeService.get_document(db, document_id, user_id)
         if not doc:
@@ -1383,18 +1396,30 @@ class KnowledgeService:
                     "Only Owner or Maintainer can edit documents in this knowledge base"
                 )
 
-        # Update the extracted_text in SubtaskContext
-        if doc.attachment_id:
-            context = (
-                db.query(SubtaskContext)
-                .filter(SubtaskContext.id == doc.attachment_id)
-                .first()
-            )
-            if context:
-                context.extracted_text = content
-                context.text_length = len(content)
-                db.commit()
-                db.refresh(context)
+        if not doc.attachment_id:
+            raise ValueError("Document has no attachment to update")
+
+        context = (
+            db.query(SubtaskContext)
+            .filter(SubtaskContext.id == doc.attachment_id)
+            .first()
+        )
+        if context is None:
+            raise ValueError("Document attachment not found")
+
+        binary_content = content.encode("utf-8")
+        doc.file_size = len(binary_content)
+
+        filename = context.original_filename or _build_attachment_filename(
+            doc.name, doc.file_extension
+        )
+        context_service.overwrite_attachment(
+            db=db,
+            context_id=context.id,
+            user_id=user_id,
+            filename=filename,
+            binary_data=binary_content,
+        )
 
         db.refresh(doc)
         return doc
