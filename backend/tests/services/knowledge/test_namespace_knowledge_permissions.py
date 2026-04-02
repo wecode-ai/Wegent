@@ -522,3 +522,94 @@ def test_explicit_kb_developer_can_delete_own_document_but_not_others(
         test_db, collaborator_document.id, collaborator.id
     )
     assert result.success is True
+
+
+@pytest.mark.unit
+def test_admin_can_manage_group_knowledge_base_without_namespace_membership(
+    test_db: Session,
+) -> None:
+    owner = _create_user(test_db, "owner-group-admin")
+    admin = _create_user(test_db, "admin-group-kb", role="admin")
+    namespace = _create_namespace(test_db, owner, "admin-kb-space")
+    _add_member(test_db, namespace, owner, GroupRole.Owner, owner.id)
+
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(name="admin-managed-kb", namespace=namespace.name),
+    )
+    owner_document = KnowledgeService.create_document(
+        test_db,
+        knowledge_base_id,
+        owner.id,
+        KnowledgeDocumentCreate(
+            name="owner-doc-for-admin",
+            file_extension="md",
+            file_size=21,
+            source_type=DocumentSourceType.TEXT,
+        ),
+    )
+
+    assert KnowledgeService.can_manage_knowledge_base(
+        test_db, knowledge_base_id, admin.id
+    )
+    assert KnowledgeService.can_manage_knowledge_base_documents(
+        test_db, knowledge_base_id, admin.id
+    )
+    assert KnowledgeService.can_manage_knowledge_document(
+        test_db, knowledge_base_id, admin.id, owner_document.user_id
+    )
+
+    updated = KnowledgeService.update_knowledge_base(
+        test_db,
+        knowledge_base_id,
+        admin.id,
+        KnowledgeBaseUpdate(description="updated by admin"),
+    )
+    assert updated is not None
+    assert updated.json["spec"]["description"] == "updated by admin"
+
+    admin_document = KnowledgeService.create_document(
+        test_db,
+        knowledge_base_id,
+        admin.id,
+        KnowledgeDocumentCreate(
+            name="admin-uploaded-doc",
+            file_extension="md",
+            file_size=23,
+            source_type=DocumentSourceType.TEXT,
+        ),
+    )
+    assert admin_document.user_id == admin.id
+
+    delete_result = KnowledgeService.delete_document(
+        test_db, owner_document.id, admin.id
+    )
+    assert delete_result.success is True
+
+
+@pytest.mark.unit
+def test_owner_can_migrate_personal_knowledge_base_to_group(
+    test_db: Session,
+) -> None:
+    owner = _create_user(test_db, "owner-kb-migrate")
+    namespace = _create_namespace(test_db, owner, "migrate-target-space")
+    _add_member(test_db, namespace, owner, GroupRole.Owner, owner.id)
+
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(name="migrate-me", namespace="default"),
+    )
+
+    result = KnowledgeService.migrate_knowledge_base_to_group(
+        test_db,
+        knowledge_base_id,
+        owner.id,
+        namespace.name,
+    )
+
+    migrated_kb = _get_kind(test_db, knowledge_base_id)
+    assert result["success"] is True
+    assert result["new_namespace"] == namespace.name
+    assert migrated_kb.namespace == namespace.name

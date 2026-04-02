@@ -136,6 +136,24 @@ class KnowledgeService:
             raise ValueError("User not found")
         return user
 
+    @staticmethod
+    def _get_knowledge_base_record(
+        db: Session, knowledge_base_id: int
+    ) -> Optional[Kind]:
+        return (
+            db.query(Kind)
+            .filter(
+                Kind.id == knowledge_base_id,
+                Kind.kind == "KnowledgeBase",
+                Kind.is_active == True,
+            )
+            .first()
+        )
+
+    @staticmethod
+    def _has_namespaced_admin_access(user: User, kb: Kind) -> bool:
+        return user.role == "admin" and kb.namespace != "default"
+
     # ============== Knowledge Base Operations ==============
 
     @staticmethod
@@ -273,22 +291,13 @@ class KnowledgeService:
         """
         from app.services.share import knowledge_share_service
 
-        kb = (
-            db.query(Kind)
-            .filter(
-                Kind.id == knowledge_base_id,
-                Kind.kind == "KnowledgeBase",
-                Kind.is_active == True,
-            )
-            .first()
-        )
+        kb = KnowledgeService._get_knowledge_base_record(db, knowledge_base_id)
 
         if not kb:
             return None, False
 
-        # Use the knowledge share service to check access
-        has_access, _, _ = knowledge_share_service.get_user_kb_permission(
-            db, knowledge_base_id, user_id
+        has_access, _, _ = KnowledgeService._get_user_kb_permission(
+            db, knowledge_base_id, user_id, kb=kb
         )
 
         return kb, has_access
@@ -1914,9 +1923,20 @@ class KnowledgeService:
         db: Session,
         knowledge_base_id: int,
         user_id: int,
+        kb: Kind | None = None,
     ) -> tuple[bool, BaseRole | None, bool]:
         """Return merged access for the user on the target knowledge base."""
         from app.services.share import knowledge_share_service
+
+        knowledge_base = kb or KnowledgeService._get_knowledge_base_record(
+            db, knowledge_base_id
+        )
+        if knowledge_base is None:
+            return False, None, False
+
+        user = KnowledgeService._get_user_or_raise(db, user_id)
+        if KnowledgeService._has_namespaced_admin_access(user, knowledge_base):
+            return True, BaseRole.Owner, False
 
         has_access, role, is_creator = knowledge_share_service.get_user_kb_permission(
             db, knowledge_base_id, user_id
@@ -2256,9 +2276,7 @@ class KnowledgeService:
             raise ValueError(f"You don't have access to group '{target_group_name}'")
 
         # Check if user has Maintainer+ permission in target group
-        if not check_group_permission(
-            db, user_id, target_group_name, GroupRole.Maintainer
-        ):
+        if target_role not in {GroupRole.Owner, GroupRole.Maintainer}:
             raise ValueError(
                 "You need Maintainer or Owner permission in the target group to migrate knowledge bases"
             )
