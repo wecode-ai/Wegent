@@ -78,3 +78,24 @@ export function isVersionAtLeast(version: string, targetVersion: string): boolea
   }
   return true
 }
+
+export function isCompleteVersionString(version: string): boolean {
+  const normalizedVersion = version.trim()
+
+  if (!normalizedVersion || normalizedVersion.endsWith('.') || normalizedVersion.endsWith('-')) {
+    return false
+  }
+
+  const [baseVersion, ...suffixParts] = normalizedVersion.split('-')
+  const versionSegments = baseVersion.split('.')
+  if (versionSegments.some(segment => !/^\d+$/.test(segment))) {
+    return false
+  }
+
+  if (suffixParts.length === 0) {
+    return true
+  }
+
+  const suffix = suffixParts.join('-')
+  return /^[0-9A-Za-z.-]+$/.test(suffix) && !suffix.endsWith('.') && !suffix.endsWith('-')
+}

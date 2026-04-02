@@ -381,7 +381,7 @@ async def build_execution_request(
                         request=request,
                         bot=bot,
                         team=team,
-                        user_id=user.id,
+                        user=user,
                     )
 
         return request

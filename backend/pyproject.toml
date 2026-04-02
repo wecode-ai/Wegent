@@ -125,6 +125,7 @@ dependencies = [
     "wegent-chat-shell",
     # Shared utilities (monorepo workspace dependency)
     "wegent-shared",
+    "minio>=7.2.20",
 ]
 
 [tool.uv.sources]

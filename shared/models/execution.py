@@ -190,6 +190,9 @@ class ExecutionRequest:
     validation_params: Optional[dict] = None  # Validation task parameters
     sandbox_metadata: Optional[dict] = None  # Sandbox task metadata
 
+    # === Workspace Recovery ===
+    skip_git_clone: bool = False  # Skip git clone for workspace recovery from archive
+
     # === Timestamps (from Task) ===
     created_at: Optional[str] = None  # ISO format datetime
     updated_at: Optional[str] = None  # ISO format datetime

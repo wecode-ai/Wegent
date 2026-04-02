@@ -431,12 +431,21 @@
     "services": {
       "docs": {
         "title": "DingTalk Docs",
-        "description": "Enable the DingTalk document and table MCP for your default agents.",
+        "description": "Enable the DingTalk Docs MCP for your default agents.",
         "default_name": "DingTalk Docs",
         "enable_label": "Enable DingTalk Docs MCP",
         "enable_hint": "When enabled, Wegent will inject your DingTalk Docs MCP into supported agents automatically.",
         "save_success": "DingTalk Docs configuration saved",
         "save_failed": "Failed to save DingTalk Docs configuration"
+      },
+      "table": {
+        "title": "DingTalk Table",
+        "description": "Enable the DingTalk Table MCP for your default agents.",
+        "default_name": "DingTalk Table",
+        "enable_label": "Enable DingTalk Table MCP",
+        "enable_hint": "When enabled, Wegent will inject your DingTalk Table MCP into supported agents automatically.",
+        "save_success": "DingTalk Table configuration saved",
+        "save_failed": "Failed to save DingTalk Table configuration"
       },
       "ai_table": {
         "title": "DingTalk AI Table",

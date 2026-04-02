@@ -29,6 +29,7 @@ import { useSearchShortcut } from '@/features/tasks/hooks/useSearchShortcut'
 import { ChatArea } from '@/features/tasks/components/chat'
 import { CreateGroupChatDialog } from '@/features/tasks/components/group-chat'
 import { RemoteWorkspaceEntry } from '@/features/tasks/components/remote-workspace'
+import { useIsDesktop } from '@/features/layout/hooks/useMediaQuery'
 
 /**
  * Desktop-specific implementation of Chat Page
@@ -103,6 +104,13 @@ export function ChatPageDesktop() {
   // Collapsed sidebar state
   const [isCollapsed, setIsCollapsed] = useState(false)
 
+  // Mobile sidebar state (for tablet screens 768px-1023px)
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
+
+  // Check if we're on a true desktop screen (≥1024px)
+  // On tablet screens (768px-1023px), we use mobile sidebar instead of ResizableSidebar
+  const isDesktop = useIsDesktop()
+
   // Selected team state for sharing
   const [_selectedTeamForNewTask, _setSelectedTeamForNewTask] = useState<Team | null>(null)
 
@@ -167,17 +175,30 @@ export function ChatPageDesktop() {
     window.location.href = paths.chat.getHref()
   }
 
+  // Handle expand for collapsed sidebar buttons
+  // On tablet screens, open mobile sidebar; on desktop, toggle collapsed state
+  const handleExpandFromCollapsedButtons = () => {
+    if (isDesktop) {
+      handleToggleCollapsed()
+    } else {
+      setIsMobileSidebarOpen(true)
+    }
+  }
+
   return (
     <div className="flex smart-h-screen bg-base text-text-primary box-border">
-      {/* Collapsed sidebar floating buttons */}
-      {isCollapsed && (
-        <CollapsedSidebarButtons onExpand={handleToggleCollapsed} onNewTask={handleNewTask} />
+      {/* Collapsed sidebar floating buttons - show on desktop when collapsed, or on tablet screens */}
+      {(isCollapsed || !isDesktop) && (
+        <CollapsedSidebarButtons
+          onExpand={handleExpandFromCollapsedButtons}
+          onNewTask={handleNewTask}
+        />
       )}
-      {/* Responsive resizable sidebar */}
+      {/* Responsive resizable sidebar - only on true desktop screens (≥1024px) */}
       <ResizableSidebar isCollapsed={isCollapsed} onToggleCollapsed={handleToggleCollapsed}>
         <TaskSidebar
-          isMobileSidebarOpen={false}
-          setIsMobileSidebarOpen={() => {}}
+          isMobileSidebarOpen={isMobileSidebarOpen}
+          setIsMobileSidebarOpen={setIsMobileSidebarOpen}
           pageType="chat"
           isCollapsed={isCollapsed}
           onToggleCollapsed={handleToggleCollapsed}
@@ -194,7 +215,7 @@ export function ChatPageDesktop() {
           variant="with-sidebar"
           title={currentTaskTitle}
           taskDetail={selectedTaskDetail}
-          onMobileSidebarToggle={() => {}}
+          onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
           onTaskDeleted={handleTaskDeleted}
           onMembersChanged={handleMembersChanged}
           isSidebarCollapsed={isCollapsed}

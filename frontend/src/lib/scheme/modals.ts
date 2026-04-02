@@ -65,6 +65,7 @@ export function initializeModalMappings(): void {
     description: 'Open MCP provider configuration dialog',
     examples: [
       'wegent://modal/mcp-provider-config?provider=dingtalk&service=docs',
+      'wegent://modal/mcp-provider-config?provider=dingtalk&service=table',
       'wegent://modal/mcp-provider-config?provider=dingtalk&service=ai_table',
     ],
   })

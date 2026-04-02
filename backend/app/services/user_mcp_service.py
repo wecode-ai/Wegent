@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from typing import Any
 
 from app.services.mcp_provider_registry import (
@@ -92,6 +93,98 @@ class UserMCPService:
         return configs
 
     @staticmethod
+    def get_decrypted_mcp_preferences(
+        preferences: str | dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        """Return the user MCP preferences subtree with decrypted URLs."""
+        prefs = UserMCPService.load_preferences(preferences)
+        mcps = deepcopy(prefs.get(MCP_ROOT_KEY) or {})
+
+        for provider in mcps.values():
+            services = provider.get(MCP_SERVICES_KEY)
+            if not isinstance(services, dict):
+                continue
+
+            for service in services.values():
+                credentials = service.get(MCP_CREDENTIALS_KEY)
+                if not isinstance(credentials, dict):
+                    continue
+
+                url = credentials.get(MCP_URL_KEY)
+                if isinstance(url, str) and url and is_data_encrypted(url):
+                    credentials[MCP_URL_KEY] = decrypt_sensitive_data(url) or ""
+
+        return mcps
+
+    @staticmethod
+    def get_enabled_decrypted_mcp_preferences(
+        preferences: str | dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        """Return only enabled MCP services with decrypted URLs."""
+        mcps = UserMCPService.get_decrypted_mcp_preferences(preferences)
+        enabled_mcps: dict[str, Any] = {}
+
+        for provider_id, provider in mcps.items():
+            services = provider.get(MCP_SERVICES_KEY)
+            if not isinstance(services, dict):
+                continue
+
+            enabled_services: dict[str, Any] = {}
+            for service_id, service in services.items():
+                if not isinstance(service, dict):
+                    continue
+
+                if not service.get("enabled"):
+                    continue
+
+                credentials = service.get(MCP_CREDENTIALS_KEY)
+                url = (
+                    credentials.get(MCP_URL_KEY)
+                    if isinstance(credentials, dict)
+                    else ""
+                )
+                if not isinstance(url, str) or not url.strip():
+                    continue
+
+                enabled_services[service_id] = service
+
+            if enabled_services:
+                enabled_mcps[provider_id] = {
+                    **provider,
+                    MCP_SERVICES_KEY: enabled_services,
+                }
+
+        return enabled_mcps
+
+    @staticmethod
+    def get_enabled_mcp_server(
+        preferences: str | dict[str, Any] | None,
+        provider_id: str,
+        service_id: str,
+        *,
+        server_name: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Build a concrete MCP server config for an enabled provider service."""
+        service = get_mcp_provider_service(provider_id, service_id)
+        if not service:
+            return None
+
+        config = UserMCPService.get_provider_service_config(
+            preferences,
+            provider_id,
+            service_id,
+        )
+        url = (config.get("url") or "").strip()
+        if not config.get("enabled") or not url:
+            return None
+
+        return {
+            "name": server_name or service["server_name"],
+            "url": url,
+            "type": "streamable-http",
+        }
+
+    @staticmethod
     def set_provider_service_config(
         preferences: str | dict[str, Any] | None,
         *,
@@ -155,17 +248,13 @@ class UserMCPService:
             for service in UserMCPService.list_provider_service_configs(
                 preferences, current_provider_id
             ):
-                url = (service.get("url") or "").strip()
-                if not service.get("enabled") or not url:
-                    continue
-
-                servers.append(
-                    {
-                        "name": service["server_name"],
-                        "url": url,
-                        "type": "streamable-http",
-                    }
+                server = UserMCPService.get_enabled_mcp_server(
+                    preferences,
+                    current_provider_id,
+                    service["service_id"],
                 )
+                if server:
+                    servers.append(server)
 
         return servers
 

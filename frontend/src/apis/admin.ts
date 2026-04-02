@@ -415,6 +415,7 @@ export interface IMChannelStatus {
 export type DeviceStatus = 'online' | 'offline' | 'busy'
 export type DeviceType = 'local' | 'cloud'
 export type BindShell = 'claudecode' | 'openclaw'
+export type VersionFilterOperator = 'gt' | 'gte' | 'eq' | 'lt' | 'lte'
 
 export interface AdminDeviceInfo {
   id: number
@@ -959,13 +960,19 @@ export const adminApis = {
   async getDevices(
     page: number = 1,
     limit: number = 20,
+    status?: DeviceStatus,
     deviceType?: DeviceType,
     bindShell?: BindShell,
-    search?: string
+    search?: string,
+    versionOp?: VersionFilterOperator,
+    version?: string
   ): Promise<AdminDeviceListResponse> {
     const params = new URLSearchParams()
     params.append('page', String(page))
     params.append('limit', String(limit))
+    if (status) {
+      params.append('status', status)
+    }
     if (deviceType) {
       params.append('device_type', deviceType)
     }
@@ -974,6 +981,10 @@ export const adminApis = {
     }
     if (search) {
       params.append('search', search)
+    }
+    if (versionOp && version) {
+      params.append('version_op', versionOp)
+      params.append('version', version)
     }
     return apiClient.get(`/admin/device-monitor/devices?${params.toString()}`)
   },
