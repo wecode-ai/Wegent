@@ -71,6 +71,16 @@ class RagRuntimeResolver:
         context_buffer_ratio: float = 0.1,
         max_direct_chunks: int = 500,
     ) -> QueryRuntimeSpec:
+        direct_injection_budget = None
+        if context_window is not None:
+            direct_injection_budget = DirectInjectionBudget(
+                context_window=context_window,
+                used_context_tokens=used_context_tokens,
+                reserved_output_tokens=reserved_output_tokens,
+                context_buffer_ratio=context_buffer_ratio,
+                max_direct_chunks=max_direct_chunks,
+            )
+
         return QueryRuntimeSpec(
             knowledge_base_ids=knowledge_base_ids,
             query=query,
@@ -80,11 +90,5 @@ class RagRuntimeResolver:
             restricted_mode=restricted_mode,
             user_id=user_id,
             user_name=user_name,
-            direct_injection_budget=DirectInjectionBudget(
-                context_window=context_window,
-                used_context_tokens=used_context_tokens,
-                reserved_output_tokens=reserved_output_tokens,
-                context_buffer_ratio=context_buffer_ratio,
-                max_direct_chunks=max_direct_chunks,
-            ),
+            direct_injection_budget=direct_injection_budget,
         )

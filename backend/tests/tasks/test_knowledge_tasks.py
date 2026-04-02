@@ -5,6 +5,7 @@
 """Tests for knowledge Celery tasks."""
 
 from contextlib import ExitStack, contextmanager, nullcontext
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -175,6 +176,15 @@ def test_index_document_task_routes_indexing_through_gateway():
                 success_finalize_mock,
             )
         )
+        stack.enter_context(
+            patch(
+                "app.services.knowledge.indexing.resolve_kb_index_info",
+                return_value=SimpleNamespace(
+                    index_owner_user_id=3,
+                    summary_enabled=False,
+                ),
+            )
+        )
         mock_resolve = stack.enter_context(
             patch(
                 "app.services.knowledge.indexing.RagRuntimeResolver.build_index_runtime_spec",
@@ -197,6 +207,12 @@ def test_index_document_task_routes_indexing_through_gateway():
             patch(
                 "app.tasks.knowledge_tasks.SessionLocal",
                 side_effect=_session_factory(),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.services.knowledge.indexing.SessionLocal",
+                side_effect=MagicMock,
             )
         )
 

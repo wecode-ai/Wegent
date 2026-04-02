@@ -72,6 +72,19 @@ def test_build_query_runtime_spec_maps_runtime_budget():
     assert spec.direct_injection_budget.max_direct_chunks == 250
 
 
+def test_build_query_runtime_spec_omits_budget_without_context_window():
+    resolver = RagRuntimeResolver()
+
+    spec = resolver.build_query_runtime_spec(
+        knowledge_base_ids=[1],
+        query="release checklist",
+        max_results=3,
+        route_mode="auto",
+    )
+
+    assert spec.direct_injection_budget is None
+
+
 def test_build_query_runtime_spec_rejects_control_plane_only_inputs():
     resolver = RagRuntimeResolver()
 

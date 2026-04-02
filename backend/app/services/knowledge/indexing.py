@@ -397,7 +397,12 @@ def run_document_indexing(
             result = loop.run_until_complete(
                 rag_gateway.index_document(runtime_spec, db=db)
             )
-            logger.info(f"[Indexing] gateway index_document returned: result={result}")
+            logger.info(
+                "[Indexing] gateway index_document returned: status=%s indexed_count=%s index_name=%s",
+                result.get("status"),
+                result.get("indexed_count"),
+                result.get("index_name"),
+            )
         finally:
             loop.run_until_complete(loop.shutdown_asyncgens())
             loop.close()

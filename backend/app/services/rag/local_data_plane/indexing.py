@@ -30,6 +30,19 @@ async def index_document_local(
         name=spec.retriever_name,
         namespace=spec.retriever_namespace,
     )
+    if retriever is None:
+        logger.warning(
+            "Retriever %s not found for KB %s during indexing",
+            spec.retriever_name,
+            spec.knowledge_base_id,
+        )
+        return {
+            "status": "skipped",
+            "reason": "retriever_not_found",
+            "knowledge_id": str(spec.knowledge_base_id),
+            "document_id": spec.document_id,
+        }
+
     storage_backend = create_storage_backend(retriever)
     service = DocumentService(storage_backend=storage_backend)
 

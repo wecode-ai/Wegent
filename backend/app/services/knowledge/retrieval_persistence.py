@@ -203,7 +203,7 @@ class RetrievalPersistenceService:
         restricted_mode: bool = False,
     ) -> None:
         """Persist retrieval results, without failing the main retrieval flow."""
-        if not user_subtask_id or not records or user_id is None or user_id <= 0:
+        if not user_subtask_id or not records or user_id is None or user_id < 0:
             return
 
         payload_by_kb = self._prepare_persistence_payload(

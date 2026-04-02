@@ -8,7 +8,7 @@ from app.services.knowledge.index_runtime import (
 )
 
 
-def test_build_kb_index_info_uses_current_user_for_default_namespace():
+def test_build_kb_index_info_uses_current_user_for_default_namespace() -> None:
     db = MagicMock()
     knowledge_base = SimpleNamespace(
         namespace="default",
@@ -28,7 +28,7 @@ def test_build_kb_index_info_uses_current_user_for_default_namespace():
     )
 
 
-def test_build_kb_index_info_uses_creator_for_group_namespace():
+def test_build_kb_index_info_uses_creator_for_group_namespace() -> None:
     db = MagicMock()
     knowledge_base = SimpleNamespace(
         namespace="team-a",
@@ -53,7 +53,7 @@ def test_build_kb_index_info_uses_creator_for_group_namespace():
     )
 
 
-def test_build_kb_index_info_uses_current_user_for_organization_namespace():
+def test_build_kb_index_info_uses_current_user_for_organization_namespace() -> None:
     db = MagicMock()
     knowledge_base = SimpleNamespace(
         namespace="org-a",
@@ -78,7 +78,7 @@ def test_build_kb_index_info_uses_current_user_for_organization_namespace():
     )
 
 
-def test_get_kb_index_info_falls_back_for_non_integer_id():
+def test_get_kb_index_info_falls_back_for_non_integer_id() -> None:
     db = MagicMock()
 
     kb_info = get_kb_index_info(
@@ -94,7 +94,7 @@ def test_get_kb_index_info_falls_back_for_non_integer_id():
     )
 
 
-def test_get_kb_index_info_falls_back_when_kb_is_missing():
+def test_get_kb_index_info_falls_back_when_kb_is_missing() -> None:
     db = MagicMock()
     db.query.return_value.filter.return_value.first.return_value = None
 
@@ -110,7 +110,7 @@ def test_get_kb_index_info_falls_back_when_kb_is_missing():
     )
 
 
-def test_splitter_runtime_parser_supports_smart_type():
+def test_splitter_runtime_parser_supports_smart_type() -> None:
     from app.services.rag.splitter.runtime_config import parse_runtime_splitter_config
 
     splitter = parse_runtime_splitter_config({"type": "smart"})

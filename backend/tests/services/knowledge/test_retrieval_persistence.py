@@ -186,12 +186,12 @@ class TestRetrievalPersistenceService:
         assert update_kwargs["restricted_mode"] is True
         assert update_kwargs["sources"][0]["title"] == "Source 1"
 
-    def test_persist_retrieval_result_skips_zero_user_id(self) -> None:
-        """Persistence should skip sentinel user_id=0."""
+    def test_persist_retrieval_result_allows_zero_user_id(self) -> None:
+        """Persistence should allow user_id=0 when control-plane validation does."""
         db = MagicMock()
 
-        mock_get_context_map = MagicMock()
-        mock_create_context = MagicMock()
+        mock_get_context_map = MagicMock(return_value={})
+        mock_create_context = MagicMock(return_value=MagicMock(id=101))
         mock_update_context = MagicMock()
 
         with patch.multiple(
@@ -217,6 +217,10 @@ class TestRetrievalPersistenceService:
                 restricted_mode=False,
             )
 
-        mock_get_context_map.assert_not_called()
-        mock_create_context.assert_not_called()
+        mock_get_context_map.assert_called_once_with(
+            db=db,
+            subtask_id=12,
+            knowledge_ids=[7],
+        )
+        mock_create_context.assert_called_once()
         mock_update_context.assert_not_called()

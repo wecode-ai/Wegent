@@ -57,6 +57,15 @@ async def test_mediator_uses_current_model_identity_first():
             knowledge_base_ids=[1],
         )
 
-    mock_resolve.assert_called_once()
+    mock_resolve.assert_called_once_with(
+        db=mock_resolve.call_args.kwargs["db"],
+        mediation_context={
+            "current_model_name": "my-model",
+            "current_model_namespace": "default",
+        },
+        knowledge_base_ids=[1],
+        user_id=None,
+        user_name="system",
+    )
     assert result.mode == "restricted_safe_summary"
     assert result.restricted_safe_summary.summary == "High-level diagnosis"
