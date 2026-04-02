@@ -1093,13 +1093,24 @@ class KnowledgeService:
             .first()
         )
         if kb:
-            user = KnowledgeService._get_user_or_raise(db, user_id)
+            kb_owner_id = getattr(kb, "user_id", None)
+            if kb.namespace == "default" and kb_owner_id is None:
+                kb_owner_id = user_id
+
+            if kb_owner_id is None:
+                raise ValueError("Knowledge base owner information is missing")
+
+            user_role = None
+            if kb.namespace != "default":
+                user = KnowledgeService._get_user_or_raise(db, user_id)
+                user_role = user.role
+
             if not can_manage_namespace_knowledge_base(
                 db,
                 user_id=user_id,
                 namespace_name=kb.namespace,
-                kb_owner_id=kb.user_id,
-                user_role=user.role,
+                kb_owner_id=kb_owner_id,
+                user_role=user_role,
             ):
                 raise ValueError(
                     "You do not have permission to manage documents in this knowledge base"
@@ -1186,13 +1197,24 @@ class KnowledgeService:
             .first()
         )
         if kb:
-            user = KnowledgeService._get_user_or_raise(db, user_id)
+            kb_owner_id = getattr(kb, "user_id", None)
+            if kb.namespace == "default" and kb_owner_id is None:
+                kb_owner_id = user_id
+
+            if kb_owner_id is None:
+                raise ValueError("Knowledge base owner information is missing")
+
+            user_role = None
+            if kb.namespace != "default":
+                user = KnowledgeService._get_user_or_raise(db, user_id)
+                user_role = user.role
+
             if not can_manage_namespace_knowledge_base(
                 db,
                 user_id=user_id,
                 namespace_name=kb.namespace,
-                kb_owner_id=kb.user_id,
-                user_role=user.role,
+                kb_owner_id=kb_owner_id,
+                user_role=user_role,
             ):
                 raise ValueError(
                     "You do not have permission to manage documents in this knowledge base"
@@ -1351,13 +1373,24 @@ class KnowledgeService:
             .first()
         )
         if kb:
-            user = KnowledgeService._get_user_or_raise(db, user_id)
+            kb_owner_id = getattr(kb, "user_id", None)
+            if kb.namespace == "default" and kb_owner_id is None:
+                kb_owner_id = user_id
+
+            if kb_owner_id is None:
+                raise ValueError("Knowledge base owner not found")
+
+            user_role = None
+            if kb.namespace != "default":
+                user = KnowledgeService._get_user_or_raise(db, user_id)
+                user_role = user.role
+
             if not can_manage_namespace_knowledge_base(
                 db,
                 user_id=user_id,
                 namespace_name=kb.namespace,
-                kb_owner_id=kb.user_id,
-                user_role=user.role,
+                kb_owner_id=kb_owner_id,
+                user_role=user_role,
             ):
                 raise ValueError(
                     "You do not have permission to manage documents in this knowledge base"
