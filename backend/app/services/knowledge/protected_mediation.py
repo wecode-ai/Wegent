@@ -20,6 +20,11 @@ from app.services.knowledge.protected_model_resolver import (
     ProtectedModelResolver,
     protected_model_resolver,
 )
+from shared.telemetry.decorators import (
+    add_span_event,
+    set_span_attribute,
+    trace_async,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +44,14 @@ PROTECTED_KB_ANSWER_CONTRACT = (
 PROTECTED_KB_MESSAGE = (
     "Protected KB material was analyzed internally and converted into "
     "a safe high-level summary. Use only this safe summary in the final answer."
+)
+
+FALLBACK_REASONS = frozenset(
+    {
+        "safe_summary_model_unavailable",
+        "no_summary_chunks",
+        "safe_summary_generation_failed",
+    }
 )
 
 SAFE_SUMMARY_SYSTEM_PROMPT = """You are a safety summarizer for restricted internal knowledge base access.
@@ -96,6 +109,45 @@ class ProtectedKnowledgeMediationResponse(BaseModel):
     total_estimated_tokens: int = 0
 
 
+def _extract_transform_attributes(
+    _service: "ProtectedKnowledgeMediationService",
+    *,
+    db: Session,
+    query: str,
+    retrieval_mode: Literal["direct_injection", "rag_retrieval"],
+    records: list[dict[str, Any]],
+    mediation_context: dict[str, Any] | None,
+    knowledge_base_ids: list[int],
+    total_estimated_tokens: int = 0,
+    user_id: int | None = None,
+    user_name: str = "system",
+) -> dict[str, str | int]:
+    return {
+        "knowledge.user_id": user_id or 0,
+        "knowledge.user_name": user_name,
+        "knowledge.retrieval_mode": retrieval_mode,
+        "knowledge.record_count": len(records),
+        "knowledge.total_estimated_tokens": total_estimated_tokens,
+        "knowledge.knowledge_base_ids": ",".join(
+            str(knowledge_base_id) for knowledge_base_id in knowledge_base_ids
+        ),
+    }
+
+
+def _format_selected_model(model_config: dict[str, Any]) -> str:
+    """Build a stable selected-model identifier for tracing."""
+    model_name = model_config.get("model_name")
+    model_namespace = model_config.get("model_namespace") or "default"
+    model_type = model_config.get("model_type")
+    model_id = model_config.get("model_id")
+
+    if model_name:
+        if model_type:
+            return f"{model_name}@{model_namespace}:{model_type}"
+        return f"{model_name}@{model_namespace}"
+    return str(model_id or "unresolved")
+
+
 class ProtectedKnowledgeMediationService:
     """Convert protected retrieval results into safe summaries."""
 
@@ -105,6 +157,11 @@ class ProtectedKnowledgeMediationService:
     ) -> None:
         self._model_resolver = model_resolver or protected_model_resolver
 
+    @trace_async(
+        span_name="protected_mediation.transform",
+        tracer_name="knowledge_service",
+        extract_attributes=_extract_transform_attributes,
+    )
     async def transform(
         self,
         *,
@@ -119,6 +176,13 @@ class ProtectedKnowledgeMediationService:
         user_name: str = "system",
     ) -> ProtectedKnowledgeMediationResponse:
         """Transform raw protected records into a safe summary envelope."""
+        logger.info(
+            "[protected_mediation] Transform started: retrieval_mode=%s kb_count=%d record_count=%d query_length=%d",
+            retrieval_mode,
+            len(knowledge_base_ids),
+            len(records),
+            len(query),
+        )
         knowledge_base_snapshots = self._model_resolver.load_knowledge_base_snapshots(
             db=db,
             knowledge_base_ids=knowledge_base_ids,
@@ -131,6 +195,16 @@ class ProtectedKnowledgeMediationService:
             user_id=user_id,
             user_name=user_name,
         )
+        selected_model = _format_selected_model(model_config)
+        logger.info(
+            "[protected_mediation] Model resolved: selected_model=%s has_model_config=%s",
+            selected_model,
+            bool(model_config),
+        )
+        set_span_attribute(
+            "knowledge.selected_model",
+            selected_model,
+        )
         kb_name_map = self._build_kb_name_map(
             knowledge_base_ids=knowledge_base_ids,
             knowledge_base_snapshots=knowledge_base_snapshots,
@@ -140,6 +214,19 @@ class ProtectedKnowledgeMediationService:
             query=query,
             records=records,
             kb_name_map=kb_name_map,
+        )
+        fallback_used = safe_summary.reason in FALLBACK_REASONS
+        set_span_attribute("knowledge.fallback_used", fallback_used)
+        if fallback_used:
+            add_span_event(
+                "knowledge.model_fallback",
+                {"reason": safe_summary.reason},
+            )
+        logger.info(
+            "[protected_mediation] Safe summary completed: decision=%s confidence=%s fallback_used=%s",
+            safe_summary.decision,
+            safe_summary.confidence,
+            fallback_used,
         )
         return ProtectedKnowledgeMediationResponse(
             retrieval_mode=retrieval_mode,

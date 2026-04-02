@@ -205,28 +205,39 @@ class RetrievalPersistenceService:
         """Persist retrieval results, without failing the main retrieval flow."""
         if not user_subtask_id or not records or user_id is None or user_id < 0:
             return
-
-        payload_by_kb = self._prepare_persistence_payload(
-            records=records,
-            restricted_mode=restricted_mode,
-        )
-        existing_contexts = context_service.get_knowledge_base_context_map_by_subtask(
-            db=db,
-            subtask_id=user_subtask_id,
-            knowledge_ids=list(payload_by_kb.keys()),
-        )
-
-        for kb_id, payload in payload_by_kb.items():
-            self._upsert_context_for_kb(
-                db=db,
-                existing_contexts=existing_contexts,
-                kb_id=kb_id,
-                payload=payload,
-                user_subtask_id=user_subtask_id,
-                user_id=user_id,
-                query=query,
-                mode=mode,
+        try:
+            payload_by_kb = self._prepare_persistence_payload(
+                records=records,
                 restricted_mode=restricted_mode,
+            )
+            existing_contexts = (
+                context_service.get_knowledge_base_context_map_by_subtask(
+                    db=db,
+                    subtask_id=user_subtask_id,
+                    knowledge_ids=list(payload_by_kb.keys()),
+                )
+            )
+
+            for kb_id, payload in payload_by_kb.items():
+                self._upsert_context_for_kb(
+                    db=db,
+                    existing_contexts=existing_contexts,
+                    kb_id=kb_id,
+                    payload=payload,
+                    user_subtask_id=user_subtask_id,
+                    user_id=user_id,
+                    query=query,
+                    mode=mode,
+                    restricted_mode=restricted_mode,
+                )
+        except Exception as exc:
+            logger.warning(
+                "[RAG] Failed to persist retrieval result: subtask_id=%s, user_id=%s, mode=%s, error=%s",
+                user_subtask_id,
+                user_id,
+                mode,
+                exc,
+                exc_info=True,
             )
 
 

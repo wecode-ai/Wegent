@@ -429,7 +429,8 @@ def run_document_indexing(
         )
 
         return {
-            "status": "success",
+            "status": indexing_status,
+            "reason": result.get("reason"),
             "document_id": document_id,
             "knowledge_base_id": knowledge_base_id,
             "indexed_count": indexed_count,

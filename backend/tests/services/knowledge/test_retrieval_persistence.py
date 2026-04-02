@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import json
+import logging
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -224,3 +225,37 @@ class TestRetrievalPersistenceService:
         )
         mock_create_context.assert_called_once()
         mock_update_context.assert_not_called()
+
+    def test_persist_retrieval_result_swallows_context_errors(self, caplog) -> None:
+        """Persistence failures must not fail the main retrieval flow."""
+        db = MagicMock()
+
+        with (
+            patch.object(
+                context_service,
+                "get_knowledge_base_context_map_by_subtask",
+                side_effect=RuntimeError("db write failed"),
+            ),
+            caplog.at_level(
+                logging.WARNING,
+                logger="app.services.knowledge.retrieval_persistence",
+            ),
+        ):
+            self.service.persist_retrieval_result(
+                db=db,
+                user_subtask_id=12,
+                user_id=34,
+                query="search query",
+                mode="rag_retrieval",
+                records=[
+                    {
+                        "content": "chunk 1",
+                        "title": "doc.md",
+                        "score": 0.9,
+                        "knowledge_base_id": 7,
+                    }
+                ],
+                restricted_mode=False,
+            )
+
+        assert "Failed to persist retrieval result" in caplog.text

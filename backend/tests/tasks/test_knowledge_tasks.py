@@ -156,6 +156,8 @@ def test_index_document_task_marks_skip_result_as_failed():
 def test_index_document_task_routes_indexing_through_gateway():
     start_decision = MagicMock(should_execute=True, reason="started")
     success_finalize_mock = MagicMock(return_value=True)
+    task_db = MagicMock()
+    indexing_db = MagicMock()
 
     with _task_request_context(retries=0), ExitStack() as stack:
         stack.enter_context(
@@ -206,13 +208,13 @@ def test_index_document_task_routes_indexing_through_gateway():
         stack.enter_context(
             patch(
                 "app.tasks.knowledge_tasks.SessionLocal",
-                side_effect=_session_factory(),
+                side_effect=lambda: nullcontext(task_db),
             )
         )
         stack.enter_context(
             patch(
                 "app.services.knowledge.indexing.SessionLocal",
-                side_effect=MagicMock,
+                return_value=indexing_db,
             )
         )
 
@@ -220,7 +222,7 @@ def test_index_document_task_routes_indexing_through_gateway():
 
     assert result["status"] == "success"
     mock_resolve.assert_called_once()
-    mock_index.assert_awaited_once()
+    mock_index.assert_awaited_once_with(mock_resolve.return_value, db=indexing_db)
 
 
 def test_index_document_task_enqueues_summary_after_finalize(

@@ -36,7 +36,7 @@ class ProtectedModelResolver:
                 .filter(
                     Kind.id.in_(knowledge_base_ids),
                     Kind.kind == "KnowledgeBase",
-                    Kind.is_active == True,
+                    Kind.is_active,
                 )
                 .all()
             )
@@ -124,8 +124,8 @@ class ProtectedModelResolver:
             return None
         return self._build_model_config(
             model_kind=model_kind,
-            model_name=model_name,
-            model_namespace=model_namespace,
+            model_name=str(model_kind.name),
+            model_namespace=str(model_kind.namespace),
             model_type=model_type,
             user_id=user_id,
             user_name=user_name,
@@ -151,7 +151,44 @@ class ProtectedModelResolver:
                 knowledge_base_ids=knowledge_base_ids,
             )
 
+        summary_model_refs = self._collect_unique_summary_model_refs(snapshots)
+        resolved_model_kinds = self._batch_lookup_summary_model_kinds(
+            db=db,
+            summary_model_refs=summary_model_refs,
+            user_id=user_id,
+        )
+
+        for summary_model_ref in summary_model_refs:
+            model_name = summary_model_ref["name"]
+            model_namespace = summary_model_ref["namespace"]
+            model_type = summary_model_ref["type"]
+            resolved = resolved_model_kinds.get(
+                (model_name, model_namespace, model_type)
+            )
+            if resolved is None:
+                continue
+
+            model_kind, resolved_model_type = resolved
+
+            return self._build_model_config(
+                model_kind=model_kind,
+                model_name=str(model_kind.name),
+                model_namespace=str(model_kind.namespace),
+                model_type=resolved_model_type or model_type or "public",
+                user_id=user_id,
+                user_name=user_name,
+            )
+
+        return None
+
+    def _collect_unique_summary_model_refs(
+        self,
+        snapshots: list[dict[str, Any]],
+    ) -> list[dict[str, str | None]]:
+        """Collect unique summary model refs in snapshot order."""
+        unique_refs: list[dict[str, str | None]] = []
         seen_refs: set[tuple[str, str, str | None]] = set()
+
         for snapshot in snapshots:
             summary_model_ref = snapshot.get("summary_model_ref") or {}
             model_name = summary_model_ref.get("name")
@@ -164,27 +201,125 @@ class ProtectedModelResolver:
             if ref_key in seen_refs:
                 continue
             seen_refs.add(ref_key)
-
-            model_kind, resolved_model_type = self._lookup_model_kind(
-                db=db,
-                model_name=model_name,
-                model_namespace=model_namespace,
-                model_type=model_type,
-                user_id=user_id,
+            unique_refs.append(
+                {
+                    "name": model_name,
+                    "namespace": model_namespace,
+                    "type": model_type,
+                }
             )
-            if model_kind is None:
+
+        return unique_refs
+
+    def _load_user_model_kinds(
+        self,
+        *,
+        db: Session,
+        user_id: int | None,
+        model_refs: list[dict[str, str | None]],
+    ) -> dict[tuple[str, str], Kind]:
+        """Batch-load user/group scoped models for candidate refs."""
+        if user_id is None:
+            return {}
+
+        user_names = {
+            str(model_ref["name"])
+            for model_ref in model_refs
+            if model_ref.get("type") != "public"
+        }
+        user_namespaces = {
+            str(model_ref["namespace"])
+            for model_ref in model_refs
+            if model_ref.get("type") != "public"
+        }
+        if not user_names or not user_namespaces:
+            return {}
+
+        model_kinds = (
+            db.query(Kind)
+            .filter(
+                Kind.user_id == user_id,
+                Kind.kind == "Model",
+                Kind.name.in_(user_names),
+                Kind.namespace.in_(user_namespaces),
+                Kind.is_active,
+            )
+            .all()
+        )
+        return {
+            (str(model_kind.name), str(model_kind.namespace)): model_kind
+            for model_kind in model_kinds
+        }
+
+    def _load_public_model_kinds(
+        self,
+        *,
+        db: Session,
+        model_refs: list[dict[str, str | None]],
+    ) -> dict[str, Kind]:
+        """Batch-load public models for candidate refs."""
+        public_names = {str(model_ref["name"]) for model_ref in model_refs}
+        if not public_names:
+            return {}
+
+        model_kinds = (
+            db.query(Kind)
+            .filter(
+                Kind.user_id == 0,
+                Kind.kind == "Model",
+                Kind.name.in_(public_names),
+                Kind.namespace == "default",
+                Kind.is_active,
+            )
+            .all()
+        )
+        return {str(model_kind.name): model_kind for model_kind in model_kinds}
+
+    def _batch_lookup_summary_model_kinds(
+        self,
+        *,
+        db: Session,
+        summary_model_refs: list[dict[str, str | None]],
+        user_id: int | None,
+    ) -> dict[tuple[str, str, str | None], tuple[Kind, str]]:
+        """Resolve candidate summary models with batched scope queries."""
+        user_model_kinds = self._load_user_model_kinds(
+            db=db,
+            user_id=user_id,
+            model_refs=summary_model_refs,
+        )
+        public_model_kinds = self._load_public_model_kinds(
+            db=db,
+            model_refs=summary_model_refs,
+        )
+
+        resolved: dict[tuple[str, str, str | None], tuple[Kind, str]] = {}
+        for model_ref in summary_model_refs:
+            model_name = str(model_ref["name"])
+            model_namespace = str(model_ref["namespace"])
+            model_type = model_ref.get("type")
+            ref_key = (model_name, model_namespace, model_type)
+
+            if model_type == "public":
+                public_kind = public_model_kinds.get(model_name)
+                if public_kind is not None:
+                    resolved[ref_key] = (public_kind, "public")
                 continue
 
-            return self._build_model_config(
-                model_kind=model_kind,
-                model_name=model_name,
-                model_namespace=model_namespace,
-                model_type=resolved_model_type or model_type or "public",
-                user_id=user_id,
-                user_name=user_name,
-            )
+            user_kind = user_model_kinds.get((model_name, model_namespace))
+            if user_kind is not None and model_type in {"user", "group"}:
+                resolved[ref_key] = (user_kind, model_type)
+                continue
+            if user_kind is not None and user_id is not None:
+                normalized_type = "user" if model_namespace == "default" else "group"
+                resolved[ref_key] = (user_kind, normalized_type)
+                continue
 
-        return None
+            public_kind = public_model_kinds.get(model_name)
+            if public_kind is not None:
+                resolved[ref_key] = (public_kind, "public")
+
+        return resolved
 
     def _get_user_scoped_model_kind(
         self,
@@ -205,7 +340,7 @@ class ProtectedModelResolver:
                 Kind.kind == "Model",
                 Kind.name == model_name,
                 Kind.namespace == model_namespace,
-                Kind.is_active == True,
+                Kind.is_active,
             )
             .first()
         )
@@ -228,7 +363,7 @@ class ProtectedModelResolver:
                     Kind.kind == "Model",
                     Kind.name == model_name,
                     Kind.namespace == "default",
-                    Kind.is_active == True,
+                    Kind.is_active,
                 )
                 .first()
             )
@@ -264,7 +399,7 @@ class ProtectedModelResolver:
                 Kind.kind == "Model",
                 Kind.name == model_name,
                 Kind.namespace == "default",
-                Kind.is_active == True,
+                Kind.is_active,
             )
             .first()
         )
@@ -290,9 +425,9 @@ class ProtectedModelResolver:
             user_id=user_id or 0,
             user_name=user_name,
         )
-        processed_config.setdefault("model_name", model_name)
-        processed_config.setdefault("model_namespace", model_namespace)
-        processed_config.setdefault("model_type", model_type)
+        processed_config["model_name"] = model_name
+        processed_config["model_namespace"] = model_namespace
+        processed_config["model_type"] = model_type
         return processed_config
 
 
