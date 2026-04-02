@@ -350,6 +350,76 @@ class TestDynamicToolSelectionIntegration:
         # all_tools should be the same as builder.tools
         assert all_tools == builder.tools
 
+    def test_gemini_build_agent_preserves_dynamic_skill_tools(self, monkeypatch):
+        """Test Gemini agent build keeps dynamically registered skill tools executable."""
+        from chat_shell.agents import graph_builder as graph_builder_module
+        from chat_shell.agents.graph_builder import LangGraphAgentBuilder
+        from chat_shell.tools.base import ToolRegistry
+
+        class FakeGeminiLLM:
+            def bind_tools(self, tools):
+                return self
+
+        class FakeGeminiSearchTool:
+            name = "gemini_search"
+            return_direct = True
+
+            def has_been_called(self):
+                return False
+
+        monkeypatch.setattr(
+            graph_builder_module, "ChatGoogleGenerativeAI", FakeGeminiLLM
+        )
+        monkeypatch.setattr(
+            graph_builder_module,
+            "GeminiSearchTool",
+            FakeGeminiSearchTool,
+        )
+        monkeypatch.setattr(
+            graph_builder_module,
+            "create_gemini_search_tool",
+            lambda llm: FakeGeminiSearchTool(),
+        )
+
+        captured: dict[str, object] = {}
+
+        def fake_create_react_agent(**kwargs):
+            captured.update(kwargs)
+            return MagicMock()
+
+        monkeypatch.setattr(
+            graph_builder_module, "create_react_agent", fake_create_react_agent
+        )
+
+        load_skill_tool = LoadSkillTool(
+            user_id=1,
+            skill_names=["dingtalk-docs"],
+            skill_metadata={
+                "dingtalk-docs": {
+                    "description": "DingTalk docs",
+                    "prompt": "Use DingTalk docs tools",
+                }
+            },
+        )
+        skill_tool = MagicMock()
+        skill_tool.name = "list_nodes"
+        load_skill_tool.register_skill_tools("dingtalk-docs", [skill_tool])
+
+        tool_registry = ToolRegistry()
+        tool_registry.register(load_skill_tool)
+
+        builder = LangGraphAgentBuilder(
+            llm=FakeGeminiLLM(),
+            tool_registry=tool_registry,
+        )
+
+        builder._build_agent()
+
+        tool_names = [tool.name for tool in captured["tools"]]
+        assert "load_skill" in tool_names
+        assert "list_nodes" in tool_names
+        assert "gemini_search" in tool_names
+
 
 class TestSkillRetentionAcrossTurns:
     """Test cases for skill retention across conversation turns."""

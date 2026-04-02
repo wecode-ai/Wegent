@@ -830,7 +830,7 @@ class LangGraphAgentBuilder:
             # - Dynamic model filtering completely removes the tool from the model's view
             # - This prevents wasted tokens and model confusion
             base_llm = self.llm
-            all_tools = list(self.tools)
+            all_tools = [*all_tools, gemini_search_tool]
 
             # Identify search tools: GeminiSearchTool and WebSearchTool
             other_search_tools = [t for t in all_tools if isinstance(t, WebSearchTool)]
