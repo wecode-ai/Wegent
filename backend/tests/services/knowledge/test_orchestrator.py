@@ -997,23 +997,27 @@ class TestKnowledgeOrchestrator:
                 return_value=(mock_kb, True),
             ):
                 with patch(
-                    "app.services.knowledge.indexing.extract_rag_config_from_knowledge_base",
-                    return_value=MagicMock(),
+                    "app.services.knowledge.orchestrator.KnowledgeService.can_manage_knowledge_document",
+                    return_value=True,
                 ):
-                    with patch.object(
-                        orchestrator,
-                        "_schedule_indexing_celery",
-                        return_value={
-                            "scheduled": False,
-                            "reason": "document_not_found",
-                            "index_generation": None,
-                        },
+                    with patch(
+                        "app.services.knowledge.indexing.extract_rag_config_from_knowledge_base",
+                        return_value=MagicMock(),
                     ):
-                        result = orchestrator.reindex_document(
-                            db=mock_db,
-                            user=mock_user,
-                            document_id=1,
-                        )
+                        with patch.object(
+                            orchestrator,
+                            "_schedule_indexing_celery",
+                            return_value={
+                                "scheduled": False,
+                                "reason": "document_not_found",
+                                "index_generation": None,
+                            },
+                        ):
+                            result = orchestrator.reindex_document(
+                                db=mock_db,
+                                user=mock_user,
+                                document_id=1,
+                            )
 
         assert result["skipped"] is True
         assert result["reason"] == "document_not_found"
@@ -1042,24 +1046,28 @@ class TestKnowledgeOrchestrator:
                 return_value=(mock_kb, True),
             ):
                 with patch(
-                    "app.services.knowledge.indexing.extract_rag_config_from_knowledge_base",
-                    return_value=MagicMock(),
+                    "app.services.knowledge.orchestrator.KnowledgeService.can_manage_knowledge_document",
+                    return_value=True,
                 ):
-                    with patch.object(
-                        orchestrator,
-                        "_schedule_indexing_celery",
-                        return_value={
-                            "scheduled": True,
-                            "reason": "scheduled",
-                            "task_id": "task-1",
-                            "index_generation": 8,
-                        },
-                    ) as mock_schedule:
-                        result = orchestrator.reindex_document(
-                            db=mock_db,
-                            user=mock_user,
-                            document_id=1,
-                        )
+                    with patch(
+                        "app.services.knowledge.indexing.extract_rag_config_from_knowledge_base",
+                        return_value=MagicMock(),
+                    ):
+                        with patch.object(
+                            orchestrator,
+                            "_schedule_indexing_celery",
+                            return_value={
+                                "scheduled": True,
+                                "reason": "scheduled",
+                                "task_id": "task-1",
+                                "index_generation": 8,
+                            },
+                        ) as mock_schedule:
+                            result = orchestrator.reindex_document(
+                                db=mock_db,
+                                user=mock_user,
+                                document_id=1,
+                            )
 
         assert result["message"] == "Reindex started"
         assert result["index_generation"] == 8
