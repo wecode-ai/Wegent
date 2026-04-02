@@ -65,7 +65,7 @@ export function ExamTopicDetail({ topic }: ExamTopicDetailProps) {
             <div className="flex items-center gap-2 mb-4">
               <FileArchive className="h-5 w-5 text-[#DF2029]" />
               <h4 className="text-base font-semibold text-gray-900">
-                {t('questions.exam_content.material_zip')}
+                {t('questions.exam_content.download_material')}
               </h4>
             </div>
             <AttachmentList

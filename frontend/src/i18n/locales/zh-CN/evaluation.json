@@ -196,7 +196,7 @@
       "material_zip_hint": "上传 ZIP 格式的材料包，答题人可下载",
       "material_zip_upload": "点击或拖拽上传材料包",
       "material_zip_accept": "仅支持 ZIP 格式",
-      "download_material": "下载材料包"
+      "download_material": "请下载以下材料包"
     }
   },
   "permissions": {
