@@ -53,7 +53,6 @@ export function CloudDeviceCreateSection({ onDeviceCreated, currentDeviceCount =
   const [mailEnabled, setMailEnabled] = useState(false)
   const [mailEmail, setMailEmail] = useState('')
   const [mailpassword, setMailpassword] = useState('')
-
   // Fetch cloud device configuration on mount
   useEffect(() => {
     const fetchConfig = async () => {
@@ -69,6 +68,18 @@ export function CloudDeviceCreateSection({ onDeviceCreated, currentDeviceCount =
 
   // Create cloud device handler
   const handleCreateCloudDevice = useCallback(async () => {
+    // Validate email account and password are not empty when mail is enabled
+    if (mailEnabled) {
+      if (!mailEmail.trim()) {
+        toast.error(t('cloud_device.mail_email_required'))
+        return
+      }
+      if (!mailpassword.trim()) {
+        toast.error(t('cloud_device.mail_password_required'))
+        return
+      }
+    }
+
     setShowCreateConfirm(false)
     setIsCreating(true)
     try {
