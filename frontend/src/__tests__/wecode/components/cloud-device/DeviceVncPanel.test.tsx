@@ -62,14 +62,13 @@ describe('DeviceVncPanel', () => {
     expect(screen.getByTestId('cloud-device-files-credentials')).toBeInTheDocument()
     expect(screen.getByText('Login admin, password device-1')).toBeInTheDocument()
     expect(screen.getByTestId('cloud-device-files-frame')).toHaveClass(
-      'relative',
-      'min-h-0',
-      'flex-1',
+      'absolute',
+      'inset-0',
       'overflow-hidden'
     )
     expect(screen.queryByRole('tabpanel')).not.toBeInTheDocument()
     const iframe = await screen.findByTitle('Files')
-    expect(iframe).toHaveClass('absolute', 'inset-0', 'block', 'h-full', 'w-full')
+    expect(iframe).toHaveClass('block', 'h-full', 'w-full')
     expect(iframe).toHaveAttribute('src', 'http://10.2.247.79:8080/files/')
   })
 

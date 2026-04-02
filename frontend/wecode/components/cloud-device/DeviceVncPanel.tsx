@@ -44,102 +44,95 @@ export function DeviceVncPanel({
   const showFilesTab = !hideFilesTab
   const credentialsText = t('vnc_files_credentials', {
     password: deviceId,
-    defaultValue: `Login: admin, Password: ${deviceId}`,
   })
 
   return (
     <div
-      className={`flex flex-col min-h-0 border-l border-border transition-all duration-800 ease-in-out ${isFullscreen ? 'flex-1' : 'w-1/2'}`}
+      className={`flex flex-col overflow-hidden border-l border-border transition-[width,flex] duration-800 ease-in-out ${isFullscreen ? 'flex-1' : 'w-1/2'}`}
     >
-      <div className="flex min-h-0 flex-1 flex-col">
-        <div className="flex items-center justify-between gap-3 border-b border-border bg-surface px-4 py-2">
-          <div className="flex min-w-0 items-center gap-3">
-            <h3 className="shrink-0 text-sm font-medium text-text-primary">
-              {title || t('vnc_panel_title')}
-            </h3>
-            <div
-              className="inline-flex h-8 items-center justify-center rounded-lg bg-base p-1 text-text-muted"
-              role="tablist"
-              aria-label={t('vnc_panel_title')}
+      <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border bg-surface px-4 py-2">
+        <div className="flex min-w-0 items-center gap-3">
+          <h3 className="shrink-0 text-sm font-medium text-text-primary">
+            {title || t('vnc_panel_title')}
+          </h3>
+          <div
+            className="inline-flex h-8 items-center justify-center rounded-lg bg-base p-1 text-text-muted"
+            role="tablist"
+            aria-label={t('vnc_panel_title')}
+          >
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab === 'desktop'}
+              data-testid="vnc-desktop-tab"
+              onClick={() => setActiveTab('desktop')}
+              className={`inline-flex h-7 items-center justify-center whitespace-nowrap rounded-md px-2.5 text-xs font-medium transition-all ${
+                activeTab === 'desktop'
+                  ? 'bg-base text-text-primary shadow'
+                  : 'text-text-secondary hover:bg-base/50 hover:text-text-primary'
+              }`}
             >
+              {t('vnc_desktop_tab')}
+            </button>
+            {showFilesTab && (
               <button
                 type="button"
                 role="tab"
-                aria-selected={activeTab === 'desktop'}
-                data-testid="vnc-desktop-tab"
-                onClick={() => setActiveTab('desktop')}
+                aria-selected={activeTab === 'files'}
+                data-testid="vnc-files-tab"
+                onClick={() => setActiveTab('files')}
                 className={`inline-flex h-7 items-center justify-center whitespace-nowrap rounded-md px-2.5 text-xs font-medium transition-all ${
-                  activeTab === 'desktop'
+                  activeTab === 'files'
                     ? 'bg-base text-text-primary shadow'
                     : 'text-text-secondary hover:bg-base/50 hover:text-text-primary'
                 }`}
               >
-                {t('vnc_desktop_tab')}
-              </button>
-              {showFilesTab && (
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={activeTab === 'files'}
-                  data-testid="vnc-files-tab"
-                  onClick={() => setActiveTab('files')}
-                  className={`inline-flex h-7 items-center justify-center whitespace-nowrap rounded-md px-2.5 text-xs font-medium transition-all ${
-                    activeTab === 'files'
-                      ? 'bg-base text-text-primary shadow'
-                      : 'text-text-secondary hover:bg-base/50 hover:text-text-primary'
-                  }`}
-                >
-                  {t('vnc_files_tab')}
-                </button>
-              )}
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            {onToggleFullscreen && (
-              <button
-                onClick={onToggleFullscreen}
-                className="flex h-8 w-8 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-hover hover:text-text-primary"
-                title={
-                  isFullscreen
-                    ? exitFullscreenLabel || 'Exit Fullscreen'
-                    : fullscreenLabel || 'Fullscreen'
-                }
-                data-testid="vnc-fullscreen-button"
-              >
-                {isFullscreen ? (
-                  <Minimize2 className="h-5 w-5" />
-                ) : (
-                  <Maximize2 className="h-5 w-5" />
-                )}
+                {t('vnc_files_tab')}
               </button>
             )}
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          {onToggleFullscreen && (
             <button
-              onClick={onClose}
+              onClick={onToggleFullscreen}
               className="flex h-8 w-8 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-hover hover:text-text-primary"
-              title={closeLabel || 'Close'}
-              data-testid="vnc-close-button"
+              title={
+                isFullscreen
+                  ? exitFullscreenLabel || 'Exit Fullscreen'
+                  : fullscreenLabel || 'Fullscreen'
+              }
+              data-testid="vnc-fullscreen-button"
             >
-              <X className="h-5 w-5" />
+              {isFullscreen ? <Minimize2 className="h-5 w-5" /> : <Maximize2 className="h-5 w-5" />}
             </button>
-          </div>
-        </div>
-
-        {activeTab === 'files' && (
-          <div
-            className="shrink-0 border-b border-border bg-surface px-4 py-2"
-            data-testid="cloud-device-files-credentials"
-          >
-            <p className="text-xs font-medium text-text-primary">{credentialsText}</p>
-          </div>
-        )}
-
-        <div className="flex min-h-0 flex-1 flex-col">
-          {activeTab === 'desktop' ? (
-            <VncViewer deviceId={deviceId} />
-          ) : (
-            <CloudDeviceFilesViewer deviceId={deviceId} isActive />
           )}
+          <button
+            onClick={onClose}
+            className="flex h-8 w-8 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-hover hover:text-text-primary"
+            title={closeLabel || 'Close'}
+            data-testid="vnc-close-button"
+          >
+            <X className="h-5 w-5" />
+          </button>
         </div>
+      </div>
+
+      {activeTab === 'files' && (
+        <div
+          className="shrink-0 border-b border-border bg-surface px-4 py-2"
+          data-testid="cloud-device-files-credentials"
+        >
+          <p className="text-xs font-medium text-text-primary">{credentialsText}</p>
+        </div>
+      )}
+
+      <div className="relative min-h-0 flex-1">
+        {activeTab === 'desktop' ? (
+          <VncViewer deviceId={deviceId} />
+        ) : (
+          <CloudDeviceFilesViewer deviceId={deviceId} isActive />
+        )}
       </div>
     </div>
   )

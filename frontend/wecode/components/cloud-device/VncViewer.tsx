@@ -125,7 +125,7 @@ export function VncViewer({ deviceId, className = '' }: VncViewerProps) {
   }, [connect])
 
   return (
-    <div className={`relative flex flex-col flex-1 min-h-0 bg-[#1a1a1a] ${className}`}>
+    <div className={`absolute inset-0 flex flex-col bg-[#1a1a1a] ${className}`}>
       {/* VNC canvas container */}
       <div
         ref={containerRef}

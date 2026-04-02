@@ -60,7 +60,7 @@ export function CloudDeviceFilesViewer({ deviceId, isActive }: CloudDeviceFilesV
   if (status === 'loading') {
     return (
       <div
-        className="flex flex-1 items-center justify-center bg-base"
+        className="absolute inset-0 flex items-center justify-center bg-base"
         data-testid="cloud-device-files-loading"
       >
         <div className="text-center">
@@ -74,7 +74,7 @@ export function CloudDeviceFilesViewer({ deviceId, isActive }: CloudDeviceFilesV
   if (!fileConfig?.available || !fileConfig.files_url) {
     return (
       <div
-        className="flex flex-1 items-center justify-center bg-base px-6"
+        className="absolute inset-0 flex items-center justify-center bg-base px-6"
         data-testid="cloud-device-files-unavailable"
       >
         <div className="max-w-sm text-center">
@@ -88,13 +88,13 @@ export function CloudDeviceFilesViewer({ deviceId, isActive }: CloudDeviceFilesV
 
   return (
     <div
-      className="relative min-h-0 flex-1 overflow-hidden bg-base"
+      className="absolute inset-0 overflow-hidden bg-base"
       data-testid="cloud-device-files-frame"
     >
       <iframe
         title={t('vnc_files_tab')}
         src={fileConfig.files_url}
-        className="absolute inset-0 block h-full w-full border-0 bg-base"
+        className="block h-full w-full border-0 bg-base"
         data-testid="cloud-device-files-iframe"
       />
     </div>
