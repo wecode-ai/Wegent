@@ -8,6 +8,7 @@ WeCode schemas package.
 
 from wecode.schemas.cloud_device import (
     CloudDeviceConfig,
+    CloudDeviceFileConfigResponse,
     CloudDeviceResponse,
     NevisSandboxStatus,
 )
@@ -37,6 +38,7 @@ from wecode.schemas.evaluation import (
 __all__ = [
     # Cloud device schemas
     "CloudDeviceConfig",
+    "CloudDeviceFileConfigResponse",
     "CloudDeviceResponse",
     "NevisSandboxStatus",
     # Evaluation schemas

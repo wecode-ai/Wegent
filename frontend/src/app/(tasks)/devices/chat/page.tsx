@@ -240,6 +240,7 @@ export default function DeviceChatPage() {
             {showVncPanel && (
               <DeviceVncPanel
                 deviceId={selectedDeviceId}
+                hideFilesTab={isOpenClaw}
                 onClose={() => setIsVncOpen(false)}
                 title={t('vnc_panel_title')}
                 closeLabel={t('vnc_close')}
