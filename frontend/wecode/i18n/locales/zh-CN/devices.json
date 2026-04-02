@@ -61,6 +61,7 @@
   "vnc_desktop_tab": "桌面",
   "vnc_files_tab": "文件",
   "vnc_files_loading": "正在加载文件服务...",
+  "vnc_files_credentials": "登录账号：admin，密码：{{password}}",
   "vnc_files_unavailable": "文件服务不可用",
   "vnc_files_unavailable_hint": "当前云设备的 8080 端口未提供 /files/ 服务或暂时无法访问。",
   "vnc_fullscreen": "全屏",

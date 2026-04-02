@@ -28,7 +28,8 @@ import { Monitor, WifiOff } from 'lucide-react'
 import { ChatArea } from '@/features/tasks/components/chat'
 import { TaskParamSync, DeviceTaskSync, DeviceParamSync } from '@/features/tasks/components/params'
 import { isOpenClawDevice } from '@/features/devices/utils/device-status'
-import { CloudDeviceVncPanel, DeviceVncPanel } from '@wecode/components/cloud-device'
+import { CloudDeviceVncPanel } from '@wecode/components/cloud-device/CloudDeviceVncPanel'
+import { DeviceVncPanel } from '@wecode/components/cloud-device/DeviceVncPanel'
 import { useDeviceVncState } from '@wecode/hooks'
 import { getPreferredExecutionDevice } from '@/features/devices/utils/execution-target'
 
@@ -240,6 +241,7 @@ export default function DeviceChatPage() {
             {showVncPanel && (
               <DeviceVncPanel
                 deviceId={selectedDeviceId}
+                hideFilesTab={isOpenClaw}
                 onClose={() => setIsVncOpen(false)}
                 title={t('vnc_panel_title')}
                 closeLabel={t('vnc_close')}

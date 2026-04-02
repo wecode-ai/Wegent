@@ -11,7 +11,7 @@ import { cloudDeviceApis } from '@wecode/apis'
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
-    t: (key: string) =>
+    t: (key: string, options?: Record<string, string>) =>
       (
         ({
           vnc_panel_title: 'Remote Desktop',
@@ -19,6 +19,7 @@ jest.mock('@/hooks/useTranslation', () => ({
           vnc_desktop_tab: 'Desktop',
           vnc_files_loading: 'Loading files service...',
           vnc_files_unavailable: 'Files service unavailable',
+          vnc_files_credentials: `Login admin, password ${options?.password ?? ''}`,
         }) as Record<string, string>
       )[key] ?? key,
   }),
@@ -58,6 +59,8 @@ describe('DeviceVncPanel', () => {
       expect(cloudDeviceApis.getFileConfig).toHaveBeenCalledWith('device-1')
     })
 
+    expect(screen.getByTestId('cloud-device-files-credentials')).toBeInTheDocument()
+    expect(screen.getByText('Login admin, password device-1')).toBeInTheDocument()
     expect(screen.getByTestId('cloud-device-files-frame')).toHaveClass(
       'relative',
       'min-h-0',
@@ -84,6 +87,8 @@ describe('DeviceVncPanel', () => {
     await user.click(screen.getByRole('tab', { name: 'Files' }))
 
     expect(await screen.findByText('Files service unavailable')).toBeInTheDocument()
+    expect(screen.getByTestId('cloud-device-files-credentials')).toBeInTheDocument()
+    expect(screen.getByText('Login admin, password device-1')).toBeInTheDocument()
     expect(screen.queryByTitle('Files')).not.toBeInTheDocument()
   })
 })
