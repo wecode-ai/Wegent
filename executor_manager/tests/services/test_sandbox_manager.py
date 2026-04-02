@@ -273,6 +273,17 @@ class TestSandboxManager:
 
         assert task["skill_identity_token"] == "skill-jwt"
 
+    def test_build_sandbox_task_propagates_skip_git_clone(
+        self, sandbox_manager_with_mock_redis, sample_sandbox
+    ):
+        """Test building task forwards skip_git_clone for recovery restores."""
+        manager = sandbox_manager_with_mock_redis
+        sample_sandbox.metadata["skip_git_clone"] = True
+
+        task = manager._build_sandbox_task(sample_sandbox)
+
+        assert task["skip_git_clone"] is True
+
     # ----- get_sandbox Tests -----
 
     @pytest.mark.asyncio

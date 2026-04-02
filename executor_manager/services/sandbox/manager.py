@@ -344,6 +344,12 @@ class SandboxManager(metaclass=SingletonMeta):
         if auth_token:
             task["auth_token"] = auth_token
 
+        # Add skip_git_clone flag for workspace recovery scenarios
+        # When restoring from archive, we skip git clone to avoid conflicts
+        skip_git_clone = sandbox.metadata.get("skip_git_clone", False)
+        if skip_git_clone:
+            task["skip_git_clone"] = True
+
         skill_identity_token = sandbox.metadata.get("skill_identity_token")
         if skill_identity_token:
             task["skill_identity_token"] = skill_identity_token

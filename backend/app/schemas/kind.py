@@ -535,6 +535,32 @@ class TaskApp(BaseModel):
     previewUrl: str
 
 
+class ArchiveInfo(BaseModel):
+    """Workspace archive information for Pod recovery after deletion.
+
+    Stores metadata about archived workspace files that can be restored
+    when a user sends a message after the executor Pod has been deleted.
+    """
+
+    storageKey: Optional[str] = Field(
+        None,
+        description="MinIO storage key (e.g., 'workspace-archives/12345/archive.tar.gz')",
+    )
+    archivedAt: Optional[datetime] = Field(
+        None, description="Timestamp when the workspace was archived"
+    )
+    expiresAt: Optional[datetime] = Field(
+        None, description="Timestamp when the archive expires (30 days after archiving)"
+    )
+    sizeBytes: Optional[int] = Field(None, description="Archive file size in bytes")
+    sessionFileIncluded: bool = Field(
+        False, description="Whether .claude_session_id file is included in the archive"
+    )
+    gitIncluded: bool = Field(
+        False, description="Whether .git directory is included in the archive"
+    )
+
+
 class TaskStatus(Status):
     """Task status"""
 
@@ -548,6 +574,11 @@ class TaskStatus(Status):
     completedAt: Optional[datetime] = None
     subTasks: Optional[List[Dict[str, Any]]] = None
     app: Optional[TaskApp] = None  # App preview information
+    archive: Optional[ArchiveInfo] = Field(
+        None,
+        description="Workspace archive information for Pod recovery after deletion. "
+        "Set when executor Pod is deleted after task completion.",
+    )
 
 
 class Task(BaseModel):

@@ -493,8 +493,13 @@ def create_assistant_subtask(
     # Resolve executor_name from previous subtasks for container reuse
     executor_name = ""
     executor_namespace = ""
+    executor_deleted_at = False
     previous = (
-        db.query(Subtask.executor_name, Subtask.executor_namespace)
+        db.query(
+            Subtask.executor_name,
+            Subtask.executor_namespace,
+            Subtask.executor_deleted_at,
+        )
         .filter(
             Subtask.task_id == task_id,
             Subtask.role == SubtaskRole.ASSISTANT,
@@ -507,6 +512,7 @@ def create_assistant_subtask(
     if previous:
         executor_name = previous.executor_name or ""
         executor_namespace = previous.executor_namespace or ""
+        executor_deleted_at = bool(previous.executor_deleted_at)
 
     # Note: completed_at is set to a placeholder value because the DB column doesn't allow NULL
     # It will be updated when the stream completes
@@ -519,6 +525,7 @@ def create_assistant_subtask(
         role=SubtaskRole.ASSISTANT,
         executor_namespace=executor_namespace,
         executor_name=executor_name,
+        executor_deleted_at=executor_deleted_at,
         prompt="",
         status=SubtaskStatus.PENDING,
         progress=0,
