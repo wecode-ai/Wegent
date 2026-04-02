@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from app.core.security import get_password_hash
 from app.models.kind import Kind
 from app.models.namespace import Namespace
-from app.models.resource_member import MemberStatus, ResourceMember
+from app.models.resource_member import MemberStatus, ResourceMember, ResourceRole
 from app.models.user import User
 from app.schemas.knowledge import (
     DocumentSourceType,
@@ -88,6 +88,30 @@ def _get_kind(test_db: Session, knowledge_base_id: int) -> Kind:
     )
     assert kb is not None
     return kb
+
+
+def _add_kb_member(
+    test_db: Session,
+    knowledge_base_id: int,
+    user: User,
+    role: ResourceRole,
+    invited_by_user_id: int,
+) -> ResourceMember:
+    member = ResourceMember(
+        resource_type="KnowledgeBase",
+        resource_id=knowledge_base_id,
+        user_id=user.id,
+        role=role.value,
+        status=MemberStatus.APPROVED.value,
+        invited_by_user_id=invited_by_user_id,
+        share_link_id=0,
+        reviewed_by_user_id=invited_by_user_id,
+        copied_resource_id=0,
+    )
+    test_db.add(member)
+    test_db.commit()
+    test_db.refresh(member)
+    return member
 
 
 @pytest.mark.unit
@@ -198,3 +222,88 @@ def test_developer_can_add_document_to_owned_namespace_kb(test_db: Session) -> N
 
     assert document.kind_id == knowledge_base_id
     assert document.user_id == developer.id
+
+
+@pytest.mark.unit
+def test_explicit_kb_maintainer_can_manage_group_kb_without_namespace_membership(
+    test_db: Session,
+) -> None:
+    owner = _create_user(test_db, "owner")
+    collaborator = _create_user(test_db, "kb-maintainer")
+    namespace = _create_namespace(test_db, owner, "kb-shared-space")
+    _add_member(test_db, namespace, owner, GroupRole.Owner, owner.id)
+
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(name="shared-kb", namespace=namespace.name),
+    )
+    _add_kb_member(
+        test_db,
+        knowledge_base_id,
+        collaborator,
+        ResourceRole.Maintainer,
+        owner.id,
+    )
+
+    assert KnowledgeService.can_manage_knowledge_base(
+        test_db, knowledge_base_id, collaborator.id
+    )
+
+    updated = KnowledgeService.update_knowledge_base(
+        test_db,
+        knowledge_base_id,
+        collaborator.id,
+        KnowledgeBaseUpdate(description="updated by explicit maintainer"),
+    )
+    assert updated is not None
+    assert updated.json["spec"]["description"] == "updated by explicit maintainer"
+
+    document = KnowledgeService.create_document(
+        test_db,
+        knowledge_base_id,
+        collaborator.id,
+        KnowledgeDocumentCreate(
+            name="kb-maintainer-doc",
+            file_extension="md",
+            file_size=16,
+            source_type=DocumentSourceType.TEXT,
+        ),
+    )
+    assert document.kind_id == knowledge_base_id
+    assert document.user_id == collaborator.id
+
+
+@pytest.mark.unit
+def test_explicit_kb_developer_cannot_manage_group_kb_owned_by_others(
+    test_db: Session,
+) -> None:
+    owner = _create_user(test_db, "owner")
+    collaborator = _create_user(test_db, "kb-developer")
+    namespace = _create_namespace(test_db, owner, "kb-dev-space")
+    _add_member(test_db, namespace, owner, GroupRole.Owner, owner.id)
+
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(name="shared-kb", namespace=namespace.name),
+    )
+    _add_kb_member(
+        test_db,
+        knowledge_base_id,
+        collaborator,
+        ResourceRole.Developer,
+        owner.id,
+    )
+
+    assert not KnowledgeService.can_manage_knowledge_base(
+        test_db, knowledge_base_id, collaborator.id
+    )
+
+    with pytest.raises(ValueError, match="permission"):
+        KnowledgeService.update_knowledge_base(
+            test_db,
+            knowledge_base_id,
+            collaborator.id,
+            KnowledgeBaseUpdate(description="developer should not edit kb settings"),
+        )
