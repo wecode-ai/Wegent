@@ -7,10 +7,11 @@ Skill adapter service for managing Skills using kinds table
 """
 
 import logging
+from copy import deepcopy
 from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException
-from sqlalchemy import and_
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -24,6 +25,186 @@ logger = logging.getLogger(__name__)
 
 class SkillKindsService:
     """Service for managing Skills in kinds table"""
+
+    @staticmethod
+    def _get_ghost_spec(ghost: Kind) -> Dict[str, Any]:
+        """Return the mutable Ghost spec dictionary."""
+        ghost_json = ghost.json if isinstance(ghost.json, dict) else {}
+        spec = ghost_json.get("spec", {})
+        return spec if isinstance(spec, dict) else {}
+
+    @staticmethod
+    def _get_skill_ref_map(spec: Dict[str, Any], key: str) -> Dict[str, Dict[str, Any]]:
+        """Return a normalized skill ref mapping from Ghost spec."""
+        raw_value = spec.get(key, {})
+        if isinstance(raw_value, dict):
+            return raw_value
+        return {}
+
+    @staticmethod
+    def _get_skill_name_list(spec: Dict[str, Any], key: str) -> List[str]:
+        """Return a normalized skill name list from Ghost spec."""
+        raw_value = spec.get(key, [])
+        if isinstance(raw_value, list):
+            return [value for value in raw_value if isinstance(value, str)]
+        return []
+
+    @staticmethod
+    def _ref_matches_skill(ref_meta: Any, skill: Kind) -> bool:
+        """Check whether a Ghost ref points to the target Skill row."""
+        return isinstance(ref_meta, dict) and ref_meta.get("skill_id") == skill.id
+
+    def _ghost_references_skill(self, ghost: Kind, skill: Kind) -> bool:
+        """Check whether a Ghost references the exact Skill.
+
+        Prefer exact skill_id matches from skill_refs/preload_skill_refs.
+        Only fall back to legacy name-based matching when no explicit refs exist
+        for the same skill name.
+        """
+        spec = self._get_ghost_spec(ghost)
+        skill_name = skill.name
+        skill_refs = self._get_skill_ref_map(spec, "skill_refs")
+        preload_skill_refs = self._get_skill_ref_map(spec, "preload_skill_refs")
+
+        if self._ref_matches_skill(skill_refs.get(skill_name), skill):
+            return True
+        if self._ref_matches_skill(preload_skill_refs.get(skill_name), skill):
+            return True
+
+        has_explicit_ref = skill_name in skill_refs or skill_name in preload_skill_refs
+        if has_explicit_ref:
+            return False
+
+        ghost_skills = self._get_skill_name_list(spec, "skills")
+        ghost_preload_skills = self._get_skill_name_list(spec, "preload_skills")
+        return skill_name in ghost_skills or skill_name in ghost_preload_skills
+
+    def _remove_ghost_skill_reference(self, ghost: Kind, skill: Kind) -> bool:
+        """Remove an exact Skill reference from a Ghost.
+
+        Returns True when the Ghost was mutated.
+        """
+        ghost_json = deepcopy(ghost.json) if isinstance(ghost.json, dict) else {}
+        spec = ghost_json.get("spec", {})
+        if not isinstance(spec, dict):
+            return False
+
+        skill_name = skill.name
+        skill_refs = self._get_skill_ref_map(spec, "skill_refs")
+        preload_skill_refs = self._get_skill_ref_map(spec, "preload_skill_refs")
+
+        removed = False
+        if self._ref_matches_skill(skill_refs.get(skill_name), skill):
+            spec["skills"] = [
+                name
+                for name in self._get_skill_name_list(spec, "skills")
+                if name != skill_name
+            ]
+            spec["skill_refs"] = {
+                name: ref for name, ref in skill_refs.items() if name != skill_name
+            }
+            removed = True
+
+        if self._ref_matches_skill(preload_skill_refs.get(skill_name), skill):
+            spec["preload_skills"] = [
+                name
+                for name in self._get_skill_name_list(spec, "preload_skills")
+                if name != skill_name
+            ]
+            spec["preload_skill_refs"] = {
+                name: ref
+                for name, ref in preload_skill_refs.items()
+                if name != skill_name
+            }
+            removed = True
+
+        has_explicit_ref = skill_name in skill_refs or skill_name in preload_skill_refs
+        if not removed and not has_explicit_ref:
+            current_skills = self._get_skill_name_list(spec, "skills")
+            current_preload_skills = self._get_skill_name_list(spec, "preload_skills")
+            if skill_name in current_skills:
+                spec["skills"] = [name for name in current_skills if name != skill_name]
+                removed = True
+            if skill_name in current_preload_skills:
+                spec["preload_skills"] = [
+                    name for name in current_preload_skills if name != skill_name
+                ]
+                removed = True
+
+        if removed:
+            ghost.json = ghost_json
+            flag_modified(ghost, "json")
+
+        return removed
+
+    def _list_candidate_ghosts_for_skill(self, db: Session, skill: Kind) -> List[Kind]:
+        """List Ghosts that may reference the given Skill.
+
+        Personal skills are only visible to the owner's Ghosts.
+        Group skills are shared within the namespace, so inspect all active Ghosts
+        in that namespace regardless of owner.
+        """
+        query = db.query(Kind).filter(Kind.kind == "Ghost", Kind.is_active == True)
+        if skill.namespace == "default":
+            query = query.filter(Kind.user_id == skill.user_id)
+        else:
+            query = query.filter(
+                or_(Kind.namespace == skill.namespace, Kind.user_id == skill.user_id)
+            )
+        return query.all()
+
+    def _get_candidate_ghost_for_skill(
+        self, db: Session, skill: Kind, ghost_id: int
+    ) -> Optional[Kind]:
+        """Return a specific Ghost if it is in the candidate scope for this Skill."""
+        query = db.query(Kind).filter(
+            Kind.id == ghost_id, Kind.kind == "Ghost", Kind.is_active == True
+        )
+        if skill.namespace == "default":
+            query = query.filter(Kind.user_id == skill.user_id)
+        else:
+            query = query.filter(
+                or_(Kind.namespace == skill.namespace, Kind.user_id == skill.user_id)
+            )
+        return query.first()
+
+    def _build_skill_references_payload(
+        self, db: Session, skill: Kind
+    ) -> Dict[str, Any]:
+        """Build the referenced Ghost list payload for a Skill."""
+        ghosts = self._list_candidate_ghosts_for_skill(db, skill)
+        referenced_ghosts = []
+        for ghost in ghosts:
+            if self._ghost_references_skill(ghost, skill):
+                referenced_ghosts.append(
+                    {"id": ghost.id, "name": ghost.name, "namespace": ghost.namespace}
+                )
+
+        return {
+            "skill_id": skill.id,
+            "skill_name": skill.name,
+            "referenced_ghosts": referenced_ghosts,
+        }
+
+    def get_skill_references(
+        self, db: Session, *, skill_id: int, user_id: int
+    ) -> Dict[str, Any]:
+        """Return Ghost references for a Skill."""
+        skill_kind = (
+            db.query(Kind)
+            .filter(
+                Kind.id == skill_id,
+                Kind.user_id == user_id,
+                Kind.kind == "Skill",
+                Kind.is_active == True,
+            )
+            .first()
+        )
+
+        if not skill_kind:
+            raise HTTPException(status_code=404, detail="Skill not found")
+
+        return self._build_skill_references_payload(db, skill_kind)
 
     def create_skill(
         self,
@@ -485,25 +666,53 @@ class SkillKindsService:
             raise HTTPException(status_code=404, detail="Skill not found")
 
         skill_name = skill_kind.name
+        logger.info(
+            "[delete_skill] Checking references for skill_id=%s skill_name=%s namespace=%s owner_user_id=%s",
+            skill_kind.id,
+            skill_kind.name,
+            skill_kind.namespace,
+            skill_kind.user_id,
+        )
 
         # Check if any Ghost references this Skill
-        ghosts = (
-            db.query(Kind)
-            .filter(
-                Kind.user_id == user_id, Kind.kind == "Ghost", Kind.is_active == True
-            )
-            .all()
+        ghosts = self._list_candidate_ghosts_for_skill(db, skill_kind)
+        logger.info(
+            "[delete_skill] Scanning %s active ghosts for skill_id=%s namespace=%s",
+            len(ghosts),
+            skill_kind.id,
+            skill_kind.namespace,
         )
 
         referenced_ghosts = []
         for ghost in ghosts:
-            ghost_skills = ghost.json.get("spec", {}).get("skills", [])
-            if skill_name in ghost_skills:
+            spec = self._get_ghost_spec(ghost)
+            skill_refs = self._get_skill_ref_map(spec, "skill_refs")
+            preload_skill_refs = self._get_skill_ref_map(spec, "preload_skill_refs")
+            ghost_skills = self._get_skill_name_list(spec, "skills")
+            ghost_preload_skills = self._get_skill_name_list(spec, "preload_skills")
+            is_referenced = self._ghost_references_skill(ghost, skill_kind)
+            logger.info(
+                "[delete_skill] Ghost reference check: ghost_id=%s ghost_name=%s ghost_namespace=%s matches=%s has_skill_name=%s has_preload_skill_name=%s skill_ref=%s preload_skill_ref=%s",
+                ghost.id,
+                ghost.name,
+                ghost.namespace,
+                is_referenced,
+                skill_name in ghost_skills,
+                skill_name in ghost_preload_skills,
+                skill_refs.get(skill_name),
+                preload_skill_refs.get(skill_name),
+            )
+            if is_referenced:
                 referenced_ghosts.append(
                     {"id": ghost.id, "name": ghost.name, "namespace": ghost.namespace}
                 )
 
         if referenced_ghosts:
+            logger.info(
+                "[delete_skill] Blocked deletion for skill_id=%s referenced_ghosts=%s",
+                skill_kind.id,
+                referenced_ghosts,
+            )
             raise HTTPException(
                 status_code=400,
                 detail={
@@ -513,6 +722,10 @@ class SkillKindsService:
                     "referenced_ghosts": referenced_ghosts,
                 },
             )
+
+        logger.info(
+            "[delete_skill] No ghost references found for skill_id=%s", skill_kind.id
+        )
 
         # Delete associated SkillBinary (hard delete to free storage)
         db.query(SkillBinary).filter(SkillBinary.kind_id == skill_id).delete()
@@ -557,25 +770,11 @@ class SkillKindsService:
         skill_name = skill_kind.name
 
         # Find all Ghosts that reference this Skill
-        ghosts = (
-            db.query(Kind)
-            .filter(
-                Kind.user_id == user_id, Kind.kind == "Ghost", Kind.is_active == True
-            )
-            .all()
-        )
+        ghosts = self._list_candidate_ghosts_for_skill(db, skill_kind)
 
         affected_ghosts = []
         for ghost in ghosts:
-            ghost_skills = ghost.json.get("spec", {}).get("skills", [])
-            if skill_name in ghost_skills:
-                # Remove the skill reference from Ghost
-                new_skills = [s for s in ghost_skills if s != skill_name]
-                ghost_json = ghost.json.copy()
-                ghost_json["spec"]["skills"] = new_skills
-                ghost.json = ghost_json
-                # Mark JSON field as modified for SQLAlchemy to detect the change
-                flag_modified(ghost, "json")
+            if self._remove_ghost_skill_reference(ghost, skill_kind):
                 affected_ghosts.append(ghost.name)
 
         db.commit()
@@ -617,36 +816,18 @@ class SkillKindsService:
         if not skill_kind:
             raise HTTPException(status_code=404, detail="Skill not found")
 
-        ghost = (
-            db.query(Kind)
-            .filter(
-                Kind.id == ghost_id,
-                Kind.user_id == user_id,
-                Kind.kind == "Ghost",
-                Kind.is_active == True,
-            )
-            .first()
-        )
+        ghost = self._get_candidate_ghost_for_skill(db, skill_kind, ghost_id)
 
         if not ghost:
             raise HTTPException(status_code=404, detail="Ghost not found")
 
-        skill_name = skill_kind.name
-        ghost_skills = ghost.json.get("spec", {}).get("skills", [])
-
-        if skill_name not in ghost_skills:
+        if not self._ghost_references_skill(ghost, skill_kind):
             raise HTTPException(
                 status_code=400,
-                detail=f"Ghost '{ghost.name}' does not reference Skill '{skill_name}'",
+                detail=f"Ghost '{ghost.name}' does not reference Skill '{skill_kind.name}'",
             )
 
-        # Remove the skill reference from Ghost
-        new_skills = [s for s in ghost_skills if s != skill_name]
-        ghost_json = ghost.json.copy()
-        ghost_json["spec"]["skills"] = new_skills
-        ghost.json = ghost_json
-        # Mark JSON field as modified for SQLAlchemy to detect the change
-        flag_modified(ghost, "json")
+        self._remove_ghost_skill_reference(ghost, skill_kind)
 
         db.commit()
 

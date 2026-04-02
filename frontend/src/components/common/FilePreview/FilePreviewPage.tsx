@@ -4,7 +4,7 @@
 
 'use client'
 
-import React, { useState } from 'react'
+import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { Download, X, Code, Eye } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { FilePreview } from './FilePreview'
@@ -12,6 +12,7 @@ import { getPreviewType, formatFileSize } from './utils'
 import { downloadAttachment } from '@/apis/attachments'
 import { ShareButton } from './components'
 import { useTranslation } from '@/hooks/useTranslation'
+import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 
 export interface FilePreviewPageProps {
   /** Attachment ID */
@@ -34,7 +35,7 @@ export interface FilePreviewPageProps {
 
 /**
  * FilePreviewPage - Fullscreen page wrapper for FilePreview
- * Used in /download/shared page
+ * Mobile: auto-hide header on scroll for more content space
  */
 export function FilePreviewPage({
   attachmentId,
@@ -49,7 +50,72 @@ export function FilePreviewPage({
   const previewType = getPreviewType(mimeType, filename)
   const isHtml = previewType === 'html'
   const { t } = useTranslation('common')
+  const isMobile = useIsMobile()
   const [htmlIsSourceMode, setHtmlIsSourceMode] = useState(false)
+
+  // Mobile auto-hide header state
+  const [isHeaderVisible, setIsHeaderVisible] = useState(true)
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
+  const lastScrollTop = useRef(0)
+
+  /**
+   * Handle scroll event for auto-hide header
+   */
+  const handleScroll = useCallback(() => {
+    if (!scrollContainerRef.current || !isMobile) return
+
+    const container = scrollContainerRef.current
+    const scrollTop = container.scrollTop
+    const scrollHeight = container.scrollHeight
+    const clientHeight = container.clientHeight
+
+    // Always show header at the top
+    if (scrollTop < 10) {
+      setIsHeaderVisible(true)
+      lastScrollTop.current = scrollTop
+      return
+    }
+
+    // Always show header at the bottom (allow access to actions)
+    if (scrollTop + clientHeight >= scrollHeight - 10) {
+      setIsHeaderVisible(true)
+      lastScrollTop.current = scrollTop
+      return
+    }
+
+    const scrollDelta = scrollTop - lastScrollTop.current
+
+    // Hide header when scrolling down significantly (> 5px)
+    if (scrollDelta > 5) {
+      setIsHeaderVisible(false)
+    }
+    // Show header when scrolling up
+    else if (scrollDelta < -5) {
+      setIsHeaderVisible(true)
+    }
+
+    lastScrollTop.current = scrollTop
+  }, [isMobile])
+
+  // Reset header visibility when switching between mobile/desktop
+  useEffect(() => {
+    setIsHeaderVisible(true)
+    lastScrollTop.current = 0
+  }, [isMobile])
+
+  // Attach scroll listener to container
+  useEffect(() => {
+    const container = scrollContainerRef.current
+    if (!container || !isMobile) return
+
+    container.addEventListener('scroll', handleScroll, { passive: true })
+
+    return () => {
+      container.removeEventListener('scroll', handleScroll, {
+        passive: true,
+      } as EventListenerOptions)
+    }
+  }, [isMobile, handleScroll])
 
   const handleDownload = async () => {
     if (attachmentId) {
@@ -94,50 +160,76 @@ export function FilePreviewPage({
   }
 
   return (
-    <div className="h-full bg-white dark:bg-gray-900 flex flex-col">
-      {/* Header */}
-      <header className="flex flex-col-reverse sm:flex-row sm:items-center justify-between px-4 py-3 border-b border-border dark:border-gray-700 bg-white dark:bg-gray-900 sticky top-0 z-10 gap-3">
-        <div className="flex items-center gap-3 min-w-0">
+    <div className="h-full bg-white dark:bg-gray-900 flex flex-col overflow-hidden">
+      {/* Header - Auto-hide on mobile when scrolling down */}
+      <header
+        className={`
+          flex-none flex items-center px-4 py-2
+          border-b border-border dark:border-gray-700
+          bg-white dark:bg-gray-900 gap-2 z-20
+          ${
+            isMobile
+              ? 'absolute top-0 left-0 right-0 z-50 shadow-sm justify-end'
+              : 'sticky top-0 justify-between'
+          }
+        `}
+        style={
+          isMobile
+            ? {
+                transform: `translateY(${isHeaderVisible ? 0 : -100}%)`,
+                transition: 'transform 250ms ease-out',
+              }
+            : undefined
+        }
+      >
+        {/* File info - desktop only (>=768px) */}
+        <div className={`items-center gap-3 min-w-0 ${isMobile ? 'hidden' : 'flex'}`}>
           <span className="text-2xl">{getFileIcon()}</span>
           <div className="min-w-0">
-            <h1 className="font-medium text-text-primary truncate max-w-[200px] sm:max-w-[300px] md:max-w-[500px]">
+            <h1 className="font-medium text-text-primary truncate max-w-[200px] md:max-w-[300px] lg:max-w-[500px]">
               {filename}
             </h1>
             {fileSize && <p className="text-xs text-text-secondary">{formatFileSize(fileSize)}</p>}
           </div>
         </div>
-        <div className="flex items-center justify-end sm:justify-start gap-2 flex-shrink-0 overflow-x-auto pb-1 sm:pb-0">
-          {/* HTML Preview Controls - only show for HTML files */}
+
+        <div className="flex items-center gap-2 flex-shrink-0 overflow-x-auto">
+          {/* HTML Preview Controls - Segmented toggle for preview/source mode */}
           {isHtml && (
-            <div className="flex items-center bg-muted/50 rounded-md p-0.5">
-              <Button
-                variant="ghost"
-                size="sm"
+            <div className="relative flex items-center bg-muted/50 rounded-lg p-1">
+              {/* Sliding background indicator */}
+              <div
+                className="absolute h-[calc(100%-8px)] bg-primary rounded-md shadow-sm will-change-transform"
+                style={{
+                  width: 'calc(50% - 4px)',
+                  left: htmlIsSourceMode ? 'calc(50% + 2px)' : '4px',
+                  transition: 'left 200ms ease-out',
+                }}
+              />
+              {/* Preview button */}
+              <button
+                type="button"
                 onClick={() => setHtmlIsSourceMode(false)}
-                className={`rounded-sm border-0 h-9 px-2 sm:px-3 text-sm font-medium gap-1.5 ${
-                  !htmlIsSourceMode
-                    ? 'bg-primary text-white shadow-sm hover:bg-primary'
-                    : 'bg-white text-text-primary hover:bg-white'
+                className={`relative z-10 flex items-center gap-1.5 h-8 px-3 text-sm font-medium rounded-md transition-colors duration-200 ${
+                  !htmlIsSourceMode ? 'text-white' : 'text-text-primary hover:text-text-primary'
                 }`}
                 title={t('actions.preview')}
               >
                 <Eye className="w-4 h-4" />
                 <span className="hidden sm:inline">{t('actions.preview')}</span>
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
+              </button>
+              {/* Source button */}
+              <button
+                type="button"
                 onClick={() => setHtmlIsSourceMode(true)}
-                className={`rounded-sm border-0 h-9 px-2 sm:px-3 text-sm font-medium gap-1.5 ${
-                  htmlIsSourceMode
-                    ? 'bg-primary text-white shadow-sm hover:bg-primary'
-                    : 'bg-white text-text-primary hover:bg-white'
+                className={`relative z-10 flex items-center gap-1.5 h-8 px-3 text-sm font-medium rounded-md transition-colors duration-200 ${
+                  htmlIsSourceMode ? 'text-white' : 'text-text-primary hover:text-text-primary'
                 }`}
                 title={t('attachment.html.source_mode')}
               >
                 <Code className="w-4 h-4" />
                 <span className="hidden sm:inline">{t('attachment.html.source_mode')}</span>
-              </Button>
+              </button>
             </div>
           )}
           {/* Share button - only show if user can share (owner only) */}
@@ -174,8 +266,16 @@ export function FilePreviewPage({
         </div>
       </header>
 
+      {/* Spacer for mobile absolute header - collapses when header is hidden */}
+      {isMobile && (
+        <div
+          className="flex-shrink-0 transition-[height] duration-250 ease-out"
+          style={{ height: isHeaderVisible ? 52 : 0 }}
+        />
+      )}
+
       {/* Preview Area */}
-      <main className="flex-1 overflow-hidden">
+      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto">
         <FilePreview
           attachmentId={attachmentId}
           fileBlob={fileBlob}
@@ -185,11 +285,11 @@ export function FilePreviewPage({
           shareToken={shareToken}
           onDownload={handleDownload}
           onClose={onClose}
-          showToolbar={true}
+          showToolbar={!isMobile}
           htmlIsSourceMode={htmlIsSourceMode}
           onHtmlViewModeChange={setHtmlIsSourceMode}
         />
-      </main>
+      </div>
     </div>
   )
 }

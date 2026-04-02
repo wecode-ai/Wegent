@@ -532,6 +532,22 @@
       "addMembersFailed": "Failed to add group members. You can add them manually in the group chat.",
       "bindKbPartialFail": "Some knowledge bases failed to bind ({{failed}}/{{total}})",
       "bindKbFailed": "Failed to bind knowledge bases"
+    },
+    "migrate": {
+      "title": "Migrate to Group",
+      "description": "Migrate this personal knowledge base to a target group. After migration, the knowledge base will belong to the target group.",
+      "targetGroup": "Target Group",
+      "selectGroupPlaceholder": "Select a group to migrate to",
+      "noAvailableGroups": "No available groups. Please join or create a group first.",
+      "permissionNote": "You need to be a maintainer of the target group to perform migration",
+      "migrationNote": "After migration, the knowledge base will move from personal to group space. Original sharing permissions will be preserved.",
+      "selectGroupRequired": "Please select a target group",
+      "invalidGroup": "Invalid target group",
+      "migrating": "Migrating...",
+      "confirm": "Confirm Migration",
+      "sourceKnowledgeBase": "Source Knowledge Base",
+      "success": "Knowledge base migrated successfully",
+      "failed": "Failed to migrate knowledge base"
     }
   },
   "add_repository": "Add Repository",

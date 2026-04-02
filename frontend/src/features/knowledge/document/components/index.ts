@@ -4,6 +4,7 @@
 
 export { KnowledgeBaseCard } from './KnowledgeBaseCard'
 export { GroupCard } from './GroupCard'
+export { MigrateKnowledgeBaseDialog } from './MigrateKnowledgeBaseDialog'
 export { KnowledgeDocumentPage } from './KnowledgeDocumentPage'
 export { KnowledgeDocumentPageDesktop } from './KnowledgeDocumentPageDesktop'
 export { KnowledgeDocumentPageMobile } from './KnowledgeDocumentPageMobile'

@@ -14,6 +14,7 @@ import {
   Database,
   Share2,
   MessageSquarePlus,
+  FolderOutput,
 } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -26,10 +27,12 @@ interface KnowledgeBaseCardProps {
   onDelete?: () => void
   onShare?: () => void
   onCreateGroupChat?: () => void
+  onMigrate?: () => void
   canEdit?: boolean
   canDelete?: boolean
   canShare?: boolean
   canCreateGroupChat?: boolean
+  canMigrate?: boolean
 }
 
 export function KnowledgeBaseCard({
@@ -39,10 +42,12 @@ export function KnowledgeBaseCard({
   onDelete,
   onShare,
   onCreateGroupChat,
+  onMigrate,
   canEdit = true,
   canDelete = true,
   canShare = false,
   canCreateGroupChat = false,
+  canMigrate = false,
 }: KnowledgeBaseCardProps) {
   const { t } = useTranslation()
 
@@ -116,6 +121,20 @@ export function KnowledgeBaseCard({
         </div>
         {/* Action icons */}
         <div className="flex items-center gap-1">
+          {canMigrate && onMigrate && (
+            <button
+              type="button"
+              className="h-11 min-w-[44px] flex items-center justify-center rounded-md text-text-muted hover:text-primary hover:bg-primary/10 transition-colors md:opacity-0 md:group-hover:opacity-100 focus-visible:opacity-100"
+              onClick={e => {
+                e.stopPropagation()
+                onMigrate()
+              }}
+              title={t('knowledge:document.migrate.title', '迁移到群组')}
+              aria-label={t('knowledge:document.migrate.title', '迁移到群组')}
+            >
+              <FolderOutput className="w-4 h-4" />
+            </button>
+          )}
           {canCreateGroupChat && onCreateGroupChat && (
             <button
               type="button"

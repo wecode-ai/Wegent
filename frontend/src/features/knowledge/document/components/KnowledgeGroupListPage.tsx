@@ -25,6 +25,7 @@ import {
   ChevronUp,
   Pencil,
   Trash2,
+  FolderOutput,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
@@ -90,6 +91,10 @@ export interface KnowledgeGroupListPageProps {
   personalCreatedByMe?: KnowledgeBaseWithGroupInfo[]
   /** Knowledge bases shared with current user (for personal mode) */
   personalSharedWithMe?: KnowledgeBaseWithGroupInfo[]
+  /** Migrate a knowledge base to group */
+  onMigrateKb?: (kb: KbDataItem) => void
+  /** Check if user can migrate a KB (only for personal KBs created by user) */
+  canMigrate?: (kb: KbDataItem) => boolean
 }
 
 type SortBy = 'name' | 'updated' | 'group' | 'permission' | 'default'
@@ -176,6 +181,8 @@ export function KnowledgeGroupListPage({
   isPersonalMode = false,
   personalCreatedByMe = [],
   personalSharedWithMe = [],
+  onMigrateKb,
+  canMigrate,
 }: KnowledgeGroupListPageProps) {
   const { t } = useTranslation('knowledge')
   const [sortBy, setSortBy] = useState<SortBy>('default')
@@ -361,10 +368,12 @@ export function KnowledgeGroupListPage({
           onClick={() => onSelectKb(kb)}
           onEdit={onEditKb ? () => onEditKb(kb) : undefined}
           onDelete={onDeleteKb ? () => onDeleteKb(kb) : undefined}
+          onMigrate={onMigrateKb ? () => onMigrateKb(kb) : undefined}
           onToggleFavorite={onToggleFavorite ? e => handleToggleFavorite(e, kb) : undefined}
           isFavorite={isFavorite?.(kb.id)}
           showGroupInfo={showGroupColumn}
           groupInfo={getKbGroupInfo?.(kb)}
+          canMigrate={canMigrate?.(kb)}
           tFunc={t}
         />
       ))}
@@ -509,10 +518,12 @@ interface KnowledgeBaseRowProps {
   onClick: () => void
   onEdit?: () => void
   onDelete?: () => void
+  onMigrate?: () => void
   onToggleFavorite?: (e: React.MouseEvent) => void
   isFavorite?: boolean
   showGroupInfo?: boolean
   groupInfo?: KbGroupInfo
+  canMigrate?: boolean
   tFunc: ReturnType<typeof useTranslation>['t']
 }
 
@@ -521,10 +532,12 @@ function KnowledgeBaseRow({
   onClick,
   onEdit,
   onDelete,
+  onMigrate,
   onToggleFavorite: _onToggleFavorite,
   isFavorite,
   showGroupInfo,
   groupInfo,
+  canMigrate,
   tFunc,
 }: KnowledgeBaseRowProps) {
   return (
@@ -559,9 +572,24 @@ function KnowledgeBaseRow({
         {formatRelativeTime(kb.updated_at, tFunc)}
       </td>
 
-      {/* Actions column - Edit and Delete only */}
+      {/* Actions column - Migrate, Edit and Delete */}
       <td className="px-6 py-3">
         <div className="flex items-center justify-end gap-1">
+          {canMigrate && onMigrate && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
+              onClick={e => {
+                e.stopPropagation()
+                onMigrate()
+              }}
+              title={tFunc('document.migrate.title', '迁移到群组')}
+              data-testid={`migrate-kb-${kb.id}`}
+            >
+              <FolderOutput className="w-4 h-4 text-text-muted hover:text-primary transition-colors" />
+            </Button>
+          )}
           {onEdit && (
             <Button
               variant="ghost"

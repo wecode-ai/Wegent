@@ -27,7 +27,9 @@ import { KnowledgeGroupListPage } from './KnowledgeGroupListPage'
 import { CreateKnowledgeBaseDialog, type AvailableGroup } from './CreateKnowledgeBaseDialog'
 import { EditKnowledgeBaseDialog } from './EditKnowledgeBaseDialog'
 import { DeleteKnowledgeBaseDialog } from './DeleteKnowledgeBaseDialog'
+import { MigrateKnowledgeBaseDialog, type MigrationTargetGroup } from './MigrateKnowledgeBaseDialog'
 import { ShareLinkDialog } from '../../permission/components/ShareLinkDialog'
+import { migrateKnowledgeBaseToGroup } from '@/apis/knowledge'
 import type {
   KnowledgeBase,
   KnowledgeBaseCreate,
@@ -115,11 +117,13 @@ export function KnowledgeDocumentPageDesktop() {
   const [editingKb, setEditingKb] = useState<KnowledgeBase | null>(null)
   const [deletingKb, setDeletingKb] = useState<KnowledgeBase | null>(null)
   const [sharingKb, setSharingKb] = useState<KnowledgeBase | null>(null)
+  const [migratingKb, setMigratingKb] = useState<KnowledgeBase | null>(null)
 
   // Loading states for dialogs
   const [isCreating, setIsCreating] = useState(false)
   const [isUpdating, setIsUpdating] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
+  const [isMigrating, setIsMigrating] = useState(false)
 
   // Default teams config for saving model preference
   const [defaultTeamsConfig, setDefaultTeamsConfig] = useState<DefaultTeamsResponse | null>(null)
@@ -543,6 +547,59 @@ export function KnowledgeDocumentPageDesktop() {
       setIsDeleting(false)
     }
   }, [deletingKb, sidebar])
+
+  // Handle KB migrated
+  const handleMigrate = useCallback(
+    async (targetGroupName: string) => {
+      if (!migratingKb) return
+
+      setIsMigrating(true)
+      try {
+        await migrateKnowledgeBaseToGroup(migratingKb.id, targetGroupName)
+
+        // Refresh sidebar data only on success
+        await sidebar.refreshAll()
+
+        // Clear selection if migrated KB was selected
+        if (migratingKb.id === sidebar.selectedKbId) {
+          sidebar.clearSelection()
+        }
+
+        // Only close dialog on success
+        setMigratingKb(null)
+      } catch (error) {
+        // Re-throw the error so MigrateKnowledgeBaseDialog can handle it
+        // and display the error message to the user
+        throw error
+      } finally {
+        setIsMigrating(false)
+      }
+    },
+    [migratingKb, sidebar]
+  )
+
+  // Check if KB can be migrated (only personal KBs created by current user)
+  const canMigrateKb = useCallback(
+    (kb: { id: number; namespace: string; user_id: number }) => {
+      // Only personal KBs (namespace='default') can be migrated
+      if (kb.namespace !== 'default') return false
+      // Only the creator can migrate
+      return kb.user_id === sidebar.currentUser?.id
+    },
+    [sidebar.currentUser]
+  )
+
+  // Build available target groups for migration (groups and organizations only)
+  const availableMigrationGroups = useMemo((): MigrationTargetGroup[] => {
+    return sidebar.groups
+      .filter(g => g.type === 'group' || g.type === 'organization')
+      .map(g => ({
+        id: g.id,
+        name: g.name,
+        displayName: g.displayName,
+        type: g.type as 'group' | 'organization',
+      }))
+  }, [sidebar.groups])
   // Check if KB is favorite
   const isFavorite = useCallback(
     (kbId: number) => {
@@ -779,6 +836,13 @@ export function KnowledgeDocumentPageDesktop() {
           personalCreatedByMe={isPersonalMode ? sidebar.personalCreatedByMe : undefined}
           personalSharedWithMe={isPersonalMode ? sidebar.personalSharedWithMe : undefined}
           getKbGroupInfo={sidebar.getKbGroupInfo}
+          onMigrateKb={kb => {
+            const fullKb =
+              sidebar.allKnowledgeBases.find(k => k.id === kb.id) ||
+              groupKbs.find(k => k.id === kb.id)
+            if (fullKb) setMigratingKb(fullKb)
+          }}
+          canMigrate={canMigrateKb}
         />
       )
     }
@@ -875,6 +939,15 @@ export function KnowledgeDocumentPageDesktop() {
         onOpenChange={open => !open && setSharingKb(null)}
         kbId={sharingKb?.id || 0}
         kbName={sharingKb?.name || ''}
+      />
+
+      <MigrateKnowledgeBaseDialog
+        open={!!migratingKb}
+        onOpenChange={open => !isMigrating && !open && setMigratingKb(null)}
+        knowledgeBase={migratingKb}
+        availableGroups={availableMigrationGroups}
+        onMigrate={handleMigrate}
+        loading={isMigrating}
       />
     </div>
   )

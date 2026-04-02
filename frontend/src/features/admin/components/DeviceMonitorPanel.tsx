@@ -28,6 +28,7 @@ import {
   ArrowUpCircle,
   RotateCcw,
   MoveRight,
+  Loader2,
 } from 'lucide-react'
 import { ChevronLeftIcon, ChevronRightIcon } from '@heroicons/react/24/solid'
 import { Button } from '@/components/ui/button'
@@ -42,11 +43,26 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { useSocket } from '@/contexts/SocketContext'
+import { DeviceUpgradeStatusPayload, ServerEvents } from '@/types/socket'
 import { cn, isCompleteVersionString, isVersionAtLeast } from '@/lib/utils'
 
 // Minimum version required for auto-upgrade support
 const MIN_AUTO_UPGRADE_VERSION = '1.6.5'
 const FILTER_DEBOUNCE_MS = 600
+const TERMINAL_UPGRADE_STATUSES = ['success', 'error', 'skipped'] as const
+
+interface DeviceUpgradeState {
+  status: DeviceUpgradeStatusPayload['status']
+  message: string
+  progress?: number
+}
+
+function isTerminalUpgradeStatus(status: DeviceUpgradeStatusPayload['status']) {
+  return TERMINAL_UPGRADE_STATUSES.includes(
+    status as (typeof TERMINAL_UPGRADE_STATUSES)[number]
+  )
+}
 
 interface StatCardProps {
   title: string
@@ -130,6 +146,7 @@ function getBindShellTag(bindShell: BindShell, t: (key: string) => string) {
 
 export function DeviceMonitorPanel() {
   const { t } = useTranslation()
+  const { socket, isConnected } = useSocket()
   const [stats, setStats] = useState<AdminDeviceStats | null>(null)
   const [devices, setDevices] = useState<AdminDeviceInfo[]>([])
   const [total, setTotal] = useState(0)
@@ -140,6 +157,8 @@ export function DeviceMonitorPanel() {
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [actionLoading, setActionLoading] = useState<Record<string, string>>({})
   const latestDevicesRequestRef = useRef(0)
+  const [upgradeStates, setUpgradeStates] = useState<Record<string, DeviceUpgradeState>>({})
+  const upgradeClearTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
 
   // Filter states
   const [deviceTypeFilter, setDeviceTypeFilter] = useState<string>('all')
@@ -257,6 +276,22 @@ export function DeviceMonitorPanel() {
     setIsRefreshing(false)
   }, [loadStats, loadDevices])
 
+  const clearUpgradeState = useCallback((deviceId: string) => {
+    const timer = upgradeClearTimersRef.current[deviceId]
+    if (timer) {
+      clearTimeout(timer)
+      delete upgradeClearTimersRef.current[deviceId]
+    }
+
+    setUpgradeStates(prev => {
+      if (!prev[deviceId]) return prev
+
+      const next = { ...prev }
+      delete next[deviceId]
+      return next
+    })
+  }, [])
+
   useEffect(() => {
     void loadStats()
   }, [loadStats])
@@ -266,6 +301,46 @@ export function DeviceMonitorPanel() {
   }, [loadDevices])
 
   const isInitialLoading = !hasLoadedStats || !hasLoadedDevices
+
+  useEffect(() => {
+    if (!socket || !isConnected) return
+
+    const handleDeviceUpgradeStatus = (data: DeviceUpgradeStatusPayload) => {
+      setUpgradeStates(prev => ({
+        ...prev,
+        [data.device_id]: {
+          status: data.status,
+          message: data.message,
+          progress: data.progress,
+        },
+      }))
+
+      if (isTerminalUpgradeStatus(data.status)) {
+        const existingTimer = upgradeClearTimersRef.current[data.device_id]
+        if (existingTimer) {
+          clearTimeout(existingTimer)
+        }
+
+        upgradeClearTimersRef.current[data.device_id] = setTimeout(() => {
+          void Promise.all([loadStats(), loadDevices()])
+          clearUpgradeState(data.device_id)
+        }, 5000)
+      }
+    }
+
+    socket.on(ServerEvents.DEVICE_UPGRADE_STATUS, handleDeviceUpgradeStatus)
+
+    return () => {
+      socket.off(ServerEvents.DEVICE_UPGRADE_STATUS, handleDeviceUpgradeStatus)
+    }
+  }, [socket, isConnected, loadStats, loadDevices, clearUpgradeState])
+
+  useEffect(() => {
+    return () => {
+      Object.values(upgradeClearTimersRef.current).forEach(clearTimeout)
+      upgradeClearTimersRef.current = {}
+    }
+  }, [])
 
   // Device action handlers
   const handleUpgrade = useCallback(
@@ -541,6 +616,8 @@ export function DeviceMonitorPanel() {
               const isOnline = device.status === 'online'
               const isCloud = device.device_type === 'cloud'
               const isClaudeCode = device.bind_shell === 'claudecode'
+              const upgradeState = upgradeStates[device.device_id]
+              const isUpgradeInProgress = !!upgradeState
               const canUpgrade =
                 isOnline &&
                 isClaudeCode &&
@@ -588,6 +665,20 @@ export function DeviceMonitorPanel() {
                           </span>
                         )}
                       </div>
+                      {upgradeState && (
+                        <div className="mt-2 flex items-center gap-2 text-xs text-text-secondary flex-wrap">
+                          <Loader2
+                            className={cn(
+                              'h-3.5 w-3.5',
+                              !isTerminalUpgradeStatus(upgradeState.status) && 'animate-spin'
+                            )}
+                          />
+                          <span>{upgradeState.message}</span>
+                          {typeof upgradeState.progress === 'number' && (
+                            <span>{Math.round(upgradeState.progress)}%</span>
+                          )}
+                        </div>
+                      )}
                     </div>
                     {/* Action Buttons */}
                     <div className="flex items-center gap-1 shrink-0">
@@ -600,20 +691,25 @@ export function DeviceMonitorPanel() {
                                 variant="ghost"
                                 size="icon"
                                 className="h-8 w-8"
-                                disabled={!canUpgrade || !!actionLoading[upgradeKey]}
+                                disabled={
+                                  !canUpgrade || !!actionLoading[upgradeKey] || isUpgradeInProgress
+                                }
                                 onClick={() => handleUpgrade(device)}
                                 data-testid={`upgrade-device-${device.device_id}`}
                               >
                                 <ArrowUpCircle
                                   className={cn(
                                     'h-4 w-4',
-                                    actionLoading[upgradeKey] && 'animate-pulse'
+                                    (actionLoading[upgradeKey] || isUpgradeInProgress) &&
+                                      'animate-pulse'
                                   )}
                                 />
                               </Button>
                             </TooltipTrigger>
                             <TooltipContent>
-                              {canUpgrade
+                              {isUpgradeInProgress
+                                ? upgradeState.message
+                                : canUpgrade
                                 ? t('admin:device_monitor.actions.upgrade')
                                 : t('admin:device_monitor.actions.upgrade_unsupported', {
                                     version: MIN_AUTO_UPGRADE_VERSION,

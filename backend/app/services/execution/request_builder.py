@@ -29,6 +29,7 @@ from app.services.mcp_provider_registry import (
     list_mcp_providers,
 )
 from app.services.readers import KindType, kindReader
+from app.services.skill_resolution import find_skill_by_name, find_skill_by_ref
 from app.services.user_mcp_service import user_mcp_service
 from shared.models import ExecutionRequest
 from shared.models.db import Kind, User
@@ -1111,52 +1112,11 @@ class TaskRequestBuilder:
         Returns:
             Skill Kind object or None if not found
         """
-        # Get team namespace for group-level skill lookup
-        team_namespace = team.namespace if team.namespace else "default"
-
-        # 1. User's personal skill (default namespace)
-        skill = (
-            self.db.query(Kind)
-            .filter(
-                Kind.user_id == team.user_id,
-                Kind.kind == "Skill",
-                Kind.name == skill_name,
-                Kind.namespace == "default",
-                Kind.is_active == True,  # noqa: E712
-            )
-            .first()
-        )
-
-        if skill:
-            return skill
-
-        # 2. Group-level skill (team's namespace) - search ALL skills in namespace
-        # This allows any team member's skill to be used by other members
-        if team_namespace != "default":
-            skill = (
-                self.db.query(Kind)
-                .filter(
-                    Kind.kind == "Skill",
-                    Kind.name == skill_name,
-                    Kind.namespace == team_namespace,
-                    Kind.is_active == True,  # noqa: E712
-                )
-                .first()
-            )
-
-            if skill:
-                return skill
-
-        # 3. Public skill (user_id=0)
-        return (
-            self.db.query(Kind)
-            .filter(
-                Kind.user_id == 0,
-                Kind.kind == "Skill",
-                Kind.name == skill_name,
-                Kind.is_active == True,  # noqa: E712
-            )
-            .first()
+        return find_skill_by_name(
+            self.db,
+            skill_name=skill_name,
+            owner_user_id=team.user_id,
+            team_namespace=team.namespace or "default",
         )
 
     def _find_skill_by_ref(
@@ -1188,90 +1148,14 @@ class TaskRequestBuilder:
         Returns:
             Skill Kind object or None if not found
         """
-        if is_public:
-            # Public skill (user_id=0)
-            return (
-                self.db.query(Kind)
-                .filter(
-                    Kind.user_id == 0,
-                    Kind.kind == "Skill",
-                    Kind.name == skill_name,
-                    Kind.is_active == True,  # noqa: E712
-                )
-                .first()
-            )
-        else:
-            # 1. Current user's skill in specified namespace
-            skill = (
-                self.db.query(Kind)
-                .filter(
-                    Kind.user_id == user_id,
-                    Kind.kind == "Skill",
-                    Kind.name == skill_name,
-                    Kind.namespace == namespace,
-                    Kind.is_active == True,  # noqa: E712
-                )
-                .first()
-            )
-            if skill:
-                return skill
-
-            # 2. Group-level skill (any user's skill in the namespace)
-            # This allows team members to use skills uploaded by other members
-            if namespace != "default":
-                skill = (
-                    self.db.query(Kind)
-                    .filter(
-                        Kind.kind == "Skill",
-                        Kind.name == skill_name,
-                        Kind.namespace == namespace,
-                        Kind.is_active == True,  # noqa: E712
-                    )
-                    .first()
-                )
-                if skill:
-                    return skill
-
-            # 3. Team namespace skill (if different from specified namespace)
-            # This handles the case where preload_skills only contains name
-            # without namespace, but the skill exists in the team's namespace
-            if (
-                team_namespace
-                and team_namespace != "default"
-                and team_namespace != namespace
-            ):
-                skill = (
-                    self.db.query(Kind)
-                    .filter(
-                        Kind.kind == "Skill",
-                        Kind.name == skill_name,
-                        Kind.namespace == team_namespace,
-                        Kind.is_active == True,  # noqa: E712
-                    )
-                    .first()
-                )
-                if skill:
-                    logger.info(
-                        "[_find_skill_by_ref] Found skill '%s' in team namespace '%s'",
-                        skill_name,
-                        team_namespace,
-                    )
-                    return skill
-
-            # 4. Fallback to current user's skill in default namespace
-            if namespace != "default":
-                return (
-                    self.db.query(Kind)
-                    .filter(
-                        Kind.user_id == user_id,
-                        Kind.kind == "Skill",
-                        Kind.name == skill_name,
-                        Kind.namespace == "default",
-                        Kind.is_active == True,  # noqa: E712
-                    )
-                    .first()
-                )
-            return None
+        return find_skill_by_ref(
+            self.db,
+            skill_name=skill_name,
+            namespace=namespace,
+            is_public=is_public,
+            user_id=user_id,
+            team_namespace=team_namespace,
+        )
 
     @staticmethod
     def _build_request_task_data(user: User | None) -> dict[str, Any] | None:

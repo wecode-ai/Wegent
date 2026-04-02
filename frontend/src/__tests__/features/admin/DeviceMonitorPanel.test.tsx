@@ -35,6 +35,13 @@ jest.mock('@/apis/admin', () => ({
   },
 }))
 
+jest.mock('@/contexts/SocketContext', () => ({
+  useSocket: () => ({
+    socket: null,
+    isConnected: false,
+  }),
+}))
+
 jest.mock('@/components/ui/tooltip', () => ({
   TooltipProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   Tooltip: ({ children }: { children: React.ReactNode }) => <>{children}</>,

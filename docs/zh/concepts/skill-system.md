@@ -106,6 +106,7 @@ bindShells: ["Chat", "ClaudeCode"]  # 兼容的 Shell 类型
 - [核心概念](./core-concepts.md) - 所有 CRD 类型概述
 - [YAML 规范](../reference/yaml-specification.md) - 完整 YAML 格式参考
 - [Skill 开发指南](../developer-guide/skill-development.md) - 技术实现细节和 Provider 开发
+- [技能传递链路](../developer-guide/skill-runtime-flow.md) - 运行时技能选择、解析与下发路径
 
 ---
 

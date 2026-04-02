@@ -21,6 +21,7 @@ import type {
 } from '@/types/knowledge'
 import type { KbDataItem } from '../components/KnowledgeGroupListPage'
 import type { Group } from '@/types/group'
+import type { User } from '@/types/api'
 
 // Storage keys
 const RECENT_STORAGE_KEY = 'knowledge-recent-access'
@@ -100,6 +101,9 @@ export interface UseKnowledgeSidebarReturn {
 
   // Admin status
   isAdmin: boolean
+
+  // Current user
+  currentUser: User | null
 
   // Refresh
   refreshAll: () => Promise<void>
@@ -493,6 +497,9 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
 
     // Admin status
     isAdmin,
+
+    // Current user
+    currentUser: user,
 
     // Refresh
     refreshAll,

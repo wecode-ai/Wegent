@@ -160,7 +160,7 @@ function PublicDownloadContent() {
   }
 
   return (
-    <div className="h-screen">
+    <div className="h-screen overflow-hidden">
       <FilePreviewPage
         fileBlob={attachmentInfo.fileData}
         filename={attachmentInfo.filename}

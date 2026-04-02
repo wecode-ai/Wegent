@@ -134,6 +134,35 @@ export interface DocumentReindexResponse {
   message: string
 }
 
+// ============== Knowledge Base Migration ==============
+
+/**
+ * Response for knowledge base migration
+ */
+export interface KnowledgeBaseMigrateResponse {
+  success: boolean
+  message: string
+  knowledge_base_id: number
+  old_namespace: string
+  new_namespace: string
+}
+
+/**
+ * Migrate a personal knowledge base to a group
+ * @param knowledgeBaseId The knowledge base ID to migrate
+ * @param targetGroupName The target group name (namespace) to migrate to
+ * @returns Migration result
+ */
+export async function migrateKnowledgeBaseToGroup(
+  knowledgeBaseId: number,
+  targetGroupName: string
+): Promise<KnowledgeBaseMigrateResponse> {
+  return apiClient.post<KnowledgeBaseMigrateResponse>(
+    `/knowledge-bases/${knowledgeBaseId}/migrate`,
+    { target_group_name: targetGroupName }
+  )
+}
+
 /**
  * Trigger re-indexing for a document
  * @param documentId The document ID to reindex

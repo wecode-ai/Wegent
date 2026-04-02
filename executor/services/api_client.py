@@ -135,6 +135,8 @@ class TaskSkillsInfo:
     team_namespace: str
     skills: List[str]
     preload_skills: List[str]
+    skill_refs: Dict[str, Dict[str, Any]]
+    preload_skill_refs: Dict[str, Dict[str, Any]]
 
 
 def fetch_task_skills(task_id: str, auth_token: str) -> TaskSkillsInfo:
@@ -155,6 +157,8 @@ def fetch_task_skills(task_id: str, auth_token: str) -> TaskSkillsInfo:
         team_namespace="default",
         skills=[],
         preload_skills=[],
+        skill_refs={},
+        preload_skill_refs={},
     )
 
     if not auth_token or not task_id:
@@ -179,7 +183,9 @@ def fetch_task_skills(task_id: str, auth_token: str) -> TaskSkillsInfo:
             logger.info(
                 f"[fetch_task_skills] Fetched skills for task {task_id}: "
                 f"skills={data.get('skills', [])}, "
-                f"preload_skills={data.get('preload_skills', [])}"
+                f"preload_skills={data.get('preload_skills', [])}, "
+                f"skill_refs_count={len(data.get('skill_refs', {}) or {})}, "
+                f"preload_skill_refs_count={len(data.get('preload_skill_refs', {}) or {})}"
             )
             return TaskSkillsInfo(
                 task_id=data.get(
@@ -189,6 +195,8 @@ def fetch_task_skills(task_id: str, auth_token: str) -> TaskSkillsInfo:
                 team_namespace=data.get("team_namespace", "default"),
                 skills=data.get("skills", []),
                 preload_skills=data.get("preload_skills", []),
+                skill_refs=data.get("skill_refs", {}) or {},
+                preload_skill_refs=data.get("preload_skill_refs", {}) or {},
             )
         else:
             logger.warning(
@@ -323,6 +331,13 @@ class SkillDownloader:
             skill_ref = (
                 resolved_skill_map.get(skill_name) if resolved_skill_map else None
             )
+            logger.info(
+                "[SkillDownloader] Prepared resolved skill lookup: skill=%s, "
+                "has_resolved_skill_map=%s, resolved_skill_ref=%s",
+                skill_name,
+                bool(resolved_skill_map),
+                skill_ref,
+            )
             if self._download_single_skill(skill_name, skill_ref):
                 success_count += 1
 
@@ -397,7 +412,10 @@ class SkillDownloader:
             # If no skill_id from skill_ref, fall back to name-based query
             if not skill_id:
                 logger.info(
-                    "[SkillDownloader] No skill_id in resolved map, falling back to name-based query"
+                    "[SkillDownloader] No skill_id in resolved map, falling back to name-based query: skill=%s, team_namespace=%s, task_id=%s",
+                    skill_name,
+                    self.team_namespace,
+                    self.task_id,
                 )
 
                 # Query skill by name
@@ -405,6 +423,7 @@ class SkillDownloader:
                 query_path = f"/api/v1/kinds/skills?name={skill_name}&namespace={self.team_namespace}"
                 if self.task_id:
                     query_path += f"&task_id={self.task_id}"
+                logger.info("[SkillDownloader] Name query path: %s", query_path)
                 response = self.client.get(query_path, timeout=self.QUERY_TIMEOUT)
 
                 if not response:
@@ -415,6 +434,15 @@ class SkillDownloader:
 
                 skills_data = response.json()
                 skill_items = skills_data.get("items", [])
+                logger.info(
+                    "[SkillDownloader] Name query result: skill=%s, item_count=%s, candidate_namespaces=%s",
+                    skill_name,
+                    len(skill_items),
+                    [
+                        item.get("metadata", {}).get("namespace")
+                        for item in skill_items[:5]
+                    ],
+                )
 
                 if not skill_items:
                     logger.error(f"[SkillDownloader] Skill '{skill_name}' not found")
