@@ -8,13 +8,42 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from app.services.context.context_service import context_service
-from app.services.rag.retrieval_persistence_service import RetrievalPersistenceService
+from app.services.knowledge.retrieval_persistence import RetrievalPersistenceService
 
 
 @pytest.mark.unit
 class TestRetrievalPersistenceService:
     def setup_method(self) -> None:
         self.service = RetrievalPersistenceService()
+
+    def test_persist_retrieval_result_skips_missing_user_subtask_id(self) -> None:
+        db = MagicMock()
+
+        self.service.persist_retrieval_result(
+            db=db,
+            user_subtask_id=None,
+            user_id=7,
+            query="q",
+            mode="rag_retrieval",
+            records=[{"knowledge_base_id": 1, "title": "doc", "content": "chunk"}],
+        )
+
+        db.assert_not_called()
+
+    def test_prepare_payload_redacts_titles_in_restricted_mode(self) -> None:
+        payload = self.service._prepare_persistence_payload(
+            records=[
+                {
+                    "knowledge_base_id": 1,
+                    "title": "salary-plan.md",
+                    "content": "hidden",
+                    "score": 0.9,
+                }
+            ],
+            restricted_mode=True,
+        )
+
+        assert payload[1]["sources"][0]["title"] == "Source 1"
 
     def test_build_extracted_text_includes_content_for_normal_mode(self) -> None:
         """Normal persistence should keep chunk content and sources."""

@@ -387,6 +387,48 @@ class TestKnowledgeServiceDeleteDocument:
         assert result.success is False
         assert result.kb_id is None
 
+    def test_delete_document_routes_rag_cleanup_through_gateway(
+        self,
+        test_db: Session,
+        test_user: User,
+        test_knowledge_base: Kind,
+        test_document: KnowledgeDocument,
+    ):
+        """Test delete_document delegates RAG cleanup through the local gateway."""
+        from sqlalchemy.orm.attributes import flag_modified
+
+        from app.services.knowledge import KnowledgeService
+
+        test_knowledge_base.json["spec"]["retrievalConfig"] = {
+            "retriever_name": "retriever-a",
+            "retriever_namespace": "default",
+        }
+        flag_modified(test_knowledge_base, "json")
+        test_db.commit()
+
+        with patch(
+            "app.services.rag.local_gateway.LocalRagGateway.delete_document_index",
+            new=AsyncMock(return_value={"status": "success"}),
+        ) as mock_delete_index:
+            result = KnowledgeService.delete_document(
+                db=test_db,
+                document_id=test_document.id,
+                user_id=test_user.id,
+            )
+
+        assert result.success is True
+        mock_delete_index.assert_awaited_once()
+        assert mock_delete_index.await_args.kwargs["knowledge_base_id"] == (
+            test_knowledge_base.id
+        )
+        assert mock_delete_index.await_args.kwargs["document_ref"] == str(
+            test_document.id
+        )
+        assert mock_delete_index.await_args.kwargs["db"] is test_db
+        assert mock_delete_index.await_args.kwargs["index_owner_user_id"] == (
+            test_user.id
+        )
+
 
 class TestKnowledgeServiceBatchDeleteDocuments:
     """Test batch_delete_documents returning KB IDs for summary updates."""

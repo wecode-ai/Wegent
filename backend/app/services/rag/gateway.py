@@ -20,3 +20,12 @@ class RagGateway(Protocol):
         db: Session | None = None,
         user_subtask_id: int | None = None,
     ) -> dict: ...
+
+    async def delete_document_index(
+        self,
+        knowledge_base_id: int,
+        document_ref: str,
+        *,
+        db: Session,
+        index_owner_user_id: int | None = None,
+    ) -> dict: ...

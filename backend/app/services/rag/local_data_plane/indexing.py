@@ -2,12 +2,18 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import logging
+
 from sqlalchemy.orm import Session
 
+from app.models.kind import Kind
 from app.services.adapters.retriever_kinds import retriever_kinds_service
 from app.services.rag.document_service import DocumentService
 from app.services.rag.runtime_specs import IndexRuntimeSpec
+from app.services.rag.splitter.runtime_config import parse_runtime_splitter_config
 from app.services.rag.storage.factory import create_storage_backend
+
+logger = logging.getLogger(__name__)
 
 
 async def index_document_local(
@@ -29,9 +35,7 @@ async def index_document_local(
 
     splitter_config = spec.splitter_config
     if splitter_config:
-        from app.services.knowledge.indexing import parse_splitter_config
-
-        splitter_config = parse_splitter_config(splitter_config)
+        splitter_config = parse_runtime_splitter_config(splitter_config)
 
     file_path = (
         spec.source.file_path if spec.source.source_type == "file_path" else None
@@ -50,4 +54,69 @@ async def index_document_local(
         splitter_config=splitter_config,
         document_id=spec.document_id,
         user_name=spec.user_name,
+    )
+
+
+async def delete_document_index_local(
+    knowledge_base_id: int,
+    document_ref: str,
+    *,
+    db: Session,
+    index_owner_user_id: int | None = None,
+) -> dict:
+    """Delete document chunks from the local storage backend."""
+    kb = (
+        db.query(Kind)
+        .filter(
+            Kind.id == knowledge_base_id,
+            Kind.kind == "KnowledgeBase",
+            Kind.is_active == True,
+        )
+        .first()
+    )
+    if kb is None:
+        return {
+            "status": "skipped",
+            "reason": "knowledge_base_not_found",
+            "knowledge_id": str(knowledge_base_id),
+            "doc_ref": document_ref,
+        }
+
+    retrieval_config = (kb.json or {}).get("spec", {}).get("retrievalConfig") or {}
+    retriever_name = retrieval_config.get("retriever_name")
+    retriever_namespace = retrieval_config.get("retriever_namespace", "default")
+    if not retriever_name:
+        return {
+            "status": "skipped",
+            "reason": "missing_retriever_name",
+            "knowledge_id": str(knowledge_base_id),
+            "doc_ref": document_ref,
+        }
+
+    runtime_user_id = index_owner_user_id or kb.user_id
+    retriever = retriever_kinds_service.get_retriever(
+        db=db,
+        user_id=runtime_user_id,
+        name=retriever_name,
+        namespace=retriever_namespace,
+    )
+    if retriever is None:
+        logger.warning(
+            "Retriever %s not found for KB %s during delete-index cleanup",
+            retriever_name,
+            knowledge_base_id,
+        )
+        return {
+            "status": "skipped",
+            "reason": "retriever_not_found",
+            "knowledge_id": str(knowledge_base_id),
+            "doc_ref": document_ref,
+        }
+
+    storage_backend = create_storage_backend(retriever)
+    service = DocumentService(storage_backend=storage_backend)
+    return await service.delete_document(
+        knowledge_id=str(knowledge_base_id),
+        doc_ref=document_ref,
+        user_id=runtime_user_id,
     )

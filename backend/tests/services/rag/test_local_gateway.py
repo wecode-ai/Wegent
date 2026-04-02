@@ -49,3 +49,18 @@ async def test_local_gateway_index_document_delegates_to_local_indexing_executor
 
     assert result["status"] == "success"
     gateway._index_executor.assert_awaited_once_with(spec)
+
+
+@pytest.mark.asyncio
+async def test_local_gateway_delete_document_index_delegates_to_delete_executor():
+    gateway = LocalRagGateway()
+    gateway._delete_executor = AsyncMock(return_value={"deleted": True})
+
+    result = await gateway.delete_document_index(
+        knowledge_base_id=1,
+        document_ref="9",
+        db=object(),
+    )
+
+    assert result == {"deleted": True}
+    gateway._delete_executor.assert_awaited_once()

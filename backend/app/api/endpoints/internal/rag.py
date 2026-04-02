@@ -742,7 +742,7 @@ async def read_document(
         Document content with pagination info
     """
     try:
-        from app.services.rag.document_read_service import (
+        from app.services.knowledge.document_read_service import (
             DOCUMENT_READ_ERROR_ACCESS_DENIED,
             DOCUMENT_READ_ERROR_NOT_FOUND,
             document_read_service,
@@ -804,7 +804,7 @@ async def read_documents(
 ) -> ReadDocsResponse:
     """Read multiple documents and optionally persist kb_head usage."""
     try:
-        from app.services.rag.document_read_service import document_read_service
+        from app.services.knowledge.document_read_service import document_read_service
 
         persistence_context = request.persistence_context
         results = document_read_service.read_documents(

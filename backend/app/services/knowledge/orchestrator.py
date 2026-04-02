@@ -40,11 +40,11 @@ from app.schemas.knowledge import (
     KnowledgeDocumentResponse,
     ResourceScope,
 )
-from app.services.knowledge.knowledge_service import KnowledgeService
-from app.services.rag.document_read_service import (
+from app.services.knowledge.document_read_service import (
     DOCUMENT_READ_ERROR_NOT_FOUND,
     document_read_service,
 )
+from app.services.knowledge.knowledge_service import KnowledgeService
 
 logger = logging.getLogger(__name__)
 
