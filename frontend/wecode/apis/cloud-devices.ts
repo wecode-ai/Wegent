@@ -60,6 +60,13 @@ export interface VncConfig {
   sandbox_id: string
 }
 
+export interface CloudDeviceFileConfig {
+  sandbox_id: string
+  ip_address?: string | null
+  files_url?: string | null
+  available: boolean
+}
+
 /**
  * Cloud device API services
  */
@@ -111,5 +118,14 @@ export const cloudDeviceApis = {
    */
   async getVncConfig(deviceId: string): Promise<VncConfig> {
     return apiClient.get(`/cloud-devices/${encodeURIComponent(deviceId)}/vnc-config`)
+  },
+
+  /**
+   * Get cloud device file panel configuration.
+   *
+   * @param deviceId - Cloud device ID (UUID or sandbox ID)
+   */
+  async getFileConfig(deviceId: string): Promise<CloudDeviceFileConfig> {
+    return apiClient.get(`/cloud-devices/${encodeURIComponent(deviceId)}/file-config`)
   },
 }

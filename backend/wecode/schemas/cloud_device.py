@@ -38,12 +38,8 @@ class CloudDeviceConfig(BaseModel):
 
     sandboxId: str = Field(..., description="Nevis sandbox ID")
     imageId: str = Field(..., description="Image ID used for VM creation")
-    deviceId: Optional[str] = Field(
-        None, description="Server-generated device UUID"
-    )
-    deviceName: Optional[str] = Field(
-        None, description="Server-generated device name"
-    )
+    deviceId: Optional[str] = Field(None, description="Server-generated device UUID")
+    deviceName: Optional[str] = Field(None, description="Server-generated device name")
     createdAt: datetime = Field(
         default_factory=datetime.now,
         description="Cloud device creation timestamp",
@@ -104,6 +100,17 @@ class VncConfigResponse(BaseModel):
         ..., description="X-Signature header value for upstream auth"
     )
     sandbox_id: str = Field(..., description="Nevis sandbox ID")
+
+
+class CloudDeviceFileConfigResponse(BaseModel):
+    """Response schema for the cloud device files panel."""
+
+    sandbox_id: str = Field(..., description="Nevis sandbox ID")
+    ip_address: Optional[str] = Field(None, description="VM IP address if assigned")
+    files_url: Optional[str] = Field(
+        None, description="Embedded files service URL if available"
+    )
+    available: bool = Field(..., description="Whether the files service is reachable")
 
 
 class CloudDeviceLimitError(BaseModel):
