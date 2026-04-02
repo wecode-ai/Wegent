@@ -12,6 +12,7 @@ from app.models.user import User
 from app.schemas.base_role import has_permission
 from app.schemas.namespace import GroupRole
 from app.services.group_permission import get_effective_role_in_group
+from shared.telemetry.decorators import trace_sync
 
 RoleResolver = Callable[[Session, int, str], Optional[GroupRole]]
 
@@ -26,6 +27,15 @@ def _resolve_role(
     return resolver(db, user_id, namespace_name)
 
 
+@trace_sync(
+    span_name="can_create_namespace_knowledge_base",
+    tracer_name="knowledge.permission_policy",
+    extract_attributes=lambda db, user, namespace_name, role_resolver=None: {
+        "user.id": user.id,
+        "user.role": user.role,
+        "namespace.name": namespace_name,
+    },
+)
 def can_create_namespace_knowledge_base(
     db: Session,
     user: User,
@@ -43,6 +53,16 @@ def can_create_namespace_knowledge_base(
     return role is not None and has_permission(role, GroupRole.Developer)
 
 
+@trace_sync(
+    span_name="can_manage_namespace_knowledge_base",
+    tracer_name="knowledge.permission_policy",
+    extract_attributes=lambda db, user_id, namespace_name, kb_owner_id, user_role=None, role_resolver=None: {
+        "user.id": user_id,
+        "user.role": user_role or "",
+        "namespace.name": namespace_name,
+        "knowledge_base.owner_user_id": kb_owner_id,
+    },
+)
 def can_manage_namespace_knowledge_base(
     db: Session,
     user_id: int,
@@ -68,6 +88,15 @@ def can_manage_namespace_knowledge_base(
     return role == GroupRole.Developer and kb_owner_id == user_id
 
 
+@trace_sync(
+    span_name="can_manage_namespace",
+    tracer_name="knowledge.permission_policy",
+    extract_attributes=lambda db, user, namespace_name, role_resolver=None: {
+        "user.id": user.id,
+        "user.role": user.role,
+        "namespace.name": namespace_name,
+    },
+)
 def can_manage_namespace(
     db: Session,
     user: User,

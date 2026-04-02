@@ -110,7 +110,7 @@ export function KnowledgeDocumentPageDesktop() {
     return () => {
       window.removeEventListener('knowledge-clear-selection', handleClearSelection)
     }
-  }, [sidebar])
+  }, [sidebar.clearSelection])
 
   // Group KBs for the selected group
   const [groupKbs, setGroupKbs] = useState<KnowledgeBase[]>([])
@@ -217,7 +217,7 @@ export function KnowledgeDocumentPageDesktop() {
       // No URL params, mark as synced
       initialUrlSyncDone.current = true
     }
-  }, [searchParams, sidebar, sidebar.allKnowledgeBases, sidebar.selectKb, sidebar.selectGroup])
+  }, [searchParams, sidebar.allKnowledgeBases, sidebar.selectKb, sidebar.selectGroup])
 
   // Helper function to update URL parameters
   const updateUrlParams = useCallback(

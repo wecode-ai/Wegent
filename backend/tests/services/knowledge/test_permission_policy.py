@@ -93,6 +93,34 @@ def test_developer_can_create_non_default_namespace_kb(test_db: Session) -> None
 
 
 @pytest.mark.unit
+def test_default_namespace_short_circuits_for_personal_kb_ownership(
+    test_db: Session,
+) -> None:
+    owner = _create_user(test_db, "personal-owner")
+    other_user = _create_user(test_db, "personal-other")
+
+    assert can_create_namespace_knowledge_base(
+        db=test_db,
+        user=owner,
+        namespace_name="default",
+    )
+    assert can_manage_namespace_knowledge_base(
+        db=test_db,
+        user_id=owner.id,
+        namespace_name="default",
+        kb_owner_id=owner.id,
+        user_role=owner.role,
+    )
+    assert not can_manage_namespace_knowledge_base(
+        db=test_db,
+        user_id=other_user.id,
+        namespace_name="default",
+        kb_owner_id=owner.id,
+        user_role=other_user.role,
+    )
+
+
+@pytest.mark.unit
 def test_developer_can_only_manage_owned_namespace_kb(test_db: Session) -> None:
     owner = _create_user(test_db, "owner")
     developer = _create_user(test_db, "developer")
@@ -131,6 +159,27 @@ def test_maintainer_can_manage_any_namespace_kb(test_db: Session) -> None:
         kb_owner_id=owner.id,
         user_role=maintainer.role,
     )
+
+
+@pytest.mark.unit
+def test_admin_short_circuits_namespace_permission_checks(test_db: Session) -> None:
+    owner = _create_user(test_db, "team-owner")
+    admin = _create_user(test_db, "admin-user", role="admin")
+    namespace = _create_namespace(test_db, owner, "team-admin-short-circuit")
+
+    assert can_create_namespace_knowledge_base(
+        db=test_db,
+        user=admin,
+        namespace_name=namespace.name,
+    )
+    assert can_manage_namespace_knowledge_base(
+        db=test_db,
+        user_id=admin.id,
+        namespace_name=namespace.name,
+        kb_owner_id=owner.id,
+        user_role=admin.role,
+    )
+    assert can_manage_namespace(test_db, admin, namespace.name)
 
 
 @pytest.mark.unit

@@ -59,6 +59,14 @@ describe('namespace permissions', () => {
   })
 
   describe('canManageKnowledgeBase', () => {
+    it('returns false when currentUserId is not provided', () => {
+      expect(
+        canManageKnowledgeBase({
+          knowledgeBase: { namespace: 'default', user_id: 1 },
+        })
+      ).toBe(false)
+    })
+
     it('allows owner of personal knowledge base', () => {
       expect(
         canManageKnowledgeBase({
