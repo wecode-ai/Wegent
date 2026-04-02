@@ -41,7 +41,6 @@ async def test_retrieve_for_chat_shell_no_longer_persists_subtask_context():
             query="test",
             knowledge_base_ids=[1],
             db=MagicMock(),
-            user_subtask_id=10,
             user_id=20,
             route_mode="rag_retrieval",
         )

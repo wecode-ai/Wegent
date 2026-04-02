@@ -17,6 +17,13 @@ from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
+from app.services.knowledge.protected_mediation import (
+    ProtectedKnowledgeMediationResponse,
+    protected_knowledge_mediator,
+)
+from app.services.knowledge.retrieval_persistence import (
+    retrieval_persistence_service,
+)
 from app.services.rag.local_gateway import LocalRagGateway
 from app.services.rag.retrieval_service import RetrievalService
 from app.services.rag.runtime_resolver import RagRuntimeResolver
@@ -82,6 +89,19 @@ class RetrievePersistenceContext(BaseModel):
     )
 
 
+class RetrieveMediationContext(BaseModel):
+    """Model identity used by Backend-side protected mediation."""
+
+    current_model_name: Optional[str] = Field(
+        default=None,
+        description="Current answering model name preferred for protected mediation",
+    )
+    current_model_namespace: Optional[str] = Field(
+        default="default",
+        description="Namespace of the current answering model",
+    )
+
+
 class InternalRetrieveRequest(BaseModel):
     """Simplified retrieve request for internal use."""
 
@@ -114,6 +134,10 @@ class InternalRetrieveRequest(BaseModel):
         default=None,
         description="Optional SubtaskContext persistence metadata handled entirely in Backend",
     )
+    mediation_context: Optional[RetrieveMediationContext] = Field(
+        default=None,
+        description="Optional model identity used by Backend restricted mediation",
+    )
 
     @model_validator(mode="after")
     def validate_knowledge_base_targets(self):
@@ -142,7 +166,10 @@ class InternalRetrieveResponse(BaseModel):
     total_estimated_tokens: int = 0
 
 
-@router.post("/retrieve", response_model=InternalRetrieveResponse)
+@router.post(
+    "/retrieve",
+    response_model=InternalRetrieveResponse | ProtectedKnowledgeMediationResponse,
+)
 async def internal_retrieve(
     request: InternalRetrieveRequest,
     db: Session = Depends(get_db),
@@ -175,6 +202,9 @@ async def internal_retrieve(
 
         runtime_context = request.runtime_context
         persistence_context = request.persistence_context
+        restricted_mode = bool(
+            persistence_context and persistence_context.restricted_mode
+        )
 
         runtime_spec = runtime_resolver.build_query_runtime_spec(
             knowledge_base_ids=knowledge_base_ids,
@@ -197,16 +227,11 @@ async def internal_retrieve(
             max_direct_chunks=(
                 runtime_context.max_direct_chunks if runtime_context else 500
             ),
-            restricted_mode=(
-                persistence_context.restricted_mode if persistence_context else False
-            ),
+            restricted_mode=restricted_mode,
         )
         result = await rag_gateway.query(
             runtime_spec,
             db=db,
-            user_subtask_id=(
-                persistence_context.user_subtask_id if persistence_context else None
-            ),
         )
 
         records = result.get("records", [])
@@ -258,8 +283,39 @@ async def internal_retrieve(
             ),
         )
 
+        mode = result.get("mode", "rag_retrieval")
+        total_estimated_tokens = result.get("total_estimated_tokens", 0)
+
+        if persistence_context is not None:
+            retrieval_persistence_service.persist_retrieval_result(
+                db=db,
+                user_subtask_id=persistence_context.user_subtask_id,
+                user_id=persistence_context.user_id,
+                query=request.query,
+                mode=mode,
+                records=records,
+                restricted_mode=restricted_mode,
+            )
+
+        if restricted_mode:
+            return await protected_knowledge_mediator.transform(
+                db=db,
+                query=request.query,
+                retrieval_mode=mode,
+                records=records,
+                mediation_context=(
+                    request.mediation_context.model_dump(exclude_none=True)
+                    if request.mediation_context
+                    else None
+                ),
+                knowledge_base_ids=knowledge_base_ids,
+                total_estimated_tokens=total_estimated_tokens,
+                user_id=persistence_context.user_id if persistence_context else None,
+                user_name=request.user_name or "system",
+            )
+
         return InternalRetrieveResponse(
-            mode=result.get("mode", "rag_retrieval"),
+            mode=mode,
             records=[
                 RetrieveRecord(
                     content=r.get("content", ""),
@@ -271,7 +327,7 @@ async def internal_retrieve(
                 for r in records
             ],
             total=len(records),
-            total_estimated_tokens=result.get("total_estimated_tokens", 0),
+            total_estimated_tokens=total_estimated_tokens,
         )
 
     except ValueError as e:
@@ -486,7 +542,7 @@ async def get_all_chunks(
     db: Session = Depends(get_db),
 ):
     """
-    Get all chunks from a knowledge base for direct injection.
+    Legacy internal endpoint for fetching all chunks for direct injection.
 
     This endpoint retrieves all chunks stored in a knowledge base,
     used when the total content fits within the model's context window.

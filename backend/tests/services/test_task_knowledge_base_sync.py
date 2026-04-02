@@ -337,9 +337,8 @@ class TestKBPriorityLogic:
                     assert call_args[1]["knowledge_base_ids"] == [10]
                     assert call_args[1]["injection_mode"] == "hybrid"
                     assert call_args[1]["tool_access_mode"] == "restricted_search_only"
-                    assert call_args[1]["summarizer_model_config"] == {
-                        "model_id": "gpt-test"
-                    }
+                    assert call_args[1]["current_model_name"] is None
+                    assert call_args[1]["current_model_namespace"] == "default"
                     assert len(kb_result.extra_tools) == 1
                     assert kb_result.knowledge_base_ids == [10]
                     assert "Restricted Knowledge Bases In Scope" in (

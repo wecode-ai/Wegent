@@ -241,7 +241,6 @@ class RetrievalService:
         context_window: Optional[int] = None,
         route_mode: Literal["auto", "direct_injection", "rag_retrieval"] = "auto",
         user_id: Optional[int] = None,
-        user_subtask_id: Optional[int] = None,
         used_context_tokens: int = 0,
         reserved_output_tokens: int = 4096,
         context_buffer_ratio: float = 0.1,

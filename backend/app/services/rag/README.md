@@ -26,12 +26,21 @@ The boundary is intentional:
 
 - Backend keeps persistence metadata, task state, permission checks, and CRD resolution.
 - Runtime specs stay free of ORM objects, DB sessions, and task-only fields such as `user_subtask_id`.
+- Control-plane persistence, document-read tracking, and restricted mediation now live under `backend/app/services/knowledge/`.
+
+## Current Boundary Status
+
+Phase 2.5 is complete for the current local module split:
+
+- `services/rag/` is the execution-side module boundary only.
+- Backend control-plane orchestration owns `SubtaskContext` persistence, `kb_head` usage recording, and restricted safe-summary mediation.
+- `/api/internal/rag/retrieve` is the unified internal retrieval surface for both normal and restricted flows.
+- `/api/internal/rag/all-chunks` remains only as a legacy internal endpoint for transitional compatibility.
 
 Follow-up work is intentionally not implemented in this foundation layer:
 
 - `summary_vector_index`
 - `tableRAG`
-- restricted mediator migration
 - remote `rag_service` extraction
 
 ## Architecture Components

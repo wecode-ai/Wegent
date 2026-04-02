@@ -12,7 +12,6 @@ async def query_local(
     spec: QueryRuntimeSpec,
     *,
     db: Session,
-    user_subtask_id: int | None = None,
 ) -> dict:
     service = RetrievalService()
     budget = spec.direct_injection_budget
@@ -25,7 +24,6 @@ async def query_local(
         user_name=spec.user_name,
         route_mode=spec.route_mode,
         user_id=spec.user_id,
-        user_subtask_id=user_subtask_id,
         context_window=budget.context_window if budget else None,
         used_context_tokens=budget.used_context_tokens if budget else 0,
         reserved_output_tokens=budget.reserved_output_tokens if budget else 4096,

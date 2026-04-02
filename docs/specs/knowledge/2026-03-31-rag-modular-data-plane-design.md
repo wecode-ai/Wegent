@@ -535,6 +535,12 @@ class ProtectedKnowledgeMediator(Protocol):
 - 删除链路通过统一边界进入 data plane，而不是由 `knowledge_service` 直接拼 storage backend
 - `/api/internal/rag/all-chunks` 降级为 legacy internal endpoint，或并入统一 retrieve contract
 
+当前状态补充：
+
+- 该阶段在当前代码中已基本收敛完成
+- restricted safe-summary mediation 已并入 Backend `/api/internal/rag/retrieve`
+- `chat_shell` 不再本地执行 restricted 二级模型压缩，只消费 Backend 返回的 `restricted_safe_summary`
+
 收敛原则：
 
 - `backend/app/services/rag/retrieval_persistence_service.py` 不应继续留在 `services/rag/`

@@ -29,15 +29,10 @@ class LocalRagGateway:
         spec: QueryRuntimeSpec,
         *,
         db: Session | None = None,
-        user_subtask_id: int | None = None,
     ) -> dict:
-        if db is None and user_subtask_id is None:
+        if db is None:
             return await self._retrieval_executor(spec)
-        return await self._retrieval_executor(
-            spec,
-            db=db,
-            user_subtask_id=user_subtask_id,
-        )
+        return await self._retrieval_executor(spec, db=db)
 
     async def delete_document_index(
         self,

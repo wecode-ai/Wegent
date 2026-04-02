@@ -18,7 +18,6 @@ class RagGateway(Protocol):
         spec: QueryRuntimeSpec,
         *,
         db: Session | None = None,
-        user_subtask_id: int | None = None,
     ) -> dict: ...
 
     async def delete_document_index(
