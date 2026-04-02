@@ -40,6 +40,7 @@ from app.core.events import TaskCompletedEvent, get_event_bus
 from app.db.session import SessionLocal
 from app.models.subtask import Subtask, SubtaskStatus
 from app.models.task import TaskResource
+from app.models.user import User
 from app.schemas.device import (
     DeviceHeartbeatPayload,
     DeviceOfflineEvent,
@@ -1248,10 +1249,10 @@ class DeviceNamespace(socketio.AsyncNamespace):
         self, user_id: int, payload: "DeviceUpgradeStatusEvent"
     ) -> None:
         """
-        Broadcast device:upgrade_status event to user room via chat namespace.
+        Broadcast device:upgrade_status event to owner and admin rooms via chat namespace.
 
         Args:
-            user_id: User ID for the room
+            user_id: Device owner's user ID
             payload: DeviceUpgradeStatusEvent payload
         """
         from app.core.socketio import get_sio
@@ -1259,15 +1260,25 @@ class DeviceNamespace(socketio.AsyncNamespace):
         try:
             sio = get_sio()
             event_data = payload.model_dump()
+            target_user_ids = {user_id}
 
-            await sio.emit(
-                "device:upgrade_status",
-                event_data,
-                room=f"user:{user_id}",
-                namespace="/chat",
-            )
+            with _db_session() as db:
+                admin_user_ids = (
+                    db.query(User.id)
+                    .filter(User.role == "admin", User.is_active == True)
+                    .all()
+                )
+                target_user_ids.update(admin_id for (admin_id,) in admin_user_ids)
+
+            for target_user_id in target_user_ids:
+                await sio.emit(
+                    "device:upgrade_status",
+                    event_data,
+                    room=f"user:{target_user_id}",
+                    namespace="/chat",
+                )
             logger.debug(
-                f"[Device WS] Broadcast device:upgrade_status to user:{user_id}, "
+                f"[Device WS] Broadcast device:upgrade_status to users={sorted(target_user_ids)}, "
                 f"device={payload.device_id}, status={payload.status}"
             )
         except Exception as e:

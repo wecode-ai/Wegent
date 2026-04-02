@@ -12,7 +12,16 @@ import logging
 from typing import List, Optional
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+)
 from fastapi.responses import RedirectResponse, Response
 from sqlalchemy.orm import Session
 
@@ -29,11 +38,29 @@ from app.schemas.subtask_context import (
     TruncationInfo,
 )
 from app.services.attachment.parser import DocumentParseError, DocumentParser
+from app.services.auth.task_token import extract_token_from_header, verify_task_token
 from app.services.context import context_service
 from app.services.context.context_service import NotFoundException
 from app.services.shared_task import shared_task_service
 
 logger = logging.getLogger(__name__)
+
+
+def _extract_subtask_id_from_task_token(authorization: str) -> int:
+    """Extract subtask_id from task token in Authorization header.
+
+    Returns subtask_id if the token is a valid task token, 0 otherwise.
+    """
+    if not authorization:
+        return 0
+    token = extract_token_from_header(authorization)
+    if not token:
+        return 0
+    token_info = verify_task_token(token)
+    if token_info and token_info.subtask_id > 0:
+        return token_info.subtask_id
+    return 0
+
 
 router = APIRouter()
 
@@ -65,47 +92,76 @@ def _ensure_attachment_access(db: Session, context, current_user: User) -> None:
     """Ensure current user has access to the attachment context."""
     # Check access permission:
     # 1. User is the uploader
-    # 2. User is the task owner
+    # 2. User is the task owner (via subtask linkage)
     # 3. User is a member of the task that contains this attachment
     has_access = context.user_id == current_user.id
 
-    if not has_access and context.subtask_id > 0:
-        # Check if user is a task owner or member
+    if not has_access:
         from app.models.resource_member import MemberStatus, ResourceMember
         from app.models.share_link import ResourceType
         from app.models.subtask import Subtask
         from app.models.task import TaskResource
 
-        subtask = db.query(Subtask).filter(Subtask.id == context.subtask_id).first()
-        if subtask:
-            # Check if user is the task owner
-            task = (
-                db.query(TaskResource)
+        task_id = None
+
+        if context.subtask_id > 0:
+            # Linked attachment: find task via subtask
+            subtask = db.query(Subtask).filter(Subtask.id == context.subtask_id).first()
+            if subtask:
+                task_id = subtask.task_id
+        else:
+            # Unlinked attachment (subtask_id=0): find task via the uploader's
+            # subtasks. This handles executor-uploaded files that weren't linked
+            # to a subtask at upload time (legacy data).
+            subtask = (
+                db.query(Subtask)
                 .filter(
-                    TaskResource.id == subtask.task_id,
-                    TaskResource.kind == "Task",
-                    TaskResource.user_id == current_user.id,
+                    Subtask.user_id == context.user_id,
                 )
+                .order_by(Subtask.id.desc())
                 .first()
             )
-            if task:
-                has_access = True
-            else:
-                # Check if user is a task member using ResourceMember
-                task_member = (
-                    db.query(ResourceMember)
-                    .filter(
-                        ResourceMember.resource_type == ResourceType.TASK,
-                        ResourceMember.resource_id == subtask.task_id,
-                        ResourceMember.user_id == current_user.id,
-                        ResourceMember.status == MemberStatus.APPROVED,
-                    )
-                    .first()
-                )
-                has_access = task_member is not None
+            if subtask:
+                task_id = subtask.task_id
+
+        if task_id:
+            has_access = _check_task_access(db, task_id, current_user.id)
 
     if not has_access:
         raise HTTPException(status_code=404, detail="Attachment not found")
+
+
+def _check_task_access(db: Session, task_id: int, user_id: int) -> bool:
+    """Check if a user has access to a task (as owner or member)."""
+    from app.models.resource_member import MemberStatus, ResourceMember
+    from app.models.share_link import ResourceType
+    from app.models.task import TaskResource
+
+    # Check if user is the task owner
+    task = (
+        db.query(TaskResource)
+        .filter(
+            TaskResource.id == task_id,
+            TaskResource.kind == "Task",
+            TaskResource.user_id == user_id,
+        )
+        .first()
+    )
+    if task:
+        return True
+
+    # Check if user is a task member
+    task_member = (
+        db.query(ResourceMember)
+        .filter(
+            ResourceMember.resource_type == ResourceType.TASK,
+            ResourceMember.resource_id == task_id,
+            ResourceMember.user_id == user_id,
+            ResourceMember.status == MemberStatus.APPROVED,
+        )
+        .first()
+    )
+    return task_member is not None
 
 
 def _get_attachment_context(db: Session, attachment_id: int, current_user: User):
@@ -221,6 +277,7 @@ async def upload_attachment(
     overwrite_attachment_id: Optional[int] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user_jwt_apikey_tasktoken),
+    authorization: str = Header(default=""),
 ):
     """
     Upload a document file for chat attachment.
@@ -244,8 +301,12 @@ async def upload_attachment(
     Optional:
         overwrite_attachment_id: Existing attachment ID to overwrite in-place
     """
+    # Extract subtask_id from task token (for executor-uploaded attachments)
+    subtask_id = _extract_subtask_id_from_task_token(authorization)
+
     logger.info(
-        f"[attachments.py] upload_attachment: user_id={current_user.id}, filename={file.filename}"
+        f"[attachments.py] upload_attachment: user_id={current_user.id}, "
+        f"filename={file.filename}, subtask_id={subtask_id}"
     )
 
     if not file.filename:
@@ -287,6 +348,7 @@ async def upload_attachment(
                 user_id=current_user.id,
                 filename=file.filename,
                 binary_data=binary_data,
+                subtask_id=subtask_id,
             )
 
         return _build_attachment_response(context, truncation_info)
@@ -652,8 +714,14 @@ async def get_attachment_by_subtask(
     if context is None:
         return None
 
-    # Verify ownership
-    if context.user_id != current_user.id:
+    # Verify access: uploader, task owner, or task member
+    has_access = context.user_id == current_user.id
+    if not has_access:
+        subtask = db.query(Subtask).filter(Subtask.id == subtask_id).first()
+        if subtask:
+            has_access = _check_task_access(db, subtask.task_id, current_user.id)
+
+    if not has_access:
         raise HTTPException(status_code=403, detail="Access denied")
 
     return AttachmentDetailResponse.from_context(context)
