@@ -12,7 +12,6 @@ from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.user import User
 from app.schemas.namespace import (
     GroupCreate,
-    GroupLevel,
     GroupListResponse,
     GroupResponse,
     GroupRole,
@@ -27,7 +26,7 @@ from app.schemas.namespace_member import (
     GroupMemberUpdate,
 )
 from app.services import group_service
-from app.services.group_permission import get_effective_role_in_group
+from app.services.group_permission import get_view_role_in_group
 from shared.telemetry.decorators import trace_sync
 
 router = APIRouter()
@@ -120,15 +119,13 @@ def list_members(
             detail="Group not found",
         )
 
-    # Check if user has access (direct or inherited)
-    user_role = get_effective_role_in_group(db, current_user.id, group_name)
-    if (
-        user_role is None
-        and current_user.role == "admin"
-        and group.level == GroupLevel.organization.value
-    ):
-        user_role = GroupRole.Owner
-
+    user_role = get_view_role_in_group(
+        db,
+        current_user.id,
+        group_name,
+        user_role=current_user.role,
+        group_level=group.level,
+    )
     if user_role is None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -195,7 +192,7 @@ def add_member_endpoint(
 ):
     """
     Add a member to the group.
-    Only Maintainers and Owners can add members.
+    Only Owners and admins can add members.
     """
     try:
         return group_service.add_member(
@@ -489,15 +486,13 @@ def get_group_endpoint(
             detail="Group not found",
         )
 
-    # Check if user has access (direct or inherited)
-    user_role = get_effective_role_in_group(db, current_user.id, group_name)
-    if (
-        user_role is None
-        and current_user.role == "admin"
-        and group.level == GroupLevel.organization.value
-    ):
-        user_role = GroupRole.Owner
-
+    user_role = get_view_role_in_group(
+        db,
+        current_user.id,
+        group_name,
+        user_role=current_user.role,
+        group_level=group.level,
+    )
     if user_role is None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

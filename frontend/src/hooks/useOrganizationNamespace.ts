@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { getOrganizationNamespace } from '@/apis/knowledge'
 
 interface UseOrganizationNamespaceOptions {
@@ -14,10 +14,17 @@ interface UseOrganizationNamespaceOptions {
 export function useOrganizationNamespace({ enabled = true }: UseOrganizationNamespaceOptions = {}) {
   const [organizationNamespace, setOrganizationNamespace] = useState<string | null>(null)
   const [loading, setLoading] = useState(enabled)
+  const [error, setError] = useState<Error | null>(null)
+  const [reloadKey, setReloadKey] = useState(0)
+
+  const reload = useCallback(() => {
+    setReloadKey(currentKey => currentKey + 1)
+  }, [])
 
   useEffect(() => {
     if (!enabled) {
       setLoading(false)
+      setError(null)
       return
     }
 
@@ -25,6 +32,7 @@ export function useOrganizationNamespace({ enabled = true }: UseOrganizationName
 
     const loadOrganizationNamespace = async () => {
       setLoading(true)
+      setError(null)
       try {
         const response = await getOrganizationNamespace()
         if (isMounted) {
@@ -33,7 +41,9 @@ export function useOrganizationNamespace({ enabled = true }: UseOrganizationName
       } catch (error) {
         console.error('Failed to load organization namespace:', error)
         if (isMounted) {
-          setOrganizationNamespace(null)
+          setError(
+            error instanceof Error ? error : new Error('Failed to load organization namespace')
+          )
         }
       } finally {
         if (isMounted) {
@@ -47,10 +57,12 @@ export function useOrganizationNamespace({ enabled = true }: UseOrganizationName
     return () => {
       isMounted = false
     }
-  }, [enabled])
+  }, [enabled, reloadKey])
 
   return {
     organizationNamespace,
     loading,
+    error,
+    reload,
   }
 }

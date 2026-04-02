@@ -9,9 +9,13 @@ from app.core.security import get_password_hash
 from app.models.namespace import Namespace
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.user import User
+from app.schemas.base_role import BaseRole
 from app.schemas.namespace import GroupRole
 from app.services.knowledge.permission_policy import (
     can_create_namespace_knowledge_base,
+    can_manage_accessible_knowledge_base,
+    can_manage_accessible_knowledge_base_documents,
+    can_manage_accessible_knowledge_document,
     can_manage_namespace,
     can_manage_namespace_knowledge_base,
 )
@@ -192,3 +196,44 @@ def test_only_owner_can_manage_namespace_settings(test_db: Session) -> None:
 
     assert can_manage_namespace(test_db, owner, namespace.name)
     assert not can_manage_namespace(test_db, maintainer, namespace.name)
+
+
+@pytest.mark.unit
+def test_explicit_kb_maintainer_can_manage_accessible_knowledge_base() -> None:
+    assert can_manage_accessible_knowledge_base(
+        has_access=True,
+        role=BaseRole.Maintainer,
+        is_creator=False,
+    )
+
+
+@pytest.mark.unit
+def test_explicit_kb_developer_can_manage_documents_but_not_kb_settings() -> None:
+    assert not can_manage_accessible_knowledge_base(
+        has_access=True,
+        role=BaseRole.Developer,
+        is_creator=False,
+    )
+    assert can_manage_accessible_knowledge_base_documents(
+        has_access=True,
+        role=BaseRole.Developer,
+        is_creator=False,
+    )
+
+
+@pytest.mark.unit
+def test_explicit_kb_developer_can_manage_only_owned_document() -> None:
+    assert can_manage_accessible_knowledge_document(
+        has_access=True,
+        role=BaseRole.Developer,
+        is_creator=False,
+        user_id=2,
+        document_owner_id=2,
+    )
+    assert not can_manage_accessible_knowledge_document(
+        has_access=True,
+        role=BaseRole.Developer,
+        is_creator=False,
+        user_id=2,
+        document_owner_id=1,
+    )

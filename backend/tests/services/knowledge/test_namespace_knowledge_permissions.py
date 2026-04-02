@@ -15,6 +15,7 @@ from app.schemas.knowledge import (
     KnowledgeBaseCreate,
     KnowledgeBaseUpdate,
     KnowledgeDocumentCreate,
+    ResourceScope,
 )
 from app.schemas.namespace import GroupRole
 from app.services.knowledge.knowledge_service import KnowledgeService
@@ -150,6 +151,32 @@ def test_developer_can_create_organization_knowledge_base(test_db: Session) -> N
     kb = _get_kind(test_db, knowledge_base_id)
     assert kb.user_id == developer.id
     assert kb.namespace == namespace.name
+
+
+@pytest.mark.unit
+def test_all_scope_does_not_duplicate_organization_knowledge_base(
+    test_db: Session,
+) -> None:
+    owner = _create_user(test_db, "org-owner")
+    developer = _create_user(test_db, "org-developer")
+    namespace = _create_namespace(test_db, owner, "company-space", level="organization")
+    _add_member(test_db, namespace, owner, GroupRole.Owner, owner.id)
+    _add_member(test_db, namespace, developer, GroupRole.Developer, owner.id)
+
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(name="company-kb", namespace=namespace.name),
+    )
+
+    knowledge_bases = KnowledgeService.list_knowledge_bases(
+        test_db,
+        developer.id,
+        ResourceScope.ALL,
+    )
+
+    matching_ids = [kb.id for kb in knowledge_bases if kb.id == knowledge_base_id]
+    assert matching_ids == [knowledge_base_id]
 
 
 @pytest.mark.unit

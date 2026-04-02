@@ -107,7 +107,7 @@ export function canManageKnowledgeDocument({
   documentOwnerId,
   isAdmin = false,
 }: KnowledgeAccessOptions & { documentOwnerId: number | null | undefined }): boolean {
-  if (!currentUserId || !documentOwnerId) {
+  if (!currentUserId) {
     return false
   }
 
@@ -121,6 +121,10 @@ export function canManageKnowledgeDocument({
     })
   ) {
     return true
+  }
+
+  if (documentOwnerId == null) {
+    return false
   }
 
   return (

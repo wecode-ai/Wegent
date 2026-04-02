@@ -138,8 +138,14 @@ export default function ContextSelector({
   const [tableError, setTableError] = useState<string | null>(null)
   const [searchValue, setSearchValue] = useState('')
   const [activeTab, setActiveTab] = useState('knowledge')
-  const { organizationNamespace, loading: organizationNamespaceLoading } =
-    useOrganizationNamespace()
+  const {
+    organizationNamespace,
+    loading: organizationNamespaceLoading,
+    error: organizationNamespaceError,
+    reload: reloadOrganizationNamespace,
+  } = useOrganizationNamespace()
+  const knowledgeBaseError =
+    error || (organizationNamespaceError ? t('knowledge:fetch_error') : null)
 
   const fetchKnowledgeBases = useCallback(async () => {
     setLoading(true)
@@ -330,6 +336,11 @@ export default function ContextSelector({
     }
   }
 
+  const handleKnowledgeBaseRetry = () => {
+    reloadOrganizationNamespace()
+    fetchKnowledgeBases()
+  }
+
   // Handle bound knowledge base selection (from group chat)
   const handleSelectBound = (kb: BoundKnowledgeBaseDetail) => {
     if (isSelected(kb.id)) {
@@ -436,11 +447,11 @@ export default function ContextSelector({
                   <div className="py-4 px-3 text-center text-sm text-text-muted">
                     {t('common:actions.loading')}
                   </div>
-                ) : error ? (
+                ) : knowledgeBaseError ? (
                   <div className="py-4 px-3 text-center">
-                    <p className="text-sm text-red-500 mb-2">{error}</p>
+                    <p className="text-sm text-red-500 mb-2">{knowledgeBaseError}</p>
                     <button
-                      onClick={fetchKnowledgeBases}
+                      onClick={handleKnowledgeBaseRetry}
                       className="text-xs text-primary hover:underline"
                     >
                       {t('common:actions.retry')}

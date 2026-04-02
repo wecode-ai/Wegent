@@ -219,6 +219,26 @@ describe('namespace permissions', () => {
         })
       ).toBe(false)
     })
+
+    it('allows admin or knowledge-base manager when document owner is missing', () => {
+      expect(
+        canManageKnowledgeDocument({
+          currentUserId: 2,
+          isAdmin: true,
+          knowledgeBase: { namespace: 'engineering', user_id: 1 },
+          documentOwnerId: null,
+        })
+      ).toBe(true)
+
+      expect(
+        canManageKnowledgeDocument({
+          currentUserId: 2,
+          knowledgeRole: 'Maintainer',
+          knowledgeBase: { namespace: 'engineering', user_id: 1 },
+          documentOwnerId: undefined,
+        })
+      ).toBe(true)
+    })
   })
 
   describe('canManageNamespace', () => {

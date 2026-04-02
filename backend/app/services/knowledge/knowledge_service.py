@@ -21,7 +21,7 @@ from app.models.knowledge import (
 )
 from app.models.namespace import Namespace
 from app.models.user import User
-from app.schemas.base_role import BaseRole, has_permission
+from app.schemas.base_role import BaseRole
 from app.schemas.kind import KnowledgeBase as KnowledgeBaseCRD
 from app.schemas.kind import KnowledgeBaseSpec, ObjectMeta
 from app.schemas.knowledge import (
@@ -49,6 +49,9 @@ from app.services.group_permission import (
 )
 from app.services.knowledge.permission_policy import (
     can_create_namespace_knowledge_base,
+    can_manage_accessible_knowledge_base,
+    can_manage_accessible_knowledge_base_documents,
+    can_manage_accessible_knowledge_document,
 )
 
 
@@ -464,7 +467,12 @@ class KnowledgeService:
                 for kb in all_kbs
                 if kb.user_id == user_id and kb.namespace == "default"
             ]
-            team = [kb for kb in all_kbs if kb.namespace in accessible_groups]
+            team = [
+                kb
+                for kb in all_kbs
+                if kb.namespace in accessible_groups
+                and kb.namespace not in org_namespace_names
+            ]
             organization = [kb for kb in all_kbs if kb.namespace in org_namespace_names]
             # Shared/bound KBs are those not in personal, team, or organization
             other = [
@@ -1899,14 +1907,7 @@ class KnowledgeService:
         has_access, role, is_creator = KnowledgeService._get_user_kb_permission(
             db, knowledge_base_id, user_id
         )
-
-        if not has_access:
-            return False
-
-        if is_creator:
-            return True
-
-        return role is not None and has_permission(role, BaseRole.Maintainer)
+        return can_manage_accessible_knowledge_base(has_access, role, is_creator)
 
     @staticmethod
     def _get_user_kb_permission(
@@ -1934,14 +1935,9 @@ class KnowledgeService:
         has_access, role, is_creator = KnowledgeService._get_user_kb_permission(
             db, knowledge_base_id, user_id
         )
-
-        if not has_access:
-            return False
-
-        if is_creator:
-            return True
-
-        return role is not None and has_permission(role, BaseRole.Developer)
+        return can_manage_accessible_knowledge_base_documents(
+            has_access, role, is_creator
+        )
 
     @staticmethod
     def can_manage_knowledge_document(
@@ -1954,20 +1950,13 @@ class KnowledgeService:
         has_access, role, is_creator = KnowledgeService._get_user_kb_permission(
             db, knowledge_base_id, user_id
         )
-
-        if not has_access:
-            return False
-
-        if is_creator:
-            return True
-
-        if role is None:
-            return False
-
-        if has_permission(role, BaseRole.Maintainer):
-            return True
-
-        return role == BaseRole.Developer and document_owner_id == user_id
+        return can_manage_accessible_knowledge_document(
+            has_access=has_access,
+            role=role,
+            is_creator=is_creator,
+            user_id=user_id,
+            document_owner_id=document_owner_id,
+        )
 
     @staticmethod
     def _get_bound_kb_ids_for_user(db: Session, user_id: int) -> list[int]:

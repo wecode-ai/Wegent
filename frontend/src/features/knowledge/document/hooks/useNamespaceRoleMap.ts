@@ -10,6 +10,7 @@ import { buildNamespaceRoleMap, type NamespaceRoleMap } from '@/utils/namespace-
 
 let cachedNamespaceRoleMap: NamespaceRoleMap | null = null
 let pendingNamespaceRoleMapRequest: Promise<NamespaceRoleMap> | null = null
+let namespaceRoleMapCacheVersion = 0
 
 function fetchNamespaceRoleMap(): Promise<NamespaceRoleMap> {
   if (cachedNamespaceRoleMap) {
@@ -17,25 +18,40 @@ function fetchNamespaceRoleMap(): Promise<NamespaceRoleMap> {
   }
 
   if (!pendingNamespaceRoleMapRequest) {
-    pendingNamespaceRoleMapRequest = listGroups()
+    const requestVersion = namespaceRoleMapCacheVersion
+    const request = listGroups()
       .then(response => {
         const roleMap = buildNamespaceRoleMap(response.items || [])
+
+        if (requestVersion !== namespaceRoleMapCacheVersion) {
+          if (pendingNamespaceRoleMapRequest === request) {
+            pendingNamespaceRoleMapRequest = null
+          }
+          return fetchNamespaceRoleMap()
+        }
+
         cachedNamespaceRoleMap = roleMap
         return roleMap
       })
       .catch(error => {
-        pendingNamespaceRoleMapRequest = null
+        if (pendingNamespaceRoleMapRequest === request) {
+          pendingNamespaceRoleMapRequest = null
+        }
         throw error
       })
       .finally(() => {
-        pendingNamespaceRoleMapRequest = null
+        if (pendingNamespaceRoleMapRequest === request) {
+          pendingNamespaceRoleMapRequest = null
+        }
       })
+    pendingNamespaceRoleMapRequest = request
   }
 
   return pendingNamespaceRoleMapRequest
 }
 
 export function clearNamespaceRoleMapCache() {
+  namespaceRoleMapCacheVersion += 1
   cachedNamespaceRoleMap = null
   pendingNamespaceRoleMapRequest = null
 }

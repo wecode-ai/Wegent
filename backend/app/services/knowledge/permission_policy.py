@@ -9,7 +9,7 @@ from typing import Callable, Optional
 from sqlalchemy.orm import Session
 
 from app.models.user import User
-from app.schemas.base_role import has_permission
+from app.schemas.base_role import BaseRole, has_permission
 from app.schemas.namespace import GroupRole
 from app.services.group_permission import get_effective_role_in_group
 from shared.telemetry.decorators import trace_sync
@@ -109,3 +109,56 @@ def can_manage_namespace(
 
     role = _resolve_role(db, user.id, namespace_name, role_resolver)
     return role == GroupRole.Owner
+
+
+def can_manage_accessible_knowledge_base(
+    has_access: bool,
+    role: BaseRole | None,
+    is_creator: bool,
+) -> bool:
+    """Return whether merged KB access allows KB-level management."""
+    if not has_access:
+        return False
+
+    if is_creator:
+        return True
+
+    return role is not None and has_permission(role, BaseRole.Maintainer)
+
+
+def can_manage_accessible_knowledge_base_documents(
+    has_access: bool,
+    role: BaseRole | None,
+    is_creator: bool,
+) -> bool:
+    """Return whether merged KB access allows document uploads."""
+    if not has_access:
+        return False
+
+    if is_creator:
+        return True
+
+    return role is not None and has_permission(role, BaseRole.Developer)
+
+
+def can_manage_accessible_knowledge_document(
+    has_access: bool,
+    role: BaseRole | None,
+    is_creator: bool,
+    user_id: int,
+    document_owner_id: int,
+) -> bool:
+    """Return whether merged KB access allows document management."""
+    if not has_access:
+        return False
+
+    if is_creator:
+        return True
+
+    if role is None:
+        return False
+
+    if has_permission(role, BaseRole.Maintainer):
+        return True
+
+    return role == BaseRole.Developer and document_owner_id == user_id

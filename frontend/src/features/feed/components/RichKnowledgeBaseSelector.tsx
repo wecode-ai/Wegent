@@ -65,9 +65,13 @@ export function RichKnowledgeBaseSelector({
   const [error, setError] = useState<string | null>(null)
   const listRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
-  const { organizationNamespace, loading: organizationNamespaceLoading } = useOrganizationNamespace(
-    { enabled: open }
-  )
+  const {
+    organizationNamespace,
+    loading: organizationNamespaceLoading,
+    error: organizationNamespaceError,
+  } = useOrganizationNamespace({ enabled: open })
+  const knowledgeBaseError =
+    error || (organizationNamespaceError ? tKnowledge('fetch_error') : null)
 
   // Measure trigger width when open changes
   useEffect(() => {
@@ -270,8 +274,8 @@ export function RichKnowledgeBaseSelector({
       )
     }
 
-    if (error) {
-      return <div className="py-8 text-center text-sm text-destructive">{error}</div>
+    if (knowledgeBaseError) {
+      return <div className="py-8 text-center text-sm text-destructive">{knowledgeBaseError}</div>
     }
 
     if (!hasAvailableKnowledgeBases) {

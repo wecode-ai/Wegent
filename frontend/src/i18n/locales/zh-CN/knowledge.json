@@ -87,6 +87,7 @@
     "table": {
       "name": "名称",
       "group": "归属小组",
+      "permission": "权限",
       "lastAccess": "最近访问",
       "actions": "操作",
       "edit": "编辑",
