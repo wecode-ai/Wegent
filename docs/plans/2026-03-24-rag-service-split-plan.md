@@ -14,9 +14,15 @@ sidebar_position: 1
 
 - 本文中的 `Phase 0` 已经作为历史阶段完成：`chat_shell` 不再负责 `/all-chunks` 与 `/retrieve` 的主路由决策，Backend internal RAG API 已接管该选择。
 - 当前一线落地工作不再是“先把路由下沉到 Backend”，而是“先稳定模块边界”，即 `RuntimeSpec + RagGateway + local data-plane modules`。
-- 当前生效的模块化设计与实施计划，请结合以下文档一起阅读：
+- 当前生效的主设计文档以以下内容为准：
   - `docs/specs/knowledge/2026-03-31-rag-modular-data-plane-design.md`
-  - `docs/plans/2026-04-01-rag-modular-data-plane-implementation-plan.md`
+  - `backend/app/services/rag/README.md`
+- `2026-04-01` 的两份 implementation plan 已随代码落地完成，作为执行清单的价值已经结束，因此不再继续保留。
+
+定位说明：
+
+- 本文保留为“为什么最终没有立刻拆独立 `rag_service`”的历史背景
+- 当前如果要继续推进后续阶段，应优先更新 `2026-03-31` 的 spec，而不是回到本文继续追加任务清单
 
 目标：
 - 将解析、切分、向量化、索引、检索等重依赖能力从 Backend 主进程中解耦。

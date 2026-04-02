@@ -37,6 +37,13 @@ Phase 2.5 is complete for the current local module split:
 - `/api/internal/rag/retrieve` is the unified internal retrieval surface for both normal and restricted flows.
 - `/api/internal/rag/all-chunks` remains only as a legacy internal endpoint for transitional compatibility.
 
+At this release node, the first four roadmap steps are complete:
+
+- runtime contract extraction
+- modular local data-plane foundation
+- Phase 2.5 control/data boundary cleanup
+- Backend-owned restricted mediation
+
 Follow-up work is intentionally not implemented in this foundation layer:
 
 - `summary_vector_index`

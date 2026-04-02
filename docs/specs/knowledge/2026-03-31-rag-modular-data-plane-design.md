@@ -19,6 +19,27 @@ sidebar_position: 1
 - 应该先拆模块边界还是先拆部署边界
 - 未来的 `summary index`、`tableRAG`、受限知识压缩、第三方 RAG engine 应该分别放在哪一层
 
+## 状态快照（2026-04-02）
+
+当前这一轮拆分已经完成推荐路线中的前四步：
+
+- `runtime contract` 已落地
+- 模块化 `rag data plane` 已落地
+- `Phase 2.5` 已完成，control/data 边界已收敛
+- restricted safe-summary 已迁入 Backend internal retrieval
+
+当前稳定边界如下：
+
+- `backend/app/services/rag/` 负责执行侧 runtime contract、gateway、local data-plane adapter
+- `backend/app/services/knowledge/` 负责 control-plane persistence、`kb_head`、protected mediation
+- `chat_shell` 只消费 Backend internal RAG 结果，不再承担 restricted 二级模型压缩编排
+
+当前仍属于后续路线的问题只剩：
+
+- `summary_vector_index`
+- `tableRAG`
+- 是否独立 `rag_service`
+
 ## 问题
 
 当前实现虽然已经完成了一部分路由下沉，但仍存在以下结构性问题：
@@ -635,6 +656,8 @@ class ProtectedKnowledgeMediator(Protocol):
 ## 最终结论
 
 Wegent 应继续推进 RAG 拆分，但本阶段应优先做“模块边界拆分”，而不是立即做“进程边界拆分”。
+
+截至 2026-04-02，推荐路线 1~4 已完成；后续决策重点已经切换为 5~7。
 
 推荐路线是：
 
