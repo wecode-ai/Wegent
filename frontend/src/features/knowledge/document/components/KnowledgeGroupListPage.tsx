@@ -66,11 +66,13 @@ export interface KnowledgeGroupListPageProps {
   /** Select a knowledge base */
   onSelectKb: (kb: KbDataItem) => void
   /** Create a new knowledge base */
-  onCreateKb: (kbType: KnowledgeBaseType) => void
+  onCreateKb?: (kbType: KnowledgeBaseType) => void
   /** Edit a knowledge base */
   onEditKb?: (kb: KbDataItem) => void
   /** Delete a knowledge base */
   onDeleteKb?: (kb: KbDataItem) => void
+  /** Whether current user can manage a specific KB */
+  canManageKb?: (kb: KbDataItem) => boolean
   /** Toggle favorite */
   onToggleFavorite?: (kbId: number, isFavorite: boolean) => void
   /** Check if KB is favorite */
@@ -171,6 +173,7 @@ export function KnowledgeGroupListPage({
   onCreateKb,
   onEditKb,
   onDeleteKb,
+  canManageKb,
   onToggleFavorite,
   isFavorite,
   getKbGroupInfo,
@@ -366,8 +369,8 @@ export function KnowledgeGroupListPage({
           key={kb.id}
           kb={kb}
           onClick={() => onSelectKb(kb)}
-          onEdit={onEditKb ? () => onEditKb(kb) : undefined}
-          onDelete={onDeleteKb ? () => onDeleteKb(kb) : undefined}
+          onEdit={onEditKb && canManageKb?.(kb) !== false ? () => onEditKb(kb) : undefined}
+          onDelete={onDeleteKb && canManageKb?.(kb) !== false ? () => onDeleteKb(kb) : undefined}
           onMigrate={onMigrateKb ? () => onMigrateKb(kb) : undefined}
           onToggleFavorite={onToggleFavorite ? e => handleToggleFavorite(e, kb) : undefined}
           isFavorite={isFavorite?.(kb.id)}
@@ -471,15 +474,17 @@ export function KnowledgeGroupListPage({
         <h2 className="text-lg font-semibold flex-1 truncate">
           {isAllMode ? t('document.allKnowledgeBases', '全部知识库') : groupName}
         </h2>
-        <Button
-          variant="primary"
-          size="sm"
-          onClick={() => onCreateKb('notebook')}
-          data-testid="create-kb-button"
-        >
-          <Plus className="w-4 h-4 mr-1" />
-          {t('document.knowledgeBase.create', '新建知识库')}
-        </Button>
+        {onCreateKb && (
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={() => onCreateKb('notebook')}
+            data-testid="create-kb-button"
+          >
+            <Plus className="w-4 h-4 mr-1" />
+            {t('document.knowledgeBase.create', '新建知识库')}
+          </Button>
+        )}
       </div>
 
       {/* Content */}

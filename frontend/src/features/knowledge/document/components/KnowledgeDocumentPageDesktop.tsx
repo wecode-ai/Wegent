@@ -19,16 +19,22 @@ import { userApis } from '@/apis/user'
 import { teamService } from '@/features/tasks/service/teamService'
 import { saveGlobalModelPreference, type ModelPreference } from '@/utils/modelPreferences'
 import { useTranslation } from '@/hooks/useTranslation'
+import { useUser } from '@/features/common/UserContext'
 import { listKnowledgeBases } from '@/apis/knowledge'
 import { useKnowledgeSidebar, type KnowledgeGroup } from '../hooks/useKnowledgeSidebar'
+import { useNamespaceRoleMap } from '../hooks/useNamespaceRoleMap'
 import { KnowledgeSidebar } from './KnowledgeSidebar'
 import { KnowledgeDetailPanel } from './KnowledgeDetailPanel'
-import { KnowledgeGroupListPage } from './KnowledgeGroupListPage'
+import { KnowledgeGroupListPage, type KbDataItem } from './KnowledgeGroupListPage'
 import { CreateKnowledgeBaseDialog, type AvailableGroup } from './CreateKnowledgeBaseDialog'
 import { EditKnowledgeBaseDialog } from './EditKnowledgeBaseDialog'
 import { DeleteKnowledgeBaseDialog } from './DeleteKnowledgeBaseDialog'
 import { MigrateKnowledgeBaseDialog, type MigrationTargetGroup } from './MigrateKnowledgeBaseDialog'
 import { ShareLinkDialog } from '../../permission/components/ShareLinkDialog'
+import {
+  canCreateKnowledgeBaseInNamespace,
+  canManageKnowledgeBase,
+} from '@/utils/namespace-permissions'
 import { migrateKnowledgeBaseToGroup } from '@/apis/knowledge'
 import type {
   KnowledgeBase,
@@ -46,9 +52,11 @@ export function KnowledgeDocumentPageDesktop() {
   const { t } = useTranslation('knowledge')
   const router = useRouter()
   const searchParams = useSearchParams()
+  const { user } = useUser()
 
   // Knowledge sidebar hook
   const sidebar = useKnowledgeSidebar()
+  const namespaceRoleMap = useNamespaceRoleMap()
 
   // Sidebar collapse state - auto-collapse when notebook KB is selected
   // Use localStorage to sync state with parent components (for TopNavigation expand button)
@@ -209,7 +217,7 @@ export function KnowledgeDocumentPageDesktop() {
       // No URL params, mark as synced
       initialUrlSyncDone.current = true
     }
-  }, [searchParams, sidebar.allKnowledgeBases, sidebar.selectKb, sidebar.selectGroup])
+  }, [searchParams, sidebar, sidebar.allKnowledgeBases, sidebar.selectKb, sidebar.selectGroup])
 
   // Helper function to update URL parameters
   const updateUrlParams = useCallback(
@@ -358,6 +366,35 @@ export function KnowledgeDocumentPageDesktop() {
     if (!sidebar.selectedGroupId) return null
     return sidebar.groups.find(g => g.id === sidebar.selectedGroupId) || null
   }, [sidebar.selectedGroupId, sidebar.groups])
+
+  const canCreateInSelectedGroup = useMemo(() => {
+    if (!selectedGroup) {
+      return false
+    }
+
+    if (selectedGroup.type === 'personal') {
+      return true
+    }
+
+    return canCreateKnowledgeBaseInNamespace({
+      namespace: selectedGroup.name,
+      namespaceRole: namespaceRoleMap.get(selectedGroup.name),
+      isAdmin: sidebar.isAdmin,
+    })
+  }, [selectedGroup, namespaceRoleMap, sidebar.isAdmin])
+
+  const canManageKbInList = useCallback(
+    (kb: KbDataItem) => {
+      return canManageKnowledgeBase({
+        currentUserId: user?.id,
+        knowledgeBase: kb,
+        knowledgeRole: 'my_role' in kb ? (kb.my_role ?? undefined) : undefined,
+        namespaceRole: namespaceRoleMap.get(kb.namespace),
+        isAdmin: sidebar.isAdmin,
+      })
+    },
+    [user?.id, namespaceRoleMap, sidebar.isAdmin]
+  )
 
   // Handle KB selection (supports both KnowledgeBase and KnowledgeBaseWithGroupInfo)
   const handleSelectKb = useCallback(
@@ -663,15 +700,25 @@ export function KnowledgeDocumentPageDesktop() {
       name: g.name,
       displayName: g.displayName,
       type: g.type,
-      canCreate: true, // TODO: Check actual permission
+      canCreate:
+        g.type === 'personal'
+          ? true
+          : canCreateKnowledgeBaseInNamespace({
+              namespace: g.name,
+              namespaceRole: namespaceRoleMap.get(g.name),
+              isAdmin: sidebar.isAdmin,
+            }),
     }))
-  }, [sidebar.groups])
+  }, [sidebar.groups, namespaceRoleMap, sidebar.isAdmin])
+
+  const hasCreatableTeamGroup = useMemo(() => {
+    return availableGroupsForCreate.some(group => group.type === 'group' && group.canCreate)
+  }, [availableGroupsForCreate])
 
   // Get group info for the selected KB
-  const selectedKbGroupInfo = useMemo(() => {
-    if (!sidebar.selectedKb) return undefined
-    return sidebar.getKbGroupInfo(sidebar.selectedKb)
-  }, [sidebar.selectedKb, sidebar.getKbGroupInfo])
+  const selectedKbGroupInfo = sidebar.selectedKb
+    ? sidebar.getKbGroupInfo(sidebar.selectedKb)
+    : undefined
 
   // Handle group click from KB detail panel - navigate to group list
   // Need to convert KbGroupInfo's groupId to sidebar's group ID format
@@ -739,7 +786,7 @@ export function KnowledgeDocumentPageDesktop() {
           knowledgeBasesWithGroupInfo={teamGroupKbs}
           isLoading={sidebar.isGroupsLoading}
           onSelectKb={handleSelectKb}
-          onCreateKb={handleCreateKbFromGroups}
+          onCreateKb={hasCreatableTeamGroup ? handleCreateKbFromGroups : undefined}
           onEditKb={kb => {
             const fullKb = sidebar.allKnowledgeBases.find(k => k.id === kb.id)
             if (fullKb) setEditingKb(fullKb)
@@ -748,6 +795,7 @@ export function KnowledgeDocumentPageDesktop() {
             const fullKb = sidebar.allKnowledgeBases.find(k => k.id === kb.id)
             if (fullKb) setDeletingKb(fullKb)
           }}
+          canManageKb={canManageKbInList}
           onToggleFavorite={handleToggleFavorite}
           isFavorite={isFavorite}
           getKbGroupInfo={sidebar.getKbGroupInfo}
@@ -778,6 +826,7 @@ export function KnowledgeDocumentPageDesktop() {
             const fullKb = sidebar.allKnowledgeBases.find(k => k.id === kb.id)
             if (fullKb) setDeletingKb(fullKb)
           }}
+          canManageKb={canManageKbInList}
           onToggleFavorite={handleToggleFavorite}
           isFavorite={isFavorite}
           getKbGroupInfo={sidebar.getKbGroupInfo}
@@ -817,7 +866,7 @@ export function KnowledgeDocumentPageDesktop() {
           isLoading={isGroupKbsLoading}
           onBack={handleBackFromGroup}
           onSelectKb={handleSelectKb}
-          onCreateKb={handleCreateKbFromGroup}
+          onCreateKb={canCreateInSelectedGroup ? handleCreateKbFromGroup : undefined}
           onEditKb={kb => {
             const fullKb =
               sidebar.allKnowledgeBases.find(k => k.id === kb.id) ||
@@ -830,6 +879,7 @@ export function KnowledgeDocumentPageDesktop() {
               groupKbs.find(k => k.id === kb.id)
             if (fullKb) setDeletingKb(fullKb)
           }}
+          canManageKb={canManageKbInList}
           onToggleFavorite={handleToggleFavorite}
           isFavorite={isFavorite}
           isPersonalMode={isPersonalMode}

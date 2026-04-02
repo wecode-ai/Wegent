@@ -44,15 +44,11 @@ def list_groups(
     Returns paginated results.
     """
     skip = (page - 1) * limit
-    # Check if user is admin to include organization groups
-    is_admin = current_user.role == "admin"
-
     groups = group_service.list_user_groups(
         db=db,
         user_id=current_user.id,
         skip=skip,
         limit=limit,
-        include_organization=is_admin,
     )
 
     # Calculate total count
@@ -65,7 +61,6 @@ def list_groups(
             user_id=current_user.id,
             skip=0,
             limit=1000,
-            include_organization=is_admin,
         )
         total = len(all_groups)
 
@@ -193,6 +188,7 @@ def add_member_endpoint(
             user_id=member_create.user_id,
             role=member_create.role,
             invited_by_user_id=current_user.id,
+            inviter_role=current_user.role,
         )
     except HTTPException:
         raise
@@ -244,6 +240,7 @@ def add_member_by_username_endpoint(
             user_id=user.id,
             role=role,
             invited_by_user_id=current_user.id,
+            inviter_role=current_user.role,
         )
         return AddMemberResult(
             success=True, message="Member added successfully", data=member
@@ -278,6 +275,7 @@ def update_member_role_endpoint(
             user_id=user_id,
             new_role=member_update.role,
             updated_by_user_id=current_user.id,
+            updater_user_role=current_user.role,
         )
     except HTTPException:
         raise
@@ -310,6 +308,7 @@ def update_member_roles_batch_endpoint(
             group_name=group_name,
             updates=batch_update.updates,
             updated_by_user_id=current_user.id,
+            updater_user_role=current_user.role,
         )
     except HTTPException:
         raise
@@ -342,6 +341,7 @@ def remove_member_endpoint(
             group_name=group_name,
             user_id=user_id,
             removed_by_user_id=current_user.id,
+            remover_user_role=current_user.role,
         )
         return None
     except HTTPException:
@@ -371,7 +371,10 @@ def invite_all_users_endpoint(
     """
     try:
         return group_service.invite_all_users(
-            db=db, group_name=group_name, invited_by_user_id=current_user.id
+            db=db,
+            group_name=group_name,
+            invited_by_user_id=current_user.id,
+            inviter_role=current_user.role,
         )
     except HTTPException:
         raise
@@ -401,6 +404,7 @@ def leave_group_endpoint(
             group_name=group_name,
             user_id=current_user.id,
             removed_by_user_id=current_user.id,  # Self-removal
+            remover_user_role=current_user.role,
         )
         return None
     except HTTPException:
@@ -433,6 +437,7 @@ def transfer_ownership_endpoint(
             group_name=group_name,
             new_owner_user_id=new_owner_user_id,
             current_owner_user_id=current_user.id,
+            current_user_role=current_user.role,
         )
     except HTTPException:
         raise

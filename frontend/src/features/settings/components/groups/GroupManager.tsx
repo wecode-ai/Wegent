@@ -18,6 +18,7 @@ import { EditGroupDialog } from './EditGroupDialog'
 import { DeleteGroupConfirmDialog } from './DeleteGroupConfirmDialog'
 import { GroupMembersDialog } from './GroupMembersDialog'
 import { useUser } from '@/features/common/UserContext'
+import { canManageNamespace } from '@/utils/namespace-permissions'
 
 interface GroupManagerProps {
   onGroupsChange?: () => void
@@ -27,6 +28,7 @@ export function GroupManager({ onGroupsChange }: GroupManagerProps) {
   const { t } = useTranslation()
   const router = useRouter()
   const { user } = useUser()
+  const isAdmin = user?.role === 'admin'
   const [groups, setGroups] = useState<Group[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -202,7 +204,10 @@ export function GroupManager({ onGroupsChange }: GroupManagerProps) {
                     </td>
                     <td className="w-[120px] min-w-[120px] px-4 py-3 text-sm">
                       <div className="flex items-center justify-center gap-2">
-                        {(group.my_role === 'Owner' || group.my_role === 'Maintainer') && (
+                        {canManageNamespace({
+                          namespaceRole: group.my_role,
+                          isAdmin,
+                        }) && (
                           <Button
                             variant="ghost"
                             size="icon"
@@ -213,7 +218,10 @@ export function GroupManager({ onGroupsChange }: GroupManagerProps) {
                             <PencilIcon className="w-4 h-4" />
                           </Button>
                         )}
-                        {group.my_role === 'Owner' && (
+                        {canManageNamespace({
+                          namespaceRole: group.my_role,
+                          isAdmin,
+                        }) && (
                           <Button
                             variant="ghost"
                             size="icon"

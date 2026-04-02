@@ -1,0 +1,82 @@
+# SPDX-FileCopyrightText: 2026 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+"""Centralized namespace and knowledge-base permission policies."""
+
+from typing import Callable, Optional
+
+from sqlalchemy.orm import Session
+
+from app.models.user import User
+from app.schemas.base_role import has_permission
+from app.schemas.namespace import GroupRole
+from app.services.group_permission import get_effective_role_in_group
+
+RoleResolver = Callable[[Session, int, str], Optional[GroupRole]]
+
+
+def _resolve_role(
+    db: Session,
+    user_id: int,
+    namespace_name: str,
+    role_resolver: RoleResolver | None = None,
+) -> Optional[GroupRole]:
+    resolver = role_resolver or get_effective_role_in_group
+    return resolver(db, user_id, namespace_name)
+
+
+def can_create_namespace_knowledge_base(
+    db: Session,
+    user: User,
+    namespace_name: str,
+    role_resolver: RoleResolver | None = None,
+) -> bool:
+    """Return whether the user can create a KB in the target namespace."""
+    if namespace_name == "default":
+        return True
+
+    if user.role == "admin":
+        return True
+
+    role = _resolve_role(db, user.id, namespace_name, role_resolver)
+    return role is not None and has_permission(role, GroupRole.Developer)
+
+
+def can_manage_namespace_knowledge_base(
+    db: Session,
+    user_id: int,
+    namespace_name: str,
+    kb_owner_id: int,
+    user_role: str | None = None,
+    role_resolver: RoleResolver | None = None,
+) -> bool:
+    """Return whether the user can manage the target KB."""
+    if namespace_name == "default":
+        return kb_owner_id == user_id
+
+    if user_role == "admin":
+        return True
+
+    role = _resolve_role(db, user_id, namespace_name, role_resolver)
+    if role is None:
+        return False
+
+    if has_permission(role, GroupRole.Maintainer):
+        return True
+
+    return role == GroupRole.Developer and kb_owner_id == user_id
+
+
+def can_manage_namespace(
+    db: Session,
+    user: User,
+    namespace_name: str,
+    role_resolver: RoleResolver | None = None,
+) -> bool:
+    """Return whether the user can manage namespace settings/members."""
+    if user.role == "admin":
+        return True
+
+    role = _resolve_role(db, user.id, namespace_name, role_resolver)
+    return role == GroupRole.Owner

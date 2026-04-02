@@ -23,6 +23,11 @@ from app.services.knowledge.orchestrator import (
     KnowledgeOrchestrator,
     knowledge_orchestrator,
 )
+from app.services.knowledge.permission_policy import (
+    can_create_namespace_knowledge_base,
+    can_manage_namespace,
+    can_manage_namespace_knowledge_base,
+)
 from app.services.knowledge.summary_service import SummaryService, get_summary_service
 from app.services.knowledge.task_knowledge_base_service import TaskKnowledgeBaseService
 
@@ -35,4 +40,7 @@ __all__ = [
     "TaskKnowledgeBaseService",
     "KnowledgeOrchestrator",
     "knowledge_orchestrator",
+    "can_create_namespace_knowledge_base",
+    "can_manage_namespace",
+    "can_manage_namespace_knowledge_base",
 ]

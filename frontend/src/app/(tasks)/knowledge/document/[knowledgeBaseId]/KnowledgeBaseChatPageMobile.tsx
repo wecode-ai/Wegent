@@ -28,12 +28,12 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { ChatArea } from '@/features/tasks/components/chat'
 import { useTeamContext } from '@/contexts/TeamContext'
 import { useKnowledgeBaseDetail } from '@/features/knowledge/document/hooks'
+import { useNamespaceRoleMap } from '@/features/knowledge/document/hooks/useNamespaceRoleMap'
 import { DocumentList, KnowledgeBaseSummaryCard } from '@/features/knowledge/document/components'
 import { BoundKnowledgeBaseSummary } from '@/features/tasks/components/group-chat'
 import { taskKnowledgeBaseApi } from '@/apis/task-knowledge-base'
-import { listGroups } from '@/apis/groups'
+import { canManageKnowledgeBase } from '@/utils/namespace-permissions'
 import type { Team } from '@/types/api'
-import type { BaseRole } from '@/types/base-role'
 /**
  * Mobile-specific implementation of Knowledge Base Chat Page
  *
@@ -109,25 +109,7 @@ export function KnowledgeBaseChatPageMobile() {
   // Search dialog state
   const [isSearchDialogOpen, setIsSearchDialogOpen] = useState(false)
 
-  // Group role map for permission checking
-  const [groupRoleMap, setGroupRoleMap] = useState<Map<string, BaseRole>>(new Map())
-
-  // Fetch all groups and build role map for permission checking
-  useEffect(() => {
-    listGroups()
-      .then(response => {
-        const roleMap = new Map<string, BaseRole>()
-        response.items.forEach(group => {
-          if (group.my_role) {
-            roleMap.set(group.name, group.my_role)
-          }
-        })
-        setGroupRoleMap(roleMap)
-      })
-      .catch(error => {
-        console.error('Failed to load groups for role map:', error)
-      })
-  }, [])
+  const namespaceRoleMap = useNamespaceRoleMap()
 
   // Toggle search dialog
   const toggleSearchDialog = useCallback(() => {
@@ -169,19 +151,13 @@ export function KnowledgeBaseChatPageMobile() {
   // Check if user can manage this KB
   const canManageKb = useMemo(() => {
     if (!knowledgeBase || !user) return false
-    // Personal knowledge base - check user ownership
-    if (knowledgeBase.namespace === 'default') {
-      return knowledgeBase.user_id === user.id
-    }
-    // Organization knowledge base - only admin can manage
-    if (knowledgeBase.namespace === 'organization') {
-      return user.role === 'admin'
-    }
-    // Group knowledge base - check group role
-    // Developer or higher can edit, Maintainer or higher can delete
-    const groupRole = groupRoleMap.get(knowledgeBase.namespace)
-    return groupRole === 'Owner' || groupRole === 'Maintainer' || groupRole === 'Developer'
-  }, [knowledgeBase, user, groupRoleMap])
+    return canManageKnowledgeBase({
+      currentUserId: user.id,
+      knowledgeBase,
+      namespaceRole: namespaceRoleMap.get(knowledgeBase.namespace),
+      isAdmin: user.role === 'admin',
+    })
+  }, [knowledgeBase, user, namespaceRoleMap])
 
   // Loading state
   if (kbLoading) {

@@ -1,0 +1,200 @@
+# SPDX-FileCopyrightText: 2026 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+import pytest
+from sqlalchemy.orm import Session
+
+from app.core.security import get_password_hash
+from app.models.kind import Kind
+from app.models.namespace import Namespace
+from app.models.resource_member import MemberStatus, ResourceMember
+from app.models.user import User
+from app.schemas.knowledge import (
+    DocumentSourceType,
+    KnowledgeBaseCreate,
+    KnowledgeBaseUpdate,
+    KnowledgeDocumentCreate,
+)
+from app.schemas.namespace import GroupRole
+from app.services.knowledge.knowledge_service import KnowledgeService
+
+
+def _create_user(test_db: Session, username: str, role: str = "user") -> User:
+    user = User(
+        user_name=username,
+        password_hash=get_password_hash(f"{username}-secret"),
+        email=f"{username}@example.com",
+        is_active=True,
+        git_info=None,
+        role=role,
+    )
+    test_db.add(user)
+    test_db.commit()
+    test_db.refresh(user)
+    return user
+
+
+def _create_namespace(
+    test_db: Session,
+    owner: User,
+    name: str,
+    level: str = "group",
+) -> Namespace:
+    namespace = Namespace(
+        name=name,
+        display_name=name,
+        owner_user_id=owner.id,
+        visibility="internal",
+        description="test namespace",
+        level=level,
+        is_active=True,
+    )
+    test_db.add(namespace)
+    test_db.commit()
+    test_db.refresh(namespace)
+    return namespace
+
+
+def _add_member(
+    test_db: Session,
+    namespace: Namespace,
+    user: User,
+    role: GroupRole,
+    invited_by_user_id: int,
+) -> ResourceMember:
+    member = ResourceMember(
+        resource_type="Namespace",
+        resource_id=namespace.id,
+        user_id=user.id,
+        role=role.value,
+        status=MemberStatus.APPROVED.value,
+        invited_by_user_id=invited_by_user_id,
+        share_link_id=0,
+        reviewed_by_user_id=invited_by_user_id,
+        copied_resource_id=0,
+    )
+    test_db.add(member)
+    test_db.commit()
+    test_db.refresh(member)
+    return member
+
+
+def _get_kind(test_db: Session, knowledge_base_id: int) -> Kind:
+    kb = (
+        test_db.query(Kind)
+        .filter(Kind.id == knowledge_base_id, Kind.kind == "KnowledgeBase")
+        .first()
+    )
+    assert kb is not None
+    return kb
+
+
+@pytest.mark.unit
+def test_developer_can_create_group_knowledge_base(test_db: Session) -> None:
+    owner = _create_user(test_db, "owner")
+    developer = _create_user(test_db, "developer")
+    namespace = _create_namespace(test_db, owner, "group-space")
+    _add_member(test_db, namespace, owner, GroupRole.Owner, owner.id)
+    _add_member(test_db, namespace, developer, GroupRole.Developer, owner.id)
+
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        developer.id,
+        KnowledgeBaseCreate(name="dev-kb", namespace=namespace.name),
+    )
+
+    kb = _get_kind(test_db, knowledge_base_id)
+    assert kb.user_id == developer.id
+    assert kb.namespace == namespace.name
+
+
+@pytest.mark.unit
+def test_developer_can_create_organization_knowledge_base(test_db: Session) -> None:
+    owner = _create_user(test_db, "owner")
+    developer = _create_user(test_db, "developer")
+    namespace = _create_namespace(test_db, owner, "company-space", level="organization")
+    _add_member(test_db, namespace, owner, GroupRole.Owner, owner.id)
+    _add_member(test_db, namespace, developer, GroupRole.Developer, owner.id)
+
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        developer.id,
+        KnowledgeBaseCreate(name="company-kb", namespace=namespace.name),
+    )
+
+    kb = _get_kind(test_db, knowledge_base_id)
+    assert kb.user_id == developer.id
+    assert kb.namespace == namespace.name
+
+
+@pytest.mark.unit
+def test_developer_cannot_update_someone_elses_namespace_kb(test_db: Session) -> None:
+    owner = _create_user(test_db, "owner")
+    developer = _create_user(test_db, "developer")
+    namespace = _create_namespace(test_db, owner, "shared-space")
+    _add_member(test_db, namespace, owner, GroupRole.Owner, owner.id)
+    _add_member(test_db, namespace, developer, GroupRole.Developer, owner.id)
+
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(name="owner-kb", namespace=namespace.name),
+    )
+
+    with pytest.raises(ValueError, match="permission"):
+        KnowledgeService.update_knowledge_base(
+            test_db,
+            knowledge_base_id,
+            developer.id,
+            KnowledgeBaseUpdate(description="developer cannot edit this"),
+        )
+
+
+@pytest.mark.unit
+def test_maintainer_can_delete_someone_elses_namespace_kb(test_db: Session) -> None:
+    owner = _create_user(test_db, "owner")
+    maintainer = _create_user(test_db, "maintainer")
+    namespace = _create_namespace(test_db, owner, "team-delete-space")
+    _add_member(test_db, namespace, owner, GroupRole.Owner, owner.id)
+    _add_member(test_db, namespace, maintainer, GroupRole.Maintainer, owner.id)
+
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(name="owner-kb", namespace=namespace.name),
+    )
+
+    assert KnowledgeService.delete_knowledge_base(
+        test_db, knowledge_base_id, maintainer.id
+    )
+
+
+@pytest.mark.unit
+def test_developer_can_add_document_to_owned_namespace_kb(test_db: Session) -> None:
+    owner = _create_user(test_db, "owner")
+    developer = _create_user(test_db, "developer")
+    namespace = _create_namespace(test_db, owner, "docs-space")
+    _add_member(test_db, namespace, owner, GroupRole.Owner, owner.id)
+    _add_member(test_db, namespace, developer, GroupRole.Developer, owner.id)
+
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        developer.id,
+        KnowledgeBaseCreate(name="owned-kb", namespace=namespace.name),
+    )
+
+    document = KnowledgeService.create_document(
+        test_db,
+        knowledge_base_id,
+        developer.id,
+        KnowledgeDocumentCreate(
+            name="release-notes",
+            file_extension="md",
+            file_size=12,
+            source_type=DocumentSourceType.TEXT,
+        ),
+    )
+
+    assert document.kind_id == knowledge_base_id
+    assert document.user_id == developer.id

@@ -189,7 +189,6 @@ export function KnowledgeDocumentPageMobile() {
         onSelectKb={handleSelectKb}
         onCreateKb={handleCreateKb}
         onOpenGroupSettings={handleOpenGroupSettings}
-        isAdmin={tree.isAdmin}
       />
 
       {/* Dialogs */}
