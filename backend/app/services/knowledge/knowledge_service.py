@@ -1061,6 +1061,36 @@ class KnowledgeService:
         )
 
     @staticmethod
+    def _assert_can_manage_kb_documents(
+        db: Session,
+        kb: Kind,
+        user_id: int,
+    ) -> None:
+        """Ensure the user can manage documents in the target knowledge base."""
+        kb_owner_id = getattr(kb, "user_id", None)
+        if kb.namespace == "default" and kb_owner_id is None:
+            kb_owner_id = user_id
+
+        if kb_owner_id is None:
+            raise ValueError("Knowledge base owner information is missing")
+
+        user_role = None
+        if kb.namespace != "default":
+            user = KnowledgeService._get_user_or_raise(db, user_id)
+            user_role = user.role
+
+        if not can_manage_namespace_knowledge_base(
+            db,
+            user_id=user_id,
+            namespace_name=kb.namespace,
+            kb_owner_id=kb_owner_id,
+            user_role=user_role,
+        ):
+            raise ValueError(
+                "You do not have permission to manage documents in this knowledge base"
+            )
+
+    @staticmethod
     def update_document(
         db: Session,
         document_id: int,
@@ -1093,28 +1123,7 @@ class KnowledgeService:
             .first()
         )
         if kb:
-            kb_owner_id = getattr(kb, "user_id", None)
-            if kb.namespace == "default" and kb_owner_id is None:
-                kb_owner_id = user_id
-
-            if kb_owner_id is None:
-                raise ValueError("Knowledge base owner information is missing")
-
-            user_role = None
-            if kb.namespace != "default":
-                user = KnowledgeService._get_user_or_raise(db, user_id)
-                user_role = user.role
-
-            if not can_manage_namespace_knowledge_base(
-                db,
-                user_id=user_id,
-                namespace_name=kb.namespace,
-                kb_owner_id=kb_owner_id,
-                user_role=user_role,
-            ):
-                raise ValueError(
-                    "You do not have permission to manage documents in this knowledge base"
-                )
+            KnowledgeService._assert_can_manage_kb_documents(db, kb, user_id)
 
         if data.name is not None:
             doc.name = data.name
@@ -1197,28 +1206,7 @@ class KnowledgeService:
             .first()
         )
         if kb:
-            kb_owner_id = getattr(kb, "user_id", None)
-            if kb.namespace == "default" and kb_owner_id is None:
-                kb_owner_id = user_id
-
-            if kb_owner_id is None:
-                raise ValueError("Knowledge base owner information is missing")
-
-            user_role = None
-            if kb.namespace != "default":
-                user = KnowledgeService._get_user_or_raise(db, user_id)
-                user_role = user.role
-
-            if not can_manage_namespace_knowledge_base(
-                db,
-                user_id=user_id,
-                namespace_name=kb.namespace,
-                kb_owner_id=kb_owner_id,
-                user_role=user_role,
-            ):
-                raise ValueError(
-                    "You do not have permission to manage documents in this knowledge base"
-                )
+            KnowledgeService._assert_can_manage_kb_documents(db, kb, user_id)
 
         # Store document_id (used as doc_ref in RAG), kind_id, and attachment_id before deletion for cleanup
         doc_ref = str(doc.id)  # document_id is used as doc_ref in RAG indexing
@@ -1373,28 +1361,7 @@ class KnowledgeService:
             .first()
         )
         if kb:
-            kb_owner_id = getattr(kb, "user_id", None)
-            if kb.namespace == "default" and kb_owner_id is None:
-                kb_owner_id = user_id
-
-            if kb_owner_id is None:
-                raise ValueError("Knowledge base owner not found")
-
-            user_role = None
-            if kb.namespace != "default":
-                user = KnowledgeService._get_user_or_raise(db, user_id)
-                user_role = user.role
-
-            if not can_manage_namespace_knowledge_base(
-                db,
-                user_id=user_id,
-                namespace_name=kb.namespace,
-                kb_owner_id=kb_owner_id,
-                user_role=user_role,
-            ):
-                raise ValueError(
-                    "You do not have permission to manage documents in this knowledge base"
-                )
+            KnowledgeService._assert_can_manage_kb_documents(db, kb, user_id)
 
         if not doc.attachment_id:
             raise ValueError("Document has no attachment to update")
