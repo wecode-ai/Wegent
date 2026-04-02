@@ -126,6 +126,78 @@ def test_admin_can_update_group_information_without_membership(
     assert response.json()["description"] == "updated by admin"
 
 
+def test_admin_can_delete_group_without_membership(
+    test_client: TestClient, test_db: Session
+) -> None:
+    owner = _create_user(test_db, "owner-user-delete")
+    admin = _create_user(test_db, "admin-user-delete", role="admin")
+    group = _create_group(test_db, owner, "admin-delete-group")
+    _add_member(test_db, group, owner, "Owner")
+    admin_token = create_access_token(data={"sub": admin.user_name})
+
+    response = test_client.delete(
+        f"/api/groups/{group.name}",
+        headers=_auth_header(admin_token),
+    )
+
+    assert response.status_code == 204
+    assert (
+        test_db.query(Namespace)
+        .filter(Namespace.name == group.name, Namespace.is_active == True)
+        .first()
+        is None
+    )
+
+
+def test_admin_transfer_ownership_demotes_previous_owner(
+    test_client: TestClient, test_db: Session
+) -> None:
+    owner = _create_user(test_db, "owner-user-transfer")
+    admin = _create_user(test_db, "admin-user-transfer", role="admin")
+    maintainer = _create_user(test_db, "maintainer-user-transfer")
+    group = _create_group(test_db, owner, "admin-transfer-group")
+    _add_member(test_db, group, owner, "Owner")
+    _add_member(test_db, group, maintainer, "Maintainer")
+    admin_token = create_access_token(data={"sub": admin.user_name})
+
+    response = test_client.post(
+        f"/api/groups/{group.name}/transfer-ownership",
+        headers=_auth_header(admin_token),
+        params={"new_owner_user_id": maintainer.id},
+    )
+
+    assert response.status_code == 200
+
+    test_db.refresh(group)
+    assert group.owner_user_id == maintainer.id
+
+    previous_owner_member = (
+        test_db.query(ResourceMember)
+        .filter(
+            ResourceMember.resource_type == "Namespace",
+            ResourceMember.resource_id == group.id,
+            ResourceMember.user_id == owner.id,
+            ResourceMember.status == MemberStatus.APPROVED.value,
+        )
+        .first()
+    )
+    assert previous_owner_member is not None
+    assert previous_owner_member.role == "Maintainer"
+
+    new_owner_member = (
+        test_db.query(ResourceMember)
+        .filter(
+            ResourceMember.resource_type == "Namespace",
+            ResourceMember.resource_id == group.id,
+            ResourceMember.user_id == maintainer.id,
+            ResourceMember.status == MemberStatus.APPROVED.value,
+        )
+        .first()
+    )
+    assert new_owner_member is not None
+    assert new_owner_member.role == "Owner"
+
+
 def test_non_admin_member_can_list_organization_group(
     test_client: TestClient, test_db: Session
 ) -> None:

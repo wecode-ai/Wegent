@@ -880,7 +880,8 @@ def transfer_ownership(
         )
 
     # Get member records
-    current_owner_member = get_group_member(db, group_name, current_owner_user_id)
+    previous_owner_user_id = group.owner_user_id
+    current_owner_member = get_group_member(db, group_name, previous_owner_user_id)
     new_owner_member = get_group_member(db, group_name, new_owner_user_id)
 
     # Update group owner

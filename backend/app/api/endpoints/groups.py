@@ -533,7 +533,10 @@ def delete_group_endpoint(
     """
     try:
         group_service.delete_group(
-            db=db, group_name=group_name, user_id=current_user.id
+            db=db,
+            group_name=group_name,
+            user_id=current_user.id,
+            user_role=current_user.role,
         )
         return None
     except HTTPException:
