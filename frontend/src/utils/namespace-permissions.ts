@@ -77,6 +77,63 @@ export function canManageKnowledgeBase({
   )
 }
 
+export function canManageKnowledgeBaseDocuments({
+  currentUserId,
+  knowledgeBase,
+  knowledgeRole,
+  namespaceRole,
+  isAdmin = false,
+}: KnowledgeAccessOptions): boolean {
+  if (!currentUserId) {
+    return false
+  }
+
+  if (isAdmin) {
+    return true
+  }
+
+  if (knowledgeBase.namespace === 'default') {
+    return knowledgeBase.user_id === currentUserId || isEditor(knowledgeRole)
+  }
+
+  return isEditor(namespaceRole) || isEditor(knowledgeRole)
+}
+
+export function canManageKnowledgeDocument({
+  currentUserId,
+  knowledgeBase,
+  knowledgeRole,
+  namespaceRole,
+  documentOwnerId,
+  isAdmin = false,
+}: KnowledgeAccessOptions & { documentOwnerId: number | null | undefined }): boolean {
+  if (!currentUserId || !documentOwnerId) {
+    return false
+  }
+
+  if (
+    canManageKnowledgeBase({
+      currentUserId,
+      knowledgeBase,
+      knowledgeRole,
+      namespaceRole,
+      isAdmin,
+    })
+  ) {
+    return true
+  }
+
+  return (
+    canManageKnowledgeBaseDocuments({
+      currentUserId,
+      knowledgeBase,
+      knowledgeRole,
+      namespaceRole,
+      isAdmin,
+    }) && documentOwnerId === currentUserId
+  )
+}
+
 export function canManageKnowledgeBasePermissions({
   currentUserId,
   knowledgeBase,

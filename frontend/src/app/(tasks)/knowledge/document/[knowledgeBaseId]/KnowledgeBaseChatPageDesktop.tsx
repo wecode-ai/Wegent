@@ -33,6 +33,7 @@ import { BoundKnowledgeBaseSummary } from '@/features/tasks/components/group-cha
 import { taskKnowledgeBaseApi } from '@/apis/task-knowledge-base'
 import {
   canManageKnowledgeBase,
+  canManageKnowledgeBaseDocuments,
   canManageKnowledgeBasePermissions,
 } from '@/utils/namespace-permissions'
 import type { Team } from '@/types/api'
@@ -207,6 +208,17 @@ export function KnowledgeBaseChatPageDesktop() {
     })
   }, [knowledgeBase, user, myPermission?.role, namespaceRoleMap])
 
+  const canUploadDocuments = useMemo(() => {
+    if (!knowledgeBase || !user) return false
+    return canManageKnowledgeBaseDocuments({
+      currentUserId: user.id,
+      knowledgeBase,
+      knowledgeRole: myPermission?.role,
+      namespaceRole: namespaceRoleMap.get(knowledgeBase.namespace),
+      isAdmin: user.role === 'admin',
+    })
+  }, [knowledgeBase, user, myPermission?.role, namespaceRoleMap])
+
   // Check if user can manage permissions (creator, namespace manager, or KB manager)
   const canManagePermissions = useMemo(() => {
     if (!knowledgeBase || !user) return false
@@ -326,7 +338,8 @@ export function KnowledgeBaseChatPageDesktop() {
           {/* Right panel - Document management */}
           <DocumentPanel
             knowledgeBase={knowledgeBase}
-            canManage={canManageKb}
+            canUpload={canUploadDocuments}
+            canManageAllDocuments={canManageKb}
             canManagePermissions={canManagePermissions}
             onDocumentSelectionChange={setSelectedDocumentIds}
             onNewChat={hasOpenTask ? handleNewTask : undefined}

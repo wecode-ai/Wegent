@@ -930,11 +930,11 @@ class KnowledgeService:
         if not kb:
             raise ValueError("Knowledge base not found or access denied")
 
-        if not KnowledgeService.can_manage_knowledge_base(
+        if not KnowledgeService.can_manage_knowledge_base_documents(
             db, knowledge_base_id, user_id
         ):
             raise ValueError(
-                "You do not have permission to manage documents in this knowledge base"
+                "You do not have permission to add documents to this knowledge base"
             )
 
         # Check document limit for notebook mode knowledge base
@@ -1040,24 +1040,29 @@ class KnowledgeService:
         )
 
     @staticmethod
-    def _assert_can_manage_kb_documents(
+    def _assert_can_manage_document(
         db: Session,
         kb: Kind,
+        document: KnowledgeDocument,
         user_id: int,
     ) -> None:
-        """Ensure the user can manage documents in the target knowledge base."""
+        """Ensure the user can manage the target document."""
         kb_id = getattr(kb, "id", None)
         if kb_id is None:
             kb_owner_id = getattr(kb, "user_id", None)
             if kb.namespace == "default" and kb_owner_id in (None, user_id):
                 return
+            if document.user_id == user_id:
+                return
             raise ValueError(
-                "You do not have permission to manage documents in this knowledge base"
+                "You do not have permission to manage this document in this knowledge base"
             )
 
-        if not KnowledgeService.can_manage_knowledge_base(db, kb_id, user_id):
+        if not KnowledgeService.can_manage_knowledge_document(
+            db, kb_id, user_id, document.user_id
+        ):
             raise ValueError(
-                "You do not have permission to manage documents in this knowledge base"
+                "You do not have permission to manage this document in this knowledge base"
             )
 
     @staticmethod
@@ -1093,7 +1098,7 @@ class KnowledgeService:
             .first()
         )
         if kb:
-            KnowledgeService._assert_can_manage_kb_documents(db, kb, user_id)
+            KnowledgeService._assert_can_manage_document(db, kb, doc, user_id)
 
         if data.name is not None:
             doc.name = data.name
@@ -1176,7 +1181,7 @@ class KnowledgeService:
             .first()
         )
         if kb:
-            KnowledgeService._assert_can_manage_kb_documents(db, kb, user_id)
+            KnowledgeService._assert_can_manage_document(db, kb, doc, user_id)
 
         # Store document_id (used as doc_ref in RAG), kind_id, and attachment_id before deletion for cleanup
         doc_ref = str(doc.id)  # document_id is used as doc_ref in RAG indexing
@@ -1331,7 +1336,7 @@ class KnowledgeService:
             .first()
         )
         if kb:
-            KnowledgeService._assert_can_manage_kb_documents(db, kb, user_id)
+            KnowledgeService._assert_can_manage_document(db, kb, doc, user_id)
 
         if not doc.attachment_id:
             raise ValueError("Document has no attachment to update")
@@ -1891,9 +1896,7 @@ class KnowledgeService:
         Returns:
             True if user has management permission
         """
-        from app.services.share import knowledge_share_service
-
-        has_access, role, is_creator = knowledge_share_service.get_user_kb_permission(
+        has_access, role, is_creator = KnowledgeService._get_user_kb_permission(
             db, knowledge_base_id, user_id
         )
 
@@ -1904,6 +1907,67 @@ class KnowledgeService:
             return True
 
         return role is not None and has_permission(role, BaseRole.Maintainer)
+
+    @staticmethod
+    def _get_user_kb_permission(
+        db: Session,
+        knowledge_base_id: int,
+        user_id: int,
+    ) -> tuple[bool, BaseRole | None, bool]:
+        """Return merged access for the user on the target knowledge base."""
+        from app.services.share import knowledge_share_service
+
+        has_access, role, is_creator = knowledge_share_service.get_user_kb_permission(
+            db, knowledge_base_id, user_id
+        )
+
+        effective_role = BaseRole(role) if role is not None else None
+        return has_access, effective_role, is_creator
+
+    @staticmethod
+    def can_manage_knowledge_base_documents(
+        db: Session,
+        knowledge_base_id: int,
+        user_id: int,
+    ) -> bool:
+        """Return whether the user can add documents to the target knowledge base."""
+        has_access, role, is_creator = KnowledgeService._get_user_kb_permission(
+            db, knowledge_base_id, user_id
+        )
+
+        if not has_access:
+            return False
+
+        if is_creator:
+            return True
+
+        return role is not None and has_permission(role, BaseRole.Developer)
+
+    @staticmethod
+    def can_manage_knowledge_document(
+        db: Session,
+        knowledge_base_id: int,
+        user_id: int,
+        document_owner_id: int,
+    ) -> bool:
+        """Return whether the user can manage the target document."""
+        has_access, role, is_creator = KnowledgeService._get_user_kb_permission(
+            db, knowledge_base_id, user_id
+        )
+
+        if not has_access:
+            return False
+
+        if is_creator:
+            return True
+
+        if role is None:
+            return False
+
+        if has_permission(role, BaseRole.Maintainer):
+            return True
+
+        return role == BaseRole.Developer and document_owner_id == user_id
 
     @staticmethod
     def _get_bound_kb_ids_for_user(db: Session, user_id: int) -> list[int]:

@@ -194,6 +194,7 @@ def list_user_groups(
     user_id: int,
     skip: int = 0,
     limit: int = 100,
+    user_role: str | None = None,
 ) -> list[GroupResponse]:
     """
     List groups where user is a member (created or joined).
@@ -210,11 +211,24 @@ def list_user_groups(
     # Get all groups where user is an active member with their role
     member_data = get_user_groups_with_roles(db, user_id)
 
-    if not member_data:
-        return []
-
     # Create a mapping of group_name -> role
     group_roles = {name: role for name, role in member_data}
+
+    if user_role == "admin":
+        organization_groups = (
+            db.query(Namespace.name)
+            .filter(
+                Namespace.level == GroupLevel.organization.value,
+                Namespace.is_active == True,
+            )
+            .all()
+        )
+        for (group_name,) in organization_groups:
+            group_roles[group_name] = GroupRole.Owner.value
+
+    if not group_roles:
+        return []
+
     group_names = list(group_roles.keys())
 
     # Build query for groups

@@ -12,6 +12,7 @@ from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.user import User
 from app.schemas.namespace import (
     GroupCreate,
+    GroupLevel,
     GroupListResponse,
     GroupResponse,
     GroupRole,
@@ -49,6 +50,7 @@ def list_groups(
         user_id=current_user.id,
         skip=skip,
         limit=limit,
+        user_role=current_user.role,
     )
 
     # Calculate total count
@@ -61,6 +63,7 @@ def list_groups(
             user_id=current_user.id,
             skip=0,
             limit=1000,
+            user_role=current_user.role,
         )
         total = len(all_groups)
 
@@ -110,8 +113,21 @@ def list_members(
     Get list of all members in the group.
     User must be a member of the group to view the member list.
     """
+    group = group_service.get_group(db=db, group_name=group_name)
+    if not group:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Group not found",
+        )
+
     # Check if user has access (direct or inherited)
     user_role = get_effective_role_in_group(db, current_user.id, group_name)
+    if (
+        user_role is None
+        and current_user.role == "admin"
+        and group.level == GroupLevel.organization.value
+    ):
+        user_role = GroupRole.Owner
 
     if user_role is None:
         raise HTTPException(
@@ -465,21 +481,27 @@ def get_group_endpoint(
     Get group details by name.
     User must be a member of the group to view it.
     """
-    # Check if user has access (direct or inherited)
-    user_role = get_effective_role_in_group(db, current_user.id, group_name)
-
-    if user_role is None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You are not a member of this group",
-        )
-
     group = group_service.get_group(db=db, group_name=group_name)
 
     if not group:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Group not found",
+        )
+
+    # Check if user has access (direct or inherited)
+    user_role = get_effective_role_in_group(db, current_user.id, group_name)
+    if (
+        user_role is None
+        and current_user.role == "admin"
+        and group.level == GroupLevel.organization.value
+    ):
+        user_role = GroupRole.Owner
+
+    if user_role is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You are not a member of this group",
         )
 
     # Set the current user's role in the group

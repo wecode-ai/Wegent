@@ -31,6 +31,7 @@ import { DocumentList } from '@/features/knowledge/document/components'
 import { PermissionManagementTab } from '@/features/knowledge/permission/components/PermissionManagementTab'
 import {
   canManageKnowledgeBase,
+  canManageKnowledgeBaseDocuments,
   canManageKnowledgeBasePermissions,
 } from '@/utils/namespace-permissions'
 /**
@@ -154,6 +155,17 @@ export function KnowledgeBaseClassicPageDesktop() {
     })
   }, [knowledgeBase, user, myPermission?.role, namespaceRoleMap])
 
+  const canUploadDocuments = useMemo(() => {
+    if (!knowledgeBase || !user) return false
+    return canManageKnowledgeBaseDocuments({
+      currentUserId: user.id,
+      knowledgeBase,
+      knowledgeRole: myPermission?.role,
+      namespaceRole: namespaceRoleMap.get(knowledgeBase.namespace),
+      isAdmin: user.role === 'admin',
+    })
+  }, [knowledgeBase, user, myPermission?.role, namespaceRoleMap])
+
   // Check if user can manage permissions (creator, namespace manager, or KB manager)
   const canManagePermissions = useMemo(() => {
     if (!knowledgeBase || !user) return false
@@ -246,7 +258,8 @@ export function KnowledgeBaseClassicPageDesktop() {
                 <DocumentList
                   knowledgeBase={knowledgeBase}
                   onBack={handleBack}
-                  canManage={canManageKb}
+                  canUpload={canUploadDocuments}
+                  canManageAllDocuments={canManageKb}
                 />
               </TabsContent>
               <TabsContent value="permissions" className="flex-1 mt-0">
@@ -257,7 +270,8 @@ export function KnowledgeBaseClassicPageDesktop() {
             <DocumentList
               knowledgeBase={knowledgeBase}
               onBack={handleBack}
-              canManage={canManageKb}
+              canUpload={canUploadDocuments}
+              canManageAllDocuments={canManageKb}
             />
           )}
         </div>

@@ -18,8 +18,12 @@ import { useSearchShortcut } from '@/features/tasks/hooks/useSearchShortcut'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useKnowledgeBaseDetail } from '@/features/knowledge/document/hooks'
 import { useNamespaceRoleMap } from '@/features/knowledge/document/hooks/useNamespaceRoleMap'
+import { useKnowledgePermissions } from '@/features/knowledge/permission/hooks/useKnowledgePermissions'
 import { DocumentList } from '@/features/knowledge/document/components'
-import { canManageKnowledgeBase } from '@/utils/namespace-permissions'
+import {
+  canManageKnowledgeBase,
+  canManageKnowledgeBaseDocuments,
+} from '@/utils/namespace-permissions'
 /**
  * Mobile-specific implementation of Knowledge Base Classic Page
  *
@@ -47,6 +51,16 @@ export function KnowledgeBaseClassicPageMobile() {
     knowledgeBaseId: knowledgeBaseId || 0,
     autoLoad: !!knowledgeBaseId,
   })
+
+  const { myPermission, fetchMyPermission } = useKnowledgePermissions({
+    kbId: knowledgeBaseId || 0,
+  })
+
+  useEffect(() => {
+    if (knowledgeBase && knowledgeBaseId) {
+      fetchMyPermission()
+    }
+  }, [knowledgeBase, knowledgeBaseId, fetchMyPermission])
 
   // User state
   const { user } = useUser()
@@ -85,10 +99,22 @@ export function KnowledgeBaseClassicPageMobile() {
     return canManageKnowledgeBase({
       currentUserId: user.id,
       knowledgeBase,
+      knowledgeRole: myPermission?.role,
       namespaceRole: namespaceRoleMap.get(knowledgeBase.namespace),
       isAdmin: user.role === 'admin',
     })
-  }, [knowledgeBase, user, namespaceRoleMap])
+  }, [knowledgeBase, user, myPermission?.role, namespaceRoleMap])
+
+  const canUploadDocuments = useMemo(() => {
+    if (!knowledgeBase || !user) return false
+    return canManageKnowledgeBaseDocuments({
+      currentUserId: user.id,
+      knowledgeBase,
+      knowledgeRole: myPermission?.role,
+      namespaceRole: namespaceRoleMap.get(knowledgeBase.namespace),
+      isAdmin: user.role === 'admin',
+    })
+  }, [knowledgeBase, user, myPermission?.role, namespaceRoleMap])
 
   // Loading state
   if (kbLoading) {
@@ -152,7 +178,11 @@ export function KnowledgeBaseClassicPageMobile() {
 
         {/* Document List */}
         <div className="flex-1 overflow-auto p-4">
-          <DocumentList knowledgeBase={knowledgeBase} canManage={canManageKb} />
+          <DocumentList
+            knowledgeBase={knowledgeBase}
+            canUpload={canUploadDocuments}
+            canManageAllDocuments={canManageKb}
+          />
         </div>
       </div>
 

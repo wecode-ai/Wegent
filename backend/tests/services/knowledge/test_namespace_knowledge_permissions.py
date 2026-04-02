@@ -225,6 +225,104 @@ def test_developer_can_add_document_to_owned_namespace_kb(test_db: Session) -> N
 
 
 @pytest.mark.unit
+def test_developer_can_add_document_to_someone_elses_namespace_kb(
+    test_db: Session,
+) -> None:
+    owner = _create_user(test_db, "owner-upload-other")
+    developer = _create_user(test_db, "developer-upload-other")
+    namespace = _create_namespace(test_db, owner, "docs-shared-space")
+    _add_member(test_db, namespace, owner, GroupRole.Owner, owner.id)
+    _add_member(test_db, namespace, developer, GroupRole.Developer, owner.id)
+
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(name="shared-kb", namespace=namespace.name),
+    )
+
+    document = KnowledgeService.create_document(
+        test_db,
+        knowledge_base_id,
+        developer.id,
+        KnowledgeDocumentCreate(
+            name="developer-upload",
+            file_extension="md",
+            file_size=24,
+            source_type=DocumentSourceType.TEXT,
+        ),
+    )
+
+    assert document.kind_id == knowledge_base_id
+    assert document.user_id == developer.id
+
+
+@pytest.mark.unit
+def test_developer_cannot_delete_someone_elses_namespace_document(
+    test_db: Session,
+) -> None:
+    owner = _create_user(test_db, "owner-delete-other-doc")
+    developer = _create_user(test_db, "developer-delete-other-doc")
+    namespace = _create_namespace(test_db, owner, "docs-delete-space")
+    _add_member(test_db, namespace, owner, GroupRole.Owner, owner.id)
+    _add_member(test_db, namespace, developer, GroupRole.Developer, owner.id)
+
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(name="shared-kb", namespace=namespace.name),
+    )
+    owner_document = KnowledgeService.create_document(
+        test_db,
+        knowledge_base_id,
+        owner.id,
+        KnowledgeDocumentCreate(
+            name="owner-doc",
+            file_extension="md",
+            file_size=32,
+            source_type=DocumentSourceType.TEXT,
+        ),
+    )
+
+    with pytest.raises(ValueError, match="permission"):
+        KnowledgeService.delete_document(test_db, owner_document.id, developer.id)
+
+
+@pytest.mark.unit
+def test_developer_can_delete_own_namespace_document_in_shared_kb(
+    test_db: Session,
+) -> None:
+    owner = _create_user(test_db, "owner-delete-own-doc")
+    developer = _create_user(test_db, "developer-delete-own-doc")
+    namespace = _create_namespace(test_db, owner, "docs-delete-own-space")
+    _add_member(test_db, namespace, owner, GroupRole.Owner, owner.id)
+    _add_member(test_db, namespace, developer, GroupRole.Developer, owner.id)
+
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(name="shared-kb", namespace=namespace.name),
+    )
+    developer_document = KnowledgeService.create_document(
+        test_db,
+        knowledge_base_id,
+        developer.id,
+        KnowledgeDocumentCreate(
+            name="developer-doc",
+            file_extension="md",
+            file_size=28,
+            source_type=DocumentSourceType.TEXT,
+        ),
+    )
+
+    result = KnowledgeService.delete_document(
+        test_db, developer_document.id, developer.id
+    )
+
+    assert result.success is True
+    assert result.kb_id == knowledge_base_id
+
+
+@pytest.mark.unit
 def test_explicit_kb_maintainer_can_manage_group_kb_without_namespace_membership(
     test_db: Session,
 ) -> None:
@@ -307,3 +405,93 @@ def test_explicit_kb_developer_cannot_manage_group_kb_owned_by_others(
             collaborator.id,
             KnowledgeBaseUpdate(description="developer should not edit kb settings"),
         )
+
+
+@pytest.mark.unit
+def test_explicit_kb_developer_can_add_document_to_shared_kb(test_db: Session) -> None:
+    owner = _create_user(test_db, "owner-kb-dev-upload")
+    collaborator = _create_user(test_db, "kb-developer-upload")
+    namespace = _create_namespace(test_db, owner, "kb-dev-upload-space")
+    _add_member(test_db, namespace, owner, GroupRole.Owner, owner.id)
+
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(name="shared-kb", namespace=namespace.name),
+    )
+    _add_kb_member(
+        test_db,
+        knowledge_base_id,
+        collaborator,
+        ResourceRole.Developer,
+        owner.id,
+    )
+
+    document = KnowledgeService.create_document(
+        test_db,
+        knowledge_base_id,
+        collaborator.id,
+        KnowledgeDocumentCreate(
+            name="kb-dev-doc",
+            file_extension="md",
+            file_size=18,
+            source_type=DocumentSourceType.TEXT,
+        ),
+    )
+
+    assert document.kind_id == knowledge_base_id
+    assert document.user_id == collaborator.id
+
+
+@pytest.mark.unit
+def test_explicit_kb_developer_can_delete_own_document_but_not_others(
+    test_db: Session,
+) -> None:
+    owner = _create_user(test_db, "owner-kb-dev-doc-delete")
+    collaborator = _create_user(test_db, "kb-developer-doc-delete")
+    namespace = _create_namespace(test_db, owner, "kb-dev-doc-delete-space")
+    _add_member(test_db, namespace, owner, GroupRole.Owner, owner.id)
+
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(name="shared-kb", namespace=namespace.name),
+    )
+    _add_kb_member(
+        test_db,
+        knowledge_base_id,
+        collaborator,
+        ResourceRole.Developer,
+        owner.id,
+    )
+
+    owner_document = KnowledgeService.create_document(
+        test_db,
+        knowledge_base_id,
+        owner.id,
+        KnowledgeDocumentCreate(
+            name="owner-doc",
+            file_extension="md",
+            file_size=18,
+            source_type=DocumentSourceType.TEXT,
+        ),
+    )
+    collaborator_document = KnowledgeService.create_document(
+        test_db,
+        knowledge_base_id,
+        collaborator.id,
+        KnowledgeDocumentCreate(
+            name="collaborator-doc",
+            file_extension="md",
+            file_size=20,
+            source_type=DocumentSourceType.TEXT,
+        ),
+    )
+
+    with pytest.raises(ValueError, match="permission"):
+        KnowledgeService.delete_document(test_db, owner_document.id, collaborator.id)
+
+    result = KnowledgeService.delete_document(
+        test_db, collaborator_document.id, collaborator.id
+    )
+    assert result.success is True

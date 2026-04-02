@@ -28,6 +28,7 @@ import { useKnowledgePermissions } from '../../permission/hooks/useKnowledgePerm
 import { useNamespaceRoleMap } from '../hooks/useNamespaceRoleMap'
 import {
   canManageKnowledgeBase,
+  canManageKnowledgeBaseDocuments,
   canManageKnowledgeBasePermissions,
 } from '@/utils/namespace-permissions'
 import type { KnowledgeBase } from '@/types/knowledge'
@@ -114,6 +115,17 @@ export function KnowledgeDetailPanel({
     })
   }, [selectedKb, user, myPermission?.role, namespaceRoleMap])
 
+  const canUploadDocuments = useMemo(() => {
+    if (!selectedKb || !user) return false
+    return canManageKnowledgeBaseDocuments({
+      currentUserId: user.id,
+      knowledgeBase: selectedKb,
+      knowledgeRole: myPermission?.role,
+      namespaceRole: namespaceRoleMap.get(selectedKb.namespace),
+      isAdmin: user.role === 'admin',
+    })
+  }, [selectedKb, user, myPermission?.role, namespaceRoleMap])
+
   // Check if user can manage permissions (creator, namespace manager, or KB manager)
   const canManagePermissions = useMemo(() => {
     if (!selectedKb || !user) return false
@@ -177,7 +189,8 @@ export function KnowledgeDetailPanel({
         {/* Right panel - Document management */}
         <DocumentPanel
           knowledgeBase={selectedKb}
-          canManage={canManageKb}
+          canUpload={canUploadDocuments}
+          canManageAllDocuments={canManageKb}
           canManagePermissions={canManagePermissions}
           onDocumentSelectionChange={setSelectedDocumentIds}
           onCollapsedChange={setIsDocumentPanelCollapsed}
@@ -220,7 +233,8 @@ export function KnowledgeDetailPanel({
           {activeTab === 'documents' ? (
             <DocumentList
               knowledgeBase={selectedKb}
-              canManage={canManageKb}
+              canUpload={canUploadDocuments}
+              canManageAllDocuments={canManageKb}
               headerActions={headerActions}
               groupInfo={groupInfo}
               onGroupClick={onGroupClick}

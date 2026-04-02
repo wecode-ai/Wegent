@@ -29,10 +29,14 @@ import { ChatArea } from '@/features/tasks/components/chat'
 import { useTeamContext } from '@/contexts/TeamContext'
 import { useKnowledgeBaseDetail } from '@/features/knowledge/document/hooks'
 import { useNamespaceRoleMap } from '@/features/knowledge/document/hooks/useNamespaceRoleMap'
+import { useKnowledgePermissions } from '@/features/knowledge/permission/hooks/useKnowledgePermissions'
 import { DocumentList, KnowledgeBaseSummaryCard } from '@/features/knowledge/document/components'
 import { BoundKnowledgeBaseSummary } from '@/features/tasks/components/group-chat'
 import { taskKnowledgeBaseApi } from '@/apis/task-knowledge-base'
-import { canManageKnowledgeBase } from '@/utils/namespace-permissions'
+import {
+  canManageKnowledgeBase,
+  canManageKnowledgeBaseDocuments,
+} from '@/utils/namespace-permissions'
 import type { Team } from '@/types/api'
 /**
  * Mobile-specific implementation of Knowledge Base Chat Page
@@ -63,6 +67,16 @@ export function KnowledgeBaseChatPageMobile() {
     knowledgeBaseId: knowledgeBaseId || 0,
     autoLoad: !!knowledgeBaseId,
   })
+
+  const { myPermission, fetchMyPermission } = useKnowledgePermissions({
+    kbId: knowledgeBaseId || 0,
+  })
+
+  useEffect(() => {
+    if (knowledgeBase && knowledgeBaseId) {
+      fetchMyPermission()
+    }
+  }, [knowledgeBase, knowledgeBaseId, fetchMyPermission])
 
   // Team state from context (centralized to avoid duplicate API calls)
   const { teams, isTeamsLoading, refreshTeams } = useTeamContext()
@@ -154,10 +168,22 @@ export function KnowledgeBaseChatPageMobile() {
     return canManageKnowledgeBase({
       currentUserId: user.id,
       knowledgeBase,
+      knowledgeRole: myPermission?.role,
       namespaceRole: namespaceRoleMap.get(knowledgeBase.namespace),
       isAdmin: user.role === 'admin',
     })
-  }, [knowledgeBase, user, namespaceRoleMap])
+  }, [knowledgeBase, user, myPermission?.role, namespaceRoleMap])
+
+  const canUploadDocuments = useMemo(() => {
+    if (!knowledgeBase || !user) return false
+    return canManageKnowledgeBaseDocuments({
+      currentUserId: user.id,
+      knowledgeBase,
+      knowledgeRole: myPermission?.role,
+      namespaceRole: namespaceRoleMap.get(knowledgeBase.namespace),
+      isAdmin: user.role === 'admin',
+    })
+  }, [knowledgeBase, user, myPermission?.role, namespaceRoleMap])
 
   // Loading state
   if (kbLoading) {
@@ -286,7 +312,11 @@ export function KnowledgeBaseChatPageMobile() {
             </DrawerClose>
           </DrawerHeader>
           <div className="p-4 overflow-auto flex-1">
-            <DocumentList knowledgeBase={knowledgeBase} canManage={canManageKb} />
+            <DocumentList
+              knowledgeBase={knowledgeBase}
+              canUpload={canUploadDocuments}
+              canManageAllDocuments={canManageKb}
+            />
           </div>
         </DrawerContent>
       </Drawer>

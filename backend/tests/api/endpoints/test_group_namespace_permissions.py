@@ -217,3 +217,70 @@ def test_non_admin_member_can_list_organization_group(
 
     assert response.status_code == 200
     assert any(item["name"] == group.name for item in response.json()["items"])
+
+
+def test_admin_can_list_organization_group_without_membership(
+    test_client: TestClient, test_db: Session
+) -> None:
+    owner = _create_user(test_db, "org-owner-admin-visible")
+    admin = _create_user(test_db, "org-admin-visible", role="admin")
+    group = _create_group(test_db, owner, "company-visible-admin")
+    group.level = "organization"
+    test_db.commit()
+    _add_member(test_db, group, owner, "Owner")
+    admin_token = create_access_token(data={"sub": admin.user_name})
+
+    response = test_client.get(
+        "/api/groups?page=1&limit=100",
+        headers=_auth_header(admin_token),
+    )
+
+    assert response.status_code == 200
+    matching_group = next(
+        item for item in response.json()["items"] if item["name"] == group.name
+    )
+    assert matching_group["my_role"] == "Owner"
+
+
+def test_admin_can_get_organization_group_without_membership(
+    test_client: TestClient, test_db: Session
+) -> None:
+    owner = _create_user(test_db, "org-owner-admin-detail")
+    admin = _create_user(test_db, "org-admin-detail", role="admin")
+    group = _create_group(test_db, owner, "company-detail-admin")
+    group.level = "organization"
+    test_db.commit()
+    _add_member(test_db, group, owner, "Owner")
+    admin_token = create_access_token(data={"sub": admin.user_name})
+
+    response = test_client.get(
+        f"/api/groups/{group.name}",
+        headers=_auth_header(admin_token),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["name"] == group.name
+    assert response.json()["my_role"] == "Owner"
+
+
+def test_admin_can_list_organization_group_members_without_membership(
+    test_client: TestClient, test_db: Session
+) -> None:
+    owner = _create_user(test_db, "org-owner-admin-members")
+    developer = _create_user(test_db, "org-dev-admin-members")
+    admin = _create_user(test_db, "org-admin-members", role="admin")
+    group = _create_group(test_db, owner, "company-members-admin")
+    group.level = "organization"
+    test_db.commit()
+    _add_member(test_db, group, owner, "Owner")
+    _add_member(test_db, group, developer, "Developer")
+    admin_token = create_access_token(data={"sub": admin.user_name})
+
+    response = test_client.get(
+        f"/api/groups/{group.name}/members",
+        headers=_auth_header(admin_token),
+    )
+
+    assert response.status_code == 200
+    member_user_ids = {item["user_id"] for item in response.json()}
+    assert member_user_ids == {owner.id, developer.id}

@@ -1643,6 +1643,12 @@ class KnowledgeOrchestrator:
             raise ValueError("Knowledge base not found")
         if not has_access:
             raise ValueError("Access denied to knowledge base")
+        if not KnowledgeService.can_manage_knowledge_document(
+            db, knowledge_base.id, user.id, document.user_id
+        ):
+            raise ValueError(
+                "You do not have permission to manage this document in this knowledge base"
+            )
 
         # Extract RAG config using shared helper
         rag_params = extract_rag_config_from_knowledge_base(db, knowledge_base, user.id)

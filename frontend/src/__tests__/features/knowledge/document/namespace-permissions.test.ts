@@ -6,7 +6,9 @@ import {
   buildNamespaceRoleMap,
   canCreateKnowledgeBaseInNamespace,
   canManageKnowledgeBase,
+  canManageKnowledgeBaseDocuments,
   canManageKnowledgeBasePermissions,
+  canManageKnowledgeDocument,
   canManageNamespace,
 } from '@/utils/namespace-permissions'
 
@@ -141,6 +143,71 @@ describe('namespace permissions', () => {
           currentUserId: 2,
           namespaceRole: 'Developer',
           knowledgeBase: { namespace: 'engineering', user_id: 1 },
+        })
+      ).toBe(false)
+    })
+  })
+
+  describe('canManageKnowledgeBaseDocuments', () => {
+    it('allows namespace developer to upload documents to a shared namespace knowledge base', () => {
+      expect(
+        canManageKnowledgeBaseDocuments({
+          currentUserId: 2,
+          namespaceRole: 'Developer',
+          knowledgeBase: { namespace: 'engineering', user_id: 1 },
+        })
+      ).toBe(true)
+    })
+
+    it('allows explicit knowledge-base developer to upload documents', () => {
+      expect(
+        canManageKnowledgeBaseDocuments({
+          currentUserId: 2,
+          knowledgeRole: 'Developer',
+          knowledgeBase: { namespace: 'engineering', user_id: 1 },
+        })
+      ).toBe(true)
+    })
+
+    it('does not allow reporter to upload documents', () => {
+      expect(
+        canManageKnowledgeBaseDocuments({
+          currentUserId: 2,
+          namespaceRole: 'Reporter',
+          knowledgeBase: { namespace: 'engineering', user_id: 1 },
+        })
+      ).toBe(false)
+    })
+  })
+
+  describe('canManageKnowledgeDocument', () => {
+    it('allows maintainer to manage any document in the knowledge base', () => {
+      expect(
+        canManageKnowledgeDocument({
+          currentUserId: 2,
+          namespaceRole: 'Maintainer',
+          knowledgeBase: { namespace: 'engineering', user_id: 1 },
+          documentOwnerId: 1,
+        })
+      ).toBe(true)
+    })
+
+    it('allows developer to manage only their own document', () => {
+      expect(
+        canManageKnowledgeDocument({
+          currentUserId: 2,
+          namespaceRole: 'Developer',
+          knowledgeBase: { namespace: 'engineering', user_id: 1 },
+          documentOwnerId: 2,
+        })
+      ).toBe(true)
+
+      expect(
+        canManageKnowledgeDocument({
+          currentUserId: 2,
+          namespaceRole: 'Developer',
+          knowledgeBase: { namespace: 'engineering', user_id: 1 },
+          documentOwnerId: 1,
         })
       ).toBe(false)
     })

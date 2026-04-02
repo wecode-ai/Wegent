@@ -121,6 +121,8 @@ interface DocumentDetailDialogProps {
   knowledgeBaseId: number
   /** Knowledge base type - edit is only available for 'notebook' type */
   kbType?: 'notebook' | 'classic'
+  /** Whether the current user can edit this document */
+  canEdit?: boolean
 }
 
 export function DocumentDetailDialog({
@@ -129,6 +131,7 @@ export function DocumentDetailDialog({
   document,
   knowledgeBaseId,
   kbType,
+  canEdit = false,
 }: DocumentDetailDialogProps) {
   const { t, getCurrentLanguage } = useTranslation('knowledge')
   const { theme } = useTheme()
@@ -164,6 +167,7 @@ export function DocumentDetailDialog({
 
   // Check if document is editable (only for notebook type knowledge base, and TEXT type or plain text files)
   const isEditable =
+    canEdit &&
     kbType === 'notebook' &&
     (document?.source_type === 'text' ||
       (document?.source_type === 'file' &&
@@ -220,12 +224,14 @@ export function DocumentDetailDialog({
   }
 
   const handleEdit = () => {
+    if (!isEditable) return
+
     setEditedContent(detail?.content || '')
     setIsEditing(true)
   }
 
   const handleSave = async () => {
-    if (!document) return
+    if (!document || !isEditable) return
 
     setIsSaving(true)
     try {
@@ -246,7 +252,7 @@ export function DocumentDetailDialog({
   // Handle save from Vim :w command - receives content from WysiwygEditor
   const handleVimSave = useCallback(
     async (content: string) => {
-      if (!document) return
+      if (!document || !isEditable) return
 
       setIsSaving(true)
       try {
@@ -264,7 +270,7 @@ export function DocumentDetailDialog({
         setIsSaving(false)
       }
     },
-    [document, t, refresh]
+    [document, isEditable, t, refresh]
   )
 
   const handleCancel = useCallback(() => {
