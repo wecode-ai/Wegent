@@ -58,11 +58,11 @@ export const DEFAULT_BIND_GROUP_STEPS = JSON.stringify({
   variables: { botName: '机器人' },
   steps: [
     {
-      title: '添加{{botName}}到群聊',
-      hint: '打开“群设置” → 选择“机器人” → 选择“添加机器人” → 搜索并添加{{botName}}',
+      title: '添加WegentBot到群聊',
+      hint: '打开“群设置” → 选择“机器人” → 选择“添加机器人” → 搜索并添加WegentBot',
     },
     { title: '点击开始绑定', hint: '' },
-    { title: '在群聊中 @{{botName}} 发送消息', hint: '' },
+    { title: '在群聊中 @WegentBot 发送消息', hint: '' },
   ],
 })
 
