@@ -170,21 +170,25 @@ class WeGentToResponseAdapter:
         model_ref = agent_config.get("model")
         if not isinstance(model_ref, dict):
             model_ref = {}
+        model_name = model_spec.get("model_name")
+        if model_name is None:
+            model_name = agent_config.get("model_name")
+        if model_name is None:
+            model_name = model_ref.get("model_name")
+
+        model_namespace = model_spec.get("model_namespace")
+        if model_namespace is None:
+            model_namespace = agent_config.get("model_namespace")
+        if model_namespace is None:
+            model_namespace = model_ref.get("model_namespace")
+        if model_namespace is None:
+            model_namespace = "default"
 
         return {
             "model_id": model_spec.get("model_id", agent_config.get("model", "")),
             "model": model_spec.get("model", agent_config.get("model_type", "openai")),
-            "model_name": model_spec.get(
-                "model_name",
-                agent_config.get("model_name", model_ref.get("model_name")),
-            ),
-            "model_namespace": model_spec.get(
-                "model_namespace",
-                agent_config.get(
-                    "model_namespace",
-                    model_ref.get("model_namespace", "default"),
-                ),
-            ),
+            "model_name": model_name,
+            "model_namespace": model_namespace,
             "api_key": model_spec.get("api_key", agent_config.get("api_key", "")),
             "base_url": model_spec.get("base_url", agent_config.get("base_url")),
             "api_format": model_spec.get("api_format", "chat"),

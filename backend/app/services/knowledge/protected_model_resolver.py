@@ -20,12 +20,55 @@ logger = logging.getLogger(__name__)
 class ProtectedModelResolver:
     """Resolve the model config used for restricted safe-summary mediation."""
 
+    def load_knowledge_base_snapshots(
+        self,
+        *,
+        db: Session,
+        knowledge_base_ids: list[int],
+    ) -> list[dict[str, Any]]:
+        """Load KB names and summary-model refs in request order."""
+        if not knowledge_base_ids:
+            return []
+
+        try:
+            knowledge_bases = (
+                db.query(Kind)
+                .filter(
+                    Kind.id.in_(knowledge_base_ids),
+                    Kind.kind == "KnowledgeBase",
+                    Kind.is_active == True,
+                )
+                .all()
+            )
+        except Exception:
+            logger.debug(
+                "[protected_model_resolver] Failed to load KB snapshots",
+                exc_info=True,
+            )
+            return []
+
+        snapshots_by_id: dict[int, dict[str, Any]] = {}
+        for kb in knowledge_bases:
+            spec = (kb.json or {}).get("spec", {})
+            snapshots_by_id[kb.id] = {
+                "id": kb.id,
+                "name": spec.get("name", f"KB-{kb.id}"),
+                "summary_model_ref": spec.get("summaryModelRef") or {},
+            }
+
+        return [
+            snapshots_by_id[kb_id]
+            for kb_id in knowledge_base_ids
+            if kb_id in snapshots_by_id
+        ]
+
     def resolve_model_config(
         self,
         *,
         db: Session,
         mediation_context: dict | None,
         knowledge_base_ids: list[int],
+        knowledge_base_snapshots: list[dict[str, Any]] | None = None,
         user_id: int | None,
         user_name: str = "system",
     ) -> dict[str, Any]:
@@ -46,6 +89,7 @@ class ProtectedModelResolver:
         summary_model = self._resolve_summary_or_system_fallback(
             db=db,
             knowledge_base_ids=knowledge_base_ids,
+            knowledge_base_snapshots=knowledge_base_snapshots,
             user_id=user_id,
             user_name=user_name,
         )
@@ -92,6 +136,7 @@ class ProtectedModelResolver:
         *,
         db: Session,
         knowledge_base_ids: list[int],
+        knowledge_base_snapshots: list[dict[str, Any]] | None,
         user_id: int | None,
         user_name: str,
     ) -> Optional[dict[str, Any]]:
@@ -99,24 +144,27 @@ class ProtectedModelResolver:
         if not knowledge_base_ids:
             return None
 
-        knowledge_bases = (
-            db.query(Kind)
-            .filter(
-                Kind.id.in_(knowledge_base_ids),
-                Kind.kind == "KnowledgeBase",
-                Kind.is_active == True,
+        snapshots = knowledge_base_snapshots
+        if snapshots is None:
+            snapshots = self.load_knowledge_base_snapshots(
+                db=db,
+                knowledge_base_ids=knowledge_base_ids,
             )
-            .all()
-        )
-        for kb in knowledge_bases:
-            spec = (kb.json or {}).get("spec", {})
-            summary_model_ref = spec.get("summaryModelRef") or {}
+
+        seen_refs: set[tuple[str, str, str | None]] = set()
+        for snapshot in snapshots:
+            summary_model_ref = snapshot.get("summary_model_ref") or {}
             model_name = summary_model_ref.get("name")
             if not model_name:
                 continue
 
             model_namespace = summary_model_ref.get("namespace", "default")
             model_type = summary_model_ref.get("type")
+            ref_key = (model_name, model_namespace, model_type)
+            if ref_key in seen_refs:
+                continue
+            seen_refs.add(ref_key)
+
             model_kind, resolved_model_type = self._lookup_model_kind(
                 db=db,
                 model_name=model_name,
@@ -137,6 +185,30 @@ class ProtectedModelResolver:
             )
 
         return None
+
+    def _get_user_scoped_model_kind(
+        self,
+        *,
+        db: Session,
+        model_name: str,
+        model_namespace: str,
+        user_id: int | None,
+    ) -> Optional[Kind]:
+        """Load a user-visible model Kind for the given namespace."""
+        if user_id is None:
+            return None
+
+        return (
+            db.query(Kind)
+            .filter(
+                Kind.user_id == user_id,
+                Kind.kind == "Model",
+                Kind.name == model_name,
+                Kind.namespace == model_namespace,
+                Kind.is_active == True,
+            )
+            .first()
+        )
 
     def _lookup_model_kind(
         self,
@@ -165,31 +237,21 @@ class ProtectedModelResolver:
             return None, None
 
         if model_type in {"user", "group"} and user_id is not None:
-            model_kind = (
-                db.query(Kind)
-                .filter(
-                    Kind.user_id == user_id,
-                    Kind.kind == "Model",
-                    Kind.name == model_name,
-                    Kind.namespace == model_namespace,
-                    Kind.is_active == True,
-                )
-                .first()
+            model_kind = self._get_user_scoped_model_kind(
+                db=db,
+                model_name=model_name,
+                model_namespace=model_namespace,
+                user_id=user_id,
             )
             if model_kind:
                 return model_kind, model_type
 
         if user_id is not None:
-            user_kind = (
-                db.query(Kind)
-                .filter(
-                    Kind.user_id == user_id,
-                    Kind.kind == "Model",
-                    Kind.name == model_name,
-                    Kind.namespace == model_namespace,
-                    Kind.is_active == True,
-                )
-                .first()
+            user_kind = self._get_user_scoped_model_kind(
+                db=db,
+                model_name=model_name,
+                model_namespace=model_namespace,
+                user_id=user_id,
             )
             if user_kind:
                 normalized_type = "user" if model_namespace == "default" else "group"

@@ -12,10 +12,44 @@ from app.services.rag.document_service import DocumentService
 from app.services.rag.runtime_specs import IndexRuntimeSpec
 from app.services.rag.splitter.runtime_config import parse_runtime_splitter_config
 from app.services.rag.storage.factory import create_storage_backend
+from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
 
 
+def _extract_index_document_attributes(
+    spec: IndexRuntimeSpec,
+    *,
+    db: Session | None = None,
+) -> dict[str, str | int]:
+    return {
+        "rag.knowledge_base_id": spec.knowledge_base_id,
+        "rag.document_id": spec.document_id or 0,
+        "rag.index_owner_user_id": spec.index_owner_user_id,
+        "rag.retriever_name": spec.retriever_name,
+        "rag.source_type": spec.source.source_type,
+    }
+
+
+def _extract_delete_document_attributes(
+    knowledge_base_id: int,
+    document_ref: str,
+    *,
+    db: Session,
+    index_owner_user_id: int | None = None,
+) -> dict[str, str | int]:
+    return {
+        "rag.knowledge_base_id": knowledge_base_id,
+        "rag.document_ref": document_ref,
+        "rag.index_owner_user_id": index_owner_user_id or 0,
+    }
+
+
+@trace_async(
+    span_name="rag.index_document_local",
+    tracer_name="backend.services.rag",
+    extract_attributes=_extract_index_document_attributes,
+)
 async def index_document_local(
     spec: IndexRuntimeSpec,
     *,
@@ -70,6 +104,11 @@ async def index_document_local(
     )
 
 
+@trace_async(
+    span_name="rag.delete_document_index_local",
+    tracer_name="backend.services.rag",
+    extract_attributes=_extract_delete_document_attributes,
+)
 async def delete_document_index_local(
     knowledge_base_id: int,
     document_ref: str,

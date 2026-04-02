@@ -59,3 +59,6 @@ class QueryRuntimeSpec(RuntimeSpecModel):
     restricted_mode: bool = False
     user_id: Optional[int] = None
     user_name: Optional[str] = None
+
+
+DEFAULT_DIRECT_INJECTION_BUDGET = DirectInjectionBudget()

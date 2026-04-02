@@ -15,7 +15,6 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app.models.kind import Kind
 from app.services.chat.config import LangChainModelFactory
 from app.services.knowledge.protected_model_resolver import (
     ProtectedModelResolver,
@@ -120,16 +119,21 @@ class ProtectedKnowledgeMediationService:
         user_name: str = "system",
     ) -> ProtectedKnowledgeMediationResponse:
         """Transform raw protected records into a safe summary envelope."""
+        knowledge_base_snapshots = self._model_resolver.load_knowledge_base_snapshots(
+            db=db,
+            knowledge_base_ids=knowledge_base_ids,
+        )
         model_config = self._model_resolver.resolve_model_config(
             db=db,
             mediation_context=mediation_context,
             knowledge_base_ids=knowledge_base_ids,
+            knowledge_base_snapshots=knowledge_base_snapshots,
             user_id=user_id,
             user_name=user_name,
         )
         kb_name_map = self._build_kb_name_map(
-            db=db,
             knowledge_base_ids=knowledge_base_ids,
+            knowledge_base_snapshots=knowledge_base_snapshots,
         )
         safe_summary = await self._summarize_records(
             model_config=model_config,
@@ -149,34 +153,19 @@ class ProtectedKnowledgeMediationService:
     def _build_kb_name_map(
         self,
         *,
-        db: Session,
         knowledge_base_ids: list[int],
+        knowledge_base_snapshots: list[dict[str, Any]],
     ) -> dict[int, str]:
         """Build a best-effort knowledge base ID to name mapping."""
         kb_name_map = {kb_id: f"KB-{kb_id}" for kb_id in knowledge_base_ids}
-        if not knowledge_base_ids:
-            return kb_name_map
-
-        try:
-            knowledge_bases = (
-                db.query(Kind)
-                .filter(
-                    Kind.id.in_(knowledge_base_ids),
-                    Kind.kind == "KnowledgeBase",
-                    Kind.is_active == True,
-                )
-                .all()
+        for snapshot in knowledge_base_snapshots:
+            kb_id = int(snapshot.get("id") or 0)
+            if kb_id <= 0:
+                continue
+            kb_name_map[kb_id] = snapshot.get("name") or kb_name_map.get(
+                kb_id,
+                f"KB-{kb_id}",
             )
-        except Exception:
-            logger.debug(
-                "[protected_mediation] Failed to load KB names, using fallback labels",
-                exc_info=True,
-            )
-            return kb_name_map
-
-        for kb in knowledge_bases:
-            spec = (kb.json or {}).get("spec", {})
-            kb_name_map[kb.id] = spec.get("name", kb_name_map.get(kb.id, f"KB-{kb.id}"))
         return kb_name_map
 
     async def _summarize_records(

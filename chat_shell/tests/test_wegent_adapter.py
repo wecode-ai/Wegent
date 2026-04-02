@@ -33,3 +33,19 @@ def test_build_model_config_prefers_model_spec_identity() -> None:
 
     assert model_config["model_name"] == "resolved-model"
     assert model_config["model_namespace"] == "group-a"
+
+
+def test_build_model_config_falls_through_none_identity_values() -> None:
+    model_config = WeGentToResponseAdapter._build_model_config(
+        {
+            "model_name": None,
+            "model_namespace": None,
+            "model": {
+                "model_name": "nested-model",
+                "model_namespace": "group-b",
+            },
+        }
+    )
+
+    assert model_config["model_name"] == "nested-model"
+    assert model_config["model_namespace"] == "group-b"

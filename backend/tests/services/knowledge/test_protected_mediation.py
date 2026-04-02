@@ -19,6 +19,17 @@ async def test_mediator_uses_current_model_identity_first():
     with (
         patch.object(
             service._model_resolver,
+            "load_knowledge_base_snapshots",
+            return_value=[
+                {
+                    "id": 1,
+                    "name": "KB-1",
+                    "summary_model_ref": {},
+                }
+            ],
+        ) as mock_load_snapshots,
+        patch.object(
+            service._model_resolver,
             "resolve_model_config",
             return_value={"model_id": "gpt-4o"},
         ) as mock_resolve,
@@ -39,8 +50,9 @@ async def test_mediator_uses_current_model_identity_first():
             ),
         ),
     ):
+        db = MagicMock()
         result = await service.transform(
-            db=MagicMock(),
+            db=db,
             query="What is broken?",
             retrieval_mode="rag_retrieval",
             records=[
@@ -57,13 +69,24 @@ async def test_mediator_uses_current_model_identity_first():
             knowledge_base_ids=[1],
         )
 
+    mock_load_snapshots.assert_called_once_with(
+        db=db,
+        knowledge_base_ids=[1],
+    )
     mock_resolve.assert_called_once_with(
-        db=mock_resolve.call_args.kwargs["db"],
+        db=db,
         mediation_context={
             "current_model_name": "my-model",
             "current_model_namespace": "default",
         },
         knowledge_base_ids=[1],
+        knowledge_base_snapshots=[
+            {
+                "id": 1,
+                "name": "KB-1",
+                "summary_model_ref": {},
+            }
+        ],
         user_id=None,
         user_name="system",
     )

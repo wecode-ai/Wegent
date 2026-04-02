@@ -10,7 +10,7 @@ sidebar_position: 1
 
 本次方案聚焦“拆 RAG 数据面”，不拆整个知识库域。
 
-状态更新（2026-04-01）：
+### 状态更新（2026-04-01）
 
 - 本文中的 `Phase 0` 已经作为历史阶段完成：`chat_shell` 不再负责 `/all-chunks` 与 `/retrieve` 的主路由决策，Backend internal RAG API 已接管该选择。
 - 当前一线落地工作不再是“先把路由下沉到 Backend”，而是“先稳定模块边界”，即 `RuntimeSpec + RagGateway + local data-plane modules`。
@@ -19,7 +19,7 @@ sidebar_position: 1
   - `backend/app/services/rag/README.md`
 - `2026-04-01` 的两份 implementation plan 已随代码落地完成，作为执行清单的价值已经结束，因此不再继续保留。
 
-定位说明：
+### 定位说明
 
 - 本文保留为“为什么最终没有立刻拆独立 `rag_service`”的历史背景
 - 当前如果要继续推进后续阶段，应优先更新 `2026-03-31` 的 spec，而不是回到本文继续追加任务清单
