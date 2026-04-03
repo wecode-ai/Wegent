@@ -37,7 +37,6 @@ from app.services.knowledge.index_runtime import (
     KnowledgeBaseIndexInfo,
     build_kb_index_info,
     get_kb_index_info,
-    is_organization_namespace,
     resolve_kb_index_info,
 )
 from app.services.rag.local_gateway import LocalRagGateway

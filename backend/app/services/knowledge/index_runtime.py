@@ -19,9 +19,11 @@ class KnowledgeBaseIndexInfo:
 
 def is_organization_namespace(db: Session, namespace: str) -> bool:
     """Check if a namespace is an organization namespace."""
-    from app.services.knowledge.knowledge_service import _is_organization_namespace
+    from app.services.knowledge.namespace_utils import (
+        is_organization_namespace as namespace_helper,
+    )
 
-    return _is_organization_namespace(db, namespace)
+    return namespace_helper(db, namespace)
 
 
 def build_kb_index_info(

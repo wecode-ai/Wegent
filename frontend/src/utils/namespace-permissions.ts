@@ -9,7 +9,6 @@ import type { KnowledgeBase, MemberRole } from '@/types/knowledge'
 export type NamespaceRoleMap = Map<string, BaseRole>
 
 interface NamespaceAccessOptions {
-  isAdmin?: boolean
   namespaceRole?: BaseRole | null
 }
 
@@ -36,13 +35,8 @@ export function buildNamespaceRoleMap(
 export function canCreateKnowledgeBaseInNamespace({
   namespace,
   namespaceRole,
-  isAdmin = false,
 }: NamespaceAccessOptions & { namespace: string }): boolean {
   if (namespace === 'default') {
-    return true
-  }
-
-  if (isAdmin) {
     return true
   }
 
@@ -54,14 +48,9 @@ export function canManageKnowledgeBase({
   knowledgeBase,
   knowledgeRole,
   namespaceRole,
-  isAdmin = false,
 }: KnowledgeAccessOptions): boolean {
   if (!currentUserId) {
     return false
-  }
-
-  if (isAdmin) {
-    return true
   }
 
   if (knowledgeBase.namespace === 'default') {
@@ -82,14 +71,9 @@ export function canManageKnowledgeBaseDocuments({
   knowledgeBase,
   knowledgeRole,
   namespaceRole,
-  isAdmin = false,
 }: KnowledgeAccessOptions): boolean {
   if (!currentUserId) {
     return false
-  }
-
-  if (isAdmin) {
-    return true
   }
 
   if (knowledgeBase.namespace === 'default') {
@@ -105,7 +89,6 @@ export function canManageKnowledgeDocument({
   knowledgeRole,
   namespaceRole,
   documentOwnerId,
-  isAdmin = false,
 }: KnowledgeAccessOptions & { documentOwnerId: number | null | undefined }): boolean {
   if (!currentUserId) {
     return false
@@ -117,7 +100,6 @@ export function canManageKnowledgeDocument({
       knowledgeBase,
       knowledgeRole,
       namespaceRole,
-      isAdmin,
     })
   ) {
     return true
@@ -133,7 +115,6 @@ export function canManageKnowledgeDocument({
       knowledgeBase,
       knowledgeRole,
       namespaceRole,
-      isAdmin,
     }) && documentOwnerId === currentUserId
   )
 }
@@ -143,14 +124,9 @@ export function canManageKnowledgeBasePermissions({
   knowledgeBase,
   knowledgeRole,
   namespaceRole,
-  isAdmin = false,
 }: KnowledgeAccessOptions): boolean {
   if (!currentUserId) {
     return false
-  }
-
-  if (isAdmin) {
-    return true
   }
 
   if (knowledgeBase.user_id === currentUserId) {
@@ -160,13 +136,6 @@ export function canManageKnowledgeBasePermissions({
   return isManager(namespaceRole) || isManager(knowledgeRole)
 }
 
-export function canManageNamespace({
-  namespaceRole,
-  isAdmin = false,
-}: NamespaceAccessOptions): boolean {
-  if (isAdmin) {
-    return true
-  }
-
+export function canManageNamespace({ namespaceRole }: NamespaceAccessOptions): boolean {
   return namespaceRole === 'Owner'
 }

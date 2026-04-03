@@ -84,36 +84,40 @@ export const knowledgePermissionApi = {
   /**
    * List all permissions for a knowledge base
    */
-  listPermissions: async (kbId: number): Promise<PermissionListResponse> => {
+  listPermissions: async (
+    kbId: number,
+    options?: { includePendingRequests?: boolean }
+  ): Promise<PermissionListResponse> => {
     // Fetch approved members
     const membersResponse = await client.get<{ members: ResourceMemberResponse[]; total: number }>(
       `/share/KnowledgeBase/${kbId}/members`
     )
 
-    // Fetch pending requests separately
-    const pendingResponse = await client.get<{
-      requests: {
-        id: number
-        user_id: number
-        user_name: string | null
-        user_email: string | null
-        requested_role: string
-        requested_at: string
-      }[]
-      total: number
-    }>(`/share/KnowledgeBase/${kbId}/requests`)
+    let pending: PermissionListResponse['pending'] = []
+    if (options?.includePendingRequests) {
+      const pendingResponse = await client.get<{
+        requests: {
+          id: number
+          user_id: number
+          user_name: string | null
+          user_email: string | null
+          requested_role: string
+          requested_at: string
+        }[]
+        total: number
+      }>(`/share/KnowledgeBase/${kbId}/requests`)
 
-    // Transform pending requests
-    const pending = pendingResponse.requests.map(r => {
-      return {
-        id: r.id,
-        user_id: r.user_id,
-        username: r.user_name || '',
-        email: r.user_email || '',
-        role: (r.requested_role as MemberRole) || 'Reporter',
-        requested_at: r.requested_at,
-      }
-    })
+      pending = pendingResponse.requests.map(r => {
+        return {
+          id: r.id,
+          user_id: r.user_id,
+          username: r.user_name || '',
+          email: r.user_email || '',
+          role: (r.requested_role as MemberRole) || 'Reporter',
+          requested_at: r.requested_at,
+        }
+      })
+    }
 
     // Transform approved members - group by role
     const approved = membersResponse.members.reduce(

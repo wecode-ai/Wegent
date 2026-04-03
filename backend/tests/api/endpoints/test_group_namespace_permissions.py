@@ -113,6 +113,8 @@ def test_admin_can_update_group_information_without_membership(
     owner = _create_user(test_db, "owner-user-3")
     admin = _create_user(test_db, "admin-user", role="admin")
     group = _create_group(test_db, owner, "admin-override-group")
+    group.level = "organization"
+    test_db.commit()
     _add_member(test_db, group, owner, "Owner")
     admin_token = create_access_token(data={"sub": admin.user_name})
 
@@ -132,6 +134,8 @@ def test_admin_can_delete_group_without_membership(
     owner = _create_user(test_db, "owner-user-delete")
     admin = _create_user(test_db, "admin-user-delete", role="admin")
     group = _create_group(test_db, owner, "admin-delete-group")
+    group.level = "organization"
+    test_db.commit()
     _add_member(test_db, group, owner, "Owner")
     admin_token = create_access_token(data={"sub": admin.user_name})
 
@@ -156,6 +160,8 @@ def test_admin_transfer_ownership_demotes_previous_owner(
     admin = _create_user(test_db, "admin-user-transfer", role="admin")
     maintainer = _create_user(test_db, "maintainer-user-transfer")
     group = _create_group(test_db, owner, "admin-transfer-group")
+    group.level = "organization"
+    test_db.commit()
     _add_member(test_db, group, owner, "Owner")
     _add_member(test_db, group, maintainer, "Maintainer")
     admin_token = create_access_token(data={"sub": admin.user_name})
@@ -196,6 +202,41 @@ def test_admin_transfer_ownership_demotes_previous_owner(
     )
     assert new_owner_member is not None
     assert new_owner_member.role == "Owner"
+
+
+def test_admin_cannot_update_regular_group_without_membership(
+    test_client: TestClient, test_db: Session
+) -> None:
+    owner = _create_user(test_db, "owner-user-regular-update")
+    admin = _create_user(test_db, "admin-user-regular-update", role="admin")
+    group = _create_group(test_db, owner, "regular-admin-update-group")
+    _add_member(test_db, group, owner, "Owner")
+    admin_token = create_access_token(data={"sub": admin.user_name})
+
+    response = test_client.put(
+        f"/api/groups/{group.name}",
+        headers=_auth_header(admin_token),
+        json={"description": "updated by admin"},
+    )
+
+    assert response.status_code == 403
+
+
+def test_admin_cannot_delete_regular_group_without_membership(
+    test_client: TestClient, test_db: Session
+) -> None:
+    owner = _create_user(test_db, "owner-user-regular-delete")
+    admin = _create_user(test_db, "admin-user-regular-delete", role="admin")
+    group = _create_group(test_db, owner, "regular-admin-delete-group")
+    _add_member(test_db, group, owner, "Owner")
+    admin_token = create_access_token(data={"sub": admin.user_name})
+
+    response = test_client.delete(
+        f"/api/groups/{group.name}",
+        headers=_auth_header(admin_token),
+    )
+
+    assert response.status_code == 403
 
 
 def test_non_admin_member_can_list_organization_group(

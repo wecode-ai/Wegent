@@ -19,6 +19,7 @@ from app.schemas.knowledge import (
 )
 from app.schemas.namespace import GroupRole
 from app.services.knowledge.knowledge_service import KnowledgeService
+from app.services.share import knowledge_share_service
 
 
 def _create_user(test_db: Session, username: str, role: str = "user") -> User:
@@ -97,13 +98,14 @@ def _add_kb_member(
     user: User,
     role: ResourceRole,
     invited_by_user_id: int,
+    status: str = MemberStatus.APPROVED.value,
 ) -> ResourceMember:
     member = ResourceMember(
         resource_type="KnowledgeBase",
         resource_id=knowledge_base_id,
         user_id=user.id,
         role=role.value,
-        status=MemberStatus.APPROVED.value,
+        status=status,
         invited_by_user_id=invited_by_user_id,
         share_link_id=0,
         reviewed_by_user_id=invited_by_user_id,
@@ -177,6 +179,104 @@ def test_all_scope_does_not_duplicate_organization_knowledge_base(
 
     matching_ids = [kb.id for kb in knowledge_bases if kb.id == knowledge_base_id]
     assert matching_ids == [knowledge_base_id]
+
+
+@pytest.mark.unit
+def test_explicitly_shared_organization_kb_stays_in_organization_grouping(
+    test_db: Session,
+) -> None:
+    owner = _create_user(test_db, "org-share-owner")
+    recipient = _create_user(test_db, "org-share-recipient")
+    namespace = _create_namespace(
+        test_db, owner, "org-shared-space", level="organization"
+    )
+    _add_member(test_db, namespace, owner, GroupRole.Owner, owner.id)
+
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(name="org-shared-kb", namespace=namespace.name),
+    )
+    _add_kb_member(
+        test_db,
+        knowledge_base_id,
+        recipient,
+        ResourceRole.Developer,
+        owner.id,
+    )
+
+    grouped = KnowledgeService.get_all_knowledge_bases_grouped(test_db, recipient.id)
+
+    assert knowledge_base_id not in {kb.id for kb in grouped.personal.shared_with_me}
+    org_kb = next(
+        kb for kb in grouped.organization.knowledge_bases if kb.id == knowledge_base_id
+    )
+    assert org_kb.group_type == "organization"
+    assert org_kb.my_role == ResourceRole.Developer.value
+
+
+@pytest.mark.unit
+def test_grouped_organization_kbs_resolve_role_per_namespace(
+    test_db: Session,
+) -> None:
+    owner = _create_user(test_db, "org-role-owner")
+    recipient = _create_user(test_db, "org-role-recipient")
+    first_namespace = _create_namespace(
+        test_db, owner, "org-role-space-a", level="organization"
+    )
+    second_namespace = _create_namespace(
+        test_db, owner, "org-role-space-b", level="organization"
+    )
+    _add_member(test_db, first_namespace, owner, GroupRole.Owner, owner.id)
+    _add_member(test_db, second_namespace, owner, GroupRole.Owner, owner.id)
+    _add_member(test_db, first_namespace, recipient, GroupRole.Developer, owner.id)
+    _add_member(test_db, second_namespace, recipient, GroupRole.Maintainer, owner.id)
+
+    first_kb_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(name="org-role-kb-a", namespace=first_namespace.name),
+    )
+    second_kb_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(name="org-role-kb-b", namespace=second_namespace.name),
+    )
+
+    grouped = KnowledgeService.get_all_knowledge_bases_grouped(test_db, recipient.id)
+    org_kbs = {kb.id: kb for kb in grouped.organization.knowledge_bases}
+
+    assert org_kbs[first_kb_id].my_role == ResourceRole.Developer.value
+    assert org_kbs[second_kb_id].my_role == ResourceRole.Maintainer.value
+
+
+@pytest.mark.unit
+def test_personal_grouped_excludes_shared_organization_kb(test_db: Session) -> None:
+    owner = _create_user(test_db, "personal-org-owner")
+    recipient = _create_user(test_db, "personal-org-recipient")
+    namespace = _create_namespace(
+        test_db, owner, "personal-org-space", level="organization"
+    )
+    _add_member(test_db, namespace, owner, GroupRole.Owner, owner.id)
+
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(name="personal-org-kb", namespace=namespace.name),
+    )
+    _add_kb_member(
+        test_db,
+        knowledge_base_id,
+        recipient,
+        ResourceRole.Developer,
+        owner.id,
+    )
+
+    grouped = KnowledgeService.get_personal_knowledge_bases_grouped(
+        test_db, recipient.id
+    )
+
+    assert knowledge_base_id not in {kb.id for kb in grouped["shared_with_me"]}
 
 
 @pytest.mark.unit
@@ -525,25 +625,27 @@ def test_explicit_kb_developer_can_delete_own_document_but_not_others(
 
 
 @pytest.mark.unit
-def test_admin_can_manage_group_knowledge_base_without_namespace_membership(
+def test_admin_can_manage_organization_knowledge_base_without_namespace_membership(
     test_db: Session,
 ) -> None:
-    owner = _create_user(test_db, "owner-group-admin")
-    admin = _create_user(test_db, "admin-group-kb", role="admin")
-    namespace = _create_namespace(test_db, owner, "admin-kb-space")
+    owner = _create_user(test_db, "owner-org-admin")
+    admin = _create_user(test_db, "admin-org-kb", role="admin")
+    namespace = _create_namespace(
+        test_db, owner, "admin-org-kb-space", level="organization"
+    )
     _add_member(test_db, namespace, owner, GroupRole.Owner, owner.id)
 
     knowledge_base_id = KnowledgeService.create_knowledge_base(
         test_db,
         owner.id,
-        KnowledgeBaseCreate(name="admin-managed-kb", namespace=namespace.name),
+        KnowledgeBaseCreate(name="admin-managed-org-kb", namespace=namespace.name),
     )
     owner_document = KnowledgeService.create_document(
         test_db,
         knowledge_base_id,
         owner.id,
         KnowledgeDocumentCreate(
-            name="owner-doc-for-admin",
+            name="owner-doc-for-org-admin",
             file_extension="md",
             file_size=21,
             source_type=DocumentSourceType.TEXT,
@@ -586,6 +688,108 @@ def test_admin_can_manage_group_knowledge_base_without_namespace_membership(
         test_db, owner_document.id, admin.id
     )
     assert delete_result.success is True
+
+
+@pytest.mark.unit
+def test_org_admin_share_permission_matches_manage_permission(
+    test_db: Session,
+) -> None:
+    owner = _create_user(test_db, "org-share-owner-admin")
+    admin = _create_user(test_db, "org-share-admin", role="admin")
+    namespace = _create_namespace(
+        test_db, owner, "org-share-admin-space", level="organization"
+    )
+    _add_member(test_db, namespace, owner, GroupRole.Owner, owner.id)
+
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(name="org-share-admin-kb", namespace=namespace.name),
+    )
+
+    assert knowledge_share_service.can_manage_permissions(
+        test_db, knowledge_base_id, admin.id
+    )
+
+    my_permission = knowledge_share_service.get_my_permission(
+        test_db, knowledge_base_id, admin.id
+    )
+
+    assert my_permission.has_access is True
+    assert my_permission.is_creator is False
+    assert my_permission.role == ResourceRole.Owner
+
+
+@pytest.mark.unit
+def test_admin_cannot_manage_regular_group_knowledge_base_without_membership(
+    test_db: Session,
+) -> None:
+    owner = _create_user(test_db, "owner-group-admin")
+    admin = _create_user(test_db, "admin-group-kb", role="admin")
+    namespace = _create_namespace(test_db, owner, "admin-kb-space")
+    _add_member(test_db, namespace, owner, GroupRole.Owner, owner.id)
+
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(name="admin-managed-kb", namespace=namespace.name),
+    )
+
+    assert not KnowledgeService.can_manage_knowledge_base(
+        test_db, knowledge_base_id, admin.id
+    )
+    assert not KnowledgeService.can_manage_knowledge_base_documents(
+        test_db, knowledge_base_id, admin.id
+    )
+    assert not KnowledgeService.can_manage_knowledge_document(
+        test_db, knowledge_base_id, admin.id, owner.id
+    )
+
+    assert (
+        KnowledgeService.update_knowledge_base(
+            test_db,
+            knowledge_base_id,
+            admin.id,
+            KnowledgeBaseUpdate(description="updated by admin"),
+        )
+        is None
+    )
+
+
+@pytest.mark.unit
+def test_namespace_maintainer_can_review_group_kb_pending_requests(
+    test_db: Session,
+) -> None:
+    owner = _create_user(test_db, "owner-pending-review")
+    maintainer = _create_user(test_db, "maintainer-pending-review")
+    requester = _create_user(test_db, "requester-pending-review")
+    namespace = _create_namespace(test_db, owner, "pending-review-space")
+    _add_member(test_db, namespace, owner, GroupRole.Owner, owner.id)
+    _add_member(test_db, namespace, maintainer, GroupRole.Maintainer, owner.id)
+
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(name="pending-review-kb", namespace=namespace.name),
+    )
+    _add_kb_member(
+        test_db,
+        knowledge_base_id,
+        requester,
+        ResourceRole.Reporter,
+        owner.id,
+        status=MemberStatus.PENDING.value,
+    )
+
+    assert knowledge_share_service.check_permission(
+        test_db, knowledge_base_id, maintainer.id, ResourceRole.Maintainer
+    )
+
+    pending_requests = knowledge_share_service.get_pending_requests(
+        test_db, knowledge_base_id, maintainer.id
+    )
+    assert pending_requests.total == 1
+    assert pending_requests.requests[0].user_id == requester.id
 
 
 @pytest.mark.unit

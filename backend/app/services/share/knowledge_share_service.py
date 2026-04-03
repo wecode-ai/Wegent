@@ -35,7 +35,7 @@ from app.services.group_permission import (
     get_restricted_analyst_groups,
     is_restricted_analyst,
 )
-from app.services.knowledge.knowledge_service import _is_organization_namespace
+from app.services.knowledge.namespace_utils import is_organization_namespace
 from app.services.share.base_service import UnifiedShareService
 from shared.models.knowledge import KnowledgeBaseToolAccessMode
 from shared.telemetry.decorators import add_span_event, set_span_attribute, trace_sync
@@ -85,8 +85,7 @@ def get_knowledge_base_tool_access_mode_by_ids(
     group_names = [
         kb.namespace
         for kb in kbs
-        if kb.namespace != "default"
-        and not _is_organization_namespace(db, kb.namespace)
+        if kb.namespace != "default" and not is_organization_namespace(db, kb.namespace)
     ]
     if get_restricted_analyst_groups(db, user_id, group_names):
         return (
@@ -151,7 +150,7 @@ class KnowledgeShareService(UnifiedShareService):
 
         # For group knowledge bases, check Restricted Analyst status FIRST
         # This check must run before creator/explicit-share checks to prevent bypass
-        if kb.namespace != "default" and not _is_organization_namespace(
+        if kb.namespace != "default" and not is_organization_namespace(
             db, kb.namespace
         ):
             if is_restricted_analyst(db, user_id, kb.namespace):
@@ -198,7 +197,7 @@ class KnowledgeShareService(UnifiedShareService):
         logger.warning(f"[_get_resource] User has NO explicit shared access")
 
         # For organization knowledge bases, all authenticated users have access
-        if _is_organization_namespace(db, kb.namespace):
+        if is_organization_namespace(db, kb.namespace):
             logger.info(
                 f"[_get_resource] Organization KB - granting access to user_id={user_id}"
             )
@@ -312,7 +311,7 @@ class KnowledgeShareService(UnifiedShareService):
 
         # For group knowledge bases, check Restricted Analyst status FIRST
         # This check must run before creator/explicit-share checks to prevent bypass
-        if kb.namespace != "default" and not _is_organization_namespace(
+        if kb.namespace != "default" and not is_organization_namespace(
             db, kb.namespace
         ):
             if is_restricted_analyst(db, user_id, kb.namespace):
@@ -346,7 +345,10 @@ class KnowledgeShareService(UnifiedShareService):
             return True, effective_role, False
 
         # For organization knowledge bases, all authenticated users have VIEW access
-        if _is_organization_namespace(db, kb.namespace):
+        if is_organization_namespace(db, kb.namespace):
+            user = db.query(User).filter(User.id == user_id).first()
+            if user and user.role == "admin":
+                return True, ResourceRole.Owner.value, False
             return True, ResourceRole.Reporter.value, False
 
         # For team knowledge bases, check group permission
@@ -373,6 +375,28 @@ class KnowledgeShareService(UnifiedShareService):
                 return True, ResourceRole.Reporter.value, False
 
         return False, None, False
+
+    def check_permission(
+        self,
+        db: Session,
+        resource_id: int,
+        user_id: int,
+        required_role: SchemaMemberRole,
+    ) -> bool:
+        """Check permission using merged KB access semantics."""
+        from app.services.knowledge.knowledge_service import KnowledgeService
+
+        has_access, role, is_creator = KnowledgeService._get_user_kb_permission(
+            db, resource_id, user_id
+        )
+        if not has_access:
+            return False
+
+        effective_role = SchemaMemberRole.Owner if is_creator else role
+        if effective_role is None:
+            return False
+
+        return has_permission(effective_role, required_role)
 
     def _is_kb_bound_to_user_group_chat(
         self, db: Session, kb_id: int, user_id: int
@@ -444,14 +468,16 @@ class KnowledgeShareService(UnifiedShareService):
         user_id: int,
     ) -> bool:
         """Check if user can manage permissions for a knowledge base."""
-        has_access, role, is_creator = self.get_user_kb_permission(
+        from app.services.knowledge.knowledge_service import KnowledgeService
+
+        has_access, role, is_creator = KnowledgeService._get_user_kb_permission(
             db, knowledge_base_id, user_id
         )
         if is_creator:
             return True
         return has_access and role in (
-            ResourceRole.Owner.value,
-            ResourceRole.Maintainer.value,
+            ResourceRole.Owner,
+            ResourceRole.Maintainer,
         )
 
     def get_my_permission(
@@ -492,7 +518,7 @@ class KnowledgeShareService(UnifiedShareService):
         # For group knowledge bases, check Restricted Analyst status FIRST
         # This check must run before creator/explicit-share checks to prevent bypass
         is_restricted = False
-        if kb.namespace != "default" and not _is_organization_namespace(
+        if kb.namespace != "default" and not is_organization_namespace(
             db, kb.namespace
         ):
             if is_restricted_analyst(db, user_id, kb.namespace):
@@ -524,82 +550,36 @@ class KnowledgeShareService(UnifiedShareService):
         )
 
         pending_request = None
-        has_explicit_access = False
-        explicit_role = None
 
         if explicit_perm and not is_restricted:
-            effective_role = explicit_perm.get_effective_role()
-            if explicit_perm.status == MemberStatus.APPROVED.value:
-                # RestrictedAnalyst is not allowed to access knowledge base details
-                if effective_role != ResourceRole.RestrictedAnalyst.value:
-                    has_explicit_access = True
-                    explicit_role = SchemaMemberRole(effective_role)
-            elif explicit_perm.status == MemberStatus.PENDING.value:
+            if explicit_perm.status == MemberStatus.PENDING.value:
+                effective_role = explicit_perm.get_effective_role()
                 pending_request = PendingRequestInfo(
                     id=explicit_perm.id,
                     role=SchemaMemberRole(effective_role),
                     requested_at=explicit_perm.requested_at,
                 )
 
-        # Check group permission for team KB or organization KB
-        group_role = None
-        if _is_organization_namespace(db, kb.namespace):
-            # Organization KB - all authenticated users have VIEW access
-            group_role = SchemaMemberRole.Reporter
-        elif kb.namespace != "default":
-            team_role = get_effective_role_in_group(db, user_id, kb.namespace)
-            if team_role is not None:
-                # RestrictedAnalyst is not allowed to access knowledge base details
-                if team_role != GroupRole.RestrictedAnalyst:
-                    role_mapping = {
-                        GroupRole.Owner: SchemaMemberRole.Owner,
-                        GroupRole.Maintainer: SchemaMemberRole.Maintainer,
-                        GroupRole.Developer: SchemaMemberRole.Developer,
-                        GroupRole.Reporter: SchemaMemberRole.Reporter,
-                    }
-                    group_role = role_mapping.get(team_role, SchemaMemberRole.Reporter)
+        from app.services.knowledge.knowledge_service import KnowledgeService
 
-        # Determine final access level (higher of explicit vs group)
-        # Use has_permission() for consistent role comparison
-        # Role priority: Owner > Maintainer > Developer > Reporter > RestrictedAnalyst
+        has_access, merged_role, is_creator = KnowledgeService._get_user_kb_permission(
+            db, knowledge_base_id, user_id, kb=kb
+        )
 
-        if has_explicit_access and group_role:
-            # Take the higher permission using has_permission
-            # has_permission(user_role, required_role) returns True if user_role >= required_role
-            # So we check which role has permission over the other
-            if has_permission(explicit_role.value, group_role.value):
-                # explicit_role is higher or equal
-                final_role = explicit_role
-            else:
-                # group_role is higher
-                final_role = group_role
-            return MyKBPermissionResponse(
-                has_access=True,
-                role=final_role,
-                is_creator=False,
-                pending_request=None,
-            )
-        elif has_explicit_access:
-            return MyKBPermissionResponse(
-                has_access=True,
-                role=explicit_role,
-                is_creator=False,
-                pending_request=None,
-            )
-        elif group_role:
-            return MyKBPermissionResponse(
-                has_access=True,
-                role=group_role,
-                is_creator=False,
-                pending_request=pending_request,
-            )
-        else:
-            return MyKBPermissionResponse(
-                has_access=False,
-                role=None,
-                is_creator=False,
-                pending_request=pending_request,
-            )
+        return MyKBPermissionResponse(
+            has_access=has_access,
+            role=(
+                SchemaMemberRole.Owner
+                if is_creator
+                else (
+                    SchemaMemberRole(merged_role.value)
+                    if merged_role is not None
+                    else None
+                )
+            ),
+            is_creator=is_creator,
+            pending_request=pending_request,
+        )
 
     def get_kb_share_info(
         self,

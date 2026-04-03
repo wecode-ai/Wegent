@@ -81,7 +81,7 @@ class TestKnowledgeBaseToolAccessMode:
         with (
             patch.object(
                 knowledge_share_module,
-                "_is_organization_namespace",
+                "is_organization_namespace",
                 return_value=False,
             ),
             patch.object(

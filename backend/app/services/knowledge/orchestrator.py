@@ -1462,7 +1462,7 @@ class KnowledgeOrchestrator:
             mark_document_index_enqueue_failed,
             prepare_document_index_enqueue,
         )
-        from app.services.knowledge.indexing import is_organization_namespace
+        from app.services.knowledge.namespace_utils import is_organization_namespace
         from app.tasks.knowledge_tasks import index_document_task
 
         spec = (knowledge_base.json or {}).get("spec", {})

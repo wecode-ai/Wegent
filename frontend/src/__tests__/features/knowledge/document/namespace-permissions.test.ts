@@ -48,13 +48,8 @@ describe('namespace permissions', () => {
       ).toBe(false)
     })
 
-    it('allows admin override', () => {
-      expect(
-        canCreateKnowledgeBaseInNamespace({
-          namespace: 'organization',
-          isAdmin: true,
-        })
-      ).toBe(true)
+    it('does not allow non-default namespace creation without editor role', () => {
+      expect(canCreateKnowledgeBaseInNamespace({ namespace: 'organization' })).toBe(false)
     })
   })
 
@@ -114,14 +109,13 @@ describe('namespace permissions', () => {
       ).toBe(true)
     })
 
-    it('allows admin override', () => {
+    it('does not allow knowledge-base management without role or ownership', () => {
       expect(
         canManageKnowledgeBase({
           currentUserId: 2,
-          isAdmin: true,
           knowledgeBase: { namespace: 'organization', user_id: 1 },
         })
-      ).toBe(true)
+      ).toBe(false)
     })
   })
 
@@ -220,16 +214,7 @@ describe('namespace permissions', () => {
       ).toBe(false)
     })
 
-    it('allows admin or knowledge-base manager when document owner is missing', () => {
-      expect(
-        canManageKnowledgeDocument({
-          currentUserId: 2,
-          isAdmin: true,
-          knowledgeBase: { namespace: 'engineering', user_id: 1 },
-          documentOwnerId: null,
-        })
-      ).toBe(true)
-
+    it('allows knowledge-base manager when document owner is missing', () => {
       expect(
         canManageKnowledgeDocument({
           currentUserId: 2,
@@ -247,8 +232,8 @@ describe('namespace permissions', () => {
       expect(canManageNamespace({ namespaceRole: 'Maintainer' })).toBe(false)
     })
 
-    it('allows admin override', () => {
-      expect(canManageNamespace({ isAdmin: true })).toBe(true)
+    it('does not allow namespace management without owner role', () => {
+      expect(canManageNamespace({})).toBe(false)
     })
   })
 })

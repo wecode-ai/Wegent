@@ -115,8 +115,6 @@ export interface UseKnowledgeTreeReturn {
   groups: Group[]
   /** Organization namespace */
   orgNamespace: string | null
-  /** Whether user is admin */
-  isAdmin: boolean
   /** Group KB data keyed by group name */
   groupKbMap: Record<string, KnowledgeBase[]>
   /** Loading state for group KBs */
@@ -139,7 +137,6 @@ export interface UseKnowledgeTreeReturn {
 
 export function useKnowledgeTree(): UseKnowledgeTreeReturn {
   const { user } = useUser()
-  const isAdmin = user?.role === 'admin'
 
   // Core data state
   const [personalData, setPersonalData] = useState<{
@@ -395,7 +392,6 @@ export function useKnowledgeTree(): UseKnowledgeTreeReturn {
       const canCreate = canCreateKnowledgeBaseInNamespace({
         namespace: groupName,
         namespaceRole: groupRole,
-        isAdmin,
       })
       const canCreateGroupChat = canCreate
 
@@ -491,7 +487,6 @@ export function useKnowledgeTree(): UseKnowledgeTreeReturn {
       canCreate: canCreateKnowledgeBaseInNamespace({
         namespace: orgNamespace || 'organization',
         namespaceRole: organizationRole,
-        isAdmin,
       }),
     })
 
@@ -503,7 +498,6 @@ export function useKnowledgeTree(): UseKnowledgeTreeReturn {
     groupKbMap,
     groupKbLoading,
     expandState,
-    isAdmin,
     orgNamespace,
     organizationRole,
   ])
@@ -519,7 +513,6 @@ export function useKnowledgeTree(): UseKnowledgeTreeReturn {
     clearSelection,
     groups,
     orgNamespace,
-    isAdmin,
     groupKbMap,
     groupKbLoading,
     loadGroupKbs,

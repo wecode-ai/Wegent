@@ -21,7 +21,7 @@ from app.models.knowledge import (
 )
 from app.models.namespace import Namespace
 from app.models.user import User
-from app.schemas.base_role import BaseRole
+from app.schemas.base_role import BaseRole, has_permission
 from app.schemas.kind import KnowledgeBase as KnowledgeBaseCRD
 from app.schemas.kind import KnowledgeBaseSpec, ObjectMeta
 from app.schemas.knowledge import (
@@ -46,40 +46,15 @@ from app.schemas.namespace import GroupLevel, GroupRole
 from app.services.group_permission import (
     get_effective_role_in_group,
     get_user_groups,
+    get_view_role_in_group,
 )
+from app.services.knowledge.namespace_utils import is_organization_namespace
 from app.services.knowledge.permission_policy import (
     can_create_namespace_knowledge_base,
     can_manage_accessible_knowledge_base,
     can_manage_accessible_knowledge_base_documents,
     can_manage_accessible_knowledge_document,
 )
-
-
-def _is_organization_namespace(db: Session, namespace_name: str) -> bool:
-    """
-    Check if a namespace is an organization-level namespace.
-
-    Args:
-        db: Database session
-        namespace_name: Namespace name
-
-    Returns:
-        True if the namespace has level='organization', False otherwise
-    """
-    # Special case: 'default' namespace is never organization-level
-    if namespace_name == "default":
-        return False
-
-    namespace = (
-        db.query(Namespace)
-        .filter(
-            Namespace.name == namespace_name,
-            Namespace.is_active == True,
-        )
-        .first()
-    )
-
-    return namespace is not None and namespace.level == GroupLevel.organization.value
 
 
 def _build_attachment_filename(name: str, file_extension: str) -> str:
@@ -151,8 +126,8 @@ class KnowledgeService:
         )
 
     @staticmethod
-    def _has_namespaced_admin_access(user: User, kb: Kind) -> bool:
-        return user.role == "admin" and kb.namespace != "default"
+    def _has_namespaced_admin_access(db: Session, user: User, kb: Kind) -> bool:
+        return user.role == "admin" and is_organization_namespace(db, kb.namespace)
 
     # ============== Knowledge Base Operations ==============
 
@@ -1195,7 +1170,7 @@ class KnowledgeService:
 
                 if retriever_name:
                     try:
-                        if kb.namespace == "default" or _is_organization_namespace(
+                        if kb.namespace == "default" or is_organization_namespace(
                             db, kb.namespace
                         ):
                             index_owner_user_id = user_id
@@ -1553,7 +1528,7 @@ class KnowledgeService:
         )
         shared_kb_ids = [p[0] for p in shared_kb_ids]
 
-        # Query shared KBs (any namespace, but not created by current user)
+        # Query shared personal KBs (namespace=default, but not created by current user)
         shared_kbs = []
         if shared_kb_ids:
             shared_kbs = (
@@ -1562,6 +1537,7 @@ class KnowledgeService:
                     Kind.kind == "KnowledgeBase",
                     Kind.is_active == True,
                     Kind.id.in_(shared_kb_ids),
+                    Kind.namespace == "default",
                     Kind.user_id != user_id,  # Exclude KBs created by current user
                 )
                 .order_by(Kind.updated_at.desc())
@@ -1615,6 +1591,8 @@ class KnowledgeService:
         from app.models.resource_member import MemberStatus, ResourceMember
         from app.models.share_link import ResourceType
 
+        user = KnowledgeService._get_user_or_raise(db, user_id)
+
         # 1. Get personal knowledge bases created by user (single query)
         personal_created = (
             db.query(Kind)
@@ -1642,9 +1620,9 @@ class KnowledgeService:
         # Build a map from kb_id to role for shared KBs
         shared_kb_roles: dict[int, str] = {p[0]: p[1] for p in shared_members}
 
-        personal_shared = []
+        shared_kbs: list[Kind] = []
         if shared_kb_ids:
-            personal_shared = (
+            shared_kbs = (
                 db.query(Kind)
                 .filter(
                     Kind.kind == "KnowledgeBase",
@@ -1656,6 +1634,33 @@ class KnowledgeService:
                 .all()
             )
 
+        shared_namespace_names = {
+            kb.namespace for kb in shared_kbs if kb.namespace != "default"
+        }
+        shared_namespaces = {}
+        if shared_namespace_names:
+            shared_namespaces = {
+                ns.name: ns
+                for ns in db.query(Namespace)
+                .filter(
+                    Namespace.name.in_(shared_namespace_names),
+                    Namespace.is_active == True,
+                )
+                .all()
+            }
+
+        personal_shared = [kb for kb in shared_kbs if kb.namespace == "default"]
+        shared_group_kbs = [
+            kb
+            for kb in shared_kbs
+            if kb.namespace != "default"
+            and (
+                shared_namespaces.get(kb.namespace) is None
+                or shared_namespaces[kb.namespace].level
+                != GroupLevel.organization.value
+            )
+        ]
+
         # 3. Get all accessible groups with roles (single query)
         from app.services.group_permission import get_user_groups_with_roles
 
@@ -1663,9 +1668,15 @@ class KnowledgeService:
         accessible_groups = [g[0] for g in accessible_groups_with_roles]
         # Build a map from group_name to role
         group_roles: dict[str, str] = {g[0]: g[1] for g in accessible_groups_with_roles}
+        shared_group_names = list(
+            dict.fromkeys(kb.namespace for kb in shared_group_kbs)
+        )
+        grouped_namespace_names = list(
+            dict.fromkeys(accessible_groups + shared_group_names)
+        )
 
         # 4. Get ALL group knowledge bases in ONE query (key optimization)
-        group_kbs = []
+        group_kbs: list[Kind] = []
         if accessible_groups:
             group_kbs = (
                 db.query(Kind)
@@ -1677,6 +1688,10 @@ class KnowledgeService:
                 .order_by(Kind.updated_at.desc())
                 .all()
             )
+        group_kb_map = {kb.id: kb for kb in group_kbs}
+        for kb in shared_group_kbs:
+            group_kb_map[kb.id] = kb
+        group_kbs = list(group_kb_map.values())
 
         # 5. Get organization knowledge bases (single query)
         org_kbs = (
@@ -1692,37 +1707,37 @@ class KnowledgeService:
             .all()
         )
 
-        # Get organization namespace info
-        org_namespace = (
+        organization_namespaces = (
             db.query(Namespace)
             .filter(
                 Namespace.level == GroupLevel.organization.value,
                 Namespace.is_active == True,
             )
-            .first()
+            .all()
         )
-
-        # Get user's role in organization namespace (if exists)
-        org_role: str | None = None
-        if org_namespace:
-            org_role = get_effective_role_in_group(db, user_id, org_namespace.name)
+        organization_namespace_map = {
+            namespace.name: namespace for namespace in organization_namespaces
+        }
+        org_namespace = organization_namespaces[0] if organization_namespaces else None
 
         # 6. Batch fetch document counts (single query)
-        all_kb_ids = (
-            [kb.id for kb in personal_created]
-            + [kb.id for kb in personal_shared]
-            + [kb.id for kb in group_kbs]
-            + [kb.id for kb in org_kbs]
+        all_kb_ids = list(
+            dict.fromkeys(
+                [kb.id for kb in personal_created]
+                + [kb.id for kb in personal_shared]
+                + [kb.id for kb in group_kbs]
+                + [kb.id for kb in org_kbs]
+            )
         )
         document_counts = KnowledgeService.get_active_document_counts(db, all_kb_ids)
 
         # 7. Batch fetch namespace display names for groups
         namespace_display_names = {}
-        if accessible_groups:
+        if grouped_namespace_names:
             namespaces = (
                 db.query(Namespace)
                 .filter(
-                    Namespace.name.in_(accessible_groups),
+                    Namespace.name.in_(grouped_namespace_names),
                     Namespace.is_active == True,
                 )
                 .all()
@@ -1754,6 +1769,25 @@ class KnowledgeService:
                 my_role=my_role,
             )
 
+        def merge_roles(*roles: str | None) -> str | None:
+            highest: str | None = None
+            for role in roles:
+                if role is None:
+                    continue
+                if highest is None or has_permission(role, highest):
+                    highest = role
+            return highest
+
+        def get_namespace_view_role(namespace_name: str, namespace_level: str) -> str:
+            view_role = get_view_role_in_group(
+                db,
+                user_id,
+                namespace_name,
+                user_role=user.role,
+                group_level=namespace_level,
+            )
+            return view_role.value if view_role is not None else BaseRole.Reporter.value
+
         # Build personal section
         # Use stable English identifiers for group_name - frontend handles localization
         # For personal created KBs, user is always Owner
@@ -1775,14 +1809,12 @@ class KnowledgeService:
         # Build groups section - group KBs by namespace in memory
         groups_map: dict[str, list[Kind]] = {}
         for kb in group_kbs:
-            if kb.namespace not in groups_map:
-                groups_map[kb.namespace] = []
-            groups_map[kb.namespace].append(kb)
+            groups_map.setdefault(kb.namespace, []).append(kb)
 
         # Build groups list - include ALL accessible groups, even those without KBs
         # For group KBs, use the user's role in that group
         groups = []
-        for ns_name in accessible_groups:
+        for ns_name in grouped_namespace_names:
             display_name = namespace_display_names.get(ns_name, ns_name)
             kbs = groups_map.get(ns_name, [])
             user_group_role = group_roles.get(ns_name)
@@ -1797,7 +1829,7 @@ class KnowledgeService:
                             ns_name,
                             display_name or ns_name,
                             "group",
-                            user_group_role,
+                            merge_roles(shared_kb_roles.get(kb.id), user_group_role),
                         )
                         for kb in kbs
                     ],
@@ -1821,7 +1853,13 @@ class KnowledgeService:
                     org_ns_name or "organization",
                     org_display_name,
                     "organization",
-                    org_role,
+                    merge_roles(
+                        shared_kb_roles.get(kb.id),
+                        get_namespace_view_role(
+                            kb.namespace,
+                            organization_namespace_map[kb.namespace].level,
+                        ),
+                    ),
                 )
                 for kb in org_kbs
             ],
@@ -1887,7 +1925,7 @@ class KnowledgeService:
             return False, None, False
 
         user = KnowledgeService._get_user_or_raise(db, user_id)
-        if KnowledgeService._has_namespaced_admin_access(user, knowledge_base):
+        if KnowledgeService._has_namespaced_admin_access(db, user, knowledge_base):
             return True, BaseRole.Owner, False
 
         has_access, role, is_creator = knowledge_share_service.get_user_kb_permission(

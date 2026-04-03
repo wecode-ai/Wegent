@@ -379,9 +379,8 @@ export function KnowledgeDocumentPageDesktop() {
     return canCreateKnowledgeBaseInNamespace({
       namespace: selectedGroup.name,
       namespaceRole: namespaceRoleMap.get(selectedGroup.name),
-      isAdmin: sidebar.isAdmin,
     })
-  }, [selectedGroup, namespaceRoleMap, sidebar.isAdmin])
+  }, [selectedGroup, namespaceRoleMap])
 
   const canManageKbInList = useCallback(
     (kb: KbDataItem) => {
@@ -390,10 +389,9 @@ export function KnowledgeDocumentPageDesktop() {
         knowledgeBase: kb,
         knowledgeRole: 'my_role' in kb ? (kb.my_role ?? undefined) : undefined,
         namespaceRole: namespaceRoleMap.get(kb.namespace),
-        isAdmin: sidebar.isAdmin,
       })
     },
-    [user?.id, namespaceRoleMap, sidebar.isAdmin]
+    [user?.id, namespaceRoleMap]
   )
 
   // Handle KB selection (supports both KnowledgeBase and KnowledgeBaseWithGroupInfo)
@@ -706,10 +704,9 @@ export function KnowledgeDocumentPageDesktop() {
           : canCreateKnowledgeBaseInNamespace({
               namespace: g.name,
               namespaceRole: namespaceRoleMap.get(g.name),
-              isAdmin: sidebar.isAdmin,
             }),
     }))
-  }, [sidebar.groups, namespaceRoleMap, sidebar.isAdmin])
+  }, [sidebar.groups, namespaceRoleMap])
 
   const hasCreatableTeamGroup = useMemo(() => {
     return availableGroupsForCreate.some(group => group.type === 'group' && group.canCreate)
@@ -933,7 +930,6 @@ export function KnowledgeDocumentPageDesktop() {
             onSelectGroup={handleSelectGroup}
             onSelectAll={handleSelectAll}
             onSelectGroups={handleSelectGroups}
-            isAdmin={sidebar.isAdmin}
             onCollapse={() => updateSidebarCollapsed(true)}
           />
         </div>

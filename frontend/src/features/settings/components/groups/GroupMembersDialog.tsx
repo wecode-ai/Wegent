@@ -29,7 +29,6 @@ import { ApiError } from '@/apis/client'
 import { toast } from 'sonner'
 import type { Group, GroupMember, GroupRole } from '@/types/group'
 import type { SearchUser } from '@/types/api'
-import { useUser } from '@/features/common/UserContext'
 import { ASSIGNABLE_ROLES, BASE_ROLES, canLeave, compareRoles, isOwner } from '@/types/base-role'
 import { canManageNamespace } from '@/utils/namespace-permissions'
 import { ArrowUpDown, ChevronDown, ChevronUp, UserPlusIcon, LogOutIcon } from 'lucide-react'
@@ -133,7 +132,6 @@ export function GroupMembersDialog({
   currentUserId,
 }: GroupMembersDialogProps) {
   const { t } = useTranslation()
-  const { user } = useUser()
   const [members, setMembers] = useState<GroupMember[]>([])
   const [loading, setLoading] = useState(false)
   const [showAddMember, setShowAddMember] = useState(false)
@@ -150,7 +148,6 @@ export function GroupMembersDialog({
   const isPrivateGroup = group?.visibility === 'private'
   const canManageGroupMembers = canManageNamespace({
     namespaceRole: myRole,
-    isAdmin: user?.role === 'admin',
   })
 
   // Permission checks using utility functions

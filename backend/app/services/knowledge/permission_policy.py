@@ -12,6 +12,7 @@ from app.models.user import User
 from app.schemas.base_role import BaseRole, has_permission
 from app.schemas.namespace import GroupRole
 from app.services.group_permission import get_effective_role_in_group
+from app.services.knowledge.namespace_utils import is_organization_namespace
 from shared.telemetry.decorators import trace_sync
 
 RoleResolver = Callable[[Session, int, str], Optional[GroupRole]]
@@ -46,7 +47,7 @@ def can_create_namespace_knowledge_base(
     if namespace_name == "default":
         return True
 
-    if user.role == "admin":
+    if user.role == "admin" and is_organization_namespace(db, namespace_name):
         return True
 
     role = _resolve_role(db, user.id, namespace_name, role_resolver)
@@ -75,7 +76,7 @@ def can_manage_namespace_knowledge_base(
     if namespace_name == "default":
         return kb_owner_id == user_id
 
-    if user_role == "admin":
+    if user_role == "admin" and is_organization_namespace(db, namespace_name):
         return True
 
     role = _resolve_role(db, user_id, namespace_name, role_resolver)
@@ -104,7 +105,7 @@ def can_manage_namespace(
     role_resolver: RoleResolver | None = None,
 ) -> bool:
     """Return whether the user can manage namespace settings/members."""
-    if user.role == "admin":
+    if user.role == "admin" and is_organization_namespace(db, namespace_name):
         return True
 
     role = _resolve_role(db, user.id, namespace_name, role_resolver)

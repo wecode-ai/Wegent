@@ -111,7 +111,6 @@ export function KnowledgeDetailPanel({
       knowledgeBase: selectedKb,
       knowledgeRole: myPermission?.role,
       namespaceRole: namespaceRoleMap.get(selectedKb.namespace),
-      isAdmin: user.role === 'admin',
     })
   }, [selectedKb, user, myPermission?.role, namespaceRoleMap])
 
@@ -122,7 +121,6 @@ export function KnowledgeDetailPanel({
       knowledgeBase: selectedKb,
       knowledgeRole: myPermission?.role,
       namespaceRole: namespaceRoleMap.get(selectedKb.namespace),
-      isAdmin: user.role === 'admin',
     })
   }, [selectedKb, user, myPermission?.role, namespaceRoleMap])
 
@@ -134,7 +132,6 @@ export function KnowledgeDetailPanel({
       knowledgeBase: selectedKb,
       knowledgeRole: myPermission?.role,
       namespaceRole: namespaceRoleMap.get(selectedKb.namespace),
-      isAdmin: user.role === 'admin',
     })
   }, [selectedKb, user, myPermission?.role, namespaceRoleMap])
 
