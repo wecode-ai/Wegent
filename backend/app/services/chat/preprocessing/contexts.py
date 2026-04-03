@@ -1203,7 +1203,9 @@ def _prepare_kb_tools_from_contexts(
         user_id=user_id,
         db_session=db,
         user_subtask_id=user_subtask_id,
-        summarizer_model_config=model_config or {},
+        current_model_name=(model_config or {}).get("model_name"),
+        current_model_namespace=(model_config or {}).get("model_namespace")
+        or "default",
         injection_mode="hybrid",
         tool_access_mode=kb_tool_access_mode,
     )

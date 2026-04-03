@@ -22,6 +22,9 @@ from app.models.subtask import SenderType, Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.kind import Bot, Task, Team
+from app.services.chat.task_default_knowledge_bases import (
+    build_initial_task_knowledge_base_refs,
+)
 from app.services.readers import KindType, kindReader
 from app.services.task_skill_selection import build_task_skill_labels
 
@@ -269,33 +272,12 @@ def create_new_task(
         f"[create_new_task] Creating task_json with is_group_chat={params.is_group_chat}"
     )
 
-    # Build knowledgeBaseRefs if knowledge_base_id is provided
-    knowledge_base_refs = None
-    if params.knowledge_base_id and task_type == "knowledge":
-        # Query the knowledge base to get its name and namespace
-        kb = (
-            db.query(Kind)
-            .filter(
-                Kind.id == params.knowledge_base_id,
-                Kind.kind == "KnowledgeBase",
-                Kind.is_active == True,
-            )
-            .first()
-        )
-        if kb:
-            kb_spec = kb.json.get("spec", {}) if kb.json else {}
-            # Note: namespace is no longer stored - ID is sufficient for lookup
-            knowledge_base_refs = [
-                {
-                    "id": kb.id,
-                    "name": kb_spec.get("name", kb.name),
-                    "boundBy": user.user_name,
-                    "boundAt": datetime.now().isoformat(),
-                }
-            ]
-            logger.info(
-                f"[create_new_task] Added knowledgeBaseRefs for kb_id={kb.id}, name={kb.name}"
-            )
+    knowledge_base_refs = build_initial_task_knowledge_base_refs(
+        db=db,
+        user=user,
+        team=team,
+        knowledge_base_id=params.knowledge_base_id,
+    )
 
     task_json = {
         "kind": "Task",

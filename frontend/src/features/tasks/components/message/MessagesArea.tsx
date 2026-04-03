@@ -1125,6 +1125,16 @@ function MessagesArea({
     setIsForwardDialogOpen(true)
   }, [])
 
+  // Handle ask_user_question form submission - send the pre-formatted message as a new conversation
+  // AskUserForm already formats the message with question text and option labels
+  const handleAskUserSubmit = useCallback(
+    (_askId: string, formattedMessage: string) => {
+      if (!onSendMessage) return
+      onSendMessage(formattedMessage)
+    },
+    [onSendMessage]
+  )
+
   // Pre-compute the last AI message subtaskId to avoid O(n²) complexity in render loop
   const lastAiMessageSubtaskId = useMemo(() => {
     for (let i = messages.length - 1; i >= 0; i--) {
@@ -1227,6 +1237,7 @@ function MessagesArea({
                     theme={theme as 'light' | 'dark'}
                     t={t}
                     onSendMessage={onSendMessage}
+                    onAskUserSubmit={handleAskUserSubmit}
                     isCurrentUserMessage={isCurrentUserMessage}
                     isGroupChat={isGroupChat}
                     isPendingConfirmation={isPendingConfirmation}
@@ -1290,6 +1301,7 @@ function MessagesArea({
                   theme={theme as 'light' | 'dark'}
                   t={t}
                   onSendMessage={onSendMessage}
+                  onAskUserSubmit={handleAskUserSubmit}
                   isCurrentUserMessage={isCurrentUserMessage}
                   onRetry={onRetry}
                   isGroupChat={isGroupChat}

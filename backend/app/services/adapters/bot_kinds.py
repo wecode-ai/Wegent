@@ -303,6 +303,10 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             "systemPrompt": obj_in.system_prompt or "",
             "mcpServers": obj_in.mcp_servers or {},
         }
+        if obj_in.default_knowledge_base_refs is not None:
+            ghost_spec["defaultKnowledgeBaseRefs"] = [
+                ref.model_dump() for ref in obj_in.default_knowledge_base_refs
+            ]
         if obj_in.skills:
             ghost_spec["skills"] = obj_in.skills
             skill_refs = self._resolve_skill_refs(
@@ -970,6 +974,15 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             ghost.json = ghost_crd.model_dump()
             flag_modified(ghost, "json")  # Mark JSON field as modified
             db.add(ghost)  # Add to session
+
+        if "default_knowledge_base_refs" in update_data and ghost:
+            ghost_crd = Ghost.model_validate(ghost.json)
+            ghost_crd.spec.defaultKnowledgeBaseRefs = (
+                obj_in.default_knowledge_base_refs or []
+            )
+            ghost.json = ghost_crd.model_dump()
+            flag_modified(ghost, "json")
+            db.add(ghost)
 
         if "skills" in update_data and ghost:
             # Validate that all referenced skills exist for this user
@@ -1678,10 +1691,15 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         preload_skills = []
         skill_refs = {}
         preload_skill_refs = {}
+        default_knowledge_base_refs = []
         if ghost:
             ghost_crd = Ghost.model_validate(ghost.json)
             skills = ghost_crd.spec.skills or []
             preload_skills = ghost_crd.spec.preload_skills or []
+            default_knowledge_base_refs = [
+                ref.model_dump()
+                for ref in (ghost_crd.spec.defaultKnowledgeBaseRefs or [])
+            ]
             skill_refs = (
                 {
                     name: ref.model_dump()
@@ -1709,6 +1727,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             "agent_config": agent_config,
             "system_prompt": system_prompt,
             "mcp_servers": mcp_servers,
+            "default_knowledge_base_refs": default_knowledge_base_refs,
             "skills": skills,
             "skill_refs": skill_refs,
             "preload_skills": preload_skills,

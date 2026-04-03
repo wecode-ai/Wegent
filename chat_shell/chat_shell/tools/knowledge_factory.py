@@ -101,8 +101,10 @@ async def prepare_knowledge_base_tools(
         db_session=db,
         user_subtask_id=user_subtask_id,
         model_id=model_id or KnowledgeBaseTool.model_id,
+        current_model_name=(model_config or {}).get("model_name"),
+        current_model_namespace=(model_config or {}).get("model_namespace")
+        or "default",
         context_window=context_window,
-        summarizer_model_config=model_config or {},
         injection_mode="hybrid",
         tool_access_mode=kb_tool_access_mode,
     )
