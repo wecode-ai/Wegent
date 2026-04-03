@@ -47,7 +47,7 @@ describe('AskUserForm', () => {
   })
 
   const createMockData = (overrides: Partial<AskUserFormData> = {}): AskUserFormData => ({
-    type: 'ask_user_question',
+    type: 'interactive_form_question',
     ask_id: 'ask_test123',
     task_id: 1,
     subtask_id: 2,

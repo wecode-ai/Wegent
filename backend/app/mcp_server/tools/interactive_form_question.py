@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 
 def _generate_ask_id(subtask_id: int) -> str:
-    """Generate a unique ID for the ask_user_question request.
+    """Generate a unique ID for the interactive_form_question request.
 
     The ask_id is deterministically derived from subtask_id so the frontend
     can directly locate the pending question using only the subtask_id,
@@ -52,9 +52,9 @@ async def _notify_frontend(
     subtask_id: int,
     question_data: Dict[str, Any],
 ) -> None:
-    """Send WebSocket notification to frontend to render the ask_user_question form card.
+    """Send WebSocket notification to frontend to render the interactive_form_question form card.
 
-    Finds the ask_user_question tool block in session_manager, updates its tool_input,
+    Finds the interactive_form_question tool block in session_manager, updates its tool_input,
     and emits a chat:block_updated event so the frontend can render the form.
 
     Args:
@@ -67,21 +67,21 @@ async def _notify_frontend(
         from app.services.chat.webpage_ws_chat_emitter import get_webpage_ws_emitter
         from shared.models.blocks import BlockStatus
 
-        # Find the ask_user_question tool block in session_manager blocks.
-        # The tool_name may be "ask_user_question" (Chat Shell path) or
+        # Find the interactive_form_question tool block in session_manager blocks.
+        # The tool_name may be "interactive_form_question" (Chat Shell path) or
         # "mcp__ask-user_wegent-ask-user__ask_user" (ClaudeCode executor path),
-        # so match by checking if the name contains "ask_user_question".
+        # so match by checking if the name contains "interactive_form_question".
         blocks = await session_manager.get_blocks(subtask_id)
         tool_use_id = None
         for block in reversed(blocks):
             tool_name = block.get("tool_name", "")
-            if block.get("type") == "tool" and "ask_user_question" in tool_name:
+            if block.get("type") == "tool" and "interactive_form_question" in tool_name:
                 tool_use_id = block.get("tool_use_id")
                 break
 
         if not tool_use_id:
             logger.warning(
-                f"[AskUser] No ask_user_question tool block found in session for subtask {subtask_id}, "
+                f"[InteractiveForm] No interactive_form_question tool block found in session for subtask {subtask_id}, "
                 "cannot notify frontend"
             )
             return
@@ -97,7 +97,7 @@ async def _notify_frontend(
         ws_emitter = get_webpage_ws_emitter()
         if not ws_emitter:
             logger.warning(
-                "[AskUser] WebSocket emitter not available, cannot notify frontend"
+                "[InteractiveForm] WebSocket emitter not available, cannot notify frontend"
             )
             return
 
@@ -109,19 +109,19 @@ async def _notify_frontend(
             status=BlockStatus.PENDING.value,
         )
         logger.info(
-            f"[AskUser] Notified frontend: task_id={task_id}, subtask_id={subtask_id}, "
+            f"[InteractiveForm] Notified frontend: task_id={task_id}, subtask_id={subtask_id}, "
             f"tool_use_id={tool_use_id}"
         )
     except Exception as e:
         logger.error(
-            f"[AskUser] Failed to notify frontend: task_id={task_id}, "
+            f"[InteractiveForm] Failed to notify frontend: task_id={task_id}, "
             f"subtask_id={subtask_id}, error={e}",
             exc_info=True,
         )
 
 
 @mcp_tool(
-    name="ask_user_question",
+    name="interactive_form_question",
     description=(
         "Ask the user one or more questions and display an interactive form. "
         "The tool returns immediately after showing the form - the user fills it in "
@@ -130,7 +130,7 @@ async def _notify_frontend(
         "Supports single choice, multiple choice, free text input, "
         "and multi-question forms (multiple questions in one call)."
     ),
-    server="ask_user_question",
+    server="interactive_form_question",
     param_descriptions={
         "question": (
             "The question to ask (used in single-question mode). "
@@ -169,7 +169,7 @@ async def _notify_frontend(
         ),
     },
 )
-async def ask_user_question(
+async def interactive_form_question(
     token_info: TaskTokenInfo,
     question: str = "",
     description: Optional[str] = None,
@@ -237,7 +237,7 @@ async def ask_user_question(
             )
 
         question_data = {
-            "type": "ask_user_question",
+            "type": "interactive_form_question",
             "ask_id": ask_id,
             "task_id": token_info.task_id,
             "subtask_id": token_info.subtask_id,
@@ -249,7 +249,7 @@ async def ask_user_question(
             "required": required,
         }
         logger.info(
-            f"[AskUser] Multi-question tool called: ask_id={ask_id}, "
+            f"[InteractiveForm] Multi-question tool called: ask_id={ask_id}, "
             f"task={token_info.task_id}, num_questions={len(normalized_questions)}"
         )
     else:
@@ -259,7 +259,7 @@ async def ask_user_question(
             actual_input_type = "text"
 
         question_data = {
-            "type": "ask_user_question",
+            "type": "interactive_form_question",
             "ask_id": ask_id,
             "task_id": token_info.task_id,
             "subtask_id": token_info.subtask_id,
@@ -273,7 +273,7 @@ async def ask_user_question(
             "default": default,
         }
         logger.info(
-            f"[AskUser] Single-question tool called: ask_id={ask_id}, "
+            f"[InteractiveForm] Single-question tool called: ask_id={ask_id}, "
             f"task={token_info.task_id}, question={question[:50]}..."
         )
 
@@ -287,10 +287,10 @@ async def ask_user_question(
     # Return immediately - the user will answer via a new conversation message.
     # The __silent_exit__ marker causes the current task to end silently.
     logger.info(
-        f"[AskUser] Returning silent exit: ask_id={ask_id}, "
+        f"[InteractiveForm] Returning silent exit: ask_id={ask_id}, "
         f"task={token_info.task_id}, subtask={token_info.subtask_id}"
     )
     return {
         "__silent_exit__": True,
-        "reason": "ask_user_question form displayed; waiting for user response via new conversation",
+        "reason": "interactive_form_question form displayed; waiting for user response via new conversation",
     }

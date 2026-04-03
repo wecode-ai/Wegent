@@ -16,16 +16,16 @@ CLARIFICATION_PROMPT = """
 <clarification_mode>
 ## Smart Follow-up Mode (智能追问模式)
 
-When you receive a user request that is ambiguous or lacks important details, use the `ask_user_question` tool to ask targeted clarification questions through MULTIPLE ROUNDS before proceeding with the task.
+When you receive a user request that is ambiguous or lacks important details, use the `interactive_form_question` tool to ask targeted clarification questions through MULTIPLE ROUNDS before proceeding with the task.
 
-### ⚠️ CRITICAL: You MUST Use the ask_user_question Tool
+### ⚠️ CRITICAL: You MUST Use the interactive_form_question Tool
 
-**ALWAYS call the `ask_user_question` tool to ask clarification questions. NEVER output questions as plain text or Markdown.**
+**ALWAYS call the `interactive_form_question` tool to ask clarification questions. NEVER output questions as plain text or Markdown.**
 
 ❌ **DO NOT** output questions as Markdown lists or numbered lists
 ❌ **DO NOT** write "1. Question A  2. Question B" in plain text
 ❌ **DO NOT** output the old `## 💬 智能追问` Markdown format
-✅ **ALWAYS** call `ask_user_question(questions=[...])` to display an interactive form
+✅ **ALWAYS** call `interactive_form_question(questions=[...])` to display an interactive form
 
 ### Multi-Round Clarification Strategy (重要！)
 
@@ -67,7 +67,7 @@ Clarify any remaining ambiguities before proceeding.
 
 4. **No Critical Gaps (无关键缺失):** There are no critical pieces of information missing that would significantly impact the quality of the output.
 
-**Examples of when to CONTINUE asking (call ask_user_question again):**
+**Examples of when to CONTINUE asking (call interactive_form_question again):**
 
 - User says "互联网行业" but hasn't specified their role (产品/研发/运营/设计/etc.)
 - User wants a "年终汇报" but hasn't mentioned any specific achievements or projects
@@ -92,7 +92,7 @@ Before deciding to proceed, mentally check:
 - [ ] DETAILS: Specific content, data, or examples provided
 - [ ] CONSTRAINTS: Limitations, requirements, or preferences known
 
-**If fewer than 4 items are checked, you likely need another round of questions (call ask_user_question again).**
+**If fewer than 4 items are checked, you likely need another round of questions (call interactive_form_question again).**
 
 ### Question Design Guidelines
 
@@ -113,7 +113,7 @@ Before deciding to proceed, mentally check:
   }
   ```
 
-> For detailed `ask_user_question` tool parameters and examples, refer to the ask-user-question skill instructions loaded in your context.
+> For detailed `interactive_form_question` tool parameters and examples, refer to the interactive-form-question skill instructions loaded in your context.
 
 ### Response After Receiving Answers
 
@@ -121,7 +121,7 @@ After each round of user answers:
 
 1. **Assess** whether you have sufficient information (use the checklist above)
 2. **Either:**
-   - Call `ask_user_question` again with follow-up questions if information is still insufficient
+   - Call `interactive_form_question` again with follow-up questions if information is still insufficient
    - OR proceed with the task if exit criteria are met
 
 **Important:** Do NOT rush to provide a solution after just one round of questions. Take time to gather comprehensive information for a truly personalized and high-quality output.
@@ -143,8 +143,8 @@ def append_clarification_prompt(system_prompt: str, enable_clarification: bool) 
     """
     Append clarification prompt to system prompt if enabled.
 
-    The CLARIFICATION_PROMPT now instructs the AI to use the ask_user_question MCP tool
-    (provided by the ask-user-question skill, auto-injected by TaskRequestBuilder) instead
+    The CLARIFICATION_PROMPT now instructs the AI to use the interactive_form_question MCP tool
+    (provided by the interactive-form-question skill, auto-injected by TaskRequestBuilder) instead
     of outputting the old Markdown format. This gives the AI clear guidance on
     multi-round clarification strategy while using the interactive form UI.
 
@@ -297,7 +297,7 @@ def build_system_prompt(
     compatibility but is no longer used here.
 
     Note: The CLARIFICATION_PROMPT has been updated to instruct the AI to use
-    the ask_user_question MCP tool (provided by the ask-user-question skill, auto-injected by
+    the interactive_form_question MCP tool (provided by the interactive-form-question skill, auto-injected by
     TaskRequestBuilder._inject_clarification_skill) instead of outputting the
     old Markdown format. This gives the AI clear multi-round clarification
     strategy guidance while using the interactive form UI.
@@ -313,15 +313,15 @@ def build_system_prompt(
 
     Injection Order:
         1. Base prompt (caller should wrap Ghost systemPrompt in <base_prompt> tags if needed)
-        2. Clarification mode instructions (if enabled) - now guides AI to use ask_user_question tool
+        2. Clarification mode instructions (if enabled) - now guides AI to use interactive_form_question tool
         3. Deep thinking mode instructions (if enabled)
         4. Skill prompts (injected dynamically by LoadSkillTool via prompt_modifier)
     """
     system_prompt = base_prompt
 
     # Append clarification mode instructions if enabled.
-    # The CLARIFICATION_PROMPT now instructs the AI to use the ask_user_question MCP tool
-    # (from the ask-user-question skill auto-injected by TaskRequestBuilder) instead of
+    # The CLARIFICATION_PROMPT now instructs the AI to use the interactive_form_question MCP tool
+    # (from the interactive-form-question skill auto-injected by TaskRequestBuilder) instead of
     # outputting the old Markdown format.
     if enable_clarification:
         system_prompt = append_clarification_prompt(system_prompt, True)
