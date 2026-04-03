@@ -452,6 +452,7 @@ class TestKnowledgeOrchestrator:
         self, orchestrator, mock_db, mock_user
     ):
         """Test get_document_detail maps paged content and async summary."""
+        document = SimpleNamespace(id=9, name="roadmap", kind_id=77)
         paged = SimpleNamespace(
             document_id=9,
             name="roadmap",
@@ -468,25 +469,35 @@ class TestKnowledgeOrchestrator:
         )
 
         with patch.object(
-            orchestrator, "read_document_content", return_value=paged
-        ) as mock_read_document_content:
-            with patch(
-                "app.services.knowledge.summary_service.get_summary_service",
-                return_value=summary_service,
-            ) as mock_get_summary_service:
-                result = await orchestrator.get_document_detail(
-                    db=mock_db,
-                    user=mock_user,
-                    document_id=9,
-                    include_content=True,
-                    include_summary=True,
-                )
+            orchestrator,
+            "_get_document_with_access_or_raise",
+            return_value=document,
+        ) as mock_get_document:
+            with patch.object(
+                orchestrator, "read_document_content", return_value=paged
+            ) as mock_read_document_content:
+                with patch(
+                    "app.services.knowledge.summary_service.get_summary_service",
+                    return_value=summary_service,
+                ) as mock_get_summary_service:
+                    result = await orchestrator.get_document_detail(
+                        db=mock_db,
+                        user=mock_user,
+                        document_id=9,
+                        include_content=True,
+                        include_summary=True,
+                    )
 
         assert result.document_id == 9
         assert result.content == "abcd"
         assert result.content_length == 10
         assert result.truncated is True
         assert result.summary == {"summary": "hello"}
+        mock_get_document.assert_called_once_with(
+            db=mock_db,
+            user=mock_user,
+            document_id=9,
+        )
         mock_read_document_content.assert_called_once_with(
             db=mock_db,
             user=mock_user,
@@ -608,6 +619,7 @@ class TestKnowledgeOrchestrator:
         self, orchestrator, mock_db, mock_user
     ):
         """Test get_document_detail treats non-zero offsets as truncated content."""
+        document = SimpleNamespace(id=9, name="roadmap", kind_id=77)
         paged = SimpleNamespace(
             document_id=9,
             name="roadmap",
@@ -620,19 +632,29 @@ class TestKnowledgeOrchestrator:
         )
 
         with patch.object(
-            orchestrator, "read_document_content", return_value=paged
-        ) as mock_read_document_content:
-            result = await orchestrator.get_document_detail(
-                db=mock_db,
-                user=mock_user,
-                document_id=9,
-                include_content=True,
-                include_summary=False,
-                offset=2,
-                limit=2,
-            )
+            orchestrator,
+            "_get_document_with_access_or_raise",
+            return_value=document,
+        ) as mock_get_document:
+            with patch.object(
+                orchestrator, "read_document_content", return_value=paged
+            ) as mock_read_document_content:
+                result = await orchestrator.get_document_detail(
+                    db=mock_db,
+                    user=mock_user,
+                    document_id=9,
+                    include_content=True,
+                    include_summary=False,
+                    offset=2,
+                    limit=2,
+                )
 
         assert result.truncated is True
+        mock_get_document.assert_called_once_with(
+            db=mock_db,
+            user=mock_user,
+            document_id=9,
+        )
         mock_read_document_content.assert_called_once_with(
             db=mock_db,
             user=mock_user,
@@ -997,23 +1019,27 @@ class TestKnowledgeOrchestrator:
                 return_value=(mock_kb, True),
             ):
                 with patch(
-                    "app.services.knowledge.indexing.extract_rag_config_from_knowledge_base",
-                    return_value=MagicMock(),
+                    "app.services.knowledge.orchestrator.KnowledgeService.can_manage_knowledge_document",
+                    return_value=True,
                 ):
-                    with patch.object(
-                        orchestrator,
-                        "_schedule_indexing_celery",
-                        return_value={
-                            "scheduled": False,
-                            "reason": "document_not_found",
-                            "index_generation": None,
-                        },
+                    with patch(
+                        "app.services.knowledge.indexing.extract_rag_config_from_knowledge_base",
+                        return_value=MagicMock(),
                     ):
-                        result = orchestrator.reindex_document(
-                            db=mock_db,
-                            user=mock_user,
-                            document_id=1,
-                        )
+                        with patch.object(
+                            orchestrator,
+                            "_schedule_indexing_celery",
+                            return_value={
+                                "scheduled": False,
+                                "reason": "document_not_found",
+                                "index_generation": None,
+                            },
+                        ):
+                            result = orchestrator.reindex_document(
+                                db=mock_db,
+                                user=mock_user,
+                                document_id=1,
+                            )
 
         assert result["skipped"] is True
         assert result["reason"] == "document_not_found"
@@ -1042,24 +1068,28 @@ class TestKnowledgeOrchestrator:
                 return_value=(mock_kb, True),
             ):
                 with patch(
-                    "app.services.knowledge.indexing.extract_rag_config_from_knowledge_base",
-                    return_value=MagicMock(),
+                    "app.services.knowledge.orchestrator.KnowledgeService.can_manage_knowledge_document",
+                    return_value=True,
                 ):
-                    with patch.object(
-                        orchestrator,
-                        "_schedule_indexing_celery",
-                        return_value={
-                            "scheduled": True,
-                            "reason": "scheduled",
-                            "task_id": "task-1",
-                            "index_generation": 8,
-                        },
-                    ) as mock_schedule:
-                        result = orchestrator.reindex_document(
-                            db=mock_db,
-                            user=mock_user,
-                            document_id=1,
-                        )
+                    with patch(
+                        "app.services.knowledge.indexing.extract_rag_config_from_knowledge_base",
+                        return_value=MagicMock(),
+                    ):
+                        with patch.object(
+                            orchestrator,
+                            "_schedule_indexing_celery",
+                            return_value={
+                                "scheduled": True,
+                                "reason": "scheduled",
+                                "task_id": "task-1",
+                                "index_generation": 8,
+                            },
+                        ) as mock_schedule:
+                            result = orchestrator.reindex_document(
+                                db=mock_db,
+                                user=mock_user,
+                                document_id=1,
+                            )
 
         assert result["message"] == "Reindex started"
         assert result["index_generation"] == 8

@@ -103,7 +103,8 @@ class TestSyncSubtaskKBToTask:
                 kb_refs = mock_task.json["spec"]["knowledgeBaseRefs"]
                 assert len(kb_refs) == 1
                 assert kb_refs[0]["name"] == "Test KB"
-                assert kb_refs[0]["namespace"] == "default"
+                # Note: namespace is no longer stored in new refs - ID is sufficient
+                assert "namespace" not in kb_refs[0]
                 assert kb_refs[0]["boundBy"] == "testuser"
 
     def test_sync_kb_to_task_already_bound(self, service, mock_db, mock_knowledge_base):
@@ -597,7 +598,8 @@ class TestKBRefIdBasedLookup:
                                         assert len(kb_refs) == 1
                                         assert kb_refs[0]["id"] == 10
                                         assert kb_refs[0]["name"] == "Test KB"
-                                        assert kb_refs[0]["namespace"] == "default"
+                                        # Note: namespace is no longer stored in new refs
+                                        assert "namespace" not in kb_refs[0]
 
     def test_duplicate_check_with_id(self, service, mock_db, mock_knowledge_base):
         """Test that duplicate detection works with ID"""

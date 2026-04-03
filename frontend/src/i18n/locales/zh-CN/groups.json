@@ -141,12 +141,11 @@
     "roleDescriptions": {
       "Reporter": "只能查看群组资源，无法进行任何修改操作，可离开群组",
       "Developer": "可查看、编辑群组资源，可离开群组，但无法删除资源或管理成员",
-      "Maintainer": "拥有除删除群组和转让Owner外的所有权限",
+      "Maintainer": "可管理命名空间内的所有知识资源，但不能管理命名空间设置或成员",
       "MaintainerDetails": {
         "title": "包括：",
         "manageResources": "管理所有资源（查看、创建、编辑、删除）",
-        "manageMembers": "邀请和移除成员",
-        "updateRoles": "修改成员角色（除Owner外）",
+        "cannotManageNamespace": "不能编辑命名空间设置、成员或所有权",
         "canLeave": "可离开群组"
       },
       "Owner": "拥有群组的完全控制权",

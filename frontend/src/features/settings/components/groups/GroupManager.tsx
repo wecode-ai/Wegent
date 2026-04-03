@@ -18,6 +18,8 @@ import { EditGroupDialog } from './EditGroupDialog'
 import { DeleteGroupConfirmDialog } from './DeleteGroupConfirmDialog'
 import { GroupMembersDialog } from './GroupMembersDialog'
 import { useUser } from '@/features/common/UserContext'
+import { canManageNamespace } from '@/utils/namespace-permissions'
+import { clearNamespaceRoleMapCache } from '@/features/knowledge/document/hooks/useNamespaceRoleMap'
 
 interface GroupManagerProps {
   onGroupsChange?: () => void
@@ -27,6 +29,7 @@ export function GroupManager({ onGroupsChange }: GroupManagerProps) {
   const { t } = useTranslation()
   const router = useRouter()
   const { user } = useUser()
+  const isAdmin = user?.role === 'admin'
   const [groups, setGroups] = useState<Group[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -79,6 +82,7 @@ export function GroupManager({ onGroupsChange }: GroupManagerProps) {
   }
 
   const handleSuccess = () => {
+    clearNamespaceRoleMapCache()
     loadGroups()
     onGroupsChange?.()
   }
@@ -143,91 +147,98 @@ export function GroupManager({ onGroupsChange }: GroupManagerProps) {
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
-                {groups.map(group => (
-                  <tr key={group.id} className="hover:bg-surface">
-                    <td className="min-w-[240px] px-4 py-3 text-sm">
-                      <button
-                        onClick={() => handleGroupClick(group)}
-                        className="block max-w-[240px] truncate text-left font-medium text-primary transition-colors hover:text-primary/80 hover:underline"
-                        title={group.display_name || group.name}
-                      >
-                        {group.display_name || group.name}
-                      </button>
-                    </td>
-                    <td className="px-4 py-3 text-sm text-text-secondary">
-                      {group.description ? (
-                        <span
-                          className="block max-w-[280px] truncate lg:max-w-[360px]"
-                          title={group.description}
+                {groups.map(group => {
+                  const canManage = canManageNamespace({
+                    namespaceRole: group.my_role,
+                    isAdmin,
+                  })
+
+                  return (
+                    <tr key={group.id} className="hover:bg-surface">
+                      <td className="min-w-[240px] px-4 py-3 text-sm">
+                        <button
+                          onClick={() => handleGroupClick(group)}
+                          className="block max-w-[240px] truncate text-left font-medium text-primary transition-colors hover:text-primary/80 hover:underline"
+                          title={group.display_name || group.name}
                         >
-                          {group.description}
-                        </span>
-                      ) : (
-                        '-'
-                      )}
-                    </td>
-                    <td className="min-w-[110px] px-4 py-3 text-sm whitespace-nowrap">
-                      <Badge variant={group.visibility === 'public' ? 'success' : 'secondary'}>
-                        {t(`groups:groups.${group.visibility}`)}
-                      </Badge>
-                    </td>
-                    <td className="min-w-[110px] px-4 py-3 text-sm whitespace-nowrap">
-                      {group.level === 'organization' ? (
-                        <Badge variant="default">{t('groups:groups.levels.organization')}</Badge>
-                      ) : (
-                        <Badge variant="secondary">{t('groups:groups.levels.group')}</Badge>
-                      )}
-                    </td>
-                    <td className="min-w-[120px] px-4 py-3 text-sm whitespace-nowrap">
-                      {group.my_role ? (
-                        <Badge variant="secondary">
-                          {t(`groups:groups.roles.${group.my_role}`)}
+                          {group.display_name || group.name}
+                        </button>
+                      </td>
+                      <td className="px-4 py-3 text-sm text-text-secondary">
+                        {group.description ? (
+                          <span
+                            className="block max-w-[280px] truncate lg:max-w-[360px]"
+                            title={group.description}
+                          >
+                            {group.description}
+                          </span>
+                        ) : (
+                          '-'
+                        )}
+                      </td>
+                      <td className="min-w-[110px] px-4 py-3 text-sm whitespace-nowrap">
+                        <Badge variant={group.visibility === 'public' ? 'success' : 'secondary'}>
+                          {t(`groups:groups.${group.visibility}`)}
                         </Badge>
-                      ) : (
-                        '-'
-                      )}
-                    </td>
-                    <td className="min-w-[96px] px-4 py-3 text-sm text-text-secondary whitespace-nowrap">
-                      <button
-                        type="button"
-                        onClick={() => handleMembersClick(group)}
-                        title={t('groups:groupManager.viewMembers')}
-                        aria-label={`${t('groups:groupManager.viewMembers')} ${group.display_name || group.name}, ${t('groups:groups.members')}: ${group.member_count || 0}`}
-                        data-testid={`group-members-button-${group.id}`}
-                        className="inline-flex items-center gap-2 rounded-md px-2 py-1 -mx-2 text-text-secondary transition-colors hover:bg-muted hover:text-text-primary"
-                      >
-                        <UsersIcon className="w-4 h-4" />
-                        <span>{group.member_count || 0}</span>
-                      </button>
-                    </td>
-                    <td className="w-[120px] min-w-[120px] px-4 py-3 text-sm">
-                      <div className="flex items-center justify-center gap-2">
-                        {(group.my_role === 'Owner' || group.my_role === 'Maintainer') && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => handleEditClick(group)}
-                            title={t('groups:groupManager.editGroup')}
-                            data-testid={`group-edit-button-${group.id}`}
-                          >
-                            <PencilIcon className="w-4 h-4" />
-                          </Button>
+                      </td>
+                      <td className="min-w-[110px] px-4 py-3 text-sm whitespace-nowrap">
+                        {group.level === 'organization' ? (
+                          <Badge variant="default">{t('groups:groups.levels.organization')}</Badge>
+                        ) : (
+                          <Badge variant="secondary">{t('groups:groups.levels.group')}</Badge>
                         )}
-                        {group.my_role === 'Owner' && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => handleDeleteClick(group)}
-                            title={t('groups:groupManager.deleteGroup')}
-                            data-testid={`group-delete-button-${group.id}`}
-                          >
-                            <TrashIcon className="w-4 h-4 text-error" />
-                          </Button>
+                      </td>
+                      <td className="min-w-[120px] px-4 py-3 text-sm whitespace-nowrap">
+                        {group.my_role ? (
+                          <Badge variant="secondary">
+                            {t(`groups:groups.roles.${group.my_role}`)}
+                          </Badge>
+                        ) : (
+                          '-'
                         )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                      </td>
+                      <td className="min-w-[96px] px-4 py-3 text-sm text-text-secondary whitespace-nowrap">
+                        <button
+                          type="button"
+                          onClick={() => handleMembersClick(group)}
+                          title={t('groups:groupManager.viewMembers')}
+                          aria-label={`${t('groups:groupManager.viewMembers')} ${group.display_name || group.name}, ${t('groups:groups.members')}: ${group.member_count || 0}`}
+                          data-testid={`group-members-button-${group.id}`}
+                          className="inline-flex items-center gap-2 rounded-md px-2 py-1 -mx-2 text-text-secondary transition-colors hover:bg-muted hover:text-text-primary"
+                        >
+                          <UsersIcon className="w-4 h-4" />
+                          <span>{group.member_count || 0}</span>
+                        </button>
+                      </td>
+                      <td className="w-[120px] min-w-[120px] px-4 py-3 text-sm">
+                        <div className="flex items-center justify-center gap-2">
+                          {canManage && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => handleEditClick(group)}
+                              title={t('groups:groupManager.editGroup')}
+                              data-testid={`group-edit-button-${group.id}`}
+                            >
+                              <PencilIcon className="w-4 h-4" />
+                            </Button>
+                          )}
+                          {canManage && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => handleDeleteClick(group)}
+                              title={t('groups:groupManager.deleteGroup')}
+                              data-testid={`group-delete-button-${group.id}`}
+                            >
+                              <TrashIcon className="w-4 h-4 text-error" />
+                            </Button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>

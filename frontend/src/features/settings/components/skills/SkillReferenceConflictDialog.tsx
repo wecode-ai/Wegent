@@ -44,9 +44,10 @@ interface SkillReferenceConflictDialogProps {
   skillName: string
   skillId: number
   referencedGhosts: ReferencedGhost[]
+  mode?: 'view' | 'delete_conflict'
   onRemoveAllReferences: () => Promise<void>
   onRemoveSingleReference: (ghostId: number) => Promise<void>
-  onDeleteSuccess: () => void
+  onAfterUpdate: () => void | Promise<void>
 }
 
 /**
@@ -65,9 +66,10 @@ export function SkillReferenceConflictDialog({
   skillName,
   skillId: _skillId,
   referencedGhosts,
+  mode = 'delete_conflict',
   onRemoveAllReferences,
   onRemoveSingleReference,
-  onDeleteSuccess,
+  onAfterUpdate,
 }: SkillReferenceConflictDialogProps) {
   const { t } = useTranslation('common')
   const [removingAll, setRemovingAll] = useState(false)
@@ -83,8 +85,12 @@ export function SkillReferenceConflictDialog({
     try {
       setRemovingAll(true)
       await onRemoveAllReferences()
-      toast.success(t('skills.references_removed_success'))
-      onDeleteSuccess()
+      toast.success(
+        mode === 'delete_conflict'
+          ? t('skills.references_removed_success')
+          : t('skills.references_cleared_success')
+      )
+      onAfterUpdate()
       onOpenChange(false)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t('skills.references_remove_failed'))
@@ -102,9 +108,9 @@ export function SkillReferenceConflictDialog({
       setLocalGhosts(newGhosts)
       toast.success(t('skills.reference_removed_success', { ghostName: ghost.name }))
 
-      // If no more references, close dialog and trigger delete
+      // If no more references remain, close dialog and refresh the caller.
       if (newGhosts.length === 0) {
-        onDeleteSuccess()
+        onAfterUpdate()
         onOpenChange(false)
       }
     } catch (error) {
@@ -120,10 +126,14 @@ export function SkillReferenceConflictDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-amber-600">
             <AlertTriangle className="h-5 w-5" />
-            {t('skills.cannot_delete_title')}
+            {mode === 'delete_conflict'
+              ? t('skills.cannot_delete_title')
+              : t('skills.references_title')}
           </DialogTitle>
           <DialogDescription>
-            {t('skills.cannot_delete_description', { skillName })}
+            {mode === 'delete_conflict'
+              ? t('skills.cannot_delete_description', { skillName })
+              : t('skills.references_description', { skillName })}
           </DialogDescription>
         </DialogHeader>
 
@@ -167,7 +177,11 @@ export function SkillReferenceConflictDialog({
           </ScrollArea>
 
           <div className="mt-4 p-3 bg-muted rounded-md">
-            <p className="text-sm text-text-secondary">{t('skills.reference_conflict_help')}</p>
+            <p className="text-sm text-text-secondary">
+              {mode === 'delete_conflict'
+                ? t('skills.reference_conflict_help')
+                : t('skills.reference_manage_help')}
+            </p>
           </div>
         </div>
 
@@ -185,8 +199,10 @@ export function SkillReferenceConflictDialog({
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 {t('skills.removing_references')}
               </>
-            ) : (
+            ) : mode === 'delete_conflict' ? (
               t('skills.remove_all_and_delete')
+            ) : (
+              t('skills.remove_all_references')
             )}
           </Button>
         </DialogFooter>

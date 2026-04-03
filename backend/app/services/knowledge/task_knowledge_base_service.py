@@ -602,7 +602,8 @@ class TaskKnowledgeBaseService:
         for idx, kb, needs_migration in found_kbs:
             ref = kb_refs[idx]
             kb_name = ref.get("name")
-            kb_namespace = ref.get("namespace", "default")
+            # Get namespace from the actual KB object, not from ref (ref may not have namespace for new data)
+            kb_namespace = kb.namespace
 
             if needs_migration:
                 refs_to_migrate.append((idx, kb.id))
@@ -755,10 +756,10 @@ class TaskKnowledgeBaseService:
         user_name = user.user_name if user else "Unknown"
 
         # Add new binding (include ID for stable references)
+        # Note: namespace is no longer stored - ID is sufficient for lookup
         new_ref = KnowledgeBaseTaskRef(
             id=kb.id,
             name=kb_name,
-            namespace=kb_namespace,
             boundBy=user_name,
             boundAt=datetime.utcnow().isoformat() + "Z",
         )
@@ -967,10 +968,10 @@ class TaskKnowledgeBaseService:
                     return False
 
             # Add new binding with ID for stable references
+            # Note: namespace is no longer stored - ID is sufficient for lookup
             new_ref = KnowledgeBaseTaskRef(
                 id=kb.id,
                 name=kb_name,
-                namespace=kb_namespace,
                 boundBy=user_name,
                 boundAt=datetime.utcnow().isoformat() + "Z",
             )

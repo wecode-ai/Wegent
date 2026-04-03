@@ -698,3 +698,26 @@ class CitationSource(BaseModel):
     chunk_index: int = Field(
         ..., ge=0, description="Chunk index in document (0-based), for precise location"
     )
+
+
+# ============== Knowledge Base Migration Schemas ==============
+
+
+class KnowledgeBaseMigrateRequest(BaseModel):
+    """Schema for migrating knowledge base to group request."""
+
+    target_group_name: str = Field(
+        ...,
+        min_length=1,
+        description="Target group name (namespace) to migrate the knowledge base to",
+    )
+
+
+class KnowledgeBaseMigrateResponse(BaseModel):
+    """Schema for knowledge base migration response."""
+
+    success: bool = Field(..., description="Whether migration succeeded")
+    message: str = Field(..., description="Migration result message")
+    knowledge_base_id: int = Field(..., description="Knowledge base ID")
+    old_namespace: str = Field(..., description="Original namespace")
+    new_namespace: str = Field(..., description="New namespace after migration")

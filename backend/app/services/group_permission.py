@@ -2,17 +2,19 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Optional
+from typing import Callable, Optional
 
 from sqlalchemy.orm import Session
 
 from app.models.namespace import Namespace
 from app.schemas.base_role import has_permission
-from app.schemas.namespace import GroupRole
+from app.schemas.namespace import GroupLevel, GroupRole
 from app.services.group_member_helper import (
     NAMESPACE_RESOURCE_TYPE,
     get_user_groups_with_roles,
 )
+
+RoleResolver = Callable[[Session, int, str], Optional[GroupRole]]
 
 
 def get_user_role_in_group(
@@ -149,6 +151,26 @@ def get_effective_role_in_group(
             if parent_role is not None:
                 # Return the same role level from parent
                 return parent_role
+
+    return None
+
+
+def get_view_role_in_group(
+    db: Session,
+    user_id: int,
+    group_name: str,
+    user_role: str | None = None,
+    group_level: str | None = None,
+    role_resolver: RoleResolver | None = None,
+) -> Optional[GroupRole]:
+    """Return the role that should be used for group read/view access."""
+    resolver = role_resolver or get_effective_role_in_group
+    role = resolver(db, user_id, group_name)
+    if role is not None:
+        return role
+
+    if user_role == "admin" and group_level == GroupLevel.organization.value:
+        return GroupRole.Owner
 
     return None
 

@@ -12,6 +12,7 @@ import {
   PackageIcon,
   RefreshCwIcon,
   GitBranchIcon,
+  Link2Icon,
 } from 'lucide-react'
 import LoadingState from '@/features/common/LoadingState'
 import {
@@ -20,9 +21,15 @@ import {
   UnifiedSkill,
   deleteSkill,
   downloadSkill,
+  fetchSkillReferences,
+  parseSkillReferenceError,
+  ReferencedGhost,
+  removeSingleSkillReference,
+  removeSkillReferences,
   updateSkillFromGit,
 } from '@/apis/skills'
 import SkillUploadModal from './SkillUploadModal'
+import { SkillReferenceConflictDialog } from './SkillReferenceConflictDialog'
 import UnifiedAddButton from '@/components/common/UnifiedAddButton'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -63,6 +70,11 @@ export default function SkillManagementModal({
   const [skillToDelete, setSkillToDelete] = useState<UnifiedSkill | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
   const [updatingFromGitId, setUpdatingFromGitId] = useState<number | null>(null)
+  const [referenceDialogOpen, setReferenceDialogOpen] = useState(false)
+  const [referenceDialogMode, setReferenceDialogMode] = useState<'view' | 'delete_conflict'>(
+    'delete_conflict'
+  )
+  const [referencedGhosts, setReferencedGhosts] = useState<ReferencedGhost[]>([])
 
   // Determine the namespace for uploading skills
   const uploadNamespace = scope === 'group' && groupName ? groupName : 'default'
@@ -130,14 +142,77 @@ export default function SkillManagementModal({
       setDeleteConfirmVisible(false)
       setSkillToDelete(null)
     } catch (error) {
-      toast({
-        variant: 'destructive',
-        title: t('common:skills.failed_delete'),
-        description: error instanceof Error ? error.message : t('common:common.unknown_error'),
-      })
+      const errorMessage = error instanceof Error ? error.message : t('common:common.unknown_error')
+      const referenceError = parseSkillReferenceError(errorMessage)
+      if (referenceError) {
+        setDeleteConfirmVisible(false)
+        setReferencedGhosts(referenceError.referenced_ghosts)
+        setReferenceDialogMode('delete_conflict')
+        setReferenceDialogOpen(true)
+      } else {
+        toast({
+          variant: 'destructive',
+          title: t('common:skills.failed_delete'),
+          description: errorMessage,
+        })
+      }
     } finally {
       setIsDeleting(false)
     }
+  }
+
+  const handleViewReferences = async (skill: UnifiedSkill) => {
+    try {
+      const result = await fetchSkillReferences(skill.id)
+      if (result.referenced_ghosts.length === 0) {
+        toast({
+          title: t('common:common.success'),
+          description: t('common:skills.no_references_found', { skillName: skill.name }),
+        })
+        return
+      }
+
+      setSkillToDelete(skill)
+      setReferencedGhosts(result.referenced_ghosts)
+      setReferenceDialogMode('view')
+      setReferenceDialogOpen(true)
+    } catch (error) {
+      toast({
+        variant: 'destructive',
+        title: t('common:skills.references_fetch_failed'),
+        description: error instanceof Error ? error.message : t('common:common.unknown_error'),
+      })
+    }
+  }
+
+  const handleRemoveAllReferencesAndDelete = async () => {
+    if (!skillToDelete) return
+
+    await removeSkillReferences(skillToDelete.id)
+    await deleteSkill(skillToDelete.id)
+    await loadSkills()
+    onSkillsChange?.()
+  }
+
+  const handleClearAllReferencesOnly = async () => {
+    if (!skillToDelete) return
+
+    await removeSkillReferences(skillToDelete.id)
+    await loadSkills()
+    onSkillsChange?.()
+  }
+
+  const handleRemoveSingleReference = async (ghostId: number) => {
+    if (!skillToDelete) return
+
+    await removeSingleSkillReference(skillToDelete.id, ghostId)
+  }
+
+  const handleReferenceDialogUpdate = async () => {
+    setSkillToDelete(null)
+    setReferencedGhosts([])
+    await loadSkills()
+    onSkillsChange?.()
   }
 
   const handleDownloadSkill = async (skill: UnifiedSkill) => {
@@ -326,8 +401,19 @@ export default function SkillManagementModal({
                               variant="ghost"
                               size="icon"
                               className="h-8 w-8"
+                              onClick={() => handleViewReferences(skill)}
+                              title={t('common:skills.view_references')}
+                              data-testid={`view-skill-references-button-${skill.id}`}
+                            >
+                              <Link2Icon className="w-4 h-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8"
                               onClick={() => handleDownloadSkill(skill)}
                               title={t('common:skills.download_skill')}
+                              data-testid={`download-skill-button-${skill.id}`}
                             >
                               <DownloadIcon className="w-4 h-4" />
                             </Button>
@@ -346,6 +432,7 @@ export default function SkillManagementModal({
                               className="h-8 w-8 text-error hover:text-error hover:bg-error/10"
                               onClick={() => handleDeleteSkill(skill)}
                               title={t('common:skills.delete_skill')}
+                              data-testid={`delete-skill-button-${skill.id}`}
                             >
                               <TrashIcon className="w-4 h-4" />
                             </Button>
@@ -436,6 +523,24 @@ export default function SkillManagementModal({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {skillToDelete && (
+        <SkillReferenceConflictDialog
+          open={referenceDialogOpen}
+          onOpenChange={setReferenceDialogOpen}
+          skillName={skillToDelete.name}
+          skillId={skillToDelete.id}
+          referencedGhosts={referencedGhosts}
+          mode={referenceDialogMode}
+          onRemoveAllReferences={
+            referenceDialogMode === 'delete_conflict'
+              ? handleRemoveAllReferencesAndDelete
+              : handleClearAllReferencesOnly
+          }
+          onRemoveSingleReference={handleRemoveSingleReference}
+          onAfterUpdate={handleReferenceDialogUpdate}
+        />
+      )}
     </>
   )
 }

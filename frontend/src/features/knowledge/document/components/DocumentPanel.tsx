@@ -52,7 +52,8 @@ const getInitialCollapsed = (storageKey: string, defaultCollapsed: boolean): boo
 
 interface DocumentPanelProps {
   knowledgeBase: KnowledgeBase
-  canManage?: boolean
+  canUpload?: boolean
+  canManageAllDocuments?: boolean
   /** Whether the user can manage permissions (is creator or has manage permission) */
   canManagePermissions?: boolean
   /** Callback when document selection changes */
@@ -84,7 +85,8 @@ const STORAGE_KEY_COLLAPSED = 'kb-document-panel-collapsed'
  */
 export function DocumentPanel({
   knowledgeBase,
-  canManage = true,
+  canUpload = true,
+  canManageAllDocuments = false,
   canManagePermissions = false,
   onDocumentSelectionChange,
   onNewChat,
@@ -292,7 +294,8 @@ export function DocumentPanel({
           <TabsContent value="documents" className="flex-1 overflow-auto p-4 mt-0">
             <DocumentList
               knowledgeBase={knowledgeBase}
-              canManage={canManage}
+              canUpload={canUpload}
+              canManageAllDocuments={canManageAllDocuments}
               compact={true}
               onSelectionChange={onDocumentSelectionChange}
               groupInfo={groupInfo}
@@ -343,7 +346,8 @@ export function DocumentPanel({
           <div className="flex-1 overflow-auto p-4">
             <DocumentList
               knowledgeBase={knowledgeBase}
-              canManage={canManage}
+              canUpload={canUpload}
+              canManageAllDocuments={canManageAllDocuments}
               compact={true}
               onSelectionChange={onDocumentSelectionChange}
               groupInfo={groupInfo}

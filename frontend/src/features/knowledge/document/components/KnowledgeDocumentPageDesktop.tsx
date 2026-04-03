@@ -19,15 +19,23 @@ import { userApis } from '@/apis/user'
 import { teamService } from '@/features/tasks/service/teamService'
 import { saveGlobalModelPreference, type ModelPreference } from '@/utils/modelPreferences'
 import { useTranslation } from '@/hooks/useTranslation'
+import { useUser } from '@/features/common/UserContext'
 import { listKnowledgeBases } from '@/apis/knowledge'
 import { useKnowledgeSidebar, type KnowledgeGroup } from '../hooks/useKnowledgeSidebar'
+import { useNamespaceRoleMap } from '../hooks/useNamespaceRoleMap'
 import { KnowledgeSidebar } from './KnowledgeSidebar'
 import { KnowledgeDetailPanel } from './KnowledgeDetailPanel'
-import { KnowledgeGroupListPage } from './KnowledgeGroupListPage'
+import { KnowledgeGroupListPage, type KbDataItem } from './KnowledgeGroupListPage'
 import { CreateKnowledgeBaseDialog, type AvailableGroup } from './CreateKnowledgeBaseDialog'
 import { EditKnowledgeBaseDialog } from './EditKnowledgeBaseDialog'
 import { DeleteKnowledgeBaseDialog } from './DeleteKnowledgeBaseDialog'
+import { MigrateKnowledgeBaseDialog, type MigrationTargetGroup } from './MigrateKnowledgeBaseDialog'
 import { ShareLinkDialog } from '../../permission/components/ShareLinkDialog'
+import {
+  canCreateKnowledgeBaseInNamespace,
+  canManageKnowledgeBase,
+} from '@/utils/namespace-permissions'
+import { migrateKnowledgeBaseToGroup } from '@/apis/knowledge'
 import type {
   KnowledgeBase,
   KnowledgeBaseCreate,
@@ -44,9 +52,11 @@ export function KnowledgeDocumentPageDesktop() {
   const { t } = useTranslation('knowledge')
   const router = useRouter()
   const searchParams = useSearchParams()
+  const { user } = useUser()
 
   // Knowledge sidebar hook
   const sidebar = useKnowledgeSidebar()
+  const namespaceRoleMap = useNamespaceRoleMap()
 
   // Sidebar collapse state - auto-collapse when notebook KB is selected
   // Use localStorage to sync state with parent components (for TopNavigation expand button)
@@ -100,7 +110,7 @@ export function KnowledgeDocumentPageDesktop() {
     return () => {
       window.removeEventListener('knowledge-clear-selection', handleClearSelection)
     }
-  }, [sidebar])
+  }, [sidebar.clearSelection])
 
   // Group KBs for the selected group
   const [groupKbs, setGroupKbs] = useState<KnowledgeBase[]>([])
@@ -115,11 +125,13 @@ export function KnowledgeDocumentPageDesktop() {
   const [editingKb, setEditingKb] = useState<KnowledgeBase | null>(null)
   const [deletingKb, setDeletingKb] = useState<KnowledgeBase | null>(null)
   const [sharingKb, setSharingKb] = useState<KnowledgeBase | null>(null)
+  const [migratingKb, setMigratingKb] = useState<KnowledgeBase | null>(null)
 
   // Loading states for dialogs
   const [isCreating, setIsCreating] = useState(false)
   const [isUpdating, setIsUpdating] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
+  const [isMigrating, setIsMigrating] = useState(false)
 
   // Default teams config for saving model preference
   const [defaultTeamsConfig, setDefaultTeamsConfig] = useState<DefaultTeamsResponse | null>(null)
@@ -355,6 +367,35 @@ export function KnowledgeDocumentPageDesktop() {
     return sidebar.groups.find(g => g.id === sidebar.selectedGroupId) || null
   }, [sidebar.selectedGroupId, sidebar.groups])
 
+  const canCreateInSelectedGroup = useMemo(() => {
+    if (!selectedGroup) {
+      return false
+    }
+
+    if (selectedGroup.type === 'personal') {
+      return true
+    }
+
+    return canCreateKnowledgeBaseInNamespace({
+      namespace: selectedGroup.name,
+      namespaceRole: namespaceRoleMap.get(selectedGroup.name),
+      isAdmin: sidebar.isAdmin,
+    })
+  }, [selectedGroup, namespaceRoleMap, sidebar.isAdmin])
+
+  const canManageKbInList = useCallback(
+    (kb: KbDataItem) => {
+      return canManageKnowledgeBase({
+        currentUserId: user?.id,
+        knowledgeBase: kb,
+        knowledgeRole: 'my_role' in kb ? (kb.my_role ?? undefined) : undefined,
+        namespaceRole: namespaceRoleMap.get(kb.namespace),
+        isAdmin: sidebar.isAdmin,
+      })
+    },
+    [user?.id, namespaceRoleMap, sidebar.isAdmin]
+  )
+
   // Handle KB selection (supports both KnowledgeBase and KnowledgeBaseWithGroupInfo)
   const handleSelectKb = useCallback(
     (kb: KnowledgeBase | { id: number; name: string; namespace: string }) => {
@@ -543,6 +584,59 @@ export function KnowledgeDocumentPageDesktop() {
       setIsDeleting(false)
     }
   }, [deletingKb, sidebar])
+
+  // Handle KB migrated
+  const handleMigrate = useCallback(
+    async (targetGroupName: string) => {
+      if (!migratingKb) return
+
+      setIsMigrating(true)
+      try {
+        await migrateKnowledgeBaseToGroup(migratingKb.id, targetGroupName)
+
+        // Refresh sidebar data only on success
+        await sidebar.refreshAll()
+
+        // Clear selection if migrated KB was selected
+        if (migratingKb.id === sidebar.selectedKbId) {
+          sidebar.clearSelection()
+        }
+
+        // Only close dialog on success
+        setMigratingKb(null)
+      } catch (error) {
+        // Re-throw the error so MigrateKnowledgeBaseDialog can handle it
+        // and display the error message to the user
+        throw error
+      } finally {
+        setIsMigrating(false)
+      }
+    },
+    [migratingKb, sidebar]
+  )
+
+  // Check if KB can be migrated (only personal KBs created by current user)
+  const canMigrateKb = useCallback(
+    (kb: { id: number; namespace: string; user_id: number }) => {
+      // Only personal KBs (namespace='default') can be migrated
+      if (kb.namespace !== 'default') return false
+      // Only the creator can migrate
+      return kb.user_id === sidebar.currentUser?.id
+    },
+    [sidebar.currentUser]
+  )
+
+  // Build available target groups for migration (groups and organizations only)
+  const availableMigrationGroups = useMemo((): MigrationTargetGroup[] => {
+    return sidebar.groups
+      .filter(g => g.type === 'group' || g.type === 'organization')
+      .map(g => ({
+        id: g.id,
+        name: g.name,
+        displayName: g.displayName,
+        type: g.type as 'group' | 'organization',
+      }))
+  }, [sidebar.groups])
   // Check if KB is favorite
   const isFavorite = useCallback(
     (kbId: number) => {
@@ -606,15 +700,25 @@ export function KnowledgeDocumentPageDesktop() {
       name: g.name,
       displayName: g.displayName,
       type: g.type,
-      canCreate: true, // TODO: Check actual permission
+      canCreate:
+        g.type === 'personal'
+          ? true
+          : canCreateKnowledgeBaseInNamespace({
+              namespace: g.name,
+              namespaceRole: namespaceRoleMap.get(g.name),
+              isAdmin: sidebar.isAdmin,
+            }),
     }))
-  }, [sidebar.groups])
+  }, [sidebar.groups, namespaceRoleMap, sidebar.isAdmin])
+
+  const hasCreatableTeamGroup = useMemo(() => {
+    return availableGroupsForCreate.some(group => group.type === 'group' && group.canCreate)
+  }, [availableGroupsForCreate])
 
   // Get group info for the selected KB
-  const selectedKbGroupInfo = useMemo(() => {
-    if (!sidebar.selectedKb) return undefined
-    return sidebar.getKbGroupInfo(sidebar.selectedKb)
-  }, [sidebar.selectedKb, sidebar.getKbGroupInfo])
+  const selectedKbGroupInfo = sidebar.selectedKb
+    ? sidebar.getKbGroupInfo(sidebar.selectedKb)
+    : undefined
 
   // Handle group click from KB detail panel - navigate to group list
   // Need to convert KbGroupInfo's groupId to sidebar's group ID format
@@ -682,7 +786,7 @@ export function KnowledgeDocumentPageDesktop() {
           knowledgeBasesWithGroupInfo={teamGroupKbs}
           isLoading={sidebar.isGroupsLoading}
           onSelectKb={handleSelectKb}
-          onCreateKb={handleCreateKbFromGroups}
+          onCreateKb={hasCreatableTeamGroup ? handleCreateKbFromGroups : undefined}
           onEditKb={kb => {
             const fullKb = sidebar.allKnowledgeBases.find(k => k.id === kb.id)
             if (fullKb) setEditingKb(fullKb)
@@ -691,6 +795,7 @@ export function KnowledgeDocumentPageDesktop() {
             const fullKb = sidebar.allKnowledgeBases.find(k => k.id === kb.id)
             if (fullKb) setDeletingKb(fullKb)
           }}
+          canManageKb={canManageKbInList}
           onToggleFavorite={handleToggleFavorite}
           isFavorite={isFavorite}
           getKbGroupInfo={sidebar.getKbGroupInfo}
@@ -721,6 +826,7 @@ export function KnowledgeDocumentPageDesktop() {
             const fullKb = sidebar.allKnowledgeBases.find(k => k.id === kb.id)
             if (fullKb) setDeletingKb(fullKb)
           }}
+          canManageKb={canManageKbInList}
           onToggleFavorite={handleToggleFavorite}
           isFavorite={isFavorite}
           getKbGroupInfo={sidebar.getKbGroupInfo}
@@ -760,7 +866,7 @@ export function KnowledgeDocumentPageDesktop() {
           isLoading={isGroupKbsLoading}
           onBack={handleBackFromGroup}
           onSelectKb={handleSelectKb}
-          onCreateKb={handleCreateKbFromGroup}
+          onCreateKb={canCreateInSelectedGroup ? handleCreateKbFromGroup : undefined}
           onEditKb={kb => {
             const fullKb =
               sidebar.allKnowledgeBases.find(k => k.id === kb.id) ||
@@ -773,12 +879,20 @@ export function KnowledgeDocumentPageDesktop() {
               groupKbs.find(k => k.id === kb.id)
             if (fullKb) setDeletingKb(fullKb)
           }}
+          canManageKb={canManageKbInList}
           onToggleFavorite={handleToggleFavorite}
           isFavorite={isFavorite}
           isPersonalMode={isPersonalMode}
           personalCreatedByMe={isPersonalMode ? sidebar.personalCreatedByMe : undefined}
           personalSharedWithMe={isPersonalMode ? sidebar.personalSharedWithMe : undefined}
           getKbGroupInfo={sidebar.getKbGroupInfo}
+          onMigrateKb={kb => {
+            const fullKb =
+              sidebar.allKnowledgeBases.find(k => k.id === kb.id) ||
+              groupKbs.find(k => k.id === kb.id)
+            if (fullKb) setMigratingKb(fullKb)
+          }}
+          canMigrate={canMigrateKb}
         />
       )
     }
@@ -875,6 +989,15 @@ export function KnowledgeDocumentPageDesktop() {
         onOpenChange={open => !open && setSharingKb(null)}
         kbId={sharingKb?.id || 0}
         kbName={sharingKb?.name || ''}
+      />
+
+      <MigrateKnowledgeBaseDialog
+        open={!!migratingKb}
+        onOpenChange={open => !isMigrating && !open && setMigratingKb(null)}
+        knowledgeBase={migratingKb}
+        availableGroups={availableMigrationGroups}
+        onMigrate={handleMigrate}
+        loading={isMigrating}
       />
     </div>
   )

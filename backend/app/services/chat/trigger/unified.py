@@ -236,7 +236,7 @@ async def build_execution_request(
             )
             additional_skills = getattr(payload, "additional_skills", None)
             if additional_skills:
-                preload_skills = additional_skills
+                preload_skills = list(preload_skills or []) + list(additional_skills)
 
         # Extract model override from task metadata labels
         # This is where force_override_bot_model is stored when task is created

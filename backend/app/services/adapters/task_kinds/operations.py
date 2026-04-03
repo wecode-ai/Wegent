@@ -30,6 +30,7 @@ from app.schemas.task import TaskCreate, TaskUpdate
 from app.services.adapters.executor_kinds import executor_kinds_service
 from app.services.adapters.pipeline_stage import pipeline_stage_service
 from app.services.readers.kinds import KindType, kindReader
+from app.services.task_skill_selection import build_task_skill_labels
 
 from .converters import convert_to_task_dict
 from .helpers import create_subtasks
@@ -255,15 +256,6 @@ class TaskOperationsMixin:
         )
         db.add(workspace)
 
-        # Create Task JSON
-        # Build additional_skills label if provided
-        # Store as JSON string for skill names that user explicitly selected
-        additional_skills_label = None
-        if obj_in.additional_skills:
-            # Extract skill names from SkillRef objects
-            skill_names = [s.name for s in obj_in.additional_skills]
-            additional_skills_label = json_lib.dumps(skill_names)
-
         task_json = {
             "kind": "Task",
             "spec": {
@@ -313,11 +305,7 @@ class TaskOperationsMixin:
                         if obj_in.api_key_name
                         else {}
                     ),
-                    **(
-                        {"additionalSkills": additional_skills_label}
-                        if additional_skills_label
-                        else {}
-                    ),
+                    **(build_task_skill_labels(obj_in.additional_skills)),
                 },
             },
             "apiVersion": "agent.wecode.io/v1",
