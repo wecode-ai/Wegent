@@ -18,6 +18,7 @@ import { useRouter } from 'next/navigation'
 import { userApis } from '@/apis/user'
 import { teamService } from '@/features/tasks/service/teamService'
 import { saveGlobalModelPreference, type ModelPreference } from '@/utils/modelPreferences'
+import { canManageNamespace } from '@/utils/namespace-permissions'
 import { useKnowledgeTree } from '../hooks/useKnowledgeTree'
 import { KnowledgeTree } from './KnowledgeTree'
 import { CreateKnowledgeBaseDialog } from './CreateKnowledgeBaseDialog'
@@ -177,6 +178,14 @@ export function KnowledgeDocumentPageMobile() {
     window.location.href = `/settings?section=groups&tab=group-team&group=${encodeURIComponent(group.name)}`
   }, [])
 
+  const canManageGroup = useCallback(
+    (group: Group) =>
+      canManageNamespace({
+        namespaceRole: group.my_role,
+      }),
+    []
+  )
+
   return (
     <div className="flex flex-col h-full" data-testid="knowledge-document-page-mobile">
       {/* Full-screen knowledge tree */}
@@ -189,6 +198,7 @@ export function KnowledgeDocumentPageMobile() {
         onSelectKb={handleSelectKb}
         onCreateKb={handleCreateKb}
         onOpenGroupSettings={handleOpenGroupSettings}
+        canManageGroup={canManageGroup}
       />
 
       {/* Dialogs */}

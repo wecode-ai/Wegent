@@ -35,7 +35,7 @@ from app.services.group_permission import (
     get_restricted_analyst_groups,
     is_restricted_analyst,
 )
-from app.services.knowledge.knowledge_service import _is_organization_namespace
+from app.services.knowledge.namespace_utils import is_organization_namespace
 from app.services.share.base_service import UnifiedShareService
 from shared.models.knowledge import KnowledgeBaseToolAccessMode
 from shared.telemetry.decorators import add_span_event, set_span_attribute, trace_sync
@@ -85,8 +85,7 @@ def get_knowledge_base_tool_access_mode_by_ids(
     group_names = [
         kb.namespace
         for kb in kbs
-        if kb.namespace != "default"
-        and not _is_organization_namespace(db, kb.namespace)
+        if kb.namespace != "default" and not is_organization_namespace(db, kb.namespace)
     ]
     if get_restricted_analyst_groups(db, user_id, group_names):
         return (
@@ -151,7 +150,7 @@ class KnowledgeShareService(UnifiedShareService):
 
         # For group knowledge bases, check Restricted Analyst status FIRST
         # This check must run before creator/explicit-share checks to prevent bypass
-        if kb.namespace != "default" and not _is_organization_namespace(
+        if kb.namespace != "default" and not is_organization_namespace(
             db, kb.namespace
         ):
             if is_restricted_analyst(db, user_id, kb.namespace):
@@ -198,7 +197,7 @@ class KnowledgeShareService(UnifiedShareService):
         logger.warning(f"[_get_resource] User has NO explicit shared access")
 
         # For organization knowledge bases, all authenticated users have access
-        if _is_organization_namespace(db, kb.namespace):
+        if is_organization_namespace(db, kb.namespace):
             logger.info(
                 f"[_get_resource] Organization KB - granting access to user_id={user_id}"
             )
@@ -312,7 +311,7 @@ class KnowledgeShareService(UnifiedShareService):
 
         # For group knowledge bases, check Restricted Analyst status FIRST
         # This check must run before creator/explicit-share checks to prevent bypass
-        if kb.namespace != "default" and not _is_organization_namespace(
+        if kb.namespace != "default" and not is_organization_namespace(
             db, kb.namespace
         ):
             if is_restricted_analyst(db, user_id, kb.namespace):
@@ -346,7 +345,7 @@ class KnowledgeShareService(UnifiedShareService):
             return True, effective_role, False
 
         # For organization knowledge bases, all authenticated users have VIEW access
-        if _is_organization_namespace(db, kb.namespace):
+        if is_organization_namespace(db, kb.namespace):
             return True, ResourceRole.Reporter.value, False
 
         # For team knowledge bases, check group permission
@@ -373,6 +372,28 @@ class KnowledgeShareService(UnifiedShareService):
                 return True, ResourceRole.Reporter.value, False
 
         return False, None, False
+
+    def check_permission(
+        self,
+        db: Session,
+        resource_id: int,
+        user_id: int,
+        required_role: SchemaMemberRole,
+    ) -> bool:
+        """Check permission using merged KB access semantics."""
+        from app.services.knowledge.knowledge_service import KnowledgeService
+
+        has_access, role, is_creator = KnowledgeService._get_user_kb_permission(
+            db, resource_id, user_id
+        )
+        if not has_access:
+            return False
+
+        effective_role = SchemaMemberRole.Owner if is_creator else role
+        if effective_role is None:
+            return False
+
+        return has_permission(effective_role, required_role)
 
     def _is_kb_bound_to_user_group_chat(
         self, db: Session, kb_id: int, user_id: int
@@ -492,7 +513,7 @@ class KnowledgeShareService(UnifiedShareService):
         # For group knowledge bases, check Restricted Analyst status FIRST
         # This check must run before creator/explicit-share checks to prevent bypass
         is_restricted = False
-        if kb.namespace != "default" and not _is_organization_namespace(
+        if kb.namespace != "default" and not is_organization_namespace(
             db, kb.namespace
         ):
             if is_restricted_analyst(db, user_id, kb.namespace):
@@ -543,7 +564,7 @@ class KnowledgeShareService(UnifiedShareService):
 
         # Check group permission for team KB or organization KB
         group_role = None
-        if _is_organization_namespace(db, kb.namespace):
+        if is_organization_namespace(db, kb.namespace):
             # Organization KB - all authenticated users have VIEW access
             group_role = SchemaMemberRole.Reporter
         elif kb.namespace != "default":

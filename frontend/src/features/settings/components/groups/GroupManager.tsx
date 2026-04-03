@@ -29,7 +29,6 @@ export function GroupManager({ onGroupsChange }: GroupManagerProps) {
   const { t } = useTranslation()
   const router = useRouter()
   const { user } = useUser()
-  const isAdmin = user?.role === 'admin'
   const [groups, setGroups] = useState<Group[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -150,7 +149,6 @@ export function GroupManager({ onGroupsChange }: GroupManagerProps) {
                 {groups.map(group => {
                   const canManage = canManageNamespace({
                     namespaceRole: group.my_role,
-                    isAdmin,
                   })
 
                   return (

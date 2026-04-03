@@ -170,7 +170,6 @@ export function KnowledgeBaseChatPageMobile() {
       knowledgeBase,
       knowledgeRole: myPermission?.role,
       namespaceRole: namespaceRoleMap.get(knowledgeBase.namespace),
-      isAdmin: user.role === 'admin',
     })
   }, [knowledgeBase, user, myPermission?.role, namespaceRoleMap])
 
@@ -181,7 +180,6 @@ export function KnowledgeBaseChatPageMobile() {
       knowledgeBase,
       knowledgeRole: myPermission?.role,
       namespaceRole: namespaceRoleMap.get(knowledgeBase.namespace),
-      isAdmin: user.role === 'admin',
     })
   }, [knowledgeBase, user, myPermission?.role, namespaceRoleMap])
 

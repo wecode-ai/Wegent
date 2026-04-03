@@ -369,8 +369,8 @@ export function KnowledgeGroupListPage({
           key={kb.id}
           kb={kb}
           onClick={() => onSelectKb(kb)}
-          onEdit={onEditKb && canManageKb?.(kb) !== false ? () => onEditKb(kb) : undefined}
-          onDelete={onDeleteKb && canManageKb?.(kb) !== false ? () => onDeleteKb(kb) : undefined}
+          onEdit={onEditKb && canManageKb?.(kb) ? () => onEditKb(kb) : undefined}
+          onDelete={onDeleteKb && canManageKb?.(kb) ? () => onDeleteKb(kb) : undefined}
           onMigrate={onMigrateKb ? () => onMigrateKb(kb) : undefined}
           onToggleFavorite={onToggleFavorite ? e => handleToggleFavorite(e, kb) : undefined}
           isFavorite={isFavorite?.(kb.id)}

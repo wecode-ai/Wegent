@@ -115,7 +115,6 @@ def get_rag_indexing_skip_reason(
 
     return None
 
-
 def parse_splitter_config(config_dict: dict) -> Optional[SplitterConfig]:
     """
     Parse a dictionary into the appropriate SplitterConfig type.
