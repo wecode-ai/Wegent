@@ -59,8 +59,6 @@ interface KnowledgeTreeProps {
   onOpenGroupSettings?: (group: Group) => void
   /** Edit knowledge base handler */
   onEditKb?: (kb: KnowledgeBase) => void
-  /** Whether user is admin */
-  isAdmin: boolean
 }
 
 export function KnowledgeTree({
@@ -73,7 +71,6 @@ export function KnowledgeTree({
   onCreateKb,
   onOpenGroupSettings,
   onEditKb,
-  isAdmin,
 }: KnowledgeTreeProps) {
   const { t } = useTranslation('knowledge')
   const [searchQuery, setSearchQuery] = useState('')
@@ -154,7 +151,6 @@ export function KnowledgeTree({
               onCreateKb={onCreateKb}
               onOpenGroupSettings={onOpenGroupSettings}
               onEditKb={onEditKb}
-              isAdmin={isAdmin}
             />
           ))
         )}
@@ -291,7 +287,6 @@ interface TreeNodeItemProps {
   ) => void
   onOpenGroupSettings?: (group: Group) => void
   onEditKb?: (kb: KnowledgeBase) => void
-  isAdmin: boolean
 }
 
 function TreeNodeItem({
@@ -305,7 +300,6 @@ function TreeNodeItem({
   onCreateKb,
   onOpenGroupSettings,
   onEditKb,
-  isAdmin,
 }: TreeNodeItemProps) {
   const { t } = useTranslation('knowledge')
   const isExpanded = searchQuery
@@ -318,8 +312,7 @@ function TreeNodeItem({
 
   // Determine if we can create KBs in this node
   const showCreate = (() => {
-    if (node.type === 'category-root' && node.scope === 'personal') return true
-    if (node.type === 'category-root' && node.scope === 'organization') return isAdmin
+    if (node.type === 'category-root' && node.canCreate) return true
     if (node.type === 'category-sub' && node.canCreate) return true
     if (node.type === 'group-item' && node.canCreate) return true
     return false
@@ -478,7 +471,6 @@ function TreeNodeItem({
                 onCreateKb={onCreateKb}
                 onOpenGroupSettings={onOpenGroupSettings}
                 onEditKb={onEditKb}
-                isAdmin={isAdmin}
               />
             )
           })}

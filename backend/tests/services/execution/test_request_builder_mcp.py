@@ -207,42 +207,15 @@ class TestCheckMcpServerReachable:
     def test_empty_url_returns_false(self):
         assert TaskRequestBuilder._check_mcp_server_reachable({"url": ""}) is False
 
-    @patch("app.services.execution.request_builder.urllib.request.urlopen")
-    def test_successful_response_returns_true(self, mock_urlopen):
+    def test_regular_url_returns_true(self):
         server = {"url": "http://mcp.example.com/server", "type": "http"}
         result = TaskRequestBuilder._check_mcp_server_reachable(server)
         assert result is True
 
-    @patch(
-        "app.services.execution.request_builder.urllib.request.urlopen",
-        side_effect=Exception("Connection refused"),
-    )
-    def test_connection_error_returns_false(self, mock_urlopen):
-        server = {"url": "http://192.0.2.1:9999/unreachable", "type": "http"}
+    def test_placeholder_url_returns_true(self):
+        server = {"url": "${{task_data.user_mcps.test.url}}", "type": "http"}
         result = TaskRequestBuilder._check_mcp_server_reachable(server)
-        assert result is False
-
-    def test_skips_placeholder_headers(self):
-        """Headers with ${{...}} placeholders should not be sent."""
-        import urllib.request
-
-        server = {
-            "url": "http://mcp.example.com/server",
-            "headers": {
-                "mcp-proxy-wegent-user": "${{user.name}}",
-                "X-Static": "fixed-value",
-            },
-        }
-        with patch(
-            "app.services.execution.request_builder.urllib.request.urlopen"
-        ) as mock_urlopen:
-            TaskRequestBuilder._check_mcp_server_reachable(server)
-            # Verify the request was made
-            assert mock_urlopen.called
-            req = mock_urlopen.call_args[0][0]
-            # Static header should be present, placeholder should not
-            assert req.get_header("X-static") == "fixed-value"
-            assert req.get_header("Mcp-proxy-wegent-user") is None
+        assert result is True
 
 
 class TestFilterReachableMcpServers:

@@ -12,6 +12,7 @@
 
 import React, { useMemo, useState, useRef, useEffect } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
+import { useOrganizationNamespace } from '@/hooks/useOrganizationNamespace'
 import { Database, Plus, Loader2, User, Users, Building2 } from 'lucide-react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Input } from '@/components/ui/input'
@@ -20,6 +21,7 @@ import { knowledgeBaseApi } from '@/apis/knowledge-base'
 import type { KnowledgeBase } from '@/types/api'
 import type { SubscriptionKnowledgeBaseRef } from '@/types/subscription'
 import { formatDocumentCount } from '@/lib/i18n-helpers'
+import { getKnowledgeBaseGroup, type KnowledgeBaseGroup } from '@/utils/knowledge-base-grouping'
 
 interface RichKnowledgeBaseSelectorProps {
   /** Currently selected knowledge base refs */
@@ -32,32 +34,10 @@ interface RichKnowledgeBaseSelectorProps {
   disabled?: boolean
 }
 
-// Group type for categorizing knowledge bases
-type KnowledgeBaseGroup = 'personal' | 'group' | 'organization'
-
 interface GroupedKnowledgeBases {
   personal: KnowledgeBase[]
   group: KnowledgeBase[]
   organization: KnowledgeBase[]
-}
-
-/**
- * Determine the group type based on namespace
- * - 'default' or user-specific namespace -> personal
- * - 'organization' -> organization
- * - other namespaces -> group
- */
-function getKnowledgeBaseGroup(kb: KnowledgeBase): KnowledgeBaseGroup {
-  const namespace = kb.namespace || 'default'
-
-  if (namespace === 'default') {
-    return 'personal'
-  }
-  if (namespace === 'organization') {
-    return 'organization'
-  }
-  // Any other namespace is considered a group
-  return 'group'
 }
 
 /**
@@ -85,6 +65,13 @@ export function RichKnowledgeBaseSelector({
   const [error, setError] = useState<string | null>(null)
   const listRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
+  const {
+    organizationNamespace,
+    loading: organizationNamespaceLoading,
+    error: organizationNamespaceError,
+  } = useOrganizationNamespace({ enabled: open })
+  const knowledgeBaseError =
+    error || (organizationNamespaceError ? tKnowledge('fetch_error') : null)
 
   // Measure trigger width when open changes
   useEffect(() => {
@@ -149,7 +136,7 @@ export function RichKnowledgeBaseSelector({
     }
 
     filtered.forEach(kb => {
-      const group = getKnowledgeBaseGroup(kb)
+      const group = getKnowledgeBaseGroup(kb.namespace, organizationNamespace)
       grouped[group].push(kb)
     })
 
@@ -159,7 +146,7 @@ export function RichKnowledgeBaseSelector({
     })
 
     return grouped
-  }, [knowledgeBases, selectedKnowledgeBases, searchQuery])
+  }, [knowledgeBases, organizationNamespace, searchQuery, selectedKnowledgeBases])
 
   // Check if there are any available knowledge bases
   const hasAvailableKnowledgeBases =
@@ -279,7 +266,7 @@ export function RichKnowledgeBaseSelector({
 
   // Render knowledge bases list
   const renderKnowledgeBasesList = () => {
-    if (loading) {
+    if (loading || organizationNamespaceLoading) {
       return (
         <div className="py-8 flex items-center justify-center">
           <Loader2 className="h-6 w-6 animate-spin text-text-muted" />
@@ -287,8 +274,8 @@ export function RichKnowledgeBaseSelector({
       )
     }
 
-    if (error) {
-      return <div className="py-8 text-center text-sm text-destructive">{error}</div>
+    if (knowledgeBaseError) {
+      return <div className="py-8 text-center text-sm text-destructive">{knowledgeBaseError}</div>
     }
 
     if (!hasAvailableKnowledgeBases) {

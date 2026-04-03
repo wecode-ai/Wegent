@@ -141,12 +141,11 @@
     "roleDescriptions": {
       "Reporter": "Can only view group resources, cannot make any modifications, can leave group",
       "Developer": "Can view, create, and edit group resources, can leave group, but cannot delete resources or manage members",
-      "Maintainer": "Has all permissions except deleting group and transferring ownership",
+      "Maintainer": "Can manage all knowledge resources in the namespace, but cannot manage namespace settings or members",
       "MaintainerDetails": {
         "title": "Including:",
         "manageResources": "Manage all resources (view, create, edit, delete)",
-        "manageMembers": "Invite and remove members",
-        "updateRoles": "Modify member roles (except Owner)",
+        "cannotManageNamespace": "Cannot edit namespace settings, membership, or ownership",
         "canLeave": "Can leave group"
       },
       "Owner": "Has full control of the group",

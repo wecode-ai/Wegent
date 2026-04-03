@@ -14,6 +14,10 @@ import { getOrganizationNamespace, listKnowledgeBases } from '@/apis/knowledge'
 import { useUser } from '@/features/common/UserContext'
 import type { KnowledgeBase } from '@/types/knowledge'
 import type { Group } from '@/types/group'
+import {
+  buildNamespaceRoleMap,
+  canCreateKnowledgeBaseInNamespace,
+} from '@/utils/namespace-permissions'
 
 // Tree node types
 export type TreeNodeType = 'category-root' | 'category-sub' | 'group-item' | 'kb-leaf'
@@ -145,6 +149,7 @@ export function useKnowledgeTree(): UseKnowledgeTreeReturn {
   const [groups, setGroups] = useState<Group[]>([])
   const [orgKbs, setOrgKbs] = useState<KnowledgeBase[]>([])
   const [orgNamespace, setOrgNamespace] = useState<string | null>(null)
+  const [organizationRole, setOrganizationRole] = useState<Group['my_role']>(undefined)
 
   // Group KB lazy loading
   const [groupKbMap, setGroupKbMap] = useState<Record<string, KnowledgeBase[]>>({})
@@ -170,11 +175,19 @@ export function useKnowledgeTree(): UseKnowledgeTreeReturn {
         listKnowledgeBases('organization'),
         getOrganizationNamespace(),
       ])
+      const groupItems = groupsRes.items || []
+      const namespaceRoleMap = buildNamespaceRoleMap(groupItems)
+      const resolvedOrgNamespace = nsRes.namespace || 'organization'
+
       setPersonalData(personalRes)
       // Filter out organization-level groups
-      setGroups((groupsRes.items || []).filter((g: Group) => g.level !== 'organization'))
+      setGroups(groupItems.filter((g: Group) => g.level !== 'organization'))
       setOrgKbs(orgRes.items || [])
       setOrgNamespace(nsRes.namespace)
+      setOrganizationRole(
+        namespaceRoleMap.get(resolvedOrgNamespace) ||
+          groupItems.find((group: Group) => group.level === 'organization')?.my_role
+      )
     } catch (error) {
       console.error('Failed to load knowledge tree data:', error)
     } finally {
@@ -379,8 +392,11 @@ export function useKnowledgeTree(): UseKnowledgeTreeReturn {
       const kbs = groupKbMap[groupName] || []
       const isLoadingGroup = groupKbLoading[groupName] || false
       const groupRole = group.my_role
-      const canCreate =
-        groupRole === 'Owner' || groupRole === 'Maintainer' || groupRole === 'Developer'
+      const canCreate = canCreateKnowledgeBaseInNamespace({
+        namespace: groupName,
+        namespaceRole: groupRole,
+        isAdmin,
+      })
       const canCreateGroupChat = canCreate
 
       const kbChildren: TreeNode[] = kbs.map(kb => ({
@@ -472,11 +488,25 @@ export function useKnowledgeTree(): UseKnowledgeTreeReturn {
       children: orgKbChildren,
       expanded: expandState['organization'] ?? false,
       scope: 'organization',
-      canCreate: isAdmin,
+      canCreate: canCreateKnowledgeBaseInNamespace({
+        namespace: orgNamespace || 'organization',
+        namespaceRole: organizationRole,
+        isAdmin,
+      }),
     })
 
     return nodes
-  }, [personalData, groups, orgKbs, groupKbMap, groupKbLoading, expandState, isAdmin])
+  }, [
+    personalData,
+    groups,
+    orgKbs,
+    groupKbMap,
+    groupKbLoading,
+    expandState,
+    isAdmin,
+    orgNamespace,
+    organizationRole,
+  ])
 
   return {
     treeNodes,

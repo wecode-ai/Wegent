@@ -349,6 +349,7 @@ class SubscriptionNotificationService:
                     "bind_private": bool(item_data.get("bind_private", True)),
                     "bind_group": bool(item_data.get("bind_group", False)),
                     "group_conversation_id": item_data.get("group_conversation_id"),
+                    "group_name": item_data.get("group_name"),
                     "updated_at": datetime.now(timezone.utc).isoformat(),
                 }
             internal["notification_channel_bindings"] = channel_binding_map
@@ -743,6 +744,7 @@ class SubscriptionNotificationService:
             "bind_private": bool(cfg.get("bind_private", True)),
             "bind_group": bool(cfg.get("bind_group", False)),
             "group_conversation_id": cfg.get("group_conversation_id"),
+            "group_name": cfg.get("group_name"),
         }
 
     def _upsert_subscription_channel_binding(

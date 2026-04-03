@@ -8,6 +8,7 @@ from typing import Any, List, Optional
 
 from pydantic import BaseModel
 
+from app.schemas.kind import SkillRefMeta
 from app.schemas.subtask import SubtaskWithBot
 from app.schemas.team import TeamInDB
 from app.schemas.user import UserInDB
@@ -254,6 +255,8 @@ class TaskSkillsResponse(BaseModel):
     team_namespace: str = "default"
     skills: List[str] = []  # All bot skills (deduplicated)
     preload_skills: List[str] = []  # Skills to preload
+    skill_refs: dict[str, SkillRefMeta] = {}
+    preload_skill_refs: dict[str, SkillRefMeta] = {}
 
 
 class PromptDraftGenerateRequest(BaseModel):

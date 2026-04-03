@@ -491,15 +491,19 @@ class KnowledgeBaseTaskRef(BaseModel):
     """Reference to a KnowledgeBase bound to a Task (group chat)
 
     Note: The 'id' field stores Kind.id for stable references.
-    The 'name' field stores the display name (spec.name) for backward compatibility.
+    The 'name' field stores the display name (spec.name) for display purposes.
     When looking up a knowledge base:
-    1. If 'id' exists, query by Kind.id directly (preferred)
-    2. If 'id' is None, fall back to name + namespace lookup (legacy data)
+    1. Query by Kind.id directly (id is the unique identifier)
+    2. Legacy data with namespace field will be ignored during lookup
+
+    The namespace field was removed because:
+    - Knowledge base ID is globally unique and sufficient for lookup
+    - When KB migrates from personal to group namespace, we don't need to update all task refs
     """
 
     id: Optional[int] = None  # Knowledge base Kind.id (primary reference)
-    name: str  # Display name (spec.name), kept for backward compatibility
-    namespace: str = "default"
+    name: str  # Display name (spec.name), kept for display purposes
+    # Note: namespace field removed - use id for lookup, existing data with namespace is ignored
     boundBy: Optional[str] = None  # Username of the person who bound this KB
     boundAt: Optional[str] = None  # Binding timestamp in ISO format
 

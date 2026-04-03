@@ -23,6 +23,7 @@ from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.kind import Bot, Task, Team
 from app.services.readers import KindType, kindReader
+from app.services.task_skill_selection import build_task_skill_labels
 
 logger = logging.getLogger(__name__)
 
@@ -282,11 +283,12 @@ def create_new_task(
             .first()
         )
         if kb:
+            kb_spec = kb.json.get("spec", {}) if kb.json else {}
+            # Note: namespace is no longer stored - ID is sufficient for lookup
             knowledge_base_refs = [
                 {
                     "id": kb.id,
-                    "name": kb.name,
-                    "namespace": kb.namespace,
+                    "name": kb_spec.get("name", kb.name),
                     "boundBy": user.user_name,
                     "boundAt": datetime.now().isoformat(),
                 }
@@ -343,19 +345,7 @@ def create_new_task(
                     if params.force_override_bot_model_type
                     else {}
                 ),
-                **(
-                    {
-                        "additionalSkills": json_lib.dumps(
-                            [
-                                s.get("name")
-                                for s in params.additional_skills
-                                if s.get("name")
-                            ]
-                        )
-                    }
-                    if params.additional_skills
-                    else {}
-                ),
+                **build_task_skill_labels(params.additional_skills),
             },
         },
         "apiVersion": "agent.wecode.io/v1",

@@ -107,6 +107,7 @@ when the skill is loaded by the LLM...
 - [Core Concepts](./core-concepts.md) - Overview of all CRD types
 - [YAML Specification](../reference/yaml-specification.md) - Complete YAML format reference
 - [Skill Development Guide](../developer-guide/skill-development.md) - Technical implementation details and Provider development
+- [Skill Runtime Flow](../developer-guide/skill-runtime-flow.md) - Runtime skill selection, resolution, and delivery paths
 
 ---
 
