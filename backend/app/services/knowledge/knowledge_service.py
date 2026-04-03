@@ -1707,31 +1707,18 @@ class KnowledgeService:
             .all()
         )
 
-        # Get organization namespace info
-        org_namespace = (
+        organization_namespaces = (
             db.query(Namespace)
             .filter(
                 Namespace.level == GroupLevel.organization.value,
                 Namespace.is_active == True,
             )
-            .first()
+            .all()
         )
-
-        # Get user's role in organization namespace (if exists)
-        org_role: str | None = None
-        if org_namespace:
-            org_view_role = get_view_role_in_group(
-                db,
-                user_id,
-                org_namespace.name,
-                user_role=user.role,
-                group_level=org_namespace.level,
-            )
-            org_role = (
-                org_view_role.value
-                if org_view_role is not None
-                else BaseRole.Reporter.value
-            )
+        organization_namespace_map = {
+            namespace.name: namespace for namespace in organization_namespaces
+        }
+        org_namespace = organization_namespaces[0] if organization_namespaces else None
 
         # 6. Batch fetch document counts (single query)
         all_kb_ids = list(
@@ -1790,6 +1777,16 @@ class KnowledgeService:
                 if highest is None or has_permission(role, highest):
                     highest = role
             return highest
+
+        def get_namespace_view_role(namespace_name: str, namespace_level: str) -> str:
+            view_role = get_view_role_in_group(
+                db,
+                user_id,
+                namespace_name,
+                user_role=user.role,
+                group_level=namespace_level,
+            )
+            return view_role.value if view_role is not None else BaseRole.Reporter.value
 
         # Build personal section
         # Use stable English identifiers for group_name - frontend handles localization
@@ -1856,7 +1853,13 @@ class KnowledgeService:
                     org_ns_name or "organization",
                     org_display_name,
                     "organization",
-                    merge_roles(shared_kb_roles.get(kb.id), org_role),
+                    merge_roles(
+                        shared_kb_roles.get(kb.id),
+                        get_namespace_view_role(
+                            kb.namespace,
+                            organization_namespace_map[kb.namespace].level,
+                        ),
+                    ),
                 )
                 for kb in org_kbs
             ],
