@@ -530,3 +530,16 @@ export interface SubscriptionGroupInfoPayload {
   group_name: string
   group_conversation_id: string
 }
+
+/**
+ * WebSocket payload for subscription binding status updates
+ */
+export interface SubscriptionBindingUpdatePayload {
+  channel_id: number
+  conversation_id?: string | null
+  private_bound: boolean
+  group_bound: boolean
+  completed: boolean
+  status: 'partial' | 'success'
+  subscription_id?: number
+}

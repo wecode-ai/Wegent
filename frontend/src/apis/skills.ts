@@ -622,6 +622,15 @@ export interface SkillReferenceError {
 }
 
 /**
+ * Response from query skill references API
+ */
+export interface SkillReferencesResponse {
+  skill_id: number
+  skill_name: string
+  referenced_ghosts: ReferencedGhost[]
+}
+
+/**
  * Response from remove references API
  */
 export interface RemoveReferencesResponse {
@@ -635,6 +644,31 @@ export interface RemoveReferencesResponse {
 export interface RemoveSingleReferenceResponse {
   success: boolean
   ghost_name: string
+}
+
+/**
+ * Query Ghost references for a Skill
+ */
+export async function fetchSkillReferences(skillId: number): Promise<SkillReferencesResponse> {
+  const token = getToken()
+  if (!token) throw new Error('No authentication token')
+
+  const url = `${getApiUrl()}/v1/kinds/skills/${skillId}/references`
+  const response = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+
+  if (!response.ok) {
+    const error = await response.text()
+    try {
+      const json = JSON.parse(error)
+      throw new Error(json.detail || 'Failed to fetch skill references')
+    } catch {
+      throw new Error(error || 'Failed to fetch skill references')
+    }
+  }
+
+  return response.json()
 }
 
 /**

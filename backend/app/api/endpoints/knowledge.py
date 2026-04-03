@@ -15,7 +15,7 @@ from datetime import datetime
 from typing import Optional, Union
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
@@ -33,6 +33,8 @@ from app.schemas.knowledge import (
     DocumentDetailResponse,
     KnowledgeBaseCreate,
     KnowledgeBaseListResponse,
+    KnowledgeBaseMigrateRequest,
+    KnowledgeBaseMigrateResponse,
     KnowledgeBaseResponse,
     KnowledgeBaseTypeUpdate,
     KnowledgeBaseUpdate,
@@ -487,6 +489,60 @@ def update_knowledge_base_type(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
+
+
+@router.post(
+    "/{knowledge_base_id}/migrate",
+    response_model=KnowledgeBaseMigrateResponse,
+)
+@trace_sync("migrate_knowledge_base_to_group", "knowledge.api")
+def migrate_knowledge_base_to_group(
+    knowledge_base_id: int,
+    data: KnowledgeBaseMigrateRequest,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Migrate a personal knowledge base to a group.
+
+    - Only personal knowledge bases (namespace='default') can be migrated
+    - Only the creator of the knowledge base can migrate it
+    - User must have Maintainer or Owner permission in the target group
+    - Target group name must be a valid group namespace
+    """
+    try:
+        result = KnowledgeService.migrate_knowledge_base_to_group(
+            db=db,
+            knowledge_base_id=knowledge_base_id,
+            user_id=current_user.id,
+            target_group_name=data.target_group_name,
+        )
+        add_span_event(
+            "knowledge.base.migrated",
+            {
+                "kb_id": str(knowledge_base_id),
+                "user_id": str(current_user.id),
+                "target_group": data.target_group_name,
+            },
+        )
+        return result
+    except IntegrityError as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A knowledge base with this name already exists in the target group",
+        ) from e
+    except SQLAlchemyError as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Database error during migration: {str(e)}",
+        ) from e
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from e
 
 
 # ============== Knowledge Document Endpoints ==============
@@ -1568,7 +1624,7 @@ knowledge_router = APIRouter()
 
 @knowledge_router.get(
     "/list",
-    response_model=Union[PersonalKnowledgeBaseGroup, AllGroupedKnowledgeResponse],
+    response_model=KnowledgeBaseListResponse,
 )
 @trace_sync("list_knowledge_bases_v1", "knowledge.api")
 def list_knowledge_bases_v1(
@@ -1578,7 +1634,7 @@ def list_knowledge_bases_v1(
     ),
     auth_context: AuthContext = Depends(get_auth_context),
     db: Session = Depends(get_db),
-) -> Union[PersonalKnowledgeBaseGroup, AllGroupedKnowledgeResponse]:
+):
     """
     List knowledge bases with flexible authentication.
 
@@ -1592,20 +1648,6 @@ def list_knowledge_bases_v1(
             - "all": Return all accessible knowledge bases (personal + groups + organization)
             - Unrecognized values are treated as "all"
 
-    Returns:
-        - When scope="personal": PersonalKnowledgeBaseGroup schema
-          {
-            "created_by_me": [...],
-            "shared_with_me": [...]
-          }
-        - When scope="all": AllGroupedKnowledgeResponse schema
-          {
-            "personal": {"created_by_me": [...], "shared_with_me": [...]},
-            "groups": [...],
-            "organization": {...},
-            "summary": {...}
-          }
-
     Authentication:
         - Personal API key: Returns knowledge bases accessible to the key owner
         - Service API key: Requires wegent-username header to specify the target user
@@ -1617,15 +1659,9 @@ def list_knowledge_bases_v1(
     if normalized_scope not in ("personal", "all"):
         normalized_scope = "all"
 
-    if normalized_scope == "personal":
-        # Return personal knowledge bases grouped by ownership
-        return KnowledgeService.get_personal_knowledge_bases_grouped(
-            db=db,
-            user_id=current_user.id,
-        )
-    else:
-        # Return all accessible knowledge bases grouped by scope
-        return KnowledgeService.get_all_knowledge_bases_grouped(
-            db=db,
-            user_id=current_user.id,
-        )
+    # Use Orchestrator for unified business logic (REST API and MCP tools share the same logic)
+    return knowledge_orchestrator.list_knowledge_bases(
+        db=db,
+        user=current_user,
+        scope=normalized_scope,
+    )

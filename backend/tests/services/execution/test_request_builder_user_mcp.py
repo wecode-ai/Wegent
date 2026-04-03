@@ -128,9 +128,7 @@ class TestUserScopedMcpInjection:
             },
         ]
 
-    def test_injects_table_skill_when_message_mentions_dingtalk_sheet(
-        self, test_db
-    ):
+    def test_injects_table_skill_when_message_mentions_dingtalk_sheet(self, test_db):
         builder = TaskRequestBuilder(test_db)
         user = SimpleNamespace(preferences="{}")
 

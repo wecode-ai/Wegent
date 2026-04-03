@@ -11,7 +11,7 @@ and send notifications when devices go offline or come back online.
 
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Set
 
 from redis.asyncio import Redis
@@ -29,6 +29,10 @@ logger = logging.getLogger(__name__)
 DEVICE_ONLINE_KEY_PREFIX = "device:online:"
 REDIS_OFFLINE_DEVICES_KEY = "cloud_device_monitor:offline_devices"
 REDIS_KEY_TTL_SECONDS = 900  # 15 minutes
+
+# Minimum device age (in minutes) before triggering offline alert
+# Devices created within this window will not trigger alerts
+MIN_DEVICE_AGE_MINUTES = 10
 
 PRIORITY_USERS = {"gaofei", "qingfeng", "qindi", "liubin1", "jinshan"}
 
@@ -89,6 +93,10 @@ async def check_cloud_devices_status(
     current_offline_ids: Set[str] = set()
     online_devices: List[Dict[str, Any]] = []
     offline_devices: List[Dict[str, Any]] = []
+
+    # Calculate minimum creation time threshold for offline alert filtering
+    # Devices created within MIN_DEVICE_AGE_MINUTES will not trigger offline alerts
+    min_age_threshold = datetime.now() - timedelta(minutes=MIN_DEVICE_AGE_MINUTES)
 
     # Check each device's online status
     for device in cloud_devices:
@@ -154,8 +162,38 @@ async def check_cloud_devices_status(
         if online_info:
             online_devices.append(device_info)
         else:
-            offline_devices.append(device_info)
-            current_offline_ids.add(device_id)
+            # Check device creation time to avoid false alerts for newly created devices
+            created_at_str = cloud_config.get("createdAt")
+            should_skip_alert = False
+
+            if created_at_str and created_at_str != "-":
+                try:
+                    # Parse created_at (format: "2025-01-15T10:30:00...")
+                    created_at = datetime.fromisoformat(
+                        created_at_str.replace("Z", "+00:00")
+                    )
+                    if created_at > min_age_threshold:
+                        # Device is too new, skip offline alert
+                        should_skip_alert = True
+                        logger.debug(
+                            f"[cloud-device-monitor] Device {device_id} created at {created_at}, "
+                            f"skipping offline alert (within {MIN_DEVICE_AGE_MINUTES} min window)"
+                        )
+                except Exception as e:
+                    logger.warning(
+                        f"[cloud-device-monitor] Failed to parse createdAt for device {device_id}: {e}"
+                    )
+
+            if not should_skip_alert:
+                offline_devices.append(device_info)
+                current_offline_ids.add(device_id)
+            else:
+                # Device is offline but too new, don't add to offline list
+                # This prevents false alerts during device initialization
+                logger.info(
+                    f"[cloud-device-monitor] Device {device_id} is offline but created recently, "
+                    f"not alerting"
+                )
 
     # Ping all devices (both online and offline) to check network reachability
     for device_info in online_devices:

@@ -29,10 +29,12 @@ import { userApis } from '@/apis/user'
 import { fetchUnifiedSkillsList, type UnifiedSkill } from '@/apis/skills'
 import type { Team, GitRepoInfo, GitBranch, SearchUser } from '@/types/api'
 import type {
+  NotificationChannelBindingConfig,
   NotificationChannelInfo,
   NotificationLevel,
   NotificationWebhook,
   Subscription,
+  SubscriptionBindingUpdatePayload,
   SubscriptionCreateRequest,
   SubscriptionExecutionTarget,
   SubscriptionGroupInfoPayload,
@@ -340,12 +342,7 @@ export function SubscriptionForm({
   const [devNotificationChannels, setDevNotificationChannels] = useState<number[]>([])
   const [devAvailableChannels, setDevAvailableChannels] = useState<NotificationChannelInfo[]>([])
   const [channelBindingConfigs, setChannelBindingConfigs] = useState<
-    Array<{
-      channel_id: number
-      bind_private: boolean
-      bind_group: boolean
-      group_conversation_id?: string
-    }>
+    NotificationChannelBindingConfig[]
   >([])
   const [bindingWaitingState, setBindingWaitingState] = useState<Record<number, boolean>>({})
   const [devSettingsLoading, setDevSettingsLoading] = useState(false)
@@ -887,6 +884,23 @@ export function SubscriptionForm({
   useEffect(() => {
     if (!socket) return
 
+    const bindingUpdateHandler = (payload: SubscriptionBindingUpdatePayload) => {
+      setDevAvailableChannels(prev =>
+        prev.map(channel =>
+          channel.id === payload.channel_id && payload.private_bound
+            ? {
+                ...channel,
+                is_bound: true,
+              }
+            : channel
+        )
+      )
+
+      if (payload.completed && !payload.group_bound) {
+        setBindingWaitingState(prev => ({ ...prev, [payload.channel_id]: false }))
+      }
+    }
+
     const handler = (payload: SubscriptionGroupInfoPayload) => {
       // Update channelBindingConfigs with group info
       setChannelBindingConfigs(prev =>
@@ -906,8 +920,10 @@ export function SubscriptionForm({
       toast.success(t('notification_settings.binding_success'))
     }
 
+    socket.on('subscription:group_binding_updated', bindingUpdateHandler)
     socket.on('subscription:group_info_received', handler)
     return () => {
+      socket.off('subscription:group_binding_updated', bindingUpdateHandler)
       socket.off('subscription:group_info_received', handler)
     }
   }, [socket, t])

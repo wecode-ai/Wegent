@@ -2,11 +2,19 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+import { useState } from 'react'
+
 import { X, Maximize2, Minimize2 } from 'lucide-react'
-import { VncViewer } from '@wecode/components/cloud-device'
+
+import { useTranslation } from '@/hooks/useTranslation'
+
+import { CloudDeviceFilesViewer } from './CloudDeviceFilesViewer'
+import { VncViewer } from './VncViewer'
+import '@wecode/i18n'
 
 interface DeviceVncPanelProps {
   readonly deviceId: string
+  readonly hideFilesTab?: boolean
   readonly onClose: () => void
   readonly title?: string
   readonly closeLabel?: string
@@ -22,6 +30,7 @@ interface DeviceVncPanelProps {
  */
 export function DeviceVncPanel({
   deviceId,
+  hideFilesTab = false,
   onClose,
   title,
   closeLabel,
@@ -30,33 +39,103 @@ export function DeviceVncPanel({
   fullscreenLabel,
   exitFullscreenLabel,
 }: DeviceVncPanelProps) {
+  const { t } = useTranslation('devices')
+  const [activeTab, setActiveTab] = useState<'desktop' | 'files'>('desktop')
+  const showFilesTab = !hideFilesTab
+  const credentialsText = t('vnc_files_credentials', {
+    password: deviceId,
+  })
+
   return (
-    <div className={`flex flex-col min-h-0 border-l border-border transition-all duration-800 ease-in-out ${isFullscreen ? 'flex-1' : 'w-1/2'}`}>
-      {/* VNC panel header */}
-      <div className="flex items-center justify-between px-4 py-2 border-b border-border bg-surface">
-        <h3 className="text-sm font-medium text-text-primary">{title || 'VNC Viewer'}</h3>
+    <div
+      className={`flex flex-col overflow-hidden border-l border-border transition-[width,flex] duration-800 ease-in-out ${isFullscreen ? 'flex-1' : 'w-1/2'}`}
+    >
+      <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border bg-surface px-4 py-2">
+        <div className="flex min-w-0 items-center gap-3">
+          <h3 className="shrink-0 text-sm font-medium text-text-primary">
+            {title || t('vnc_panel_title')}
+          </h3>
+          <div
+            className="inline-flex h-8 items-center justify-center rounded-lg bg-base p-1 text-text-muted"
+            role="tablist"
+            aria-label={t('vnc_panel_title')}
+          >
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab === 'desktop'}
+              data-testid="vnc-desktop-tab"
+              onClick={() => setActiveTab('desktop')}
+              className={`inline-flex h-7 items-center justify-center whitespace-nowrap rounded-md px-2.5 text-xs font-medium transition-all ${
+                activeTab === 'desktop'
+                  ? 'bg-base text-text-primary shadow'
+                  : 'text-text-secondary hover:bg-base/50 hover:text-text-primary'
+              }`}
+            >
+              {t('vnc_desktop_tab')}
+            </button>
+            {showFilesTab && (
+              <button
+                type="button"
+                role="tab"
+                aria-selected={activeTab === 'files'}
+                data-testid="vnc-files-tab"
+                onClick={() => setActiveTab('files')}
+                className={`inline-flex h-7 items-center justify-center whitespace-nowrap rounded-md px-2.5 text-xs font-medium transition-all ${
+                  activeTab === 'files'
+                    ? 'bg-base text-text-primary shadow'
+                    : 'text-text-secondary hover:bg-base/50 hover:text-text-primary'
+                }`}
+              >
+                {t('vnc_files_tab')}
+              </button>
+            )}
+          </div>
+        </div>
         <div className="flex items-center gap-2">
-          {/* Fullscreen toggle button */}
           {onToggleFullscreen && (
             <button
               onClick={onToggleFullscreen}
-              className="w-8 h-8 flex items-center justify-center rounded-md hover:bg-hover text-text-secondary hover:text-text-primary transition-colors"
-              title={isFullscreen ? exitFullscreenLabel || 'Exit Fullscreen' : fullscreenLabel || 'Fullscreen'}
+              className="flex h-8 w-8 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-hover hover:text-text-primary"
+              title={
+                isFullscreen
+                  ? exitFullscreenLabel || 'Exit Fullscreen'
+                  : fullscreenLabel || 'Fullscreen'
+              }
+              data-testid="vnc-fullscreen-button"
             >
-              {isFullscreen ? <Minimize2 className="w-5 h-5" /> : <Maximize2 className="w-5 h-5" />}
+              {isFullscreen ? <Minimize2 className="h-5 w-5" /> : <Maximize2 className="h-5 w-5" />}
             </button>
           )}
           <button
             onClick={onClose}
-            className="w-8 h-8 flex items-center justify-center rounded-md hover:bg-hover text-text-secondary hover:text-text-primary transition-colors"
+            className="flex h-8 w-8 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-hover hover:text-text-primary"
             title={closeLabel || 'Close'}
+            data-testid="vnc-close-button"
           >
-            <X className="w-5 h-5" />
+            <X className="h-5 w-5" />
           </button>
         </div>
       </div>
-      {/* VNC viewer */}
-      <VncViewer deviceId={deviceId} />
+
+      {activeTab === 'files' && (
+        <div
+          className="shrink-0 border-b border-border bg-surface px-4 py-2"
+          data-testid="cloud-device-files-credentials"
+        >
+          <p className="text-xs font-medium text-text-primary">{credentialsText}</p>
+        </div>
+      )}
+
+      <div className="relative min-h-0 flex-1">
+        {activeTab === 'desktop' ? (
+          <VncViewer deviceId={deviceId} />
+        ) : (
+          <CloudDeviceFilesViewer deviceId={deviceId} isActive />
+        )}
+      </div>
     </div>
   )
 }
+
+export default DeviceVncPanel

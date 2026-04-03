@@ -32,7 +32,6 @@ from app.services.group_member_helper import (
     NAMESPACE_RESOURCE_TYPE,
     count_group_members_by_role,
     create_group_member,
-    delete_group_member,
     get_group_member,
     get_group_member_count,
     get_group_members,
@@ -40,9 +39,8 @@ from app.services.group_member_helper import (
     get_user_groups_with_roles,
 )
 from app.services.group_permission import (
-    check_group_permission,
-    get_effective_role_in_group,
     get_user_role_in_group,
+    get_view_role_in_group,
 )
 
 # Maximum nesting depth for groups
@@ -117,8 +115,9 @@ def create_group(
             )
 
         # Check if user has permission to create subgroups (must be at least Maintainer)
-        # Use effective role to support inheritance
-        user_group_role = get_effective_role_in_group(db, owner_user_id, parent_name)
+        user_group_role = _get_group_access_role(
+            db, parent_group, owner_user_id, user_role
+        )
 
         if user_group_role is None or not has_permission(
             user_group_role, GroupRole.Maintainer
@@ -194,7 +193,7 @@ def list_user_groups(
     user_id: int,
     skip: int = 0,
     limit: int = 100,
-    include_organization: bool = False,
+    user_role: str | None = None,
 ) -> list[GroupResponse]:
     """
     List groups where user is a member (created or joined).
@@ -205,19 +204,30 @@ def list_user_groups(
         user_id: User ID
         skip: Number of records to skip
         limit: Maximum number of records to return
-        include_organization: Whether to include organization-level groups (admin only)
-
     Returns:
         List of GroupResponse objects with additional fields
     """
     # Get all groups where user is an active member with their role
     member_data = get_user_groups_with_roles(db, user_id)
 
-    if not member_data:
-        return []
-
     # Create a mapping of group_name -> role
     group_roles = {name: role for name, role in member_data}
+
+    if user_role == "admin":
+        organization_groups = (
+            db.query(Namespace.name)
+            .filter(
+                Namespace.level == GroupLevel.organization.value,
+                Namespace.is_active == True,
+            )
+            .all()
+        )
+        for (group_name,) in organization_groups:
+            group_roles[group_name] = GroupRole.Owner.value
+
+    if not group_roles:
+        return []
+
     group_names = list(group_roles.keys())
 
     # Build query for groups
@@ -225,13 +235,6 @@ def list_user_groups(
         Namespace.name.in_(group_names),
         Namespace.is_active == True,
     )
-
-    # Filter out organization-level groups for non-admin users
-    if not include_organization:
-        query = query.filter(
-            (Namespace.level != GroupLevel.organization.value)
-            | (Namespace.level.is_(None))
-        )
 
     groups = query.order_by(Namespace.created_at.desc()).offset(skip).limit(limit).all()
 
@@ -286,11 +289,11 @@ def update_group(
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
 
-    # Check permission (must be at least Maintainer)
-    if not check_group_permission(db, user_id, group_name, GroupRole.Maintainer):
+    access_role = _get_group_access_role(db, group, user_id, user_role)
+    if access_role != GroupRole.Owner:
         raise HTTPException(
             status_code=403,
-            detail="Only Maintainers and Owners can update group information",
+            detail="Only Owners can update group information",
         )
 
     # Check permission for organization-level changes (admin only)
@@ -328,7 +331,9 @@ def update_group(
     return GroupResponse.model_validate(group)
 
 
-def delete_group(db: Session, group_name: str, user_id: int) -> None:
+def delete_group(
+    db: Session, group_name: str, user_id: int, user_role: str | None = None
+) -> None:
     """
     Delete a group (hard delete).
 
@@ -357,9 +362,8 @@ def delete_group(db: Session, group_name: str, user_id: int) -> None:
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
 
-    # Check permission (must be Owner)
-    user_role = get_user_role_in_group(db, user_id, group_name)
-    if user_role != GroupRole.Owner:
+    group_role = _get_group_access_role(db, group, user_id, user_role)
+    if group_role != GroupRole.Owner:
         raise HTTPException(
             status_code=403,
             detail="Only group Owner can delete the group",
@@ -418,6 +422,7 @@ def add_member(
     user_id: int,
     role: GroupRole,
     invited_by_user_id: int,
+    inviter_role: str | None = None,
 ) -> GroupMemberResponse:
     """
     Add a member to a group.
@@ -457,13 +462,13 @@ def add_member(
     if not target_user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    # Check inviter has permission (must be at least Maintainer)
-    if not check_group_permission(
-        db, invited_by_user_id, group_name, GroupRole.Maintainer
-    ):
+    inviter_group_role = _get_group_access_role(
+        db, group, invited_by_user_id, inviter_role
+    )
+    if inviter_group_role != GroupRole.Owner:
         raise HTTPException(
             status_code=403,
-            detail="Only Maintainers and Owners can add members",
+            detail="Only Owners can add members",
         )
 
     # Check if user is already a member
@@ -509,6 +514,22 @@ def _build_group_member_response(
     return GroupMemberResponse(**response_data)
 
 
+def _get_group_access_role(
+    db: Session,
+    group: Namespace,
+    user_id: int,
+    user_role: str | None = None,
+) -> GroupRole | None:
+    """Return the effective role for view and management checks."""
+    return get_view_role_in_group(
+        db,
+        user_id,
+        group.name,
+        user_role=user_role,
+        group_level=group.level,
+    )
+
+
 def _get_group_or_404(db: Session, group_name: str) -> Namespace:
     """Get an active group or raise 404."""
     group = (
@@ -527,14 +548,19 @@ def _get_group_or_404(db: Session, group_name: str) -> Namespace:
 
 
 def _get_role_updater_role(
-    db: Session, group_name: str, updated_by_user_id: int
+    db: Session,
+    group: Namespace,
+    updated_by_user_id: int,
+    updater_user_role: str | None = None,
 ) -> GroupRole:
     """Validate and return the updater's effective role for role changes."""
-    updater_role = get_user_role_in_group(db, updated_by_user_id, group_name)
-    if updater_role not in [GroupRole.Owner, GroupRole.Maintainer]:
+    updater_role = _get_group_access_role(
+        db, group, updated_by_user_id, updater_user_role
+    )
+    if updater_role != GroupRole.Owner:
         raise HTTPException(
             status_code=403,
-            detail="Only Maintainers and Owners can update member roles",
+            detail="Only Owners can update member roles",
         )
     return updater_role
 
@@ -592,7 +618,11 @@ def _get_batch_role_update_priority(
 
 
 def remove_member(
-    db: Session, group_name: str, user_id: int, removed_by_user_id: int
+    db: Session,
+    group_name: str,
+    user_id: int,
+    removed_by_user_id: int,
+    remover_user_role: str | None = None,
 ) -> None:
     """
     Remove a member from a group.
@@ -629,23 +659,17 @@ def remove_member(
 
     # Check permission
     # Owner can remove anyone, Maintainers can remove Developers and Reporters, users can remove themselves
-    remover_role = get_user_role_in_group(db, removed_by_user_id, group_name)
+    remover_role = _get_group_access_role(
+        db, group, removed_by_user_id, remover_user_role
+    )
     target_role = GroupRole(member.role)
 
     # Allow self-removal
     if removed_by_user_id != user_id:
-        # Check if remover has sufficient permissions
-        if remover_role is None:
+        if remover_role != GroupRole.Owner:
             raise HTTPException(
                 status_code=403,
-                detail="You are not a member of this group",
-            )
-
-        # Remover must have higher permission than target (not equal or lower)
-        if not has_permission(remover_role, target_role) or remover_role == target_role:
-            raise HTTPException(
-                status_code=403,
-                detail="Insufficient permissions to remove this member",
+                detail="Only Owners can remove other members",
             )
 
     # Prevent removing the last owner
@@ -672,6 +696,7 @@ def update_member_role(
     user_id: int,
     new_role: GroupRole,
     updated_by_user_id: int,
+    updater_user_role: str | None = None,
 ) -> GroupMemberResponse:
     """
     Update a member's role.
@@ -696,7 +721,9 @@ def update_member_role(
     if not member:
         raise HTTPException(status_code=404, detail="Member not found")
 
-    updater_role = _get_role_updater_role(db, group_name, updated_by_user_id)
+    updater_role = _get_role_updater_role(
+        db, group, updated_by_user_id, updater_user_role
+    )
     _validate_member_role_change(member, new_role, updater_role)
     _validate_current_group_owner_role_change(group, member, new_role)
     current_role = GroupRole(member.role)
@@ -725,6 +752,7 @@ def update_member_roles_batch(
     group_name: str,
     updates: list[GroupMemberBatchUpdateItem],
     updated_by_user_id: int,
+    updater_user_role: str | None = None,
 ) -> GroupMemberBatchUpdateResponse:
     """
     Batch update member roles with a single commit.
@@ -733,7 +761,9 @@ def update_member_roles_batch(
     safely process mixed owner updates without transient last-owner failures.
     """
     group = _get_group_or_404(db, group_name)
-    updater_role = _get_role_updater_role(db, group_name, updated_by_user_id)
+    updater_role = _get_role_updater_role(
+        db, group, updated_by_user_id, updater_user_role
+    )
 
     namespace_id = get_namespace_id_by_name(db, group_name)
     user_ids = [update.user_id for update in updates]
@@ -823,7 +853,11 @@ def update_member_roles_batch(
 
 
 def transfer_ownership(
-    db: Session, group_name: str, new_owner_user_id: int, current_owner_user_id: int
+    db: Session,
+    group_name: str,
+    new_owner_user_id: int,
+    current_owner_user_id: int,
+    current_user_role: str | None = None,
 ) -> GroupResponse:
     """
     Transfer group ownership to another member.
@@ -856,8 +890,10 @@ def transfer_ownership(
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
 
-    # Verify current user is the owner
-    if group.owner_user_id != current_owner_user_id:
+    current_owner_role = _get_group_access_role(
+        db, group, current_owner_user_id, current_user_role
+    )
+    if current_owner_role != GroupRole.Owner:
         raise HTTPException(
             status_code=403,
             detail="Only the current owner can transfer ownership",
@@ -872,7 +908,8 @@ def transfer_ownership(
         )
 
     # Get member records
-    current_owner_member = get_group_member(db, group_name, current_owner_user_id)
+    previous_owner_user_id = group.owner_user_id
+    current_owner_member = get_group_member(db, group_name, previous_owner_user_id)
     new_owner_member = get_group_member(db, group_name, new_owner_user_id)
 
     # Update group owner
@@ -892,7 +929,10 @@ def transfer_ownership(
 
 
 def invite_all_users(
-    db: Session, group_name: str, invited_by_user_id: int
+    db: Session,
+    group_name: str,
+    invited_by_user_id: int,
+    inviter_role: str | None = None,
 ) -> list[GroupMemberResponse]:
     """
     Invite all existing users to the group as Reporters.
@@ -923,13 +963,13 @@ def invite_all_users(
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
 
-    # Check permission (must be at least Maintainer)
-    if not check_group_permission(
-        db, invited_by_user_id, group_name, GroupRole.Maintainer
-    ):
+    inviter_group_role = _get_group_access_role(
+        db, group, invited_by_user_id, inviter_role
+    )
+    if inviter_group_role != GroupRole.Owner:
         raise HTTPException(
             status_code=403,
-            detail="Only Maintainers and Owners can invite users",
+            detail="Only Owners can invite users",
         )
 
     # Get all active users

@@ -239,7 +239,7 @@ export function DeviceMonitorPanel() {
       const bindShell = bindShellFilter === 'all' ? undefined : (bindShellFilter as BindShell)
       const status = statusFilter === 'all' ? undefined : (statusFilter as DeviceStatus)
       const searchTerm = debouncedSearch.trim() || undefined
-      const version = statusFilter === 'offline' ? undefined : (appliedVersionFilter || undefined)
+      const version = statusFilter === 'offline' ? undefined : appliedVersionFilter || undefined
 
       const data = await adminApis.getDevices(
         page,
@@ -268,7 +268,16 @@ export function DeviceMonitorPanel() {
         setHasLoadedDevices(true)
       }
     }
-  }, [page, statusFilter, deviceTypeFilter, bindShellFilter, debouncedSearch, appliedVersionFilter, versionFilterOp, t])
+  }, [
+    page,
+    statusFilter,
+    deviceTypeFilter,
+    bindShellFilter,
+    debouncedSearch,
+    appliedVersionFilter,
+    versionFilterOp,
+    t,
+  ])
 
   const handleRefresh = useCallback(async () => {
     setIsRefreshing(true)
@@ -508,10 +517,7 @@ export function DeviceMonitorPanel() {
             setStatusFilter(value)
           }}
         >
-          <SelectTrigger
-            className="w-full sm:w-[140px]"
-            data-testid="device-status-filter-select"
-          >
+          <SelectTrigger className="w-full sm:w-[140px]" data-testid="device-status-filter-select">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -573,11 +579,21 @@ export function DeviceMonitorPanel() {
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="gte">{t('admin:device_monitor.version_filter.operators.gte')}</SelectItem>
-              <SelectItem value="gt">{t('admin:device_monitor.version_filter.operators.gt')}</SelectItem>
-              <SelectItem value="eq">{t('admin:device_monitor.version_filter.operators.eq')}</SelectItem>
-              <SelectItem value="lt">{t('admin:device_monitor.version_filter.operators.lt')}</SelectItem>
-              <SelectItem value="lte">{t('admin:device_monitor.version_filter.operators.lte')}</SelectItem>
+              <SelectItem value="gte">
+                {t('admin:device_monitor.version_filter.operators.gte')}
+              </SelectItem>
+              <SelectItem value="gt">
+                {t('admin:device_monitor.version_filter.operators.gt')}
+              </SelectItem>
+              <SelectItem value="eq">
+                {t('admin:device_monitor.version_filter.operators.eq')}
+              </SelectItem>
+              <SelectItem value="lt">
+                {t('admin:device_monitor.version_filter.operators.lt')}
+              </SelectItem>
+              <SelectItem value="lte">
+                {t('admin:device_monitor.version_filter.operators.lte')}
+              </SelectItem>
             </SelectContent>
           </Select>
           <Input

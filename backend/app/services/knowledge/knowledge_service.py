@@ -20,6 +20,8 @@ from app.models.knowledge import (
     KnowledgeDocument,
 )
 from app.models.namespace import Namespace
+from app.models.user import User
+from app.schemas.base_role import BaseRole, has_permission
 from app.schemas.kind import KnowledgeBase as KnowledgeBaseCRD
 from app.schemas.kind import KnowledgeBaseSpec, ObjectMeta
 from app.schemas.knowledge import (
@@ -42,37 +44,17 @@ from app.schemas.knowledge import (
 )
 from app.schemas.namespace import GroupLevel, GroupRole
 from app.services.group_permission import (
-    check_group_permission,
     get_effective_role_in_group,
     get_user_groups,
+    get_view_role_in_group,
 )
-
-
-def _is_organization_namespace(db: Session, namespace_name: str) -> bool:
-    """
-    Check if a namespace is an organization-level namespace.
-
-    Args:
-        db: Database session
-        namespace_name: Namespace name
-
-    Returns:
-        True if the namespace has level='organization', False otherwise
-    """
-    # Special case: 'default' namespace is never organization-level
-    if namespace_name == "default":
-        return False
-
-    namespace = (
-        db.query(Namespace)
-        .filter(
-            Namespace.name == namespace_name,
-            Namespace.is_active == True,
-        )
-        .first()
-    )
-
-    return namespace is not None and namespace.level == GroupLevel.organization.value
+from app.services.knowledge.namespace_utils import is_organization_namespace
+from app.services.knowledge.permission_policy import (
+    can_create_namespace_knowledge_base,
+    can_manage_accessible_knowledge_base,
+    can_manage_accessible_knowledge_base_documents,
+    can_manage_accessible_knowledge_document,
+)
 
 
 def _build_attachment_filename(name: str, file_extension: str) -> str:
@@ -122,6 +104,31 @@ class ActiveDocumentTextStats:
 class KnowledgeService:
     """Service for managing knowledge bases and documents using kinds table."""
 
+    @staticmethod
+    def _get_user_or_raise(db: Session, user_id: int) -> User:
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            raise ValueError("User not found")
+        return user
+
+    @staticmethod
+    def _get_knowledge_base_record(
+        db: Session, knowledge_base_id: int
+    ) -> Optional[Kind]:
+        return (
+            db.query(Kind)
+            .filter(
+                Kind.id == knowledge_base_id,
+                Kind.kind == "KnowledgeBase",
+                Kind.is_active == True,
+            )
+            .first()
+        )
+
+    @staticmethod
+    def _has_namespaced_admin_access(db: Session, user: User, kb: Kind) -> bool:
+        return user.role == "admin" and is_organization_namespace(db, kb.namespace)
+
     # ============== Knowledge Base Operations ==============
 
     @staticmethod
@@ -146,27 +153,11 @@ class KnowledgeService:
         """
         from datetime import datetime
 
-        # Check permission for organization-level knowledge base (admin only)
-        if _is_organization_namespace(db, data.namespace):
-            from app.models.user import User
-
-            user = db.query(User).filter(User.id == user_id).first()
-            if not user or user.role != "admin":
-                raise ValueError("Only admin can create organization knowledge base")
-
-        # Check permission for team knowledge base
-        elif data.namespace != "default":
-            role = get_effective_role_in_group(db, user_id, data.namespace)
-            if role is None:
-                raise ValueError(
-                    f"User does not have access to group '{data.namespace}'"
-                )
-            if not check_group_permission(
-                db, user_id, data.namespace, GroupRole.Maintainer
-            ):
-                raise ValueError(
-                    "Only Owner or Maintainer can create knowledge base in this group"
-                )
+        user = KnowledgeService._get_user_or_raise(db, user_id)
+        if not can_create_namespace_knowledge_base(db, user, data.namespace):
+            raise ValueError(
+                "You do not have permission to create a knowledge base in this namespace"
+            )
 
         # Generate unique name for the Kind record
         kb_name = f"kb-{user_id}-{data.namespace}-{data.name}"
@@ -275,22 +266,13 @@ class KnowledgeService:
         """
         from app.services.share import knowledge_share_service
 
-        kb = (
-            db.query(Kind)
-            .filter(
-                Kind.id == knowledge_base_id,
-                Kind.kind == "KnowledgeBase",
-                Kind.is_active == True,
-            )
-            .first()
-        )
+        kb = KnowledgeService._get_knowledge_base_record(db, knowledge_base_id)
 
         if not kb:
             return None, False
 
-        # Use the knowledge share service to check access
-        has_access, _, _ = knowledge_share_service.get_user_kb_permission(
-            db, knowledge_base_id, user_id
+        has_access, _, _ = KnowledgeService._get_user_kb_permission(
+            db, knowledge_base_id, user_id, kb=kb
         )
 
         return kb, has_access
@@ -469,7 +451,12 @@ class KnowledgeService:
                 for kb in all_kbs
                 if kb.user_id == user_id and kb.namespace == "default"
             ]
-            team = [kb for kb in all_kbs if kb.namespace in accessible_groups]
+            team = [
+                kb
+                for kb in all_kbs
+                if kb.namespace in accessible_groups
+                and kb.namespace not in org_namespace_names
+            ]
             organization = [kb for kb in all_kbs if kb.namespace in org_namespace_names]
             # Shared/bound KBs are those not in personal, team, or organization
             other = [
@@ -508,22 +495,10 @@ class KnowledgeService:
         if not kb or not has_access:
             return None
 
-        # Check permission for organization-level knowledge base (admin only)
-        if _is_organization_namespace(db, kb.namespace):
-            from app.models.user import User
-
-            user = db.query(User).filter(User.id == user_id).first()
-            if not user or user.role != "admin":
-                raise ValueError("Only admin can update organization knowledge base")
-
-        # Check permission for team knowledge base
-        elif kb.namespace != "default":
-            if not check_group_permission(
-                db, user_id, kb.namespace, GroupRole.Maintainer
-            ):
-                raise ValueError(
-                    "Only Owner or Maintainer can update knowledge base in this group"
-                )
+        if not KnowledgeService.can_manage_knowledge_base(
+            db, knowledge_base_id, user_id
+        ):
+            raise ValueError("You do not have permission to manage this knowledge base")
 
         # Get current spec
         kb_json = kb.json
@@ -650,24 +625,15 @@ class KnowledgeService:
         if not kb:
             return False
 
-        # Check permission for organization-level knowledge base (admin only)
-        if _is_organization_namespace(db, kb.namespace):
-            from app.models.user import User
-
-            user = db.query(User).filter(User.id == user_id).first()
-            if not user or user.role != "admin":
-                raise ValueError("Only admin can delete organization knowledge base")
-            # Admin can delete organization KB, skip get_knowledge_base permission check
-        else:
-            # For non-organization KBs, use get_knowledge_base for permission check
-            kb, has_access = KnowledgeService.get_knowledge_base(
-                db, knowledge_base_id, user_id
-            )
-            if not kb or not has_access:
-                return False
-            # Only creator can delete personal/group knowledge base
-            if kb.user_id != user_id:
-                raise ValueError("Only the creator can delete this knowledge base")
+        kb, has_access = KnowledgeService.get_knowledge_base(
+            db, knowledge_base_id, user_id
+        )
+        if not kb or not has_access:
+            return False
+        if not KnowledgeService.can_manage_knowledge_base(
+            db, knowledge_base_id, user_id
+        ):
+            raise ValueError("You do not have permission to manage this knowledge base")
 
         # Check if knowledge base has documents - prevent deletion if documents exist
         document_count = KnowledgeService.get_document_count(db, knowledge_base_id)
@@ -713,14 +679,10 @@ class KnowledgeService:
         if not kb or not has_access:
             return None
 
-        # Check permission for team knowledge base
-        if kb.namespace != "default":
-            if not check_group_permission(
-                db, user_id, kb.namespace, GroupRole.Maintainer
-            ):
-                raise ValueError(
-                    "Only Owner or Maintainer can update knowledge base type in this group"
-                )
+        if not KnowledgeService.can_manage_knowledge_base(
+            db, knowledge_base_id, user_id
+        ):
+            raise ValueError("You do not have permission to manage this knowledge base")
 
         # Validate new_type
         if new_type not in ("notebook", "classic"):
@@ -960,28 +922,12 @@ class KnowledgeService:
         if not kb:
             raise ValueError("Knowledge base not found or access denied")
 
-        # Check permission based on namespace type
-        if _is_organization_namespace(db, kb.namespace):
-            # Organization KB - admin only
-            from app.models.user import User
-
-            user = db.query(User).filter(User.id == user_id).first()
-            if not user or user.role != "admin":
-                raise ValueError(
-                    "Only admin can add documents to organization knowledge base"
-                )
-        elif kb.namespace == "default":
-            # Personal KB - only owner can add documents
-            if kb.user_id != user_id:
-                raise ValueError("Knowledge base not found or access denied")
-        else:
-            # Team/Group KB - check group permission
-            if not check_group_permission(
-                db, user_id, kb.namespace, GroupRole.Maintainer
-            ):
-                raise ValueError(
-                    "Only Owner or Maintainer can add documents to this knowledge base"
-                )
+        if not KnowledgeService.can_manage_knowledge_base_documents(
+            db, knowledge_base_id, user_id
+        ):
+            raise ValueError(
+                "You do not have permission to add documents to this knowledge base"
+            )
 
         # Check document limit for notebook mode knowledge base
         kb_spec = kb.json.get("spec", {})
@@ -1086,6 +1032,32 @@ class KnowledgeService:
         )
 
     @staticmethod
+    def _assert_can_manage_document(
+        db: Session,
+        kb: Kind,
+        document: KnowledgeDocument,
+        user_id: int,
+    ) -> None:
+        """Ensure the user can manage the target document."""
+        kb_id = getattr(kb, "id", None)
+        if kb_id is None:
+            kb_owner_id = getattr(kb, "user_id", None)
+            if kb.namespace == "default" and kb_owner_id in (None, user_id):
+                return
+            if document.user_id == user_id:
+                return
+            raise ValueError(
+                "You do not have permission to manage this document in this knowledge base"
+            )
+
+        if not KnowledgeService.can_manage_knowledge_document(
+            db, kb_id, user_id, document.user_id
+        ):
+            raise ValueError(
+                "You do not have permission to manage this document in this knowledge base"
+            )
+
+    @staticmethod
     def update_document(
         db: Session,
         document_id: int,
@@ -1118,23 +1090,7 @@ class KnowledgeService:
             .first()
         )
         if kb:
-            # Check permission for organization-level knowledge base (admin only)
-            if _is_organization_namespace(db, kb.namespace):
-                from app.models.user import User
-
-                user = db.query(User).filter(User.id == user_id).first()
-                if not user or user.role != "admin":
-                    raise ValueError(
-                        "Only admin can update documents in organization knowledge base"
-                    )
-            # Check permission for team knowledge base
-            elif kb.namespace != "default":
-                if not check_group_permission(
-                    db, user_id, kb.namespace, GroupRole.Maintainer
-                ):
-                    raise ValueError(
-                        "Only Owner or Maintainer can update documents in this knowledge base"
-                    )
+            KnowledgeService._assert_can_manage_document(db, kb, doc, user_id)
 
         if data.name is not None:
             doc.name = data.name
@@ -1172,39 +1128,11 @@ class KnowledgeService:
         import asyncio
         import logging
 
-        from app.services.adapters.retriever_kinds import retriever_kinds_service
         from app.services.context import context_service
-        from app.services.rag.storage.factory import create_storage_backend
+        from app.services.rag.local_gateway import LocalRagGateway
 
         logger = logging.getLogger(__name__)
-
-        def _ensure_event_loop() -> asyncio.AbstractEventLoop:
-            """
-            Ensure there is a valid, open event loop in the current thread.
-
-            LlamaIndex's ElasticsearchStore uses nest_asyncio and internally calls
-            asyncio.get_event_loop().run_until_complete(). This function ensures
-            a valid event loop exists before those calls to avoid "Event loop is closed" errors.
-
-            This is thread-safe because asyncio.set_event_loop() is thread-local.
-            Each thread maintains its own event loop, so setting it in one thread
-            does not affect other threads.
-
-            Returns:
-                A valid, open event loop
-            """
-            try:
-                loop = asyncio.get_event_loop()
-                if loop.is_closed():
-                    # Event loop exists but is closed, create a new one
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                return loop
-            except RuntimeError:
-                # No event loop in current thread, create one
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                return loop
+        rag_gateway = LocalRagGateway()
 
         doc = KnowledgeService.get_document(db, document_id, user_id)
         if not doc:
@@ -1217,23 +1145,7 @@ class KnowledgeService:
             .first()
         )
         if kb:
-            # Check permission for organization-level knowledge base (admin only)
-            if _is_organization_namespace(db, kb.namespace):
-                from app.models.user import User
-
-                user = db.query(User).filter(User.id == user_id).first()
-                if not user or user.role != "admin":
-                    raise ValueError(
-                        "Only admin can delete documents from organization knowledge base"
-                    )
-            # Check permission for team knowledge base
-            elif kb.namespace != "default":
-                if not check_group_permission(
-                    db, user_id, kb.namespace, GroupRole.Maintainer
-                ):
-                    raise ValueError(
-                        "Only Owner or Maintainer can delete documents from this knowledge base"
-                    )
+            KnowledgeService._assert_can_manage_document(db, kb, doc, user_id)
 
         # Store document_id (used as doc_ref in RAG), kind_id, and attachment_id before deletion for cleanup
         doc_ref = str(doc.id)  # document_id is used as doc_ref in RAG indexing
@@ -1255,55 +1167,35 @@ class KnowledgeService:
 
             if retrieval_config:
                 retriever_name = retrieval_config.get("retriever_name")
-                retriever_namespace = retrieval_config.get(
-                    "retriever_namespace", "default"
-                )
 
                 if retriever_name:
                     try:
-                        # Get retriever from database
-                        retriever_crd = retriever_kinds_service.get_retriever(
-                            db=db,
-                            user_id=user_id,
-                            name=retriever_name,
-                            namespace=retriever_namespace,
-                        )
+                        if kb.namespace == "default" or is_organization_namespace(
+                            db, kb.namespace
+                        ):
+                            index_owner_user_id = user_id
+                        else:
+                            index_owner_user_id = kb.user_id
 
-                        if retriever_crd:
-                            # Create storage backend from retriever
-                            storage_backend = create_storage_backend(retriever_crd)
-
-                            # Get the correct user_id for index naming
-                            # For group knowledge bases, use the KB creator's user_id
-                            # This ensures we delete from the same index where documents were stored
-                            if kb.namespace == "default" or _is_organization_namespace(
-                                db, kb.namespace
-                            ):
-                                # Personal/Organization knowledge base - use current user's ID
-                                index_owner_user_id = user_id
-                            else:
-                                # Group knowledge base - use KB creator's user_id
-                                index_owner_user_id = kb.user_id
-
-                            # Ensure a valid event loop exists before calling storage_backend.delete_document
-                            # LlamaIndex's ElasticsearchStore uses nest_asyncio and internally calls
-                            # asyncio.get_event_loop().run_until_complete(), which requires a valid loop
-                            _ensure_event_loop()
-
-                            # Delete RAG index using the synchronous storage backend method
-                            # storage_backend.delete_document is synchronous but internally uses async operations
-                            storage_backend.delete_document(
-                                knowledge_id=str(kind_id),
-                                doc_ref=doc_ref,
-                                user_id=index_owner_user_id,
+                        result = asyncio.run(
+                            rag_gateway.delete_document_index(
+                                knowledge_base_id=kind_id,
+                                document_ref=doc_ref,
+                                db=db,
+                                index_owner_user_id=index_owner_user_id,
                             )
+                        )
+                        if result.get("status") == "success":
                             logger.info(
                                 f"Deleted RAG index for doc_ref '{doc_ref}' in knowledge base {kind_id} "
                                 f"(index_owner_user_id={index_owner_user_id})"
                             )
                         else:
                             logger.warning(
-                                f"Retriever {retriever_name} not found, skipping RAG index deletion"
+                                "Skipped RAG index deletion for doc_ref '%s' in knowledge base %s: %s",
+                                doc_ref,
+                                kind_id,
+                                result.get("reason", result.get("status", "unknown")),
                             )
                     except Exception as e:
                         # Log error but don't fail the document deletion
@@ -1382,19 +1274,13 @@ class KnowledgeService:
                 "Only TEXT type documents or plain text files (txt, md) can be edited"
             )
 
-        # Check permission for team knowledge base
         kb = (
             db.query(Kind)
             .filter(Kind.id == doc.kind_id, Kind.kind == "KnowledgeBase")
             .first()
         )
-        if kb and kb.namespace != "default":
-            if not check_group_permission(
-                db, user_id, kb.namespace, GroupRole.Maintainer
-            ):
-                raise ValueError(
-                    "Only Owner or Maintainer can edit documents in this knowledge base"
-                )
+        if kb:
+            KnowledgeService._assert_can_manage_document(db, kb, doc, user_id)
 
         if not doc.attachment_id:
             raise ValueError("Document has no attachment to update")
@@ -1642,7 +1528,7 @@ class KnowledgeService:
         )
         shared_kb_ids = [p[0] for p in shared_kb_ids]
 
-        # Query shared KBs (any namespace, but not created by current user)
+        # Query shared personal KBs (namespace=default, but not created by current user)
         shared_kbs = []
         if shared_kb_ids:
             shared_kbs = (
@@ -1651,6 +1537,7 @@ class KnowledgeService:
                     Kind.kind == "KnowledgeBase",
                     Kind.is_active == True,
                     Kind.id.in_(shared_kb_ids),
+                    Kind.namespace == "default",
                     Kind.user_id != user_id,  # Exclude KBs created by current user
                 )
                 .order_by(Kind.updated_at.desc())
@@ -1704,6 +1591,8 @@ class KnowledgeService:
         from app.models.resource_member import MemberStatus, ResourceMember
         from app.models.share_link import ResourceType
 
+        user = KnowledgeService._get_user_or_raise(db, user_id)
+
         # 1. Get personal knowledge bases created by user (single query)
         personal_created = (
             db.query(Kind)
@@ -1731,9 +1620,9 @@ class KnowledgeService:
         # Build a map from kb_id to role for shared KBs
         shared_kb_roles: dict[int, str] = {p[0]: p[1] for p in shared_members}
 
-        personal_shared = []
+        shared_kbs: list[Kind] = []
         if shared_kb_ids:
-            personal_shared = (
+            shared_kbs = (
                 db.query(Kind)
                 .filter(
                     Kind.kind == "KnowledgeBase",
@@ -1745,6 +1634,33 @@ class KnowledgeService:
                 .all()
             )
 
+        shared_namespace_names = {
+            kb.namespace for kb in shared_kbs if kb.namespace != "default"
+        }
+        shared_namespaces = {}
+        if shared_namespace_names:
+            shared_namespaces = {
+                ns.name: ns
+                for ns in db.query(Namespace)
+                .filter(
+                    Namespace.name.in_(shared_namespace_names),
+                    Namespace.is_active == True,
+                )
+                .all()
+            }
+
+        personal_shared = [kb for kb in shared_kbs if kb.namespace == "default"]
+        shared_group_kbs = [
+            kb
+            for kb in shared_kbs
+            if kb.namespace != "default"
+            and (
+                shared_namespaces.get(kb.namespace) is None
+                or shared_namespaces[kb.namespace].level
+                != GroupLevel.organization.value
+            )
+        ]
+
         # 3. Get all accessible groups with roles (single query)
         from app.services.group_permission import get_user_groups_with_roles
 
@@ -1752,9 +1668,15 @@ class KnowledgeService:
         accessible_groups = [g[0] for g in accessible_groups_with_roles]
         # Build a map from group_name to role
         group_roles: dict[str, str] = {g[0]: g[1] for g in accessible_groups_with_roles}
+        shared_group_names = list(
+            dict.fromkeys(kb.namespace for kb in shared_group_kbs)
+        )
+        grouped_namespace_names = list(
+            dict.fromkeys(accessible_groups + shared_group_names)
+        )
 
         # 4. Get ALL group knowledge bases in ONE query (key optimization)
-        group_kbs = []
+        group_kbs: list[Kind] = []
         if accessible_groups:
             group_kbs = (
                 db.query(Kind)
@@ -1766,6 +1688,10 @@ class KnowledgeService:
                 .order_by(Kind.updated_at.desc())
                 .all()
             )
+        group_kb_map = {kb.id: kb for kb in group_kbs}
+        for kb in shared_group_kbs:
+            group_kb_map[kb.id] = kb
+        group_kbs = list(group_kb_map.values())
 
         # 5. Get organization knowledge bases (single query)
         org_kbs = (
@@ -1781,37 +1707,37 @@ class KnowledgeService:
             .all()
         )
 
-        # Get organization namespace info
-        org_namespace = (
+        organization_namespaces = (
             db.query(Namespace)
             .filter(
                 Namespace.level == GroupLevel.organization.value,
                 Namespace.is_active == True,
             )
-            .first()
+            .all()
         )
-
-        # Get user's role in organization namespace (if exists)
-        org_role: str | None = None
-        if org_namespace:
-            org_role = get_effective_role_in_group(db, user_id, org_namespace.name)
+        organization_namespace_map = {
+            namespace.name: namespace for namespace in organization_namespaces
+        }
+        org_namespace = organization_namespaces[0] if organization_namespaces else None
 
         # 6. Batch fetch document counts (single query)
-        all_kb_ids = (
-            [kb.id for kb in personal_created]
-            + [kb.id for kb in personal_shared]
-            + [kb.id for kb in group_kbs]
-            + [kb.id for kb in org_kbs]
+        all_kb_ids = list(
+            dict.fromkeys(
+                [kb.id for kb in personal_created]
+                + [kb.id for kb in personal_shared]
+                + [kb.id for kb in group_kbs]
+                + [kb.id for kb in org_kbs]
+            )
         )
         document_counts = KnowledgeService.get_active_document_counts(db, all_kb_ids)
 
         # 7. Batch fetch namespace display names for groups
         namespace_display_names = {}
-        if accessible_groups:
+        if grouped_namespace_names:
             namespaces = (
                 db.query(Namespace)
                 .filter(
-                    Namespace.name.in_(accessible_groups),
+                    Namespace.name.in_(grouped_namespace_names),
                     Namespace.is_active == True,
                 )
                 .all()
@@ -1843,6 +1769,25 @@ class KnowledgeService:
                 my_role=my_role,
             )
 
+        def merge_roles(*roles: str | None) -> str | None:
+            highest: str | None = None
+            for role in roles:
+                if role is None:
+                    continue
+                if highest is None or has_permission(role, highest):
+                    highest = role
+            return highest
+
+        def get_namespace_view_role(namespace_name: str, namespace_level: str) -> str:
+            view_role = get_view_role_in_group(
+                db,
+                user_id,
+                namespace_name,
+                user_role=user.role,
+                group_level=namespace_level,
+            )
+            return view_role.value if view_role is not None else BaseRole.Reporter.value
+
         # Build personal section
         # Use stable English identifiers for group_name - frontend handles localization
         # For personal created KBs, user is always Owner
@@ -1864,14 +1809,12 @@ class KnowledgeService:
         # Build groups section - group KBs by namespace in memory
         groups_map: dict[str, list[Kind]] = {}
         for kb in group_kbs:
-            if kb.namespace not in groups_map:
-                groups_map[kb.namespace] = []
-            groups_map[kb.namespace].append(kb)
+            groups_map.setdefault(kb.namespace, []).append(kb)
 
         # Build groups list - include ALL accessible groups, even those without KBs
         # For group KBs, use the user's role in that group
         groups = []
-        for ns_name in accessible_groups:
+        for ns_name in grouped_namespace_names:
             display_name = namespace_display_names.get(ns_name, ns_name)
             kbs = groups_map.get(ns_name, [])
             user_group_role = group_roles.get(ns_name)
@@ -1886,7 +1829,7 @@ class KnowledgeService:
                             ns_name,
                             display_name or ns_name,
                             "group",
-                            user_group_role,
+                            merge_roles(shared_kb_roles.get(kb.id), user_group_role),
                         )
                         for kb in kbs
                     ],
@@ -1910,7 +1853,13 @@ class KnowledgeService:
                     org_ns_name or "organization",
                     org_display_name,
                     "organization",
-                    org_role,
+                    merge_roles(
+                        shared_kb_roles.get(kb.id),
+                        get_namespace_view_role(
+                            kb.namespace,
+                            organization_namespace_map[kb.namespace].level,
+                        ),
+                    ),
                 )
                 for kb in org_kbs
             ],
@@ -1954,25 +1903,70 @@ class KnowledgeService:
         Returns:
             True if user has management permission
         """
-        kb = (
-            db.query(Kind)
-            .filter(
-                Kind.id == knowledge_base_id,
-                Kind.kind == "KnowledgeBase",
-                Kind.is_active == True,
-            )
-            .first()
+        has_access, role, is_creator = KnowledgeService._get_user_kb_permission(
+            db, knowledge_base_id, user_id
+        )
+        return can_manage_accessible_knowledge_base(has_access, role, is_creator)
+
+    @staticmethod
+    def _get_user_kb_permission(
+        db: Session,
+        knowledge_base_id: int,
+        user_id: int,
+        kb: Kind | None = None,
+    ) -> tuple[bool, BaseRole | None, bool]:
+        """Return merged access for the user on the target knowledge base."""
+        from app.services.share import knowledge_share_service
+
+        knowledge_base = kb or KnowledgeService._get_knowledge_base_record(
+            db, knowledge_base_id
+        )
+        if knowledge_base is None:
+            return False, None, False
+
+        user = KnowledgeService._get_user_or_raise(db, user_id)
+        if KnowledgeService._has_namespaced_admin_access(db, user, knowledge_base):
+            return True, BaseRole.Owner, False
+
+        has_access, role, is_creator = knowledge_share_service.get_user_kb_permission(
+            db, knowledge_base_id, user_id
         )
 
-        if not kb:
-            return False
+        effective_role = BaseRole(role) if role is not None else None
+        return has_access, effective_role, is_creator
 
-        if kb.namespace == "default":
-            return kb.user_id == user_id
-        else:
-            return check_group_permission(
-                db, user_id, kb.namespace, GroupRole.Maintainer
-            )
+    @staticmethod
+    def can_manage_knowledge_base_documents(
+        db: Session,
+        knowledge_base_id: int,
+        user_id: int,
+    ) -> bool:
+        """Return whether the user can add documents to the target knowledge base."""
+        has_access, role, is_creator = KnowledgeService._get_user_kb_permission(
+            db, knowledge_base_id, user_id
+        )
+        return can_manage_accessible_knowledge_base_documents(
+            has_access, role, is_creator
+        )
+
+    @staticmethod
+    def can_manage_knowledge_document(
+        db: Session,
+        knowledge_base_id: int,
+        user_id: int,
+        document_owner_id: int,
+    ) -> bool:
+        """Return whether the user can manage the target document."""
+        has_access, role, is_creator = KnowledgeService._get_user_kb_permission(
+            db, knowledge_base_id, user_id
+        )
+        return can_manage_accessible_knowledge_document(
+            has_access=has_access,
+            role=role,
+            is_creator=is_creator,
+            user_id=user_id,
+            document_owner_id=document_owner_id,
+        )
 
     @staticmethod
     def _get_bound_kb_ids_for_user(db: Session, user_id: int) -> list[int]:
@@ -2218,3 +2212,112 @@ class KnowledgeService:
             return None
 
         return doc
+
+    # ============== Knowledge Base Migration ==============
+
+    @staticmethod
+    def migrate_knowledge_base_to_group(
+        db: Session,
+        knowledge_base_id: int,
+        user_id: int,
+        target_group_name: str,
+    ) -> dict:
+        """
+        Migrate a personal knowledge base to a group.
+
+        Args:
+            db: Database session
+            knowledge_base_id: Knowledge base ID to migrate
+            user_id: Requesting user ID (must be the creator of the KB)
+            target_group_name: Target group name (namespace) to migrate to
+
+        Returns:
+            Dict with migration result information
+
+        Raises:
+            ValueError: If validation fails or permission denied
+        """
+        from sqlalchemy.orm.attributes import flag_modified
+
+        # Get the knowledge base
+        kb = (
+            db.query(Kind)
+            .filter(
+                Kind.id == knowledge_base_id,
+                Kind.kind == "KnowledgeBase",
+            )
+            .first()
+        )
+
+        if not kb:
+            raise ValueError("Knowledge base not found")
+
+        # Only personal knowledge bases (namespace='default') can be migrated
+        if kb.namespace != "default":
+            raise ValueError("Only personal knowledge bases can be migrated to groups")
+
+        # Only the creator can migrate
+        if kb.user_id != user_id:
+            raise ValueError("Only the creator can migrate this knowledge base")
+
+        # Check if user has access to the target group
+        target_role = get_effective_role_in_group(db, user_id, target_group_name)
+        if target_role is None:
+            raise ValueError(f"You don't have access to group '{target_group_name}'")
+
+        # Check if user has Maintainer+ permission in target group
+        if target_role not in {GroupRole.Owner, GroupRole.Maintainer}:
+            raise ValueError(
+                "You need Maintainer or Owner permission in the target group to migrate knowledge bases"
+            )
+
+        # Check for duplicate name in target group
+        kb_spec = kb.json.get("spec", {})
+        kb_name = kb_spec.get("name", "")
+
+        existing_in_target = (
+            db.query(Kind)
+            .filter(
+                Kind.kind == "KnowledgeBase",
+                Kind.namespace == target_group_name,
+            )
+            .all()
+        )
+
+        for existing_kb in existing_in_target:
+            existing_spec = existing_kb.json.get("spec", {})
+            if existing_spec.get("name") == kb_name:
+                raise ValueError(
+                    f"A knowledge base with name '{kb_name}' already exists in the target group"
+                )
+
+        # Store old namespace for response
+        old_namespace = kb.namespace
+
+        # Update the namespace
+        kb.namespace = target_group_name
+
+        # Update the name in Kind record to reflect new namespace
+        # Format: kb-{user_id}-{namespace}-{name}
+        new_kb_name = f"kb-{user_id}-{target_group_name}-{kb_name}"
+        kb.name = new_kb_name
+
+        # Update the namespace in the JSON spec as well
+        kb_json = kb.json
+        if "metadata" not in kb_json:
+            kb_json["metadata"] = {}
+        kb_json["metadata"]["namespace"] = target_group_name
+        kb_json["metadata"]["name"] = new_kb_name
+        kb.json = kb_json
+        flag_modified(kb, "json")
+
+        db.commit()
+        db.refresh(kb)
+
+        return {
+            "success": True,
+            "message": f"Knowledge base '{kb_name}' migrated to group '{target_group_name}' successfully",
+            "knowledge_base_id": kb.id,
+            "old_namespace": old_namespace,
+            "new_namespace": target_group_name,
+        }

@@ -417,6 +417,364 @@ author: "New Author"
         assert "referenced by Ghosts" in detail["message"]
         assert any(g["name"] == "test-ghost" for g in detail["referenced_ghosts"])
 
+    def test_delete_skill_ignores_same_name_reference_with_different_skill_id(
+        self, test_db: Session, test_user: User
+    ):
+        """Delete check should prefer exact skill_id matching when refs exist."""
+        service = SkillKindsService()
+        skill_md = "---\ndescription: Group skill\n---\n"
+        zip_content = self.create_test_zip(skill_md, zip_name="team-a")
+
+        target_skill = service.create_skill(
+            db=test_db,
+            name="shared-name-skill",
+            namespace="team-a",
+            file_content=zip_content,
+            file_name="team-a.zip",
+            user_id=test_user.id,
+        )
+        other_zip_content = self.create_test_zip(skill_md, zip_name="default")
+        other_skill = service.create_skill(
+            db=test_db,
+            name="shared-name-skill",
+            namespace="default",
+            file_content=other_zip_content,
+            file_name="default.zip",
+            user_id=test_user.id,
+        )
+
+        target_skill_id = int(target_skill.metadata.labels["id"])
+        other_skill_id = int(other_skill.metadata.labels["id"])
+
+        ghost_json = {
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Ghost",
+            "metadata": {"name": "test-ghost", "namespace": "default"},
+            "spec": {
+                "systemPrompt": "Test prompt",
+                "skills": ["shared-name-skill"],
+                "skill_refs": {
+                    "shared-name-skill": {
+                        "skill_id": other_skill_id,
+                        "namespace": "default",
+                        "is_public": False,
+                    }
+                },
+            },
+        }
+
+        ghost_kind = Kind(
+            user_id=test_user.id,
+            kind="Ghost",
+            name="test-ghost",
+            namespace="default",
+            json=ghost_json,
+            is_active=True,
+        )
+        test_db.add(ghost_kind)
+        test_db.commit()
+
+        service.delete_skill(db=test_db, skill_id=target_skill_id, user_id=test_user.id)
+
+        assert (
+            service.get_skill_by_id(
+                db=test_db, skill_id=target_skill_id, user_id=test_user.id
+            )
+            is None
+        )
+
+    def test_delete_skill_handles_null_ghost_skill_lists(
+        self, test_db: Session, test_user: User
+    ):
+        """Delete check should treat null Ghost skill lists as empty lists."""
+        service = SkillKindsService()
+        skill_md = "---\ndescription: Group skill\n---\n"
+        zip_content = self.create_test_zip(skill_md)
+
+        created_skill = service.create_skill(
+            db=test_db,
+            name="nullable-ghost-skill",
+            namespace="default",
+            file_content=zip_content,
+            file_name="test.zip",
+            user_id=test_user.id,
+        )
+
+        ghost_kind = Kind(
+            user_id=test_user.id,
+            kind="Ghost",
+            name="null-lists-ghost",
+            namespace="default",
+            json={
+                "apiVersion": "agent.wecode.io/v1",
+                "kind": "Ghost",
+                "metadata": {"name": "null-lists-ghost", "namespace": "default"},
+                "spec": {
+                    "systemPrompt": "Test prompt",
+                    "skills": None,
+                    "preload_skills": None,
+                },
+            },
+            is_active=True,
+        )
+        test_db.add(ghost_kind)
+        test_db.commit()
+
+        service.delete_skill(
+            db=test_db,
+            skill_id=int(created_skill.metadata.labels["id"]),
+            user_id=test_user.id,
+        )
+
+        assert (
+            service.get_skill_by_id(
+                db=test_db,
+                skill_id=int(created_skill.metadata.labels["id"]),
+                user_id=test_user.id,
+            )
+            is None
+        )
+
+    def test_remove_skill_references_removes_only_exact_skill_ref(
+        self, test_db: Session, test_user: User
+    ):
+        """Bulk removal should update only refs that match the target skill_id."""
+        service = SkillKindsService()
+        skill_md = "---\ndescription: Group skill\n---\n"
+        zip_content = self.create_test_zip(skill_md, zip_name="team-a")
+
+        target_skill = service.create_skill(
+            db=test_db,
+            name="shared-name-skill",
+            namespace="team-a",
+            file_content=zip_content,
+            file_name="team-a.zip",
+            user_id=test_user.id,
+        )
+        other_zip_content = self.create_test_zip(skill_md, zip_name="default")
+        other_skill = service.create_skill(
+            db=test_db,
+            name="shared-name-skill",
+            namespace="default",
+            file_content=other_zip_content,
+            file_name="default.zip",
+            user_id=test_user.id,
+        )
+
+        target_skill_id = int(target_skill.metadata.labels["id"])
+        other_skill_id = int(other_skill.metadata.labels["id"])
+
+        matching_ghost = Kind(
+            user_id=test_user.id,
+            kind="Ghost",
+            name="matching-ghost",
+            namespace="default",
+            json={
+                "apiVersion": "agent.wecode.io/v1",
+                "kind": "Ghost",
+                "metadata": {"name": "matching-ghost", "namespace": "default"},
+                "spec": {
+                    "systemPrompt": "Test prompt",
+                    "skills": ["shared-name-skill"],
+                    "preload_skills": ["shared-name-skill"],
+                    "skill_refs": {
+                        "shared-name-skill": {
+                            "skill_id": target_skill_id,
+                            "namespace": "team-a",
+                            "is_public": False,
+                        }
+                    },
+                    "preload_skill_refs": {
+                        "shared-name-skill": {
+                            "skill_id": target_skill_id,
+                            "namespace": "team-a",
+                            "is_public": False,
+                        }
+                    },
+                },
+            },
+            is_active=True,
+        )
+        non_matching_ghost = Kind(
+            user_id=test_user.id,
+            kind="Ghost",
+            name="non-matching-ghost",
+            namespace="default",
+            json={
+                "apiVersion": "agent.wecode.io/v1",
+                "kind": "Ghost",
+                "metadata": {"name": "non-matching-ghost", "namespace": "default"},
+                "spec": {
+                    "systemPrompt": "Test prompt",
+                    "skills": ["shared-name-skill"],
+                    "preload_skills": ["shared-name-skill"],
+                    "skill_refs": {
+                        "shared-name-skill": {
+                            "skill_id": other_skill_id,
+                            "namespace": "default",
+                            "is_public": False,
+                        }
+                    },
+                    "preload_skill_refs": {
+                        "shared-name-skill": {
+                            "skill_id": other_skill_id,
+                            "namespace": "default",
+                            "is_public": False,
+                        }
+                    },
+                },
+            },
+            is_active=True,
+        )
+        test_db.add_all([matching_ghost, non_matching_ghost])
+        test_db.commit()
+
+        result = service.remove_skill_references(
+            db=test_db, skill_id=target_skill_id, user_id=test_user.id
+        )
+
+        assert result["removed_count"] == 1
+        assert result["affected_ghosts"] == ["matching-ghost"]
+
+        test_db.refresh(matching_ghost)
+        test_db.refresh(non_matching_ghost)
+        assert matching_ghost.json["spec"]["skills"] == []
+        assert matching_ghost.json["spec"]["preload_skills"] == []
+        assert matching_ghost.json["spec"]["skill_refs"] == {}
+        assert matching_ghost.json["spec"]["preload_skill_refs"] == {}
+        assert non_matching_ghost.json["spec"]["skills"] == ["shared-name-skill"]
+        assert non_matching_ghost.json["spec"]["preload_skills"] == [
+            "shared-name-skill"
+        ]
+        assert (
+            non_matching_ghost.json["spec"]["skill_refs"]["shared-name-skill"][
+                "skill_id"
+            ]
+            == other_skill_id
+        )
+
+    def test_remove_single_skill_reference_removes_only_exact_skill_ref(
+        self, test_db: Session, test_user: User
+    ):
+        """Single removal should reject same-name refs that point to another skill_id."""
+        service = SkillKindsService()
+        skill_md = "---\ndescription: Group skill\n---\n"
+        zip_content = self.create_test_zip(skill_md, zip_name="team-a")
+
+        target_skill = service.create_skill(
+            db=test_db,
+            name="shared-name-skill",
+            namespace="team-a",
+            file_content=zip_content,
+            file_name="team-a.zip",
+            user_id=test_user.id,
+        )
+        other_zip_content = self.create_test_zip(skill_md, zip_name="default")
+        other_skill = service.create_skill(
+            db=test_db,
+            name="shared-name-skill",
+            namespace="default",
+            file_content=other_zip_content,
+            file_name="default.zip",
+            user_id=test_user.id,
+        )
+
+        target_skill_id = int(target_skill.metadata.labels["id"])
+        other_skill_id = int(other_skill.metadata.labels["id"])
+
+        ghost_kind = Kind(
+            user_id=test_user.id,
+            kind="Ghost",
+            name="test-ghost",
+            namespace="default",
+            json={
+                "apiVersion": "agent.wecode.io/v1",
+                "kind": "Ghost",
+                "metadata": {"name": "test-ghost", "namespace": "default"},
+                "spec": {
+                    "systemPrompt": "Test prompt",
+                    "skills": ["shared-name-skill"],
+                    "skill_refs": {
+                        "shared-name-skill": {
+                            "skill_id": other_skill_id,
+                            "namespace": "default",
+                            "is_public": False,
+                        }
+                    },
+                },
+            },
+            is_active=True,
+        )
+        test_db.add(ghost_kind)
+        test_db.commit()
+
+        with pytest.raises(HTTPException) as exc_info:
+            service.remove_single_skill_reference(
+                db=test_db,
+                skill_id=target_skill_id,
+                ghost_id=ghost_kind.id,
+                user_id=test_user.id,
+            )
+
+        assert exc_info.value.status_code == 400
+        assert "does not reference Skill" in exc_info.value.detail
+
+    def test_remove_single_skill_reference_allows_group_member_ghost(
+        self, test_db: Session, test_user: User, test_admin_user: User
+    ):
+        """Single removal should work for group Ghosts not owned by the skill owner."""
+        service = SkillKindsService()
+        skill_md = "---\ndescription: Group skill\n---\n"
+        zip_content = self.create_test_zip(skill_md, zip_name="team-a")
+
+        target_skill = service.create_skill(
+            db=test_db,
+            name="group-shared-skill",
+            namespace="team-a",
+            file_content=zip_content,
+            file_name="team-a.zip",
+            user_id=test_user.id,
+        )
+        target_skill_id = int(target_skill.metadata.labels["id"])
+
+        ghost_kind = Kind(
+            user_id=test_admin_user.id,
+            kind="Ghost",
+            name="group-member-ghost",
+            namespace="team-a",
+            json={
+                "apiVersion": "agent.wecode.io/v1",
+                "kind": "Ghost",
+                "metadata": {"name": "group-member-ghost", "namespace": "team-a"},
+                "spec": {
+                    "systemPrompt": "Test prompt",
+                    "skills": ["group-shared-skill"],
+                    "skill_refs": {
+                        "group-shared-skill": {
+                            "skill_id": target_skill_id,
+                            "namespace": "team-a",
+                            "is_public": False,
+                        }
+                    },
+                },
+            },
+            is_active=True,
+        )
+        test_db.add(ghost_kind)
+        test_db.commit()
+
+        result = service.remove_single_skill_reference(
+            db=test_db,
+            skill_id=target_skill_id,
+            ghost_id=ghost_kind.id,
+            user_id=test_user.id,
+        )
+
+        assert result == {"success": True, "ghost_name": "group-member-ghost"}
+        test_db.refresh(ghost_kind)
+        assert ghost_kind.json["spec"]["skills"] == []
+        assert ghost_kind.json["spec"]["skill_refs"] == {}
+
     def test_get_skill_binary(self, test_db: Session, test_user: User):
         """Test retrieving skill binary data"""
         service = SkillKindsService()

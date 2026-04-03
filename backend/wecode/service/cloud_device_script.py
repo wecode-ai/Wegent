@@ -185,7 +185,7 @@ def _generate_user_data_script(
     # Build install script arguments
     install_args = f'-t "{auth_token}"'
     if mail_email and mail_password:
-        install_args += f' -m -e "{mail_email}" -p "{mail_password}"'
+        install_args += f" -m -e '{mail_email}' -p '{mail_password}'"
 
     # Build openclaw curl command and install arguments
     openclaw_section = ""

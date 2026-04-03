@@ -11,6 +11,7 @@ import {
   UnifiedSkill,
   deleteSkill,
   downloadSkill,
+  fetchSkillReferences,
   removeSkillReferences,
   removeSingleSkillReference,
   parseSkillReferenceError,
@@ -53,6 +54,7 @@ import {
   Search,
   ExternalLink,
   Users,
+  Link2,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import SkillUploadModal from './skills/SkillUploadModal'
@@ -97,6 +99,9 @@ export function SkillListWithScope({ scope, selectedGroup }: SkillListWithScopeP
   // Reference conflict dialog state
   const [referenceConflictOpen, setReferenceConflictOpen] = useState(false)
   const [referencedGhosts, setReferencedGhosts] = useState<ReferencedGhost[]>([])
+  const [referenceDialogMode, setReferenceDialogMode] = useState<'view' | 'delete_conflict'>(
+    'delete_conflict'
+  )
 
   // Check skill market availability on mount
   useEffect(() => {
@@ -187,6 +192,7 @@ export function SkillListWithScope({ scope, selectedGroup }: SkillListWithScopeP
         // Close the simple delete dialog and open the reference conflict dialog
         setDeleteDialogOpen(false)
         setReferencedGhosts(referenceError.referenced_ghosts)
+        setReferenceDialogMode('delete_conflict')
         setReferenceConflictOpen(true)
       } else {
         toast.error(errorMessage || t('skills.delete_failed'))
@@ -208,11 +214,35 @@ export function SkillListWithScope({ scope, selectedGroup }: SkillListWithScopeP
     loadSkills()
   }
 
+  const handleClearAllReferencesOnly = async () => {
+    if (!skillToDelete) return
+
+    await removeSkillReferences(skillToDelete.id)
+    loadSkills()
+  }
+
   // Handle removing a single reference
   const handleRemoveSingleReference = async (ghostId: number) => {
     if (!skillToDelete) return
 
     await removeSingleSkillReference(skillToDelete.id, ghostId)
+  }
+
+  const handleViewReferences = async (skill: UnifiedSkill) => {
+    try {
+      const result = await fetchSkillReferences(skill.id)
+      if (result.referenced_ghosts.length === 0) {
+        toast.info(t('skills.no_references_found', { skillName: skill.name }))
+        return
+      }
+
+      setSkillToDelete(skill)
+      setReferencedGhosts(result.referenced_ghosts)
+      setReferenceDialogMode('view')
+      setReferenceConflictOpen(true)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t('skills.references_fetch_failed'))
+    }
   }
 
   // Handle successful deletion after removing references
@@ -442,7 +472,7 @@ export function SkillListWithScope({ scope, selectedGroup }: SkillListWithScopeP
           {filteredSkills.map(skill => (
             <div
               key={`${skill.name}-${skill.is_public}`}
-              className="bg-surface border border-border rounded-lg p-4 hover:border-primary/50 transition-colors"
+              className="bg-surface border border-border rounded-lg p-4 hover:border-primary/50 transition-colors flex h-full flex-col"
             >
               {/* Skill header */}
               <div className="flex items-start justify-between mb-2">
@@ -479,68 +509,84 @@ export function SkillListWithScope({ scope, selectedGroup }: SkillListWithScopeP
                 </div>
               )}
 
-              {/* Author */}
-              {skill.author && (
-                <p className="text-xs text-text-muted mb-3">
-                  {t('skills.author')}: {skill.author}
-                </p>
-              )}
+              <div className="mt-auto space-y-3 pt-3">
+                {/* Author */}
+                {skill.author && (
+                  <p className="text-xs text-text-muted">
+                    {t('skills.author')}: {skill.author}
+                  </p>
+                )}
 
-              {/* Git source info */}
-              {skill.source?.type === 'git' && skill.source.repo_url && (
-                <div className="flex items-center gap-1.5 mb-3">
-                  <GitBranch className="w-3 h-3 text-text-muted" />
-                  <span className="text-xs text-text-muted truncate max-w-[200px]">
-                    {skill.source.repo_url}
-                  </span>
-                </div>
-              )}
+                {/* Git source info */}
+                {skill.source?.type === 'git' && skill.source.repo_url && (
+                  <div className="flex items-center gap-1.5">
+                    <GitBranch className="w-3 h-3 text-text-muted" />
+                    <span className="text-xs text-text-muted truncate max-w-[200px]">
+                      {skill.source.repo_url}
+                    </span>
+                  </div>
+                )}
 
-              {/* Actions */}
-              <div className="flex items-center gap-2 pt-2 border-t border-border">
-                {!skill.is_public && (
-                  <>
-                    {/* Update from Git button - only show for git-imported skills */}
-                    {skill.source?.type === 'git' && (
+                {/* Actions */}
+                <div className="flex items-center gap-2 border-t border-border pt-2">
+                  {!skill.is_public && (
+                    <>
+                      {/* Update from Git button - only show for git-imported skills */}
+                      {skill.source?.type === 'git' && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleUpdateFromGit(skill)}
+                          disabled={updatingFromGitId === skill.id}
+                          className="text-text-secondary hover:text-text-primary"
+                          title={t('skills.update_from_git')}
+                        >
+                          <RefreshCw
+                            className={`w-4 h-4 ${updatingFromGitId === skill.id ? 'animate-spin' : ''}`}
+                          />
+                        </Button>
+                      )}
                       <Button
                         variant="ghost"
                         size="sm"
-                        onClick={() => handleUpdateFromGit(skill)}
-                        disabled={updatingFromGitId === skill.id}
+                        onClick={() => handleDownload(skill)}
                         className="text-text-secondary hover:text-text-primary"
-                        title={t('skills.update_from_git')}
+                        data-testid={`download-skill-button-${skill.id}`}
                       >
-                        <RefreshCw
-                          className={`w-4 h-4 ${updatingFromGitId === skill.id ? 'animate-spin' : ''}`}
-                        />
+                        <Download className="w-4 h-4" />
                       </Button>
-                    )}
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => handleDownload(skill)}
-                      className="text-text-secondary hover:text-text-primary"
-                    >
-                      <Download className="w-4 h-4" />
-                    </Button>
-                    {/* Show delete button if user has permission */}
-                    {canDeleteSkill(skill) && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => openDeleteDialog(skill)}
-                        className="text-red-500 hover:text-red-600"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </Button>
-                    )}
-                  </>
-                )}
-                {skill.is_public && (
-                  <span className="text-xs text-text-muted italic">
-                    {t('skills.public_readonly')}
-                  </span>
-                )}
+                      {canDeleteSkill(skill) && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleViewReferences(skill)}
+                          className="text-text-secondary hover:text-text-primary"
+                          title={t('skills.view_references')}
+                          data-testid={`view-skill-references-button-${skill.id}`}
+                        >
+                          <Link2 className="w-4 h-4" />
+                        </Button>
+                      )}
+                      {/* Show delete button if user has permission */}
+                      {canDeleteSkill(skill) && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => openDeleteDialog(skill)}
+                          className="text-red-500 hover:text-red-600"
+                          data-testid={`delete-skill-button-${skill.id}`}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      )}
+                    </>
+                  )}
+                  {skill.is_public && (
+                    <span className="text-xs text-text-muted italic">
+                      {t('skills.public_readonly')}
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
           ))}
@@ -595,9 +641,14 @@ export function SkillListWithScope({ scope, selectedGroup }: SkillListWithScopeP
           skillName={skillToDelete.name}
           skillId={skillToDelete.id}
           referencedGhosts={referencedGhosts}
-          onRemoveAllReferences={handleRemoveAllReferences}
+          mode={referenceDialogMode}
+          onRemoveAllReferences={
+            referenceDialogMode === 'delete_conflict'
+              ? handleRemoveAllReferences
+              : handleClearAllReferencesOnly
+          }
           onRemoveSingleReference={handleRemoveSingleReference}
-          onDeleteSuccess={handleDeleteSuccess}
+          onAfterUpdate={handleDeleteSuccess}
         />
       )}
 

@@ -87,6 +87,7 @@
     "table": {
       "name": "名称",
       "group": "归属小组",
+      "permission": "权限",
       "lastAccess": "最近访问",
       "actions": "操作",
       "edit": "编辑",
@@ -532,6 +533,22 @@
       "addMembersFailed": "添加组成员失败，可在群聊中手动添加",
       "bindKbPartialFail": "部分知识库关联失败（{{failed}}/{{total}}）",
       "bindKbFailed": "关联知识库失败"
+    },
+    "migrate": {
+      "title": "迁移到群组",
+      "description": "将此个人知识库迁移到目标群组，迁移后该知识库将属于目标群组",
+      "targetGroup": "目标群组",
+      "selectGroupPlaceholder": "选择要迁移到的群组",
+      "noAvailableGroups": "没有可迁移的群组，请先加入或创建一个群组",
+      "permissionNote": "您需要是目标群组的管理员才能执行迁移",
+      "migrationNote": "迁移后，该知识库将从个人知识库移动到群组知识库，原分享权限将保留",
+      "selectGroupRequired": "请选择目标群组",
+      "invalidGroup": "无效的目标群组",
+      "migrating": "迁移中...",
+      "confirm": "确认迁移",
+      "sourceKnowledgeBase": "待迁移知识库",
+      "success": "知识库迁移成功",
+      "failed": "知识库迁移失败"
     }
   },
   "add_repository": "添加仓库",

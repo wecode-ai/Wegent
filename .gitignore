@@ -95,6 +95,7 @@ coverage/
 .history
 .wegentrc
 .worktrees/
+.superpowers/
 
 # PyInstaller
 *.spec

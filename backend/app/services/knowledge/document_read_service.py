@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Document reading service for kb_head style access."""
+"""Control-plane service for kb_head-style knowledge document reads."""
 
 import logging
 from typing import Any, Dict, Optional

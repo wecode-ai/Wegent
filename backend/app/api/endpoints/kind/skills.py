@@ -172,6 +172,22 @@ class UnifiedSkillResponse(BaseModel):
         return str(v)
 
 
+class ReferencedGhostResponse(BaseModel):
+    """Schema for a Ghost that references a Skill."""
+
+    id: int
+    name: str
+    namespace: str
+
+
+class SkillReferencesResponse(BaseModel):
+    """Schema for queried Skill references."""
+
+    skill_id: int
+    skill_name: str
+    referenced_ghosts: List[ReferencedGhostResponse]
+
+
 @router.post("/upload", response_model=Skill, status_code=201)
 async def upload_skill(
     file: UploadFile = File(..., description="Skill ZIP package (max 10MB)"),
@@ -1343,6 +1359,29 @@ def remove_single_skill_reference(
         db=db, skill_id=skill_id, ghost_id=ghost_id, user_id=skill_kind.user_id
     )
     return result
+
+
+@router.get("/{skill_id}/references", response_model=SkillReferencesResponse)
+def get_skill_references(
+    skill_id: int,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Query Ghost references for a Skill without deleting it.
+
+    Permission rules are the same as other skill management operations.
+    """
+    skill_kind = _resolve_manageable_skill(
+        db=db,
+        skill_id=skill_id,
+        current_user=current_user,
+        action="inspect references for",
+    )
+
+    return skill_kinds_service.get_skill_references(
+        db=db, skill_id=skill_id, user_id=skill_kind.user_id
+    )
 
 
 @router.post("/{skill_id}/update-from-git", response_model=Dict[str, Any])

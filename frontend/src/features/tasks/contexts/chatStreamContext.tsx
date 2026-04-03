@@ -442,19 +442,24 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
    * Uses task_id from event payload directly
    */
   const handleBlockUpdated = useCallback((data: ChatBlockUpdatedPayload) => {
-    const { task_id: taskId, subtask_id, block_id, content, tool_output, status } = data
+    const { task_id: taskId, subtask_id, block_id, content, tool_output, tool_input, status } = data
 
     if (!taskId) {
       console.warn('[ChatStreamContext][block_updated] Missing task_id for subtask:', subtask_id)
       return
     }
 
+    // Map 'running' status to 'pending' since MessageBlock does not support 'running'
+    const mappedStatus =
+      status === 'running' ? 'pending' : (status as MessageBlock['status'] | undefined)
+
     // Build partial block update
     const blockUpdate: Partial<MessageBlock> = {
       id: block_id,
       ...(content !== undefined && { content }),
       ...(tool_output !== undefined && { tool_output }),
-      ...(status !== undefined && { status }),
+      ...(tool_input !== undefined && { tool_input }),
+      ...(mappedStatus !== undefined && { status: mappedStatus }),
     }
 
     const machine = taskStateManager.get(taskId)

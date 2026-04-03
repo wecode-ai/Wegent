@@ -38,6 +38,7 @@ interface DocumentItemProps {
   onReindex?: (doc: KnowledgeDocument) => void
   onViewDetail?: (doc: KnowledgeDocument) => void
   canManage?: boolean
+  canSelect?: boolean
   showBorder?: boolean
   selected?: boolean
   onSelect?: (doc: KnowledgeDocument, selected: boolean) => void
@@ -61,6 +62,7 @@ export function DocumentItem({
   onReindex,
   onViewDetail,
   canManage = true,
+  canSelect = canManage,
   showBorder = true,
   selected = false,
   onSelect,
@@ -202,7 +204,7 @@ export function DocumentItem({
         onClick={handleRowClick}
       >
         {/* Checkbox for batch selection */}
-        {canManage && (
+        {canSelect && (
           <div className="flex-shrink-0" onClick={handleCheckboxClick}>
             <Checkbox
               checked={selected}
@@ -381,7 +383,7 @@ export function DocumentItem({
       onClick={handleRowClick}
     >
       {/* Checkbox for batch selection */}
-      {canManage && (
+      {canSelect && (
         <div className="flex-shrink-0" onClick={handleCheckboxClick}>
           <Checkbox
             checked={selected}

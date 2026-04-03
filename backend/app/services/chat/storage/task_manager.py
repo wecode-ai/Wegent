@@ -22,7 +22,11 @@ from app.models.subtask import SenderType, Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.kind import Bot, Task, Team
+from app.services.chat.task_default_knowledge_bases import (
+    build_initial_task_knowledge_base_refs,
+)
 from app.services.readers import KindType, kindReader
+from app.services.task_skill_selection import build_task_skill_labels
 
 logger = logging.getLogger(__name__)
 
@@ -268,32 +272,12 @@ def create_new_task(
         f"[create_new_task] Creating task_json with is_group_chat={params.is_group_chat}"
     )
 
-    # Build knowledgeBaseRefs if knowledge_base_id is provided
-    knowledge_base_refs = None
-    if params.knowledge_base_id and task_type == "knowledge":
-        # Query the knowledge base to get its name and namespace
-        kb = (
-            db.query(Kind)
-            .filter(
-                Kind.id == params.knowledge_base_id,
-                Kind.kind == "KnowledgeBase",
-                Kind.is_active == True,
-            )
-            .first()
-        )
-        if kb:
-            knowledge_base_refs = [
-                {
-                    "id": kb.id,
-                    "name": kb.name,
-                    "namespace": kb.namespace,
-                    "boundBy": user.user_name,
-                    "boundAt": datetime.now().isoformat(),
-                }
-            ]
-            logger.info(
-                f"[create_new_task] Added knowledgeBaseRefs for kb_id={kb.id}, name={kb.name}"
-            )
+    knowledge_base_refs = build_initial_task_knowledge_base_refs(
+        db=db,
+        user=user,
+        team=team,
+        knowledge_base_id=params.knowledge_base_id,
+    )
 
     task_json = {
         "kind": "Task",
@@ -343,19 +327,7 @@ def create_new_task(
                     if params.force_override_bot_model_type
                     else {}
                 ),
-                **(
-                    {
-                        "additionalSkills": json_lib.dumps(
-                            [
-                                s.get("name")
-                                for s in params.additional_skills
-                                if s.get("name")
-                            ]
-                        )
-                    }
-                    if params.additional_skills
-                    else {}
-                ),
+                **build_task_skill_labels(params.additional_skills),
             },
         },
         "apiVersion": "agent.wecode.io/v1",

@@ -11,7 +11,9 @@ managed through Nevis Sandbox API.
 
 import asyncio
 import logging
+from typing import Any
 
+import httpx
 from fastapi import APIRouter, Body, Depends, HTTPException, Request, WebSocket, status
 from sqlalchemy.orm import Session
 
@@ -21,6 +23,7 @@ from app.core.config import settings
 from app.models.user import User
 from wecode.config.nevis_config import nevis_settings
 from wecode.schemas.cloud_device import (
+    CloudDeviceFileConfigResponse,
     CloudDeviceResponse,
     CreateCloudDeviceRequest,
     NevisSandboxStatus,
@@ -32,6 +35,7 @@ from wecode.service.nevis_client import NevisClientError
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+FILES_SERVICE_TIMEOUT = 3.0
 
 
 def _get_backend_url(request: Request) -> str:
@@ -53,6 +57,55 @@ def _get_backend_url(request: Request) -> str:
     scheme = request.url.scheme
     host = request.headers.get("host", request.url.netloc)
     return f"{scheme}://{host}"
+
+
+async def _get_owned_cloud_device_status(
+    device_id: str,
+    db: Session,
+    current_user: User,
+) -> dict[str, Any]:
+    """Load a cloud device status payload and validate ownership."""
+    device_status = await cloud_device_provider.get_status(
+        db=db,
+        user_id=current_user.id,
+        device_id=device_id,
+    )
+    if not device_status:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Cloud device '{device_id}' not found",
+        )
+    return device_status
+
+
+def _resolve_sandbox_id(device_id: str, device_status: dict[str, Any]) -> str:
+    """Resolve the Nevis sandbox ID from cloud device status."""
+    cloud_config = device_status.get("cloud_config") or {}
+    return cloud_config.get("sandboxId", device_id)
+
+
+def _build_files_url(ip_address: str | None) -> str | None:
+    """Build the files service URL from a Nevis VM IP."""
+    if not ip_address:
+        return None
+    return f"http://{ip_address}:8080/files/"
+
+
+async def _is_files_service_available(files_url: str | None) -> bool:
+    """Probe the cloud device files service with a short timeout."""
+    if not files_url:
+        return False
+
+    try:
+        async with httpx.AsyncClient(
+            timeout=FILES_SERVICE_TIMEOUT,
+            follow_redirects=True,
+        ) as client:
+            response = await client.get(files_url)
+            response.raise_for_status()
+            return True
+    except httpx.HTTPError:
+        return False
 
 
 @router.post("", response_model=CloudDeviceResponse)
@@ -210,22 +263,8 @@ async def get_cloud_device_nevis_status(
         HTTPException 404: If device not found
         HTTPException 500: If Nevis API call fails
     """
-    # Verify device exists and belongs to user
-    device_status = await cloud_device_provider.get_status(
-        db=db,
-        user_id=current_user.id,
-        device_id=device_id,
-    )
-
-    if not device_status:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Cloud device '{device_id}' not found",
-        )
-
-    # Resolve sandbox ID from cloud_config (device_id may be UUID after executor registration)
-    cloud_config = device_status.get("cloud_config") or {}
-    sandbox_id = cloud_config.get("sandboxId", device_id)
+    device_status = await _get_owned_cloud_device_status(device_id, db, current_user)
+    sandbox_id = _resolve_sandbox_id(device_id, device_status)
 
     try:
         nevis_status = await cloud_device_provider.get_vm_status(sandbox_id)
@@ -278,22 +317,8 @@ async def get_vnc_config(
             detail="Cloud device provider is not configured",
         )
 
-    # Verify device exists and belongs to user
-    device_status = await cloud_device_provider.get_status(
-        db=db,
-        user_id=current_user.id,
-        device_id=device_id,
-    )
-
-    if not device_status:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Cloud device '{device_id}' not found",
-        )
-
-    # Resolve sandbox ID from cloud_config
-    cloud_config = device_status.get("cloud_config") or {}
-    sandbox_id = cloud_config.get("sandboxId", device_id)
+    device_status = await _get_owned_cloud_device_status(device_id, db, current_user)
+    sandbox_id = _resolve_sandbox_id(device_id, device_status)
 
     # Build upstream VNC WebSocket URL from Nevis settings
     base_url = nevis_settings.NEVIS_BASE_URL.rstrip("/")
@@ -315,6 +340,54 @@ async def get_vnc_config(
         wss_url=wss_url,
         signature=nevis_settings.NEVIS_SIGNATURE,
         sandbox_id=sandbox_id,
+    )
+
+
+@router.get("/{device_id}/file-config", response_model=CloudDeviceFileConfigResponse)
+async def get_cloud_device_file_config(
+    device_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """Get file panel metadata for a cloud device."""
+    if not cloud_device_provider.is_configured():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Cloud device provider is not configured",
+        )
+
+    device_status = await _get_owned_cloud_device_status(device_id, db, current_user)
+    sandbox_id = _resolve_sandbox_id(device_id, device_status)
+
+    try:
+        nevis_status = await cloud_device_provider.get_vm_status(sandbox_id)
+    except NevisClientError as e:
+        if e.status_code == 404:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Nevis sandbox '{device_id}' not found",
+            )
+        logger.error(f"Nevis API error getting file config: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get cloud device file config: {str(e)}",
+        )
+    except Exception as e:
+        logger.exception(f"Unexpected error getting cloud device file config: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to get cloud device file config",
+        )
+
+    ip_address = nevis_status.get("ip_address")
+    files_url = _build_files_url(ip_address)
+    available = await _is_files_service_available(files_url)
+
+    return CloudDeviceFileConfigResponse(
+        sandbox_id=nevis_status.get("sandbox_id", sandbox_id),
+        ip_address=ip_address,
+        files_url=files_url,
+        available=available,
     )
 
 

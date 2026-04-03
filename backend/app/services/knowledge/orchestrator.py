@@ -40,11 +40,11 @@ from app.schemas.knowledge import (
     KnowledgeDocumentResponse,
     ResourceScope,
 )
-from app.services.knowledge.knowledge_service import KnowledgeService
-from app.services.rag.document_read_service import (
+from app.services.knowledge.document_read_service import (
     DOCUMENT_READ_ERROR_NOT_FOUND,
     document_read_service,
 )
+from app.services.knowledge.knowledge_service import KnowledgeService
 
 logger = logging.getLogger(__name__)
 
@@ -1462,7 +1462,7 @@ class KnowledgeOrchestrator:
             mark_document_index_enqueue_failed,
             prepare_document_index_enqueue,
         )
-        from app.services.knowledge.indexing import is_organization_namespace
+        from app.services.knowledge.namespace_utils import is_organization_namespace
         from app.tasks.knowledge_tasks import index_document_task
 
         spec = (knowledge_base.json or {}).get("spec", {})
@@ -1643,6 +1643,12 @@ class KnowledgeOrchestrator:
             raise ValueError("Knowledge base not found")
         if not has_access:
             raise ValueError("Access denied to knowledge base")
+        if not KnowledgeService.can_manage_knowledge_document(
+            db, knowledge_base.id, user.id, document.user_id
+        ):
+            raise ValueError(
+                "You do not have permission to manage this document in this knowledge base"
+            )
 
         # Extract RAG config using shared helper
         rag_params = extract_rag_config_from_knowledge_base(db, knowledge_base, user.id)

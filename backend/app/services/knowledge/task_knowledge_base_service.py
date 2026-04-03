@@ -19,10 +19,8 @@ from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.kind import KnowledgeBaseTaskRef
 from app.services.group_permission import get_effective_role_in_group
-from app.services.knowledge.knowledge_service import (
-    KnowledgeService,
-    _is_organization_namespace,
-)
+from app.services.knowledge.knowledge_service import KnowledgeService
+from app.services.knowledge.namespace_utils import is_organization_namespace
 from app.services.task_member_service import task_member_service
 
 logger = logging.getLogger(__name__)
@@ -124,7 +122,7 @@ class TaskKnowledgeBaseService:
             return self._is_kb_bound_to_user_group_chat(db, kb.id, user_id)
 
         # For organization knowledge base, all authenticated users have access
-        if _is_organization_namespace(db, kb.namespace):
+        if is_organization_namespace(db, kb.namespace):
             return True
 
         # For team knowledge base, check group membership
@@ -602,7 +600,8 @@ class TaskKnowledgeBaseService:
         for idx, kb, needs_migration in found_kbs:
             ref = kb_refs[idx]
             kb_name = ref.get("name")
-            kb_namespace = ref.get("namespace", "default")
+            # Get namespace from the actual KB object, not from ref (ref may not have namespace for new data)
+            kb_namespace = kb.namespace
 
             if needs_migration:
                 refs_to_migrate.append((idx, kb.id))
@@ -755,10 +754,10 @@ class TaskKnowledgeBaseService:
         user_name = user.user_name if user else "Unknown"
 
         # Add new binding (include ID for stable references)
+        # Note: namespace is no longer stored - ID is sufficient for lookup
         new_ref = KnowledgeBaseTaskRef(
             id=kb.id,
             name=kb_name,
-            namespace=kb_namespace,
             boundBy=user_name,
             boundAt=datetime.utcnow().isoformat() + "Z",
         )
@@ -967,10 +966,10 @@ class TaskKnowledgeBaseService:
                     return False
 
             # Add new binding with ID for stable references
+            # Note: namespace is no longer stored - ID is sufficient for lookup
             new_ref = KnowledgeBaseTaskRef(
                 id=kb.id,
                 name=kb_name,
-                namespace=kb_namespace,
                 boundBy=user_name,
                 boundAt=datetime.utcnow().isoformat() + "Z",
             )

@@ -15,6 +15,8 @@ import { processCitePatterns } from '../../../utils/processCitePatterns'
 import type { GeminiAnnotation } from '@/types/socket'
 import VideoPlayer from '../VideoPlayer'
 import { ImageGallery } from '../ImageGallery'
+import { AskUserForm } from '../../clarification'
+import type { AskUserFormData } from '@/types/api'
 
 interface MixedContentViewProps {
   thinking: ThinkingStep[] | null
@@ -25,6 +27,14 @@ interface MixedContentViewProps {
   annotations?: GeminiAnnotation[]
   /** Optional callback when user wants to use a generated image as reference for follow-up */
   onUseAsReference?: (item: import('../ImageGallery').ImageItem) => void
+  /** Task ID for AskUserForm context */
+  taskId?: number
+  /** Subtask ID for AskUserForm context */
+  subtaskId?: number
+  /** Current message index for AskUserForm submission tracking */
+  currentMessageIndex?: number
+  /** Callback when user submits an ask_user_question form - receives pre-formatted message string */
+  onAskUserSubmit?: (askId: string, formattedMessage: string) => void
 }
 
 /**
@@ -43,6 +53,10 @@ const MixedContentView = memo(function MixedContentView({
   blocks,
   annotations,
   onUseAsReference,
+  taskId,
+  subtaskId,
+  currentMessageIndex,
+  onAskUserSubmit,
 }: MixedContentViewProps) {
   const { t } = useTranslation('chat')
   // Extract tools from thinking (legacy mode)
@@ -59,7 +73,6 @@ const MixedContentView = memo(function MixedContentView({
     return map
   }, [toolGroups])
 
-  // Build mixed content array - prefer blocks if available
   // Build mixed content array - prefer blocks if available
   const mixedItems = useMemo(() => {
     // NEW: Block-based rendering (preferred)
@@ -116,6 +129,134 @@ const MixedContentView = memo(function MixedContentView({
               message: block.content, // Progress message
             }
           } else if (block.type === 'tool') {
+            // Check if this is an ask_user_question tool - render as interactive form
+            if (block.tool_name?.includes('ask_user_question') && block.tool_input) {
+              const input = block.tool_input as Record<string, unknown>
+
+              // Helper function to parse boolean values (handles string "True"/"False" from AI)
+              const parseBoolean = (value: unknown, defaultValue: boolean): boolean => {
+                if (typeof value === 'boolean') return value
+                if (typeof value === 'string') {
+                  const lower = value.toLowerCase()
+                  if (lower === 'true') return true
+                  if (lower === 'false') return false
+                }
+                return defaultValue
+              }
+
+              // Determine input_type: if options are provided, it's choice; otherwise text
+              const hasOptions =
+                Array.isArray(input.options) && (input.options as unknown[]).length > 0
+              const inputType = hasOptions ? 'choice' : 'text'
+
+              // Try to extract ask_id from tool_output first (server-generated),
+              // then from tool_input.ask_id, finally fallback to tool_use_id
+              let askId = block.tool_use_id || block.id
+              if (block.tool_output) {
+                const output =
+                  typeof block.tool_output === 'string'
+                    ? (() => {
+                        try {
+                          return JSON.parse(block.tool_output)
+                        } catch {
+                          return {}
+                        }
+                      })()
+                    : block.tool_output
+                if (output && typeof output === 'object' && 'ask_id' in output) {
+                  askId = (output as Record<string, unknown>).ask_id as string
+                }
+              }
+              // Also check if ask_id is in the input (for some implementations)
+              if (input.ask_id && typeof input.ask_id === 'string') {
+                askId = input.ask_id
+              }
+
+              // Parse options and handle recommended field (may be string "True"/"False")
+              const parsedOptions = hasOptions
+                ? (
+                    input.options as Array<{ label: string; value: string; recommended?: unknown }>
+                  ).map(opt => ({
+                    label: opt.label,
+                    value: opt.value,
+                    recommended: parseBoolean(opt.recommended, false),
+                  }))
+                : null
+
+              // Parse multi-question mode: questions array
+              const rawQuestions = input.questions
+              const parsedQuestions =
+                Array.isArray(rawQuestions) && rawQuestions.length > 0
+                  ? (rawQuestions as Array<Record<string, unknown>>).map(q => {
+                      const qHasOptions =
+                        Array.isArray(q.options) && (q.options as unknown[]).length > 0
+                      const qInputType = qHasOptions ? 'choice' : 'text'
+                      return {
+                        id: (q.id as string) || '',
+                        question: (q.question as string) || '',
+                        description: (q.description as string) || null,
+                        input_type: (q.input_type as 'choice' | 'text') || qInputType,
+                        options: qHasOptions
+                          ? (
+                              q.options as Array<{
+                                label: string
+                                value: string
+                                recommended?: unknown
+                              }>
+                            ).map(opt => ({
+                              label: opt.label,
+                              value: opt.value,
+                              recommended: parseBoolean(opt.recommended, false),
+                            }))
+                          : null,
+                        multi_select: parseBoolean(q.multi_select, false),
+                        required: parseBoolean(q.required, true),
+                        default: (q.default as string[]) || null,
+                        placeholder: (q.placeholder as string) || null,
+                      }
+                    })
+                  : null
+
+              // Parse tool_output for timeout detection
+              const parsedToolOutput = block.tool_output
+                ? ((typeof block.tool_output === 'string'
+                    ? (() => {
+                        try {
+                          return JSON.parse(block.tool_output)
+                        } catch {
+                          return null
+                        }
+                      })()
+                    : block.tool_output) as Record<string, unknown> | null)
+                : null
+
+              const askUserData: AskUserFormData = {
+                type: 'ask_user_question',
+                ask_id: askId,
+                tool_use_id: block.tool_use_id || null, // Pass tool_use_id for fallback lookup
+                task_id: taskId || 0,
+                subtask_id: subtaskId || 0,
+                question: (input.question as string) || '',
+                description: (input.description as string) || null,
+                // Multi-question mode
+                questions: parsedQuestions,
+                // Single-question mode fields (used when questions is null)
+                options: parsedOptions,
+                multi_select: parseBoolean(input.multi_select, false),
+                input_type: (input.input_type as 'choice' | 'text') || inputType,
+                placeholder: (input.placeholder as string) || null,
+                required: parseBoolean(input.required, true),
+                default: (input.default as string[]) || null,
+                // Pass tool_output so AskUserForm can detect timeout vs normal completion
+                tool_output: parsedToolOutput,
+              }
+              return {
+                type: 'ask_user_question' as const,
+                data: askUserData,
+                blockId: block.id,
+                status: block.status,
+              }
+            }
             // Normalize tool name to match preset components (e.g., sandbox_write_file -> Write)
             const normalizedToolName = normalizeToolName(block.tool_name || 'unknown')
             const toolPair = {
@@ -353,6 +494,20 @@ const MixedContentView = memo(function MixedContentView({
                   onUseAsReference={onUseAsReference}
                 />
               ) : null}
+            </div>
+          )
+        } else if (item.type === 'ask_user_question') {
+          // Render ask_user_question form for interactive user input
+          // pb-4 ensures enough space between the form and the absolute-positioned BubbleTools below
+          return (
+            <div key={item.blockId} className="pb-4">
+              <AskUserForm
+                data={item.data}
+                taskId={taskId || 0}
+                currentMessageIndex={currentMessageIndex || 0}
+                blockStatus={item.status}
+                onSubmit={onAskUserSubmit}
+              />
             </div>
           )
         } else if (item.type === 'tool') {

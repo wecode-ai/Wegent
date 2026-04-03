@@ -25,30 +25,15 @@ import type { KnowledgeBase } from '@/types/api'
 import type { BoundKnowledgeBaseDetail } from '@/types/task-knowledge-base'
 import type { ContextItem, KnowledgeBaseContext, TableContext } from '@/types/context'
 import { useTranslation } from '@/hooks/useTranslation'
+import { useOrganizationNamespace } from '@/hooks/useOrganizationNamespace'
 import { cn } from '@/lib/utils'
 import { formatDocumentCount } from '@/lib/i18n-helpers'
+import { getKnowledgeBaseGroup } from '@/utils/knowledge-base-grouping'
 
-// Grouped knowledge bases structure
 interface GroupedKnowledgeBases {
   personal: KnowledgeBase[]
   group: Map<string, KnowledgeBase[]> // namespace -> knowledge bases
   organization: KnowledgeBase[]
-}
-
-/**
- * Categorize knowledge base by namespace
- * - 'default' -> personal
- * - 'organization' -> organization
- * - others -> group
- */
-function categorizeKnowledgeBase(kb: KnowledgeBase): keyof GroupedKnowledgeBases {
-  if (kb.namespace === 'default') {
-    return 'personal'
-  } else if (kb.namespace === 'organization') {
-    return 'organization'
-  } else {
-    return 'group'
-  }
 }
 
 interface ContextSelectorProps {
@@ -153,6 +138,14 @@ export default function ContextSelector({
   const [tableError, setTableError] = useState<string | null>(null)
   const [searchValue, setSearchValue] = useState('')
   const [activeTab, setActiveTab] = useState('knowledge')
+  const {
+    organizationNamespace,
+    loading: organizationNamespaceLoading,
+    error: organizationNamespaceError,
+    reload: reloadOrganizationNamespace,
+  } = useOrganizationNamespace()
+  const knowledgeBaseError =
+    error || (organizationNamespaceError ? t('knowledge:fetch_error') : null)
 
   const fetchKnowledgeBases = useCallback(async () => {
     setLoading(true)
@@ -229,7 +222,7 @@ export default function ContextSelector({
     }
 
     for (const kb of filtered) {
-      const category = categorizeKnowledgeBase(kb)
+      const category = getKnowledgeBaseGroup(kb.namespace, organizationNamespace)
       if (category === 'group') {
         // Group by namespace (group name)
         const existing = groups.group.get(kb.namespace) || []
@@ -256,7 +249,7 @@ export default function ContextSelector({
     groups.group = new Map(sortedGroupEntries)
 
     return groups
-  }, [knowledgeBases, boundKnowledgeBases, excludeKnowledgeBaseId])
+  }, [knowledgeBases, boundKnowledgeBases, excludeKnowledgeBaseId, organizationNamespace])
 
   // Check if there are any knowledge bases to show
   const hasKnowledgeBases =
@@ -341,6 +334,11 @@ export default function ContextSelector({
         })
       }
     }
+  }
+
+  const handleKnowledgeBaseRetry = () => {
+    reloadOrganizationNamespace()
+    fetchKnowledgeBases()
   }
 
   // Handle bound knowledge base selection (from group chat)
@@ -445,15 +443,15 @@ export default function ContextSelector({
                 )}
               />
               <CommandList className="min-h-[36px] max-h-[300px] overflow-y-auto flex-1">
-                {loading ? (
+                {loading || organizationNamespaceLoading ? (
                   <div className="py-4 px-3 text-center text-sm text-text-muted">
                     {t('common:actions.loading')}
                   </div>
-                ) : error ? (
+                ) : knowledgeBaseError ? (
                   <div className="py-4 px-3 text-center">
-                    <p className="text-sm text-red-500 mb-2">{error}</p>
+                    <p className="text-sm text-red-500 mb-2">{knowledgeBaseError}</p>
                     <button
-                      onClick={fetchKnowledgeBases}
+                      onClick={handleKnowledgeBaseRetry}
                       className="text-xs text-primary hover:underline"
                     >
                       {t('common:actions.retry')}

@@ -25,11 +25,15 @@ import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContex
 import { useSearchShortcut } from '@/features/tasks/hooks/useSearchShortcut'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useKnowledgeBaseDetail } from '@/features/knowledge/document/hooks'
+import { useNamespaceRoleMap } from '@/features/knowledge/document/hooks/useNamespaceRoleMap'
 import { useKnowledgePermissions } from '@/features/knowledge/permission/hooks/useKnowledgePermissions'
 import { DocumentList } from '@/features/knowledge/document/components'
 import { PermissionManagementTab } from '@/features/knowledge/permission/components/PermissionManagementTab'
-import { listGroups } from '@/apis/groups'
-import type { BaseRole } from '@/types/base-role'
+import {
+  canManageKnowledgeBase,
+  canManageKnowledgeBaseDocuments,
+  canManageKnowledgeBasePermissions,
+} from '@/utils/namespace-permissions'
 /**
  * Desktop-specific implementation of Knowledge Base Classic Page
  *
@@ -87,25 +91,7 @@ export function KnowledgeBaseClassicPageDesktop() {
   // Search dialog state
   const [isSearchDialogOpen, setIsSearchDialogOpen] = useState(false)
 
-  // Group role map for permission checking
-  const [groupRoleMap, setGroupRoleMap] = useState<Map<string, BaseRole>>(new Map())
-
-  // Fetch all groups and build role map for permission checking
-  useEffect(() => {
-    listGroups()
-      .then(response => {
-        const roleMap = new Map<string, BaseRole>()
-        response.items.forEach(group => {
-          if (group.my_role) {
-            roleMap.set(group.name, group.my_role)
-          }
-        })
-        setGroupRoleMap(roleMap)
-      })
-      .catch(error => {
-        console.error('Failed to load groups for role map:', error)
-      })
-  }, [])
+  const namespaceRoleMap = useNamespaceRoleMap()
 
   // Toggle search dialog callback
   const toggleSearchDialog = useCallback(() => {
@@ -160,29 +146,34 @@ export function KnowledgeBaseClassicPageDesktop() {
   // Check if user can manage this knowledge base
   const canManageKb = useMemo(() => {
     if (!knowledgeBase || !user) return false
-    // Personal knowledge base - check user ownership
-    if (knowledgeBase.namespace === 'default') {
-      return knowledgeBase.user_id === user.id
-    }
-    // Organization knowledge base - only admin can manage
-    if (knowledgeBase.namespace === 'organization') {
-      return user.role === 'admin'
-    }
-    // Group knowledge base - check group role
-    // Developer or higher can edit, Maintainer or higher can delete
-    const groupRole = groupRoleMap.get(knowledgeBase.namespace)
-    return groupRole === 'Owner' || groupRole === 'Maintainer' || groupRole === 'Developer'
-  }, [knowledgeBase, user, groupRoleMap])
+    return canManageKnowledgeBase({
+      currentUserId: user.id,
+      knowledgeBase,
+      knowledgeRole: myPermission?.role,
+      namespaceRole: namespaceRoleMap.get(knowledgeBase.namespace),
+    })
+  }, [knowledgeBase, user, myPermission?.role, namespaceRoleMap])
 
-  // Check if user can manage permissions (is creator or has Maintainer/Owner role)
+  const canUploadDocuments = useMemo(() => {
+    if (!knowledgeBase || !user) return false
+    return canManageKnowledgeBaseDocuments({
+      currentUserId: user.id,
+      knowledgeBase,
+      knowledgeRole: myPermission?.role,
+      namespaceRole: namespaceRoleMap.get(knowledgeBase.namespace),
+    })
+  }, [knowledgeBase, user, myPermission?.role, namespaceRoleMap])
+
+  // Check if user can manage permissions (creator, namespace manager, or KB manager)
   const canManagePermissions = useMemo(() => {
     if (!knowledgeBase || !user) return false
-    // Creator can always manage permissions
-    if (knowledgeBase.user_id === user.id) return true
-    // User with Maintainer or Owner role can manage
-    if (myPermission?.role === 'Maintainer' || myPermission?.role === 'Owner') return true
-    return false
-  }, [knowledgeBase, user, myPermission])
+    return canManageKnowledgeBasePermissions({
+      currentUserId: user.id,
+      knowledgeBase,
+      knowledgeRole: myPermission?.role,
+      namespaceRole: namespaceRoleMap.get(knowledgeBase.namespace),
+    })
+  }, [knowledgeBase, user, myPermission?.role, namespaceRoleMap])
 
   // Loading state - wait for both knowledge base and user data
   if (kbLoading || isUserLoading) {
@@ -264,7 +255,8 @@ export function KnowledgeBaseClassicPageDesktop() {
                 <DocumentList
                   knowledgeBase={knowledgeBase}
                   onBack={handleBack}
-                  canManage={canManageKb}
+                  canUpload={canUploadDocuments}
+                  canManageAllDocuments={canManageKb}
                 />
               </TabsContent>
               <TabsContent value="permissions" className="flex-1 mt-0">
@@ -275,7 +267,8 @@ export function KnowledgeBaseClassicPageDesktop() {
             <DocumentList
               knowledgeBase={knowledgeBase}
               onBack={handleBack}
-              canManage={canManageKb}
+              canUpload={canUploadDocuments}
+              canManageAllDocuments={canManageKb}
             />
           )}
         </div>

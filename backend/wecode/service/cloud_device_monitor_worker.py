@@ -93,6 +93,11 @@ async def _run_monitor_check():
     from redis.asyncio import Redis
 
     from app.core.config import settings
+
+    # Check if cloud device offline alert is enabled
+    if not settings.CLOUD_DEVICE_OFFLINE_ALERT_ENABLED:
+        logger.debug("[cloud-device-monitor] Alert is disabled, skipping check")
+        return
     from app.db.session import get_db_session
     from wecode.service.cloud_device_monitor_service import (
         check_cloud_devices_status,

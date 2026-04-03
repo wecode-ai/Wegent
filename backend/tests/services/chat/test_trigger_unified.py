@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -153,6 +154,73 @@ class TestBuildExecutionRequestUserSubtaskId:
                     assert result.user_subtask_id is None
                     mock_builder.build.assert_called_once()
                     mock_process_contexts.assert_not_awaited()
+
+    async def test_merges_payload_additional_skills_with_existing_preload_skills(self):
+        """Payload additional skills should extend caller preload skills, not replace them."""
+        from app.services.chat.trigger import unified as trigger_unified
+
+        mock_db = MagicMock()
+        request_from_builder = ExecutionRequest(task_id=1, subtask_id=2)
+        mock_builder = MagicMock()
+        mock_builder.build.return_value = request_from_builder
+
+        payload = SimpleNamespace(
+            additional_skills=[
+                SimpleNamespace(
+                    name="payload-skill",
+                    namespace="default",
+                    is_public=True,
+                )
+            ],
+            enable_web_search=False,
+            enable_clarification=False,
+        )
+
+        with patch.object(trigger_unified, "SessionLocal", return_value=mock_db):
+            with patch(
+                "app.services.execution.TaskRequestBuilder", return_value=mock_builder
+            ):
+                with patch.object(
+                    trigger_unified,
+                    "_process_contexts",
+                    new=AsyncMock(return_value=request_from_builder),
+                ):
+                    task = MagicMock()
+                    task.id = 1
+                    task.json = {}
+
+                    assistant_subtask = MagicMock()
+                    assistant_subtask.id = 2
+
+                    team = MagicMock()
+                    user = MagicMock()
+                    user.id = 7
+
+                    await trigger_unified.build_execution_request(
+                        task=task,
+                        assistant_subtask=assistant_subtask,
+                        team=team,
+                        user=user,
+                        message="hello",
+                        payload=payload,
+                        user_subtask_id=123,
+                        preload_skills=[
+                            {
+                                "name": "subscription-skill",
+                                "namespace": "default",
+                                "is_public": True,
+                            }
+                        ],
+                    )
+
+        assert mock_builder.build.call_args.kwargs["preload_skills"] == [
+            {
+                "name": "subscription-skill",
+                "namespace": "default",
+                "is_public": True,
+            },
+            payload.additional_skills[0],
+        ]
 
     async def test_selected_kb_triggers_skill_resolution_after_context_processing(self):
         """Selected KB contexts should be resolved into concrete skill config before dispatch."""
@@ -398,3 +466,49 @@ class TestProcessContextsAttachments:
         assert result.knowledge_base_ids == [1408]
         assert result.preload_skills == ["wegent-knowledge"]
         assert result.user_selected_skills == ["wegent-knowledge"]
+
+    @pytest.mark.asyncio
+    async def test_explicit_subtask_kb_overrides_inherited_task_level_ids(self):
+        """Explicit subtask KB selection should override inherited task-level KB IDs."""
+        from app.services.chat.trigger import unified as trigger_unified
+
+        request = ExecutionRequest(
+            task_id=1263,
+            subtask_id=1697,
+            prompt="save this file",
+            system_prompt="system",
+            model_config={},
+            knowledge_base_ids=[11, 22, 33],
+            preload_skills=[],
+        )
+
+        ctx = ChatContextsResult(
+            final_message="processed",
+            has_table_context=False,
+            table_contexts=[],
+            kb=KnowledgeBaseToolsResult(
+                extra_tools=[],
+                enhanced_system_prompt="enhanced",
+                kb_meta_prompt="meta",
+                knowledge_base_ids=[33],
+                is_user_selected_kb=True,
+            ),
+        )
+
+        with patch(
+            "app.services.chat.preprocessing.prepare_contexts_for_chat",
+            new=AsyncMock(return_value=ctx),
+        ):
+            with patch(
+                "app.services.chat.trigger.unified.context_service.get_attachments_by_subtask",
+                return_value=[],
+            ):
+                result = await trigger_unified._process_contexts(
+                    db=MagicMock(),
+                    request=request,
+                    user_subtask_id=1696,
+                    user_id=2,
+                )
+
+        assert result.knowledge_base_ids == [33]
+        assert result.is_user_selected_kb is True

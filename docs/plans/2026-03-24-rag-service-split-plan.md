@@ -10,6 +10,20 @@ sidebar_position: 1
 
 本次方案聚焦“拆 RAG 数据面”，不拆整个知识库域。
 
+### 状态更新（2026-04-01）
+
+- 本文中的 `Phase 0` 已经作为历史阶段完成：`chat_shell` 不再负责 `/all-chunks` 与 `/retrieve` 的主路由决策，Backend internal RAG API 已接管该选择。
+- 当前一线落地工作不再是“先把路由下沉到 Backend”，而是“先稳定模块边界”，即 `RuntimeSpec + RagGateway + local data-plane modules`。
+- 当前生效的主设计文档以以下内容为准：
+  - `docs/specs/knowledge/2026-03-31-rag-modular-data-plane-design.md`
+  - `backend/app/services/rag/README.md`
+- `2026-04-01` 的两份 implementation plan 已随代码落地完成，作为执行清单的价值已经结束，因此不再继续保留。
+
+### 定位说明
+
+- 本文保留为“为什么最终没有立刻拆独立 `rag_service`”的历史背景
+- 当前如果要继续推进后续阶段，应优先更新 `2026-03-31` 的 spec，而不是回到本文继续追加任务清单
+
 目标：
 - 将解析、切分、向量化、索引、检索等重依赖能力从 Backend 主进程中解耦。
 - 保留 Backend 作为控制面，继续负责权限、资源配置、元数据和任务编排。
@@ -17,6 +31,8 @@ sidebar_position: 1
 - 保持 Frontend 和 `chat_shell` 的改动最小，优先复用现有内部 API 外观。
 
 ## 现状
+
+以下“现状”描述包含 2026-03-24 制定方案时的历史上下文，其中部分检索路由职责已经在后续实现中下沉到 Backend。
 
 当前实现具备以下特征：
 
@@ -193,7 +209,7 @@ Backend 负责将以下内容解析为 runtime payload：
 
 ## 推荐实施顺序
 
-### Phase 0：先做检索路由下沉
+### Phase 0：先做检索路由下沉（已完成，保留为历史记录）
 
 目标：
 - 不立刻拆服务
@@ -212,6 +228,12 @@ Backend 负责将以下内容解析为 runtime payload：
 - 减少 `chat_shell` 对检索策略的感知
 - 为后续 rag_service 拆分创造稳定接口
 - 避免未来 `hierarchical retrieval` 再次把策略堆回 `chat_shell`
+
+当前补充说明：
+
+- 该阶段已经完成，不再是当前实施重点。
+- 当前基础重构以 `RuntimeSpec`、`RagGateway`、`LocalRagGateway` 和 `local_data_plane` 为核心。
+- `summary_vector_index`、`tableRAG`、restricted mediator 迁移、remote `rag_service` 抽离，均转入后续独立 track。
 
 ### Phase 1：抽象 RagGateway
 
