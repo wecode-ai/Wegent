@@ -13,6 +13,8 @@ Flow (both create and update):
 
 from typing import Any, Dict, List, Optional
 
+from sqlalchemy.orm.attributes import flag_modified
+
 from shared.models.db import User
 
 try:
@@ -123,22 +125,18 @@ def apply_patch() -> None:
             self, db, obj_in=obj_in, background_tasks=background_tasks
         )
 
-        # 3) mask gitlab tokens in DB immediately
+        # 3) mask gitlab tokens in DB directly (bypass merge logic to avoid duplicates)
         try:
             masked = _mask_gitlab_tokens(getattr(created_user, "git_info", None))
             if masked is not None:
-                _ = _orig_update_current_user(
-                    self,
-                    db,
-                    user=created_user,
-                    obj_in=UserUpdate(git_info=masked),
-                    validate_git_info=False,
-                )
+                created_user.git_info = masked
+                flag_modified(created_user, "git_info")
+                db.add(created_user)
+                db.commit()
+                db.refresh(created_user)
         except Exception:
-            # if masking fails, return created_user anyway
-            return created_user
+            pass
 
-        # re-fetch updated user object by returning from update call above isn't captured; refresh created_user in place expected by service
         return created_user
 
     # Monkey-patched update_current_user
@@ -170,19 +168,17 @@ def apply_patch() -> None:
             self, db, user=user, obj_in=obj_in, validate_git_info=True
         )
 
-        # 3) mask gitlab tokens in DB immediately
+        # 3) mask gitlab tokens in DB directly (bypass merge logic to avoid duplicates)
         try:
             masked = _mask_gitlab_tokens(getattr(updated_user, "git_info", None))
             if masked is not None:
-                _ = _orig_update_current_user(
-                    self,
-                    db,
-                    user=updated_user,
-                    obj_in=UserUpdate(git_info=masked),
-                    validate_git_info=False,
-                )
+                updated_user.git_info = masked
+                flag_modified(updated_user, "git_info")
+                db.add(updated_user)
+                db.commit()
+                db.refresh(updated_user)
         except Exception:
-            return updated_user
+            pass
 
         return updated_user
 
