@@ -418,7 +418,59 @@ class TestDynamicToolSelectionIntegration:
         tool_names = [tool.name for tool in captured["tools"]]
         assert "load_skill" in tool_names
         assert "list_nodes" in tool_names
-        assert "gemini_search" in tool_names
+        assert tool_names.count("gemini_search") == 1
+
+    def test_gemini_build_agent_deduplicates_gemini_search_tool(self, monkeypatch):
+        """Test Gemini agent build registers gemini_search only once."""
+        from chat_shell.agents import graph_builder as graph_builder_module
+        from chat_shell.agents.graph_builder import LangGraphAgentBuilder
+        from chat_shell.tools.base import ToolRegistry
+
+        class FakeGeminiLLM:
+            def bind_tools(self, tools):
+                return self
+
+        class FakeGeminiSearchTool:
+            name = "gemini_search"
+            return_direct = True
+
+            def has_been_called(self):
+                return False
+
+        monkeypatch.setattr(
+            graph_builder_module, "ChatGoogleGenerativeAI", FakeGeminiLLM
+        )
+        monkeypatch.setattr(
+            graph_builder_module,
+            "GeminiSearchTool",
+            FakeGeminiSearchTool,
+        )
+        monkeypatch.setattr(
+            graph_builder_module,
+            "create_gemini_search_tool",
+            lambda llm: FakeGeminiSearchTool(),
+        )
+
+        captured: dict[str, object] = {}
+
+        def fake_create_react_agent(**kwargs):
+            captured.update(kwargs)
+            return MagicMock()
+
+        monkeypatch.setattr(
+            graph_builder_module, "create_react_agent", fake_create_react_agent
+        )
+
+        tool_registry = ToolRegistry()
+        builder = LangGraphAgentBuilder(
+            llm=FakeGeminiLLM(),
+            tool_registry=tool_registry,
+        )
+
+        builder._build_agent()
+
+        tool_names = [tool.name for tool in captured["tools"]]
+        assert tool_names.count("gemini_search") == 1
 
 
 class TestSkillRetentionAcrossTurns:
