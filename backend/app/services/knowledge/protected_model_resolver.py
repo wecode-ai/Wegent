@@ -371,16 +371,7 @@ class ProtectedModelResolver:
                 return model_kind, "public"
             return None, None
 
-        if model_type in {"user", "group"} and user_id is not None:
-            model_kind = self._get_user_scoped_model_kind(
-                db=db,
-                model_name=model_name,
-                model_namespace=model_namespace,
-                user_id=user_id,
-            )
-            if model_kind:
-                return model_kind, model_type
-
+        user_kind: Optional[Kind] = None
         if user_id is not None:
             user_kind = self._get_user_scoped_model_kind(
                 db=db,
@@ -389,6 +380,8 @@ class ProtectedModelResolver:
                 user_id=user_id,
             )
             if user_kind:
+                if model_type in {"user", "group"}:
+                    return user_kind, model_type
                 normalized_type = "user" if model_namespace == "default" else "group"
                 return user_kind, normalized_type
 

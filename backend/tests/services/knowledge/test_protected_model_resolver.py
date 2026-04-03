@@ -168,6 +168,34 @@ def test_lookup_model_kind_keeps_named_model_resolution_behavior() -> None:
     assert model_type == "group"
 
 
+def test_lookup_model_kind_does_not_repeat_user_lookup_on_typed_miss() -> None:
+    resolver = ProtectedModelResolver()
+    db = MagicMock()
+    db.query.return_value.filter.return_value.first.return_value = None
+
+    with patch.object(
+        resolver,
+        "_get_user_scoped_model_kind",
+        return_value=None,
+    ) as mock_get_user_kind:
+        model_kind, model_type = resolver._lookup_model_kind(
+            db=db,
+            model_name="summary-model",
+            model_namespace="team-a",
+            model_type="group",
+            user_id=7,
+        )
+
+    mock_get_user_kind.assert_called_once_with(
+        db=db,
+        model_name="summary-model",
+        model_namespace="team-a",
+        user_id=7,
+    )
+    assert model_kind is None
+    assert model_type is None
+
+
 def test_resolve_named_model_uses_resolved_kind_metadata() -> None:
     resolver = ProtectedModelResolver()
     db = MagicMock()
