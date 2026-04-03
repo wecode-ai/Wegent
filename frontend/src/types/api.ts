@@ -508,7 +508,7 @@ export interface AskUserQuestion {
 }
 
 export interface AskUserFormData {
-  type: 'ask_user_question'
+  type: 'interactive_form_question'
   ask_id: string
   /** Tool use ID from Claude (UUID format) - used as fallback for answer submission */
   tool_use_id?: string | null

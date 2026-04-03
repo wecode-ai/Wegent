@@ -2,14 +2,14 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Tests for ask_user_question MCP tool."""
+"""Tests for interactive_form_question MCP tool."""
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from app.mcp_server.auth import TaskTokenInfo
-from app.mcp_server.tools.ask_user_question import _generate_ask_id, ask_user_question
+from app.mcp_server.tools.interactive_form_question import _generate_ask_id, interactive_form_question
 
 
 class TestGenerateAskId:
@@ -27,8 +27,8 @@ class TestGenerateAskId:
         assert len(set(ids)) == 100
 
 
-class TestAskUserTool:
-    """Tests for ask_user_question async tool."""
+class TestInteractiveFormTool:
+    """Tests for interactive_form_question async tool."""
 
     def _make_token(self, task_id=1, subtask_id=2):
         return TaskTokenInfo(
@@ -40,13 +40,13 @@ class TestAskUserTool:
 
     @pytest.mark.asyncio
     async def test_returns_silent_exit(self):
-        """ask_user_question always returns __silent_exit__."""
+        """interactive_form_question always returns __silent_exit__."""
         token = self._make_token()
         with patch(
-            "app.mcp_server.tools.ask_user_question._notify_frontend",
+            "app.mcp_server.tools.interactive_form_question._notify_frontend",
             new_callable=AsyncMock,
         ):
-            result = await ask_user_question(token_info=token, question="Any question?")
+            result = await interactive_form_question(token_info=token, question="Any question?")
 
         assert result["__silent_exit__"] is True
         assert "reason" in result
@@ -61,10 +61,10 @@ class TestAskUserTool:
             captured.update(question_data)
 
         with patch(
-            "app.mcp_server.tools.ask_user_question._notify_frontend",
+            "app.mcp_server.tools.interactive_form_question._notify_frontend",
             side_effect=capture,
         ):
-            await ask_user_question(
+            await interactive_form_question(
                 token_info=token,
                 question="Pick one",
                 options=[{"label": "A", "value": "a"}],
@@ -75,7 +75,7 @@ class TestAskUserTool:
         assert captured["question"] == "Pick one"
         assert captured["task_id"] == token.task_id
         assert captured["subtask_id"] == token.subtask_id
-        assert captured["type"] == "ask_user_question"
+        assert captured["type"] == "interactive_form_question"
 
     @pytest.mark.asyncio
     async def test_single_question_no_options_becomes_text(self):
@@ -87,10 +87,10 @@ class TestAskUserTool:
             captured.update(question_data)
 
         with patch(
-            "app.mcp_server.tools.ask_user_question._notify_frontend",
+            "app.mcp_server.tools.interactive_form_question._notify_frontend",
             side_effect=capture,
         ):
-            await ask_user_question(
+            await interactive_form_question(
                 token_info=token,
                 question="Enter anything",
                 input_type="choice",  # overridden to 'text'
@@ -118,10 +118,10 @@ class TestAskUserTool:
         ]
 
         with patch(
-            "app.mcp_server.tools.ask_user_question._notify_frontend",
+            "app.mcp_server.tools.interactive_form_question._notify_frontend",
             side_effect=capture,
         ):
-            await ask_user_question(token_info=token, questions=questions)
+            await interactive_form_question(token_info=token, questions=questions)
 
         assert "questions" in captured
         assert len(captured["questions"]) == 2
@@ -137,9 +137,9 @@ class TestAskUserTool:
         mock_notify = AsyncMock()
 
         with patch(
-            "app.mcp_server.tools.ask_user_question._notify_frontend", mock_notify
+            "app.mcp_server.tools.interactive_form_question._notify_frontend", mock_notify
         ):
-            await ask_user_question(token_info=token, question="Hello?")
+            await interactive_form_question(token_info=token, question="Hello?")
 
         mock_notify.assert_awaited_once()
         call_kwargs = mock_notify.call_args
@@ -157,9 +157,9 @@ class TestAskUserTool:
             captured.update(question_data)
 
         with patch(
-            "app.mcp_server.tools.ask_user_question._notify_frontend",
+            "app.mcp_server.tools.interactive_form_question._notify_frontend",
             side_effect=capture,
         ):
-            await ask_user_question(token_info=token, question="Q?")
+            await interactive_form_question(token_info=token, question="Q?")
 
         assert captured["ask_id"] == "ask_99"

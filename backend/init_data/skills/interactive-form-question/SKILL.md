@@ -1,7 +1,7 @@
 ---
-name: "ask-user-question"
+name: "interactive-form-question"
 description: "Ask the user questions or present choices via an interactive form. Use when you need to gather preferences, clarify ambiguous instructions, get decisions on implementation choices, or present a list of options for the user to select from. Never write options or questions as plain text — always use this tool."
-displayName: "提问"
+displayName: "交互式表单提问"
 version: "1.0.0"
 author: "Wegent Team"
 tags: ["interaction", "user-input", "form", "clarification"]
@@ -10,9 +10,9 @@ bindShells:
   - Agno
   - ClaudeCode
 mcpServers:
-  wegent-ask-user-question:
+  wegent-interactive-form-question:
     type: streamable-http
-    url: "${{backend_url}}/mcp/ask-user-question/sse"
+    url: "${{backend_url}}/mcp/interactive-form-question/sse"
     headers:
       Authorization: "Bearer ${{task_token}}"
     timeout: 300
@@ -20,7 +20,7 @@ mcpServers:
 
 # Ask User
 
-You now have access to the `ask_user_question` tool. Use it to ask the user questions during execution.
+You now have access to the `interactive_form_question` tool. Use it to ask the user questions during execution.
 
 ## When to Use
 
@@ -28,7 +28,7 @@ You now have access to the `ask_user_question` tool. Use it to ask the user ques
 2. **Clarify ambiguous instructions** — when the request could be interpreted multiple ways
 3. **Get decisions on implementation choices as you work** — when a fork in the road requires user input
 4. **Offer choices on direction** — let the user steer when multiple valid paths exist
-5. **Present any list of options to the user** — whenever you would naturally write a numbered/bulleted list of choices for the user to pick from, use `ask_user_question` instead
+5. **Present any list of options to the user** — whenever you would naturally write a numbered/bulleted list of choices for the user to pick from, use `interactive_form_question` instead
 
 **Never write options, choices, or questions as plain text or markdown lists — always call the tool.**
 
@@ -38,11 +38,11 @@ You now have access to the `ask_user_question` tool. Use it to ask the user ques
 - Use `multi_select: true` to allow multiple answers to be selected
 - If you recommend a specific option, set `"recommended": true` on that option — the frontend will display the recommended badge automatically. **NEVER add "(Recommended)", "(推荐)" or any similar text to the `label` field** — the badge is rendered by the frontend, not by text in the label
 - Use multi-question mode (`questions=[...]`) to batch related questions into one form and avoid multiple round-trips
-- After receiving answers, call `ask_user_question` again if follow-up questions arise — never ask in plain text
+- After receiving answers, call `interactive_form_question` again if follow-up questions arise — never ask in plain text
 
 ## Behavior
 
-`ask_user_question` displays an interactive form and returns immediately (`__silent_exit__`). The current task ends silently and resumes when the user submits their answer as a new message.
+`interactive_form_question` displays an interactive form and returns immediately (`__silent_exit__`). The current task ends silently and resumes when the user submits their answer as a new message.
 
 ## Tool Parameters
 
@@ -66,7 +66,7 @@ You now have access to the `ask_user_question` tool. Use it to ask the user ques
 ### Clarify ambiguous instructions
 
 ```
-ask_user_question(
+interactive_form_question(
   question="Which environment should I deploy to?",
   options=[
     {"label": "Development", "value": "dev", "recommended": true},
@@ -79,7 +79,7 @@ ask_user_question(
 ### Get a decision as you work
 
 ```
-ask_user_question(
+interactive_form_question(
   question="I found two approaches for the caching layer. Which do you prefer?",
   description="Option A is simpler but less flexible. Option B handles edge cases but adds complexity.",
   options=[
@@ -92,7 +92,7 @@ ask_user_question(
 ### Gather requirements upfront (multi-question)
 
 ```
-ask_user_question(
+interactive_form_question(
   question="A few things before I start",
   questions=[
     {
@@ -130,7 +130,7 @@ ask_user_question(
 ### Confirm before a destructive action
 
 ```
-ask_user_question(
+interactive_form_question(
   question="This will overwrite the existing file. Proceed?",
   options=[
     {"label": "Yes, overwrite", "value": "yes"},

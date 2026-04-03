@@ -743,7 +743,7 @@ class SessionManager:
             tool_use_id: Tool use ID
             status: New status (optional, e.g. "done", "error")
             tool_output: Optional tool output to set
-            tool_input: Optional tool input/arguments to update (used by ask_user_question MCP tool)
+            tool_input: Optional tool input/arguments to update (used by interactive_form_question MCP tool)
         """
         try:
             blocks_key = self._get_blocks_key(subtask_id)

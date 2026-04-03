@@ -130,7 +130,7 @@ const MixedContentView = memo(function MixedContentView({
             }
           } else if (block.type === 'tool') {
             // Check if this is an ask_user_question tool - render as interactive form
-            if (block.tool_name?.includes('ask_user_question') && block.tool_input) {
+            if (block.tool_name?.includes('interactive_form_question') && block.tool_input) {
               const input = block.tool_input as Record<string, unknown>
 
               // Helper function to parse boolean values (handles string "True"/"False" from AI)
@@ -231,7 +231,7 @@ const MixedContentView = memo(function MixedContentView({
                 : null
 
               const askUserData: AskUserFormData = {
-                type: 'ask_user_question',
+                type: 'interactive_form_question',
                 ask_id: askId,
                 tool_use_id: block.tool_use_id || null, // Pass tool_use_id for fallback lookup
                 task_id: taskId || 0,
@@ -251,7 +251,7 @@ const MixedContentView = memo(function MixedContentView({
                 tool_output: parsedToolOutput,
               }
               return {
-                type: 'ask_user_question' as const,
+                type: 'interactive_form_question' as const,
                 data: askUserData,
                 blockId: block.id,
                 status: block.status,
@@ -496,7 +496,7 @@ const MixedContentView = memo(function MixedContentView({
               ) : null}
             </div>
           )
-        } else if (item.type === 'ask_user_question') {
+        } else if (item.type === 'interactive_form_question') {
           // Render ask_user_question form for interactive user input
           // pb-4 ensures enough space between the form and the absolute-positioned BubbleTools below
           return (

@@ -298,7 +298,7 @@ class WebPageSocketEmitter:
             block_id: Block ID to update
             content: Optional text content update
             tool_output: Optional tool output data
-            tool_input: Optional tool input/arguments update (for ask_user_question form rendering)
+            tool_input: Optional tool input/arguments update (for interactive_form_question form rendering)
             status: Optional status update (pending, streaming, running, done, error)
         """
         payload: Dict[str, Any] = {
