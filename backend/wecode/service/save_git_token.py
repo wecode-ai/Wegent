@@ -170,6 +170,10 @@ class SaveGitToken:
         Raises ValidationException on any failure.
         """
         new_tokens = self._build_new_tokens(git_info)
+        self.logger.info(
+            "save_gitlab_tokens_blocking: new_tokens keys=%s for user=%s",
+            list(new_tokens.keys()), username,
+        )
         if not new_tokens:
             self.logger.info("No gitlab tokens to save")
             return
@@ -178,7 +182,15 @@ class SaveGitToken:
             with httpx.Client(timeout=10) as client:
                 # Fetch existing tokens and merge (new tokens override existing)
                 existing_tokens = self._fetch_existing_tokens(username, client)
+                self.logger.info(
+                    "save_gitlab_tokens_blocking: existing_tokens keys=%s",
+                    list(existing_tokens.keys()),
+                )
                 request_data = {**existing_tokens, **new_tokens}
+                self.logger.info(
+                    "save_gitlab_tokens_blocking: merged request_data keys=%s",
+                    list(request_data.keys()),
+                )
 
                 response = client.post(
                     self.save_token_api_url,
