@@ -552,6 +552,10 @@ class Settings(BaseSettings):
     # Enable/disable Aidesk authentication
     AIDESK_AUTH_ENABLED: bool = True
 
+    # Cloud device offline alert configuration
+    # Enable/disable cloud device offline alert (default: False)
+    CLOUD_DEVICE_OFFLINE_ALERT_ENABLED: bool = False
+
     @classmethod
     def settings_customise_sources(
         cls,
