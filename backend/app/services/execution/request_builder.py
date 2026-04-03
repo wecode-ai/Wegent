@@ -189,6 +189,15 @@ class TaskRequestBuilder:
         # Get skills for the bot (full resolution from Ghost)
         # Convert preload_skills to the format expected by _get_bot_skills
         effective_preload_skills = list(preload_skills or [])
+
+        # When clarification mode is enabled, auto-inject the ask-user-question skill.
+        # This replaces the old prompt-injection approach with the MCP skill approach,
+        # allowing the AI to use the ask_user_question tool for interactive clarification forms.
+        if enable_clarification:
+            effective_preload_skills = self._inject_clarification_skill(
+                effective_preload_skills
+            )
+
         effective_preload_skills = self._inject_conditional_provider_skills(
             user=user,
             message=message,
@@ -1585,6 +1594,52 @@ Response template:
                     text_parts.append(text)
 
         return "\n".join(text_parts)
+
+    @staticmethod
+    def _inject_clarification_skill(preload_skills: list) -> list:
+        """Inject the ask-user-question skill when clarification mode is enabled.
+
+        When enable_clarification=True, the ask-user-question skill is automatically added
+        to preload_skills. This replaces the old prompt-injection approach
+        (CLARIFICATION_PROMPT appended to system prompt) with the MCP skill approach,
+        allowing the AI to use the ask_user_question tool for interactive clarification forms.
+
+        The ask-user-question skill provides the ask_user_question MCP tool which:
+        1. Displays an interactive form card in the frontend
+        2. Returns __silent_exit__ immediately (non-blocking)
+        3. Waits for user response as a new conversation message
+
+        Args:
+            preload_skills: Current list of preload skills
+
+        Returns:
+            Updated preload_skills list with ask-user-question skill injected (if not already present)
+        """
+        # Clarification skill name (matches backend/init_data/skills/ask-user-question/SKILL.md)
+        clarification_skill_name = "ask-user-question"
+
+        # Check if already present (avoid duplicates)
+        existing_names = {
+            skill if isinstance(skill, str) else skill.get("name", "")
+            for skill in preload_skills
+            if isinstance(skill, (str, dict))
+        }
+
+        if clarification_skill_name not in existing_names:
+            preload_skills = list(preload_skills)
+            preload_skills.append(
+                {
+                    "name": clarification_skill_name,
+                    "namespace": "default",
+                    "is_public": True,
+                }
+            )
+            logger.info(
+                "[TaskRequestBuilder] Injected clarification skill '%s' into preload_skills",
+                clarification_skill_name,
+            )
+
+        return preload_skills
 
     def _inject_conditional_provider_skills(
         self,

@@ -27,9 +27,16 @@ import SkillManagementModal from './skills/SkillManagementModal'
 import { RichSkillSelector } from './skills/RichSkillSelector'
 import DifyBotConfig from './DifyBotConfig'
 import PromptFineTuneDialog from '@/features/prompt-tune/components/PromptFineTuneDialog'
+import { KnowledgeBaseMultiSelector } from './knowledge/KnowledgeBaseMultiSelector'
 
 import { Bot } from '@/types/api'
-import { botApis, CreateBotRequest, SkillRefMeta, UpdateBotRequest } from '@/apis/bots'
+import {
+  botApis,
+  CreateBotRequest,
+  KnowledgeBaseDefaultRef,
+  SkillRefMeta,
+  UpdateBotRequest,
+} from '@/apis/bots'
 import {
   isPredefinedModel,
   getModelFromConfig,
@@ -55,6 +62,7 @@ export interface BotFormData {
   agent_config: Record<string, unknown>
   system_prompt: string
   mcp_servers: Record<string, unknown>
+  default_knowledge_base_refs: KnowledgeBaseDefaultRef[]
   skills: string[]
   skill_refs: Record<string, SkillRefMeta>
   // preload_skills: string[]
@@ -165,6 +173,9 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
   const [mcpConfig, setMcpConfig] = useState(
     baseBot?.mcp_servers ? JSON.stringify(baseBot.mcp_servers, null, 2) : ''
   )
+  const [defaultKnowledgeBaseRefs, setDefaultKnowledgeBaseRefs] = useState<
+    KnowledgeBaseDefaultRef[]
+  >(baseBot?.default_knowledge_base_refs || [])
   const [selectedSkills, setSelectedSkills] = useState<string[]>(baseBot?.skills || [])
   const [preloadSkills, setPreloadSkills] = useState<string[]>(baseBot?.preload_skills || [])
   const [selectedSkillRefs, setSelectedSkillRefs] = useState<Record<string, SkillRefMeta>>(
@@ -474,6 +485,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     }
 
     setSelectedSkills(baseBot?.skills || [])
+    setDefaultKnowledgeBaseRefs(baseBot?.default_knowledge_base_refs || [])
     setPreloadSkills(baseBot?.preload_skills || [])
     setSelectedSkillRefs(baseBot?.skill_refs || {})
     // Capture initial bot skills - this list remains constant for preload selection
@@ -621,6 +633,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
       agent_config: parsedAgentConfig,
       system_prompt: isDifyAgent ? '' : prompt.trim() || '',
       mcp_servers: parsedMcpConfig,
+      default_knowledge_base_refs: defaultKnowledgeBaseRefs,
       skills: selectedSkills.length > 0 ? selectedSkills : [],
       skill_refs: buildSkillRefsFromSelection(
         selectedSkills,
@@ -642,6 +655,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     mcpConfig,
     agentName,
     botName,
+    defaultKnowledgeBaseRefs,
     prompt,
     selectedSkills,
     selectedSkillRefs,
@@ -698,6 +712,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
           agent_config: botData.agent_config,
           system_prompt: botData.system_prompt,
           mcp_servers: botData.mcp_servers,
+          default_knowledge_base_refs: botData.default_knowledge_base_refs,
           skills: botData.skills,
           skill_refs: botData.skill_refs,
           // preload_skills: botData.preload_skills,
@@ -880,6 +895,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
           agent_config: parsedAgentConfig as Record<string, unknown>,
           system_prompt: isDifyAgent ? '' : prompt.trim() || '', // Clear system_prompt for Dify
           mcp_servers: parsedMcpConfig ?? {},
+          default_knowledge_base_refs: defaultKnowledgeBaseRefs,
           skills: selectedSkills.length > 0 ? selectedSkills : [],
           skill_refs: buildSkillRefsFromSelection(
             selectedSkills,
@@ -952,7 +968,12 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                   {t('common:common.cancel')}
                 </Button>
               )}
-              <Button onClick={handleSave} disabled={botSaving} variant="primary">
+              <Button
+                onClick={handleSave}
+                disabled={botSaving}
+                variant="primary"
+                data-testid="save-button"
+              >
                 {botSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 {botSaving ? t('common:actions.saving') : t('common:actions.save')}
               </Button>
@@ -1421,6 +1442,28 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                         )}
                       </div>
                     )}
+                  </div>
+                </div>
+              )}
+
+              {scope !== 'public' && (
+                <div className="flex flex-col">
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="flex items-center">
+                      <label className="block text-base font-medium text-text-primary">
+                        {t('common:bot.default_knowledge_bases')}
+                      </label>
+                      <span className="text-xs text-text-muted ml-2">
+                        {t('common:bot.default_knowledge_bases_optional')}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="bg-base rounded-md p-2 min-h-[80px]">
+                    <KnowledgeBaseMultiSelector
+                      value={defaultKnowledgeBaseRefs}
+                      onChange={setDefaultKnowledgeBaseRefs}
+                      disabled={readOnly}
+                    />
                   </div>
                 </div>
               )}

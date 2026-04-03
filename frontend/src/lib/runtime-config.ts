@@ -86,7 +86,9 @@ export const fetchRuntimeConfig = async (): Promise<RuntimeConfig> => {
   }
 
   // Fetch config from API
-  runtimeConfigPromise = fetch('/runtime-config')
+  runtimeConfigPromise = fetch('/runtime-config', {
+    ...(process.env.NODE_ENV === 'development' && { cache: 'no-store' as RequestCache }),
+  })
     .then(res => {
       if (!res.ok) {
         throw new Error('Failed to fetch runtime config')

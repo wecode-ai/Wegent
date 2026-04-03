@@ -14,7 +14,9 @@ from app.models.kind import Kind
 from app.models.user import User
 
 
-def _create_device_kind(test_db: Session, user_id: int, device_id: str, name: str) -> Kind:
+def _create_device_kind(
+    test_db: Session, user_id: int, device_id: str, name: str
+) -> Kind:
     device = Kind(
         user_id=user_id,
         kind="Device",
@@ -50,7 +52,9 @@ async def test_admin_device_monitor_filters_online_devices_by_version(
     test_admin_user: User,
     test_user: User,
 ):
-    online_device = _create_device_kind(test_db, test_user.id, "device-online", "Online")
+    online_device = _create_device_kind(
+        test_db, test_user.id, "device-online", "Online"
+    )
     busy_device = _create_device_kind(test_db, test_user.id, "device-busy", "Busy")
     _create_device_kind(test_db, test_user.id, "device-offline", "Offline")
 
@@ -110,7 +114,9 @@ async def test_admin_device_monitor_ignores_version_filter_for_offline_status(
     test_user: User,
 ):
     _create_device_kind(test_db, test_user.id, "device-online", "Online")
-    offline_device = _create_device_kind(test_db, test_user.id, "device-offline", "Offline")
+    offline_device = _create_device_kind(
+        test_db, test_user.id, "device-offline", "Offline"
+    )
 
     online_key = device_monitor.local_device_provider.generate_online_key(
         test_user.id, "device-online"

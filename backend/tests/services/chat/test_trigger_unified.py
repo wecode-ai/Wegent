@@ -466,3 +466,49 @@ class TestProcessContextsAttachments:
         assert result.knowledge_base_ids == [1408]
         assert result.preload_skills == ["wegent-knowledge"]
         assert result.user_selected_skills == ["wegent-knowledge"]
+
+    @pytest.mark.asyncio
+    async def test_explicit_subtask_kb_overrides_inherited_task_level_ids(self):
+        """Explicit subtask KB selection should override inherited task-level KB IDs."""
+        from app.services.chat.trigger import unified as trigger_unified
+
+        request = ExecutionRequest(
+            task_id=1263,
+            subtask_id=1697,
+            prompt="save this file",
+            system_prompt="system",
+            model_config={},
+            knowledge_base_ids=[11, 22, 33],
+            preload_skills=[],
+        )
+
+        ctx = ChatContextsResult(
+            final_message="processed",
+            has_table_context=False,
+            table_contexts=[],
+            kb=KnowledgeBaseToolsResult(
+                extra_tools=[],
+                enhanced_system_prompt="enhanced",
+                kb_meta_prompt="meta",
+                knowledge_base_ids=[33],
+                is_user_selected_kb=True,
+            ),
+        )
+
+        with patch(
+            "app.services.chat.preprocessing.prepare_contexts_for_chat",
+            new=AsyncMock(return_value=ctx),
+        ):
+            with patch(
+                "app.services.chat.trigger.unified.context_service.get_attachments_by_subtask",
+                return_value=[],
+            ):
+                result = await trigger_unified._process_contexts(
+                    db=MagicMock(),
+                    request=request,
+                    user_subtask_id=1696,
+                    user_id=2,
+                )
+
+        assert result.knowledge_base_ids == [33]
+        assert result.is_user_selected_kb is True

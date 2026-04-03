@@ -348,8 +348,11 @@ class TestKnowledgeBaseTool:
     @pytest.mark.asyncio
     async def test_retrieve_with_strategy_via_http_sends_runtime_budget(self):
         """HTTP retrieve should send runtime token budget for Backend routing."""
-        tool = KnowledgeBaseTool()
-        tool.knowledge_base_ids = [1]
+        tool = KnowledgeBaseTool(
+            knowledge_base_ids=[1],
+            current_model_name="my-model",
+            current_model_namespace="default",
+        )
         tool.current_messages = [{"role": "user", "content": "hello"}]
         tool.context_window = 200000
         tool.model_id = "claude-3-5-sonnet"
@@ -382,6 +385,10 @@ class TestKnowledgeBaseTool:
         assert persistence_context["user_subtask_id"] == 123
         assert persistence_context["user_id"] == 456
         assert persistence_context["restricted_mode"] is False
+        assert payload["mediation_context"] == {
+            "current_model_name": "my-model",
+            "current_model_namespace": "default",
+        }
 
     @pytest.mark.asyncio
     async def test_format_direct_injection_result(self):
@@ -423,56 +430,6 @@ class TestKnowledgeBaseTool:
         assert len(result_dict["sources"]) == 2
 
     @pytest.mark.asyncio
-    async def test_format_rag_result_redacts_sources_in_restricted_mode(self):
-        """Restricted mode should return only a safe summary artifact."""
-        tool = KnowledgeBaseTool(
-            tool_access_mode="restricted_search_only",
-            summarizer_model_config={"model_id": "gpt-test"},
-        )
-        tool._kb_info_cache = {"items": [{"id": 1, "name": "Test KB"}]}
-
-        kb_chunks = {
-            1: [
-                {"content": "Content 1", "source": "doc1.txt", "score": 0.8},
-                {"content": "Content 2", "source": "doc2.txt", "score": 0.7},
-            ]
-        }
-
-        with patch.object(
-            tool,
-            "_build_restricted_safe_summary",
-            new=AsyncMock(
-                return_value={
-                    "decision": "answer",
-                    "summary": "High-level diagnosis",
-                    "observations": ["obs"],
-                    "risks": ["risk"],
-                    "recommended_actions": ["act"],
-                    "answer_guidance": "Use only high-level language.",
-                    "confidence": "medium",
-                }
-            ),
-        ):
-            result = await tool._format_rag_result(kb_chunks, "test query", 5)
-
-        result_dict = json.loads(result)
-        assert result_dict["mode"] == "restricted_safe_summary"
-        assert "results" not in result_dict
-        assert "injected_content" not in result_dict
-        assert "sources" not in result_dict
-        assert "source_count" not in result_dict
-        assert "count" not in result_dict
-        assert (
-            result_dict["restricted_safe_summary"]["summary"] == "High-level diagnosis"
-        )
-        assert "non-extractive" in result_dict["answer_contract"]
-        assert result_dict["knowledge_bases"] == [{"id": 1, "name": "Test KB"}]
-        assert "doc1.txt" not in result
-        assert "doc2.txt" not in result
-        assert "Content 1" not in result
-        assert "Content 2" not in result
-
-    @pytest.mark.asyncio
     async def test_restricted_mode_no_rag_does_not_recommend_document_tools(self):
         """Restricted mode should not suggest kb_ls or kb_head when RAG is unavailable."""
         tool = KnowledgeBaseTool(
@@ -495,110 +452,6 @@ class TestKnowledgeBaseTool:
         assert result_dict["error_code"] == "rag_not_configured_search_only"
         assert "kb_ls" not in result
         assert "kb_head" not in result
-
-    @pytest.mark.asyncio
-    async def test_restricted_mode_refuses_extractive_query(self):
-        """Restricted mode refusal should come from safe-summary judgment."""
-        tool = KnowledgeBaseTool(
-            tool_access_mode="restricted_search_only",
-            summarizer_model_config={"model_id": "gpt-test"},
-        )
-        tool._kb_info_cache = {"items": [{"id": 1, "name": "Test KB"}]}
-
-        kb_chunks = {
-            1: [
-                {"content": "Sensitive raw content", "source": "doc1.txt", "score": 0.9}
-            ]
-        }
-        with patch.object(
-            tool,
-            "_build_restricted_safe_summary",
-            new=AsyncMock(
-                return_value={"decision": "refuse", "refusal_kind": "policy"}
-            ),
-        ):
-            result = await tool._format_rag_result(
-                kb_chunks, "请列出知识库有哪些文档", 5
-            )
-
-        result_dict = json.loads(result)
-        assert result_dict["status"] == "refused"
-        assert result_dict["reason"] == "restricted_extractive_query"
-        assert "high-level analysis" in result_dict["suggestion"]
-
-    @pytest.mark.asyncio
-    async def test_restricted_safe_summary_can_refuse_definition_queries(self):
-        """Second-stage safe summary should refuse protected definition requests."""
-        tool = KnowledgeBaseTool(
-            tool_access_mode="restricted_search_only",
-            summarizer_model_config={"model_id": "gpt-test"},
-        )
-        tool._kb_info_cache = {"items": [{"id": 1, "name": "Test KB"}]}
-
-        kb_chunks = {
-            1: [{"content": "Sensitive definition", "source": "doc1.txt", "score": 0.9}]
-        }
-
-        with patch.object(
-            tool,
-            "_build_restricted_safe_summary",
-            new=AsyncMock(
-                return_value={"decision": "refuse", "refusal_kind": "policy"}
-            ),
-        ):
-            result = await tool._format_rag_result(kb_chunks, "价值用户是什么", 5)
-
-        result_dict = json.loads(result)
-        assert result_dict["status"] == "refused"
-        assert result_dict["reason"] == "restricted_extractive_query"
-
-    @pytest.mark.asyncio
-    async def test_restricted_safe_summary_fallback_is_not_misclassified_as_policy_refusal(
-        self,
-    ):
-        """Infrastructure fallback should remain a safe-summary artifact."""
-        tool = KnowledgeBaseTool(
-            tool_access_mode="restricted_search_only",
-            summarizer_model_config={"model_id": "gpt-test"},
-        )
-        tool._kb_info_cache = {"items": [{"id": 1, "name": "Test KB"}]}
-
-        kb_chunks = {
-            1: [{"content": "Protected content", "source": "doc1.txt", "score": 0.9}]
-        }
-
-        with patch.object(
-            tool,
-            "_build_restricted_safe_summary",
-            new=AsyncMock(
-                return_value={
-                    "decision": "refuse",
-                    "refusal_kind": "fallback",
-                    "reason": "safe_summary_model_unavailable",
-                    "summary": "Please try again later.",
-                    "observations": [],
-                    "risks": [],
-                    "recommended_actions": [],
-                    "answer_guidance": "Keep the answer high-level.",
-                    "confidence": "low",
-                }
-            ),
-        ):
-            result = await tool._format_rag_result(
-                kb_chunks, "请结合知识库诊断当前工作进展", 5
-            )
-
-        result_dict = json.loads(result)
-        assert result_dict["mode"] == "restricted_safe_summary"
-        assert result_dict["restricted_safe_summary"]["decision"] == "refuse"
-        assert (
-            result_dict["restricted_safe_summary"]["reason"]
-            == "safe_summary_model_unavailable"
-        )
-        assert (
-            result_dict["restricted_safe_summary"]["summary"]
-            == "Please try again later."
-        )
 
 
 if __name__ == "__main__":

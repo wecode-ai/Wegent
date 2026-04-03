@@ -328,7 +328,8 @@ export interface ChatBlockUpdatedPayload {
   block_id: string
   content?: string
   tool_output?: unknown
-  status?: 'pending' | 'streaming' | 'done' | 'error'
+  tool_input?: Record<string, unknown>
+  status?: 'pending' | 'streaming' | 'running' | 'done' | 'error'
 }
 export interface ChatMessageAttachment {
   id: number

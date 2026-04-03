@@ -53,8 +53,11 @@ import redis.asyncio as aioredis
 _original_aioredis_from_url = aioredis.from_url
 aioredis.from_url = MagicMock(return_value=_mock_redis_instance)
 
-
 import pytest
+
+# Import the factory module once during test bootstrap so autouse fixtures can
+# patch module objects directly without relying on repeated string resolution.
+from executor_manager.common import redis_factory as executor_redis_factory
 
 
 @pytest.fixture
@@ -287,11 +290,12 @@ def reset_all_singletons_and_mock_redis(mocker, mock_redis_client):
     It mocks Redis connections to prevent blocking during tests.
     """
     # Mock Redis before any imports that might trigger connections
-    mocker.patch(
-        "executor_manager.common.redis_factory.redis.from_url",
+    mocker.patch.object(
+        executor_redis_factory.redis,
+        "from_url",
         return_value=mock_redis_client,
     )
-    mocker.patch("redis.from_url", return_value=mock_redis_client)
+    mocker.patch.object(redis, "from_url", return_value=mock_redis_client)
 
     # Reset singletons
     try:

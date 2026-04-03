@@ -10,7 +10,16 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from pydantic import AliasChoices, BaseModel, Field, field_validator, model_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    Field,
+    field_serializer,
+    field_validator,
+    model_validator,
+)
+
+from app.utils.workspace_archive_time import normalize_workspace_archive_datetime
 
 
 # API Format Enum for OpenAI-compatible models
@@ -128,12 +137,20 @@ class SkillRefMeta(BaseModel):
     is_public: bool = Field(False, description="Whether this is a public skill")
 
 
+class KnowledgeBaseDefaultRef(BaseModel):
+    """Knowledge base binding used for Ghost-level defaults."""
+
+    id: int
+    name: str
+
+
 # Ghost CRD schemas
 class GhostSpec(BaseModel):
     """Ghost specification"""
 
     systemPrompt: str
     mcpServers: Optional[Dict[str, Any]] = None
+    defaultKnowledgeBaseRefs: Optional[List[KnowledgeBaseDefaultRef]] = None
     skills: Optional[List[str]] = None  # Skill names list
     preload_skills: Optional[List[str]] = Field(
         None,
@@ -563,6 +580,13 @@ class ArchiveInfo(BaseModel):
     gitIncluded: bool = Field(
         False, description="Whether .git directory is included in the archive"
     )
+
+    @field_serializer("archivedAt", "expiresAt")
+    def serialize_archive_datetimes(self, value: Optional[datetime]) -> Optional[str]:
+        """Serialize archive timestamps in the configured display timezone."""
+        if value is None:
+            return None
+        return normalize_workspace_archive_datetime(value).isoformat()
 
 
 class TaskStatus(Status):

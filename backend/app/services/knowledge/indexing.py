@@ -32,30 +32,26 @@ from app.core.config import settings
 from app.db.session import SessionLocal
 from app.models.kind import Kind
 from app.models.subtask_context import ContextType, SubtaskContext
-from app.schemas.rag import (
-    SemanticSplitterConfig,
-    SentenceSplitterConfig,
-    SplitterConfig,
+from app.schemas.rag import SplitterConfig
+from app.services.knowledge.index_runtime import (
+    KnowledgeBaseIndexInfo,
+    build_kb_index_info,
+    get_kb_index_info,
+    is_organization_namespace,
+    resolve_kb_index_info,
 )
+from app.services.rag.local_gateway import LocalRagGateway
+from app.services.rag.runtime_resolver import RagRuntimeResolver
+from app.services.rag.splitter.runtime_config import parse_runtime_splitter_config
 from shared.telemetry import add_span_event
 
 logger = logging.getLogger(__name__)
+runtime_resolver = RagRuntimeResolver()
+rag_gateway = LocalRagGateway()
 
 # Excel file size limit for RAG indexing (2MB)
 EXCEL_FILE_SIZE_LIMIT = 2 * 1024 * 1024  # 2MB in bytes
 EXCEL_EXTENSIONS = frozenset({".xls", ".xlsx"})
-
-
-@dataclass
-class KnowledgeBaseIndexInfo:
-    """Container for knowledge base information needed for background indexing.
-
-    This dataclass holds all KB-related information needed by the background
-    indexing task, avoiding redundant database queries in the background task.
-    """
-
-    index_owner_user_id: int
-    summary_enabled: bool = False
 
 
 @dataclass
@@ -120,134 +116,6 @@ def get_rag_indexing_skip_reason(
     return None
 
 
-def is_organization_namespace(db: Session, namespace: str) -> bool:
-    """Check if a namespace is an organization namespace.
-
-    Args:
-        db: Database session
-        namespace: Namespace to check
-
-    Returns:
-        True if this is an organization namespace
-    """
-    # Import here to avoid circular imports
-    from app.services.knowledge.knowledge_service import _is_organization_namespace
-
-    return _is_organization_namespace(db, namespace)
-
-
-def get_kb_index_info(
-    db: Session, knowledge_base_id: str, current_user_id: int
-) -> KnowledgeBaseIndexInfo:
-    """
-    Get knowledge base information needed for indexing in a single query.
-
-    Returns index_owner_user_id and summary_enabled setting in one operation
-    to avoid redundant database queries.
-
-    For personal knowledge bases (namespace="default"), use the current user's ID.
-    For organization knowledge bases, use the current user's ID.
-    For group knowledge bases (namespace!="default"), use the KB creator's ID.
-
-    Args:
-        db: Database session
-        knowledge_base_id: Knowledge base ID (Kind.id as string)
-        current_user_id: Current requesting user's ID
-
-    Returns:
-        KnowledgeBaseIndexInfo containing index_owner_user_id and summary_enabled
-    """
-    try:
-        kb_id = int(knowledge_base_id)
-    except ValueError:
-        # If knowledge_base_id is not a valid integer, return default info
-        return KnowledgeBaseIndexInfo(
-            index_owner_user_id=current_user_id,
-            summary_enabled=False,
-        )
-
-    # Get the knowledge base (single query for all needed info)
-    kb = (
-        db.query(Kind)
-        .filter(
-            Kind.id == kb_id,
-            Kind.kind == "KnowledgeBase",
-            Kind.is_active == True,
-        )
-        .first()
-    )
-
-    if not kb:
-        # Knowledge base not found, return default info
-        return KnowledgeBaseIndexInfo(
-            index_owner_user_id=current_user_id,
-            summary_enabled=False,
-        )
-
-    # Extract summary_enabled from KB spec
-    spec = (kb.json or {}).get("spec", {})
-    summary_enabled = spec.get("summaryEnabled", False)
-
-    # Determine index_owner_user_id based on namespace
-    if kb.namespace == "default":
-        # Personal knowledge base - use current user's ID
-        index_owner_user_id = current_user_id
-    elif is_organization_namespace(db, kb.namespace):
-        # Organization knowledge base - use current user's ID for index naming
-        # All users can access organization KBs, so we use the current user's ID
-        index_owner_user_id = current_user_id
-    else:
-        # Group knowledge base - use KB creator's user_id for index naming
-        # This ensures all group members access the same index
-        index_owner_user_id = kb.user_id
-
-    return KnowledgeBaseIndexInfo(
-        index_owner_user_id=index_owner_user_id,
-        summary_enabled=summary_enabled,
-    )
-
-
-def resolve_kb_index_info(
-    db: Session,
-    knowledge_base_id: str,
-    user_id: int,
-    kb_index_info: Optional[KnowledgeBaseIndexInfo] = None,
-) -> KnowledgeBaseIndexInfo:
-    """
-    Resolve knowledge base index information.
-
-    Use pre-computed KB info if provided, otherwise fetch from DB.
-    This optimization avoids redundant DB query when called from create_document.
-
-    Args:
-        db: Database session
-        knowledge_base_id: Knowledge base ID
-        user_id: User ID (the user who triggered the indexing)
-        kb_index_info: Pre-computed KB info (optional)
-
-    Returns:
-        KnowledgeBaseIndexInfo containing index_owner_user_id and summary_enabled
-    """
-    if kb_index_info:
-        logger.debug(
-            f"[Indexing] Using pre-computed KB info: index_owner_user_id={kb_index_info.index_owner_user_id}, "
-            f"summary_enabled={kb_index_info.summary_enabled}"
-        )
-        return kb_index_info
-    else:
-        # Fallback: fetch KB info from database
-        kb_info = get_kb_index_info(
-            db=db,
-            knowledge_base_id=knowledge_base_id,
-            current_user_id=user_id,
-        )
-        logger.debug(
-            f"[Indexing] Fetched KB info from DB: index_owner_user_id={kb_info.index_owner_user_id}, "
-            f"summary_enabled={kb_info.summary_enabled}"
-        )
-        return kb_info
-
-
 def parse_splitter_config(config_dict: dict) -> Optional[SplitterConfig]:
     """
     Parse a dictionary into the appropriate SplitterConfig type.
@@ -262,24 +130,19 @@ def parse_splitter_config(config_dict: dict) -> Optional[SplitterConfig]:
         SemanticSplitterConfig, SentenceSplitterConfig, or SmartSplitterConfig instance,
         or None if invalid
     """
-    from app.schemas.rag import SmartSplitterConfig
+    return parse_runtime_splitter_config(config_dict)
 
-    if not config_dict:
+
+def _serialize_splitter_config(
+    splitter_config: Optional[SplitterConfig],
+    splitter_config_dict: Optional[dict],
+) -> Optional[dict]:
+    """Normalize splitter config to a plain dict for runtime spec transport."""
+    if splitter_config_dict:
+        return splitter_config_dict
+    if splitter_config is None:
         return None
-
-    splitter_type = config_dict.get("type")
-    if splitter_type == "semantic":
-        return SemanticSplitterConfig(**config_dict)
-    elif splitter_type == "sentence":
-        return SentenceSplitterConfig(**config_dict)
-    elif splitter_type == "smart":
-        return SmartSplitterConfig(**config_dict)
-    else:
-        # Default to sentence splitter if type is not specified or unknown
-        logger.warning(
-            f"Unknown splitter type '{splitter_type}', defaulting to sentence splitter"
-        )
-        return SentenceSplitterConfig(**config_dict)
+    return splitter_config.model_dump(exclude_none=True)
 
 
 def extract_rag_config_from_knowledge_base(
@@ -338,19 +201,10 @@ def extract_rag_config_from_knowledge_base(
         )
         return None
 
-    # Pre-compute KB index info
-    summary_enabled = spec.get("summaryEnabled", False)
-    if knowledge_base.namespace == "default":
-        index_owner_user_id = current_user_id
-    elif is_organization_namespace(db, knowledge_base.namespace):
-        index_owner_user_id = current_user_id
-    else:
-        # Group KB - use creator's user_id for shared index
-        index_owner_user_id = knowledge_base.user_id
-
-    kb_index_info = KnowledgeBaseIndexInfo(
-        index_owner_user_id=index_owner_user_id,
-        summary_enabled=summary_enabled,
+    kb_index_info = build_kb_index_info(
+        db=db,
+        knowledge_base=knowledge_base,
+        current_user_id=current_user_id,
     )
 
     # Return partial params - document-specific fields will be filled by caller
@@ -413,10 +267,6 @@ def run_document_indexing(
     Returns:
         Dict with status, document_id, and indexed_count
     """
-    from app.services.adapters.retriever_kinds import retriever_kinds_service
-    from app.services.rag.document_service import DocumentService
-    from app.services.rag.storage import create_storage_backend
-
     logger.info(
         f"[Indexing] Starting: kb_id={knowledge_base_id}, "
         f"attachment_id={attachment_id}, document_id={document_id}"
@@ -509,69 +359,34 @@ def run_document_indexing(
             },
         )
 
-        # Get retriever from database
-        retriever_crd = retriever_kinds_service.get_retriever(
+        runtime_spec = runtime_resolver.build_index_runtime_spec(
             db=db,
+            knowledge_base_id=knowledge_base_id,
+            attachment_id=attachment_id,
+            retriever_name=retriever_name,
+            retriever_namespace=retriever_namespace,
+            embedding_model_name=embedding_model_name,
+            embedding_model_namespace=embedding_model_namespace,
             user_id=user_id,
-            name=retriever_name,
-            namespace=retriever_namespace,
+            user_name=user_name,
+            document_id=document_id,
+            splitter_config_dict=_serialize_splitter_config(
+                splitter_config=splitter_config,
+                splitter_config_dict=splitter_config_dict,
+            ),
+            kb_index_info=kb_info,
         )
-
-        if not retriever_crd:
-            logger.error(
-                f"[Indexing] Retriever not found: name={retriever_name}, "
-                f"namespace={retriever_namespace}"
-            )
-            add_span_event(
-                "rag.indexing.retriever.not_found",
-                {
-                    "retriever_name": retriever_name,
-                    "retriever_namespace": retriever_namespace,
-                },
-            )
-            raise ValueError(
-                f"Retriever {retriever_name} (namespace: {retriever_namespace}) not found"
-            )
-
-        logger.info(f"[Indexing] Found retriever: {retriever_name}")
-        add_span_event(
-            "rag.indexing.retriever.found",
-            {
-                "retriever_name": retriever_name,
-                "retriever_namespace": retriever_namespace,
-            },
-        )
-
-        # Create storage backend from retriever
-        storage_backend = create_storage_backend(retriever_crd)
-        logger.info(
-            f"[Indexing] Created storage backend: {type(storage_backend).__name__}"
-        )
-        add_span_event(
-            "rag.indexing.storage_backend.created",
-            {
-                "backend_type": type(storage_backend).__name__,
-            },
-        )
-
-        # Create document service
-        doc_service = DocumentService(storage_backend=storage_backend)
-
-        # Parse splitter config if dict was provided
-        resolved_splitter_config = splitter_config
-        if splitter_config_dict and not resolved_splitter_config:
-            resolved_splitter_config = parse_splitter_config(splitter_config_dict)
 
         # Run async indexing code in event loop
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
             logger.info(
-                f"[Indexing] Starting index_document: kb_id={knowledge_base_id}, "
+                f"[Indexing] Starting gateway index_document: kb_id={knowledge_base_id}, "
                 f"index_owner_user_id={kb_info.index_owner_user_id}"
             )
             add_span_event(
-                "rag.indexing.index_document.started",
+                "rag.indexing.gateway.index_document.started",
                 {
                     "kb_id": str(knowledge_base_id),
                     "index_owner_user_id": str(kb_info.index_owner_user_id),
@@ -580,20 +395,14 @@ def run_document_indexing(
                 },
             )
             result = loop.run_until_complete(
-                doc_service.index_document(
-                    knowledge_id=knowledge_base_id,
-                    embedding_model_name=embedding_model_name,
-                    embedding_model_namespace=embedding_model_namespace,
-                    user_id=kb_info.index_owner_user_id,
-                    db=db,
-                    attachment_id=attachment_id,
-                    splitter_config=resolved_splitter_config,
-                    document_id=document_id,
-                    trace_context=None,
-                    user_name=user_name,
-                )
+                rag_gateway.index_document(runtime_spec, db=db)
             )
-            logger.info(f"[Indexing] index_document returned: result={result}")
+            logger.info(
+                "[Indexing] gateway index_document returned: status=%s indexed_count=%s index_name=%s",
+                result.get("status"),
+                result.get("indexed_count"),
+                result.get("index_name"),
+            )
         finally:
             loop.run_until_complete(loop.shutdown_asyncgens())
             loop.close()
@@ -620,7 +429,8 @@ def run_document_indexing(
         )
 
         return {
-            "status": "success",
+            "status": indexing_status,
+            "reason": result.get("reason"),
             "document_id": document_id,
             "knowledge_base_id": knowledge_base_id,
             "indexed_count": indexed_count,

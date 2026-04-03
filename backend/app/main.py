@@ -70,7 +70,11 @@ async def lifespan(app: FastAPI):
     # ==================== MCP SERVER LIFESPAN ====================
     # MCP servers need their session_manager.run() to be called within the lifespan
     # This is required for the streamable HTTP transport to work properly
-    from app.mcp_server.server import knowledge_mcp_server, system_mcp_server
+    from app.mcp_server.server import (
+        ask_user_question_mcp_server,
+        knowledge_mcp_server,
+        system_mcp_server,
+    )
 
     # ==================== STARTUP ====================
     # Try to get Redis client for distributed locking
@@ -305,7 +309,9 @@ async def lifespan(app: FastAPI):
         logger.info("✓ System MCP server session manager started")
         async with knowledge_mcp_server.session_manager.run():
             logger.info("✓ Knowledge MCP server session manager started")
-            yield
+            async with ask_user_question_mcp_server.session_manager.run():
+                logger.info("✓ Ask User MCP server session manager started")
+                yield
 
     # ==================== SHUTDOWN ====================
     logger.info("=" * 60)

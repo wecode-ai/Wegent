@@ -122,6 +122,10 @@ def test_manual_archive_endpoint_updates_task_archive(
     assert payload["success"] is True
     assert payload["task_id"] == task.id
     assert payload["archive"]["storageKey"] == "workspace-archives/1385/archive.tar.gz"
+    archived_at = datetime.fromisoformat(payload["archive"]["archivedAt"])
+    payload_expires_at = datetime.fromisoformat(payload["archive"]["expiresAt"])
+    assert archived_at.utcoffset() == timedelta(hours=8)
+    assert payload_expires_at.utcoffset() == timedelta(hours=8)
     archive_mock.assert_awaited_once()
 
     test_db.expire_all()
@@ -131,13 +135,14 @@ def test_manual_archive_endpoint_updates_task_archive(
         .first()
     )
     persisted_archive = persisted_task.json["status"]["archive"]
+    persisted_archived_at = datetime.fromisoformat(persisted_archive["archivedAt"])
 
     assert persisted_archive["storageKey"] == "workspace-archives/1385/archive.tar.gz"
     assert persisted_archive["sizeBytes"] == 1024
-    assert (
-        datetime.fromisoformat(persisted_archive["expiresAt"].replace("Z", "+00:00"))
-        == expires_at
-    )
+    assert persisted_archived_at.utcoffset() == timedelta(hours=8)
+    persisted_expires_at = datetime.fromisoformat(persisted_archive["expiresAt"])
+    assert persisted_expires_at.utcoffset() == timedelta(hours=8)
+    assert persisted_expires_at.astimezone(expires_at.tzinfo) == expires_at
 
 
 def test_manual_archive_endpoint_returns_404_without_executor(

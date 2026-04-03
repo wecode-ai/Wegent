@@ -55,7 +55,9 @@ jest.mock('@/components/ui/select', () => {
     value?: string
   }
 
-  const collectOptions = (children: React.ReactNode): Array<{ value: string; label: React.ReactNode }> => {
+  const collectOptions = (
+    children: React.ReactNode
+  ): Array<{ value: string; label: React.ReactNode }> => {
     const options: Array<{ value: string; label: React.ReactNode }> = []
 
     React.Children.forEach(children, child => {
@@ -209,9 +211,12 @@ describe('DeviceMonitorPanel', () => {
       target: { value: 'mac' },
     })
 
-    await waitFor(() => {
-      expect(mockedAdminApis.getDevices).toHaveBeenCalledTimes(2)
-    }, { timeout: 1200 })
+    await waitFor(
+      () => {
+        expect(mockedAdminApis.getDevices).toHaveBeenCalledTimes(2)
+      },
+      { timeout: 1200 }
+    )
 
     expect(mockedAdminApis.getDeviceStats).toHaveBeenCalledTimes(1)
     expect(screen.getByTestId('device-card-device-1')).toBeInTheDocument()
@@ -228,9 +233,12 @@ describe('DeviceMonitorPanel', () => {
       target: { value: '1.6.5' },
     })
 
-    await waitFor(() => {
-      expect(mockedAdminApis.getDevices).toHaveBeenCalledTimes(2)
-    }, { timeout: 1200 })
+    await waitFor(
+      () => {
+        expect(mockedAdminApis.getDevices).toHaveBeenCalledTimes(2)
+      },
+      { timeout: 1200 }
+    )
 
     expect(mockedAdminApis.getDevices).toHaveBeenLastCalledWith(
       1,
@@ -275,9 +283,12 @@ describe('DeviceMonitorPanel', () => {
       target: { value: 'offline' },
     })
 
-    await waitFor(() => {
-      expect(mockedAdminApis.getDevices).toHaveBeenCalledTimes(2)
-    }, { timeout: 1200 })
+    await waitFor(
+      () => {
+        expect(mockedAdminApis.getDevices).toHaveBeenCalledTimes(2)
+      },
+      { timeout: 1200 }
+    )
 
     expect(screen.getByTestId('version-filter-input')).toBeDisabled()
     expect(mockedAdminApis.getDevices).toHaveBeenLastCalledWith(

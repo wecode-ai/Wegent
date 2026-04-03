@@ -17,6 +17,16 @@ from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
+from app.services.knowledge.protected_mediation import (
+    ProtectedKnowledgeMediationResponse,
+    protected_knowledge_mediator,
+)
+from app.services.knowledge.retrieval_persistence import (
+    retrieval_persistence_service,
+)
+from app.services.rag.local_gateway import LocalRagGateway
+from app.services.rag.retrieval_service import RetrievalService
+from app.services.rag.runtime_resolver import RagRuntimeResolver
 
 # Constants for document reading pagination
 DEFAULT_READ_DOC_LIMIT = 50_000  # Default characters to return
@@ -25,6 +35,8 @@ MAX_READ_DOC_LIMIT = 500_000  # Maximum characters allowed per request
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/rag", tags=["internal-rag"])
+runtime_resolver = RagRuntimeResolver()
+rag_gateway = LocalRagGateway()
 
 
 class DirectInjectionRuntimeContext(BaseModel):
@@ -77,6 +89,19 @@ class RetrievePersistenceContext(BaseModel):
     )
 
 
+class RetrieveMediationContext(BaseModel):
+    """Model identity used by Backend-side protected mediation."""
+
+    current_model_name: Optional[str] = Field(
+        default=None,
+        description="Current answering model name preferred for protected mediation",
+    )
+    current_model_namespace: Optional[str] = Field(
+        default="default",
+        description="Namespace of the current answering model",
+    )
+
+
 class InternalRetrieveRequest(BaseModel):
     """Simplified retrieve request for internal use."""
 
@@ -109,6 +134,10 @@ class InternalRetrieveRequest(BaseModel):
         default=None,
         description="Optional SubtaskContext persistence metadata handled entirely in Backend",
     )
+    mediation_context: Optional[RetrieveMediationContext] = Field(
+        default=None,
+        description="Optional model identity used by Backend restricted mediation",
+    )
 
     @model_validator(mode="after")
     def validate_knowledge_base_targets(self):
@@ -137,7 +166,10 @@ class InternalRetrieveResponse(BaseModel):
     total_estimated_tokens: int = 0
 
 
-@router.post("/retrieve", response_model=InternalRetrieveResponse)
+@router.post(
+    "/retrieve",
+    response_model=InternalRetrieveResponse | ProtectedKnowledgeMediationResponse,
+)
 async def internal_retrieve(
     request: InternalRetrieveRequest,
     db: Session = Depends(get_db),
@@ -157,9 +189,6 @@ async def internal_retrieve(
         Retrieval results with records
     """
     try:
-        from app.services.rag.retrieval_service import RetrievalService
-
-        retrieval_service = RetrievalService()
         knowledge_base_ids = request.knowledge_base_ids or []
         if request.knowledge_base_id is not None:
             knowledge_base_ids = [request.knowledge_base_id]
@@ -173,19 +202,18 @@ async def internal_retrieve(
 
         runtime_context = request.runtime_context
         persistence_context = request.persistence_context
+        restricted_mode = bool(
+            persistence_context and persistence_context.restricted_mode
+        )
 
-        result = await retrieval_service.retrieve_for_chat_shell(
-            query=request.query,
+        runtime_spec = runtime_resolver.build_query_runtime_spec(
             knowledge_base_ids=knowledge_base_ids,
-            db=db,
+            query=request.query,
             max_results=request.max_results,
             document_ids=request.document_ids,
-            user_name=request.user_name,
             route_mode=request.route_mode,
             user_id=persistence_context.user_id if persistence_context else None,
-            user_subtask_id=(
-                persistence_context.user_subtask_id if persistence_context else None
-            ),
+            user_name=request.user_name,
             context_window=runtime_context.context_window if runtime_context else None,
             used_context_tokens=(
                 runtime_context.used_context_tokens if runtime_context else 0
@@ -199,9 +227,11 @@ async def internal_retrieve(
             max_direct_chunks=(
                 runtime_context.max_direct_chunks if runtime_context else 500
             ),
-            restricted_mode=(
-                persistence_context.restricted_mode if persistence_context else False
-            ),
+            restricted_mode=restricted_mode,
+        )
+        result = await rag_gateway.query(
+            runtime_spec,
+            db=db,
         )
 
         records = result.get("records", [])
@@ -210,12 +240,12 @@ async def internal_retrieve(
         total_content_chars = sum(len(r.get("content", "")) for r in records)
         total_content_kb = total_content_chars / 1024
         available_for_kb = (
-            retrieval_service._calculate_ratio_based_direct_injection_budget(
+            RetrievalService._calculate_ratio_based_direct_injection_budget(
                 runtime_context.context_window if runtime_context else None
             )
         )
         available_injection_tokens = (
-            retrieval_service._calculate_available_injection_tokens(
+            RetrievalService._calculate_available_injection_tokens(
                 context_window=(
                     runtime_context.context_window if runtime_context else None
                 ),
@@ -253,8 +283,39 @@ async def internal_retrieve(
             ),
         )
 
+        mode = result.get("mode", "rag_retrieval")
+        total_estimated_tokens = result.get("total_estimated_tokens", 0)
+
+        if persistence_context is not None:
+            retrieval_persistence_service.persist_retrieval_result(
+                db=db,
+                user_subtask_id=persistence_context.user_subtask_id,
+                user_id=persistence_context.user_id,
+                query=request.query,
+                mode=mode,
+                records=records,
+                restricted_mode=restricted_mode,
+            )
+
+        if restricted_mode:
+            return await protected_knowledge_mediator.transform(
+                db=db,
+                query=request.query,
+                retrieval_mode=mode,
+                records=records,
+                mediation_context=(
+                    request.mediation_context.model_dump(exclude_none=True)
+                    if request.mediation_context
+                    else None
+                ),
+                knowledge_base_ids=knowledge_base_ids,
+                total_estimated_tokens=total_estimated_tokens,
+                user_id=persistence_context.user_id if persistence_context else None,
+                user_name=request.user_name or "system",
+            )
+
         return InternalRetrieveResponse(
-            mode=result.get("mode", "rag_retrieval"),
+            mode=mode,
             records=[
                 RetrieveRecord(
                     content=r.get("content", ""),
@@ -266,7 +327,7 @@ async def internal_retrieve(
                 for r in records
             ],
             total=len(records),
-            total_estimated_tokens=result.get("total_estimated_tokens", 0),
+            total_estimated_tokens=total_estimated_tokens,
         )
 
     except ValueError as e:
@@ -481,7 +542,7 @@ async def get_all_chunks(
     db: Session = Depends(get_db),
 ):
     """
-    Get all chunks from a knowledge base for direct injection.
+    Legacy internal endpoint for fetching all chunks for direct injection.
 
     This endpoint retrieves all chunks stored in a knowledge base,
     used when the total content fits within the model's context window.
@@ -737,7 +798,7 @@ async def read_document(
         Document content with pagination info
     """
     try:
-        from app.services.rag.document_read_service import (
+        from app.services.knowledge.document_read_service import (
             DOCUMENT_READ_ERROR_ACCESS_DENIED,
             DOCUMENT_READ_ERROR_NOT_FOUND,
             document_read_service,
@@ -799,7 +860,7 @@ async def read_documents(
 ) -> ReadDocsResponse:
     """Read multiple documents and optionally persist kb_head usage."""
     try:
-        from app.services.rag.document_read_service import document_read_service
+        from app.services.knowledge.document_read_service import document_read_service
 
         persistence_context = request.persistence_context
         results = document_read_service.read_documents(

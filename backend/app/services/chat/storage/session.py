@@ -729,10 +729,11 @@ class SessionManager:
         self,
         subtask_id: int,
         tool_use_id: str,
-        status: str = "done",
+        status: Optional[str] = None,
         tool_output: Optional[str] = None,
+        tool_input: Optional[Dict[str, Any]] = None,
     ) -> None:
-        """Update tool block status.
+        """Update tool block status, output, and/or input.
 
         Note: This requires reading and updating the block, which is O(n).
         However, tool blocks are relatively rare compared to text chunks.
@@ -740,8 +741,9 @@ class SessionManager:
         Args:
             subtask_id: Subtask ID
             tool_use_id: Tool use ID
-            status: New status (default: "done")
-            tool_output: Optional tool output
+            status: New status (optional, e.g. "done", "error")
+            tool_output: Optional tool output to set
+            tool_input: Optional tool input/arguments to update (used by ask_user_question MCP tool)
         """
         try:
             blocks_key = self._get_blocks_key(subtask_id)
@@ -759,14 +761,18 @@ class SessionManager:
                         block.get("type") == "tool"
                         and block.get("tool_use_id") == tool_use_id
                     ):
-                        block["status"] = status
-                        if tool_output:
+                        if status is not None:
+                            block["status"] = status
+                        if tool_output is not None:
                             block["tool_output"] = tool_output
+                        if tool_input is not None:
+                            block["tool_input"] = tool_input
                         # Update the block in place
                         await redis_client.lset(blocks_key, i, json.dumps(block))
                         logger.debug(
-                            f"[SessionManager] Updated tool block status for subtask {subtask_id}: "
-                            f"id={tool_use_id}, status={status}"
+                            f"[SessionManager] Updated tool block for subtask {subtask_id}: "
+                            f"id={tool_use_id}, status={status}, "
+                            f"has_tool_input={tool_input is not None}"
                         )
                         break
             finally:

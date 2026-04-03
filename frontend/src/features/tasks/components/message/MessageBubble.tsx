@@ -156,6 +156,8 @@ export interface MessageBubbleProps {
   isWaiting?: boolean
   /** Generic callback when a component inside the message bubble wants to send a message (e.g., ClarificationForm) */
   onSendMessage?: (content: string) => void
+  /** Callback when user submits an ask_user_question form - sends the pre-formatted answer as a new conversation message */
+  onAskUserSubmit?: (askId: string, formattedMessage: string) => void
   /** Callback when user selects text in AI message (optional) - receives selected text */
   onTextSelect?: (selectedText: string) => void
   /** Paragraph-level action configuration - shows action button on hover for each paragraph in AI messages */
@@ -346,6 +348,7 @@ const MessageBubble = memo(
     t,
     isWaiting,
     onSendMessage,
+    onAskUserSubmit,
     onTextSelect,
     paragraphAction,
     isCurrentUserMessage,
@@ -1480,6 +1483,10 @@ const MessageBubble = memo(
                         blocks={msg.result.blocks}
                         annotations={msg.result?.annotations}
                         onUseAsReference={onUseAsReference}
+                        taskId={selectedTaskDetail?.id}
+                        subtaskId={msg.subtaskId}
+                        currentMessageIndex={index}
+                        onAskUserSubmit={onAskUserSubmit}
                       />
                       <SourceReferences sources={msg.sources || msg.result?.sources || []} />
                       <GeminiAnnotations annotations={msg.result?.annotations || []} />
