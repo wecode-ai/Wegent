@@ -37,7 +37,6 @@ from app.services.knowledge.index_runtime import (
     KnowledgeBaseIndexInfo,
     build_kb_index_info,
     get_kb_index_info,
-    is_organization_namespace,
     resolve_kb_index_info,
 )
 from app.services.rag.local_gateway import LocalRagGateway
@@ -114,6 +113,7 @@ def get_rag_indexing_skip_reason(
             return f"EXCEL_FILE_SIZE_EXCEEDED|{normalized_extension}|{limit_mb:.0f}|{size_mb:.2f}"
 
     return None
+
 
 def parse_splitter_config(config_dict: dict) -> Optional[SplitterConfig]:
     """
