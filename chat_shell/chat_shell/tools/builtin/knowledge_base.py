@@ -10,7 +10,8 @@ between direct injection and RAG retrieval based on context window capacity.
 
 import json
 import logging
-from typing import Any, Dict, List, Optional
+from contextlib import contextmanager
+from typing import Any, Dict, Iterator, List, Optional
 
 from langchain_core.callbacks import CallbackManagerForToolRun
 from langchain_core.tools import BaseTool
@@ -46,6 +47,14 @@ class KnowledgeBaseInput(BaseModel):
         default=20,
         description="Maximum number of results to return. Increased from 5 to 20 for better RAG coverage.",
     )
+    document_ids: list[int] = Field(
+        default_factory=list,
+        description="Optional document IDs to restrict retrieval scope.",
+    )
+    document_names: list[str] = Field(
+        default_factory=list,
+        description="Optional exact document names to restrict retrieval scope when document IDs are not known.",
+    )
 
 
 class KnowledgeBaseTool(BaseTool):
@@ -73,6 +82,7 @@ class KnowledgeBaseTool(BaseTool):
     # Document IDs to filter (optional, for searching specific documents only)
     # When set, only chunks from these documents will be returned
     document_ids: list[int] = Field(default_factory=list)
+    document_names: list[str] = Field(default_factory=list)
 
     # User ID for access control
     user_id: int = 0
@@ -468,7 +478,36 @@ class KnowledgeBaseTool(BaseTool):
         """Synchronous run - not implemented, use async version."""
         raise NotImplementedError("KnowledgeBaseTool only supports async execution")
 
+    @contextmanager
+    def _apply_call_scoped_filters(
+        self,
+        document_ids: Optional[list[int]] = None,
+        document_names: Optional[list[str]] = None,
+    ) -> Iterator[None]:
+        """Temporarily apply per-call document filters."""
+        original_document_ids = self.document_ids
+        original_document_names = self.document_names
+        self.document_ids = document_ids or original_document_ids
+        self.document_names = document_names or original_document_names
+        try:
+            yield
+        finally:
+            self.document_ids = original_document_ids
+            self.document_names = original_document_names
+
     async def _arun(
+        self,
+        query: str,
+        max_results: int = 20,
+        document_ids: Optional[list[int]] = None,
+        document_names: Optional[list[str]] = None,
+        run_manager: CallbackManagerForToolRun | None = None,
+    ) -> str:
+        """Execute knowledge base search with optional per-call scoped filters."""
+        with self._apply_call_scoped_filters(document_ids, document_names):
+            return await self._arun_impl(query, max_results, run_manager)
+
+    async def _arun_impl(
         self,
         query: str,
         max_results: int = 20,
@@ -900,6 +939,8 @@ class KnowledgeBaseTool(BaseTool):
             payload["mediation_context"] = mediation_context
         if self.document_ids:
             payload["document_ids"] = self.document_ids
+        if self.document_names:
+            payload["document_names"] = self.document_names
         if self.user_name is not None:
             payload["user_name"] = self.user_name
 

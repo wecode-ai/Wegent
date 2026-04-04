@@ -1,0 +1,71 @@
+# SPDX-FileCopyrightText: 2026 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from chat_shell.tools.builtin import KnowledgeBaseTool
+
+
+def test_knowledge_base_input_supports_document_names():
+    from chat_shell.tools.builtin.knowledge_base import KnowledgeBaseInput
+
+    payload = KnowledgeBaseInput(
+        query="checklist",
+        max_results=5,
+        document_names=["release.md"],
+    )
+
+    assert payload.document_names == ["release.md"]
+
+
+@pytest.mark.asyncio
+async def test_http_mode_forwards_document_names_and_ids():
+    tool = KnowledgeBaseTool(
+        knowledge_base_ids=[1, 2],
+        user_id=7,
+    )
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "mode": "rag_retrieval",
+        "records": [],
+        "total": 0,
+        "total_estimated_tokens": 0,
+    }
+
+    with (
+        patch("httpx.AsyncClient") as mock_client,
+        patch.object(
+            tool,
+            "_get_kb_info",
+            AsyncMock(
+                return_value={
+                    "items": [
+                        {
+                            "id": 1,
+                            "name": "Test KB",
+                            "rag_enabled": True,
+                            "max_calls_per_conversation": 10,
+                            "exempt_calls_before_check": 5,
+                        }
+                    ]
+                }
+            ),
+        ),
+    ):
+        post = AsyncMock(return_value=mock_response)
+        mock_client.return_value.__aenter__.return_value.post = post
+
+        await tool._arun(
+            query="release checklist",
+            max_results=8,
+            document_ids=[101],
+            document_names=["release.md"],
+        )
+
+    payload = post.call_args.kwargs["json"]
+    assert payload["document_ids"] == [101]
+    assert payload["document_names"] == ["release.md"]
