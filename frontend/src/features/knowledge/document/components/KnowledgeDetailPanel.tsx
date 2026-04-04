@@ -19,15 +19,19 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { useUser } from '@/features/common/UserContext'
 import { useTeamContext } from '@/contexts/TeamContext'
 import { useTaskContext } from '@/features/tasks/contexts/taskContext'
-import { listGroups } from '@/apis/groups'
 import { ChatArea } from '@/features/tasks/components/chat'
 import { DocumentList, type KbGroupInfo } from './DocumentList'
 import { DocumentPanel } from './DocumentPanel'
 import { KnowledgeBaseSummaryCard } from './KnowledgeBaseSummaryCard'
 import { PermissionManagementTab } from '../../permission/components/PermissionManagementTab'
 import { useKnowledgePermissions } from '../../permission/hooks/useKnowledgePermissions'
+import { useNamespaceRoleMap } from '../hooks/useNamespaceRoleMap'
+import {
+  canManageKnowledgeBase,
+  canManageKnowledgeBaseDocuments,
+  canManageKnowledgeBasePermissions,
+} from '@/utils/namespace-permissions'
 import type { KnowledgeBase } from '@/types/knowledge'
-import type { BaseRole } from '@/types/base-role'
 import type { Team } from '@/types/api'
 
 interface KnowledgeDetailPanelProps {
@@ -71,8 +75,7 @@ export function KnowledgeDetailPanel({
   // Document panel collapsed state (for notebook mode)
   const [_isDocumentPanelCollapsed, setIsDocumentPanelCollapsed] = useState(false)
 
-  // Group role map for permission checking
-  const [groupRoleMap, setGroupRoleMap] = useState<Map<string, BaseRole>>(new Map())
+  const namespaceRoleMap = useNamespaceRoleMap()
 
   // Fetch user permission for this knowledge base
   const { myPermission, fetchMyPermission } = useKnowledgePermissions({
@@ -85,23 +88,6 @@ export function KnowledgeDetailPanel({
       fetchMyPermission()
     }
   }, [selectedKb, fetchMyPermission])
-
-  // Fetch all groups and build role map for permission checking
-  useEffect(() => {
-    listGroups()
-      .then(response => {
-        const roleMap = new Map<string, BaseRole>()
-        response.items.forEach(group => {
-          if (group.my_role) {
-            roleMap.set(group.name, group.my_role)
-          }
-        })
-        setGroupRoleMap(roleMap)
-      })
-      .catch(error => {
-        console.error('Failed to load groups for role map:', error)
-      })
-  }, [])
 
   // Filter teams for knowledge mode
   const filteredTeams = useMemo(() => {
@@ -120,29 +106,34 @@ export function KnowledgeDetailPanel({
   // Check if user can manage this knowledge base
   const canManageKb = useMemo(() => {
     if (!selectedKb || !user) return false
-    // Personal knowledge base - check user ownership
-    if (selectedKb.namespace === 'default') {
-      return selectedKb.user_id === user.id
-    }
-    // Organization knowledge base - only admin can manage
-    if (selectedKb.namespace === 'organization') {
-      return user.role === 'admin'
-    }
-    // Group knowledge base - check group role
-    // Developer or higher can edit, Maintainer or higher can delete
-    const groupRole = groupRoleMap.get(selectedKb.namespace)
-    return groupRole === 'Owner' || groupRole === 'Maintainer' || groupRole === 'Developer'
-  }, [selectedKb, user, groupRoleMap])
+    return canManageKnowledgeBase({
+      currentUserId: user.id,
+      knowledgeBase: selectedKb,
+      knowledgeRole: myPermission?.role,
+      namespaceRole: namespaceRoleMap.get(selectedKb.namespace),
+    })
+  }, [selectedKb, user, myPermission?.role, namespaceRoleMap])
 
-  // Check if user can manage permissions (is creator or has Maintainer/Owner role)
+  const canUploadDocuments = useMemo(() => {
+    if (!selectedKb || !user) return false
+    return canManageKnowledgeBaseDocuments({
+      currentUserId: user.id,
+      knowledgeBase: selectedKb,
+      knowledgeRole: myPermission?.role,
+      namespaceRole: namespaceRoleMap.get(selectedKb.namespace),
+    })
+  }, [selectedKb, user, myPermission?.role, namespaceRoleMap])
+
+  // Check if user can manage permissions (creator, namespace manager, or KB manager)
   const canManagePermissions = useMemo(() => {
     if (!selectedKb || !user) return false
-    // Creator can always manage permissions
-    if (selectedKb.user_id === user.id) return true
-    // User with Maintainer or Owner role can manage
-    if (myPermission?.role === 'Maintainer' || myPermission?.role === 'Owner') return true
-    return false
-  }, [selectedKb, user, myPermission])
+    return canManageKnowledgeBasePermissions({
+      currentUserId: user.id,
+      knowledgeBase: selectedKb,
+      knowledgeRole: myPermission?.role,
+      namespaceRole: namespaceRoleMap.get(selectedKb.namespace),
+    })
+  }, [selectedKb, user, myPermission?.role, namespaceRoleMap])
 
   // Determine KB type
   const isNotebook = selectedKb?.kb_type === 'notebook'
@@ -195,7 +186,8 @@ export function KnowledgeDetailPanel({
         {/* Right panel - Document management */}
         <DocumentPanel
           knowledgeBase={selectedKb}
-          canManage={canManageKb}
+          canUpload={canUploadDocuments}
+          canManageAllDocuments={canManageKb}
           canManagePermissions={canManagePermissions}
           onDocumentSelectionChange={setSelectedDocumentIds}
           onCollapsedChange={setIsDocumentPanelCollapsed}
@@ -238,7 +230,8 @@ export function KnowledgeDetailPanel({
           {activeTab === 'documents' ? (
             <DocumentList
               knowledgeBase={selectedKb}
-              canManage={canManageKb}
+              canUpload={canUploadDocuments}
+              canManageAllDocuments={canManageKb}
               headerActions={headerActions}
               groupInfo={groupInfo}
               onGroupClick={onGroupClick}

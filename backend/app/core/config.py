@@ -146,6 +146,13 @@ class Settings(BaseSettings):
     # Cleanup scanning interval seconds
     TASK_EXECUTOR_CLEANUP_INTERVAL_SECONDS: int = 600
 
+    # Workspace archive configuration
+    WORKSPACE_ARCHIVE_MAX_SIZE_MB: int = 500
+    WORKSPACE_ARCHIVE_RETENTION_DAYS: int = 30
+    WORKSPACE_ARCHIVE_BUCKET: str = "wegent-archives"
+    WORKSPACE_ARCHIVE_ENABLED: bool = True
+    WORKSPACE_ARCHIVE_TIMEZONE: str = "Asia/Shanghai"
+
     # Frontend URL configuration
     FRONTEND_URL: str = "http://localhost:3000"
 

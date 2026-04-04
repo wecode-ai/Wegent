@@ -337,9 +337,8 @@ class TestKBPriorityLogic:
                     assert call_args[1]["knowledge_base_ids"] == [10]
                     assert call_args[1]["injection_mode"] == "hybrid"
                     assert call_args[1]["tool_access_mode"] == "restricted_search_only"
-                    assert call_args[1]["summarizer_model_config"] == {
-                        "model_id": "gpt-test"
-                    }
+                    assert call_args[1]["current_model_name"] is None
+                    assert call_args[1]["current_model_namespace"] == "default"
                     assert len(kb_result.extra_tools) == 1
                     assert kb_result.knowledge_base_ids == [10]
                     assert "Restricted Knowledge Bases In Scope" in (
@@ -681,6 +680,49 @@ class TestKBRefIdBasedLookup:
                 # Verify ID is included
                 assert kb_refs[0]["id"] == 10
                 assert kb_refs[0]["name"] == "Test KB"
+
+    def test_sync_kb_appends_to_existing_task_level_refs(self, service, mock_db):
+        """Test that message-time KB sync appends to existing task-level refs."""
+        mock_task = Mock(spec=TaskResource)
+        mock_task.id = 100
+        mock_task.json = {
+            "spec": {
+                "title": "Test Task",
+                "knowledgeBaseRefs": [
+                    {"id": 11, "name": "Ghost Docs"},
+                    {"id": 22, "name": "Runbooks"},
+                ],
+            }
+        }
+
+        appended_kb = Mock(spec=Kind)
+        appended_kb.id = 33
+        appended_kb.kind = "KnowledgeBase"
+        appended_kb.namespace = "default"
+        appended_kb.is_active = True
+        appended_kb.json = {"spec": {"name": "Release Notes"}}
+
+        mock_query = MagicMock()
+        mock_db.query.return_value = mock_query
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = appended_kb
+
+        with patch.object(service, "can_access_knowledge_base", return_value=True):
+            with patch(
+                "app.services.knowledge.task_knowledge_base_service.flag_modified"
+            ):
+                result = service.sync_subtask_kb_to_task(
+                    db=mock_db,
+                    task=mock_task,
+                    knowledge_id=33,
+                    user_id=1,
+                    user_name="testuser",
+                )
+
+                assert result is True
+                assert {
+                    ref["id"] for ref in mock_task.json["spec"]["knowledgeBaseRefs"]
+                } == {11, 22, 33}
 
     def test_sync_kb_dedup_by_id(self, service, mock_db, mock_knowledge_base):
         """Test that sync deduplication works with ID"""

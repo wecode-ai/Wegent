@@ -99,9 +99,6 @@ export interface UseKnowledgeSidebarReturn {
   // Get group info for a KB (accepts both KnowledgeBase and KnowledgeBaseWithGroupInfo)
   getKbGroupInfo: (kb: KbDataItem) => KbGroupInfo
 
-  // Admin status
-  isAdmin: boolean
-
   // Current user
   currentUser: User | null
 
@@ -155,7 +152,6 @@ function toKnowledgeBase(kb: KnowledgeBaseWithGroupInfo): KnowledgeBase {
 
 export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
   const { user } = useUser()
-  const isAdmin = user?.role === 'admin'
 
   // Data state - using the new all-grouped API response
   const [allGroupedData, setAllGroupedData] = useState<AllGroupedKnowledgeResponse | null>(null)
@@ -494,9 +490,6 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
 
     // Get group info for a KB
     getKbGroupInfo,
-
-    // Admin status
-    isAdmin,
 
     // Current user
     currentUser: user,

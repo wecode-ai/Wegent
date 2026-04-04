@@ -87,6 +87,7 @@
     "table": {
       "name": "Name",
       "group": "Group",
+      "permission": "Permission",
       "lastAccess": "Last Access",
       "actions": "Actions",
       "edit": "Edit",

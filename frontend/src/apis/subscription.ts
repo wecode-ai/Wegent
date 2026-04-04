@@ -226,7 +226,7 @@ export const subscriptionApis = {
     if (subscriptionId) {
       return apiClient.post(`/subscriptions/${subscriptionId}/developer/binding/start`, request)
     }
-    return apiClient.post('/developer/binding/start', request)
+    return apiClient.post('/subscriptions/developer/binding/start', request)
   },
 
   /**
@@ -240,7 +240,7 @@ export const subscriptionApis = {
     if (subscriptionId) {
       return apiClient.post(`/subscriptions/${subscriptionId}/developer/binding/cancel`, request)
     }
-    return apiClient.post('/developer/binding/cancel', request)
+    return apiClient.post('/subscriptions/developer/binding/cancel', request)
   },
 
   /**

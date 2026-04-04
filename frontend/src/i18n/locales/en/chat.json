@@ -607,5 +607,22 @@
     "lightbox": "Image preview",
     "no_models": "No image models available"
   },
+  "ask_user_question": {
+    "title": "Smart Follow-up",
+    "recommended": "Recommended",
+    "submit": "Submit Answer",
+    "submitting": "Submitting...",
+    "submit_failed": "Failed to submit",
+    "required_field": "This field is required",
+    "text_placeholder": "Enter your answer...",
+    "answered": "Answered",
+    "selected": "Selected",
+    "timeout": "No response received (timed out)",
+    "other": "Other",
+    "other_placeholder": "Please specify...",
+    "other_required": "Please describe your answer",
+    "custom_input": "Custom Input",
+    "custom_placeholder": "Enter custom input..."
+  },
   "scroll_to_bottom": "Scroll to bottom"
 }

@@ -24,13 +24,12 @@ from app.core.config import settings
 from app.models.subtask import Subtask
 from app.models.task import TaskResource
 from app.schemas.kind import ArchiveInfo, Task
-
-from .storage import (
-    ARCHIVE_ENABLED,
-    ARCHIVE_MAX_SIZE_MB,
-    ARCHIVE_RETENTION_DAYS,
-    archive_storage_service,
+from app.utils.workspace_archive_time import (
+    normalize_workspace_archive_datetime,
+    workspace_archive_now,
 )
+
+from .storage import archive_storage_service
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +76,7 @@ class ArchiveService:
         Returns:
             ArchiveInfo if successful, None if skipped or failed
         """
-        if not ARCHIVE_ENABLED:
+        if not settings.WORKSPACE_ARCHIVE_ENABLED:
             logger.info("Workspace archiving is disabled")
             return None
 
@@ -108,7 +107,7 @@ class ArchiveService:
             # Create archive info
             archive_info = ArchiveInfo(
                 storageKey=storage_key,
-                archivedAt=datetime.utcnow(),
+                archivedAt=workspace_archive_now(),
                 expiresAt=archive_storage_service.calculate_expiration_time(),
                 sizeBytes=archive_result.get("size_bytes"),
                 sessionFileIncluded=archive_result.get("session_file_included", False),
@@ -171,7 +170,11 @@ class ArchiveService:
                 return False
 
             # Check if archive is expired
-            if archive_info.expiresAt and archive_info.expiresAt < datetime.utcnow():
+            if (
+                archive_info.expiresAt
+                and normalize_workspace_archive_datetime(archive_info.expiresAt)
+                < workspace_archive_now()
+            ):
                 logger.info(
                     f"[ArchiveService] Archive expired for task {task_id}, "
                     f"expired at {archive_info.expiresAt}"
@@ -239,7 +242,11 @@ class ArchiveService:
                 return False, None, None
 
             # Check expiration
-            if archive_info.expiresAt and archive_info.expiresAt < datetime.utcnow():
+            if (
+                archive_info.expiresAt
+                and normalize_workspace_archive_datetime(archive_info.expiresAt)
+                < workspace_archive_now()
+            ):
                 return False, None, "expired"
 
             return True, archive_info.storageKey, None
@@ -275,7 +282,7 @@ class ArchiveService:
             "upload_url": upload_url,
             "executor_name": executor_name,
             "executor_namespace": executor_namespace,
-            "max_size_mb": ARCHIVE_MAX_SIZE_MB,
+            "max_size_mb": settings.WORKSPACE_ARCHIVE_MAX_SIZE_MB,
         }
 
         logger.info(

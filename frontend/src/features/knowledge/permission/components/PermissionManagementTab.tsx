@@ -43,7 +43,7 @@ export function PermissionManagementTab({ kbId }: PermissionManagementTabProps) 
     updatePermission,
     deletePermission,
     clearError,
-  } = useKnowledgePermissions({ kbId })
+  } = useKnowledgePermissions({ kbId, includePendingRequests: true })
 
   // Fetch permissions on mount
   useEffect(() => {

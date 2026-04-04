@@ -3,18 +3,48 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import json
+import logging
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from app.services.context.context_service import context_service
-from app.services.rag.retrieval_persistence_service import RetrievalPersistenceService
+from app.services.knowledge.retrieval_persistence import RetrievalPersistenceService
 
 
 @pytest.mark.unit
 class TestRetrievalPersistenceService:
     def setup_method(self) -> None:
         self.service = RetrievalPersistenceService()
+
+    def test_persist_retrieval_result_skips_missing_user_subtask_id(self) -> None:
+        db = MagicMock()
+
+        self.service.persist_retrieval_result(
+            db=db,
+            user_subtask_id=None,
+            user_id=7,
+            query="q",
+            mode="rag_retrieval",
+            records=[{"knowledge_base_id": 1, "title": "doc", "content": "chunk"}],
+        )
+
+        db.assert_not_called()
+
+    def test_prepare_payload_redacts_titles_in_restricted_mode(self) -> None:
+        payload = self.service._prepare_persistence_payload(
+            records=[
+                {
+                    "knowledge_base_id": 1,
+                    "title": "salary-plan.md",
+                    "content": "hidden",
+                    "score": 0.9,
+                }
+            ],
+            restricted_mode=True,
+        )
+
+        assert payload[1]["sources"][0]["title"] == "Source 1"
 
     def test_build_extracted_text_includes_content_for_normal_mode(self) -> None:
         """Normal persistence should keep chunk content and sources."""
@@ -157,12 +187,12 @@ class TestRetrievalPersistenceService:
         assert update_kwargs["restricted_mode"] is True
         assert update_kwargs["sources"][0]["title"] == "Source 1"
 
-    def test_persist_retrieval_result_skips_zero_user_id(self) -> None:
-        """Persistence should skip sentinel user_id=0."""
+    def test_persist_retrieval_result_allows_zero_user_id(self) -> None:
+        """Persistence should allow user_id=0 when control-plane validation does."""
         db = MagicMock()
 
-        mock_get_context_map = MagicMock()
-        mock_create_context = MagicMock()
+        mock_get_context_map = MagicMock(return_value={})
+        mock_create_context = MagicMock(return_value=MagicMock(id=101))
         mock_update_context = MagicMock()
 
         with patch.multiple(
@@ -188,6 +218,44 @@ class TestRetrievalPersistenceService:
                 restricted_mode=False,
             )
 
-        mock_get_context_map.assert_not_called()
-        mock_create_context.assert_not_called()
+        mock_get_context_map.assert_called_once_with(
+            db=db,
+            subtask_id=12,
+            knowledge_ids=[7],
+        )
+        mock_create_context.assert_called_once()
         mock_update_context.assert_not_called()
+
+    def test_persist_retrieval_result_swallows_context_errors(self, caplog) -> None:
+        """Persistence failures must not fail the main retrieval flow."""
+        db = MagicMock()
+
+        with (
+            patch.object(
+                context_service,
+                "get_knowledge_base_context_map_by_subtask",
+                side_effect=RuntimeError("db write failed"),
+            ),
+            caplog.at_level(
+                logging.WARNING,
+                logger="app.services.knowledge.retrieval_persistence",
+            ),
+        ):
+            self.service.persist_retrieval_result(
+                db=db,
+                user_subtask_id=12,
+                user_id=34,
+                query="search query",
+                mode="rag_retrieval",
+                records=[
+                    {
+                        "content": "chunk 1",
+                        "title": "doc.md",
+                        "score": 0.9,
+                        "knowledge_base_id": 7,
+                    }
+                ],
+                restricted_mode=False,
+            )
+
+        assert "Failed to persist retrieval result" in caplog.text

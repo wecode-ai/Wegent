@@ -585,5 +585,22 @@
     "lightbox": "图片预览",
     "no_models": "暂无可用的图片模型"
   },
+  "ask_user_question": {
+    "title": "智能追问",
+    "recommended": "推荐",
+    "submit": "提交回答",
+    "submitting": "提交中...",
+    "submit_failed": "提交失败",
+    "required_field": "此问题必须回答",
+    "text_placeholder": "请输入您的回答...",
+    "answered": "已回答",
+    "selected": "已选择",
+    "timeout": "未收到回答（已超时）",
+    "other": "其他",
+    "other_placeholder": "请输入...",
+    "other_required": "请描述您的答案",
+    "custom_input": "自定义输入",
+    "custom_placeholder": "请输入您的自定义内容..."
+  },
   "scroll_to_bottom": "滚动到底部"
 }

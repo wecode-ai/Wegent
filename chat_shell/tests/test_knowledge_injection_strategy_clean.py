@@ -318,18 +318,25 @@ class TestKnowledgeBaseToolClean:
                 "total": 0,
             }
 
-            route_mode, kb_chunks = await tool._retrieve_with_strategy_from_all_kbs(
+            route_mode, raw_result = await tool._retrieve_with_strategy_from_all_kbs(
                 "test query", 5
             )
 
         assert route_mode == "rag_retrieval"
-        assert kb_chunks == {}
+        assert raw_result == {
+            "mode": "rag_retrieval",
+            "records": [],
+            "total": 0,
+        }
 
     @pytest.mark.asyncio
     async def test_retrieve_with_strategy_via_http_sends_runtime_budget(self):
         """HTTP retrieve should send runtime token budget for Backend routing."""
-        tool = KnowledgeBaseTool()
-        tool.knowledge_base_ids = [1]
+        tool = KnowledgeBaseTool(
+            knowledge_base_ids=[1],
+            current_model_name="my-model",
+            current_model_namespace="default",
+        )
         tool.current_messages = [{"role": "user", "content": "hello"}]
         tool.context_window = 200000
         tool.model_id = "claude-3-5-sonnet"
@@ -362,6 +369,10 @@ class TestKnowledgeBaseToolClean:
         assert persistence_context["user_subtask_id"] == 123
         assert persistence_context["user_id"] == 456
         assert persistence_context["restricted_mode"] is False
+        assert payload["mediation_context"] == {
+            "current_model_name": "my-model",
+            "current_model_namespace": "default",
+        }
 
     def test_build_runtime_context_uses_effective_context_window(self):
         """Runtime context should fall back to the effective model budget."""

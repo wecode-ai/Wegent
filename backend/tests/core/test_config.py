@@ -77,6 +77,32 @@ class TestSettings:
         assert s.CHAT_TASK_EXECUTOR_DELETE_AFTER_HOURS == 2
         assert s.CODE_TASK_EXECUTOR_DELETE_AFTER_HOURS == 24
 
+    def test_workspace_archive_settings_defaults(self):
+        """Test workspace archive configuration defaults."""
+        s = Settings()
+
+        assert s.WORKSPACE_ARCHIVE_RETENTION_DAYS == 30
+        assert s.WORKSPACE_ARCHIVE_BUCKET == "wegent-archives"
+        assert s.WORKSPACE_ARCHIVE_MAX_SIZE_MB == 500
+        assert s.WORKSPACE_ARCHIVE_ENABLED is True
+        assert s.WORKSPACE_ARCHIVE_TIMEZONE == "Asia/Shanghai"
+
+    def test_workspace_archive_settings_from_env(self, monkeypatch):
+        """Test workspace archive configuration from environment variables."""
+        monkeypatch.setenv("WORKSPACE_ARCHIVE_RETENTION_DAYS", "14")
+        monkeypatch.setenv("WORKSPACE_ARCHIVE_BUCKET", "custom-archive-bucket")
+        monkeypatch.setenv("WORKSPACE_ARCHIVE_MAX_SIZE_MB", "256")
+        monkeypatch.setenv("WORKSPACE_ARCHIVE_ENABLED", "false")
+        monkeypatch.setenv("WORKSPACE_ARCHIVE_TIMEZONE", "UTC")
+
+        s = Settings()
+
+        assert s.WORKSPACE_ARCHIVE_RETENTION_DAYS == 14
+        assert s.WORKSPACE_ARCHIVE_BUCKET == "custom-archive-bucket"
+        assert s.WORKSPACE_ARCHIVE_MAX_SIZE_MB == 256
+        assert s.WORKSPACE_ARCHIVE_ENABLED is False
+        assert s.WORKSPACE_ARCHIVE_TIMEZONE == "UTC"
+
     def test_settings_oidc_configuration(self):
         """Test OIDC configuration"""
         s = Settings()

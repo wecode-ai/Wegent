@@ -43,6 +43,10 @@ import {
 } from '@/features/projects'
 import { useInboxUnreadCount } from '@/features/inbox'
 
+export const SIDEBAR_NAV_CONFIG = {
+  keepSecondaryNavFixed: true,
+}
+
 interface TaskSidebarProps {
   isMobileSidebarOpen: boolean
   setIsMobileSidebarOpen: (open: boolean) => void
@@ -91,7 +95,8 @@ export default function TaskSidebar({
     setSelectedTask,
     isRefreshing,
   } = useTaskContext()
-  const scrollRef = useRef<HTMLDivElement>(null)
+  const desktopScrollRef = useRef<HTMLDivElement>(null)
+  const mobileScrollRef = useRef<HTMLDivElement>(null)
 
   // Inbox unread count
   const { unreadCount: inboxUnreadCount } = useInboxUnreadCount()
@@ -222,39 +227,9 @@ export default function TaskSidebar({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tasks, getUnreadCount, viewStatusVersion])
 
-  // Refs for separate scroll containers
-  const groupScrollRef = useRef<HTMLDivElement>(null)
-  const personalScrollRef = useRef<HTMLDivElement>(null)
-
-  // Scroll to bottom to load more (for group tasks)
-  useEffect(() => {
-    const el = groupScrollRef.current
-    if (!el) return
-    const handleScroll = () => {
-      if (el.scrollTop + el.clientHeight >= el.scrollHeight - 10) {
-        loadMoreGroupTasks()
-      }
-    }
-    el.addEventListener('scroll', handleScroll)
-    return () => el.removeEventListener('scroll', handleScroll)
-  }, [loadMoreGroupTasks])
-
-  // Scroll to bottom to load more (for personal tasks)
-  useEffect(() => {
-    const el = personalScrollRef.current
-    if (!el) return
-    const handleScroll = () => {
-      if (el.scrollTop + el.clientHeight >= el.scrollHeight - 10) {
-        loadMorePersonalTasks()
-      }
-    }
-    el.addEventListener('scroll', handleScroll)
-    return () => el.removeEventListener('scroll', handleScroll)
-  }, [loadMorePersonalTasks])
-
   // Scroll to bottom to load more (legacy - for search results)
   useEffect(() => {
-    const el = scrollRef.current
+    const el = desktopScrollRef.current
     if (!el) return
     const handleScroll = () => {
       if (el.scrollTop + el.clientHeight >= el.scrollHeight - 10) {
@@ -265,321 +240,380 @@ export default function TaskSidebar({
     return () => el.removeEventListener('scroll', handleScroll)
   }, [loadMore])
 
-  const sidebarContent = (
-    <>
-      {/* Logo and Mode Indicator - matches Figma: left-[20px] top-[12px] */}
-      <div className={`${isCollapsed ? 'px-2' : 'px-5'} pt-3 pb-4`}>
-        {isCollapsed ? (
-          /* Collapsed mode: Combined button with expand and add icons - matches Figma */
-          <TooltipProvider>
-            <Tooltip delayDuration={300}>
-              <TooltipTrigger asChild>
-                <div
-                  className="flex items-center gap-3 px-4 py-2.5 rounded-3xl border border-border bg-base shadow-sm cursor-pointer hover:bg-hover transition-colors"
-                  onClick={onToggleCollapsed}
-                >
-                  <PanelLeftOpen className="h-4 w-4 text-text-primary flex-shrink-0" />
-                  <button
-                    onClick={e => {
-                      e.stopPropagation()
-                      handleNewAgentClick()
-                    }}
-                    className="flex-shrink-0"
-                    aria-label={t('common:tasks.new_conversation')}
-                  >
-                    <Plus className="h-4 w-4 text-text-primary" />
-                  </button>
-                </div>
-              </TooltipTrigger>
-              <TooltipContent side="right">
-                <p>{t('common:sidebar.expand')}</p>
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-        ) : (
-          /* Expanded mode: Logo and collapse button */
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <Image
-                src="/weibo-logo.png"
-                alt="Weibo Logo"
-                width={36}
-                height={35}
-                className="object-contain"
-              />
-              <span className="text-base font-semibold text-text-primary">Wegent</span>
-            </div>
-            {onToggleCollapsed && (
-              <TooltipProvider>
-                <Tooltip delayDuration={300}>
-                  <TooltipTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={onToggleCollapsed}
-                      className="h-8 w-8 p-0 text-text-muted hover:text-text-primary hover:bg-hover rounded-lg"
-                      aria-label={t('common:sidebar.collapse')}
-                    >
-                      <PanelLeftClose className="h-4 w-4" />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent side="right">
-                    <p>{t('common:sidebar.collapse')}</p>
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-            )}
-          </div>
-        )}
-      </div>
+  useEffect(() => {
+    const el = mobileScrollRef.current
+    if (!el) return
+    const handleScroll = () => {
+      if (el.scrollTop + el.clientHeight >= el.scrollHeight - 10) {
+        loadMore()
+      }
+    }
+    el.addEventListener('scroll', handleScroll)
+    return () => el.removeEventListener('scroll', handleScroll)
+  }, [loadMore])
 
-      {/* New Conversation Button and Navigation Buttons - wrapped together for onboarding tour */}
-      <div data-tour="mode-toggle" className="px-2.5">
-        {/* New Conversation Button - only show in expanded mode, collapsed mode has it in the top combined button */}
-        {!isCollapsed && (
-          <div className="mb-1">
+  const fixedNavigationButtons = navigationButtons.filter(
+    btn => btn.buttonPageType === 'flow' || btn.buttonPageType === 'code'
+  )
+  const secondaryNavigationButtons = navigationButtons.filter(
+    btn => btn.buttonPageType !== 'flow' && btn.buttonPageType !== 'code'
+  )
+  const fixedSecondaryNavigationButtons = SIDEBAR_NAV_CONFIG.keepSecondaryNavFixed
+    ? secondaryNavigationButtons
+    : []
+  const scrollableNavigationButtons = SIDEBAR_NAV_CONFIG.keepSecondaryNavFixed
+    ? []
+    : secondaryNavigationButtons
+
+  const renderNavigationButtons = (buttons: NavigationButton[]) => {
+    if (isCollapsed || buttons.length === 0) return null
+
+    return (
+      <div className="space-y-0.5">
+        {buttons.map(btn => (
+          <div key={btn.path} className="relative group">
             <Button
               variant="ghost"
-              onClick={handleNewAgentClick}
-              className="w-full justify-between px-3 h-9 text-sm text-text-primary hover:bg-[rgb(238,238,238)] dark:hover:bg-white/10 rounded-md group transition-all duration-200 hover:scale-[1.02]"
+              onClick={() => handleNavigationClick(btn.path, btn.isActive, btn.buttonPageType)}
+              className={`w-full justify-between px-3 h-9 text-sm rounded-md transition-all duration-200 ${
+                btn.isActive
+                  ? 'bg-primary/10 text-primary font-medium hover:bg-primary/15'
+                  : 'text-text-primary hover:bg-[rgb(238,238,238)] dark:hover:bg-white/10 hover:scale-[1.02]'
+              }`}
               size="sm"
             >
               <span className="flex items-center">
-                <Plus className="h-4 w-4 flex-shrink-0" />
-                <span className="ml-1.5 text-[14px] leading-5 font-medium text-[#444746]">
-                  {t('common:tasks.new_conversation')}
+                <btn.icon
+                  className={`h-4 w-4 flex-shrink-0 ${btn.isActive ? 'text-primary' : ''}`}
+                />
+                <span
+                  className={`ml-1.5 text-[14px] leading-5 font-medium ${
+                    btn.isActive ? 'text-primary' : 'text-[#444746]'
+                  }`}
+                >
+                  {btn.label}
                 </span>
               </span>
-              <span className="text-text-muted opacity-0 group-hover:opacity-100 transition-opacity">
-                ›
-              </span>
+              {btn.unreadCount !== undefined && btn.unreadCount > 0 && (
+                <span className="flex items-center justify-center min-w-[18px] h-[18px] px-1.5 text-[11px] font-medium bg-red-500 text-white rounded-full">
+                  {btn.unreadCount > 99 ? '99+' : btn.unreadCount}
+                </span>
+              )}
             </Button>
+            {btn.isActive && btn.tooltip && (
+              <div className="absolute right-1 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                <TooltipProvider>
+                  <Tooltip delayDuration={0}>
+                    <TooltipTrigger asChild>
+                      <button
+                        onClick={e => {
+                          e.stopPropagation()
+                          handleNavigationClick(btn.path, btn.isActive, btn.buttonPageType)
+                        }}
+                        className="flex items-center gap-1 px-1.5 py-0.5 text-xs bg-primary text-white rounded-md hover:bg-primary/90 transition-colors"
+                      >
+                        <Plus className="h-3 w-3" />
+                        <span>{t('common:tasks.new_task')}</span>
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="right">
+                      <p>{btn.tooltip}</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              </div>
+            )}
           </div>
-        )}
+        ))}
+      </div>
+    )
+  }
 
-        {/* Navigation Buttons - matches Figma: spacing and style */}
-        {!isCollapsed && navigationButtons.length > 0 && (
-          <div className="space-y-0.5">
-            {navigationButtons.map(btn => (
-              <div key={btn.path} className="relative group">
+  const createFixedSectionWheelHandler =
+    (scrollContainerRef: React.RefObject<HTMLDivElement | null>) =>
+    (event: React.WheelEvent<HTMLDivElement>) => {
+      const scrollContainer = scrollContainerRef.current
+      if (!scrollContainer) return
+
+      scrollContainer.scrollTop += event.deltaY
+      event.preventDefault()
+    }
+
+  const renderSidebarContent = (scrollContainerRef: React.RefObject<HTMLDivElement | null>) => (
+    <>
+      <div
+        className="flex-1 min-h-0 overflow-y-auto task-list-scrollbar"
+        ref={scrollContainerRef}
+        data-testid="task-sidebar-scroll-container"
+      >
+        <div
+          className="sticky top-0 z-20 bg-base"
+          data-testid="task-sidebar-fixed-section"
+          onWheel={createFixedSectionWheelHandler(scrollContainerRef)}
+        >
+          {/* Logo and Mode Indicator - matches Figma: left-[20px] top-[12px] */}
+          <div className={`${isCollapsed ? 'px-2' : 'px-5'} pt-3 pb-4`}>
+            {isCollapsed ? (
+              /* Collapsed mode: Combined button with expand and add icons - matches Figma */
+              <TooltipProvider>
+                <Tooltip delayDuration={300}>
+                  <TooltipTrigger asChild>
+                    <div
+                      className="flex items-center gap-3 px-4 py-2.5 rounded-3xl border border-border bg-base shadow-sm cursor-pointer hover:bg-hover transition-colors"
+                      onClick={onToggleCollapsed}
+                    >
+                      <PanelLeftOpen className="h-4 w-4 text-text-primary flex-shrink-0" />
+                      <button
+                        onClick={e => {
+                          e.stopPropagation()
+                          handleNewAgentClick()
+                        }}
+                        className="flex-shrink-0"
+                        aria-label={t('common:tasks.new_conversation')}
+                      >
+                        <Plus className="h-4 w-4 text-text-primary" />
+                      </button>
+                    </div>
+                  </TooltipTrigger>
+                  <TooltipContent side="right">
+                    <p>{t('common:sidebar.expand')}</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            ) : (
+              /* Expanded mode: Logo and collapse button */
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <Image
+                    src="/weibo-logo.png"
+                    alt="Weibo Logo"
+                    width={36}
+                    height={35}
+                    className="object-contain"
+                  />
+                  <span className="text-base font-semibold text-text-primary">Wegent</span>
+                </div>
+                {onToggleCollapsed && (
+                  <TooltipProvider>
+                    <Tooltip delayDuration={300}>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={onToggleCollapsed}
+                          className="h-8 w-8 p-0 text-text-muted hover:text-text-primary hover:bg-hover rounded-lg"
+                          aria-label={t('common:sidebar.collapse')}
+                        >
+                          <PanelLeftClose className="h-4 w-4" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent side="right">
+                        <p>{t('common:sidebar.collapse')}</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* New Conversation Button and Fixed Navigation Buttons */}
+          <div data-tour="mode-toggle" className="px-2.5">
+            {!isCollapsed && (
+              <div className="mb-1">
                 <Button
                   variant="ghost"
-                  onClick={() => handleNavigationClick(btn.path, btn.isActive, btn.buttonPageType)}
-                  className={`w-full justify-between px-3 h-9 text-sm rounded-md transition-all duration-200 ${
-                    btn.isActive
-                      ? 'bg-primary/10 text-primary font-medium hover:bg-primary/15'
-                      : 'text-text-primary hover:bg-[rgb(238,238,238)] dark:hover:bg-white/10 hover:scale-[1.02]'
-                  }`}
+                  onClick={handleNewAgentClick}
+                  className="w-full justify-between px-3 h-9 text-sm text-text-primary hover:bg-[rgb(238,238,238)] dark:hover:bg-white/10 rounded-md group transition-all duration-200 hover:scale-[1.02]"
                   size="sm"
                 >
                   <span className="flex items-center">
-                    <btn.icon
-                      className={`h-4 w-4 flex-shrink-0 ${btn.isActive ? 'text-primary' : ''}`}
-                    />
-                    <span
-                      className={`ml-1.5 text-[14px] leading-5 font-medium ${
-                        btn.isActive ? 'text-primary' : 'text-[#444746]'
-                      }`}
-                    >
-                      {btn.label}
+                    <Plus className="h-4 w-4 flex-shrink-0" />
+                    <span className="ml-1.5 text-[14px] leading-5 font-medium text-[#444746]">
+                      {t('common:tasks.new_conversation')}
                     </span>
                   </span>
-                  {/* Unread count badge */}
-                  {btn.unreadCount !== undefined && btn.unreadCount > 0 && (
-                    <span className="flex items-center justify-center min-w-[18px] h-[18px] px-1.5 text-[11px] font-medium bg-red-500 text-white rounded-full">
-                      {btn.unreadCount > 99 ? '99+' : btn.unreadCount}
-                    </span>
-                  )}
+                  <span className="text-text-muted opacity-0 group-hover:opacity-100 transition-opacity">
+                    ›
+                  </span>
                 </Button>
-                {/* Show "New Task" button on hover when in code mode */}
-                {btn.isActive && btn.tooltip && (
-                  <div className="absolute right-1 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-                    <TooltipProvider>
-                      <Tooltip delayDuration={0}>
-                        <TooltipTrigger asChild>
-                          <button
-                            onClick={e => {
-                              e.stopPropagation()
-                              handleNavigationClick(btn.path, btn.isActive, btn.buttonPageType)
-                            }}
-                            className="flex items-center gap-1 px-1.5 py-0.5 text-xs bg-primary text-white rounded-md hover:bg-primary/90 transition-colors"
-                          >
-                            <Plus className="h-3 w-3" />
-                            <span>{t('common:tasks.new_task')}</span>
-                          </button>
-                        </TooltipTrigger>
-                        <TooltipContent side="right">
-                          <p>{btn.tooltip}</p>
-                        </TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
+              </div>
+            )}
+            {renderNavigationButtons(fixedNavigationButtons)}
+            {fixedSecondaryNavigationButtons.length > 0 &&
+              renderNavigationButtons(fixedSecondaryNavigationButtons)}
+          </div>
+        </div>
+
+        <div data-testid="task-sidebar-scroll-content">
+          {!isCollapsed && scrollableNavigationButtons.length > 0 && (
+            <div className="px-2.5 pt-0.5">
+              {renderNavigationButtons(scrollableNavigationButtons)}
+            </div>
+          )}
+
+          {/* Tasks Section - matches Figma: left-[20px] top-[198px] with border */}
+          <ProjectProvider>
+            <TaskDndProvider>
+              <div
+                className={`${isCollapsed ? 'px-0' : 'px-2.5'} pt-4 border-t border-border-light mt-3`}
+              >
+                {/* Auto-refresh indicator - shows when refreshing after page visibility or reconnect */}
+                {isRefreshing && !isCollapsed && (
+                  <div className="px-1 pb-2">
+                    <div className="flex items-center gap-2 text-xs text-primary">
+                      <div className="h-1 w-full bg-surface rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-primary/60 rounded-full animate-pulse"
+                          style={{ width: '100%' }}
+                        />
+                      </div>
+                      <span className="text-text-muted whitespace-nowrap">
+                        {t('common:tasks.refreshing')}
+                      </span>
+                    </div>
+                  </div>
+                )}
+                {/* Collapsed mode refresh indicator */}
+                {isRefreshing && isCollapsed && (
+                  <div className="flex justify-center pb-2">
+                    <div className="h-1 w-6 bg-primary/60 rounded-full animate-pulse" />
+                  </div>
+                )}
+                {/* Search Result Header */}
+                {!isCollapsed && isSearchResult && (
+                  <div className="px-1 pb-2 flex items-center justify-between">
+                    <span className="text-xs font-medium text-text-muted">
+                      {t('common:tasks.search_results')}
+                    </span>
+                    <button
+                      onClick={handleClearSearch}
+                      className="flex items-center gap-1 text-xs text-text-muted hover:text-text-primary transition-colors"
+                    >
+                      <X className="h-3 w-3" />
+                      {t('common:tasks.clear_search')}
+                    </button>
+                  </div>
+                )}
+                {/* Search Button for collapsed mode - removed, search is now in the combined top button */}
+                {isSearching ? (
+                  <div className="text-center py-8 text-xs text-text-muted">
+                    {t('common:tasks.searching')}
+                  </div>
+                ) : isSearchResult ? (
+                  // Search results mode - show mixed results from legacy tasks list
+                  tasks.length === 0 ? (
+                    <div className="text-center py-8 text-xs text-text-muted">
+                      {t('common:tasks.no_search_results')}
+                    </div>
+                  ) : (
+                    (() => {
+                      // Separate group chats and regular tasks from search results
+                      const allGroupChats = tasks
+                        .filter(task => task.is_group_chat)
+                        .sort(
+                          (a, b) =>
+                            new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+                        )
+                      const regularTasks = tasks
+                        .filter(task => !task.is_group_chat)
+                        .sort(
+                          (a, b) =>
+                            new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+                        )
+
+                      return (
+                        <>
+                          {/* Group Chats from search results */}
+                          {allGroupChats.length > 0 && (
+                            <>
+                              {!isCollapsed && (
+                                <div className="px-1 pb-1 text-xs font-medium text-text-muted">
+                                  {t('common:tasks.group_chats')}
+                                </div>
+                              )}
+                              <TaskListSection
+                                tasks={allGroupChats}
+                                title=""
+                                unreadCount={getUnreadCount(allGroupChats)}
+                                onTaskClick={() => setIsMobileSidebarOpen(false)}
+                                isCollapsed={isCollapsed}
+                                showTitle={false}
+                                enableDrag={true}
+                                key={`search-group-chats-${viewStatusVersion}`}
+                              />
+                            </>
+                          )}
+                          {/* Personal tasks from search results */}
+                          {regularTasks.length > 0 && (
+                            <>
+                              {!isCollapsed && (
+                                <div
+                                  className={`px-1 pb-1 text-xs font-medium text-text-muted flex items-center justify-between ${allGroupChats.length > 0 ? 'pt-3 mt-2 border-t border-border-light' : ''}`}
+                                >
+                                  <span>{t('common:tasks.history_title')}</span>
+                                </div>
+                              )}
+                              {isCollapsed && allGroupChats.length > 0 && (
+                                <div className="border-t border-border-light my-2" />
+                              )}
+                              <TaskListSection
+                                tasks={regularTasks}
+                                title=""
+                                unreadCount={getUnreadCount(regularTasks)}
+                                onTaskClick={() => setIsMobileSidebarOpen(false)}
+                                isCollapsed={isCollapsed}
+                                showTitle={false}
+                                enableDrag={true}
+                                key={`search-regular-tasks-${viewStatusVersion}`}
+                              />
+                            </>
+                          )}
+                        </>
+                      )
+                    })()
+                  )
+                ) : (
+                  <TaskHistorySection
+                    groupTasks={groupTasks}
+                    personalTasks={personalTasks}
+                    isCollapsed={isCollapsed}
+                    isGroupChatsExpanded={isGroupChatsExpanded}
+                    setIsGroupChatsExpanded={setIsGroupChatsExpanded}
+                    maxVisibleGroupChats={maxVisibleGroupChats}
+                    hasMoreGroupTasks={hasMoreGroupTasks}
+                    hasMorePersonalTasks={hasMorePersonalTasks}
+                    loadMoreGroupTasks={loadMoreGroupTasks}
+                    loadMorePersonalTasks={loadMorePersonalTasks}
+                    loadingMoreGroupTasks={loadingMoreGroupTasks}
+                    loadingMorePersonalTasks={loadingMorePersonalTasks}
+                    viewStatusVersion={viewStatusVersion}
+                    getUnreadCount={getUnreadCount}
+                    totalUnreadCount={totalUnreadCount}
+                    handleMarkAllAsViewed={handleMarkAllAsViewed}
+                    handleOpenSearchDialog={handleOpenSearchDialog}
+                    shortcutDisplayText={shortcutDisplayText}
+                    setIsMobileSidebarOpen={setIsMobileSidebarOpen}
+                    t={t}
+                    isSearchResult={isSearchResult}
+                    onTaskSelect={() => setIsMobileSidebarOpen(false)}
+                    isHistoryManageDialogOpen={isHistoryManageDialogOpen}
+                    setIsHistoryManageDialogOpen={setIsHistoryManageDialogOpen}
+                  />
+                )}
+                {loadingMore && isSearchResult && (
+                  <div className="text-center py-2 text-xs text-text-muted">
+                    {t('common:tasks.loading')}
                   </div>
                 )}
               </div>
-            ))}
-          </div>
-        )}
+            </TaskDndProvider>
+          </ProjectProvider>
+        </div>
       </div>
 
-      {/* Tasks Section - matches Figma: left-[20px] top-[198px] with border */}
-      <ProjectProvider>
-        <TaskDndProvider>
-          <div
-            className={`flex-1 ${isCollapsed ? 'px-0' : 'px-2.5'} pt-4 overflow-y-auto task-list-scrollbar border-t border-border-light mt-3`}
-            ref={scrollRef}
-          >
-            {/* Auto-refresh indicator - shows when refreshing after page visibility or reconnect */}
-            {isRefreshing && !isCollapsed && (
-              <div className="px-1 pb-2">
-                <div className="flex items-center gap-2 text-xs text-primary">
-                  <div className="h-1 w-full bg-surface rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-primary/60 rounded-full animate-pulse"
-                      style={{ width: '100%' }}
-                    />
-                  </div>
-                  <span className="text-text-muted whitespace-nowrap">
-                    {t('common:tasks.refreshing')}
-                  </span>
-                </div>
-              </div>
-            )}
-            {/* Collapsed mode refresh indicator */}
-            {isRefreshing && isCollapsed && (
-              <div className="flex justify-center pb-2">
-                <div className="h-1 w-6 bg-primary/60 rounded-full animate-pulse" />
-              </div>
-            )}
-            {/* Search Result Header */}
-            {!isCollapsed && isSearchResult && (
-              <div className="px-1 pb-2 flex items-center justify-between">
-                <span className="text-xs font-medium text-text-muted">
-                  {t('common:tasks.search_results')}
-                </span>
-                <button
-                  onClick={handleClearSearch}
-                  className="flex items-center gap-1 text-xs text-text-muted hover:text-text-primary transition-colors"
-                >
-                  <X className="h-3 w-3" />
-                  {t('common:tasks.clear_search')}
-                </button>
-              </div>
-            )}
-            {/* Search Button for collapsed mode - removed, search is now in the combined top button */}
-            {isSearching ? (
-              <div className="text-center py-8 text-xs text-text-muted">
-                {t('common:tasks.searching')}
-              </div>
-            ) : isSearchResult ? (
-              // Search results mode - show mixed results from legacy tasks list
-              tasks.length === 0 ? (
-                <div className="text-center py-8 text-xs text-text-muted">
-                  {t('common:tasks.no_search_results')}
-                </div>
-              ) : (
-                (() => {
-                  // Separate group chats and regular tasks from search results
-                  const allGroupChats = tasks
-                    .filter(task => task.is_group_chat)
-                    .sort(
-                      (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
-                    )
-                  const regularTasks = tasks
-                    .filter(task => !task.is_group_chat)
-                    .sort(
-                      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-                    )
-
-                  return (
-                    <>
-                      {/* Group Chats from search results */}
-                      {allGroupChats.length > 0 && (
-                        <>
-                          {!isCollapsed && (
-                            <div className="px-1 pb-1 text-xs font-medium text-text-muted">
-                              {t('common:tasks.group_chats')}
-                            </div>
-                          )}
-                          <TaskListSection
-                            tasks={allGroupChats}
-                            title=""
-                            unreadCount={getUnreadCount(allGroupChats)}
-                            onTaskClick={() => setIsMobileSidebarOpen(false)}
-                            isCollapsed={isCollapsed}
-                            showTitle={false}
-                            enableDrag={true}
-                            key={`search-group-chats-${viewStatusVersion}`}
-                          />
-                        </>
-                      )}
-                      {/* Personal tasks from search results */}
-                      {regularTasks.length > 0 && (
-                        <>
-                          {!isCollapsed && (
-                            <div
-                              className={`px-1 pb-1 text-xs font-medium text-text-muted flex items-center justify-between ${allGroupChats.length > 0 ? 'pt-3 mt-2 border-t border-border-light' : ''}`}
-                            >
-                              <span>{t('common:tasks.history_title')}</span>
-                            </div>
-                          )}
-                          {isCollapsed && allGroupChats.length > 0 && (
-                            <div className="border-t border-border-light my-2" />
-                          )}
-                          <TaskListSection
-                            tasks={regularTasks}
-                            title=""
-                            unreadCount={getUnreadCount(regularTasks)}
-                            onTaskClick={() => setIsMobileSidebarOpen(false)}
-                            isCollapsed={isCollapsed}
-                            showTitle={false}
-                            enableDrag={true}
-                            key={`search-regular-tasks-${viewStatusVersion}`}
-                          />
-                        </>
-                      )}
-                    </>
-                  )
-                })()
-              )
-            ) : (
-              <TaskHistorySection
-                groupTasks={groupTasks}
-                personalTasks={personalTasks}
-                isCollapsed={isCollapsed}
-                isGroupChatsExpanded={isGroupChatsExpanded}
-                setIsGroupChatsExpanded={setIsGroupChatsExpanded}
-                maxVisibleGroupChats={maxVisibleGroupChats}
-                hasMoreGroupTasks={hasMoreGroupTasks}
-                hasMorePersonalTasks={hasMorePersonalTasks}
-                loadMoreGroupTasks={loadMoreGroupTasks}
-                loadMorePersonalTasks={loadMorePersonalTasks}
-                loadingMoreGroupTasks={loadingMoreGroupTasks}
-                loadingMorePersonalTasks={loadingMorePersonalTasks}
-                viewStatusVersion={viewStatusVersion}
-                getUnreadCount={getUnreadCount}
-                totalUnreadCount={totalUnreadCount}
-                handleMarkAllAsViewed={handleMarkAllAsViewed}
-                handleOpenSearchDialog={handleOpenSearchDialog}
-                shortcutDisplayText={shortcutDisplayText}
-                setIsMobileSidebarOpen={setIsMobileSidebarOpen}
-                t={t}
-                isSearchResult={isSearchResult}
-                onTaskSelect={() => setIsMobileSidebarOpen(false)}
-                isHistoryManageDialogOpen={isHistoryManageDialogOpen}
-                setIsHistoryManageDialogOpen={setIsHistoryManageDialogOpen}
-              />
-            )}
-            {loadingMore && isSearchResult && (
-              <div className="text-center py-2 text-xs text-text-muted">
-                {t('common:tasks.loading')}
-              </div>
-            )}
-          </div>
-        </TaskDndProvider>
-      </ProjectProvider>
-
-      {/* User Menu - matches Figma: left-[20px] top-[852px] with border */}
-      <div className="px-2.5 py-3 border-t border-border-light" data-tour="settings-link">
+      {/* User Menu */}
+      <div className="px-2.5 py-3 border-t border-border-light shrink-0" data-tour="settings-link">
         <UserFloatingMenu />
       </div>
     </>
@@ -593,7 +627,7 @@ export default function TaskSidebar({
         style={{ height: 'calc(100% - 24px)' }}
         data-tour="task-sidebar"
       >
-        {sidebarContent}
+        {renderSidebarContent(desktopScrollRef)}
       </div>
 
       {/* Mobile Sidebar */}
@@ -604,7 +638,7 @@ export default function TaskSidebar({
         hideTitle={true}
         data-tour="task-sidebar"
       >
-        <div className="h-full flex flex-col">{sidebarContent}</div>
+        <div className="h-full flex flex-col">{renderSidebarContent(mobileScrollRef)}</div>
       </MobileSidebar>
 
       {/* History Manage Dialog */}

@@ -17,9 +17,6 @@ from app.services.adapters.retriever_kinds import retriever_kinds_service
 from app.services.knowledge import KnowledgeService
 from app.services.rag.embedding.factory import create_embedding_model_from_crd
 from app.services.rag.retrieval.retriever import DocumentRetriever
-from app.services.rag.retrieval_persistence_service import (
-    retrieval_persistence_service,
-)
 from app.services.rag.storage.base import BaseStorageBackend
 from app.services.rag.storage.factory import create_storage_backend
 from shared.telemetry.decorators import add_span_event, set_span_attribute, trace_async
@@ -244,7 +241,6 @@ class RetrievalService:
         context_window: Optional[int] = None,
         route_mode: Literal["auto", "direct_injection", "rag_retrieval"] = "auto",
         user_id: Optional[int] = None,
-        user_subtask_id: Optional[int] = None,
         used_context_tokens: int = 0,
         reserved_output_tokens: int = 4096,
         context_buffer_ratio: float = 0.1,
@@ -427,34 +423,6 @@ class RetrievalService:
             records = records[:max_results]
             mode = "rag_retrieval"
             set_span_attribute("rag.final_mode", mode)
-
-        try:
-            add_span_event(
-                "rag.routing.persist_result",
-                {
-                    "mode": mode,
-                    "record_count": len(records),
-                },
-            )
-            retrieval_persistence_service.persist_retrieval_result(
-                db=db,
-                user_subtask_id=user_subtask_id,
-                user_id=user_id,
-                query=query,
-                mode=mode,
-                records=records,
-                restricted_mode=restricted_mode,
-            )
-        except Exception as exc:
-            logger.warning(
-                "[RAG] Failed to persist retrieve_for_chat_shell result: "
-                "subtask_id=%s, user_id=%s, mode=%s, error=%s",
-                user_subtask_id,
-                user_id,
-                mode,
-                exc,
-                exc_info=True,
-            )
 
         return {
             "mode": mode,

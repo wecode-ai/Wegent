@@ -284,12 +284,13 @@ class WebPageSocketEmitter:
         block_id: str,
         content: Optional[str] = None,
         tool_output: Optional[Any] = None,
+        tool_input: Optional[Dict[str, Any]] = None,
         status: Optional[str] = None,
     ) -> None:
         """
         Emit chat:block_updated event to task room.
 
-        Used when a tool block is updated (e.g., tool execution completed).
+        Used when a tool block is updated (e.g., tool execution completed or tool input received).
 
         Args:
             task_id: Task ID
@@ -297,7 +298,8 @@ class WebPageSocketEmitter:
             block_id: Block ID to update
             content: Optional text content update
             tool_output: Optional tool output data
-            status: Optional status update (pending, streaming, done, error)
+            tool_input: Optional tool input/arguments update (for interactive_form_question form rendering)
+            status: Optional status update (pending, streaming, running, done, error)
         """
         payload: Dict[str, Any] = {
             "task_id": task_id,
@@ -308,6 +310,8 @@ class WebPageSocketEmitter:
             payload["content"] = content
         if tool_output is not None:
             payload["tool_output"] = tool_output
+        if tool_input is not None:
+            payload["tool_input"] = tool_input
         if status is not None:
             payload["status"] = status
 
@@ -319,7 +323,7 @@ class WebPageSocketEmitter:
         )
         logger.debug(
             f"[WS] emit chat:block_updated task={task_id} subtask={subtask_id} "
-            f"block_id={block_id} status={status}"
+            f"block_id={block_id} status={status} has_tool_input={tool_input is not None}"
         )
 
     # ============================================================
@@ -1043,7 +1047,6 @@ def get_main_event_loop() -> Optional[asyncio.AbstractEventLoop]:
     Returns:
         The main event loop or None if not initialized
     """
-    return _main_event_loop
     return _main_event_loop
 
 

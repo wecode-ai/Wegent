@@ -37,8 +37,6 @@ export interface GroupsSectionProps {
   onToggle: () => void
   /** Select a group */
   onSelectGroup: (groupId: string) => void
-  /** Whether user is admin */
-  isAdmin: boolean
 }
 
 export function GroupsSection({
@@ -48,7 +46,6 @@ export function GroupsSection({
   isExpanded,
   onToggle,
   onSelectGroup,
-  isAdmin: _isAdmin,
 }: GroupsSectionProps) {
   const { t } = useTranslation('knowledge')
 

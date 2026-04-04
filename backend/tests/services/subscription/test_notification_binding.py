@@ -10,6 +10,7 @@ import json
 from fnmatch import fnmatch
 
 from app.models.kind import Kind
+from app.schemas.subscription import NotificationLevel
 from app.services.subscription.notification_service import (
     subscription_notification_service,
 )
@@ -189,3 +190,58 @@ def test_group_message_can_also_complete_private_binding(test_db, test_user, moc
     assert channel_binding is not None
     assert channel_binding.sender_id == "ding-user-2"
     assert channel_binding.sender_staff_id == "staff-2"
+
+
+def test_update_developer_settings_preserves_group_name(test_db, test_user):
+    subscription = _create_subscription_kind(
+        test_db, owner_user_id=test_user.id, subscription_id=1004
+    )
+
+    updated = subscription_notification_service.update_developer_settings(
+        test_db,
+        subscription_id=subscription.id,
+        user_id=test_user.id,
+        notification_level=NotificationLevel.NOTIFY,
+        notification_channel_ids=[123],
+        channel_binding_configs=[
+            {
+                "channel_id": 123,
+                "bind_private": True,
+                "bind_group": True,
+                "group_conversation_id": "conversation-123",
+                "group_name": "测试机器人",
+            }
+        ],
+    )
+
+    assert [item.model_dump() for item in updated.channel_binding_configs] == [
+        {
+            "channel_id": 123,
+            "bind_private": True,
+            "bind_group": True,
+            "group_conversation_id": "conversation-123",
+            "group_name": "测试机器人",
+        }
+    ]
+
+    persisted = (
+        test_db.query(Kind)
+        .filter(Kind.id == subscription.id, Kind.kind == "Subscription")
+        .first()
+    )
+    assert persisted is not None
+    binding = persisted.json["_internal"]["notification_channel_bindings"]["123"]
+    assert binding["group_name"] == "测试机器人"
+
+    reloaded = subscription_notification_service.get_developer_settings(
+        test_db, subscription_id=subscription.id, user_id=test_user.id
+    )
+    assert [item.model_dump() for item in reloaded.channel_binding_configs] == [
+        {
+            "channel_id": 123,
+            "bind_private": True,
+            "bind_group": True,
+            "group_conversation_id": "conversation-123",
+            "group_name": "测试机器人",
+        }
+    ]

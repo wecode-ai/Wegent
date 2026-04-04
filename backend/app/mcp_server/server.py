@@ -51,6 +51,8 @@ SYSTEM_MCP_MOUNT_PATH = "/mcp/system"
 SYSTEM_MCP_TRANSPORT_PATH = "/"
 KNOWLEDGE_MCP_MOUNT_PATH = "/mcp/knowledge"
 KNOWLEDGE_MCP_TRANSPORT_PATH = "/sse"
+INTERACTIVE_FORM_MCP_MOUNT_PATH = "/mcp/interactive-form-question"
+INTERACTIVE_FORM_MCP_TRANSPORT_PATH = "/sse"
 
 
 @dataclass(frozen=True)
@@ -220,6 +222,71 @@ def ensure_knowledge_tools_registered() -> None:
     _register_knowledge_tools()
 
 
+# ============== interactive_form_question MCP Server ==============
+# Provides interactive user input collection tool
+# Available via Skill configuration
+# Uses decorator-based auto-registration from @mcp_tool decorated endpoints
+
+interactive_form_question_mcp_server = FastMCP(
+    "wegent-interactive-form-question-mcp",
+    stateless_http=True,
+    json_response=True,
+    streamable_http_path="/",
+    transport_security=_build_transport_security_settings(),
+)
+
+# Store for interactive_form_question MCP request context (used by McpAppSpec)
+_interactive_form_question_request_token_info: contextvars.ContextVar[
+    Optional[TaskTokenInfo]
+] = contextvars.ContextVar(
+    "_interactive_form_question_request_token_info", default=None
+)
+
+# Flag to track if tools have been registered
+_interactive_form_question_tools_registered = False
+
+
+def _get_interactive_form_question_token_info_from_context() -> Optional[TaskTokenInfo]:
+    """Get token info from interactive_form_question MCP request context."""
+    return _interactive_form_question_request_token_info.get()
+
+
+def _register_interactive_form_question_tools() -> None:
+    """Register interactive_form_question tools from @mcp_tool decorated endpoints.
+
+    This function imports the interactive_form_question tools module to trigger decorator
+    registration, then registers all collected tools to the interactive_form_question MCP server.
+    """
+    global _interactive_form_question_tools_registered
+    if _interactive_form_question_tools_registered:
+        return
+
+    # Import MCP tools module to trigger @mcp_tool decorator registration
+    from app.mcp_server.tool_registry import register_tools_to_server
+    from app.mcp_server.tools import (  # noqa: F401 side-effect: triggers @mcp_tool registration
+        interactive_form_question,
+    )
+
+    # Register all collected tools to the interactive_form_question server
+    count = register_tools_to_server(
+        interactive_form_question_mcp_server, "interactive_form_question"
+    )
+    logger.info(
+        f"[MCP:InteractiveForm] Registered {count} tools from decorated endpoints"
+    )
+
+    _interactive_form_question_tools_registered = True
+
+
+def ensure_interactive_form_question_tools_registered() -> None:
+    """Ensure interactive_form_question MCP tools are registered.
+
+    This should be called during application startup to register
+    all @mcp_tool decorated endpoints as MCP tools.
+    """
+    _register_interactive_form_question_tools()
+
+
 # ============== Starlette App Factory ==============
 
 _SYSTEM_MCP_SPEC = McpAppSpec(
@@ -244,7 +311,18 @@ _KNOWLEDGE_MCP_SPEC = McpAppSpec(
     include_root_metadata=True,
 )
 
-MCP_APP_SPECS = (_SYSTEM_MCP_SPEC, _KNOWLEDGE_MCP_SPEC)
+_INTERACTIVE_FORM_MCP_SPEC = McpAppSpec(
+    name="interactive_form_question",
+    service_name="wegent-interactive-form-question-mcp",
+    mount_path=INTERACTIVE_FORM_MCP_MOUNT_PATH,
+    transport_path=INTERACTIVE_FORM_MCP_TRANSPORT_PATH,
+    server=interactive_form_question_mcp_server,
+    token_context=_interactive_form_question_request_token_info,
+    log_prefix="InteractiveForm",
+    include_root_metadata=True,
+)
+
+MCP_APP_SPECS = (_SYSTEM_MCP_SPEC, _KNOWLEDGE_MCP_SPEC, _INTERACTIVE_FORM_MCP_SPEC)
 
 
 def _build_root_metadata(spec: McpAppSpec) -> Dict[str, Any]:
@@ -260,9 +338,11 @@ def _build_root_metadata(spec: McpAppSpec) -> Dict[str, Any]:
 
 def _build_mcp_app(spec: McpAppSpec) -> Starlette:
     """Create a Starlette app for a streamable-http MCP server."""
-    # Ensure knowledge tools are registered before creating the app
+    # Ensure tools are registered before creating the app
     if spec.name == "knowledge":
         ensure_knowledge_tools_registered()
+    elif spec.name == "interactive_form_question":
+        ensure_interactive_form_question_tools_registered()
 
     async def health_check(request: Request) -> JSONResponse:
         return JSONResponse({"status": "healthy", "service": spec.service_name})
@@ -292,12 +372,12 @@ def _build_mcp_app(spec: McpAppSpec) -> Starlette:
                     token_info.subtask_id,
                     token_info.user_name,
                 )
-                # Set MCPRequestContext for decorator-based tools (knowledge server)
-                if spec.name == "knowledge":
+                # Set MCPRequestContext for decorator-based tools
+                if spec.name in ("knowledge", "interactive_form_question"):
                     mcp_ctx = MCPRequestContext(
                         token_info=token_info,
                         tool_name="",  # Will be set by tool invocation
-                        server_name="knowledge",
+                        server_name=spec.name,
                     )
                     mcp_ctx_token = set_mcp_context(mcp_ctx)
             else:
@@ -441,6 +521,26 @@ def get_mcp_knowledge_config(backend_url: str, auth_token: str) -> Dict[str, Any
         url=f"{backend_url}{KNOWLEDGE_MCP_MOUNT_PATH}{KNOWLEDGE_MCP_TRANSPORT_PATH}",
         auth_token=auth_token,
         timeout=300,  # 5 minutes for document operations
+    )
+
+
+def get_mcp_interactive_form_question_config(
+    backend_url: str, auth_token: str
+) -> Dict[str, Any]:
+    """Get interactive_form_question MCP server configuration for Skill injection.
+
+    Args:
+        backend_url: Backend URL (e.g., "http://localhost:8000")
+        auth_token: Authentication token for MCP server (uses placeholder for Skill)
+
+    Returns:
+        MCP server configuration dictionary
+    """
+    return _build_streamable_http_config(
+        name="wegent-interactive-form-question",
+        url=f"{backend_url}{INTERACTIVE_FORM_MCP_MOUNT_PATH}{INTERACTIVE_FORM_MCP_TRANSPORT_PATH}",
+        auth_token=auth_token,
+        timeout=300,  # 5 minutes for user response
     )
 
 

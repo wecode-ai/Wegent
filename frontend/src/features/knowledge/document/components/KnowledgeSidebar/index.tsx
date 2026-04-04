@@ -62,8 +62,6 @@ export interface KnowledgeSidebarProps {
   onSelectAll: () => void
   /** Select "Groups" to show all groups list */
   onSelectGroups: () => void
-  /** Whether user is admin */
-  isAdmin: boolean
   /** Callback to collapse the sidebar */
   onCollapse?: () => void
 }
@@ -85,7 +83,6 @@ export function KnowledgeSidebar({
   onSelectGroup,
   onSelectAll,
   onSelectGroups,
-  isAdmin: _isAdmin,
   onCollapse,
 }: KnowledgeSidebarProps) {
   const { t } = useTranslation('knowledge')

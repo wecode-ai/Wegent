@@ -59,8 +59,10 @@ interface KnowledgeTreeProps {
   onOpenGroupSettings?: (group: Group) => void
   /** Edit knowledge base handler */
   onEditKb?: (kb: KnowledgeBase) => void
-  /** Whether user is admin */
-  isAdmin: boolean
+  /** Whether current user can manage a specific group */
+  canManageGroup?: (group: Group) => boolean
+  /** Whether current user can manage a specific KB */
+  canManageKb?: (kb: KnowledgeBase) => boolean
 }
 
 export function KnowledgeTree({
@@ -73,7 +75,8 @@ export function KnowledgeTree({
   onCreateKb,
   onOpenGroupSettings,
   onEditKb,
-  isAdmin,
+  canManageGroup,
+  canManageKb,
 }: KnowledgeTreeProps) {
   const { t } = useTranslation('knowledge')
   const [searchQuery, setSearchQuery] = useState('')
@@ -154,7 +157,8 @@ export function KnowledgeTree({
               onCreateKb={onCreateKb}
               onOpenGroupSettings={onOpenGroupSettings}
               onEditKb={onEditKb}
-              isAdmin={isAdmin}
+              canManageGroup={canManageGroup}
+              canManageKb={canManageKb}
             />
           ))
         )}
@@ -291,7 +295,8 @@ interface TreeNodeItemProps {
   ) => void
   onOpenGroupSettings?: (group: Group) => void
   onEditKb?: (kb: KnowledgeBase) => void
-  isAdmin: boolean
+  canManageGroup?: (group: Group) => boolean
+  canManageKb?: (kb: KnowledgeBase) => boolean
 }
 
 function TreeNodeItem({
@@ -305,7 +310,8 @@ function TreeNodeItem({
   onCreateKb,
   onOpenGroupSettings,
   onEditKb,
-  isAdmin,
+  canManageGroup,
+  canManageKb,
 }: TreeNodeItemProps) {
   const { t } = useTranslation('knowledge')
   const isExpanded = searchQuery
@@ -318,8 +324,7 @@ function TreeNodeItem({
 
   // Determine if we can create KBs in this node
   const showCreate = (() => {
-    if (node.type === 'category-root' && node.scope === 'personal') return true
-    if (node.type === 'category-root' && node.scope === 'organization') return isAdmin
+    if (node.type === 'category-root' && node.canCreate) return true
     if (node.type === 'category-sub' && node.canCreate) return true
     if (node.type === 'group-item' && node.canCreate) return true
     return false
@@ -432,19 +437,22 @@ function TreeNodeItem({
           )}
 
           {/* Group settings button for group nodes */}
-          {node.type === 'group-item' && node.group && onOpenGroupSettings && (
-            <button
-              className="p-0.5 rounded hover:bg-muted text-text-muted hover:text-primary transition-colors"
-              onClick={handleGroupSettings}
-              title={t('document.groupSettings')}
-              data-testid={`group-settings-${node.group.id}`}
-            >
-              <Settings className="w-3.5 h-3.5" />
-            </button>
-          )}
+          {node.type === 'group-item' &&
+            node.group &&
+            onOpenGroupSettings &&
+            canManageGroup?.(node.group) && (
+              <button
+                className="p-0.5 rounded hover:bg-muted text-text-muted hover:text-primary transition-colors"
+                onClick={handleGroupSettings}
+                title={t('document.groupSettings')}
+                data-testid={`group-settings-${node.group.id}`}
+              >
+                <Settings className="w-3.5 h-3.5" />
+              </button>
+            )}
 
           {/* KB settings button for notebook leaf nodes */}
-          {isLeaf && node.knowledgeBase && onEditKb && (
+          {isLeaf && node.knowledgeBase && onEditKb && canManageKb?.(node.knowledgeBase) && (
             <button
               className="p-0.5 rounded hover:bg-muted text-text-muted hover:text-primary transition-colors"
               onClick={handleKbSettings}
@@ -478,7 +486,8 @@ function TreeNodeItem({
                 onCreateKb={onCreateKb}
                 onOpenGroupSettings={onOpenGroupSettings}
                 onEditKb={onEditKb}
-                isAdmin={isAdmin}
+                canManageGroup={canManageGroup}
+                canManageKb={canManageKb}
               />
             )
           })}

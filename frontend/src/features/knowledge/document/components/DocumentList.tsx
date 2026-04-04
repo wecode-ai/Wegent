@@ -39,6 +39,7 @@ import { refreshKnowledgeBaseSummary } from '@/apis/knowledge'
 import { toast } from '@/hooks/use-toast'
 import type { KnowledgeBase, KnowledgeDocument, SplitterConfig } from '@/types/knowledge'
 import { useTranslation } from '@/hooks/useTranslation'
+import { useUser } from '@/features/common/UserContext'
 
 /** Group info for breadcrumb display */
 export interface KbGroupInfo {
@@ -50,7 +51,8 @@ export interface KbGroupInfo {
 interface DocumentListProps {
   knowledgeBase: KnowledgeBase
   onBack?: () => void
-  canManage?: boolean
+  canUpload?: boolean
+  canManageAllDocuments?: boolean
   /** Compact mode for sidebar display - uses card layout instead of table */
   compact?: boolean
   /** Callback when document selection changes (for notebook mode context injection) */
@@ -71,7 +73,8 @@ type SortOrder = 'asc' | 'desc'
 export function DocumentList({
   knowledgeBase,
   onBack,
-  canManage = true,
+  canUpload = true,
+  canManageAllDocuments = false,
   compact = false,
   onSelectionChange,
   onRefreshKnowledgeBase,
@@ -80,6 +83,7 @@ export function DocumentList({
   onGroupClick,
 }: DocumentListProps) {
   const { t } = useTranslation('knowledge')
+  const { user } = useUser()
   const { documents, loading, error, create, remove, refresh, batchDelete } = useDocuments({
     knowledgeBaseId: knowledgeBase.id,
   })
@@ -203,6 +207,14 @@ export function DocumentList({
 
     return result
   }, [documents, searchQuery, sortField, sortOrder])
+
+  const canManageAnyDocuments = canUpload || canManageAllDocuments
+
+  const canManageDocument = (document: KnowledgeDocument) =>
+    canManageAllDocuments || (canUpload && user?.id === document.user_id)
+
+  const canSelectDocument = (document: KnowledgeDocument) =>
+    Boolean(onSelectionChange) || (canManageAllDocuments && canManageDocument(document))
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -611,7 +623,7 @@ export function DocumentList({
         </TooltipProvider>
 
         {/* Upload button */}
-        {canManage && (
+        {canUpload && (
           <Button variant="primary" size="sm" onClick={() => setShowUpload(true)}>
             <Upload className="w-4 h-4 mr-1" />
             {t('document.document.upload')}
@@ -634,7 +646,7 @@ export function DocumentList({
       ) : filteredAndSortedDocuments.length > 0 ? (
         <>
           {/* Batch action bar - shown when items are selected (not in notebook mode where selection is for context injection) */}
-          {canManage && selectedIds.size > 0 && !onSelectionChange && (
+          {canManageAllDocuments && selectedIds.size > 0 && !onSelectionChange && (
             <div
               className={`flex items-center gap-3 ${compact ? 'px-2 py-2' : 'px-4 py-2.5'} bg-primary/5 border border-primary/20 rounded-lg`}
             >
@@ -687,7 +699,8 @@ export function DocumentList({
                   onReindex={handleReindexDocument}
                   isRefreshing={refreshingDocId === doc.id}
                   isReindexing={reindexingDocId === doc.id}
-                  canManage={canManage}
+                  canManage={canManageDocument(doc)}
+                  canSelect={canSelectDocument(doc)}
                   showBorder={false}
                   selected={selectedIds.has(doc.id)}
                   onSelect={handleSelectDoc}
@@ -702,7 +715,7 @@ export function DocumentList({
               {/* Table header */}
               <div className="flex items-center gap-4 px-4 py-2.5 bg-surface text-xs text-text-muted font-medium min-w-[800px]">
                 {/* Checkbox for select all */}
-                {canManage && (
+                {canManageAllDocuments && (
                   <div className="flex-shrink-0">
                     <Checkbox
                       checked={isAllSelected}
@@ -753,7 +766,7 @@ export function DocumentList({
                 <div className="w-24 flex-shrink-0 text-center">
                   {t('document.document.columns.indexStatus')}
                 </div>
-                {canManage && (
+                {canManageAnyDocuments && (
                   <div className="w-20 flex-shrink-0 text-center">
                     {t('document.document.columns.actions')}
                   </div>
@@ -771,7 +784,8 @@ export function DocumentList({
                   onReindex={handleReindexDocument}
                   isRefreshing={refreshingDocId === doc.id}
                   isReindexing={reindexingDocId === doc.id}
-                  canManage={canManage}
+                  canManage={canManageDocument(doc)}
+                  canSelect={canSelectDocument(doc) && canManageAllDocuments}
                   showBorder={index < filteredAndSortedDocuments.length - 1}
                   selected={selectedIds.has(doc.id)}
                   onSelect={handleSelectDoc}
@@ -791,7 +805,7 @@ export function DocumentList({
           <FileText className="w-12 h-12 mb-4 opacity-50" />
           <p>{t('document.document.noResults')}</p>
         </div>
-      ) : canManage ? (
+      ) : canUpload ? (
         <div className="flex flex-col items-center justify-center py-16 text-text-secondary">
           <FileUp className="w-16 h-16 mb-4 text-text-muted opacity-60" />
           <p className="text-base text-text-primary mb-2">{t('document.document.emptyHint')}</p>
@@ -810,6 +824,7 @@ export function DocumentList({
         document={viewingDoc}
         knowledgeBaseId={knowledgeBase.id}
         kbType={knowledgeBase.kb_type}
+        canEdit={viewingDoc ? canManageDocument(viewingDoc) : false}
       />
 
       <DocumentUpload

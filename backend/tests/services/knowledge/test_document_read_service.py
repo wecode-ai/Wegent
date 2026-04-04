@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from app.services.context.context_service import context_service
-from app.services.rag.document_read_service import DocumentReadService
+from app.services.knowledge.document_read_service import DocumentReadService
 
 
 @pytest.mark.unit

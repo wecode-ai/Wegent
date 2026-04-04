@@ -23,6 +23,7 @@ import type {
 
 interface UseKnowledgePermissionsOptions {
   kbId: number
+  includePendingRequests?: boolean
 }
 
 interface UseKnowledgePermissionsReturn {
@@ -54,6 +55,7 @@ interface UseKnowledgePermissionsReturn {
 
 export function useKnowledgePermissions({
   kbId,
+  includePendingRequests = false,
 }: UseKnowledgePermissionsOptions): UseKnowledgePermissionsReturn {
   const [permissions, setPermissions] = useState<PermissionListResponse | null>(null)
   const [myPermission, setMyPermission] = useState<MyPermissionResponse | null>(null)
@@ -66,7 +68,9 @@ export function useKnowledgePermissions({
     setLoading(true)
     setError(null)
     try {
-      const result = await knowledgePermissionApi.listPermissions(kbId)
+      const result = await knowledgePermissionApi.listPermissions(kbId, {
+        includePendingRequests,
+      })
       setPermissions(result)
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to fetch permissions'
@@ -74,7 +78,7 @@ export function useKnowledgePermissions({
     } finally {
       setLoading(false)
     }
-  }, [kbId])
+  }, [includePendingRequests, kbId])
 
   const fetchMyPermission = useCallback(async () => {
     if (!kbId) return

@@ -11,7 +11,6 @@ providing complete Bot, Model, Ghost, Shell, and Skill resolution.
 """
 
 import logging
-import urllib.request
 from typing import Any, List, Optional, Union
 
 from pydantic import BaseModel
@@ -190,6 +189,15 @@ class TaskRequestBuilder:
         # Get skills for the bot (full resolution from Ghost)
         # Convert preload_skills to the format expected by _get_bot_skills
         effective_preload_skills = list(preload_skills or [])
+
+        # When clarification mode is enabled, auto-inject the interactive-form-question skill.
+        # This replaces the old prompt-injection approach with the MCP skill approach,
+        # allowing the AI to use the interactive_form_question tool for interactive clarification forms.
+        if enable_clarification:
+            effective_preload_skills = self._inject_clarification_skill(
+                effective_preload_skills
+            )
+
         effective_preload_skills = self._inject_conditional_provider_skills(
             user=user,
             message=message,
@@ -1587,6 +1595,52 @@ Response template:
 
         return "\n".join(text_parts)
 
+    @staticmethod
+    def _inject_clarification_skill(preload_skills: list) -> list:
+        """Inject the interactive-form-question skill when clarification mode is enabled.
+
+        When enable_clarification=True, the interactive-form-question skill is automatically added
+        to preload_skills. This replaces the old prompt-injection approach
+        (CLARIFICATION_PROMPT appended to system prompt) with the MCP skill approach,
+        allowing the AI to use the interactive_form_question tool for interactive clarification forms.
+
+        The interactive-form-question skill provides the interactive_form_question MCP tool which:
+        1. Displays an interactive form card in the frontend
+        2. Returns __silent_exit__ immediately (non-blocking)
+        3. Waits for user response as a new conversation message
+
+        Args:
+            preload_skills: Current list of preload skills
+
+        Returns:
+            Updated preload_skills list with interactive-form-question skill injected (if not already present)
+        """
+        # Clarification skill name (matches backend/init_data/skills/interactive-form-question/SKILL.md)
+        clarification_skill_name = "interactive-form-question"
+
+        # Check if already present (avoid duplicates)
+        existing_names = {
+            skill if isinstance(skill, str) else skill.get("name", "")
+            for skill in preload_skills
+            if isinstance(skill, (str, dict))
+        }
+
+        if clarification_skill_name not in existing_names:
+            preload_skills = list(preload_skills)
+            preload_skills.append(
+                {
+                    "name": clarification_skill_name,
+                    "namespace": "default",
+                    "is_public": True,
+                }
+            )
+            logger.info(
+                "[TaskRequestBuilder] Injected clarification skill '%s' into preload_skills",
+                clarification_skill_name,
+            )
+
+        return preload_skills
+
     def _inject_conditional_provider_skills(
         self,
         *,
@@ -1754,18 +1808,13 @@ Response template:
 
     @staticmethod
     def _check_mcp_server_reachable(server: dict) -> bool:
-        """Check if an MCP server URL is reachable with a short timeout.
-
-        Sends a GET request (not HEAD, as some servers like SSE endpoints
-        don't support HEAD method and will timeout). Any HTTP response
-        (including 4xx/5xx) means the server is reachable. Only connection
-        failures are treated as unreachable.
+        """Check if an MCP server config is valid without probing the network.
 
         Args:
             server: Server config dict with 'url' and optional 'headers'
 
         Returns:
-            True if server responded or is stdio type, False on connection failure
+            True if the config should be kept, False for obviously invalid configs
         """
         server_type = server.get("type", "").lower()
 
@@ -1787,28 +1836,7 @@ Response template:
         if "${{backend_url}}" in url:
             return True
 
-        try:
-            # Use GET instead of HEAD because some servers (especially SSE endpoints)
-            # don't support HEAD method and will timeout
-            req = urllib.request.Request(url, method="GET")
-            # Add headers, skipping unresolved placeholders
-            headers = server.get("headers", server.get("auth", {}))
-            if isinstance(headers, dict):
-                for k, v in headers.items():
-                    if isinstance(v, str) and not v.startswith("${{"):
-                        req.add_header(k, v)
-            urllib.request.urlopen(req, timeout=5)
-            return True
-        except urllib.error.HTTPError:
-            # Any HTTP response (including 4xx/5xx) means the server is reachable
-            return True
-        except Exception as e:
-            logger.warning(
-                "[MCP-CHECK] Failed to check server reachability: url=%s, error=%s",
-                url,
-                str(e),
-            )
-            return False
+        return True
 
     def _filter_reachable_mcp_servers(self, mcp_servers: list) -> list:
         """Filter out unreachable MCP servers.

@@ -29,14 +29,8 @@ import { ApiError } from '@/apis/client'
 import { toast } from 'sonner'
 import type { Group, GroupMember, GroupRole } from '@/types/group'
 import type { SearchUser } from '@/types/api'
-import {
-  ASSIGNABLE_ROLES,
-  BASE_ROLES,
-  canLeave,
-  canManageMembers,
-  compareRoles,
-  isOwner,
-} from '@/types/base-role'
+import { ASSIGNABLE_ROLES, BASE_ROLES, canLeave, compareRoles, isOwner } from '@/types/base-role'
+import { canManageNamespace } from '@/utils/namespace-permissions'
 import { ArrowUpDown, ChevronDown, ChevronUp, UserPlusIcon, LogOutIcon } from 'lucide-react'
 import { UserSearchSelect } from '@/components/common/UserSearchSelect'
 
@@ -152,13 +146,16 @@ export function GroupMembersDialog({
 
   const myRole = group?.my_role
   const isPrivateGroup = group?.visibility === 'private'
+  const canManageGroupMembers = canManageNamespace({
+    namespaceRole: myRole,
+  })
 
   // Permission checks using utility functions
   // Private groups do not allow adding members
-  const canAddMember = canManageMembers(myRole) && !isPrivateGroup
-  const canRemoveMember = canManageMembers(myRole)
-  const canUpdateRole = canManageMembers(myRole)
-  const canInviteAll = canManageMembers(myRole) && !isPrivateGroup
+  const canAddMember = canManageGroupMembers && !isPrivateGroup
+  const canRemoveMember = canManageGroupMembers
+  const canUpdateRole = canManageGroupMembers
+  const canInviteAll = canManageGroupMembers && !isPrivateGroup
   const canLeaveGroup = canLeave(myRole)
   const hasMemberManagementPermission = canAddMember || canRemoveMember || canUpdateRole
   const hasUnsavedRoleChanges = Object.keys(roleDrafts).length > 0
@@ -614,10 +611,9 @@ export function GroupMembersDialog({
                         )}
                       </li>
                       <li>
-                        {t('groups:groupMembers.roleDescriptions.MaintainerDetails.manageMembers')}
-                      </li>
-                      <li>
-                        {t('groups:groupMembers.roleDescriptions.MaintainerDetails.updateRoles')}
+                        {t(
+                          'groups:groupMembers.roleDescriptions.MaintainerDetails.cannotManageNamespace'
+                        )}
                       </li>
                       <li>
                         {t('groups:groupMembers.roleDescriptions.MaintainerDetails.canLeave')}
