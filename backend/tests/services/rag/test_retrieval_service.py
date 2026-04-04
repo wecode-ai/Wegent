@@ -384,6 +384,70 @@ class TestRetrieveForChatShell:
         assert result["records"][0]["knowledge_base_id"] == 123
 
     @pytest.mark.asyncio
+    async def test_package_mode_resolves_document_names_before_retrieval(self):
+        """Package mode should resolve document_names before calling retrieval service."""
+        from chat_shell.tools.builtin import KnowledgeBaseTool
+
+        tool = KnowledgeBaseTool(
+            knowledge_base_ids=[1],
+            db_session=MagicMock(),
+            user_id=7,
+        )
+
+        with (
+            patch.object(
+                tool,
+                "_get_kb_info",
+                AsyncMock(
+                    return_value={
+                        "items": [
+                            {
+                                "id": 1,
+                                "name": "Test KB",
+                                "rag_enabled": True,
+                                "max_calls_per_conversation": 10,
+                                "exempt_calls_before_check": 5,
+                            }
+                        ]
+                    }
+                ),
+            ),
+            patch(
+                "app.services.knowledge.KnowledgeService.resolve_document_ids_by_names",
+                return_value=[301],
+                create=True,
+            ) as mock_resolve,
+            patch(
+                "app.services.rag.retrieval_service.RetrievalService.retrieve_for_chat_shell",
+                new_callable=AsyncMock,
+                return_value={
+                    "mode": "rag_retrieval",
+                    "records": [
+                        {
+                            "content": "match",
+                            "score": 0.9,
+                            "title": "release.md",
+                            "knowledge_base_id": 1,
+                        }
+                    ],
+                    "total": 1,
+                    "total_estimated_tokens": 0,
+                },
+            ) as mock_retrieve,
+        ):
+            await tool._arun(
+                query="release checklist",
+                document_names=["release.md"],
+            )
+
+        mock_resolve.assert_called_once_with(
+            db=tool.db_session,
+            knowledge_base_ids=[1],
+            document_names=["release.md"],
+        )
+        assert mock_retrieve.await_args.kwargs["document_ids"] == [301]
+
+    @pytest.mark.asyncio
     async def test_force_rag_route_sorts_and_limits_results_globally(self):
         """Backend should return the final globally ranked RAG records."""
         from app.services.rag.retrieval_service import RetrievalService

@@ -40,10 +40,14 @@ class TestKBPromptConstants:
         assert "Intent Routing" in KB_PROMPT_STRICT
         assert "knowledge base selection / metadata" in strict_lower
         assert "question that must be answered from documents" in strict_lower
-        assert "must not answer without searching first" in strict_lower
+        assert "must retrieve evidence before answering" in strict_lower
         assert "general knowledge" in strict_lower
         assert "selected knowledge base content only" in strict_lower
         assert "knowledge base management" in strict_lower
+        assert "document_names" in KB_PROMPT_STRICT
+        assert "document_ids" in KB_PROMPT_STRICT
+        assert "kb_ls" in KB_PROMPT_STRICT
+        assert "kb_head" in KB_PROMPT_STRICT
 
     def test_kb_prompt_relaxed_contains_required_content(self):
         """KB_PROMPT_RELAXED should contain relaxed mode instructions."""
@@ -55,6 +59,9 @@ class TestKBPromptConstants:
         assert "general knowledge" in KB_PROMPT_RELAXED
         # All KB prompts use Intent Routing pattern
         assert "Intent Routing" in KB_PROMPT_RELAXED
+        assert "document_names" in KB_PROMPT_RELAXED
+        assert "document_ids" in KB_PROMPT_RELAXED
+        assert "kb_ls" in KB_PROMPT_RELAXED
 
     def test_prompts_are_different(self):
         """Strict and relaxed prompts should be different."""

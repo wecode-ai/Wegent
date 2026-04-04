@@ -890,6 +890,32 @@ class KnowledgeService:
         }
 
     @staticmethod
+    def resolve_document_ids_by_names(
+        db: Session,
+        knowledge_base_ids: list[int],
+        document_names: list[str],
+    ) -> list[int]:
+        """Resolve exact document names within the provided knowledge-base scope."""
+        if not knowledge_base_ids or not document_names:
+            return []
+
+        normalized_names = [
+            name.strip() for name in document_names if name and name.strip()
+        ]
+        if not normalized_names:
+            return []
+
+        rows = (
+            db.query(KnowledgeDocument.id)
+            .filter(
+                KnowledgeDocument.kind_id.in_(knowledge_base_ids),
+                KnowledgeDocument.name.in_(normalized_names),
+            )
+            .all()
+        )
+        return [row.id for row in rows]
+
+    @staticmethod
     def get_active_document_text_length_stats(
         db: Session,
         knowledge_base_id: int,

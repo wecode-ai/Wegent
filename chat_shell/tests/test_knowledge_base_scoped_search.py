@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -69,3 +70,49 @@ async def test_http_mode_forwards_document_names_and_ids():
     payload = post.call_args.kwargs["json"]
     assert payload["document_ids"] == [101]
     assert payload["document_names"] == ["release.md"]
+
+
+@pytest.mark.asyncio
+async def test_arun_preserves_backend_scoped_search_error_message():
+    tool = KnowledgeBaseTool(
+        knowledge_base_ids=[1],
+        user_id=7,
+    )
+
+    with (
+        patch.object(
+            tool,
+            "_get_kb_info",
+            AsyncMock(
+                return_value={
+                    "items": [
+                        {
+                            "id": 1,
+                            "name": "Test KB",
+                            "rag_enabled": True,
+                            "max_calls_per_conversation": 10,
+                            "exempt_calls_before_check": 5,
+                        }
+                    ]
+                }
+            ),
+        ),
+        patch.object(
+            tool,
+            "_retrieve_with_strategy_from_all_kbs",
+            AsyncMock(
+                return_value=(
+                    "rag_retrieval",
+                    {
+                        "mode": "rag_retrieval",
+                        "records": [],
+                        "total": 0,
+                        "message": "Document names not found in the selected knowledge bases. Use kb_ls to inspect available documents first.",
+                    },
+                )
+            ),
+        ),
+    ):
+        result = json.loads(await tool._arun(query="release checklist"))
+
+    assert result["message"].startswith("Document names not found")

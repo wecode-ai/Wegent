@@ -628,11 +628,12 @@ class KnowledgeBaseTool(BaseTool):
                 raw_result.get("records", [])
             )
             if not kb_chunks:
-                message = (
+                default_message = (
                     "No documents found in the knowledge base."
                     if route_mode == InjectionMode.DIRECT_INJECTION
                     else "No relevant information found in the knowledge base for this query."
                 )
+                message = raw_result.get("message") or default_message
                 return json.dumps(
                     {
                         "query": query,
@@ -840,6 +841,34 @@ class KnowledgeBaseTool(BaseTool):
             )
         else:
             try:
+                resolved_document_ids = self.document_ids or None
+                if not resolved_document_ids and self.document_names:
+                    from app.services.knowledge import KnowledgeService
+
+                    resolved_document_ids = (
+                        KnowledgeService.resolve_document_ids_by_names(
+                            db=self.db_session,
+                            knowledge_base_ids=self.knowledge_base_ids,
+                            document_names=self.document_names,
+                        )
+                        or None
+                    )
+                    if not resolved_document_ids:
+                        result = {
+                            "mode": InjectionMode.RAG_ONLY,
+                            "records": [],
+                            "total": 0,
+                            "total_estimated_tokens": 0,
+                            "message": "Document names not found in the selected knowledge bases. Use kb_ls to inspect available documents first.",
+                        }
+                        mode = result.get("mode", InjectionMode.RAG_ONLY)
+                        logger.info(
+                            "[KnowledgeBaseTool] Retrieved %d records via Backend route mode=%s",
+                            len(result.get("records", [])),
+                            mode,
+                        )
+                        return mode, result
+
                 from app.services.rag.retrieval_service import RetrievalService
 
                 retrieval_service = RetrievalService()
@@ -848,7 +877,7 @@ class KnowledgeBaseTool(BaseTool):
                     knowledge_base_ids=self.knowledge_base_ids,
                     db=self.db_session,
                     max_results=max_results,
-                    document_ids=self.document_ids or None,
+                    document_ids=resolved_document_ids,
                     user_name=self.user_name,
                     route_mode=route_mode,
                     user_id=self.user_id,
