@@ -9,7 +9,7 @@ Knowledge base and document service using kinds table.
 from dataclasses import dataclass
 from typing import Optional
 
-from sqlalchemy import and_, func
+from sqlalchemy import and_, case, func
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -844,6 +844,50 @@ class KnowledgeService:
         )
 
         return {kb_id: count for kb_id, count in results}
+
+    @staticmethod
+    def get_document_prompt_stats(
+        db: Session,
+        knowledge_base_ids: list[int],
+    ) -> dict[int, dict[str, int]]:
+        """Get prompt-oriented document stats for multiple knowledge bases."""
+        if not knowledge_base_ids:
+            return {}
+
+        spreadsheet_exts = ["csv", "xls", "xlsx"]
+
+        results = (
+            db.query(
+                KnowledgeDocument.kind_id,
+                func.count(KnowledgeDocument.id).label("total_count"),
+                func.sum(case((KnowledgeDocument.is_active == True, 1), else_=0)).label(
+                    "searchable_count"
+                ),
+                func.sum(
+                    case(
+                        (
+                            func.lower(KnowledgeDocument.file_extension).in_(
+                                spreadsheet_exts
+                            ),
+                            1,
+                        ),
+                        else_=0,
+                    )
+                ).label("spreadsheet_count"),
+            )
+            .filter(KnowledgeDocument.kind_id.in_(knowledge_base_ids))
+            .group_by(KnowledgeDocument.kind_id)
+            .all()
+        )
+
+        return {
+            kb_id: {
+                "total_document_count": int(total_count or 0),
+                "searchable_document_count": int(searchable_count or 0),
+                "spreadsheet_document_count": int(spreadsheet_count or 0),
+            }
+            for kb_id, total_count, searchable_count, spreadsheet_count in results
+        }
 
     @staticmethod
     def get_active_document_text_length_stats(
