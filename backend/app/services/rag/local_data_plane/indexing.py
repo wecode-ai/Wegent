@@ -7,11 +7,13 @@ import logging
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
+from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
 from app.services.adapters.retriever_kinds import retriever_kinds_service
-from app.services.rag.document_service import DocumentService
+from app.services.context import context_service
+from app.services.rag.embedding.factory import create_embedding_model_from_crd
 from app.services.rag.runtime_specs import IndexRuntimeSpec
-from app.services.rag.splitter.runtime_config import parse_runtime_splitter_config
 from app.services.rag.storage.factory import create_storage_backend
+from knowledge_engine.services import DocumentService as EngineDocumentService
 from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
@@ -43,6 +45,37 @@ def _extract_delete_document_attributes(
         "rag.document_ref": document_ref,
         "rag.index_owner_user_id": index_owner_user_id or 0,
     }
+
+
+def _get_attachment_binary_source(
+    db: Session,
+    attachment_id: int,
+) -> tuple[bytes, str, str]:
+    context = (
+        db.query(SubtaskContext)
+        .filter(
+            SubtaskContext.id == attachment_id,
+            SubtaskContext.context_type == ContextType.ATTACHMENT.value,
+        )
+        .first()
+    )
+    if not context:
+        raise ValueError(f"Attachment context {attachment_id} not found")
+    if context.status != ContextStatus.READY.value:
+        raise ValueError(
+            f"Attachment context {attachment_id} is not ready (status: {context.status})"
+        )
+
+    binary_data = context_service.get_attachment_binary_data(
+        db=db,
+        context=context,
+    )
+    if binary_data is None:
+        raise ValueError(
+            f"Attachment context {attachment_id} has no binary data available"
+        )
+
+    return binary_data, context.original_filename, context.file_extension
 
 
 @trace_async(
@@ -78,29 +111,38 @@ async def index_document_local(
         }
 
     storage_backend = create_storage_backend(retriever)
-    service = DocumentService(storage_backend=storage_backend)
-
-    splitter_config = spec.splitter_config
-    if splitter_config:
-        splitter_config = parse_runtime_splitter_config(splitter_config)
-
-    file_path = (
-        spec.source.file_path if spec.source.source_type == "file_path" else None
-    )
-    attachment_id = (
-        spec.source.attachment_id if spec.source.source_type == "attachment" else None
-    )
-    return await service.index_document(
-        knowledge_id=str(spec.knowledge_base_id),
-        embedding_model_name=spec.embedding_model_name,
-        embedding_model_namespace=spec.embedding_model_namespace,
-        user_id=spec.index_owner_user_id,
+    embed_model = create_embedding_model_from_crd(
         db=db,
-        file_path=file_path,
-        attachment_id=attachment_id,
-        splitter_config=splitter_config,
-        document_id=spec.document_id,
+        user_id=spec.index_owner_user_id,
+        model_name=spec.embedding_model_name,
+        model_namespace=spec.embedding_model_namespace,
         user_name=spec.user_name,
+    )
+    service = EngineDocumentService(storage_backend=storage_backend)
+
+    if spec.source.source_type == "attachment":
+        binary_data, source_file, file_extension = _get_attachment_binary_source(
+            db,
+            spec.source.attachment_id,
+        )
+        return await service.index_document_from_binary(
+            knowledge_id=str(spec.knowledge_base_id),
+            binary_data=binary_data,
+            source_file=source_file,
+            file_extension=file_extension,
+            embed_model=embed_model,
+            user_id=spec.index_owner_user_id,
+            splitter_config=spec.splitter_config,
+            document_id=spec.document_id,
+        )
+
+    return await service.index_document_from_file(
+        knowledge_id=str(spec.knowledge_base_id),
+        file_path=spec.source.file_path,
+        embed_model=embed_model,
+        user_id=spec.index_owner_user_id,
+        splitter_config=spec.splitter_config,
+        document_id=spec.document_id,
     )
 
 
@@ -166,7 +208,7 @@ async def delete_document_index_local(
         }
 
     storage_backend = create_storage_backend(retriever)
-    service = DocumentService(storage_backend=storage_backend)
+    service = EngineDocumentService(storage_backend=storage_backend)
     return await service.delete_document(
         knowledge_id=str(knowledge_base_id),
         doc_ref=document_ref,
