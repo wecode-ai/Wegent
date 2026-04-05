@@ -39,14 +39,13 @@ from app.services.knowledge.index_runtime import (
     get_kb_index_info,
     resolve_kb_index_info,
 )
-from app.services.rag.local_gateway import LocalRagGateway
+from app.services.rag.gateway_factory import get_index_gateway
 from app.services.rag.runtime_resolver import RagRuntimeResolver
 from app.services.rag.splitter.runtime_config import parse_runtime_splitter_config
 from shared.telemetry import add_span_event
 
 logger = logging.getLogger(__name__)
 runtime_resolver = RagRuntimeResolver()
-rag_gateway = LocalRagGateway()
 
 # Excel file size limit for RAG indexing (2MB)
 EXCEL_FILE_SIZE_LIMIT = 2 * 1024 * 1024  # 2MB in bytes
@@ -393,6 +392,7 @@ def run_document_indexing(
                     "embedding_model_namespace": embedding_model_namespace,
                 },
             )
+            rag_gateway = get_index_gateway()
             result = loop.run_until_complete(
                 rag_gateway.index_document(runtime_spec, db=db)
             )

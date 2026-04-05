@@ -405,11 +405,22 @@ class TestKnowledgeServiceDeleteDocument:
         }
         flag_modified(test_knowledge_base, "json")
         test_db.commit()
+        delete_runtime_spec = object()
+        mock_gateway = MagicMock()
+        mock_gateway.delete_document_index = AsyncMock(
+            return_value={"status": "success"}
+        )
 
-        with patch(
-            "app.services.rag.local_gateway.LocalRagGateway.delete_document_index",
-            new=AsyncMock(return_value={"status": "success"}),
-        ) as mock_delete_index:
+        with (
+            patch(
+                "app.services.rag.gateway_factory.get_delete_gateway",
+                return_value=mock_gateway,
+            ) as mock_get_delete_gateway,
+            patch(
+                "app.services.rag.runtime_resolver.RagRuntimeResolver.build_delete_runtime_spec",
+                return_value=delete_runtime_spec,
+            ) as mock_build_delete_runtime_spec,
+        ):
             result = KnowledgeService.delete_document(
                 db=test_db,
                 document_id=test_document.id,
@@ -417,16 +428,19 @@ class TestKnowledgeServiceDeleteDocument:
             )
 
         assert result.success is True
-        mock_delete_index.assert_awaited_once()
-        assert mock_delete_index.await_args.kwargs["knowledge_base_id"] == (
+        mock_get_delete_gateway.assert_called_once()
+        mock_build_delete_runtime_spec.assert_called_once_with(
+            db=test_db,
+            knowledge_base_id=test_knowledge_base.id,
+            document_ref=str(test_document.id),
+            index_owner_user_id=test_user.id,
+        )
+        mock_gateway.delete_document_index.assert_awaited_once_with(
+            delete_runtime_spec,
+            db=test_db,
+        )
+        assert mock_build_delete_runtime_spec.call_args.kwargs["knowledge_base_id"] == (
             test_knowledge_base.id
-        )
-        assert mock_delete_index.await_args.kwargs["document_ref"] == str(
-            test_document.id
-        )
-        assert mock_delete_index.await_args.kwargs["db"] is test_db
-        assert mock_delete_index.await_args.kwargs["index_owner_user_id"] == (
-            test_user.id
         )
 
 
