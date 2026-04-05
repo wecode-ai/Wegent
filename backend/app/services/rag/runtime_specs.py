@@ -2,6 +2,20 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from shared.models import (
+    RemoteKnowledgeBaseQueryConfig,
+    RuntimeEmbeddingModelConfig,
+    RuntimeRetrievalConfig,
+    RuntimeRetrieverConfig,
+)
+
+RetrievalPolicy = Literal[
+    "chunk_only",
+    "summary_first",
+    "summary_then_chunk_expand",
+    "hybrid",
+]
+
 
 class RuntimeSpecModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -44,9 +58,14 @@ class IndexRuntimeSpec(RuntimeSpecModel):
     embedding_model_name: str
     embedding_model_namespace: str
     source: IndexSource
+    retriever_config: RuntimeRetrieverConfig | None = None
+    embedding_model_config: RuntimeEmbeddingModelConfig | None = None
     index_families: list[str] = Field(default_factory=lambda: ["chunk_vector"])
     splitter_config: Optional[dict] = None
     user_name: Optional[str] = None
+
+
+QueryKnowledgeBaseRuntimeConfig = RemoteKnowledgeBaseQueryConfig
 
 
 class QueryRuntimeSpec(RuntimeSpecModel):
@@ -59,6 +78,19 @@ class QueryRuntimeSpec(RuntimeSpecModel):
     restricted_mode: bool = False
     user_id: Optional[int] = None
     user_name: Optional[str] = None
+    knowledge_base_configs: list[QueryKnowledgeBaseRuntimeConfig] = Field(
+        default_factory=list
+    )
+    enabled_index_families: list[str] = Field(default_factory=lambda: ["chunk_vector"])
+    retrieval_policy: RetrievalPolicy = "chunk_only"
+
+
+class DeleteRuntimeSpec(RuntimeSpecModel):
+    knowledge_base_id: int
+    document_ref: str
+    index_owner_user_id: int
+    retriever_config: RuntimeRetrieverConfig
+    enabled_index_families: list[str] = Field(default_factory=lambda: ["chunk_vector"])
 
 
 DEFAULT_DIRECT_INJECTION_BUDGET = DirectInjectionBudget()

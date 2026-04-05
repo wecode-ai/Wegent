@@ -5,7 +5,11 @@ from app.services.rag.local_data_plane.indexing import (
     index_document_local,
 )
 from app.services.rag.local_data_plane.retrieval import query_local
-from app.services.rag.runtime_specs import IndexRuntimeSpec, QueryRuntimeSpec
+from app.services.rag.runtime_specs import (
+    DeleteRuntimeSpec,
+    IndexRuntimeSpec,
+    QueryRuntimeSpec,
+)
 
 
 class LocalRagGateway:
@@ -36,15 +40,8 @@ class LocalRagGateway:
 
     async def delete_document_index(
         self,
-        knowledge_base_id: int,
-        document_ref: str,
+        spec: DeleteRuntimeSpec,
         *,
         db: Session,
-        index_owner_user_id: int | None = None,
     ) -> dict:
-        return await self._delete_executor(
-            knowledge_base_id=knowledge_base_id,
-            document_ref=document_ref,
-            db=db,
-            index_owner_user_id=index_owner_user_id,
-        )
+        return await self._delete_executor(spec, db=db)

@@ -226,6 +226,38 @@ class RetrievalService:
                 return "runtime_budget_exceeded"
         return None
 
+    def decide_route_mode_for_chat_shell(
+        self,
+        *,
+        query: str,
+        knowledge_base_ids: list[int],
+        db: Session,
+        route_mode: Literal["auto", "direct_injection", "rag_retrieval"] = "auto",
+        document_ids: Optional[list[int]] = None,
+        context_window: Optional[int] = None,
+    ) -> Literal["direct_injection", "rag_retrieval"]:
+        """Resolve the coarse query route while keeping final direct-fit local."""
+        del query
+        if not knowledge_base_ids:
+            return "rag_retrieval"
+
+        total_estimated_tokens = 0
+        if route_mode == "auto":
+            total_estimated_tokens = self._estimate_total_tokens_for_knowledge_bases(
+                db=db,
+                knowledge_base_ids=knowledge_base_ids,
+                document_ids=document_ids,
+            )
+
+        use_direct_injection = self._should_use_direct_injection(
+            context_window=context_window,
+            total_estimated_tokens=total_estimated_tokens,
+            route_mode=route_mode,
+        )
+        if use_direct_injection:
+            return "direct_injection"
+        return "rag_retrieval"
+
     @trace_async(
         span_name="rag.retrieve_for_chat_shell",
         tracer_name="backend.services.rag",

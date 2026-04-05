@@ -2,7 +2,6 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -11,7 +10,12 @@ from app.services.rag.local_data_plane.indexing import (
     delete_document_index_local,
     index_document_local,
 )
-from app.services.rag.runtime_specs import IndexRuntimeSpec, IndexSource
+from app.services.rag.runtime_specs import (
+    DeleteRuntimeSpec,
+    IndexRuntimeSpec,
+    IndexSource,
+)
+from shared.models import RuntimeRetrieverConfig
 
 
 @pytest.mark.asyncio
@@ -122,28 +126,21 @@ async def test_index_document_local_delegates_to_engine_document_service() -> No
 async def test_delete_document_index_local_delegates_to_engine_document_service() -> (
     None
 ):
-    db = MagicMock()
-    db.query.return_value.filter.return_value.first.return_value = SimpleNamespace(
-        user_id=11,
-        json={
-            "spec": {
-                "retrievalConfig": {
-                    "retriever_name": "retriever-a",
-                    "retriever_namespace": "default",
-                }
-            }
-        },
+    spec = DeleteRuntimeSpec(
+        knowledge_base_id=1,
+        document_ref="doc-1",
+        index_owner_user_id=7,
+        retriever_config=RuntimeRetrieverConfig(
+            name="retriever-a",
+            namespace="default",
+            storage_config={"type": "qdrant"},
+        ),
     )
-    storage_backend = MagicMock()
 
     with (
         patch(
-            "app.services.rag.local_data_plane.indexing.retriever_kinds_service.get_retriever",
+            "app.services.rag.local_data_plane.indexing.create_storage_backend_from_runtime_config",
             return_value=MagicMock(),
-        ) as mock_get_retriever,
-        patch(
-            "app.services.rag.local_data_plane.indexing.create_storage_backend",
-            return_value=storage_backend,
         ),
         patch(
             "app.services.rag.local_data_plane.indexing.EngineDocumentService.delete_document",
@@ -151,15 +148,9 @@ async def test_delete_document_index_local_delegates_to_engine_document_service(
             return_value={"status": "success", "deleted_chunks": 4},
         ) as mock_delete_document,
     ):
-        result = await delete_document_index_local(
-            knowledge_base_id=1,
-            document_ref="doc-1",
-            db=db,
-            index_owner_user_id=7,
-        )
+        result = await delete_document_index_local(spec, db=MagicMock())
 
     assert result == {"status": "success", "deleted_chunks": 4}
-    mock_get_retriever.assert_called_once()
     mock_delete_document.assert_awaited_once_with(
         knowledge_id="1",
         doc_ref="doc-1",

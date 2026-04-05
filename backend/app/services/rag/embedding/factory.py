@@ -17,6 +17,7 @@ from app.services.chat.config.model_resolver import (
     build_default_headers_with_placeholders,
 )
 from app.services.rag.embedding.custom import CustomEmbedding
+from shared.models import RuntimeEmbeddingModelConfig
 from shared.utils.crypto import decrypt_api_key
 
 logger = logging.getLogger(__name__)
@@ -176,6 +177,43 @@ def create_embedding_model_from_crd(
             f"[EmbeddingFactory] Model '{model_name}' has configured dimensions: {dimensions}"
         )
 
+    return _create_embedding_model_from_resolved_values(
+        protocol=protocol,
+        model_name=model_name,
+        api_key=api_key,
+        base_url=base_url,
+        model_id=model_id,
+        custom_headers=custom_headers if isinstance(custom_headers, dict) else {},
+        dimensions=dimensions,
+    )
+
+
+def create_embedding_model_from_runtime_config(
+    runtime_config: RuntimeEmbeddingModelConfig,
+) -> BaseEmbedding:
+    """Create embedding model directly from resolved runtime config."""
+    resolved_config = runtime_config.resolved_config or {}
+    return _create_embedding_model_from_resolved_values(
+        protocol=resolved_config.get("protocol"),
+        model_name=runtime_config.model_name,
+        api_key=resolved_config.get("api_key"),
+        base_url=resolved_config.get("base_url"),
+        model_id=resolved_config.get("model_id"),
+        custom_headers=resolved_config.get("custom_headers") or {},
+        dimensions=resolved_config.get("dimensions"),
+    )
+
+
+def _create_embedding_model_from_resolved_values(
+    *,
+    protocol: str | None,
+    model_name: str,
+    api_key: str | None,
+    base_url: str | None,
+    model_id: str | None,
+    custom_headers: dict[str, Any],
+    dimensions: int | None,
+) -> BaseEmbedding:
     # Build embedding config based on protocol
     if protocol == "openai":
         # OpenAI protocol (supports custom headers for internal gateways)
@@ -232,5 +270,6 @@ def create_embedding_model_from_crd(
         )
     else:
         raise ValueError(
-            f"Unsupported embedding protocol: {protocol}. Supported: openai, cohere, jina, custom"
+            f"Unsupported embedding protocol for model '{model_name}': {protocol}. "
+            "Supported: openai, cohere, jina, custom"
         )

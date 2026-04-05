@@ -331,6 +331,52 @@ class TestRetrieveForChatShell:
         assert result["mode"] == "direct_injection"
         assert result["records"][0]["knowledge_base_id"] == 123
 
+    def test_decide_route_mode_for_chat_shell_returns_rag_retrieval_without_budget(
+        self,
+    ):
+        from app.services.rag.retrieval_service import RetrievalService
+
+        service = RetrievalService()
+        db = MagicMock()
+
+        result = service.decide_route_mode_for_chat_shell(
+            query="test",
+            knowledge_base_ids=[123],
+            db=db,
+            route_mode="auto",
+            context_window=None,
+        )
+
+        assert result == "rag_retrieval"
+
+    def test_decide_route_mode_for_chat_shell_returns_direct_injection_when_auto_fits(
+        self,
+    ):
+        from app.services.rag.retrieval_service import RetrievalService
+
+        service = RetrievalService()
+        db = MagicMock()
+
+        with patch.object(
+            RetrievalService,
+            "_estimate_total_tokens_for_knowledge_bases",
+            return_value=100,
+        ) as mock_estimate:
+            result = service.decide_route_mode_for_chat_shell(
+                query="test",
+                knowledge_base_ids=[123],
+                db=db,
+                route_mode="auto",
+                context_window=10000,
+            )
+
+        mock_estimate.assert_called_once_with(
+            db=db,
+            knowledge_base_ids=[123],
+            document_ids=None,
+        )
+        assert result == "direct_injection"
+
     def test_estimate_total_tokens_supports_decimal_aggregate_result(self):
         """Aggregate text-length queries may return Decimal depending on the driver."""
         from app.services.rag.retrieval_service import RetrievalService

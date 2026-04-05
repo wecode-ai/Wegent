@@ -156,3 +156,37 @@ class TestSettings:
         assert s.PROJECT_NAME == "Custom Project"
         assert s.ACCESS_TOKEN_EXPIRE_MINUTES == 60
         assert s.MAX_RUNNING_TASKS_PER_USER == 5
+
+    def test_rag_runtime_mode_defaults_to_local_for_all_operations(self):
+        """Test RAG runtime mode defaults to local across operations."""
+        s = Settings()
+
+        assert s.RAG_RUNTIME_MODE == "local"
+        assert s.get_rag_runtime_mode("index") == "local"
+        assert s.get_rag_runtime_mode("query") == "local"
+        assert s.get_rag_runtime_mode("delete") == "local"
+
+    def test_rag_runtime_mode_accepts_global_env_value(self, monkeypatch):
+        """Test RAG runtime mode accepts a single global env value."""
+        monkeypatch.setenv("RAG_RUNTIME_MODE", "remote")
+
+        s = Settings()
+
+        assert s.RAG_RUNTIME_MODE == "remote"
+        assert s.get_rag_runtime_mode("index") == "remote"
+        assert s.get_rag_runtime_mode("query") == "remote"
+        assert s.get_rag_runtime_mode("delete") == "remote"
+
+    def test_rag_runtime_mode_accepts_operation_override_map(self, monkeypatch):
+        """Test RAG runtime mode accepts per-operation overrides."""
+        monkeypatch.setenv(
+            "RAG_RUNTIME_MODE",
+            '{"default":"remote","query":"local"}',
+        )
+
+        s = Settings()
+
+        assert s.RAG_RUNTIME_MODE == {"default": "remote", "query": "local"}
+        assert s.get_rag_runtime_mode("index") == "remote"
+        assert s.get_rag_runtime_mode("query") == "local"
+        assert s.get_rag_runtime_mode("delete") == "remote"

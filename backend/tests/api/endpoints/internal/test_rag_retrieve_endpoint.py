@@ -4,6 +4,27 @@
 
 from unittest.mock import ANY, AsyncMock, patch
 
+from app.core.config import settings
+from app.services.rag.remote_gateway import RemoteRagGatewayError
+from app.services.rag.runtime_specs import DirectInjectionBudget, QueryRuntimeSpec
+
+
+def _make_runtime_spec(
+    *,
+    route_mode: str = "auto",
+    knowledge_base_ids: list[int] | None = None,
+    query: str = "test",
+    with_budget: bool = False,
+) -> QueryRuntimeSpec:
+    return QueryRuntimeSpec(
+        knowledge_base_ids=knowledge_base_ids or [1],
+        query=query,
+        route_mode=route_mode,
+        direct_injection_budget=(
+            DirectInjectionBudget(context_window=10000) if with_budget else None
+        ),
+    )
+
 
 def test_internal_retrieve_returns_restricted_safe_summary(test_client):
     payload = {
@@ -28,6 +49,14 @@ def test_internal_retrieve_returns_restricted_safe_summary(test_client):
     }
 
     with (
+        patch(
+            "app.api.endpoints.internal.rag.RagRuntimeResolver.build_query_runtime_spec",
+            return_value=_make_runtime_spec(
+                knowledge_base_ids=[1],
+                query=payload["query"],
+                with_budget=True,
+            ),
+        ),
         patch(
             "app.api.endpoints.internal.rag.LocalRagGateway.query",
             new_callable=AsyncMock,
@@ -93,6 +122,13 @@ def test_internal_retrieve_keeps_user_subtask_id_out_of_gateway(test_client):
 
     with (
         patch(
+            "app.api.endpoints.internal.rag.RagRuntimeResolver.build_query_runtime_spec",
+            return_value=_make_runtime_spec(
+                knowledge_base_ids=[1],
+                query=payload["query"],
+            ),
+        ),
+        patch(
             "app.api.endpoints.internal.rag.LocalRagGateway.query",
             new_callable=AsyncMock,
             return_value={
@@ -110,4 +146,256 @@ def test_internal_retrieve_keeps_user_subtask_id_out_of_gateway(test_client):
 
     assert response.status_code == 200
     mock_query.assert_awaited_once_with(ANY, db=ANY)
+    mock_persist.assert_called_once()
+
+
+def test_internal_retrieve_keeps_direct_injection_routing_in_backend(
+    test_client, monkeypatch
+):
+    monkeypatch.setattr(settings, "RAG_RUNTIME_MODE", {"query": "remote"})
+
+    payload = {
+        "query": "How should we proceed?",
+        "knowledge_base_ids": [1],
+        "route_mode": "direct_injection",
+        "persistence_context": {
+            "user_subtask_id": 11,
+            "user_id": 7,
+            "restricted_mode": False,
+        },
+    }
+
+    with (
+        patch(
+            "app.api.endpoints.internal.rag.RagRuntimeResolver.build_query_runtime_spec",
+            return_value=_make_runtime_spec(
+                knowledge_base_ids=[1],
+                query=payload["query"],
+                route_mode="direct_injection",
+            ),
+        ),
+        patch(
+            "app.api.endpoints.internal.rag.get_query_gateway"
+        ) as mock_get_query_gateway,
+        patch(
+            "app.api.endpoints.internal.rag.LocalRagGateway.query",
+            new_callable=AsyncMock,
+            return_value={
+                "mode": "direct_injection",
+                "records": [],
+                "total": 0,
+                "total_estimated_tokens": 0,
+            },
+        ) as mock_query,
+        patch(
+            "app.api.endpoints.internal.rag.retrieval_persistence_service.persist_retrieval_result"
+        ) as mock_persist,
+    ):
+        response = test_client.post("/api/internal/rag/retrieve", json=payload)
+
+    assert response.status_code == 200
+    mock_get_query_gateway.assert_not_called()
+    mock_query.assert_awaited_once_with(ANY, db=ANY)
+    mock_persist.assert_called_once()
+
+
+def test_internal_retrieve_auto_route_uses_remote_gateway_for_rag_retrieval(
+    test_client, monkeypatch
+):
+    monkeypatch.setattr(settings, "RAG_RUNTIME_MODE", {"query": "remote"})
+
+    payload = {
+        "query": "How should we proceed?",
+        "knowledge_base_ids": [1],
+        "route_mode": "auto",
+        "runtime_context": {
+            "context_window": 10000,
+            "used_context_tokens": 100,
+            "reserved_output_tokens": 2048,
+            "context_buffer_ratio": 0.1,
+            "max_direct_chunks": 500,
+        },
+    }
+
+    remote_gateway = AsyncMock()
+    remote_gateway.query.return_value = {
+        "mode": "rag_retrieval",
+        "records": [],
+        "total": 0,
+        "total_estimated_tokens": 0,
+    }
+
+    with (
+        patch(
+            "app.api.endpoints.internal.rag.RagRuntimeResolver.build_query_runtime_spec",
+            return_value=_make_runtime_spec(
+                knowledge_base_ids=[1],
+                query=payload["query"],
+                with_budget=True,
+            ),
+        ),
+        patch(
+            "app.api.endpoints.internal.rag.RetrievalService.decide_route_mode_for_chat_shell",
+            return_value="rag_retrieval",
+        ),
+        patch(
+            "app.api.endpoints.internal.rag.get_query_gateway",
+            return_value=remote_gateway,
+        ) as mock_get_query_gateway,
+        patch(
+            "app.api.endpoints.internal.rag.LocalRagGateway.query",
+            new_callable=AsyncMock,
+        ) as mock_local_query,
+    ):
+        response = test_client.post("/api/internal/rag/retrieve", json=payload)
+
+    assert response.status_code == 200
+    mock_get_query_gateway.assert_called_once()
+    remote_gateway.query.assert_awaited_once_with(ANY, db=ANY)
+    assert remote_gateway.query.await_args.args[0].route_mode == "rag_retrieval"
+    mock_local_query.assert_not_called()
+
+
+def test_internal_retrieve_auto_route_keeps_local_direct_injection(
+    test_client, monkeypatch
+):
+    monkeypatch.setattr(settings, "RAG_RUNTIME_MODE", {"query": "remote"})
+
+    payload = {
+        "query": "How should we proceed?",
+        "knowledge_base_ids": [1],
+        "route_mode": "auto",
+        "runtime_context": {
+            "context_window": 10000,
+            "used_context_tokens": 100,
+            "reserved_output_tokens": 2048,
+            "context_buffer_ratio": 0.1,
+            "max_direct_chunks": 500,
+        },
+    }
+
+    with (
+        patch(
+            "app.api.endpoints.internal.rag.RagRuntimeResolver.build_query_runtime_spec",
+            return_value=_make_runtime_spec(
+                knowledge_base_ids=[1],
+                query=payload["query"],
+                with_budget=True,
+            ),
+        ),
+        patch(
+            "app.api.endpoints.internal.rag.RetrievalService.decide_route_mode_for_chat_shell",
+            return_value="direct_injection",
+        ),
+        patch(
+            "app.api.endpoints.internal.rag.get_query_gateway"
+        ) as mock_get_query_gateway,
+        patch(
+            "app.api.endpoints.internal.rag.LocalRagGateway.query",
+            new_callable=AsyncMock,
+            return_value={
+                "mode": "direct_injection",
+                "records": [],
+                "total": 0,
+                "total_estimated_tokens": 0,
+            },
+        ) as mock_local_query,
+    ):
+        response = test_client.post("/api/internal/rag/retrieve", json=payload)
+
+    assert response.status_code == 200
+    mock_get_query_gateway.assert_not_called()
+    mock_local_query.assert_awaited_once_with(ANY, db=ANY)
+    assert mock_local_query.await_args.args[0].route_mode == "direct_injection"
+
+
+def test_internal_retrieve_falls_back_to_local_when_remote_query_fails(
+    test_client, monkeypatch
+):
+    monkeypatch.setattr(settings, "RAG_RUNTIME_MODE", {"query": "remote"})
+
+    payload = {
+        "query": "How should we proceed?",
+        "knowledge_base_ids": [1],
+        "route_mode": "auto",
+        "runtime_context": {
+            "context_window": 10000,
+            "used_context_tokens": 100,
+            "reserved_output_tokens": 2048,
+            "context_buffer_ratio": 0.1,
+            "max_direct_chunks": 500,
+        },
+        "persistence_context": {
+            "user_subtask_id": 11,
+            "user_id": 7,
+            "restricted_mode": False,
+        },
+    }
+
+    remote_gateway = AsyncMock()
+    remote_gateway.query.side_effect = RemoteRagGatewayError(
+        "knowledge runtime unavailable",
+        code="runtime_unavailable",
+        retryable=True,
+        status_code=503,
+    )
+
+    with (
+        patch(
+            "app.api.endpoints.internal.rag.RagRuntimeResolver.build_query_runtime_spec",
+            return_value=_make_runtime_spec(
+                knowledge_base_ids=[1],
+                query=payload["query"],
+                with_budget=True,
+            ),
+        ),
+        patch(
+            "app.api.endpoints.internal.rag.RetrievalService.decide_route_mode_for_chat_shell",
+            return_value="rag_retrieval",
+        ),
+        patch(
+            "app.api.endpoints.internal.rag.get_query_gateway",
+            return_value=remote_gateway,
+        ) as mock_get_query_gateway,
+        patch(
+            "app.api.endpoints.internal.rag.LocalRagGateway.query",
+            new_callable=AsyncMock,
+            return_value={
+                "mode": "rag_retrieval",
+                "records": [
+                    {
+                        "content": "fallback result",
+                        "title": "Fallback doc",
+                        "knowledge_base_id": 1,
+                    }
+                ],
+                "total": 1,
+                "total_estimated_tokens": 4,
+            },
+        ) as mock_local_query,
+        patch(
+            "app.api.endpoints.internal.rag.retrieval_persistence_service.persist_retrieval_result"
+        ) as mock_persist,
+    ):
+        response = test_client.post("/api/internal/rag/retrieve", json=payload)
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "mode": "rag_retrieval",
+        "records": [
+            {
+                "content": "fallback result",
+                "score": None,
+                "title": "Fallback doc",
+                "metadata": None,
+                "knowledge_base_id": 1,
+            }
+        ],
+        "total": 1,
+        "total_estimated_tokens": 4,
+    }
+    mock_get_query_gateway.assert_called_once()
+    remote_gateway.query.assert_awaited_once_with(ANY, db=ANY)
+    mock_local_query.assert_awaited_once_with(ANY, db=ANY)
+    assert mock_local_query.await_args.args[0].route_mode == "rag_retrieval"
     mock_persist.assert_called_once()

@@ -2,7 +2,7 @@
 sidebar_position: 1
 ---
 
-# RAG Service 独立化设计
+# Knowledge Runtime 独立化设计
 
 ## 背景
 
@@ -15,14 +15,21 @@ sidebar_position: 1
 - `LocalRagGateway`
 - `local_data_plane`
 
-在该基础上，下一步不再是继续做进程内重构，而是将 RAG 数据面执行能力进一步抽为可独立启动的 `rag_service`，同时保留灰度与回退能力。
+在该基础上，最初本轮曾尝试采用“先稳定服务边界，再让 `knowledge_runtime` 独立补齐执行能力”的路线。但随着 remote query 进入真实实现阶段，这条路径暴露出一个更直接的问题：
 
-本设计聚焦：
+- 如果 `knowledge_runtime` 不复用现有底层执行能力，就需要在新服务中重新实现一遍解析、chunking、embedding、storage backend、query / delete 逻辑
+- 一旦进入真实索引与真实检索，这种“独立重写”会快速偏离原本希望保留的 `knowledge_engine` 目标
+- 为了让 `knowledge_runtime` 真正独立执行，又不能访问 Backend DB，remote contract 也必须承载更完整的运行时配置
 
-- 将解析、切分、embedding、索引、检索、删索引迁移到独立 `rag_service`
-- Backend 保持唯一控制面
-- 不将 `direct injection` 与 `restricted mediation` 下沉到 `rag_service`
-- 为 `summary_vector_index` 和后续多索引族检索路线预留稳定扩展点
+因此本文修订后的核心方向是：
+
+- 将跨服务协议放入 `shared`
+- 保持 Backend 继续担任唯一 control plane
+- 从 Backend 中抽离 RAG data-plane execution kernel，作为 `knowledge_engine`
+- Backend local 与 `knowledge_runtime` remote 都依赖同一套 `knowledge_engine`
+- 稳定 remote 后，再删除 Backend 原有 local 入口层
+
+为避免与此前讨论断层，本文中的历史术语 `rag_service`，在目标形态中统一对应 `knowledge_runtime`。
 
 ## 状态快照
 
@@ -50,21 +57,21 @@ sidebar_position: 1
 
 这意味着 Backend 镜像、依赖、启动成本和故障域仍然被重 RAG 能力绑定。
 
-### 2. 首版服务化如果边界错误，返工成本会更高
+### 2. 如果 `knowledge_runtime` 走“独立重写”，真实能力阶段会越来越偏离目标
 
-如果直接将现有执行逻辑整体通过 HTTP 暴露，而不先明确稳定 contract，会把以下不稳定点固化进服务协议：
+当 remote 还只是占位 handler 时，“独立重写”看上去更稳；但一旦进入真实 index / query / delete：
 
-- 文件内容如何获取
-- 执行面是否关心权限与 CRD
-- `direct injection` 是否属于检索服务职责
-- `restricted mediation` 是否属于 RAG 服务职责
-- 未来 `summary_vector_index`、`tableRAG` 如何接入
+- 需要重新接入现有向量库与 embedding 模型
+- 需要复刻 `DocumentService`、storage backend、retriever 解析相关逻辑
+- 需要再次处理 local / remote 语义对齐
+
+这会让实现逐步变成“Backend 有一套真实底层，`knowledge_runtime` 再有一套相似底层”，不仅重复度高，也与“尽快形成可复用的 `knowledge_engine` 执行层”这一目标相冲突。
 
 ### 3. 文件内容传输方式会影响服务职责
 
 索引链路中的解析、切分、embedding 都依赖原始文档内容。
 
-如果 Backend 在每次索引时直接把文件 bytes 推给 `rag_service`：
+如果 Backend 在每次索引时直接把文件 bytes 推给 `knowledge_runtime`：
 
 - Backend 会重新成为大文件中转站
 - 异步重试与 reindex 模型会变差
@@ -72,89 +79,117 @@ sidebar_position: 1
 
 因此，首版必须优先稳定“内容引用 contract”，而不是只追求“是否能传得动文件”。
 
+### 4. “拆整个 knowledge 模块”范围过大，但“抽 execution kernel”是合理边界
+
+当前真正需要迁移的不是整个 Backend `knowledge` 模块，而是其中的 RAG data-plane execution 部分。
+
+如果直接拆整个 `knowledge` 模块：
+
+- 会把权限、元数据、状态机、摘要触发等 control-plane 逻辑一起卷入
+- 会放大数据库、ORM、业务规则迁移范围
+- 会让本轮目标从“拆服务”膨胀成“重构知识模块”
+
+更合理的边界是只抽出 execution kernel，使其：
+
+- 不依赖 Backend DB model
+- 只消费归一化后的 runtime config
+- 同时服务于 Backend local 和 `knowledge_runtime` remote
+
 ## 目标
 
-- 将 RAG 数据面执行迁移为可独立启动的 `rag_service`
+- 将 RAG 数据面执行迁移为可独立启动的 `knowledge_runtime`
 - 保持 Backend 作为唯一 control plane
 - 保持 `chat_shell` 和其他消费者继续只面向 Backend 调用
 - 通过 `RagGateway` 支持 local / remote 双实现切换
-- 建立统一 remote contract，使 `LocalRagGateway` 与 `RemoteRagGateway` 语义一致
-- 以 `index_family` 预留 `summary_vector_index` 扩展能力
+- 将跨服务 transport schema 放入 `shared`
+- 将 Backend 当前 RAG data-plane execution 抽离为可复用的 `knowledge_engine`
+- 让 Backend local 与 `knowledge_runtime` remote 共用同一套底层执行能力
+- 以 `index_family` 与 `retrieval_policy` 预留 `summary_vector_index` 扩展能力
 
 ## 非目标
 
 - 本轮不实现知识库 MCP `search`
-- 本轮不让 `rag_service` 直接访问 Backend 数据库
-- 本轮不把附件存储实现复制到 `rag_service`
-- 本轮不将 `direct injection` 下沉到 `rag_service`
-- 本轮不将 `restricted mediation` 下沉到 `rag_service`
+- 本轮不让 `knowledge_runtime` 直接访问 Backend 数据库
+- 本轮不把附件存储实现复制到 `knowledge_runtime`
+- 本轮不将 `direct injection` 下沉到 `knowledge_runtime`
+- 本轮不将 `restricted mediation` 下沉到 `knowledge_runtime`
+- 本轮不拆整个 Backend `knowledge` 模块
+- 本轮不实现 `summary_vector_index`
 - 本轮不决定 `tableRAG` 的具体底层存储和协议
 
 ## 方案对比
 
-### 方案 1：一次性切换到远程 `rag_service`
+### 方案 1：`shared` 轻协议 + Backend local 基本不动 + `knowledge_runtime` 独立重写
+
+做法：
+
+- 将 remote contract 抽到 `shared`
+- Backend local 数据面只做必要的协议对齐和 remote 接入改动
+- `knowledge_runtime` 参考现有 Backend 数据面语义独立实现
+- Backend 通过配置决定索引/检索/删除走 local 或 remote
+
+优点：
+
+- 服务拆分风险最低
+- local 模式回归面最小
+- 灰度和回滚边界清晰
+- 更容易区分“服务化问题”和“执行逻辑问题”
+
+缺点：
+
+- 进入真实执行阶段后会持续复制底层实现
+- local / remote 语义漂移风险更高
+- 与 `knowledge_engine` 目标背离
+
+### 方案 2：先抽 execution kernel，再让 local / remote 共用
+
+做法：
+
+- 先从 Backend 中抽出 `knowledge_engine`
+- `knowledge_engine` 只承载解析、chunking、embedding、storage backend、index / query / delete 执行
+- Backend local 和 `knowledge_runtime` 都依赖这套共享实现
+- Backend 继续负责 control-plane 编排与 remote contract 归一化
+
+优点：
+
+- 更符合“尽快形成底层可复用执行层”的目标
+- `knowledge_runtime` 更容易尽快接上真实向量库
+- 可以避免 runtime 为了真实 query 再重写一套底层
+
+缺点：
+
+- 需要当轮处理 Python 包边界
+- 需要为 remote contract 补充足够的运行时配置
+- 抽离边界如果过宽，容易误伤 control plane
+
+### 方案 3：一次性切到远程 `knowledge_runtime`
 
 做法：
 
 - Backend 直接移除本地执行主路径
-- 索引、检索、删除全部切到独立 `rag_service`
+- 索引、检索、删除全部切到独立 `knowledge_runtime`
 
 优点：
 
-- 目标形态直接
-- Backend 能最快变轻
+- 目标形态最直接
+- Backend 最快变轻
 
 缺点：
 
-- 首版风险最大
-- 出问题时回退困难
+- 首版风险最高
+- 回退困难
 - 远程 contract、内容获取、鉴权、回写、观测会在同一轮同时收敛
-
-### 方案 2：双实现网关，先落远程能力，再灰度切换
-
-做法：
-
-- 保留 `LocalRagGateway`
-- 新增 `RemoteRagGateway`
-- Backend 继续解析 `RuntimeSpec`
-- 通过配置决定索引/检索/删除走 local 或 remote
-
-优点：
-
-- 与现有代码边界最一致
-- 支持渐进灰度
-- 允许快速回退到 local
-
-缺点：
-
-- 过渡期会同时维护 local / remote 两套执行入口
-
-### 方案 3：仅先拆索引，检索继续留在本地
-
-做法：
-
-- 解析、切分、embedding、索引迁到 `rag_service`
-- 检索仍由本地 data-plane 执行
-
-优点：
-
-- 优先拆出最重的文件处理链路
-
-缺点：
-
-- 会形成“写远程、读本地”的阶段性混合边界
-- 后续还要再做一次检索远程化收敛
 
 ## 选型
 
-采用方案 2。
+采用方案 2，但只抽 execution kernel，不拆整个 `knowledge` 模块。
 
 原因：
 
-- 当前 `RuntimeSpec + RagGateway` 已经形成天然过渡层
-- 可以先稳定远程 contract，再决定何时切换默认路径
-- 能在不打断现有 `chat_shell` 调用面的前提下完成服务化
-- 风险和收益平衡最好
+- 继续走“独立重写”会让真实 query / delete 越做越偏
+- 用户当前更重视尽快复刻底层 `knowledge_engine` 能力，而不是继续维持两套相似实现
+- 真正需要复用的是 RAG execution kernel，而不是整个 `knowledge` 模块
+- 只要抽取边界足够窄，仍然可以把 control-plane 稳定留在 Backend
 
 ## 总体设计
 
@@ -166,12 +201,30 @@ chat_shell / public API / future MCP consumers
      -> RagRuntimeResolver
      -> RagGateway
         -> LocalRagGateway | RemoteRagGateway
-           -> local_data_plane | rag_service
+           -> knowledge_engine | knowledge_runtime -> knowledge_engine
 ```
+
+### `shared` 职责
+
+`shared` 只承载轻协议，建议放置：
+
+- remote request / response schema
+- `content_ref` schema
+- internal auth header / token schema
+- error code / error payload schema
+
+`shared` 不承载：
+
+- 文档解析逻辑
+- embedding / 索引执行逻辑
+- Backend 编排逻辑
+- `direct injection` / `restricted mediation` 语义
+
+换句话说，`shared` 在本轮是 transport contract 层，不是执行层。
 
 ### Backend 职责
 
-Backend 保留：
+Backend 始终保留：
 
 - 权限、多租户、namespace、group / personal 规则
 - `KnowledgeBase` / `KnowledgeDocument` 元数据
@@ -181,25 +234,43 @@ Backend 保留：
 - `restricted mediation`
 - 对 `chat_shell` 和其他消费者暴露统一 API
 
-Backend 不负责：
+迁移期内，Backend 还负责：
 
-- 文档解析实现
-- chunking / embedding / 索引写入执行
-- 远程数据面中的向量检索执行
+- 将 CRD / 元数据解析为归一化 runtime config
+- 为 remote 请求补齐执行所需配置，而不是让 `knowledge_runtime` 反查 Backend DB
+- 保留 local fallback 与回滚能力
 
-### rag_service 职责
+Backend 不再直接承载长期演进的底层 RAG execution 细节；这些能力应沉到 `knowledge_engine`。
 
-`rag_service` 只负责执行面：
+### `knowledge_engine` 职责
 
-- 文档内容拉取
+`knowledge_engine` 是本轮应落地的 execution kernel，职责包括：
+
 - 文档解析
 - splitter
 - embedding
-- index family 写入
+- storage backend 选择与调用
+- index 执行
 - query 执行
-- document index 删除
+- delete document index 执行
 
-`rag_service` 不负责：
+`knowledge_engine` 必须满足：
+
+- 不依赖 Backend ORM model
+- 不读取 Backend DB
+- 只消费归一化后的 runtime config 与外部传入资源
+- 可被 Backend local 与 `knowledge_runtime` remote 共用
+
+### `knowledge_runtime` 职责
+
+`knowledge_runtime` 是新的内部执行服务，只负责 remote 数据面执行：
+
+- 文档内容拉取
+- 将 remote request 转换为 `knowledge_engine` 可执行输入
+- 调用 `knowledge_engine` 执行真实 index / query / delete
+- 返回协议化结果
+
+`knowledge_runtime` 不负责：
 
 - 权限判断
 - CRD 查询与解析
@@ -208,12 +279,31 @@ Backend 不负责：
 - `direct injection` 消费编排
 - `restricted mediation`
 
+### 关于 `knowledge_engine`
+
+`knowledge_engine` 在修订后的方案中不再是“未来可选抽取”，而是当前应落地的窄边界 execution kernel。
+
+它不是：
+
+- 整个 knowledge 模块
+- control plane
+- 轻协议层
+
+它只是：
+
+- Backend local 与 `knowledge_runtime` remote 共同依赖的底层执行库
+
+如果未来 Backend 不再保留 local mode，那么 `knowledge_engine` 可以继续只作为 `knowledge_runtime` 的内部组成部分存在；如果未来需要单独发布，再评估是否独立成 package / repo。
+
 ### 稳定边界原则
 
-真正稳定的边界不是“文件存在哪里”，而是：
+真正稳定的边界不是“服务是否独立重写”，而是：
 
-- Backend 传递 runtime contract 和 content reference
-- `rag_service` 只消费这些 contract，不理解数据库语义
+- Backend 传递 runtime contract 和 `content_ref`
+- `shared` 提供稳定 transport schema
+- `knowledge_engine` 只消费归一化 runtime config，不理解数据库语义
+- `knowledge_runtime` 不理解 Backend DB 与 control-plane 规则
+- Backend local 与 remote 在相同 execution kernel 或相同 contract 下保持语义一致
 
 ## 内容获取设计
 
@@ -228,7 +318,7 @@ Backend 不负责：
 
 因此，首版不以“直推 bytes”作为主路径。
 
-### 采用 content_ref 拉取模式
+### 采用 `content_ref` 拉取模式
 
 索引请求只传内容引用，不直接传大文件内容。
 
@@ -247,12 +337,12 @@ content_ref
 行为：
 
 - Backend 生成内部可鉴权下载 URL
-- `rag_service` 按引用回源拉取内容
+- `knowledge_runtime` 按引用回源拉取内容
 
 意义：
 
 - 保证兼容当前所有附件存储后端
-- 不需要把附件存储实现复制到 `rag_service`
+- 不需要把附件存储实现复制到 `knowledge_runtime`
 
 #### `presigned_url`
 
@@ -261,7 +351,7 @@ content_ref
 行为：
 
 - Backend 生成预签名 URL
-- `rag_service` 直接读取对象存储
+- `knowledge_runtime` 直接读取对象存储
 
 意义：
 
@@ -270,34 +360,46 @@ content_ref
 
 ### 首版解耦目标
 
-首版不追求“`rag_service` 完全不依赖 Backend 提供内容入口”。
+首版不追求“`knowledge_runtime` 完全不依赖 Backend 提供内容入口”。
 
 首版追求的是：
 
-- `rag_service` 不理解附件存储实现
+- `knowledge_runtime` 不理解附件存储实现
 - Backend 不承担长期 bytes push 中转职责
 - 索引重试可围绕统一 `content_ref` 复用
 
-## Runtime Contract 与 Remote Contract
+## Contract 设计
 
-### 本地 contract 保持不变
+### Backend 内部 contract 尽量保持不变
 
-Backend 内部继续使用：
+Backend 内部继续使用现有：
 
 - `IndexRuntimeSpec`
 - `QueryRuntimeSpec`
 
-### 引入远程 payload 映射层
+本轮只做必要扩展，不把 local 路径大改成另一套抽象。
 
-`RemoteRagGateway` 负责将本地 runtime contract 转换为远程请求：
+### 远程 contract 放入 `shared`
+
+`RemoteRagGateway` 与 `knowledge_runtime` 之间共享的 transport schema 放在 `shared`。
+
+建议包括：
 
 - `RemoteIndexRequest`
 - `RemoteQueryRequest`
 - `RemoteDeleteDocumentIndexRequest`
+- `RemoteQueryResult`
+- `ContentRef`
+- internal auth schema
+- remote error schema
 
-这样 `local` 与 `remote` 的差异只体现在 transport，而不体现在业务语义。
+这样做的目的不是“共享执行逻辑”，而是：
 
-### RemoteIndexRequest
+- 统一跨服务协议
+- 降低 Backend 接入 remote 的改动面
+- 让 local / remote 行为对齐有共同的 contract 基线
+
+### `RemoteIndexRequest`
 
 建议包含：
 
@@ -314,9 +416,9 @@ Backend 内部继续使用：
 说明：
 
 - Backend 在发请求前完成 retriever / embedding 配置展开
-- `rag_service` 不再按 name / namespace 回查 CRD
+- `knowledge_runtime` 不再按 name / namespace 回查 CRD
 
-### RemoteQueryRequest
+### `RemoteQueryRequest`
 
 建议尽量贴近 `QueryRuntimeSpec`，包含：
 
@@ -333,9 +435,8 @@ Backend 内部继续使用：
 - `retrieval_policy` 是稳定的远程执行语义，不应直接暴露 chat-specific 的消费策略
 - 当前 `QueryRuntimeSpec` 中已有的 `route_mode` / `direct_injection_budget` 可以在 Backend 内部继续保留，作为 control-plane 路由输入
 - 首版 `RemoteQueryRequest` 不把 `direct injection` 决策语义固化进服务 contract
-- `retrieval_policy` 用于未来扩展多索引族路线
 
-### RemoteDeleteDocumentIndexRequest
+### `RemoteDeleteDocumentIndexRequest`
 
 建议包含：
 
@@ -345,9 +446,9 @@ Backend 内部继续使用：
 - `retriever_config`
 - `enabled_index_families`
 
-## rag_service API 形态
+## `knowledge_runtime` API 形态
 
-首期仅提供三类内部执行接口：
+首期 `knowledge_runtime` 仅提供三类内部执行接口：
 
 - `POST /internal/rag/index`
 - `POST /internal/rag/query`
@@ -357,15 +458,15 @@ Backend 内部继续使用：
 
 - 不接收 DB session、ORM、CRD ref 查找请求
 - 不直接回写 Backend 数据库
-- 返回结构尽量与本地 gateway 一致
+- 返回结构与 `shared` 中的 response schema 对齐
 
 ## 多索引族扩展设计
 
-### 将 index family 作为一等概念
+### 将 `index_family` 作为一等概念
 
 不能将未来扩展继续围绕单一 `chunk_vector` 路径硬编码。
 
-从本轮开始，需将索引执行与检索执行都按 `index_family` 预留。
+从本轮开始，remote contract 与 `knowledge_runtime` 内部执行都要按 `index_family` 预留。
 
 ### 首期默认 family
 
@@ -378,17 +479,7 @@ Backend 内部继续使用：
 - `summary_vector`
 - 其他 family，例如 `table_rag`
 
-### IndexRuntimeSpec 扩展方向
-
-建议保持：
-
-- `index_families: ["chunk_vector"]`
-
-未来可扩：
-
-- `["chunk_vector", "summary_vector"]`
-
-### QueryRuntimeSpec 扩展方向
+### `QueryRuntimeSpec` / RemoteQuery 扩展位
 
 建议新增或保留扩展位：
 
@@ -404,7 +495,7 @@ Backend 内部继续使用：
 
 ### 结果来源标记
 
-`rag_service` 返回结果时应明确记录来源族，例如：
+`knowledge_runtime` 返回结果时应明确记录来源族，例如：
 
 - `index_family = chunk_vector`
 - `index_family = summary_vector`
@@ -415,9 +506,9 @@ Backend 内部继续使用：
 - 调试与观测
 - 不同消费方的结果解释
 
-## direct injection 与 restricted mediation 边界
+## `direct injection` 与 `restricted mediation` 边界
 
-### direct injection 保留在 Backend
+### `direct injection` 保留在 Backend
 
 `direct injection` 不是纯检索执行，而是消费编排决策。
 
@@ -427,188 +518,84 @@ Backend 内部继续使用：
 - 模型窗口与输出保留
 - 消费方的 prompt 注入方式
 
-因此首版不将其作为 `rag_service` 的主职责。
+因此首版不将其作为 `knowledge_runtime` 的主职责。
 
 允许的边界是：
 
-- `rag_service` 提供执行原语，例如常规 query 或 all-chunks 风格执行
+- `knowledge_runtime` 提供常规 query 执行
 - Backend 决定是否走 direct injection
 - Backend 决定如何包装结果供 `chat_shell` 消费
 
-### restricted mediation 保留在 Backend
+### `restricted mediation` 保留在 Backend
 
 `restricted mediation` 明确属于安全与权限策略，而不是检索能力。
 
 因此：
 
-- `rag_service` 返回原始检索候选
+- `knowledge_runtime` 返回原始检索候选
 - Backend 负责决定是否：
   - 直接返回
   - 做 safe-summary / restricted artifact
   - 拒绝输出
 
-不允许 `rag_service` 承担 policy decision。
+不允许 `knowledge_runtime` 承担 policy decision。
 
-## 三条主链路
+## 迁移策略
 
-### 索引链路
+### Phase 1：抽出轻协议与 execution kernel 边界
 
-```text
-Backend
-  -> 权限校验 / 元数据创建 / 任务调度
-  -> RagRuntimeResolver 构造 IndexRuntimeSpec
-  -> RemoteRagGateway 映射 RemoteIndexRequest
-  -> 生成 content_ref
-  -> rag_service 拉取内容并执行解析、切分、embedding、索引
-  -> 返回执行结果
-  -> Backend 回写 document 状态与 chunks，并触发摘要
-```
+- 在 `shared` 中维持 `knowledge_runtime` remote contract
+- 明确 `knowledge_engine` 的输入输出边界
+- 不把 control-plane 规则带入 `knowledge_engine`
 
-Backend 回写内容包括：
+### Phase 2：从 Backend 提取 `knowledge_engine`
 
-- `KnowledgeDocument.index_status`
-- `KnowledgeDocument.is_active`
-- `KnowledgeDocument.chunks`
-- 摘要任务触发
+- 将 local data-plane 中可复用的底层执行能力抽入 `knowledge_engine`
+- Backend local 改为通过 `knowledge_engine` 执行
+- 保持 Backend 对外 API 与控制语义不变
 
-### 检索链路
+### Phase 3：让 `knowledge_runtime` 复用 `knowledge_engine`
 
-```text
-chat_shell / other consumers
-  -> Backend API
-  -> 权限与目标解析
-  -> QueryRuntimeSpec
-  -> RagGateway(local|remote)
-  -> rag_service 执行 query
-  -> Backend 保持 direct injection / restricted / persistence 编排
-```
+- 新服务不独立重写底层 index / query / delete
+- `knowledge_runtime` 只负责协议接入、内容拉取、鉴权和结果序列化
+- remote request 必须携带足够的运行时配置，使 `knowledge_runtime` 无需读取 Backend DB
 
-首版中，检索远程化不改变以下责任归属：
+### Phase 4：通过 `RemoteRagGateway` 灰度接入
 
-- direct injection routing：Backend
-- restricted mediation：Backend
-- retrieval persistence：Backend
+- Backend 增加 remote gateway
+- 索引、检索、删除按配置独立切换 local / remote
+- 保留 local fallback 与快速回退能力
 
-### 删除索引链路
+### Phase 5：稳定后删除 Backend local 入口层
 
-```text
-Backend
-  -> 基于文档与 KB 元数据决定删索引
-  -> 组装 remote delete request
-  -> rag_service 删除 index family 中的 document 数据
-  -> Backend 回写状态与后续清理
-```
+- 当 remote 模式稳定后
+- 删除 Backend 中只用于本地执行的入口层
+- `knowledge_engine` 保留为 `knowledge_runtime` 的核心执行层
 
-## Gateway 与迁移策略
+## 风险与约束
 
-### 双实现网关
+### 1. `knowledge_engine` 抽取边界过宽会误伤 control plane
 
-保留：
+如果把权限、元数据、状态机、摘要触发也一起抽走：
 
-- `LocalRagGateway`
+- 会扩大本轮迁移范围
+- 会引入 DB / ORM / 业务规则耦合
+- 会让服务拆分与业务重构绑定在一起
 
-新增：
+因此必须坚持：
 
-- `RemoteRagGateway`
+- 只抽 execution kernel
+- 不抽整个 `knowledge` 模块
 
-建议引入选择层：
+### 2. remote contract 如果不携带足够 runtime config，`knowledge_runtime` 仍无法独立执行
 
-- `ConfigurableRagGateway`
-- 或 factory based gateway selector
+如果 remote query / delete 仍只传 KB id 和 query：
 
-### 切换粒度
+- `knowledge_runtime` 仍需要回查 Backend 获取 retriever / storage / embedding 配置
+- 服务边界会重新退化
+- 真实 query 接入现有向量库时会卡住
 
-建议按操作独立切换：
-
-- `index_mode = local | remote`
-- `query_mode = local | remote`
-- `delete_mode = local | remote`
-
-原因：
-
-- 索引与检索风险模型不同
-- 灰度与回退更细粒度
-
-### 推荐迁移顺序
-
-1. 落 `rag_service` 可启动骨架与 remote contract
-2. 实现 `RemoteRagGateway`，默认仍走 local
-3. 先灰度索引链路到 remote
-4. 索引稳定后灰度检索链路
-5. 最后灰度删除链路
-6. 稳定后评估是否降低 local data-plane 主路径权重
-
-### 回退策略
-
-- 任一操作异常时，可通过配置切回 local
-- 对上层 API 不做改动
-- 不引入双写、双查等高复杂度补偿逻辑
-
-## 观测与诊断
-
-切换期必须显式区分 local / remote：
-
-- `gateway_mode`
-- `operation = index | query | delete`
-- 远程请求耗时
-- 内容拉取耗时
-- 解析耗时
-- embedding 耗时
-- 向量写入耗时
-- 错误类型
-- 回退次数
-
-`rag_service` 返回错误时，建议区分：
-
-- 内容获取失败
-- 解析失败
-- embedding 调用失败
-- 向量存储失败
-- 非法 contract
-
-## 测试策略
-
-### Backend
-
-- `RagRuntimeResolver` contract 测试
-- `RemoteRagGateway` payload 映射测试
-- gateway 切换配置测试
-- 索引 / 检索 / 删除的回写测试
-
-### rag_service
-
-- `content_ref` 解析测试
-- `backend_attachment_stream` 拉取测试
-- `presigned_url` 拉取测试
-- index / query / delete 接口测试
-- 多 index family executor 测试
-
-### 集成测试
-
-- local 模式回归
-- remote 模式端到端
-- remote 失败后切回 local
-
-## 风险
-
-### 1. MySQL 附件场景仍依赖 Backend 在线
-
-这是首版有意识接受的现实约束。
-
-但该依赖只体现在：
-
-- Backend 作为内容流入口
-
-不应扩散为：
-
-- `rag_service` 直接依赖 Backend 数据库
-- Backend 重新承担 bytes push 中转职责
-
-### 2. contract 如果只围绕单一路径设计，未来会返工
-
-如果远程 query contract 仍默认“只有 chunk_vector”，则 `summary_vector_index` 接入时会再次重做协议。
-
-因此本轮必须将：
+因此本轮 remote contract 必须逐步承载足够的运行时配置，同时保留：
 
 - `index_family`
 - `retrieval_policy`
@@ -618,7 +605,7 @@ Backend
 
 ### 3. chat-specific 语义下沉会污染数据面
 
-如果把 `direct injection` 或 `restricted mediation` 迁入 `rag_service`：
+如果把 `direct injection` 或 `restricted mediation` 迁入 `knowledge_runtime`：
 
 - 数据面会耦合消费语义
 - MCP / chat_shell / future API 会共享错误边界
@@ -628,18 +615,22 @@ Backend
 ## 后续工作
 
 - 设计知识库 MCP `search`，将其作为 retrieval surface 的新增消费面
-- 将 `summary_vector_index` 接入 `index_family` 执行器体系
-- 为 `tableRAG` 设计独立 family / executor / query policy
+- 在 remote 稳定后删除 Backend local 入口层
+- 视独立发布需求评估是否将 `knowledge_engine` 单独 package 化
+- 将 `summary_vector_index` 接入 `index_family` 执行体系
+- 为 `tableRAG` 设计独立 family / query policy
 - 在对象存储场景中进一步减少 Backend 对内容拉取链路的参与
 
 ## 结论
 
-本轮采用“Backend 作为唯一控制面，`rag_service` 作为独立执行数据面”的路线，并通过 `RagGateway` 保持 local / remote 双实现切换。
+本轮修订后采用“`shared` 放轻协议、Backend 保留 control plane、抽离 `knowledge_engine` execution kernel、`knowledge_runtime` 复用该 kernel、通过 `RagGateway` 灰度接入 remote”的路线。
 
 首版最重要的设计结论是：
 
 - 不推文件 bytes，统一走 `content_ref`
-- 不将 `direct injection` 与 `restricted mediation` 下沉到 `rag_service`
-- 从首版开始按 `index_family` 设计，为 `summary_vector_index` 预留稳定空间
+- 不将 `direct injection` 与 `restricted mediation` 下沉到 `knowledge_runtime`
+- 不拆整个 Backend `knowledge` 模块，只抽 RAG execution kernel
+- 让 `knowledge_runtime` 尽快复用真实底层执行能力，而不是继续独立重写
+- 从首版开始按 `index_family` / `retrieval_policy` 设计，为 `summary_vector_index` 预留稳定空间
 
-这样可以在保持灰度和回退能力的同时，把未来 `summary_vector_index`、`tableRAG`、知识库 MCP search 等能力建立在更稳定的服务边界上。
+这样既能保留 Backend control-plane 稳定性，又能尽快让 `knowledge_runtime` 接入真实底层执行能力，避免后续继续维护两套相似的数据面实现。

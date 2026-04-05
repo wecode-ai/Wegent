@@ -13,6 +13,7 @@ from app.services.rag.storage.base import BaseStorageBackend
 from app.services.rag.storage.elasticsearch_backend import ElasticsearchBackend
 from app.services.rag.storage.milvus_backend import MilvusBackend
 from app.services.rag.storage.qdrant_backend import QdrantBackend
+from shared.models import RuntimeRetrieverConfig
 
 # Registry of storage backend classes by type
 STORAGE_BACKEND_REGISTRY: Dict[str, Type[BaseStorageBackend]] = {
@@ -158,5 +159,31 @@ def create_storage_backend(retriever: Retriever) -> BaseStorageBackend:
     }
 
     # Create backend instance
+    backend_class = STORAGE_BACKEND_REGISTRY[storage_type]
+    return backend_class(config)
+
+
+def create_storage_backend_from_runtime_config(
+    retriever_config: RuntimeRetrieverConfig,
+) -> BaseStorageBackend:
+    """Create storage backend from resolved runtime retriever config."""
+    storage_config = retriever_config.storage_config or {}
+    storage_type = storage_config.get("type", "").lower()
+
+    if storage_type not in STORAGE_BACKEND_REGISTRY:
+        raise ValueError(
+            f"Unsupported storage type: {storage_type}. "
+            f"Supported types: {list(STORAGE_BACKEND_REGISTRY.keys())}"
+        )
+
+    config = {
+        "url": storage_config.get("url"),
+        "username": storage_config.get("username"),
+        "password": storage_config.get("password"),
+        "apiKey": storage_config.get("apiKey"),
+        "indexStrategy": storage_config.get("indexStrategy") or {"mode": "per_dataset"},
+        "ext": storage_config.get("ext") or {},
+    }
+
     backend_class = STORAGE_BACKEND_REGISTRY[storage_type]
     return backend_class(config)
