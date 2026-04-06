@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class KnowledgeRuntimeProtocolModel(BaseModel):
@@ -111,6 +111,8 @@ class RemoteIndexRequest(KnowledgeRuntimeProtocolModel):
     retriever_config: RuntimeRetrieverConfig
     embedding_model_config: RuntimeEmbeddingModelConfig
     splitter_config: dict[str, Any] | None = None
+    source_file: str | None = None
+    file_extension: str | None = None
     index_families: list[str] = Field(default_factory=lambda: ["chunk_vector"])
     content_ref: ContentRef
     trace_context: dict[str, Any] | None = None
@@ -145,12 +147,27 @@ class RemoteQueryRequest(KnowledgeRuntimeProtocolModel):
     document_ids: list[int] | None = None
     metadata_condition: dict[str, Any] | None = None
     user_name: str | None = None
-    knowledge_base_configs: list[RemoteKnowledgeBaseQueryConfig] = Field(
-        default_factory=list
-    )
+    knowledge_base_configs: list[RemoteKnowledgeBaseQueryConfig]
     enabled_index_families: list[str] = Field(default_factory=lambda: ["chunk_vector"])
     retrieval_policy: RetrievalPolicy = "chunk_only"
     extensions: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def validate_knowledge_base_configs(self) -> "RemoteQueryRequest":
+        if not self.knowledge_base_configs:
+            raise ValueError("knowledge_base_configs must not be empty")
+
+        requested_ids = list(self.knowledge_base_ids)
+        configured_ids = [
+            config.knowledge_base_id for config in self.knowledge_base_configs
+        ]
+        if len(requested_ids) != len(configured_ids) or set(requested_ids) != set(
+            configured_ids
+        ):
+            raise ValueError(
+                "knowledge_base_configs must align with knowledge_base_ids"
+            )
+        return self
 
 
 class RemoteQueryRecord(KnowledgeRuntimeProtocolModel):

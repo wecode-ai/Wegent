@@ -113,8 +113,8 @@ The checkbox states below are preserved as the original execution breakdown and 
 ### Task 1: Realign docs and package boundaries around `knowledge_engine`
 
 **Files:**
-- Modify: [2026-04-03-rag-service-extraction-design.md](/Users/yanhe1/iDev/weibo/wegent/docs/specs/knowledge/2026-04-03-rag-service-extraction-design.md)
-- Modify: [2026-04-04-rag-service-extraction-implementation-plan.md](/Users/yanhe1/iDev/weibo/wegent/docs/plans/2026-04-04-rag-service-extraction-implementation-plan.md)
+- Modify: `docs/specs/knowledge/2026-04-03-rag-service-extraction-design.md`
+- Modify: `docs/plans/2026-04-04-rag-service-extraction-implementation-plan.md`
 
 - [ ] Update the design and plan to treat `knowledge_engine` as the current execution-kernel extraction target
 - [ ] State explicitly that Backend keeps control-plane logic and does not split the full `knowledge` module

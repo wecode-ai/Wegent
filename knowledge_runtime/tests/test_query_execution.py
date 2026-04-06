@@ -8,6 +8,7 @@ import pytest
 from knowledge_runtime.services.handlers import RuntimeHandlers
 
 from shared.models import (
+    RemoteIndexRequest,
     RemoteKnowledgeBaseQueryConfig,
     RemoteQueryRequest,
     RuntimeEmbeddingModelConfig,
@@ -184,4 +185,38 @@ async def test_query_handler_executes_engine_queries_and_merges_results(mocker) 
             ],
         },
         user_id=202,
+    )
+
+
+def test_resolve_source_file_metadata_prefers_explicit_request_metadata() -> None:
+    handlers = RuntimeHandlers()
+
+    remote_index_request = RemoteIndexRequest.model_validate(
+        {
+            "knowledge_base_id": 101,
+            "document_id": 202,
+            "index_owner_user_id": 303,
+            "retriever_config": {
+                "name": "default-retriever",
+                "namespace": "default",
+                "storage_config": {"type": "qdrant"},
+            },
+            "embedding_model_config": {
+                "model_name": "text-embedding-3-small",
+                "model_namespace": "default",
+                "resolved_config": {"protocol": "openai"},
+            },
+            "content_ref": {
+                "kind": "backend_attachment_stream",
+                "url": "http://backend/api/internal/rag/content/12",
+                "auth_token": "download-token",
+            },
+            "source_file": "release-notes.md",
+            "file_extension": ".md",
+        }
+    )
+
+    assert handlers._resolve_source_file_metadata(remote_index_request) == (
+        "release-notes.md",
+        ".md",
     )

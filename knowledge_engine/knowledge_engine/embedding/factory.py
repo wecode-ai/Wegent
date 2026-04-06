@@ -46,7 +46,7 @@ def _create_embedding_model_from_resolved_values(
             )
             return CustomEmbedding(
                 api_url=api_url,
-                model=model_id or "text-embedding-3-small",
+                model=model_id or model_name or "text-embedding-3-small",
                 headers=custom_headers,
                 api_key=api_key,
                 dimensions=dimensions,
@@ -55,7 +55,7 @@ def _create_embedding_model_from_resolved_values(
         from llama_index.embeddings.openai import OpenAIEmbedding
 
         return OpenAIEmbedding(
-            model=model_id or "text-embedding-3-small",
+            model=model_id or model_name or "text-embedding-3-small",
             api_key=api_key,
             api_base=base_url,
             dimensions=dimensions,

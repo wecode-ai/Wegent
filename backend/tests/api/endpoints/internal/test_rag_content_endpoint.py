@@ -4,6 +4,10 @@
 
 from unittest.mock import patch
 
+import pytest
+from fastapi.responses import StreamingResponse
+
+from app.api.endpoints.internal.rag_content import stream_rag_attachment_content
 from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
 from app.services.auth.rag_download_token import create_rag_download_token
 
@@ -61,3 +65,26 @@ def test_internal_rag_content_streams_allowed_attachment(test_client, test_db) -
     assert response.status_code == 200
     assert response.content == b"release plan"
     assert response.headers["content-type"].startswith("text/plain")
+
+
+@pytest.mark.asyncio
+async def test_internal_rag_content_returns_streaming_response(test_db) -> None:
+    context = _create_attachment_context(test_db)
+
+    with (
+        patch(
+            "app.api.endpoints.internal.rag_content.context_service.get_context_optional",
+            return_value=context,
+        ),
+        patch(
+            "app.api.endpoints.internal.rag_content.context_service.get_attachment_binary_data",
+            return_value=b"release plan",
+        ),
+    ):
+        response = await stream_rag_attachment_content(
+            attachment_id=context.id,
+            _=None,
+            db=test_db,
+        )
+
+    assert isinstance(response, StreamingResponse)

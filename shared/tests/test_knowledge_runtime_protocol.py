@@ -80,8 +80,19 @@ def test_remote_index_request_rejects_unknown_content_ref_kind() -> None:
                 "knowledge_base_id": 11,
                 "document_id": 22,
                 "index_owner_user_id": 33,
-                "retriever_config": {"provider": "milvus"},
-                "embedding_model_config": {"model": "text-embedding-3-large"},
+                "retriever_config": {
+                    "name": "retriever-a",
+                    "namespace": "default",
+                    "storage_config": {
+                        "type": "milvus",
+                        "url": "http://milvus:19530",
+                    },
+                },
+                "embedding_model_config": {
+                    "model_name": "text-embedding-3-large",
+                    "model_namespace": "default",
+                    "resolved_config": {"protocol": "openai"},
+                },
                 "index_families": ["chunk_vector"],
                 "content_ref": {
                     "kind": "unsupported_kind",
@@ -189,6 +200,58 @@ def test_remote_query_request_accepts_explicit_execution_configs() -> None:
         "chunk_vector",
         "summary_vector_index",
     ]
+
+
+def test_remote_query_request_rejects_empty_knowledge_base_configs() -> None:
+    remote_query_request = _require_model("RemoteQueryRequest")
+
+    with pytest.raises(ValidationError):
+        remote_query_request.model_validate(
+            {
+                "knowledge_base_ids": [1001],
+                "query": "release checklist",
+                "knowledge_base_configs": [],
+            }
+        )
+
+
+def test_remote_query_request_rejects_misaligned_knowledge_base_configs() -> None:
+    remote_query_request = _require_model("RemoteQueryRequest")
+
+    with pytest.raises(ValidationError):
+        remote_query_request.model_validate(
+            {
+                "knowledge_base_ids": [1001, 1002],
+                "query": "release checklist",
+                "knowledge_base_configs": [
+                    {
+                        "knowledge_base_id": 1001,
+                        "index_owner_user_id": 42,
+                        "retriever_config": {
+                            "name": "retriever-a",
+                            "namespace": "default",
+                            "storage_config": {
+                                "type": "qdrant",
+                                "url": "http://qdrant:6333",
+                            },
+                        },
+                        "embedding_model_config": {
+                            "model_name": "embed-a",
+                            "model_namespace": "default",
+                            "resolved_config": {
+                                "protocol": "openai",
+                                "model_id": "text-embedding-3-small",
+                            },
+                        },
+                        "retrieval_config": {
+                            "top_k": 8,
+                            "score_threshold": 0.55,
+                            "retrieval_mode": "hybrid",
+                        },
+                    }
+                ],
+            }
+        )
 
 
 def test_remote_delete_request_requires_resolved_retriever_config() -> None:

@@ -239,3 +239,30 @@ def test_build_delete_runtime_spec_resolves_retriever_config():
     assert spec.document_ref == "doc-8"
     assert spec.index_owner_user_id == 99
     assert spec.retriever_config.storage_config["type"] == "qdrant"
+
+
+def test_build_public_query_runtime_spec_requires_kb_access():
+    resolver = RagRuntimeResolver()
+    db = MagicMock()
+
+    with patch(
+        "app.services.knowledge.knowledge_service.KnowledgeService.get_knowledge_base",
+        return_value=(None, False),
+    ):
+        with pytest.raises(
+            ValueError, match="Knowledge base 7 not found or access denied"
+        ):
+            resolver.build_public_query_runtime_spec(
+                db=db,
+                knowledge_base_id=7,
+                query="release checklist",
+                max_results=5,
+                retriever_name="retriever-a",
+                retriever_namespace="default",
+                embedding_model_name="embed-a",
+                embedding_model_namespace="default",
+                user_id=9,
+                user_name="alice",
+                score_threshold=0.7,
+                retrieval_mode="vector",
+            )

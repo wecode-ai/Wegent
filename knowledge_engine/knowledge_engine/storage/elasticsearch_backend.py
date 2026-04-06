@@ -468,6 +468,15 @@ class ElasticsearchBackend(BaseStorageBackend):
         index_name = self.get_index_name(knowledge_id, **kwargs)
         es_client = Elasticsearch(self.url, **self.es_kwargs)
 
+        if not es_client.indices.exists(index=index_name):
+            return {
+                "documents": [],
+                "total": 0,
+                "page": page,
+                "page_size": page_size,
+                "knowledge_id": knowledge_id,
+            }
+
         # Aggregate by doc_ref (our custom document ID), filtered by knowledge_id
         search_body = {
             "size": 0,

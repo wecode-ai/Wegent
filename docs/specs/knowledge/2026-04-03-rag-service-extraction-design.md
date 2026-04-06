@@ -339,7 +339,7 @@ content_ref
   -> presigned_url
 ```
 
-#### `backend_attachment_stream`
+### `backend_attachment_stream`
 
 适用于当前 MySQL 或仅 Backend 可读的附件存储。
 
@@ -353,7 +353,7 @@ content_ref
 - 保证兼容当前所有附件存储后端
 - 不需要把附件存储实现复制到 `knowledge_runtime`
 
-#### `presigned_url`
+### `presigned_url`
 
 适用于 S3 / MinIO / 其他对象存储。
 

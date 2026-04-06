@@ -58,6 +58,9 @@ class CustomEmbedding(BaseEmbedding):
     async def _aget_query_embedding(self, query: str) -> list[float]:
         return await asyncio.to_thread(self._get_query_embedding, query)
 
+    async def _aget_text_embedding(self, text: str) -> list[float]:
+        return await asyncio.to_thread(self._get_text_embedding, text)
+
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=2, max=10),

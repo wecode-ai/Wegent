@@ -117,7 +117,7 @@ def build_elasticsearch_filters(
 
     for cond in metadata_condition["conditions"]:
         key = cond.get("key")
-        operator = cond.get("operator", "eq")
+        operator = str(cond.get("operator", "eq")).lower()
         value = cond.get("value")
 
         if not key or value is None:

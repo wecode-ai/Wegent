@@ -51,6 +51,11 @@ async def test_remote_gateway_index_document_posts_runtime_request(mocker) -> No
             url="https://storage.example.com/release-notes.md",
         ),
     )
+    mocker.patch(
+        "app.services.rag.remote_gateway._get_attachment_source_metadata",
+        return_value=("release-notes.md", ".md"),
+        create=True,
+    )
     post_mock = mocker.patch(
         "httpx.AsyncClient.post",
         return_value=_build_response(
@@ -130,6 +135,8 @@ async def test_remote_gateway_index_document_posts_runtime_request(mocker) -> No
             "kind": "presigned_url",
             "url": "https://storage.example.com/release-notes.md",
         },
+        "source_file": "release-notes.md",
+        "file_extension": ".md",
         "user_name": "alice",
     }
 
@@ -274,7 +281,39 @@ async def test_remote_gateway_translates_structured_remote_errors(mocker) -> Non
     with pytest.raises(
         RemoteRagGatewayError, match="knowledge runtime unavailable"
     ) as exc:
-        await gateway.query(QueryRuntimeSpec(knowledge_base_ids=[1], query="release"))
+        await gateway.query(
+            QueryRuntimeSpec(
+                knowledge_base_ids=[1],
+                query="release",
+                knowledge_base_configs=[
+                    QueryKnowledgeBaseRuntimeConfig(
+                        knowledge_base_id=1,
+                        index_owner_user_id=8,
+                        retriever_config=RuntimeRetrieverConfig(
+                            name="retriever-a",
+                            namespace="default",
+                            storage_config={
+                                "type": "qdrant",
+                                "url": "http://qdrant:6333",
+                            },
+                        ),
+                        embedding_model_config=RuntimeEmbeddingModelConfig(
+                            model_name="embedding-a",
+                            model_namespace="default",
+                            resolved_config={
+                                "protocol": "openai",
+                                "model_id": "text-embedding-3-small",
+                            },
+                        ),
+                        retrieval_config=RuntimeRetrievalConfig(
+                            top_k=20,
+                            score_threshold=0.7,
+                            retrieval_mode="vector",
+                        ),
+                    )
+                ],
+            )
+        )
 
     assert exc.value.code == "runtime_unavailable"
     assert exc.value.retryable is True

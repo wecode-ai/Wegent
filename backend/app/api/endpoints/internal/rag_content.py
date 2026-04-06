@@ -7,9 +7,10 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
-from fastapi.responses import Response
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
@@ -22,6 +23,10 @@ from app.services.context import context_service
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/rag/content", tags=["internal-rag-content"])
+
+
+def _binary_stream(binary_data: bytes) -> Iterator[bytes]:
+    yield binary_data
 
 
 def _verify_rag_download_authorization(
@@ -76,8 +81,8 @@ async def stream_rag_attachment_content(
             detail="Failed to retrieve attachment data",
         )
 
-    return Response(
-        content=binary_data,
+    return StreamingResponse(
+        _binary_stream(binary_data),
         media_type=context.mime_type,
         headers={
             "Content-Disposition": _build_content_disposition(context.original_filename)

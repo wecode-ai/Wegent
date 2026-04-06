@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -12,7 +13,7 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = "development"
     HOST: str = "0.0.0.0"
     PORT: int = 8200
-    INTERNAL_SERVICE_TOKEN: str = "knowledge-runtime-token"
+    INTERNAL_SERVICE_TOKEN: str = Field(...)
 
     model_config = SettingsConfigDict(
         env_file=".env",

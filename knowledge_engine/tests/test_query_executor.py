@@ -73,3 +73,34 @@ async def test_query_executor_delegates_to_storage_backend_with_normalized_confi
         },
         user_id=7,
     )
+
+
+@pytest.mark.asyncio
+async def test_query_executor_normalizes_explicit_none_values_to_defaults() -> None:
+    from knowledge_engine.query import QueryExecutor
+
+    storage_backend = MagicMock()
+    storage_backend.retrieve.return_value = {"records": []}
+    executor = QueryExecutor(storage_backend=storage_backend, embed_model=object())
+
+    await executor.execute(
+        knowledge_id="1",
+        query="release checklist",
+        retrieval_config={
+            "top_k": None,
+            "score_threshold": None,
+            "retrieval_mode": None,
+        },
+    )
+
+    storage_backend.retrieve.assert_called_once_with(
+        knowledge_id="1",
+        query="release checklist",
+        embed_model=executor.embed_model,
+        retrieval_setting={
+            "top_k": 20,
+            "score_threshold": 0.7,
+            "retrieval_mode": "vector",
+        },
+        metadata_condition=None,
+    )

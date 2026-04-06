@@ -153,9 +153,17 @@ class RagRuntimeResolver:
         keyword_weight: float | None = None,
         metadata_condition: dict | None = None,
     ) -> QueryRuntimeSpec:
-        kb = self._get_knowledge_base_record(db=db, knowledge_base_id=knowledge_base_id)
-        if kb is None:
-            raise ValueError(f"Knowledge base {knowledge_base_id} not found")
+        from app.services.knowledge.knowledge_service import KnowledgeService
+
+        kb, has_access = KnowledgeService.get_knowledge_base(
+            db=db,
+            knowledge_base_id=knowledge_base_id,
+            user_id=user_id,
+        )
+        if kb is None or not has_access:
+            raise ValueError(
+                f"Knowledge base {knowledge_base_id} not found or access denied"
+            )
 
         return QueryRuntimeSpec(
             knowledge_base_ids=[knowledge_base_id],

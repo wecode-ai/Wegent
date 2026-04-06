@@ -11,6 +11,8 @@ from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.models.subtask_context import ContextType
+from app.services.context import context_service
 from app.services.rag.content_refs import build_content_ref_for_attachment
 from app.services.rag.runtime_specs import (
     ConnectionTestRuntimeSpec,
@@ -115,6 +117,10 @@ class RemoteRagGateway:
         if spec.source.source_type != "attachment" or spec.source.attachment_id is None:
             raise ValueError("RemoteRagGateway only supports attachment sources")
 
+        source_file, file_extension = _get_attachment_source_metadata(
+            db=db,
+            attachment_id=spec.source.attachment_id,
+        )
         payload = RemoteIndexRequest(
             knowledge_base_id=spec.knowledge_base_id,
             document_id=spec.document_id,
@@ -135,6 +141,8 @@ class RemoteRagGateway:
                 db=db,
                 attachment_id=spec.source.attachment_id,
             ),
+            source_file=source_file,
+            file_extension=file_extension,
             user_name=spec.user_name,
         )
         return await self._post_model("/internal/rag/index", payload)
@@ -189,3 +197,18 @@ class RemoteRagGateway:
         del db
         payload = RemoteTestConnectionRequest(retriever_config=spec.retriever_config)
         return await self._post_model("/internal/rag/test-connection", payload)
+
+
+def _get_attachment_source_metadata(
+    *,
+    db: Session,
+    attachment_id: int,
+) -> tuple[str | None, str | None]:
+    context = context_service.get_context_optional(
+        db=db,
+        context_id=attachment_id,
+    )
+    if context is None or context.context_type != ContextType.ATTACHMENT.value:
+        return None, None
+
+    return context.original_filename or None, context.file_extension or None

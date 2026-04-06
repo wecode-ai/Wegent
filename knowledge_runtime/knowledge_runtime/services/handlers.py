@@ -173,6 +173,10 @@ class RuntimeHandlers:
     def _resolve_source_file_metadata(
         request: RemoteIndexRequest,
     ) -> tuple[str, str]:
+        if request.source_file:
+            suffix = request.file_extension or PurePosixPath(request.source_file).suffix
+            return request.source_file, suffix.lower()
+
         parsed_url = urlparse(request.content_ref.url)
         file_name = PurePosixPath(parsed_url.path).name
         if file_name:

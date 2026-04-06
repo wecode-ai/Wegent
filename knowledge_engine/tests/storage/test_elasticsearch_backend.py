@@ -70,3 +70,33 @@ class TestGetAllChunks:
 
         result = backend.get_all_chunks(knowledge_id="kb_1", max_chunks=100)
         assert result == []
+
+
+class TestListDocuments:
+    @patch("knowledge_engine.storage.elasticsearch_backend.Elasticsearch")
+    def test_list_documents_returns_empty_page_when_index_missing(
+        self, mock_client_class
+    ):
+        from knowledge_engine.storage.elasticsearch_backend import ElasticsearchBackend
+
+        mock_client = MagicMock()
+        mock_client_class.return_value = mock_client
+        mock_client.indices.exists.return_value = False
+
+        backend = ElasticsearchBackend(
+            {
+                "url": "http://localhost:9200",
+                "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
+            }
+        )
+
+        result = backend.list_documents(knowledge_id="kb_1", page=2, page_size=10)
+
+        assert result == {
+            "documents": [],
+            "total": 0,
+            "page": 2,
+            "page_size": 10,
+            "knowledge_id": "kb_1",
+        }
+        mock_client.search.assert_not_called()

@@ -51,9 +51,13 @@ class QueryExecutor:
             config = dict(retrieval_config)
 
         retrieval_setting = {
-            "top_k": config.get("top_k", 20),
-            "score_threshold": config.get("score_threshold", 0.7),
-            "retrieval_mode": config.get("retrieval_mode", "vector"),
+            "top_k": config.get("top_k") or 20,
+            "score_threshold": (
+                config.get("score_threshold")
+                if config.get("score_threshold") is not None
+                else 0.7
+            ),
+            "retrieval_mode": config.get("retrieval_mode") or "vector",
         }
         if "vector_weight" in config:
             retrieval_setting["vector_weight"] = config["vector_weight"]
