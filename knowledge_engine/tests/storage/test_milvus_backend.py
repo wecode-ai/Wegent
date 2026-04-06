@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2025 Weibo, Inc.
+# SPDX-FileCopyrightText: 2026 Weibo, Inc.
 #
 # SPDX-License-Identifier: Apache-2.0
 
@@ -10,8 +10,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from app.services.rag.storage.chunk_metadata import ChunkMetadata
-from app.services.rag.storage.milvus_backend import MilvusBackend
+from knowledge_engine.storage.chunk_metadata import ChunkMetadata
+from knowledge_engine.storage.milvus_backend import MilvusBackend
 
 
 class TestMilvusBackendInit:
@@ -165,7 +165,6 @@ class TestRetrieve:
     @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
     def test_retrieve_vector_mode(self, mock_milvus_vs):
         """Test retrieval in vector mode."""
-        # Setup mock
         mock_store = MagicMock()
         mock_milvus_vs.return_value = mock_store
 
@@ -236,7 +235,6 @@ class TestRetrieve:
         )
 
         assert "records" in result
-        # Keyword mode should not call get_query_embedding
         mock_embed_model.get_query_embedding.assert_not_called()
 
     @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
@@ -274,7 +272,6 @@ class TestRetrieve:
         )
 
         assert "records" in result
-        # Hybrid mode should call get_query_embedding
         mock_embed_model.get_query_embedding.assert_called_once()
 
     def test_retrieve_invalid_mode(self):
@@ -334,7 +331,6 @@ class TestRetrieve:
             },
         )
 
-        # Only high score result should be returned
         assert len(result["records"]) == 1
         assert result["records"][0]["content"] == "high score"
 
@@ -381,7 +377,7 @@ class TestGetDocument:
         mock_node2 = MagicMock()
         mock_node2.text = "chunk 2"
         mock_node2.metadata = {"source_file": "test.txt", "chunk_index": 1}
-        mock_store.get_nodes.return_value = [mock_node2, mock_node1]  # Out of order
+        mock_store.get_nodes.return_value = [mock_node2, mock_node1]
 
         config = {
             "url": "http://localhost:19530/default",
@@ -395,7 +391,6 @@ class TestGetDocument:
         assert result["knowledge_id"] == "kb_1"
         assert result["source_file"] == "test.txt"
         assert result["chunk_count"] == 2
-        # Verify chunks are sorted by chunk_index
         assert result["chunks"][0]["chunk_index"] == 0
         assert result["chunks"][1]["chunk_index"] == 1
 
@@ -426,7 +421,6 @@ class TestListDocuments:
         mock_client_class.return_value = mock_client
         mock_client.list_collections.return_value = ["test_kb_kb_1"]
 
-        # Simulate 3 chunks from 2 documents
         mock_client.query.return_value = [
             {
                 "doc_ref": "doc_1",
@@ -457,12 +451,10 @@ class TestListDocuments:
         assert len(result["documents"]) == 2
         assert result["page"] == 1
         assert result["page_size"] == 10
-        # doc_2 should be first (newer created_at)
         assert result["documents"][0]["doc_ref"] == "doc_2"
         assert result["documents"][0]["chunk_count"] == 1
         assert result["documents"][1]["doc_ref"] == "doc_1"
         assert result["documents"][1]["chunk_count"] == 2
-        # Verify client.close() is called to prevent resource leaks
         mock_client.close.assert_called_once()
 
     @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
@@ -470,7 +462,7 @@ class TestListDocuments:
         """Test listing documents when collection doesn't exist."""
         mock_client = MagicMock()
         mock_client_class.return_value = mock_client
-        mock_client.list_collections.return_value = []  # Collection doesn't exist
+        mock_client.list_collections.return_value = []
 
         config = {
             "url": "http://localhost:19530/default",
@@ -482,7 +474,6 @@ class TestListDocuments:
 
         assert result["total"] == 0
         assert result["documents"] == []
-        # Verify client.close() is called to prevent resource leaks
         mock_client.close.assert_called_once()
 
 
@@ -503,7 +494,6 @@ class TestTestConnection:
         backend = MilvusBackend(config)
 
         assert backend.test_connection() is True
-        # Verify client.close() is called to prevent resource leaks
         mock_client.close.assert_called_once()
 
     @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
@@ -520,7 +510,6 @@ class TestTestConnection:
         backend = MilvusBackend(config)
 
         assert backend.test_connection() is False
-        # Verify client.close() is called even on failure to prevent resource leaks
         mock_client.close.assert_called_once()
 
 
@@ -558,10 +547,8 @@ class TestGetAllChunks:
         result = backend.get_all_chunks(knowledge_id="kb_1", max_chunks=100)
 
         assert len(result) == 2
-        # Verify sorted by doc_ref and chunk_index
         assert result[0]["chunk_id"] == 0
         assert result[1]["chunk_id"] == 1
-        # Verify client.close() is called to prevent resource leaks
         mock_client.close.assert_called_once()
 
     @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
@@ -580,7 +567,6 @@ class TestGetAllChunks:
         result = backend.get_all_chunks(knowledge_id="kb_1", max_chunks=100)
 
         assert result == []
-        # Verify client.close() is called to prevent resource leaks
         mock_client.close.assert_called_once()
 
 
@@ -596,20 +582,13 @@ class TestIndexWithMetadata:
     @patch("knowledge_engine.storage.milvus_backend.StorageContext")
     @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
     def test_index_with_metadata(self, mock_milvus_vs, mock_storage_ctx, mock_vs_index):
-        """Test indexing nodes with metadata.
-
-        Verifies that:
-        1. The correct index name is generated from ChunkMetadata
-        2. VectorStoreIndex is called with the correct parameters
-        3. The result contains expected fields
-        """
+        """Test indexing nodes with metadata."""
         mock_store = MagicMock()
         mock_milvus_vs.return_value = mock_store
 
         mock_ctx = MagicMock()
         mock_storage_ctx.from_defaults.return_value = mock_ctx
 
-        # Create mock nodes with metadata already applied (simulating indexer layer)
         mock_node1 = MagicMock()
         mock_node1.metadata = {
             "knowledge_id": "kb_1",
@@ -648,15 +627,13 @@ class TestIndexWithMetadata:
             embed_model=mock_embed_model,
         )
 
-        # Verify result structure
         assert result["indexed_count"] == 2
         assert result["status"] == "success"
         assert result["index_name"] == "test_kb_kb_1"
 
-        # Verify VectorStoreIndex was called with correct parameters
         mock_vs_index.assert_called_once()
         call_args = mock_vs_index.call_args
-        assert call_args[0][0] == [mock_node1, mock_node2]  # nodes
+        assert call_args[0][0] == [mock_node1, mock_node2]
         assert call_args[1]["storage_context"] == mock_ctx
         assert call_args[1]["embed_model"] == mock_embed_model
         assert call_args[1]["show_progress"] is True
@@ -710,8 +687,6 @@ class TestIndexNameGeneration:
         }
         backend = MilvusBackend(config)
 
-        # kb_id 1-100 should go to bucket 0
         assert backend.get_index_name("1") == "milvus_collection_0"
         assert backend.get_index_name("100") == "milvus_collection_0"
-        # kb_id 101-200 should go to bucket 100
         assert backend.get_index_name("101") == "milvus_collection_100"

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2025 Weibo, Inc.
+# SPDX-FileCopyrightText: 2026 Weibo, Inc.
 #
 # SPDX-License-Identifier: Apache-2.0
 
@@ -13,7 +13,7 @@ class TestGetAllChunks:
     @patch("knowledge_engine.storage.elasticsearch_backend.Elasticsearch")
     def test_get_all_chunks_returns_parsed_chunks(self, mock_client_class):
         """Should parse hits into normalized chunk payloads."""
-        from app.services.rag.storage.elasticsearch_backend import ElasticsearchBackend
+        from knowledge_engine.storage.elasticsearch_backend import ElasticsearchBackend
 
         mock_client = MagicMock()
         mock_client_class.return_value = mock_client
@@ -52,7 +52,7 @@ class TestGetAllChunks:
     @patch("knowledge_engine.storage.elasticsearch_backend.Elasticsearch")
     def test_get_all_chunks_returns_empty_when_no_hits(self, mock_client_class):
         """Should return an empty list when the knowledge_id term query has no hits."""
-        from app.services.rag.storage.elasticsearch_backend import ElasticsearchBackend
+        from knowledge_engine.storage.elasticsearch_backend import ElasticsearchBackend
 
         mock_client = MagicMock()
         mock_client_class.return_value = mock_client
