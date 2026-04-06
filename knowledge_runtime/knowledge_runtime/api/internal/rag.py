@@ -3,14 +3,15 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from fastapi import APIRouter, Depends
-
 from knowledge_runtime.security import verify_internal_service_token
 from knowledge_runtime.services.handlers import runtime_handlers
+
 from shared.models.knowledge_runtime_protocol import (
     RemoteDeleteDocumentIndexRequest,
     RemoteIndexRequest,
     RemoteQueryRequest,
     RemoteQueryResponse,
+    RemoteTestConnectionRequest,
 )
 
 router = APIRouter(prefix="/internal/rag", tags=["internal-rag"])
@@ -38,3 +39,11 @@ async def delete_document_index(
     _: None = Depends(verify_internal_service_token),
 ) -> dict:
     return await runtime_handlers.delete_document_index(request)
+
+
+@router.post("/test-connection")
+async def test_connection(
+    request: RemoteTestConnectionRequest,
+    _: None = Depends(verify_internal_service_token),
+) -> dict:
+    return await runtime_handlers.test_connection(request)

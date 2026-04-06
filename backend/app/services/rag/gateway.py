@@ -3,6 +3,7 @@ from typing import Protocol
 from sqlalchemy.orm import Session
 
 from app.services.rag.runtime_specs import (
+    ConnectionTestRuntimeSpec,
     DeleteRuntimeSpec,
     IndexRuntimeSpec,
     QueryRuntimeSpec,
@@ -29,4 +30,11 @@ class RagGateway(Protocol):
         spec: DeleteRuntimeSpec,
         *,
         db: Session,
+    ) -> dict: ...
+
+    async def test_connection(
+        self,
+        spec: ConnectionTestRuntimeSpec,
+        *,
+        db: Session | None = None,
     ) -> dict: ...

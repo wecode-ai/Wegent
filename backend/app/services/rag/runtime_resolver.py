@@ -12,6 +12,7 @@ from app.services.knowledge.index_runtime import (
 )
 from app.services.rag.embedding.factory import _process_custom_headers_placeholders
 from app.services.rag.runtime_specs import (
+    ConnectionTestRuntimeSpec,
     DeleteRuntimeSpec,
     DirectInjectionBudget,
     IndexRuntimeSpec,
@@ -87,6 +88,7 @@ class RagRuntimeResolver:
         max_results: int,
         route_mode: Literal["auto", "direct_injection", "rag_retrieval"],
         document_ids: list[int] | None = None,
+        metadata_condition: dict | None = None,
         restricted_mode: bool = False,
         user_id: int | None = None,
         user_name: str | None = None,
@@ -114,11 +116,12 @@ class RagRuntimeResolver:
             max_results=max_results,
             route_mode=route_mode,
             document_ids=document_ids,
+            metadata_condition=metadata_condition,
             restricted_mode=restricted_mode,
             user_id=user_id,
             user_name=user_name,
             knowledge_base_configs=(
-                self._build_query_knowledge_base_configs(
+                self.build_query_knowledge_base_configs(
                     db=db,
                     knowledge_base_ids=knowledge_base_ids,
                     user_name=user_name,
@@ -129,6 +132,78 @@ class RagRuntimeResolver:
             enabled_index_families=enabled_index_families or ["chunk_vector"],
             retrieval_policy=retrieval_policy,
             direct_injection_budget=direct_injection_budget,
+        )
+
+    def build_public_query_runtime_spec(
+        self,
+        *,
+        db: Session,
+        knowledge_base_id: int,
+        query: str,
+        max_results: int,
+        retriever_name: str,
+        retriever_namespace: str,
+        embedding_model_name: str,
+        embedding_model_namespace: str,
+        user_id: int,
+        user_name: str | None,
+        score_threshold: float,
+        retrieval_mode: str,
+        vector_weight: float | None = None,
+        keyword_weight: float | None = None,
+        metadata_condition: dict | None = None,
+    ) -> QueryRuntimeSpec:
+        kb = self._get_knowledge_base_record(db=db, knowledge_base_id=knowledge_base_id)
+        if kb is None:
+            raise ValueError(f"Knowledge base {knowledge_base_id} not found")
+
+        return QueryRuntimeSpec(
+            knowledge_base_ids=[knowledge_base_id],
+            query=query,
+            max_results=max_results,
+            route_mode="rag_retrieval",
+            metadata_condition=metadata_condition,
+            user_id=user_id,
+            user_name=user_name,
+            knowledge_base_configs=[
+                QueryKnowledgeBaseRuntimeConfig(
+                    knowledge_base_id=knowledge_base_id,
+                    index_owner_user_id=kb.user_id,
+                    retriever_config=self._build_resolved_retriever_config(
+                        db=db,
+                        user_id=user_id,
+                        name=retriever_name,
+                        namespace=retriever_namespace,
+                    ),
+                    embedding_model_config=self._build_resolved_embedding_model_config(
+                        db=db,
+                        user_id=user_id,
+                        model_name=embedding_model_name,
+                        model_namespace=embedding_model_namespace,
+                        user_name=user_name,
+                    ),
+                    retrieval_config=RuntimeRetrievalConfig(
+                        top_k=max_results,
+                        score_threshold=score_threshold,
+                        retrieval_mode=retrieval_mode,
+                        vector_weight=vector_weight,
+                        keyword_weight=keyword_weight,
+                    ),
+                )
+            ],
+        )
+
+    def build_query_knowledge_base_configs(
+        self,
+        *,
+        db: Session,
+        knowledge_base_ids: list[int],
+        user_name: str | None,
+    ) -> list[QueryKnowledgeBaseRuntimeConfig]:
+        return self._build_query_knowledge_base_configs(
+            db=db,
+            knowledge_base_ids=knowledge_base_ids,
+            user_name=user_name,
         )
 
     def build_delete_runtime_spec(

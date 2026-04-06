@@ -8,6 +8,7 @@ WORKDIR /app
 
 # Copy local dependencies first so uv can resolve path sources.
 COPY shared /shared
+COPY knowledge_engine /knowledge_engine
 
 # Copy pyproject.toml and install dependencies.
 COPY knowledge_runtime/pyproject.toml .

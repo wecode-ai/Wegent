@@ -129,6 +129,13 @@ class RemoteDeleteDocumentIndexRequest(KnowledgeRuntimeProtocolModel):
     extensions: dict[str, Any] | None = None
 
 
+class RemoteTestConnectionRequest(KnowledgeRuntimeProtocolModel):
+    """Test-connection request sent from Backend to knowledge_runtime."""
+
+    retriever_config: RuntimeRetrieverConfig
+    extensions: dict[str, Any] | None = None
+
+
 class RemoteQueryRequest(KnowledgeRuntimeProtocolModel):
     """Query request sent from Backend to knowledge_runtime."""
 
@@ -136,6 +143,7 @@ class RemoteQueryRequest(KnowledgeRuntimeProtocolModel):
     query: str
     max_results: int = 5
     document_ids: list[int] | None = None
+    metadata_condition: dict[str, Any] | None = None
     user_name: str | None = None
     knowledge_base_configs: list[RemoteKnowledgeBaseQueryConfig] = Field(
         default_factory=list

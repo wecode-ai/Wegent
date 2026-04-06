@@ -129,7 +129,7 @@ class TestMilvusBackendClassAttributes:
 class TestCreateVectorStore:
     """Tests for create_vector_store method."""
 
-    @patch("app.services.rag.storage.milvus_backend.LazyAsyncMilvusVectorStore")
+    @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
     def test_create_vector_store_basic(self, mock_milvus_vs):
         """Test creating a vector store with basic parameters.
 
@@ -162,7 +162,7 @@ class TestCreateVectorStore:
 class TestRetrieve:
     """Tests for retrieve method."""
 
-    @patch("app.services.rag.storage.milvus_backend.LazyAsyncMilvusVectorStore")
+    @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
     def test_retrieve_vector_mode(self, mock_milvus_vs):
         """Test retrieval in vector mode."""
         # Setup mock
@@ -202,7 +202,7 @@ class TestRetrieve:
         assert result["records"][0]["content"] == "test content"
         assert result["records"][0]["score"] == 0.9
 
-    @patch("app.services.rag.storage.milvus_backend.LazyAsyncMilvusVectorStore")
+    @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
     def test_retrieve_keyword_mode(self, mock_milvus_vs):
         """Test retrieval in keyword mode."""
         mock_store = MagicMock()
@@ -239,7 +239,7 @@ class TestRetrieve:
         # Keyword mode should not call get_query_embedding
         mock_embed_model.get_query_embedding.assert_not_called()
 
-    @patch("app.services.rag.storage.milvus_backend.LazyAsyncMilvusVectorStore")
+    @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
     def test_retrieve_hybrid_mode(self, mock_milvus_vs):
         """Test retrieval in hybrid mode."""
         mock_store = MagicMock()
@@ -297,7 +297,7 @@ class TestRetrieve:
                 retrieval_setting={"retrieval_mode": "invalid"},
             )
 
-    @patch("app.services.rag.storage.milvus_backend.LazyAsyncMilvusVectorStore")
+    @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
     def test_retrieve_score_threshold_filtering(self, mock_milvus_vs):
         """Test that results below score threshold are filtered out."""
         mock_store = MagicMock()
@@ -342,7 +342,7 @@ class TestRetrieve:
 class TestDeleteDocument:
     """Tests for delete_document method."""
 
-    @patch("app.services.rag.storage.milvus_backend.LazyAsyncMilvusVectorStore")
+    @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
     def test_delete_document(self, mock_milvus_vs):
         """Test deleting a document."""
         mock_store = MagicMock()
@@ -369,7 +369,7 @@ class TestDeleteDocument:
 class TestGetDocument:
     """Tests for get_document method."""
 
-    @patch("app.services.rag.storage.milvus_backend.LazyAsyncMilvusVectorStore")
+    @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
     def test_get_document(self, mock_milvus_vs):
         """Test getting document details."""
         mock_store = MagicMock()
@@ -399,7 +399,7 @@ class TestGetDocument:
         assert result["chunks"][0]["chunk_index"] == 0
         assert result["chunks"][1]["chunk_index"] == 1
 
-    @patch("app.services.rag.storage.milvus_backend.LazyAsyncMilvusVectorStore")
+    @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
     def test_get_document_not_found(self, mock_milvus_vs):
         """Test getting a document that doesn't exist."""
         mock_store = MagicMock()
@@ -419,7 +419,7 @@ class TestGetDocument:
 class TestListDocuments:
     """Tests for list_documents method."""
 
-    @patch("app.services.rag.storage.milvus_backend.MilvusClient")
+    @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
     def test_list_documents(self, mock_client_class):
         """Test listing documents with pagination."""
         mock_client = MagicMock()
@@ -465,7 +465,7 @@ class TestListDocuments:
         # Verify client.close() is called to prevent resource leaks
         mock_client.close.assert_called_once()
 
-    @patch("app.services.rag.storage.milvus_backend.MilvusClient")
+    @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
     def test_list_documents_empty_collection(self, mock_client_class):
         """Test listing documents when collection doesn't exist."""
         mock_client = MagicMock()
@@ -489,7 +489,7 @@ class TestListDocuments:
 class TestTestConnection:
     """Tests for test_connection method."""
 
-    @patch("app.services.rag.storage.milvus_backend.MilvusClient")
+    @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
     def test_connection_success(self, mock_client_class):
         """Test successful connection."""
         mock_client = MagicMock()
@@ -506,7 +506,7 @@ class TestTestConnection:
         # Verify client.close() is called to prevent resource leaks
         mock_client.close.assert_called_once()
 
-    @patch("app.services.rag.storage.milvus_backend.MilvusClient")
+    @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
     def test_connection_failure(self, mock_client_class):
         """Test failed connection."""
         mock_client = MagicMock()
@@ -527,7 +527,7 @@ class TestTestConnection:
 class TestGetAllChunks:
     """Tests for get_all_chunks method."""
 
-    @patch("app.services.rag.storage.milvus_backend.MilvusClient")
+    @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
     def test_get_all_chunks(self, mock_client_class):
         """Test getting all chunks."""
         mock_client = MagicMock()
@@ -564,7 +564,7 @@ class TestGetAllChunks:
         # Verify client.close() is called to prevent resource leaks
         mock_client.close.assert_called_once()
 
-    @patch("app.services.rag.storage.milvus_backend.MilvusClient")
+    @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
     def test_get_all_chunks_collection_not_exists(self, mock_client_class):
         """Test getting chunks when collection doesn't exist."""
         mock_client = MagicMock()
@@ -592,9 +592,9 @@ class TestIndexWithMetadata:
     to nodes - it only uses ChunkMetadata for index name generation.
     """
 
-    @patch("app.services.rag.storage.milvus_backend.VectorStoreIndex")
-    @patch("app.services.rag.storage.milvus_backend.StorageContext")
-    @patch("app.services.rag.storage.milvus_backend.LazyAsyncMilvusVectorStore")
+    @patch("knowledge_engine.storage.milvus_backend.VectorStoreIndex")
+    @patch("knowledge_engine.storage.milvus_backend.StorageContext")
+    @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
     def test_index_with_metadata(self, mock_milvus_vs, mock_storage_ctx, mock_vs_index):
         """Test indexing nodes with metadata.
 

@@ -347,17 +347,6 @@ POST   /api/v1/namespaces/{namespace}/retrievers/{name}/test # Test connection
 ### RAG Operations (Updated)
 
 ```
-POST /api/rag/documents/upload
-{
-  "knowledge_id": "kb_123",
-  "retriever_ref": {
-    "name": "my-es-retriever",
-    "namespace": "default"
-  },
-  "file": <binary>,
-  "embedding_config": {...}
-}
-
 POST /api/rag/retrieve
 {
   "knowledge_id": "kb_123",

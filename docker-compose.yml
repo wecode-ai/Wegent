@@ -67,6 +67,29 @@ services:
       retries: 5
       start_period: 40s
 
+  knowledge_runtime:
+    build:
+      context: .
+      dockerfile: docker/knowledge_runtime/Dockerfile
+    container_name: wegent-knowledge-runtime
+    restart: always
+    profiles:
+      - rag
+    ports:
+      - "${KNOWLEDGE_RUNTIME_PORT:-8200}:8200"
+    environment:
+      PORT: 8200
+      HOST: 0.0.0.0
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-knowledge-runtime-token}
+    networks:
+      - wegent-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8200/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
   backend:
     # build:
       # dockerfile: docker/backend/Dockerfile
@@ -107,7 +130,8 @@ services:
       CHAT_SHELL_MODE: ${CHAT_SHELL_MODE:-http}
       CHAT_SHELL_URL: ${CHAT_SHELL_URL:-http://chat_shell:8100}
       # CHAT_SHELL_TOKEN: ${INTERNAL_SERVICE_TOKEN:-chat-shell-token}
-      # INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-chat-shell-token}
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-knowledge-runtime-token}
+      KNOWLEDGE_RUNTIME_URL: ${KNOWLEDGE_RUNTIME_URL:-http://knowledge_runtime:8200}
       # Task Dispatch Configuration
       # Mode: 'push' (default) or 'pull' (deprecated, executor_manager polls)
       TASK_DISPATCH_MODE: ${TASK_DISPATCH_MODE:-push}

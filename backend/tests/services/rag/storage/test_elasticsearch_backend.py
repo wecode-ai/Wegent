@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 class TestGetAllChunks:
     """Tests for ElasticsearchBackend.get_all_chunks."""
 
-    @patch("app.services.rag.storage.elasticsearch_backend.Elasticsearch")
+    @patch("knowledge_engine.storage.elasticsearch_backend.Elasticsearch")
     def test_get_all_chunks_returns_parsed_chunks(self, mock_client_class):
         """Should parse hits into normalized chunk payloads."""
         from app.services.rag.storage.elasticsearch_backend import ElasticsearchBackend
@@ -49,7 +49,7 @@ class TestGetAllChunks:
         assert result[0]["doc_ref"] == "doc_1"
         assert result[0]["chunk_id"] == 3
 
-    @patch("app.services.rag.storage.elasticsearch_backend.Elasticsearch")
+    @patch("knowledge_engine.storage.elasticsearch_backend.Elasticsearch")
     def test_get_all_chunks_returns_empty_when_no_hits(self, mock_client_class):
         """Should return an empty list when the knowledge_id term query has no hits."""
         from app.services.rag.storage.elasticsearch_backend import ElasticsearchBackend

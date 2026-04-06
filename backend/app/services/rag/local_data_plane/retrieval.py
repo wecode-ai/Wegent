@@ -45,6 +45,8 @@ async def query_local(
         db=db,
         max_results=spec.max_results,
         document_ids=spec.document_ids,
+        metadata_condition=spec.metadata_condition,
+        knowledge_base_configs=spec.knowledge_base_configs,
         user_name=spec.user_name,
         route_mode=spec.route_mode,
         user_id=spec.user_id,

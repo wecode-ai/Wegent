@@ -16,7 +16,9 @@ from app.models.kind import Kind
 from app.services.chat.config.model_resolver import (
     build_default_headers_with_placeholders,
 )
-from app.services.rag.embedding.custom import CustomEmbedding
+from knowledge_engine.embedding.factory import (
+    create_embedding_model_from_runtime_config as engine_create_embedding_model_from_runtime_config,
+)
 from shared.models import RuntimeEmbeddingModelConfig
 from shared.utils.crypto import decrypt_api_key
 
@@ -177,14 +179,21 @@ def create_embedding_model_from_crd(
             f"[EmbeddingFactory] Model '{model_name}' has configured dimensions: {dimensions}"
         )
 
-    return _create_embedding_model_from_resolved_values(
-        protocol=protocol,
-        model_name=model_name,
-        api_key=api_key,
-        base_url=base_url,
-        model_id=model_id,
-        custom_headers=custom_headers if isinstance(custom_headers, dict) else {},
-        dimensions=dimensions,
+    return engine_create_embedding_model_from_runtime_config(
+        RuntimeEmbeddingModelConfig(
+            model_name=model_name,
+            model_namespace=model_namespace,
+            resolved_config={
+                "protocol": protocol,
+                "api_key": api_key,
+                "base_url": base_url,
+                "model_id": model_id,
+                "custom_headers": (
+                    custom_headers if isinstance(custom_headers, dict) else {}
+                ),
+                "dimensions": dimensions,
+            },
+        )
     )
 
 
@@ -192,84 +201,4 @@ def create_embedding_model_from_runtime_config(
     runtime_config: RuntimeEmbeddingModelConfig,
 ) -> BaseEmbedding:
     """Create embedding model directly from resolved runtime config."""
-    resolved_config = runtime_config.resolved_config or {}
-    return _create_embedding_model_from_resolved_values(
-        protocol=resolved_config.get("protocol"),
-        model_name=runtime_config.model_name,
-        api_key=resolved_config.get("api_key"),
-        base_url=resolved_config.get("base_url"),
-        model_id=resolved_config.get("model_id"),
-        custom_headers=resolved_config.get("custom_headers") or {},
-        dimensions=resolved_config.get("dimensions"),
-    )
-
-
-def _create_embedding_model_from_resolved_values(
-    *,
-    protocol: str | None,
-    model_name: str,
-    api_key: str | None,
-    base_url: str | None,
-    model_id: str | None,
-    custom_headers: dict[str, Any],
-    dimensions: int | None,
-) -> BaseEmbedding:
-    # Build embedding config based on protocol
-    if protocol == "openai":
-        # OpenAI protocol (supports custom headers for internal gateways)
-        # If custom headers are provided, use CustomEmbedding for flexibility
-        if (
-            custom_headers
-            and isinstance(custom_headers, dict)
-            and len(custom_headers) > 0
-        ):
-            # Construct OpenAI-compatible endpoint
-            api_url = (
-                f"{base_url.rstrip('/')}/embeddings"
-                if base_url
-                else "https://api.openai.com/v1/embeddings"
-            )
-
-            return CustomEmbedding(
-                api_url=api_url,
-                model=model_id or "text-embedding-3-small",
-                headers=custom_headers,
-                api_key=api_key,
-                dimensions=dimensions,
-            )
-        else:
-            # Standard OpenAI embedding
-            from llama_index.embeddings.openai import OpenAIEmbedding
-
-            # Note: OpenAIEmbedding doesn't support dimensions parameter
-            # The dimension is determined by the model itself
-            return OpenAIEmbedding(
-                model=model_id or "text-embedding-3-small",
-                api_key=api_key,
-                api_base=base_url if base_url else None,
-            )
-    elif protocol in ["cohere", "jina", "custom"]:
-        # Custom API endpoint for Cohere, Jina, or other custom providers
-        if not base_url:
-            raise ValueError(
-                f"Model '{model_name}' with protocol '{protocol}' requires base_url"
-            )
-
-        # Ensure base_url ends with /embeddings or appropriate endpoint
-        if not base_url.endswith("/embeddings"):
-            api_url = f"{base_url.rstrip('/')}/embeddings"
-        else:
-            api_url = base_url
-
-        return CustomEmbedding(
-            api_url=api_url,
-            model=model_id,
-            headers=custom_headers if isinstance(custom_headers, dict) else {},
-            api_key=api_key,
-            dimensions=dimensions,
-        )
-    else:
-        raise ValueError(
-            f"Unsupported embedding protocol for model '{model_name}': {protocol}. "
-            "Supported: openai, cohere, jina, custom"
-        )
+    return engine_create_embedding_model_from_runtime_config(runtime_config)

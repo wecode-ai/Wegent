@@ -4,13 +4,13 @@
 
 from __future__ import annotations
 
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from fastapi.testclient import TestClient
-
 from knowledge_runtime.main import create_app
 from knowledge_runtime.services.content_fetcher import fetch_content
+
 from shared.models.knowledge_runtime_protocol import (
     BackendAttachmentStreamContentRef,
     PresignedUrlContentRef,
@@ -64,11 +64,34 @@ async def test_fetch_content_uses_presigned_url_without_auth_header(mocker) -> N
     )
 
 
-def test_index_route_fetches_content_and_returns_execution_metadata(mocker) -> None:
+def test_index_route_fetches_content_and_delegates_to_document_service(mocker) -> None:
     client = TestClient(create_app())
     fetch_mock = mocker.patch(
         "knowledge_runtime.services.handlers.content_fetcher.fetch_content",
         return_value=b"indexed text",
+    )
+    storage_backend = object()
+    embed_model = object()
+    mocker.patch(
+        "knowledge_runtime.services.handlers.create_storage_backend_from_runtime_config",
+        return_value=storage_backend,
+    )
+    mocker.patch(
+        "knowledge_runtime.services.handlers.create_embedding_model_from_runtime_config",
+        return_value=embed_model,
+    )
+    document_service = Mock()
+    document_service.index_document_from_binary = AsyncMock(
+        return_value={
+            "status": "success",
+            "knowledge_id": "101",
+            "doc_ref": "202",
+            "chunk_count": 3,
+        }
+    )
+    document_service_cls = mocker.patch(
+        "knowledge_runtime.services.handlers.DocumentService",
+        return_value=document_service,
     )
 
     response = client.post(
@@ -90,18 +113,45 @@ def test_index_route_fetches_content_and_returns_execution_metadata(mocker) -> N
 
     assert response.status_code == 200
     assert response.json() == {
-        "status": "accepted",
+        "status": "success",
         "knowledge_id": "101",
-        "document_id": 202,
-        "content_bytes": len(b"indexed text"),
-        "content_ref_kind": "presigned_url",
-        "index_families": ["chunk_vector", "summary_vector_index"],
+        "doc_ref": "202",
+        "chunk_count": 3,
     }
     fetch_mock.assert_awaited_once()
+    document_service_cls.assert_called_once_with(storage_backend=storage_backend)
+    document_service.index_document_from_binary.assert_awaited_once_with(
+        knowledge_id="101",
+        binary_data=b"indexed text",
+        source_file="release-notes.md",
+        file_extension=".md",
+        embed_model=embed_model,
+        user_id=303,
+        splitter_config=None,
+        document_id=202,
+    )
 
 
-def test_delete_route_returns_enabled_index_families() -> None:
+def test_delete_route_delegates_to_document_service(mocker) -> None:
     client = TestClient(create_app())
+    storage_backend = object()
+    document_service = Mock()
+    document_service.delete_document = AsyncMock(
+        return_value={
+            "status": "success",
+            "knowledge_id": "101",
+            "doc_ref": "202",
+            "deleted_chunks": 3,
+        }
+    )
+    mocker.patch(
+        "knowledge_runtime.services.handlers.create_storage_backend_from_runtime_config",
+        return_value=storage_backend,
+    )
+    document_service_cls = mocker.patch(
+        "knowledge_runtime.services.handlers.DocumentService",
+        return_value=document_service,
+    )
 
     response = client.post(
         "/internal/rag/delete-document-index",
@@ -123,14 +173,46 @@ def test_delete_route_returns_enabled_index_families() -> None:
 
     assert response.status_code == 200
     assert response.json() == {
-        "status": "accepted",
+        "status": "success",
         "knowledge_id": "101",
         "doc_ref": "202",
-        "enabled_index_families": [
-            "chunk_vector",
-            "summary_vector_index",
-        ],
+        "deleted_chunks": 3,
     }
+    document_service_cls.assert_called_once_with(storage_backend=storage_backend)
+    document_service.delete_document.assert_awaited_once_with(
+        knowledge_id="101",
+        doc_ref="202",
+        user_id=None,
+    )
+
+
+def test_test_connection_route_delegates_to_storage_backend(mocker) -> None:
+    client = TestClient(create_app())
+    storage_backend = Mock()
+    storage_backend.test_connection.return_value = True
+    mocker.patch(
+        "knowledge_runtime.services.handlers.create_storage_backend_from_runtime_config",
+        return_value=storage_backend,
+    )
+
+    response = client.post(
+        "/internal/rag/test-connection",
+        headers=_auth_headers(),
+        json={
+            "retriever_config": {
+                "name": "default-retriever",
+                "namespace": "default",
+                "storage_config": {"type": "qdrant"},
+            }
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "success": True,
+        "message": "Connection successful",
+    }
+    storage_backend.test_connection.assert_called_once_with()
 
 
 def test_query_route_rejects_invalid_auth_token() -> None:

@@ -2,25 +2,27 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""
-Storage backend factory for creating storage backends from Retriever CRD.
-"""
+"""Storage backend factory for backend control-plane resolution."""
 
-from typing import Dict, List, Optional, Type
+from typing import Dict, List, Optional
 
 from app.schemas.kind import Retriever
-from app.services.rag.storage.base import BaseStorageBackend
-from app.services.rag.storage.elasticsearch_backend import ElasticsearchBackend
-from app.services.rag.storage.milvus_backend import MilvusBackend
-from app.services.rag.storage.qdrant_backend import QdrantBackend
+from knowledge_engine.storage.base import BaseStorageBackend
+from knowledge_engine.storage.factory import (
+    STORAGE_BACKEND_REGISTRY as ENGINE_STORAGE_BACKEND_REGISTRY,
+)
+from knowledge_engine.storage.factory import (
+    create_storage_backend_from_config as engine_create_storage_backend_from_config,
+)
+from knowledge_engine.storage.factory import (
+    create_storage_backend_from_runtime_config as engine_create_storage_backend_from_runtime_config,
+)
+from knowledge_engine.storage.factory import (
+    get_supported_storage_types as engine_get_supported_storage_types,
+)
 from shared.models import RuntimeRetrieverConfig
 
-# Registry of storage backend classes by type
-STORAGE_BACKEND_REGISTRY: Dict[str, Type[BaseStorageBackend]] = {
-    "elasticsearch": ElasticsearchBackend,
-    "qdrant": QdrantBackend,
-    "milvus": MilvusBackend,
-}
+STORAGE_BACKEND_REGISTRY = ENGINE_STORAGE_BACKEND_REGISTRY
 
 
 def get_supported_storage_types() -> List[str]:
@@ -30,7 +32,7 @@ def get_supported_storage_types() -> List[str]:
     Returns:
         List of storage type names
     """
-    return list(STORAGE_BACKEND_REGISTRY.keys())
+    return engine_get_supported_storage_types()
 
 
 def get_supported_retrieval_methods(storage_type: str) -> List[str]:
@@ -111,19 +113,15 @@ def create_storage_backend_from_config(
             f"Supported types: {list(STORAGE_BACKEND_REGISTRY.keys())}"
         )
 
-    # Build config dict for backend
-    config = {
-        "url": url,
-        "username": username,
-        "password": password,
-        "apiKey": api_key,
-        "indexStrategy": index_strategy or {"mode": "per_dataset"},
-        "ext": ext or {},
-    }
-
-    # Create backend instance
-    backend_class = STORAGE_BACKEND_REGISTRY[storage_type]
-    return backend_class(config)
+    return engine_create_storage_backend_from_config(
+        storage_type=storage_type,
+        url=url,
+        username=username,
+        password=password,
+        api_key=api_key,
+        index_strategy=index_strategy,
+        ext=ext,
+    )
 
 
 def create_storage_backend(retriever: Retriever) -> BaseStorageBackend:
@@ -148,42 +146,27 @@ def create_storage_backend(retriever: Retriever) -> BaseStorageBackend:
             f"Supported types: {list(STORAGE_BACKEND_REGISTRY.keys())}"
         )
 
-    # Build config dict for backend
-    config = {
-        "url": storage_config.url,
-        "username": storage_config.username,
-        "password": storage_config.password,
-        "apiKey": storage_config.apiKey,
-        "indexStrategy": storage_config.indexStrategy.model_dump(exclude_none=True),
-        "ext": storage_config.ext or {},
-    }
-
-    # Create backend instance
-    backend_class = STORAGE_BACKEND_REGISTRY[storage_type]
-    return backend_class(config)
+    return engine_create_storage_backend_from_runtime_config(
+        RuntimeRetrieverConfig(
+            name=retriever.metadata.name,
+            namespace=retriever.metadata.namespace,
+            storage_config={
+                "type": storage_type,
+                "url": storage_config.url,
+                "username": storage_config.username,
+                "password": storage_config.password,
+                "apiKey": storage_config.apiKey,
+                "indexStrategy": storage_config.indexStrategy.model_dump(
+                    exclude_none=True
+                ),
+                "ext": storage_config.ext or {},
+            },
+        )
+    )
 
 
 def create_storage_backend_from_runtime_config(
     retriever_config: RuntimeRetrieverConfig,
 ) -> BaseStorageBackend:
     """Create storage backend from resolved runtime retriever config."""
-    storage_config = retriever_config.storage_config or {}
-    storage_type = storage_config.get("type", "").lower()
-
-    if storage_type not in STORAGE_BACKEND_REGISTRY:
-        raise ValueError(
-            f"Unsupported storage type: {storage_type}. "
-            f"Supported types: {list(STORAGE_BACKEND_REGISTRY.keys())}"
-        )
-
-    config = {
-        "url": storage_config.get("url"),
-        "username": storage_config.get("username"),
-        "password": storage_config.get("password"),
-        "apiKey": storage_config.get("apiKey"),
-        "indexStrategy": storage_config.get("indexStrategy") or {"mode": "per_dataset"},
-        "ext": storage_config.get("ext") or {},
-    }
-
-    backend_class = STORAGE_BACKEND_REGISTRY[storage_type]
-    return backend_class(config)
+    return engine_create_storage_backend_from_runtime_config(retriever_config)

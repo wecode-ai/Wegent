@@ -30,6 +30,7 @@ def test_shared_models_exports_knowledge_runtime_protocol_types() -> None:
         "RemoteQueryRequest",
         "RemoteQueryRecord",
         "RemoteQueryResponse",
+        "RemoteTestConnectionRequest",
     ]
 
     for name in exported_names:
@@ -129,6 +130,13 @@ def test_remote_query_request_accepts_explicit_execution_configs() -> None:
             "knowledge_base_ids": [1001],
             "query": "release checklist",
             "max_results": 6,
+            "metadata_condition": {
+                "operator": "or",
+                "conditions": [
+                    {"key": "source", "operator": "==", "value": "kb"},
+                    {"key": "lang", "operator": "==", "value": "zh"},
+                ],
+            },
             "knowledge_base_configs": [
                 {
                     "knowledge_base_id": 1001,
@@ -169,6 +177,13 @@ def test_remote_query_request_accepts_explicit_execution_configs() -> None:
         request.knowledge_base_configs[0].retriever_config.storage_config["type"]
         == "qdrant"
     )
+    assert request.metadata_condition == {
+        "operator": "or",
+        "conditions": [
+            {"key": "source", "operator": "==", "value": "kb"},
+            {"key": "lang", "operator": "==", "value": "zh"},
+        ],
+    }
     assert request.knowledge_base_configs[0].retrieval_config.top_k == 8
     assert request.enabled_index_families == [
         "chunk_vector",
@@ -199,3 +214,22 @@ def test_remote_delete_request_requires_resolved_retriever_config() -> None:
 
     assert request.retriever_config.name == "retriever-a"
     assert request.retriever_config.storage_config["type"] == "elasticsearch"
+
+
+def test_remote_test_connection_request_requires_retriever_config() -> None:
+    remote_test_connection_request = _require_model("RemoteTestConnectionRequest")
+
+    request = remote_test_connection_request.model_validate(
+        {
+            "retriever_config": {
+                "name": "retriever-a",
+                "namespace": "default",
+                "storage_config": {
+                    "type": "qdrant",
+                    "url": "http://qdrant:6333",
+                },
+            }
+        }
+    )
+
+    assert request.retriever_config.storage_config["type"] == "qdrant"

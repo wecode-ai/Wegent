@@ -18,6 +18,7 @@ from app.services.rag.gateway_factory import (
 from app.services.rag.local_gateway import LocalRagGateway
 from app.services.rag.remote_gateway import RemoteRagGateway, RemoteRagGatewayError
 from app.services.rag.runtime_specs import (
+    ConnectionTestRuntimeSpec,
     DeleteRuntimeSpec,
     IndexRuntimeSpec,
     IndexSource,
@@ -328,6 +329,47 @@ async def test_remote_gateway_delete_posts_resolved_retriever_config(mocker) -> 
             },
         },
         "enabled_index_families": ["chunk_vector"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_remote_gateway_test_connection_posts_resolved_retriever_config(
+    mocker,
+) -> None:
+    post_mock = mocker.patch(
+        "httpx.AsyncClient.post",
+        return_value=_build_response(
+            url="http://knowledge-runtime/internal/rag/test-connection",
+            status_code=200,
+            json_body={"success": True, "message": "Connection successful"},
+        ),
+    )
+    gateway = RemoteRagGateway(
+        base_url="http://knowledge-runtime",
+        token="runtime-token",
+    )
+    spec = ConnectionTestRuntimeSpec(
+        retriever_config=RuntimeRetrieverConfig(
+            name="retriever-a",
+            namespace="default",
+            storage_config={"type": "elasticsearch", "url": "http://es:9200"},
+        )
+    )
+
+    result = await gateway.test_connection(spec, db=MagicMock())
+
+    assert result == {"success": True, "message": "Connection successful"}
+    args, kwargs = post_mock.await_args
+    assert args[0] == "http://knowledge-runtime/internal/rag/test-connection"
+    assert kwargs["json"] == {
+        "retriever_config": {
+            "name": "retriever-a",
+            "namespace": "default",
+            "storage_config": {
+                "type": "elasticsearch",
+                "url": "http://es:9200",
+            },
+        }
     }
 
 

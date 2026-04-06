@@ -58,6 +58,12 @@ class TestGetAllChunksFromKnowledgeBase:
     async def test_get_all_chunks_without_user_auth_check(self):
         """Internal all-chunks should work without passing a request user."""
         from app.services.rag.retrieval_service import RetrievalService
+        from shared.models import (
+            RemoteKnowledgeBaseQueryConfig,
+            RuntimeEmbeddingModelConfig,
+            RuntimeRetrievalConfig,
+            RuntimeRetrieverConfig,
+        )
 
         kb = MagicMock()
         kb.id = 123
@@ -81,23 +87,48 @@ class TestGetAllChunksFromKnowledgeBase:
         mock_backend.get_all_chunks.return_value = [
             {"content": "chunk", "title": "doc-1", "doc_ref": "1"}
         ]
+        runtime_config = RemoteKnowledgeBaseQueryConfig(
+            knowledge_base_id=123,
+            index_owner_user_id=42,
+            retriever_config=RuntimeRetrieverConfig(
+                name="retriever-a",
+                namespace="default",
+                storage_config={"type": "qdrant", "url": "http://qdrant:6333"},
+            ),
+            embedding_model_config=RuntimeEmbeddingModelConfig(
+                model_name="embed-a",
+                model_namespace="default",
+                resolved_config={"protocol": "openai"},
+            ),
+            retrieval_config=RuntimeRetrievalConfig(top_k=20),
+        )
 
-        with patch(
-            "app.services.rag.retrieval_service.retriever_kinds_service.get_retriever",
-            return_value=MagicMock(),
-        ):
-            with patch(
-                "app.services.rag.retrieval_service.create_storage_backend",
+        with (
+            patch(
+                "app.services.rag.retrieval_service.RagRuntimeResolver.build_query_knowledge_base_configs",
+                return_value=[runtime_config],
+            ) as mock_build_runtime_configs,
+            patch(
+                "app.services.rag.retrieval_service.create_storage_backend_from_runtime_config",
                 return_value=mock_backend,
-            ):
-                result = await RetrievalService().get_all_chunks_from_knowledge_base(
-                    knowledge_base_id=123,
-                    db=db,
-                    max_chunks=50,
-                    query="debug query",
-                )
+            ) as mock_create_storage_backend,
+        ):
+            result = await RetrievalService().get_all_chunks_from_knowledge_base(
+                knowledge_base_id=123,
+                db=db,
+                max_chunks=50,
+                query="debug query",
+            )
 
         assert result == [{"content": "chunk", "title": "doc-1", "doc_ref": "1"}]
+        mock_build_runtime_configs.assert_called_once_with(
+            db=db,
+            knowledge_base_ids=[123],
+            user_name=None,
+        )
+        mock_create_storage_backend.assert_called_once_with(
+            runtime_config.retriever_config
+        )
         mock_backend.get_index_name.assert_called_once_with("123", user_id=42)
         mock_backend.get_all_chunks.assert_called_once_with(
             knowledge_id="123",
@@ -482,3 +513,98 @@ class TestRetrieveForChatShell:
             456,
             123,
         ]
+
+    @pytest.mark.asyncio
+    async def test_force_rag_route_uses_knowledge_engine_query_executor_when_runtime_configs_are_available(
+        self,
+    ):
+        """Resolved runtime configs should drive the engine query seam in local mode."""
+        from app.services.rag.retrieval_service import RetrievalService
+        from shared.models import (
+            RemoteKnowledgeBaseQueryConfig,
+            RuntimeEmbeddingModelConfig,
+            RuntimeRetrievalConfig,
+            RuntimeRetrieverConfig,
+        )
+
+        db = MagicMock()
+        storage_backend = MagicMock()
+        embed_model = object()
+        kb_config = RemoteKnowledgeBaseQueryConfig(
+            knowledge_base_id=123,
+            index_owner_user_id=7,
+            retriever_config=RuntimeRetrieverConfig(
+                name="retriever-a",
+                namespace="default",
+                storage_config={"type": "qdrant", "url": "http://qdrant:6333"},
+            ),
+            embedding_model_config=RuntimeEmbeddingModelConfig(
+                model_name="embed-a",
+                model_namespace="default",
+                resolved_config={"protocol": "openai"},
+            ),
+            retrieval_config=RuntimeRetrievalConfig(
+                top_k=8,
+                score_threshold=0.45,
+                retrieval_mode="hybrid",
+                vector_weight=0.8,
+                keyword_weight=0.2,
+            ),
+        )
+
+        with (
+            patch(
+                "app.services.rag.retrieval_service.create_storage_backend_from_runtime_config",
+                return_value=storage_backend,
+            ) as mock_storage,
+            patch(
+                "app.services.rag.retrieval_service.create_embedding_model_from_runtime_config",
+                return_value=embed_model,
+            ) as mock_embedding,
+            patch(
+                "app.services.rag.retrieval_service.QueryExecutor.execute",
+                new_callable=AsyncMock,
+                return_value={
+                    "records": [
+                        {
+                            "content": "release checklist",
+                            "score": 0.91,
+                            "title": "Checklist",
+                            "metadata": {"doc_ref": "9"},
+                        }
+                    ]
+                },
+            ) as mock_execute,
+        ):
+            result = await RetrievalService().retrieve_for_chat_shell(
+                query="release checklist",
+                knowledge_base_ids=[123],
+                db=db,
+                max_results=5,
+                route_mode="rag_retrieval",
+                document_ids=[9],
+                knowledge_base_configs=[kb_config],
+            )
+
+        assert result["mode"] == "rag_retrieval"
+        assert result["records"] == [
+            {
+                "content": "release checklist",
+                "score": 0.91,
+                "title": "Checklist",
+                "metadata": {"doc_ref": "9"},
+                "knowledge_base_id": 123,
+            }
+        ]
+        mock_storage.assert_called_once_with(kb_config.retriever_config)
+        mock_embedding.assert_called_once_with(kb_config.embedding_model_config)
+        mock_execute.assert_awaited_once_with(
+            knowledge_id="123",
+            query="release checklist",
+            retrieval_config=kb_config.retrieval_config,
+            metadata_condition={
+                "operator": "and",
+                "conditions": [{"key": "doc_ref", "operator": "in", "value": ["9"]}],
+            },
+            user_id=7,
+        )

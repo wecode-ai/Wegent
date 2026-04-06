@@ -178,26 +178,7 @@ Retrieval test helps you optimize retrieval configuration before actual use.
 
 ## Using Retrievers with RAG
 
-### 1. Upload and Index Documents
-
-```bash
-POST /api/rag/documents/upload
-Content-Type: multipart/form-data
-
-- knowledge_id: "kb_001"
-- retriever_name: "my-es-retriever"
-- retriever_namespace: "default"
-- file: <document.pdf>
-- embedding_config: {
-    "provider": "openai",
-    "model": "text-embedding-3-small",
-    "api_key": "sk-..."
-  }
-```
-
-**Supported file types**: MD, PDF, TXT, DOCX, and code files
-
-### 2. Retrieve Relevant Chunks
+### 1. Retrieve Relevant Chunks
 
 ```bash
 POST /api/rag/retrieve
@@ -223,19 +204,6 @@ Content-Type: application/json
     "keyword_weight": 0.3
   }
 }
-```
-
-### 3. Manage Documents
-
-```bash
-# List documents
-GET /api/rag/documents?knowledge_id=kb_001&retriever_name=my-es-retriever&page=1&page_size=20
-
-# Get document details
-GET /api/rag/documents/{doc_ref}?knowledge_id=kb_001&retriever_name=my-es-retriever
-
-# Delete document
-DELETE /api/rag/documents/{doc_ref}?knowledge_id=kb_001&retriever_name=my-es-retriever
 ```
 
 ## Embedding Providers

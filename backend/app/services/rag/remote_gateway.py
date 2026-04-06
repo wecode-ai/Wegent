@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.services.rag.content_refs import build_content_ref_for_attachment
 from app.services.rag.runtime_specs import (
+    ConnectionTestRuntimeSpec,
     DeleteRuntimeSpec,
     IndexRuntimeSpec,
     QueryRuntimeSpec,
@@ -23,6 +24,7 @@ from shared.models import (
     RemoteQueryRequest,
     RemoteQueryResponse,
     RemoteRagError,
+    RemoteTestConnectionRequest,
 )
 
 
@@ -149,6 +151,7 @@ class RemoteRagGateway:
             query=spec.query,
             max_results=spec.max_results,
             document_ids=spec.document_ids,
+            metadata_condition=spec.metadata_condition,
             user_name=spec.user_name,
             knowledge_base_configs=spec.knowledge_base_configs,
             enabled_index_families=spec.enabled_index_families,
@@ -176,3 +179,13 @@ class RemoteRagGateway:
             enabled_index_families=spec.enabled_index_families,
         )
         return await self._post_model("/internal/rag/delete-document-index", payload)
+
+    async def test_connection(
+        self,
+        spec: ConnectionTestRuntimeSpec,
+        *,
+        db: Session | None = None,
+    ) -> dict[str, Any]:
+        del db
+        payload = RemoteTestConnectionRequest(retriever_config=spec.retriever_config)
+        return await self._post_model("/internal/rag/test-connection", payload)

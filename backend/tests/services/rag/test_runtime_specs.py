@@ -61,6 +61,7 @@ def test_query_runtime_spec_keeps_direct_injection_budget():
             max_direct_chunks=500,
         ),
         document_ids=[11],
+        metadata_condition={"key": "source", "operator": "==", "value": "kb"},
         restricted_mode=False,
         user_id=3,
         user_name="alice",
@@ -93,6 +94,11 @@ def test_query_runtime_spec_keeps_direct_injection_budget():
     )
     assert spec.knowledge_base_ids == [1, 2]
     assert spec.document_ids == [11]
+    assert spec.metadata_condition == {
+        "key": "source",
+        "operator": "==",
+        "value": "kb",
+    }
     assert spec.direct_injection_budget.max_direct_chunks == 500
     assert spec.knowledge_base_configs[0].retrieval_config.top_k == 20
     assert spec.enabled_index_families == ["chunk_vector", "summary_vector"]
@@ -139,19 +145,7 @@ def test_delete_runtime_spec_keeps_resolved_retriever_config():
     [
         (
             {"source_type": "attachment"},
-            "attachment_id is required",
-        ),
-        (
-            {"source_type": "attachment", "attachment_id": 123, "file_path": "/tmp/a"},
-            "file_path must not be provided",
-        ),
-        (
-            {"source_type": "file_path"},
-            "file_path is required",
-        ),
-        (
-            {"source_type": "file_path", "file_path": "/tmp/a", "attachment_id": 123},
-            "attachment_id must not be provided",
+            "Field required",
         ),
     ],
 )
