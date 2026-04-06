@@ -2,9 +2,9 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Backward-compatible retrieval helper exports."""
+"""Retrieval helper exports from the shared execution kernel."""
 
-from app.services.rag.retrieval.filters import (
+from knowledge_engine.retrieval.filters import (
     build_elasticsearch_filters,
     parse_metadata_filters,
 )

@@ -2,16 +2,21 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""
-Storage backend abstraction for RAG functionality.
-"""
+"""Storage helpers exposed at the Backend runtime boundary."""
 
-from app.services.rag.storage.base import BaseStorageBackend
-from app.services.rag.storage.chunk_metadata import ChunkMetadata
-from app.services.rag.storage.elasticsearch_backend import ElasticsearchBackend
-from app.services.rag.storage.factory import create_storage_backend
-from app.services.rag.storage.milvus_backend import MilvusBackend
-from app.services.rag.storage.qdrant_backend import QdrantBackend
+from app.services.rag.storage.factory import (
+    create_storage_backend,
+    create_storage_backend_from_config,
+    create_storage_backend_from_runtime_config,
+    get_all_storage_retrieval_methods,
+    get_supported_retrieval_methods,
+    get_supported_storage_types,
+)
+from knowledge_engine.storage.base import BaseStorageBackend
+from knowledge_engine.storage.chunk_metadata import ChunkMetadata
+from knowledge_engine.storage.elasticsearch_backend import ElasticsearchBackend
+from knowledge_engine.storage.milvus_backend import MilvusBackend
+from knowledge_engine.storage.qdrant_backend import QdrantBackend
 
 __all__ = [
     "BaseStorageBackend",
@@ -20,4 +25,9 @@ __all__ = [
     "MilvusBackend",
     "QdrantBackend",
     "create_storage_backend",
+    "create_storage_backend_from_config",
+    "create_storage_backend_from_runtime_config",
+    "get_supported_storage_types",
+    "get_supported_retrieval_methods",
+    "get_all_storage_retrieval_methods",
 ]
