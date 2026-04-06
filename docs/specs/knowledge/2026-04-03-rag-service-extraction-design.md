@@ -31,17 +31,26 @@ sidebar_position: 1
 
 为避免与此前讨论断层，本文中的历史术语 `rag_service`，在目标形态中统一对应 `knowledge_runtime`。
 
-## 状态快照
+## 状态快照（2026-04-06）
 
 当前代码中已经具备以下基础：
 
 - Backend internal retrieval 已收敛到 `backend/app/api/endpoints/internal/rag.py`
 - `chat_shell` 中 `knowledge_base_search` 通过 Backend internal RAG API 完成检索
-- `backend/app/services/rag/runtime_specs.py` 已提供 `IndexRuntimeSpec` 与 `QueryRuntimeSpec`
+- `backend/app/services/rag/runtime_specs.py` 已提供 `IndexRuntimeSpec`、`QueryRuntimeSpec`、`DeleteRuntimeSpec` 与 `ConnectionTestRuntimeSpec`
 - `backend/app/services/rag/gateway.py` 已定义 `RagGateway`
-- `backend/app/services/rag/local_gateway.py` 已将本地执行路径封装到 `LocalRagGateway`
+- `backend/app/services/rag/local_gateway.py` 与 `backend/app/services/rag/remote_gateway.py` 已完成 local / remote gateway 封装
+- `knowledge_engine` 已经作为顶层执行库落地，承接 storage backend、embedding、query executor、document index / delete 等执行逻辑
+- `knowledge_runtime` 已经作为薄服务落地，并通过 `knowledge_engine` 执行真实 index / query / delete
+- Backend `RAG_RUNTIME_MODE` 已统一 local / remote 路由开关，并支持按 operation 切换
 
 当前知识库 MCP 尚未提供 `search` 能力，但本轮不将其纳入拆分主线，只在后续工作中说明。
+
+### 当前落地结论
+
+- 本轮已经完成 `knowledge_engine` 抽离，Backend local mode 继续作为主 rollout 目标。
+- `knowledge_runtime` 已具备真实执行能力，但 remote mode 仍属于后续 rollout / parity 收敛工作，不是本轮主切换目标。
+- `shared` 继续只承载 transport protocol；`direct injection` 与 `restricted mediation` 仍明确保留在 Backend。
 
 ## 问题
 
@@ -615,15 +624,15 @@ Backend 内部继续使用现有：
 ## 后续工作
 
 - 设计知识库 MCP `search`，将其作为 retrieval surface 的新增消费面
-- 在 remote 稳定后删除 Backend local 入口层
-- 视独立发布需求评估是否将 `knowledge_engine` 单独 package 化
+- 在 remote 稳定后，再评估是否继续删除 Backend 仅用于 local mode 的入口层
+- 视独立发布需求评估是否进一步独立发布 `knowledge_engine`
 - 将 `summary_vector_index` 接入 `index_family` 执行体系
 - 为 `tableRAG` 设计独立 family / query policy
 - 在对象存储场景中进一步减少 Backend 对内容拉取链路的参与
 
 ## 结论
 
-本轮修订后采用“`shared` 放轻协议、Backend 保留 control plane、抽离 `knowledge_engine` execution kernel、`knowledge_runtime` 复用该 kernel、通过 `RagGateway` 灰度接入 remote”的路线。
+本轮修订后采用“`shared` 放轻协议、Backend 保留 control plane、抽离 `knowledge_engine` execution kernel、`knowledge_runtime` 复用该 kernel、通过 `RagGateway` 灰度接入 remote”的路线；其中 `knowledge_engine` 抽离已经完成，后续重点转为 remote rollout、parity 验证与后续索引族扩展。
 
 首版最重要的设计结论是：
 

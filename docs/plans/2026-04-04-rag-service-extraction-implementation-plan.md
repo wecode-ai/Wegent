@@ -1,3 +1,7 @@
+---
+sidebar_position: 1
+---
+
 # Knowledge Runtime Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
@@ -23,6 +27,24 @@ The following items already exist and must be preserved while executing this pla
 - Backend parity/integration tests already cover local vs remote route switching at the gateway level
 
 This plan supersedes only the old "independent `knowledge_runtime` reimplementation" direction. It does not discard the already-landed transport and rollout safety work.
+
+## Implementation Status (2026-04-06)
+
+This plan has been substantially executed for the extraction phase. The current authoritative status is:
+
+- Completed:
+  - `shared` protocol models for `knowledge_runtime`
+  - top-level `knowledge_engine` package extraction
+  - Backend local indexing / retrieval / delete execution routed through `knowledge_engine`
+  - `knowledge_runtime` thin adapter over `knowledge_engine`
+  - Backend remote gateway payload wiring for index / query / delete / test-connection
+  - storage and gateway-focused test migration into `knowledge_engine` / Backend
+- Still follow-up work:
+  - broader remote rollout / parity verification beyond focused regression coverage
+  - release and operational hardening for `knowledge_runtime`
+  - future `summary_vector_index`, `tableRAG`, and MCP `search`
+
+The checkbox states below are preserved as the original execution breakdown and should be read as historical plan detail, not as the authoritative current rollout status.
 
 ## Fixed Decisions
 
@@ -84,7 +106,7 @@ This plan supersedes only the old "independent `knowledge_runtime` reimplementat
 ### Deployment
 
 - `docker/knowledge_runtime/Dockerfile`
-- `docker-compose-rag.yml`
+- `docker-compose.yml`
 
 ---
 
@@ -305,7 +327,7 @@ Expected: PASS
 
 **Files:**
 - Modify: `docker/knowledge_runtime/Dockerfile`
-- Modify: `docker-compose-rag.yml`
+- Modify: `docker-compose.yml`
 
 - [ ] Ensure `knowledge_runtime` image installs both `wegent-shared` and `knowledge_engine`
 - [ ] Keep base image and startup style aligned with Backend / Chat Shell conventions
@@ -314,7 +336,7 @@ Expected: PASS
 
 **Verification**
 
-Run: `docker compose --profile rag -f docker-compose-rag.yml config`
+Run: `docker compose -f docker-compose.yml config`
 Expected: valid compose output including `knowledge_runtime` and the new package wiring
 
 ## Rollout Guidance
@@ -333,7 +355,7 @@ Expected: valid compose output including `knowledge_runtime` and the new package
 - `uv run --project knowledge_engine --group dev pytest knowledge_engine/tests -v`
 - `uv run --project backend --group dev pytest backend/tests/services/rag backend/tests/api/endpoints/internal backend/tests/integration/test_rag_remote_mode.py -v`
 - `uv run --project knowledge_runtime --group dev pytest knowledge_runtime/tests -v`
-- `docker compose --profile rag -f docker-compose-rag.yml config`
+- `docker compose -f docker-compose.yml config`
 
 ## Guardrails
 
