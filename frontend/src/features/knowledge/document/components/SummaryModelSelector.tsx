@@ -72,7 +72,7 @@ export function SummaryModelSelector({
     fetchModels()
   }, [])
 
-  // Auto-preselect model from cached preference when:
+  // Auto-preselect model from cached preference or fallback to first available model when:
   // 1. Models are loaded
   // 2. No value is currently selected
   // 3. Valid knowledgeDefaultTeamId is provided
@@ -93,29 +93,39 @@ export function SummaryModelSelector({
 
     // Read cached preference from localStorage
     const cachedPreference = getGlobalModelPreference(knowledgeDefaultTeamId)
-    if (!cachedPreference?.modelName) {
-      return
+
+    if (cachedPreference?.modelName) {
+      // Find matching model in the models list
+      const matchedModel = models.find(model => {
+        // Match by modelName (required)
+        if (model.name !== cachedPreference.modelName) {
+          return false
+        }
+        // If modelType is specified in preference, also match by type
+        if (cachedPreference.modelType && model.type !== cachedPreference.modelType) {
+          return false
+        }
+        return true
+      })
+
+      if (matchedModel) {
+        // Auto-select the matched model from cache
+        onChange({
+          name: matchedModel.name,
+          namespace: matchedModel.namespace || 'default',
+          type: matchedModel.type,
+        })
+        return
+      }
     }
 
-    // Find matching model in the models list
-    const matchedModel = models.find(model => {
-      // Match by modelName (required)
-      if (model.name !== cachedPreference.modelName) {
-        return false
-      }
-      // If modelType is specified in preference, also match by type
-      if (cachedPreference.modelType && model.type !== cachedPreference.modelType) {
-        return false
-      }
-      return true
-    })
-
-    if (matchedModel) {
-      // Auto-select the matched model
+    // Fallback: Select the first available model if no cached preference or no match found
+    const firstModel = models[0]
+    if (firstModel) {
       onChange({
-        name: matchedModel.name,
-        namespace: matchedModel.namespace || 'default',
-        type: matchedModel.type,
+        name: firstModel.name,
+        namespace: firstModel.namespace || 'default',
+        type: firstModel.type,
       })
     }
   }, [models, value, loading, knowledgeDefaultTeamId, onChange])
