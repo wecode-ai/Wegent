@@ -46,6 +46,14 @@ class KnowledgeBaseInput(BaseModel):
         default=20,
         description="Maximum number of results to return. Increased from 5 to 20 for better RAG coverage.",
     )
+    document_ids: list[int] = Field(
+        default_factory=list,
+        description="Optional document IDs to restrict retrieval scope.",
+    )
+    document_names: list[str] = Field(
+        default_factory=list,
+        description="Optional exact document names to restrict retrieval scope when document IDs are not known.",
+    )
 
 
 class KnowledgeBaseTool(BaseTool):
@@ -73,6 +81,7 @@ class KnowledgeBaseTool(BaseTool):
     # Document IDs to filter (optional, for searching specific documents only)
     # When set, only chunks from these documents will be returned
     document_ids: list[int] = Field(default_factory=list)
+    document_names: list[str] = Field(default_factory=list)
 
     # User ID for access control
     user_id: int = 0
@@ -468,11 +477,48 @@ class KnowledgeBaseTool(BaseTool):
         """Synchronous run - not implemented, use async version."""
         raise NotImplementedError("KnowledgeBaseTool only supports async execution")
 
+    def _resolve_scoped_filters(
+        self,
+        document_ids: Optional[list[int]] = None,
+        document_names: Optional[list[str]] = None,
+    ) -> tuple[list[int], list[str]]:
+        """Resolve per-call filters without mutating tool instance state."""
+        effective_document_ids = (
+            self.document_ids if document_ids is None else document_ids
+        )
+        effective_document_names = (
+            self.document_names if document_names is None else document_names
+        )
+        return effective_document_ids, effective_document_names
+
     async def _arun(
         self,
         query: str,
         max_results: int = 20,
+        document_ids: Optional[list[int]] = None,
+        document_names: Optional[list[str]] = None,
         run_manager: CallbackManagerForToolRun | None = None,
+    ) -> str:
+        """Execute knowledge base search with optional per-call scoped filters."""
+        effective_document_ids, effective_document_names = self._resolve_scoped_filters(
+            document_ids=document_ids,
+            document_names=document_names,
+        )
+        return await self._arun_impl(
+            query,
+            max_results,
+            run_manager,
+            document_ids=effective_document_ids,
+            document_names=effective_document_names,
+        )
+
+    async def _arun_impl(
+        self,
+        query: str,
+        max_results: int = 20,
+        run_manager: CallbackManagerForToolRun | None = None,
+        document_ids: Optional[list[int]] = None,
+        document_names: Optional[list[str]] = None,
     ) -> str:
         """Execute knowledge base search with intelligent injection strategy.
 
@@ -494,6 +540,8 @@ class KnowledgeBaseTool(BaseTool):
             JSON string with search results or injected content
         """
         try:
+            effective_document_ids = document_ids or []
+            effective_document_names = document_names or []
             if not self.knowledge_base_ids:
                 return json.dumps(
                     {"error": "No knowledge bases configured for this conversation."}
@@ -558,8 +606,8 @@ class KnowledgeBaseTool(BaseTool):
             logger.info(
                 f"[KnowledgeBaseTool] Searching {len(self.knowledge_base_ids)} knowledge bases with query: {query}"
                 + (
-                    f", filtering by {len(self.document_ids)} documents"
-                    if self.document_ids
+                    f", filtering by {len(effective_document_ids)} documents"
+                    if effective_document_ids
                     else ""
                 )
             )
@@ -574,6 +622,8 @@ class KnowledgeBaseTool(BaseTool):
                 query=query,
                 max_results=max_results,
                 route_mode=preferred_route_mode,
+                document_ids=effective_document_ids,
+                document_names=effective_document_names,
             )
 
             logger.info(
@@ -589,11 +639,12 @@ class KnowledgeBaseTool(BaseTool):
                 raw_result.get("records", [])
             )
             if not kb_chunks:
-                message = (
+                default_message = (
                     "No documents found in the knowledge base."
                     if route_mode == InjectionMode.DIRECT_INJECTION
                     else "No relevant information found in the knowledge base for this query."
                 )
+                message = raw_result.get("message") or default_message
                 return json.dumps(
                     {
                         "query": query,
@@ -791,6 +842,8 @@ class KnowledgeBaseTool(BaseTool):
         query: str,
         max_results: int,
         route_mode: str = "auto",
+        document_ids: Optional[list[int]] = None,
+        document_names: Optional[list[str]] = None,
     ) -> tuple[str, Dict[str, Any]]:
         """Retrieve KB data using Backend-side route selection."""
         if self.db_session is None:
@@ -798,9 +851,39 @@ class KnowledgeBaseTool(BaseTool):
                 query=query,
                 max_results=max_results,
                 route_mode=route_mode,
+                document_ids=document_ids,
+                document_names=document_names,
             )
         else:
             try:
+                resolved_document_ids = document_ids or None
+                if not resolved_document_ids and document_names:
+                    from app.services.knowledge import KnowledgeService
+
+                    resolved_document_ids = (
+                        KnowledgeService.resolve_document_ids_by_names(
+                            db=self.db_session,
+                            knowledge_base_ids=self.knowledge_base_ids,
+                            document_names=document_names,
+                        )
+                        or None
+                    )
+                    if not resolved_document_ids:
+                        result = {
+                            "mode": InjectionMode.RAG_ONLY,
+                            "records": [],
+                            "total": 0,
+                            "total_estimated_tokens": 0,
+                            "message": "Document names not found in the selected knowledge bases. Use kb_ls to inspect available documents first.",
+                        }
+                        mode = result.get("mode", InjectionMode.RAG_ONLY)
+                        logger.info(
+                            "[KnowledgeBaseTool] Retrieved %d records via Backend route mode=%s",
+                            len(result.get("records", [])),
+                            mode,
+                        )
+                        return mode, result
+
                 from app.services.rag.retrieval_service import RetrievalService
 
                 retrieval_service = RetrievalService()
@@ -809,7 +892,7 @@ class KnowledgeBaseTool(BaseTool):
                     knowledge_base_ids=self.knowledge_base_ids,
                     db=self.db_session,
                     max_results=max_results,
-                    document_ids=self.document_ids or None,
+                    document_ids=resolved_document_ids,
                     user_name=self.user_name,
                     route_mode=route_mode,
                     user_id=self.user_id,
@@ -873,6 +956,8 @@ class KnowledgeBaseTool(BaseTool):
         query: str,
         max_results: int,
         route_mode: str = "auto",
+        document_ids: Optional[list[int]] = None,
+        document_names: Optional[list[str]] = None,
     ) -> Dict[str, Any]:
         """Retrieve KB data from Backend internal retrieve endpoint."""
         import httpx
@@ -898,8 +983,10 @@ class KnowledgeBaseTool(BaseTool):
         mediation_context = self._build_mediation_context()
         if mediation_context:
             payload["mediation_context"] = mediation_context
-        if self.document_ids:
-            payload["document_ids"] = self.document_ids
+        if document_ids:
+            payload["document_ids"] = document_ids
+        if document_names:
+            payload["document_names"] = document_names
         if self.user_name is not None:
             payload["user_name"] = self.user_name
 

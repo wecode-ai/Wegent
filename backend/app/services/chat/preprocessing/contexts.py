@@ -1319,11 +1319,15 @@ def _build_kb_meta_prompt(
             format_restricted_kb_meta_prompt,
             select_kb_summary_text,
         )
+        from app.services.knowledge import KnowledgeService
         from app.services.knowledge.task_knowledge_base_service import (
             task_knowledge_base_service,
         )
 
         kb_map = task_knowledge_base_service.get_knowledge_bases_by_ids(
+            db, knowledge_base_ids
+        )
+        kb_prompt_stats = KnowledgeService.get_document_prompt_stats(
             db, knowledge_base_ids
         )
 
@@ -1335,6 +1339,10 @@ def _build_kb_meta_prompt(
                     {
                         "kb_id": kb_id,
                         "kb_name": "Unknown",
+                        "search_available": False,
+                        "total_document_count": 0,
+                        "searchable_document_count": 0,
+                        "spreadsheet_document_count": 0,
                         "summary_text": "",
                         "topics": [],
                     }
@@ -1365,10 +1373,24 @@ def _build_kb_meta_prompt(
                     exc_info=True,
                 )
 
+            stats = kb_prompt_stats.get(
+                kb_id,
+                {
+                    "total_document_count": 0,
+                    "searchable_document_count": 0,
+                    "spreadsheet_document_count": 0,
+                },
+            )
+            retrieval_config = kb_spec.get("retrievalConfig") or {}
+
             kb_meta_list.append(
                 {
                     "kb_id": kb_id,
                     "kb_name": kb_name,
+                    "search_available": bool(retrieval_config.get("retriever_name")),
+                    "total_document_count": stats["total_document_count"],
+                    "searchable_document_count": stats["searchable_document_count"],
+                    "spreadsheet_document_count": stats["spreadsheet_document_count"],
                     "summary_text": summary_text,
                     "topics": topics,
                 }
