@@ -179,13 +179,13 @@ class RagRuntimeResolver:
                     index_owner_user_id=kb.user_id,
                     retriever_config=self._build_resolved_retriever_config(
                         db=db,
-                        user_id=user_id,
+                        user_id=kb.user_id,
                         name=retriever_name,
                         namespace=retriever_namespace,
                     ),
                     embedding_model_config=self._build_resolved_embedding_model_config(
                         db=db,
-                        user_id=user_id,
+                        user_id=kb.user_id,
                         model_name=embedding_model_name,
                         model_namespace=embedding_model_namespace,
                         user_name=user_name,

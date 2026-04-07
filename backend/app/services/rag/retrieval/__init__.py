@@ -9,4 +9,4 @@ from knowledge_engine.retrieval.filters import (
     parse_metadata_filters,
 )
 
-__all__ = ["parse_metadata_filters", "build_elasticsearch_filters"]
+__all__ = ["build_elasticsearch_filters", "parse_metadata_filters"]

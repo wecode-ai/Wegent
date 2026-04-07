@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Literal, Optional
 
 from sqlalchemy.orm import Session
 
+from app.models.kind import Kind
 from app.services.rag.runtime_resolver import RagRuntimeResolver
 from knowledge_engine.embedding import create_embedding_model_from_runtime_config
 from knowledge_engine.query import QueryExecutor
@@ -242,9 +243,13 @@ class RetrievalService:
         route_mode: Literal["auto", "direct_injection", "rag_retrieval"] = "auto",
         document_ids: Optional[list[int]] = None,
         context_window: Optional[int] = None,
+        used_context_tokens: int = 0,
+        reserved_output_tokens: int = 4096,
+        context_buffer_ratio: float = 0.1,
+        max_direct_chunks: int = CHAT_SHELL_DEFAULT_MAX_DIRECT_CHUNKS,
     ) -> Literal["direct_injection", "rag_retrieval"]:
         """Resolve the coarse query route while keeping final direct-fit local."""
-        del query
+        del query, max_direct_chunks
         if not knowledge_base_ids:
             return "rag_retrieval"
 
@@ -261,6 +266,22 @@ class RetrievalService:
             total_estimated_tokens=total_estimated_tokens,
             route_mode=route_mode,
         )
+        if not use_direct_injection:
+            return "rag_retrieval"
+
+        available_injection_tokens = self._calculate_available_injection_tokens(
+            context_window=context_window,
+            used_context_tokens=used_context_tokens,
+            reserved_output_tokens=reserved_output_tokens,
+            context_buffer_ratio=context_buffer_ratio,
+        )
+        if (
+            route_mode == "auto"
+            and available_injection_tokens is not None
+            and total_estimated_tokens > available_injection_tokens
+        ):
+            return "rag_retrieval"
+
         if use_direct_injection:
             return "direct_injection"
         return "rag_retrieval"
@@ -539,7 +560,7 @@ class RetrievalService:
     async def _retrieve_from_kb_internal(
         self,
         query: str,
-        kb,  # Kind instance
+        kb: Kind,
         db: Session,
         metadata_condition: Optional[Dict[str, Any]] = None,
         user_name: Optional[str] = None,
@@ -599,7 +620,7 @@ class RetrievalService:
     def _build_runtime_query_config(
         self,
         *,
-        kb,
+        kb: Kind,
         db: Session,
         user_name: Optional[str] = None,
     ) -> RemoteKnowledgeBaseQueryConfig:
@@ -608,6 +629,10 @@ class RetrievalService:
             knowledge_base_ids=[kb.id],
             user_name=user_name,
         )
+        if not configs:
+            raise ValueError(
+                f"Failed to resolve runtime config for knowledge base {kb.id}"
+            )
         return configs[0]
 
     async def _execute_runtime_query(

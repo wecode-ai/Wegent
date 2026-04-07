@@ -408,6 +408,30 @@ class TestRetrieveForChatShell:
         )
         assert result == "direct_injection"
 
+    def test_decide_route_mode_for_chat_shell_uses_live_runtime_budget(self):
+        from app.services.rag.retrieval_service import RetrievalService
+
+        service = RetrievalService()
+        db = MagicMock()
+
+        with patch.object(
+            RetrievalService,
+            "_estimate_total_tokens_for_knowledge_bases",
+            return_value=100,
+        ):
+            result = service.decide_route_mode_for_chat_shell(
+                query="test",
+                knowledge_base_ids=[123],
+                db=db,
+                route_mode="auto",
+                context_window=10000,
+                used_context_tokens=9990,
+                reserved_output_tokens=0,
+                context_buffer_ratio=0.0,
+            )
+
+        assert result == "rag_retrieval"
+
     def test_estimate_total_tokens_supports_decimal_aggregate_result(self):
         """Aggregate text-length queries may return Decimal depending on the driver."""
         from app.services.rag.retrieval_service import RetrievalService

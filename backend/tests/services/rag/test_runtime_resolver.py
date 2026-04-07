@@ -266,3 +266,62 @@ def test_build_public_query_runtime_spec_requires_kb_access():
                 score_threshold=0.7,
                 retrieval_mode="vector",
             )
+
+
+def test_build_public_query_runtime_spec_resolves_configs_in_kb_owner_scope():
+    resolver = RagRuntimeResolver()
+    db = MagicMock()
+
+    with (
+        patch(
+            "app.services.knowledge.knowledge_service.KnowledgeService.get_knowledge_base",
+            return_value=(SimpleNamespace(id=7, user_id=42), True),
+        ),
+        patch.object(
+            resolver,
+            "_build_resolved_retriever_config",
+            return_value=RuntimeRetrieverConfig(
+                name="retriever-a",
+                namespace="default",
+                storage_config={"type": "qdrant"},
+            ),
+        ) as mock_retriever_config,
+        patch.object(
+            resolver,
+            "_build_resolved_embedding_model_config",
+            return_value=RuntimeEmbeddingModelConfig(
+                model_name="embed-a",
+                model_namespace="default",
+                resolved_config={"protocol": "openai"},
+            ),
+        ) as mock_embedding_config,
+    ):
+        spec = resolver.build_public_query_runtime_spec(
+            db=db,
+            knowledge_base_id=7,
+            query="release checklist",
+            max_results=5,
+            retriever_name="retriever-a",
+            retriever_namespace="default",
+            embedding_model_name="embed-a",
+            embedding_model_namespace="default",
+            user_id=9,
+            user_name="alice",
+            score_threshold=0.7,
+            retrieval_mode="vector",
+        )
+
+    assert spec.knowledge_base_configs[0].index_owner_user_id == 42
+    mock_retriever_config.assert_called_once_with(
+        db=db,
+        user_id=42,
+        name="retriever-a",
+        namespace="default",
+    )
+    mock_embedding_config.assert_called_once_with(
+        db=db,
+        user_id=42,
+        model_name="embed-a",
+        model_namespace="default",
+        user_name="alice",
+    )

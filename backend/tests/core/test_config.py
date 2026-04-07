@@ -190,3 +190,29 @@ class TestSettings:
         assert s.get_rag_runtime_mode("index") == "remote"
         assert s.get_rag_runtime_mode("query") == "local"
         assert s.get_rag_runtime_mode("delete") == "remote"
+
+    def test_rag_runtime_mode_rejects_unknown_global_value(self, monkeypatch):
+        """Test invalid global RAG runtime modes fail fast."""
+        monkeypatch.setenv("RAG_RUNTIME_MODE", "edge")
+
+        with pytest.raises(ValidationError, match="Invalid RAG runtime mode"):
+            Settings()
+
+    def test_rag_runtime_mode_rejects_invalid_operation_override_value(
+        self, monkeypatch
+    ):
+        """Test invalid per-operation runtime modes fail fast."""
+        monkeypatch.setenv(
+            "RAG_RUNTIME_MODE",
+            '{"default":"remote","query":"edge"}',
+        )
+
+        with pytest.raises(ValidationError, match="Invalid RAG runtime mode"):
+            Settings()
+
+    def test_rag_runtime_mode_rejects_malformed_json_override(self, monkeypatch):
+        """Test malformed JSON override maps are rejected."""
+        monkeypatch.setenv("RAG_RUNTIME_MODE", '{"default":"remote",')
+
+        with pytest.raises(ValidationError, match="malformed"):
+            Settings()

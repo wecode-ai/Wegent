@@ -42,6 +42,32 @@ class NoInterpolationDotEnvSettingsSource(DotEnvSettingsSource):
         return parse_env_vars(file_vars, case_sensitive, ignore_empty, parse_none_str)
 
 
+VALID_RAG_RUNTIME_MODES = {"local", "remote"}
+
+
+def _normalize_rag_runtime_mode_value(value: Any, *, label: str) -> str:
+    normalized = str(value).strip().lower()
+    if normalized in VALID_RAG_RUNTIME_MODES:
+        return normalized
+    raise ValueError(
+        f"Invalid RAG runtime mode for {label}: {value!r}. "
+        f"Expected one of {sorted(VALID_RAG_RUNTIME_MODES)}"
+    )
+
+
+def _normalize_rag_runtime_mode_mapping(value: Mapping[Any, Any]) -> dict[str, str]:
+    normalized_mapping: dict[str, str] = {}
+    for key, item in value.items():
+        normalized_key = str(key).strip().lower()
+        if not normalized_key:
+            continue
+        normalized_mapping[normalized_key] = _normalize_rag_runtime_mode_value(
+            item,
+            label=f"operation {normalized_key!r}",
+        )
+    return normalized_mapping
+
+
 class Settings(BaseSettings):
     # Project configuration
     PROJECT_NAME: str = "Task Manager Backend"
@@ -242,11 +268,7 @@ class Settings(BaseSettings):
         if v is None:
             return "local"
         if isinstance(v, Mapping):
-            return {
-                str(key).strip().lower(): str(value).strip().lower()
-                for key, value in v.items()
-                if str(key).strip() and str(value).strip()
-            }
+            return _normalize_rag_runtime_mode_mapping(v)
         if isinstance(v, str):
             raw = v.strip()
             if not raw:
@@ -254,16 +276,15 @@ class Settings(BaseSettings):
             if raw.startswith("{"):
                 try:
                     parsed = json.loads(raw)
-                except json.JSONDecodeError:
-                    return raw.lower()
+                except json.JSONDecodeError as exc:
+                    raise ValueError(
+                        "RAG_RUNTIME_MODE malformed JSON override"
+                    ) from exc
                 if isinstance(parsed, Mapping):
-                    return {
-                        str(key).strip().lower(): str(value).strip().lower()
-                        for key, value in parsed.items()
-                        if str(key).strip() and str(value).strip()
-                    }
-            return raw.lower()
-        return v
+                    return _normalize_rag_runtime_mode_mapping(parsed)
+                raise ValueError("RAG_RUNTIME_MODE JSON override must be an object")
+            return _normalize_rag_runtime_mode_value(raw, label="global")
+        raise ValueError(f"Unsupported RAG_RUNTIME_MODE value: {v!r}")
 
     # Scheduler backend configuration
     # Supported backends: "celery" (default), "apscheduler", "xxljob"
@@ -546,8 +567,11 @@ class Settings(BaseSettings):
         if isinstance(config, Mapping):
             normalized_operation = operation.strip().lower()
             mode = config.get(normalized_operation) or config.get("default", "local")
-            return str(mode).strip().lower() or "local"
-        return str(config).strip().lower() or "local"
+            return _normalize_rag_runtime_mode_value(
+                mode,
+                label=f"operation {normalized_operation!r}",
+            )
+        return _normalize_rag_runtime_mode_value(config, label="global")
 
     @classmethod
     def settings_customise_sources(

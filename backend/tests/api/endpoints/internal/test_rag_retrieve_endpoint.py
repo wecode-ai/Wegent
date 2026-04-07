@@ -318,6 +318,68 @@ def test_internal_retrieve_auto_route_uses_remote_gateway_for_rag_retrieval(
     mock_local_query.assert_not_called()
 
 
+def test_internal_retrieve_auto_route_passes_runtime_budget_to_route_decision(
+    test_client, monkeypatch
+):
+    monkeypatch.setattr(settings, "RAG_RUNTIME_MODE", {"query": "remote"})
+
+    payload = {
+        "query": "How should we proceed?",
+        "knowledge_base_ids": [1],
+        "route_mode": "auto",
+        "runtime_context": {
+            "context_window": 10000,
+            "used_context_tokens": 4200,
+            "reserved_output_tokens": 1024,
+            "context_buffer_ratio": 0.2,
+            "max_direct_chunks": 500,
+        },
+    }
+
+    with (
+        patch(
+            "app.api.endpoints.internal.rag.RagRuntimeResolver.build_query_runtime_spec",
+            return_value=_make_runtime_spec(
+                knowledge_base_ids=[1],
+                query=payload["query"],
+                with_budget=True,
+            ),
+        ),
+        patch(
+            "app.api.endpoints.internal.rag.RetrievalService.decide_route_mode_for_chat_shell",
+            return_value="rag_retrieval",
+        ) as mock_decide_route_mode,
+        patch(
+            "app.api.endpoints.internal.rag.get_query_gateway",
+            return_value=AsyncMock(
+                query=AsyncMock(
+                    return_value={
+                        "mode": "rag_retrieval",
+                        "records": [],
+                        "total": 0,
+                        "total_estimated_tokens": 0,
+                    }
+                )
+            ),
+        ),
+    ):
+        response = test_client.post("/api/internal/rag/retrieve", json=payload)
+
+    assert response.status_code == 200
+    mock_decide_route_mode.assert_called_once_with(
+        query=payload["query"],
+        knowledge_base_ids=[1],
+        db=ANY,
+        route_mode="auto",
+        document_ids=None,
+        context_window=10000,
+        used_context_tokens=4200,
+        reserved_output_tokens=1024,
+        context_buffer_ratio=0.2,
+        max_direct_chunks=500,
+    )
+
+
 def test_internal_retrieve_auto_route_keeps_local_direct_injection(
     test_client, monkeypatch
 ):

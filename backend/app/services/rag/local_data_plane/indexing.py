@@ -130,13 +130,8 @@ async def index_document_local(
             document_id=spec.document_id,
         )
 
-    return await service.index_document_from_file(
-        knowledge_id=str(spec.knowledge_base_id),
-        file_path=spec.source.file_path,
-        embed_model=embed_model,
-        user_id=spec.index_owner_user_id,
-        splitter_config=spec.splitter_config,
-        document_id=spec.document_id,
+    raise ValueError(
+        f"Unsupported index source type for local execution: {spec.source.source_type}"
     )
 
 

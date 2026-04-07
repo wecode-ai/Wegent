@@ -1244,12 +1244,7 @@ class KnowledgeService:
 
                 if retriever_name:
                     try:
-                        if kb.namespace == "default" or is_organization_namespace(
-                            db, kb.namespace
-                        ):
-                            index_owner_user_id = user_id
-                        else:
-                            index_owner_user_id = kb.user_id
+                        index_owner_user_id = kb.user_id
 
                         from app.services.rag.runtime_resolver import RagRuntimeResolver
 

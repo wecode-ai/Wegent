@@ -194,7 +194,11 @@ def _resolve_query_gateway(runtime_spec):
     return LocalRagGateway()
 
 
-def _finalize_query_runtime_spec(runtime_spec, db: Session):
+def _finalize_query_runtime_spec(
+    runtime_spec,
+    db: Session,
+    runtime_context: DirectInjectionRuntimeContext | None = None,
+):
     if getattr(runtime_spec, "route_mode", "auto") != "auto":
         return runtime_spec
     required_attributes = (
@@ -208,7 +212,7 @@ def _finalize_query_runtime_spec(runtime_spec, db: Session):
         return runtime_spec
 
     retrieval_service = RetrievalService()
-    budget = getattr(runtime_spec, "direct_injection_budget", None)
+    budget = runtime_context or getattr(runtime_spec, "direct_injection_budget", None)
     resolved_route_mode = retrieval_service.decide_route_mode_for_chat_shell(
         query=runtime_spec.query,
         knowledge_base_ids=runtime_spec.knowledge_base_ids,
@@ -216,6 +220,10 @@ def _finalize_query_runtime_spec(runtime_spec, db: Session):
         route_mode=runtime_spec.route_mode,
         document_ids=runtime_spec.document_ids,
         context_window=budget.context_window if budget else None,
+        used_context_tokens=budget.used_context_tokens if budget else 0,
+        reserved_output_tokens=budget.reserved_output_tokens if budget else 4096,
+        context_buffer_ratio=budget.context_buffer_ratio if budget else 0.1,
+        max_direct_chunks=budget.max_direct_chunks if budget else 500,
     )
     return runtime_spec.model_copy(update={"route_mode": resolved_route_mode})
 
@@ -313,7 +321,7 @@ async def internal_retrieve(
             ),
             restricted_mode=restricted_mode,
         )
-        runtime_spec = _finalize_query_runtime_spec(runtime_spec, db)
+        runtime_spec = _finalize_query_runtime_spec(runtime_spec, db, runtime_context)
         result = await _execute_query_with_remote_fallback(runtime_spec, db)
 
         records = result.get("records", [])
