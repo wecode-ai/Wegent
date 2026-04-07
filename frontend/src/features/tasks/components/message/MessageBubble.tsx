@@ -448,6 +448,14 @@ const MessageBubble = memo(
     const hasSpecialFormat = React.useMemo(() => {
       if (!msg.content || msg.type === 'user') return false
 
+      // If there are tool blocks, always use MixedContentView to render them
+      if (
+        msg.result?.blocks &&
+        msg.result.blocks.some((b: { type: string }) => b.type === 'tool')
+      ) {
+        return false
+      }
+
       // Quick check: if content doesn't contain any header markers, skip parsing
       const content = msg.content
       const hasClarificationMarker =
@@ -462,7 +470,7 @@ const MessageBubble = memo(
         content.toLowerCase().includes('prompt')
 
       return hasClarificationMarker || hasFinalPromptMarker
-    }, [msg.content, msg.type])
+    }, [msg.content, msg.type, msg.result?.blocks])
 
     const renderProgressBar = (status: string, progress: number) => {
       const normalizedStatus = (status ?? '').toUpperCase()
@@ -1702,13 +1710,15 @@ const MessageBubble = memo(
     const prevBlocksHash =
       prevProps.msg.result?.blocks
         ?.map(
-          b => `${b.id}:${b.status}:${b.type === 'tool' ? !!b.tool_output : b.content?.length || 0}`
+          b =>
+            `${b.id}:${b.status}:${b.type === 'tool' ? !!b.tool_output : (b as { content?: string }).content?.length || 0}`
         )
         .join('|') || ''
     const nextBlocksHash =
       nextProps.msg.result?.blocks
         ?.map(
-          b => `${b.id}:${b.status}:${b.type === 'tool' ? !!b.tool_output : b.content?.length || 0}`
+          b =>
+            `${b.id}:${b.status}:${b.type === 'tool' ? !!b.tool_output : (b as { content?: string }).content?.length || 0}`
         )
         .join('|') || ''
 

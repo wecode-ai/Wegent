@@ -111,3 +111,54 @@ def test_internal_retrieve_keeps_user_subtask_id_out_of_gateway(test_client):
     assert response.status_code == 200
     mock_query.assert_awaited_once_with(ANY, db=ANY)
     mock_persist.assert_called_once()
+
+
+def test_internal_retrieve_resolves_document_names_before_query(test_client):
+    with (
+        patch(
+            "app.api.endpoints.internal.rag._resolve_document_names",
+            return_value=[101, 102],
+        ) as mock_resolve,
+        patch(
+            "app.api.endpoints.internal.rag.LocalRagGateway.query",
+            new_callable=AsyncMock,
+            return_value={
+                "mode": "rag_retrieval",
+                "records": [],
+                "total": 0,
+                "total_estimated_tokens": 0,
+            },
+        ) as mock_query,
+    ):
+        response = test_client.post(
+            "/api/internal/rag/retrieve",
+            json={
+                "query": "release checklist",
+                "knowledge_base_ids": [12],
+                "document_names": ["release.md"],
+            },
+        )
+
+    assert response.status_code == 200
+    mock_resolve.assert_called_once()
+    mock_query.assert_awaited_once()
+
+
+def test_internal_retrieve_returns_error_when_document_names_not_found(test_client):
+    with patch(
+        "app.api.endpoints.internal.rag._resolve_document_names",
+        return_value=[],
+    ):
+        response = test_client.post(
+            "/api/internal/rag/retrieve",
+            json={
+                "query": "release checklist",
+                "knowledge_base_ids": [12],
+                "document_names": ["missing.md"],
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["mode"] == "rag_retrieval"
+    assert response.json()["records"] == []
+    assert response.json()["message"].startswith("Document names not found")

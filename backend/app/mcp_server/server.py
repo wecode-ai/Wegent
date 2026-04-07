@@ -53,6 +53,8 @@ KNOWLEDGE_MCP_MOUNT_PATH = "/mcp/knowledge"
 KNOWLEDGE_MCP_TRANSPORT_PATH = "/sse"
 INTERACTIVE_FORM_MCP_MOUNT_PATH = "/mcp/interactive-form-question"
 INTERACTIVE_FORM_MCP_TRANSPORT_PATH = "/sse"
+PROMPT_OPTIMIZATION_MCP_MOUNT_PATH = "/mcp/prompt-optimization"
+PROMPT_OPTIMIZATION_MCP_TRANSPORT_PATH = "/sse"
 
 
 @dataclass(frozen=True)
@@ -287,6 +289,69 @@ def ensure_interactive_form_question_tools_registered() -> None:
     _register_interactive_form_question_tools()
 
 
+# ============== Prompt Optimization MCP Server ==============
+# Provides prompt optimization tools
+# Available via Skill configuration
+# Uses decorator-based auto-registration from @mcp_tool decorated endpoints
+
+prompt_optimization_mcp_server = FastMCP(
+    "wegent-prompt-optimization-mcp",
+    stateless_http=True,
+    json_response=True,
+    streamable_http_path="/",
+    transport_security=_build_transport_security_settings(),
+)
+
+# Store for prompt_optimization MCP request context (used by McpAppSpec)
+_prompt_optimization_request_token_info: contextvars.ContextVar[
+    Optional[TaskTokenInfo]
+] = contextvars.ContextVar("_prompt_optimization_request_token_info", default=None)
+
+# Flag to track if tools have been registered
+_prompt_optimization_tools_registered = False
+
+
+def _get_prompt_optimization_token_info_from_context() -> Optional[TaskTokenInfo]:
+    """Get token info from prompt_optimization MCP request context."""
+    return _prompt_optimization_request_token_info.get()
+
+
+def _register_prompt_optimization_tools() -> None:
+    """Register prompt_optimization tools from @mcp_tool decorated endpoints.
+
+    This function imports the prompt_optimization tools module to trigger decorator
+    registration, then registers all collected tools to the prompt_optimization MCP server.
+    """
+    global _prompt_optimization_tools_registered
+    if _prompt_optimization_tools_registered:
+        return
+
+    # Import MCP tools module to trigger @mcp_tool decorator registration
+    from app.mcp_server.tool_registry import register_tools_to_server
+    from app.mcp_server.tools import (  # noqa: F401 side-effect: triggers @mcp_tool registration
+        prompt_optimization,
+    )
+
+    # Register all collected tools to the prompt_optimization server
+    count = register_tools_to_server(
+        prompt_optimization_mcp_server, "prompt_optimization"
+    )
+    logger.info(
+        f"[MCP:PromptOptimization] Registered {count} tools from decorated endpoints"
+    )
+
+    _prompt_optimization_tools_registered = True
+
+
+def ensure_prompt_optimization_tools_registered() -> None:
+    """Ensure prompt_optimization MCP tools are registered.
+
+    This should be called during application startup to register
+    all @mcp_tool decorated endpoints as MCP tools.
+    """
+    _register_prompt_optimization_tools()
+
+
 # ============== Starlette App Factory ==============
 
 _SYSTEM_MCP_SPEC = McpAppSpec(
@@ -322,7 +387,23 @@ _INTERACTIVE_FORM_MCP_SPEC = McpAppSpec(
     include_root_metadata=True,
 )
 
-MCP_APP_SPECS = (_SYSTEM_MCP_SPEC, _KNOWLEDGE_MCP_SPEC, _INTERACTIVE_FORM_MCP_SPEC)
+_PROMPT_OPTIMIZATION_MCP_SPEC = McpAppSpec(
+    name="prompt_optimization",
+    service_name="wegent-prompt-optimization-mcp",
+    mount_path=PROMPT_OPTIMIZATION_MCP_MOUNT_PATH,
+    transport_path=PROMPT_OPTIMIZATION_MCP_TRANSPORT_PATH,
+    server=prompt_optimization_mcp_server,
+    token_context=_prompt_optimization_request_token_info,
+    log_prefix="PromptOptimization",
+    include_root_metadata=True,
+)
+
+MCP_APP_SPECS = (
+    _SYSTEM_MCP_SPEC,
+    _KNOWLEDGE_MCP_SPEC,
+    _INTERACTIVE_FORM_MCP_SPEC,
+    _PROMPT_OPTIMIZATION_MCP_SPEC,
+)
 
 
 def _build_root_metadata(spec: McpAppSpec) -> Dict[str, Any]:
@@ -343,6 +424,8 @@ def _build_mcp_app(spec: McpAppSpec) -> Starlette:
         ensure_knowledge_tools_registered()
     elif spec.name == "interactive_form_question":
         ensure_interactive_form_question_tools_registered()
+    elif spec.name == "prompt_optimization":
+        ensure_prompt_optimization_tools_registered()
 
     async def health_check(request: Request) -> JSONResponse:
         return JSONResponse({"status": "healthy", "service": spec.service_name})
@@ -373,7 +456,11 @@ def _build_mcp_app(spec: McpAppSpec) -> Starlette:
                     token_info.user_name,
                 )
                 # Set MCPRequestContext for decorator-based tools
-                if spec.name in ("knowledge", "interactive_form_question"):
+                if spec.name in (
+                    "knowledge",
+                    "interactive_form_question",
+                    "prompt_optimization",
+                ):
                     mcp_ctx = MCPRequestContext(
                         token_info=token_info,
                         tool_name="",  # Will be set by tool invocation
@@ -541,6 +628,26 @@ def get_mcp_interactive_form_question_config(
         url=f"{backend_url}{INTERACTIVE_FORM_MCP_MOUNT_PATH}{INTERACTIVE_FORM_MCP_TRANSPORT_PATH}",
         auth_token=auth_token,
         timeout=300,  # 5 minutes for user response
+    )
+
+
+def get_mcp_prompt_optimization_config(
+    backend_url: str, auth_token: str
+) -> Dict[str, Any]:
+    """Get prompt_optimization MCP server configuration for Skill injection.
+
+    Args:
+        backend_url: Backend URL (e.g., "http://localhost:8000")
+        auth_token: Authentication token for MCP server (uses placeholder for Skill)
+
+    Returns:
+        MCP server configuration dictionary
+    """
+    return _build_streamable_http_config(
+        name="wegent-prompt-optimization",
+        url=f"{backend_url}{PROMPT_OPTIMIZATION_MCP_MOUNT_PATH}{PROMPT_OPTIMIZATION_MCP_TRANSPORT_PATH}",
+        auth_token=auth_token,
+        timeout=300,  # 5 minutes for prompt optimization
     )
 
 
