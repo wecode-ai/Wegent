@@ -501,8 +501,8 @@ export function KnowledgeDocumentPageDesktop() {
           exempt_calls_before_check: data.exempt_calls_before_check,
         })
 
-        // Save model preference for notebook type
-        if (kbType === 'notebook' && data.summary_enabled && data.summary_model_ref) {
+        // Save model preference when summary is enabled and model is selected
+        if (data.summary_enabled && data.summary_model_ref) {
           saveSummaryModelToPreference(data.summary_model_ref)
         }
         setShowCreateDialog(false)
