@@ -59,6 +59,8 @@ interface CreateKnowledgeBaseDialogProps {
   kbType?: KnowledgeBaseType
   /** Optional team ID for reading cached model preference */
   knowledgeDefaultTeamId?: number | null
+  /** Optional bind model name from team's bot config as fallback */
+  bindModel?: string | null
   /** Available groups for selection (for "All" mode) */
   availableGroups?: AvailableGroup[]
   /** Default selected group ID */
@@ -89,6 +91,7 @@ export function CreateKnowledgeBaseDialog({
   groupName,
   kbType: initialKbType = 'notebook',
   knowledgeDefaultTeamId,
+  bindModel,
   availableGroups,
   defaultGroupId,
   showGroupSelector = false,
@@ -351,6 +354,7 @@ export function CreateKnowledgeBaseDialog({
               setSummaryModelError('')
             }}
             knowledgeDefaultTeamId={knowledgeDefaultTeamId}
+            bindModel={bindModel}
             callLimits={{ maxCalls, exemptCalls }}
             onCallLimitsChange={({ maxCalls: nextMax, exemptCalls: nextExempt }) => {
               setMaxCalls(nextMax)
