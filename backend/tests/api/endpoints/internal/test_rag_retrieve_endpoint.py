@@ -13,11 +13,13 @@ def _make_runtime_spec(
     *,
     route_mode: str = "auto",
     knowledge_base_ids: list[int] | None = None,
+    document_ids: list[int] | None = None,
     query: str = "test",
     with_budget: bool = False,
 ) -> QueryRuntimeSpec:
     return QueryRuntimeSpec(
         knowledge_base_ids=knowledge_base_ids or [1],
+        document_ids=document_ids,
         query=query,
         route_mode=route_mode,
         direct_injection_budget=(
@@ -156,6 +158,14 @@ def test_internal_retrieve_resolves_document_names_before_query(test_client):
             return_value=[101, 102],
         ) as mock_resolve,
         patch(
+            "app.api.endpoints.internal.rag.RagRuntimeResolver.build_query_runtime_spec",
+            return_value=_make_runtime_spec(
+                knowledge_base_ids=[12],
+                document_ids=[101, 102],
+                query="release checklist",
+            ),
+        ),
+        patch(
             "app.api.endpoints.internal.rag.LocalRagGateway.query",
             new_callable=AsyncMock,
             return_value={
@@ -178,6 +188,7 @@ def test_internal_retrieve_resolves_document_names_before_query(test_client):
     assert response.status_code == 200
     mock_resolve.assert_called_once()
     mock_query.assert_awaited_once()
+    assert mock_query.await_args.args[0].document_ids == [101, 102]
 
 
 def test_internal_retrieve_returns_error_when_document_names_not_found(test_client):
@@ -444,6 +455,7 @@ def test_internal_retrieve_falls_back_to_local_when_remote_query_fails(
         ],
         "total": 1,
         "total_estimated_tokens": 4,
+        "message": None,
     }
     mock_get_query_gateway.assert_called_once()
     remote_gateway.query.assert_awaited_once_with(ANY, db=ANY)

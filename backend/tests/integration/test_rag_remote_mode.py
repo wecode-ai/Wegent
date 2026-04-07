@@ -47,6 +47,7 @@ EXPECTED_QUERY_RESPONSE = {
     ],
     "total": 1,
     "total_estimated_tokens": 12,
+    "message": None,
 }
 
 
