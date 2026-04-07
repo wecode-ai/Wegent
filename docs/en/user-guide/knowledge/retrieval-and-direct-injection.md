@@ -4,13 +4,13 @@ sidebar_position: 11
 
 # Retrieval And Direct Injection
 
-Knowledge Base conversations do not rely on a single access pattern. In addition to standard RAG retrieval, Wegent also keeps a "small KB full direct injection" path that can load all chunks from a knowledge base and pass them to the model when needed.
+Knowledge Base conversations do not rely on a single access pattern. In addition to standard RAG retrieval, Wegent also keeps a "small KB full direct injection" path that can pass as much KB context as possible to the model when needed.
 
 ---
 
 ## Why direct injection exists
 
-The main reason `all-chunks` was introduced is that vector retrieval quality was not stable enough in some scenarios.
+The main reason direct injection was introduced is that vector retrieval quality was not stable enough in some scenarios.
 
 For smaller knowledge bases with limited total content, but where the question depends on broader context, pure vector retrieval can fail in a few common ways:
 
@@ -24,19 +24,20 @@ In those cases, loading all chunks and injecting them into the model is often mo
 
 ## The two paths
 
-| Path | Main API | Best for | Characteristics |
-|------|----------|----------|-----------------|
+| Path | Main entry | Best for | Characteristics |
+|------|------------|----------|-----------------|
 | **Retrieval mode** | `/api/internal/rag/retrieve` | Medium to large KBs, targeted queries, normal RAG Q&A | Lower cost, more focused context |
-| **Direct injection mode** | `/api/internal/rag/all-chunks` | Small KBs, full-context reasoning, unstable vector recall | More complete recall, higher context cost |
+| **Direct injection mode** | `/api/internal/rag/retrieve` | Small KBs, full-context reasoning, unstable vector recall | More complete recall, higher context cost |
 
 In practice:
 
-- `retrieve` is the normal search path
-- `all-chunks` is a complementary path for small knowledge bases, not a replacement for retrievers
+- `/api/internal/rag/retrieve` is the unified entrypoint
+- Backend decides internally whether the request should stay in normal retrieval or switch to direct injection
+- the old `/api/internal/rag/all-chunks` endpoint remains only as a legacy internal compatibility surface
 
 ---
 
-## When all-chunks is useful
+## When direct injection is useful
 
 This path is typically useful when:
 
@@ -55,31 +56,31 @@ These prompts depend on global context more than a few top-k chunks.
 
 ## Permission model
 
-`all-chunks` should follow the same permission model as `/api/internal/rag/retrieve`.
+Direct injection should follow the same permission model as `/api/internal/rag/retrieve`.
 
 That means:
 
 - It is part of the **internal RAG** service-to-service API
 - Access control should be validated earlier, during task context and knowledge base selection
-- `all-chunks` should not introduce an extra user-level blocking rule that behaves differently from `retrieve`
+- direct injection should not introduce an extra user-level blocking rule that behaves differently from normal retrieval
 
 This keeps the chain consistent:
 
 - Both APIs serve the same knowledge access flow
-- If `retrieve` is allowed but `all-chunks` is blocked separately, behavior becomes inconsistent
+- If normal retrieval is allowed but direct injection is blocked separately, behavior becomes inconsistent
 - Small-KB direct injection should not be blocked by an endpoint-specific rule
 
 ---
 
 ## Safe Summaries For Restricted Analyst
 
-When the KB user permission is `Restricted Analyst`, the system no longer passes raw retrieved chunks directly to the final answering model. Instead, `knowledge_base_search` first produces a **safe summary** internally.
+When the KB user permission is `Restricted Analyst`, the system no longer passes raw retrieved chunks directly to the final answering model. Instead, Backend internal retrieval first produces a **safe summary**.
 
 The goals of this path are:
 
 - allow the model to use the KB for high-level analysis, diagnosis, risk judgment, and recommendations
 - avoid exposing original wording, exact definitions, KPI values, titles, filenames, or document structure
-- move the “can this be answered safely?” decision into the KB tool itself
+- move the “can this be answered safely?” decision into Backend-side KB orchestration
 
 In practice:
 
@@ -129,16 +130,16 @@ In these cases the system should either:
 
 ---
 
-## Impact On all-chunks
+## Impact On direct injection
 
-`all-chunks` still exists to support "small KB full direct injection", but in restricted mode its role changes:
+Direct injection still exists to support "small KB full direct injection", but in restricted mode its role changes:
 
 - it can still provide broader context when vector retrieval is unstable
 - the raw full-KB chunks are then converted into a safe summary before reaching the main model
 
 That means:
 
-- `all-chunks` still improves stability for small KBs
+- direct injection still improves stability for small KBs
 - but in restricted mode the final model sees a safe summary, not raw chunk content
 
 This preserves the recall benefit of full-context access while reducing disclosure risk.
@@ -149,16 +150,16 @@ This preserves the recall benefit of full-context access while reducing disclosu
 
 | Recommendation | Explanation |
 |----------------|-------------|
-| Keep retrievers configured | `all-chunks` is a supplement, not a substitute for normal indexing and retrieval |
+| Keep retrievers configured | Direct injection is a supplement, not a substitute for normal indexing and retrieval |
 | Keep direct injection for small KBs | It often improves stability when KB size is manageable |
 | Use retrieval for large KBs | Full injection becomes expensive in context and cost |
-| Use logs for debugging | If `all-chunks` returns empty, check indexing, document state, and backend logs |
+| Use logs for debugging | If direct injection returns empty, check indexing, document state, and backend logs |
 
 ---
 
-## Troubleshooting empty all-chunks results
+## Troubleshooting empty direct injection results
 
-If `all-chunks` returns no content, check:
+If direct injection returns no content, check:
 
 | Check | Description |
 |-------|-------------|
@@ -170,8 +171,8 @@ If `all-chunks` returns no content, check:
 
 If logs show:
 
-- the request reached `/api/internal/rag/all-chunks`
-- `get_all_chunks start` was logged
+- the request reached `/api/internal/rag/retrieve`
+- Backend resolved the route to `direct_injection`
 - but the final hit count is 0
 
 then the problem is usually in indexing or data layout, not request authentication.

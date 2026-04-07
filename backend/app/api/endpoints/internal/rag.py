@@ -24,7 +24,9 @@ from app.services.knowledge.protected_mediation import (
 from app.services.knowledge.retrieval_persistence import (
     retrieval_persistence_service,
 )
+from app.services.rag.gateway_factory import get_query_gateway
 from app.services.rag.local_gateway import LocalRagGateway
+from app.services.rag.remote_gateway import RemoteRagGatewayError
 from app.services.rag.retrieval_service import RetrievalService
 from app.services.rag.runtime_resolver import RagRuntimeResolver
 
@@ -36,7 +38,6 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/rag", tags=["internal-rag"])
 runtime_resolver = RagRuntimeResolver()
-rag_gateway = LocalRagGateway()
 
 
 class DirectInjectionRuntimeContext(BaseModel):
@@ -186,6 +187,52 @@ def _resolve_document_names(
     )
 
 
+def _resolve_query_gateway(runtime_spec):
+    route_mode = getattr(runtime_spec, "route_mode", "auto")
+    if route_mode == "rag_retrieval":
+        return get_query_gateway()
+    return LocalRagGateway()
+
+
+def _finalize_query_runtime_spec(runtime_spec, db: Session):
+    if getattr(runtime_spec, "route_mode", "auto") != "auto":
+        return runtime_spec
+    required_attributes = (
+        "query",
+        "knowledge_base_ids",
+        "document_ids",
+        "direct_injection_budget",
+        "model_copy",
+    )
+    if not all(hasattr(runtime_spec, attr) for attr in required_attributes):
+        return runtime_spec
+
+    retrieval_service = RetrievalService()
+    budget = getattr(runtime_spec, "direct_injection_budget", None)
+    resolved_route_mode = retrieval_service.decide_route_mode_for_chat_shell(
+        query=runtime_spec.query,
+        knowledge_base_ids=runtime_spec.knowledge_base_ids,
+        db=db,
+        route_mode=runtime_spec.route_mode,
+        document_ids=runtime_spec.document_ids,
+        context_window=budget.context_window if budget else None,
+    )
+    return runtime_spec.model_copy(update={"route_mode": resolved_route_mode})
+
+
+async def _execute_query_with_remote_fallback(runtime_spec, db: Session):
+    rag_gateway = _resolve_query_gateway(runtime_spec)
+    try:
+        return await rag_gateway.query(runtime_spec, db=db)
+    except RemoteRagGatewayError as exc:
+        logger.warning(
+            "[internal_rag] Remote query failed for KBs %s, falling back to local gateway: %s",
+            getattr(runtime_spec, "knowledge_base_ids", []),
+            exc,
+        )
+        return await LocalRagGateway().query(runtime_spec, db=db)
+
+
 @router.post(
     "/retrieve",
     response_model=InternalRetrieveResponse | ProtectedKnowledgeMediationResponse,
@@ -243,6 +290,7 @@ async def internal_retrieve(
         )
 
         runtime_spec = runtime_resolver.build_query_runtime_spec(
+            db=db,
             knowledge_base_ids=knowledge_base_ids,
             query=request.query,
             max_results=request.max_results,
@@ -265,10 +313,8 @@ async def internal_retrieve(
             ),
             restricted_mode=restricted_mode,
         )
-        result = await rag_gateway.query(
-            runtime_spec,
-            db=db,
-        )
+        runtime_spec = _finalize_query_runtime_spec(runtime_spec, db)
+        result = await _execute_query_with_remote_fallback(runtime_spec, db)
 
         records = result.get("records", [])
 

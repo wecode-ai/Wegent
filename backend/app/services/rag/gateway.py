@@ -2,7 +2,12 @@ from typing import Protocol
 
 from sqlalchemy.orm import Session
 
-from app.services.rag.runtime_specs import IndexRuntimeSpec, QueryRuntimeSpec
+from app.services.rag.runtime_specs import (
+    ConnectionTestRuntimeSpec,
+    DeleteRuntimeSpec,
+    IndexRuntimeSpec,
+    QueryRuntimeSpec,
+)
 
 
 class RagGateway(Protocol):
@@ -22,9 +27,14 @@ class RagGateway(Protocol):
 
     async def delete_document_index(
         self,
-        knowledge_base_id: int,
-        document_ref: str,
+        spec: DeleteRuntimeSpec,
         *,
         db: Session,
-        index_owner_user_id: int | None = None,
+    ) -> dict: ...
+
+    async def test_connection(
+        self,
+        spec: ConnectionTestRuntimeSpec,
+        *,
+        db: Session | None = None,
     ) -> dict: ...

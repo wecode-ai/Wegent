@@ -8,10 +8,13 @@ import pytest
 
 from app.services.rag.local_gateway import LocalRagGateway
 from app.services.rag.runtime_specs import (
+    ConnectionTestRuntimeSpec,
+    DeleteRuntimeSpec,
     IndexRuntimeSpec,
     IndexSource,
     QueryRuntimeSpec,
 )
+from shared.models import RuntimeRetrieverConfig
 
 
 @pytest.mark.asyncio
@@ -58,20 +61,41 @@ async def test_local_gateway_delete_document_index_delegates_to_delete_executor(
     gateway = LocalRagGateway()
     gateway._delete_executor = AsyncMock(return_value={"deleted": True})
     db = MagicMock()
-
-    result = await gateway.delete_document_index(
+    spec = DeleteRuntimeSpec(
         knowledge_base_id=1,
         document_ref="9",
-        db=db,
+        index_owner_user_id=7,
+        retriever_config=RuntimeRetrieverConfig(
+            name="retriever-a",
+            namespace="default",
+            storage_config={"type": "qdrant"},
+        ),
     )
+
+    result = await gateway.delete_document_index(spec, db=db)
 
     assert result == {"deleted": True}
-    gateway._delete_executor.assert_awaited_once_with(
-        knowledge_base_id=1,
-        document_ref="9",
-        db=db,
-        index_owner_user_id=None,
+    gateway._delete_executor.assert_awaited_once_with(spec, db=db)
+
+
+@pytest.mark.asyncio
+async def test_local_gateway_test_connection_delegates_to_connection_executor():
+    gateway = LocalRagGateway()
+    gateway._connection_test_executor = AsyncMock(
+        return_value={"success": True, "message": "Connection successful"}
     )
+    spec = ConnectionTestRuntimeSpec(
+        retriever_config=RuntimeRetrieverConfig(
+            name="retriever-a",
+            namespace="default",
+            storage_config={"type": "qdrant"},
+        )
+    )
+
+    result = await gateway.test_connection(spec)
+
+    assert result == {"success": True, "message": "Connection successful"}
+    gateway._connection_test_executor.assert_awaited_once_with(spec, db=None)
 
 
 @pytest.mark.asyncio

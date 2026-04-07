@@ -6,12 +6,19 @@ import logging
 
 from sqlalchemy.orm import Session
 
-from app.models.kind import Kind
+from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
 from app.services.adapters.retriever_kinds import retriever_kinds_service
-from app.services.rag.document_service import DocumentService
-from app.services.rag.runtime_specs import IndexRuntimeSpec
-from app.services.rag.splitter.runtime_config import parse_runtime_splitter_config
-from app.services.rag.storage.factory import create_storage_backend
+from app.services.context import context_service
+from app.services.rag.embedding.factory import (
+    create_embedding_model_from_crd,
+    create_embedding_model_from_runtime_config,
+)
+from app.services.rag.runtime_specs import DeleteRuntimeSpec, IndexRuntimeSpec
+from app.services.rag.storage.factory import (
+    create_storage_backend,
+    create_storage_backend_from_runtime_config,
+)
+from knowledge_engine.services import DocumentService as EngineDocumentService
 from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
@@ -32,17 +39,46 @@ def _extract_index_document_attributes(
 
 
 def _extract_delete_document_attributes(
-    knowledge_base_id: int,
-    document_ref: str,
+    spec: DeleteRuntimeSpec,
     *,
     db: Session,
-    index_owner_user_id: int | None = None,
 ) -> dict[str, str | int]:
     return {
-        "rag.knowledge_base_id": knowledge_base_id,
-        "rag.document_ref": document_ref,
-        "rag.index_owner_user_id": index_owner_user_id or 0,
+        "rag.knowledge_base_id": spec.knowledge_base_id,
+        "rag.document_ref": spec.document_ref,
+        "rag.index_owner_user_id": spec.index_owner_user_id,
     }
+
+
+def _get_attachment_binary_source(
+    db: Session,
+    attachment_id: int,
+) -> tuple[bytes, str, str]:
+    context = (
+        db.query(SubtaskContext)
+        .filter(
+            SubtaskContext.id == attachment_id,
+            SubtaskContext.context_type == ContextType.ATTACHMENT.value,
+        )
+        .first()
+    )
+    if not context:
+        raise ValueError(f"Attachment context {attachment_id} not found")
+    if context.status != ContextStatus.READY.value:
+        raise ValueError(
+            f"Attachment context {attachment_id} is not ready (status: {context.status})"
+        )
+
+    binary_data = context_service.get_attachment_binary_data(
+        db=db,
+        context=context,
+    )
+    if binary_data is None:
+        raise ValueError(
+            f"Attachment context {attachment_id} has no binary data available"
+        )
+
+    return binary_data, context.original_filename, context.file_extension
 
 
 @trace_async(
@@ -58,13 +94,11 @@ async def index_document_local(
     if db is None:
         raise ValueError("db is required for local indexing execution")
 
-    retriever = retriever_kinds_service.get_retriever(
-        db=db,
-        user_id=spec.index_owner_user_id,
-        name=spec.retriever_name,
-        namespace=spec.retriever_namespace,
-    )
-    if retriever is None:
+    try:
+        storage_backend = _build_index_storage_backend(spec, db=db)
+    except ValueError as exc:
+        if str(exc) != "retriever_not_found":
+            raise
         logger.warning(
             "Retriever %s not found for KB %s during indexing",
             spec.retriever_name,
@@ -77,30 +111,32 @@ async def index_document_local(
             "document_id": spec.document_id,
         }
 
-    storage_backend = create_storage_backend(retriever)
-    service = DocumentService(storage_backend=storage_backend)
+    embed_model = _build_index_embed_model(spec, db=db)
+    service = EngineDocumentService(storage_backend=storage_backend)
 
-    splitter_config = spec.splitter_config
-    if splitter_config:
-        splitter_config = parse_runtime_splitter_config(splitter_config)
+    if spec.source.source_type == "attachment":
+        binary_data, source_file, file_extension = _get_attachment_binary_source(
+            db,
+            spec.source.attachment_id,
+        )
+        return await service.index_document_from_binary(
+            knowledge_id=str(spec.knowledge_base_id),
+            binary_data=binary_data,
+            source_file=source_file,
+            file_extension=file_extension,
+            embed_model=embed_model,
+            user_id=spec.index_owner_user_id,
+            splitter_config=spec.splitter_config,
+            document_id=spec.document_id,
+        )
 
-    file_path = (
-        spec.source.file_path if spec.source.source_type == "file_path" else None
-    )
-    attachment_id = (
-        spec.source.attachment_id if spec.source.source_type == "attachment" else None
-    )
-    return await service.index_document(
+    return await service.index_document_from_file(
         knowledge_id=str(spec.knowledge_base_id),
-        embedding_model_name=spec.embedding_model_name,
-        embedding_model_namespace=spec.embedding_model_namespace,
+        file_path=spec.source.file_path,
+        embed_model=embed_model,
         user_id=spec.index_owner_user_id,
-        db=db,
-        file_path=file_path,
-        attachment_id=attachment_id,
-        splitter_config=splitter_config,
+        splitter_config=spec.splitter_config,
         document_id=spec.document_id,
-        user_name=spec.user_name,
     )
 
 
@@ -110,65 +146,52 @@ async def index_document_local(
     extract_attributes=_extract_delete_document_attributes,
 )
 async def delete_document_index_local(
-    knowledge_base_id: int,
-    document_ref: str,
+    spec: DeleteRuntimeSpec,
     *,
     db: Session,
-    index_owner_user_id: int | None = None,
 ) -> dict:
     """Delete document chunks from the local storage backend."""
-    kb = (
-        db.query(Kind)
-        .filter(
-            Kind.id == knowledge_base_id,
-            Kind.kind == "KnowledgeBase",
-            Kind.is_active,
-        )
-        .first()
+    del db
+    storage_backend = create_storage_backend_from_runtime_config(spec.retriever_config)
+    service = EngineDocumentService(storage_backend=storage_backend)
+    return await service.delete_document(
+        knowledge_id=str(spec.knowledge_base_id),
+        doc_ref=spec.document_ref,
+        user_id=spec.index_owner_user_id,
     )
-    if kb is None:
-        return {
-            "status": "skipped",
-            "reason": "knowledge_base_not_found",
-            "knowledge_id": str(knowledge_base_id),
-            "doc_ref": document_ref,
-        }
 
-    retrieval_config = (kb.json or {}).get("spec", {}).get("retrievalConfig") or {}
-    retriever_name = retrieval_config.get("retriever_name")
-    retriever_namespace = retrieval_config.get("retriever_namespace", "default")
-    if not retriever_name:
-        return {
-            "status": "skipped",
-            "reason": "missing_retriever_name",
-            "knowledge_id": str(knowledge_base_id),
-            "doc_ref": document_ref,
-        }
 
-    runtime_user_id = index_owner_user_id or kb.user_id
+def _build_index_storage_backend(
+    spec: IndexRuntimeSpec,
+    *,
+    db: Session,
+):
+    if spec.retriever_config is not None:
+        return create_storage_backend_from_runtime_config(spec.retriever_config)
+
     retriever = retriever_kinds_service.get_retriever(
         db=db,
-        user_id=runtime_user_id,
-        name=retriever_name,
-        namespace=retriever_namespace,
+        user_id=spec.index_owner_user_id,
+        name=spec.retriever_name,
+        namespace=spec.retriever_namespace,
     )
     if retriever is None:
-        logger.warning(
-            "Retriever %s not found for KB %s during delete-index cleanup",
-            retriever_name,
-            knowledge_base_id,
-        )
-        return {
-            "status": "skipped",
-            "reason": "retriever_not_found",
-            "knowledge_id": str(knowledge_base_id),
-            "doc_ref": document_ref,
-        }
+        raise ValueError("retriever_not_found")
+    return create_storage_backend(retriever)
 
-    storage_backend = create_storage_backend(retriever)
-    service = DocumentService(storage_backend=storage_backend)
-    return await service.delete_document(
-        knowledge_id=str(knowledge_base_id),
-        doc_ref=document_ref,
-        user_id=runtime_user_id,
+
+def _build_index_embed_model(
+    spec: IndexRuntimeSpec,
+    *,
+    db: Session,
+):
+    if spec.embedding_model_config is not None:
+        return create_embedding_model_from_runtime_config(spec.embedding_model_config)
+
+    return create_embedding_model_from_crd(
+        db=db,
+        user_id=spec.index_owner_user_id,
+        model_name=spec.embedding_model_name,
+        model_namespace=spec.embedding_model_namespace,
+        user_name=spec.user_name,
     )

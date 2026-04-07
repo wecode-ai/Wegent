@@ -235,6 +235,36 @@ class Settings(BaseSettings):
             return [item.strip() for item in raw.split(",") if item.strip()]
         return v
 
+    @field_validator("RAG_RUNTIME_MODE", mode="before")
+    @classmethod
+    def parse_rag_runtime_mode(cls, v: Any) -> str | dict[str, str]:
+        """Parse RAG runtime mode from a global value or JSON operation map."""
+        if v is None:
+            return "local"
+        if isinstance(v, Mapping):
+            return {
+                str(key).strip().lower(): str(value).strip().lower()
+                for key, value in v.items()
+                if str(key).strip() and str(value).strip()
+            }
+        if isinstance(v, str):
+            raw = v.strip()
+            if not raw:
+                return "local"
+            if raw.startswith("{"):
+                try:
+                    parsed = json.loads(raw)
+                except json.JSONDecodeError:
+                    return raw.lower()
+                if isinstance(parsed, Mapping):
+                    return {
+                        str(key).strip().lower(): str(value).strip().lower()
+                        for key, value in parsed.items()
+                        if str(key).strip() and str(value).strip()
+                    }
+            return raw.lower()
+        return v
+
     # Scheduler backend configuration
     # Supported backends: "celery" (default), "apscheduler", "xxljob"
     SCHEDULER_BACKEND: str = "celery"
@@ -406,6 +436,14 @@ class Settings(BaseSettings):
     # Backend internal URL (for service-to-service communication)
     # Used by chat_shell to download skill binaries
     BACKEND_INTERNAL_URL: str = "http://localhost:8000"
+    # Knowledge runtime service URL for remote RAG execution
+    KNOWLEDGE_RUNTIME_URL: str = "http://localhost:8200"
+    # RAG data-plane execution mode
+    # "local" keeps execution in Backend, "remote" forwards to knowledge_runtime
+    # Accepts either a global mode string or a JSON object with per-operation overrides:
+    # "remote"
+    # {"default":"local","query":"remote"}
+    RAG_RUNTIME_MODE: str | dict[str, str] = "local"
 
     # Streaming architecture mode configuration
     # "legacy" - WebSocketStreamingHandler directly emits to WebSocket (current behavior)
@@ -501,6 +539,15 @@ class Settings(BaseSettings):
     # OpenTelemetry configuration is centralized in shared/telemetry/config.py
     # Use: from shared.telemetry.config import get_otel_config
     # All OTEL_* environment variables are read from there
+
+    def get_rag_runtime_mode(self, operation: str) -> str:
+        """Resolve the effective RAG runtime mode for an operation."""
+        config = self.RAG_RUNTIME_MODE
+        if isinstance(config, Mapping):
+            normalized_operation = operation.strip().lower()
+            mode = config.get(normalized_operation) or config.get("default", "local")
+            return str(mode).strip().lower() or "local"
+        return str(config).strip().lower() or "local"
 
     @classmethod
     def settings_customise_sources(

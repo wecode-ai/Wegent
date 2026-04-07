@@ -2,20 +2,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""
-Splitter module for document chunking.
-"""
+"""Runtime splitter helpers kept in backend control plane."""
 
-from app.services.rag.splitter.smart import SmartSplitter
-from app.services.rag.splitter.splitter import (
-    DocumentSplitter,
-    SemanticSplitter,
-    SentenceSplitter,
-)
+from app.services.rag.splitter.runtime_config import parse_runtime_splitter_config
 
-__all__ = [
-    "DocumentSplitter",
-    "SemanticSplitter",
-    "SentenceSplitter",
-    "SmartSplitter",
-]
+__all__ = ["parse_runtime_splitter_config"]
