@@ -866,8 +866,11 @@ class KnowledgeService:
                 func.sum(
                     case(
                         (
-                            func.lower(KnowledgeDocument.file_extension).in_(
-                                spreadsheet_exts
+                            and_(
+                                KnowledgeDocument.is_active == True,
+                                func.lower(KnowledgeDocument.file_extension).in_(
+                                    spreadsheet_exts
+                                ),
                             ),
                             1,
                         ),

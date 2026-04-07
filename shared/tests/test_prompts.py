@@ -49,7 +49,7 @@ class TestKBPromptConstants:
         assert "kb_ls" in KB_PROMPT_STRICT
         assert "kb_head" in KB_PROMPT_STRICT
         assert "spreadsheet files" in strict_lower
-        assert "lower-confidence" in strict_lower
+        assert "weak or irrelevant" in strict_lower
 
     def test_kb_prompt_relaxed_contains_required_content(self):
         """KB_PROMPT_RELAXED should contain relaxed mode instructions."""
@@ -67,6 +67,7 @@ class TestKBPromptConstants:
         assert "kb_ls" in KB_PROMPT_RELAXED
         assert "spreadsheet files" in relaxed_lower
         assert "kb_head" in relaxed_lower
+        assert "weak or irrelevant" in relaxed_lower
 
     def test_prompts_are_different(self):
         """Strict and relaxed prompts should be different."""
