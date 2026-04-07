@@ -10,8 +10,7 @@ between direct injection and RAG retrieval based on context window capacity.
 
 import json
 import logging
-from contextlib import contextmanager
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any, Dict, List, Optional
 
 from langchain_core.callbacks import CallbackManagerForToolRun
 from langchain_core.tools import BaseTool
@@ -478,22 +477,19 @@ class KnowledgeBaseTool(BaseTool):
         """Synchronous run - not implemented, use async version."""
         raise NotImplementedError("KnowledgeBaseTool only supports async execution")
 
-    @contextmanager
-    def _apply_call_scoped_filters(
+    def _resolve_scoped_filters(
         self,
         document_ids: Optional[list[int]] = None,
         document_names: Optional[list[str]] = None,
-    ) -> Iterator[None]:
-        """Temporarily apply per-call document filters."""
-        original_document_ids = self.document_ids
-        original_document_names = self.document_names
-        self.document_ids = document_ids or original_document_ids
-        self.document_names = document_names or original_document_names
-        try:
-            yield
-        finally:
-            self.document_ids = original_document_ids
-            self.document_names = original_document_names
+    ) -> tuple[list[int], list[str]]:
+        """Resolve per-call filters without mutating tool instance state."""
+        effective_document_ids = (
+            self.document_ids if document_ids is None else document_ids
+        )
+        effective_document_names = (
+            self.document_names if document_names is None else document_names
+        )
+        return effective_document_ids, effective_document_names
 
     async def _arun(
         self,
@@ -504,14 +500,25 @@ class KnowledgeBaseTool(BaseTool):
         run_manager: CallbackManagerForToolRun | None = None,
     ) -> str:
         """Execute knowledge base search with optional per-call scoped filters."""
-        with self._apply_call_scoped_filters(document_ids, document_names):
-            return await self._arun_impl(query, max_results, run_manager)
+        effective_document_ids, effective_document_names = self._resolve_scoped_filters(
+            document_ids=document_ids,
+            document_names=document_names,
+        )
+        return await self._arun_impl(
+            query,
+            max_results,
+            run_manager,
+            document_ids=effective_document_ids,
+            document_names=effective_document_names,
+        )
 
     async def _arun_impl(
         self,
         query: str,
         max_results: int = 20,
         run_manager: CallbackManagerForToolRun | None = None,
+        document_ids: Optional[list[int]] = None,
+        document_names: Optional[list[str]] = None,
     ) -> str:
         """Execute knowledge base search with intelligent injection strategy.
 
@@ -533,6 +540,8 @@ class KnowledgeBaseTool(BaseTool):
             JSON string with search results or injected content
         """
         try:
+            effective_document_ids = document_ids or []
+            effective_document_names = document_names or []
             if not self.knowledge_base_ids:
                 return json.dumps(
                     {"error": "No knowledge bases configured for this conversation."}
@@ -597,8 +606,8 @@ class KnowledgeBaseTool(BaseTool):
             logger.info(
                 f"[KnowledgeBaseTool] Searching {len(self.knowledge_base_ids)} knowledge bases with query: {query}"
                 + (
-                    f", filtering by {len(self.document_ids)} documents"
-                    if self.document_ids
+                    f", filtering by {len(effective_document_ids)} documents"
+                    if effective_document_ids
                     else ""
                 )
             )
@@ -613,6 +622,8 @@ class KnowledgeBaseTool(BaseTool):
                 query=query,
                 max_results=max_results,
                 route_mode=preferred_route_mode,
+                document_ids=effective_document_ids,
+                document_names=effective_document_names,
             )
 
             logger.info(
@@ -831,6 +842,8 @@ class KnowledgeBaseTool(BaseTool):
         query: str,
         max_results: int,
         route_mode: str = "auto",
+        document_ids: Optional[list[int]] = None,
+        document_names: Optional[list[str]] = None,
     ) -> tuple[str, Dict[str, Any]]:
         """Retrieve KB data using Backend-side route selection."""
         if self.db_session is None:
@@ -838,18 +851,20 @@ class KnowledgeBaseTool(BaseTool):
                 query=query,
                 max_results=max_results,
                 route_mode=route_mode,
+                document_ids=document_ids,
+                document_names=document_names,
             )
         else:
             try:
-                resolved_document_ids = self.document_ids or None
-                if not resolved_document_ids and self.document_names:
+                resolved_document_ids = document_ids or None
+                if not resolved_document_ids and document_names:
                     from app.services.knowledge import KnowledgeService
 
                     resolved_document_ids = (
                         KnowledgeService.resolve_document_ids_by_names(
                             db=self.db_session,
                             knowledge_base_ids=self.knowledge_base_ids,
-                            document_names=self.document_names,
+                            document_names=document_names,
                         )
                         or None
                     )
@@ -941,6 +956,8 @@ class KnowledgeBaseTool(BaseTool):
         query: str,
         max_results: int,
         route_mode: str = "auto",
+        document_ids: Optional[list[int]] = None,
+        document_names: Optional[list[str]] = None,
     ) -> Dict[str, Any]:
         """Retrieve KB data from Backend internal retrieve endpoint."""
         import httpx
@@ -966,10 +983,10 @@ class KnowledgeBaseTool(BaseTool):
         mediation_context = self._build_mediation_context()
         if mediation_context:
             payload["mediation_context"] = mediation_context
-        if self.document_ids:
-            payload["document_ids"] = self.document_ids
-        if self.document_names:
-            payload["document_names"] = self.document_names
+        if document_ids:
+            payload["document_ids"] = document_ids
+        if document_names:
+            payload["document_names"] = document_names
         if self.user_name is not None:
             payload["user_name"] = self.user_name
 

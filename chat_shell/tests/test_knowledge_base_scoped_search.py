@@ -116,3 +116,61 @@ async def test_arun_preserves_backend_scoped_search_error_message():
         result = json.loads(await tool._arun(query="release checklist"))
 
     assert result["message"].startswith("Document names not found")
+
+
+@pytest.mark.asyncio
+async def test_arun_passes_scoped_filters_without_mutating_tool_defaults():
+    tool = KnowledgeBaseTool(
+        knowledge_base_ids=[1],
+        user_id=7,
+        document_ids=[999],
+        document_names=["default.md"],
+    )
+
+    async def _fake_retrieve(**kwargs):
+        assert kwargs["document_ids"] == [101]
+        assert kwargs["document_names"] == ["release.md"]
+        assert tool.document_ids == [999]
+        assert tool.document_names == ["default.md"]
+        return (
+            "rag_retrieval",
+            {
+                "mode": "rag_retrieval",
+                "records": [],
+                "total": 0,
+                "total_estimated_tokens": 0,
+            },
+        )
+
+    with (
+        patch.object(
+            tool,
+            "_get_kb_info",
+            AsyncMock(
+                return_value={
+                    "items": [
+                        {
+                            "id": 1,
+                            "name": "Test KB",
+                            "rag_enabled": True,
+                            "max_calls_per_conversation": 10,
+                            "exempt_calls_before_check": 5,
+                        }
+                    ]
+                }
+            ),
+        ),
+        patch.object(
+            tool,
+            "_retrieve_with_strategy_from_all_kbs",
+            AsyncMock(side_effect=_fake_retrieve),
+        ),
+    ):
+        await tool._arun(
+            query="release checklist",
+            document_ids=[101],
+            document_names=["release.md"],
+        )
+
+    assert tool.document_ids == [999]
+    assert tool.document_names == ["default.md"]

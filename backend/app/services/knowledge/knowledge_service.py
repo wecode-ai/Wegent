@@ -910,6 +910,7 @@ class KnowledgeService:
             .filter(
                 KnowledgeDocument.kind_id.in_(knowledge_base_ids),
                 KnowledgeDocument.name.in_(normalized_names),
+                KnowledgeDocument.is_active == True,
             )
             .all()
         )

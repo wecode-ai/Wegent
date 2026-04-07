@@ -221,13 +221,13 @@ async def internal_retrieve(
                 document_names=request.document_names,
             )
             if not resolved_document_ids:
-                return {
-                    "mode": "rag_retrieval",
-                    "records": [],
-                    "total": 0,
-                    "total_estimated_tokens": 0,
-                    "message": "Document names not found in the selected knowledge bases. Use kb_ls to inspect available documents first.",
-                }
+                return InternalRetrieveResponse(
+                    mode="rag_retrieval",
+                    records=[],
+                    total=0,
+                    total_estimated_tokens=0,
+                    message="Document names not found in the selected knowledge bases. Use kb_ls to inspect available documents first.",
+                )
 
         if resolved_document_ids:
             logger.info(
