@@ -48,12 +48,15 @@ class TestKBPromptConstants:
         assert "document_ids" in KB_PROMPT_STRICT
         assert "kb_ls" in KB_PROMPT_STRICT
         assert "kb_head" in KB_PROMPT_STRICT
+        assert "spreadsheet files" in strict_lower
+        assert "lower-confidence" in strict_lower
 
     def test_kb_prompt_relaxed_contains_required_content(self):
         """KB_PROMPT_RELAXED should contain relaxed mode instructions."""
         from shared.prompts import KB_PROMPT_RELAXED
 
         # Check for key phrases in relaxed mode
+        relaxed_lower = KB_PROMPT_RELAXED.lower()
         assert "knowledge_base_search" in KB_PROMPT_RELAXED
         # Relaxed mode must allow fallback to general knowledge
         assert "general knowledge" in KB_PROMPT_RELAXED
@@ -62,6 +65,8 @@ class TestKBPromptConstants:
         assert "document_names" in KB_PROMPT_RELAXED
         assert "document_ids" in KB_PROMPT_RELAXED
         assert "kb_ls" in KB_PROMPT_RELAXED
+        assert "spreadsheet files" in relaxed_lower
+        assert "kb_head" in relaxed_lower
 
     def test_prompts_are_different(self):
         """Strict and relaxed prompts should be different."""
