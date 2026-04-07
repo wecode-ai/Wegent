@@ -105,7 +105,24 @@ def format_kb_meta_prompt(kb_meta_list: list[dict[str, Any]]) -> str:
             kb_meta.get("kb_name", "Unknown"), "Unknown"
         )
         kb_id = sanitize_prompt_identifier(kb_meta.get("kb_id", "N/A"), "N/A")
-        kb_lines.append(f"- KB Name: {kb_name}, KB ID: {kb_id}")
+        search_available = (
+            "available" if kb_meta.get("search_available") else "unavailable"
+        )
+        total_document_count = int(kb_meta.get("total_document_count", 0) or 0)
+        searchable_document_count = int(
+            kb_meta.get("searchable_document_count", 0) or 0
+        )
+        spreadsheet_document_count = int(
+            kb_meta.get("spreadsheet_document_count", 0) or 0
+        )
+
+        kb_lines.append(
+            f"- KB Name: {kb_name}, KB ID: {kb_id}, "
+            f"Search: {search_available}, "
+            f"Total Docs: {total_document_count}, "
+            f"Searchable Docs: {searchable_document_count}, "
+            f"Spreadsheets: {spreadsheet_document_count}"
+        )
 
         summary_text = kb_meta.get("summary_text") or ""
         topics = kb_meta.get("topics") or []
