@@ -297,6 +297,13 @@ docker compose up -d     # 启动
         </a>
     </td>
     <td align="center">
+        <a href="https://github.com/icycrystal4">
+            <img src="https://avatars.githubusercontent.com/u/946207?v=4" width="80;" alt="icycrystal4"/>
+            <br />
+            <sub><b>Icycrystal4</b></sub>
+        </a>
+    </td>
+    <td align="center">
         <a href="https://github.com/parabala">
             <img src="https://avatars.githubusercontent.com/u/115564000?v=4" width="80;" alt="parabala"/>
             <br />
@@ -308,13 +315,6 @@ docker compose up -d     # 启动
             <img src="https://avatars.githubusercontent.com/u/39821951?v=4" width="80;" alt="moqimoqidea"/>
             <br />
             <sub><b>Moqimoqidea</b></sub>
-        </a>
-    </td>
-    <td align="center">
-        <a href="https://github.com/icycrystal4">
-            <img src="https://avatars.githubusercontent.com/u/946207?v=4" width="80;" alt="icycrystal4"/>
-            <br />
-            <sub><b>Icycrystal4</b></sub>
         </a>
     </td>
     <td align="center">
@@ -442,7 +442,7 @@ docker compose up -d     # 启动
         <a href="https://github.com/code-wangdi">
             <img src="https://avatars.githubusercontent.com/u/11024395?v=4" width="80;" alt="code-wangdi"/>
             <br />
-            <sub><b>code-wangdi</b></sub>
+            <sub><b>Code-wangdi</b></sub>
         </a>
     </td>
     <td align="center">

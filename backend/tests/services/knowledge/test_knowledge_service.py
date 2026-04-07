@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from app.models.knowledge import KnowledgeDocument
 from app.services.context import context_service
 from app.services.knowledge.knowledge_service import KnowledgeService
 
@@ -62,3 +63,102 @@ class TestKnowledgeServiceUpdateDocumentContent:
             binary_data="# Updated release notes".encode("utf-8"),
         )
         db.refresh.assert_called_once_with(document)
+
+
+@pytest.mark.unit
+class TestKnowledgeServiceResolveDocumentIdsByNames:
+    def test_resolve_document_ids_by_names_returns_only_active_docs_in_scope(
+        self, test_db, test_user
+    ) -> None:
+        """Document-name resolution should ignore inactive and out-of-scope rows."""
+        active_doc = KnowledgeDocument(
+            kind_id=10,
+            attachment_id=0,
+            name="release.md",
+            file_extension="md",
+            file_size=10,
+            user_id=test_user.id,
+            is_active=True,
+            source_type="file",
+        )
+        inactive_doc = KnowledgeDocument(
+            kind_id=10,
+            attachment_id=0,
+            name="release.md",
+            file_extension="md",
+            file_size=10,
+            user_id=test_user.id,
+            is_active=False,
+            source_type="file",
+        )
+        other_kb_doc = KnowledgeDocument(
+            kind_id=11,
+            attachment_id=0,
+            name="release.md",
+            file_extension="md",
+            file_size=10,
+            user_id=test_user.id,
+            is_active=True,
+            source_type="file",
+        )
+        test_db.add_all([active_doc, inactive_doc, other_kb_doc])
+        test_db.commit()
+
+        resolved_ids = KnowledgeService.resolve_document_ids_by_names(
+            db=test_db,
+            knowledge_base_ids=[10],
+            document_names=["release.md"],
+        )
+
+        assert resolved_ids == [active_doc.id]
+
+
+@pytest.mark.unit
+class TestKnowledgeServiceGetDocumentPromptStats:
+    def test_get_document_prompt_stats_counts_only_active_spreadsheets(
+        self, test_db, test_user
+    ) -> None:
+        """Spreadsheet count should reflect searchable spreadsheet documents only."""
+        active_csv = KnowledgeDocument(
+            kind_id=10,
+            attachment_id=0,
+            name="active-report.csv",
+            file_extension="csv",
+            file_size=10,
+            user_id=test_user.id,
+            is_active=True,
+            source_type="file",
+        )
+        inactive_xlsx = KnowledgeDocument(
+            kind_id=10,
+            attachment_id=0,
+            name="inactive-report.xlsx",
+            file_extension="xlsx",
+            file_size=10,
+            user_id=test_user.id,
+            is_active=False,
+            source_type="file",
+        )
+        active_markdown = KnowledgeDocument(
+            kind_id=10,
+            attachment_id=0,
+            name="guide.md",
+            file_extension="md",
+            file_size=10,
+            user_id=test_user.id,
+            is_active=True,
+            source_type="file",
+        )
+        test_db.add_all([active_csv, inactive_xlsx, active_markdown])
+        test_db.commit()
+
+        stats = KnowledgeService.get_document_prompt_stats(
+            db=test_db,
+            knowledge_base_ids=[10],
+        )
+
+        assert stats[10] == {
+            "total_document_count": 3,
+            "searchable_document_count": 2,
+            "spreadsheet_document_count": 1,
+        }

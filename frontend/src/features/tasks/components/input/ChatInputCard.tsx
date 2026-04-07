@@ -78,6 +78,9 @@ export interface ChatInputCardProps extends Omit<
 
   // Hide all selectors (for OpenClaw devices) - only show text input + send button
   hideSelectors?: boolean
+
+  // Callback to open team edit dialog (shown as pencil icon on badge)
+  onEditTeam?: () => void
 }
 
 /**
@@ -122,6 +125,7 @@ export function ChatInputCard({
   hasNoTeams = false,
   disabledReason,
   hideSelectors,
+  onEditTeam,
   // ChatInputControls props
   selectedModel,
   setSelectedModel,
@@ -295,6 +299,7 @@ export function ChatInputCard({
                     team={selectedTeam}
                     showClearButton={true}
                     onClear={onRestoreDefaultTeam}
+                    onEdit={onEditTeam}
                   />
                 ) : undefined
               }
@@ -331,6 +336,7 @@ export function ChatInputCard({
               team={selectedTeam}
               showClearButton={true}
               onClear={onRestoreDefaultTeam}
+              onEdit={onEditTeam}
             />
           </div>
         )}

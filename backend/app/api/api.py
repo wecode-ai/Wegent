@@ -23,6 +23,7 @@ from app.api.endpoints import (
     openapi_responses,
     pet,
     projects,
+    prompt_optimization,
     quota,
     repository,
     share,
@@ -201,6 +202,11 @@ api_router.include_router(
     skill_market.router, prefix="/skill-market", tags=["skill-market"]
 )
 api_router.include_router(skill_identity.router, tags=["skill-identity"])
+api_router.include_router(
+    prompt_optimization.router,
+    prefix="/prompt-optimization",
+    tags=["prompt-optimization"],
+)
 api_router.include_router(k_router)
 
 # Internal API endpoints (for service-to-service communication)

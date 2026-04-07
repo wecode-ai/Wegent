@@ -118,6 +118,10 @@ class InternalRetrieveRequest(BaseModel):
         default=None,
         description="Optional list of document IDs to filter. Only chunks from these documents will be returned.",
     )
+    document_names: Optional[list[str]] = Field(
+        default=None,
+        description="Optional exact document names to resolve into document IDs before retrieval.",
+    )
     route_mode: Literal["auto", "direct_injection", "rag_retrieval"] = Field(
         default="auto",
         description="Routing mode: auto decides in Backend, direct_injection forces all-chunks, rag_retrieval forces standard retrieval",
@@ -164,6 +168,22 @@ class InternalRetrieveResponse(BaseModel):
     records: list[RetrieveRecord]
     total: int
     total_estimated_tokens: int = 0
+    message: Optional[str] = None
+
+
+def _resolve_document_names(
+    db: Session,
+    knowledge_base_ids: list[int],
+    document_names: list[str],
+) -> list[int]:
+    """Resolve exact document names into document IDs within KB scope."""
+    from app.services.knowledge import KnowledgeService
+
+    return KnowledgeService.resolve_document_ids_by_names(
+        db=db,
+        knowledge_base_ids=knowledge_base_ids,
+        document_names=document_names,
+    )
 
 
 @router.post(
@@ -193,11 +213,27 @@ async def internal_retrieve(
         if request.knowledge_base_id is not None:
             knowledge_base_ids = [request.knowledge_base_id]
 
-        if request.document_ids:
+        resolved_document_ids = request.document_ids or []
+        if not resolved_document_ids and request.document_names:
+            resolved_document_ids = _resolve_document_names(
+                db=db,
+                knowledge_base_ids=knowledge_base_ids,
+                document_names=request.document_names,
+            )
+            if not resolved_document_ids:
+                return InternalRetrieveResponse(
+                    mode="rag_retrieval",
+                    records=[],
+                    total=0,
+                    total_estimated_tokens=0,
+                    message="Document names not found in the selected knowledge bases. Use kb_ls to inspect available documents first.",
+                )
+
+        if resolved_document_ids:
             logger.info(
                 "[internal_rag] Filtering by %d documents: %s",
-                len(request.document_ids),
-                request.document_ids,
+                len(resolved_document_ids),
+                resolved_document_ids,
             )
 
         runtime_context = request.runtime_context
@@ -210,7 +246,7 @@ async def internal_retrieve(
             knowledge_base_ids=knowledge_base_ids,
             query=request.query,
             max_results=request.max_results,
-            document_ids=request.document_ids,
+            document_ids=resolved_document_ids or None,
             route_mode=request.route_mode,
             user_id=persistence_context.user_id if persistence_context else None,
             user_name=request.user_name,
@@ -277,8 +313,8 @@ async def internal_retrieve(
             available_injection_tokens,
             request.query[:50],
             (
-                f", filtered by {len(request.document_ids)} docs"
-                if request.document_ids
+                f", filtered by {len(resolved_document_ids)} docs"
+                if resolved_document_ids
                 else ""
             ),
         )
@@ -328,6 +364,7 @@ async def internal_retrieve(
             ],
             total=len(records),
             total_estimated_tokens=total_estimated_tokens,
+            message=result.get("message"),
         )
 
     except ValueError as e:

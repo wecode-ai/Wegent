@@ -17,6 +17,9 @@ import VideoPlayer from '../VideoPlayer'
 import { ImageGallery } from '../ImageGallery'
 import { AskUserForm } from '../../clarification'
 import type { AskUserFormData } from '@/types/api'
+import { blockRendererRegistry } from '../block-registry'
+// Import to register prompt optimization block renderer
+import '@/features/prompt-optimization/block-renderer'
 
 interface MixedContentViewProps {
   thinking: ThinkingStep[] | null
@@ -257,6 +260,16 @@ const MixedContentView = memo(function MixedContentView({
                 status: block.status,
               }
             }
+            // Check for custom block renderers first (e.g., prompt optimization)
+            // This allows feature modules to register their own block renderers
+            const customRenderer = blockRendererRegistry.findRenderer(block)
+            if (customRenderer) {
+              return {
+                type: 'custom' as const,
+                blockId: block.id,
+                render: () => customRenderer.render({ block, isLastBlock: false }),
+              }
+            }
             // Normalize tool name to match preset components (e.g., sandbox_write_file -> Write)
             const normalizedToolName = normalizeToolName(block.tool_name || 'unknown')
             const toolPair = {
@@ -379,7 +392,7 @@ const MixedContentView = memo(function MixedContentView({
     }
 
     return items
-  }, [blocks, thinking, content, toolMap])
+  }, [blocks, thinking, content, toolMap, taskId, subtaskId])
 
   // Check if we should show "Processing..." indicator
   const shouldShowProcessing = useMemo(() => {
@@ -496,6 +509,9 @@ const MixedContentView = memo(function MixedContentView({
               ) : null}
             </div>
           )
+        } else if (item.type === 'custom') {
+          // Render custom block using the registered renderer
+          return <div key={item.blockId}>{item.render()}</div>
         } else if (item.type === 'interactive_form_question') {
           // Render ask_user_question form for interactive user input
           // pb-4 ensures enough space between the form and the absolute-positioned BubbleTools below

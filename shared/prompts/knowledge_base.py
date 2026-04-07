@@ -34,7 +34,12 @@ B) **Knowledge base contents overview** (list documents)
 - Action: Call `kb_ls` for the selected knowledge base(s). Summarize the document list and ask which document(s) to open if needed.
 
 C) **Question that must be answered from documents** (retrieve evidence)
-- Action: Call `knowledge_base_search` using the user's query (or refined keywords) and answer **ONLY** from retrieved information.
+- Action: Choose the highest-signal retrieval path first:
+  - If the user already named the target file(s), prefer `knowledge_base_search` with exact `document_names`.
+  - If you already know exact document IDs, prefer `knowledge_base_search` with `document_ids`.
+  - If the file names are unknown and scoping would help, call `kb_ls` first, then use scoped `knowledge_base_search` or `kb_head`.
+  - If spreadsheet files are present, especially larger spreadsheets, `knowledge_base_search` may be less reliable for exact table details. If results seem weak or irrelevant, use `kb_ls` to narrow candidates and `kb_head` to verify.
+  - If the question is broad and no file-level scope is needed, call `knowledge_base_search` globally.
 
 D) **Knowledge base management** (optional, only if tools exist)
 - Examples: "Create a KB", "Add/update a document", "List all my KBs" (management, not Q&A)
@@ -43,14 +48,15 @@ D) **Knowledge base management** (optional, only if tools exist)
 
 ### Required Workflow:
 (ONLY for type C)
-1. Call `knowledge_base_search` first
-2. Wait for results
-3. Answer **ONLY** from retrieved information
-4. If results are empty/irrelevant, say: "I cannot find relevant information in the selected knowledge base to answer this question."
-5. Do not use general knowledge or assumptions
+1. Decide whether global search, scoped search, or `kb_ls` is the best first move
+2. If you know exact files, use scoped `knowledge_base_search(document_names=[...])` or `knowledge_base_search(document_ids=[...])`
+3. Wait for results or inspect documents with `kb_head` when browsing is required
+4. Answer **ONLY** from retrieved or directly read knowledge-base content
+5. If results are empty/irrelevant, say: "I cannot find relevant information in the selected knowledge base to answer this question."
+6. Do not use general knowledge or assumptions
 
 ### Critical Rules:
-- Type C: you MUST NOT answer without searching first
+- Type C: you MUST retrieve evidence before answering, but you may choose `kb_ls` first when that is higher-signal
 - Type A/B: you MUST NOT force `knowledge_base_search` first (it is often low-signal)
 - Do not invent information not present in the knowledge base
 
@@ -60,6 +66,7 @@ D) **Knowledge base management** (optional, only if tools exist)
 
 Use exploration tools when:
 - The user asks for an overview / document list (type B)
+- You need exact document names before scoped search
 - `knowledge_base_search` is unavailable (rag_not_configured / rejected) or you hit call-limit warnings (⚠️/🚨)
 
 Do not use exploration tools just because RAG returned no results.
@@ -86,7 +93,12 @@ B) **Knowledge base contents overview**
 - Action: Prefer `kb_ls` (then `kb_head` only when the user wants to open a specific document).
 
 C) **Content question**
-- Action: Prefer `knowledge_base_search`.
+- Action: Choose the highest-signal retrieval path first.
+  - Use `knowledge_base_search` globally for broad KB questions.
+  - Use scoped `knowledge_base_search(document_names=[...])` when the user already knows exact file names.
+  - Use scoped `knowledge_base_search(document_ids=[...])` when exact document IDs are already known.
+  - If you need exact file names or want to narrow the scope before searching, call `kb_ls` first, then use scoped search or `kb_head`.
+  - If spreadsheet files are present, especially larger spreadsheets, `knowledge_base_search` may be less reliable for exact table details. If results seem weak or irrelevant, use `kb_ls` to narrow candidates and `kb_head` to verify.
   - If results are relevant: answer using KB content and cite sources.
   - If results are empty/irrelevant: you may answer from general knowledge, and clearly state the KB had no relevant info.
   - If `knowledge_base_search` is unavailable/limited (rag_not_configured / rejected / call-limit warnings ⚠️/🚨): switch to `kb_ls` → `kb_head` to retrieve evidence manually.
@@ -99,6 +111,8 @@ D) **Knowledge base management** (optional, only if tools exist)
 - Prefer knowledge base content when relevant; cite sources when used
 - If the KB has no relevant content, say so and answer from general knowledge
 - For "what's in the KB" questions, `kb_ls` is usually higher-signal than `knowledge_base_search`
+- `document_names` matching is exact, so use `kb_ls` first when you do not know the exact file names
+- If spreadsheet files are present, especially larger spreadsheets, and search results look weak or irrelevant, verify precision-sensitive table details with `kb_head`
 </knowledge_base>
 """
 

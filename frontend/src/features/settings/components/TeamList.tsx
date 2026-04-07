@@ -24,12 +24,14 @@ import { CheckRunningTasksResponse } from '@/apis/common'
 import { fetchBotsList } from '../services/bots'
 import TeamEditDialog from './TeamEditDialog'
 import BotList from './BotList'
+import { ForceDeleteTaskSummary } from './ForceDeleteTaskSummary'
 import UnifiedAddButton from '@/components/common/UnifiedAddButton'
 import TeamShareModal from './TeamShareModal'
 import TeamCreationWizard from './wizard/TeamCreationWizard'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useToast } from '@/hooks/use-toast'
 import { sortTeamsByUpdatedAt } from '@/utils/team'
+import { isGroupTeam, isPublicTeam, isSharedTeam } from '@/utils/team-permissions'
 import type { BaseRole } from '@/types/base-role'
 import { sortBotsByUpdatedAt } from '@/utils/bot'
 import { useRouter } from 'next/navigation'
@@ -236,16 +238,6 @@ export default function TeamList({
     })
   }, [teams, modeFilter])
 
-  // Helper function to check if a team is a group resource
-  const isGroupTeam = (team: Team) => {
-    return team.namespace && team.namespace !== 'default'
-  }
-
-  // Helper function to check if a team is a public/system team (user_id = 0)
-  const isPublicTeam = (team: Team) => {
-    return team.user_id === 0
-  }
-
   // Helper function to check permissions for a specific group resource
   const canEditGroupResource = (namespace: string) => {
     if (!groupRoleMap) return false
@@ -378,17 +370,15 @@ export default function TeamList({
     setShareData(null)
   }
 
-  // Check if edit button should be shown
+  // Check if edit button should be shown (uses shared permission utility)
+  // Note: shouldShowEdit doesn't need userId because it checks structural properties
+  // For personal teams, TeamList always shows edit (the team owner is always viewing their own teams)
   const shouldShowEdit = (team: Team) => {
-    // Public teams are read-only for all users (managed by admin)
     if (isPublicTeam(team)) return false
-    // Shared teams don't show edit button
-    if (team.share_status === 2) return false
-    // For group teams, check group permissions
+    if (isSharedTeam(team)) return false
     if (isGroupTeam(team)) {
       return canEditGroupResource(team.namespace!)
     }
-    // For personal teams, always show
     return true
   }
 
@@ -402,11 +392,6 @@ export default function TeamList({
     }
     // For personal teams, always show
     return true
-  }
-
-  // Check if this is a shared team (need to show "unbind" instead of "delete")
-  const isSharedTeam = (team: Team) => {
-    return team.share_status === 2
   }
 
   // Check if share button should be shown
@@ -763,36 +748,23 @@ export default function TeamList({
           <DialogHeader>
             <DialogTitle>{t('teams.force_delete_confirm_title')}</DialogTitle>
             <DialogDescription>
-              <div className="space-y-3">
-                <p>
-                  {t('teams.force_delete_confirm_message', {
-                    count: runningTasksInfo?.running_tasks_count || 0,
-                  })}
-                </p>
-                {runningTasksInfo && runningTasksInfo.running_tasks.length > 0 && (
-                  <div className="bg-muted p-3 rounded-md">
-                    <p className="font-medium text-sm mb-2">{t('teams.running_tasks_list')}</p>
-                    <ul className="text-sm space-y-1">
-                      {runningTasksInfo.running_tasks.slice(0, 5).map(task => (
-                        <li key={task.task_id} className="text-text-muted">
-                          • {task.task_title || task.task_name} ({task.status})
-                        </li>
-                      ))}
-                      {runningTasksInfo.running_tasks.length > 5 && (
-                        <li className="text-text-muted">
-                          ...{' '}
-                          {t('teams.and_more_tasks', {
-                            count: runningTasksInfo.running_tasks.length - 5,
-                          })}
-                        </li>
-                      )}
-                    </ul>
-                  </div>
-                )}
-                <p className="text-error text-sm">{t('teams.force_delete_warning')}</p>
-              </div>
+              {t('teams.force_delete_confirm_message', {
+                count: runningTasksInfo?.running_tasks_count || 0,
+              })}
             </DialogDescription>
           </DialogHeader>
+          <ForceDeleteTaskSummary
+            runningTasks={runningTasksInfo?.running_tasks || []}
+            runningTasksTitle={t('teams.running_tasks_list')}
+            warning={t('teams.force_delete_warning')}
+            andMoreLabel={
+              runningTasksInfo && runningTasksInfo.running_tasks.length > 5
+                ? `... ${t('teams.and_more_tasks', {
+                    count: runningTasksInfo.running_tasks.length - 5,
+                  })}`
+                : undefined
+            }
+          />
           <DialogFooter>
             <Button variant="secondary" onClick={handleCancelDelete} disabled={isDeleting}>
               {t('common.cancel')}
