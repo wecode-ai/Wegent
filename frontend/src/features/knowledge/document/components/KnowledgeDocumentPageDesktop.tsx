@@ -564,7 +564,8 @@ export function KnowledgeDocumentPageDesktop() {
         const { updateKnowledgeBase } = await import('@/apis/knowledge')
         await updateKnowledgeBase(editingKb.id, data)
 
-        if (editingKb.kb_type === 'notebook' && data.summary_enabled && data.summary_model_ref) {
+        // Save model preference when summary is enabled and model is selected
+        if (data.summary_enabled && data.summary_model_ref) {
           saveSummaryModelToPreference(data.summary_model_ref)
         }
 

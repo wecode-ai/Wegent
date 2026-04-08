@@ -48,7 +48,10 @@ export function SummaryModelSelector({
   const [loading, setLoading] = useState(false)
   // Track the last team ID for which we attempted preselection
   // This allows re-attempting when the team ID changes or dialog reopens
-  const attemptedTeamIdRef = useRef<number | null>(null)
+  // ATTEMPTED_WITHOUT_TEAM (-1) is a sentinel value indicating we attempted
+  // preselection before team info was loaded, allowing re-attempt when team info arrives
+  const ATTEMPTED_WITHOUT_TEAM = -1
+  const attemptedTeamIdRef = useRef<number | null | typeof ATTEMPTED_WITHOUT_TEAM>(null)
 
   // Fetch models on mount
   useEffect(() => {
@@ -91,15 +94,22 @@ export function SummaryModelSelector({
       return
     }
 
-    // Skip if we already attempted preselection for this team ID
-    if (knowledgeDefaultTeamId && attemptedTeamIdRef.current === knowledgeDefaultTeamId) {
-      return
+    // Determine if we should attempt preselection
+    // - First attempt: attemptedTeamIdRef.current is null
+    // - Re-attempt: previously attempted without team info (-1), now have teamId
+    // - Re-attempt: teamId changed to a different value
+    const shouldAttempt = () => {
+      if (attemptedTeamIdRef.current === null) return true
+      if (attemptedTeamIdRef.current === ATTEMPTED_WITHOUT_TEAM && knowledgeDefaultTeamId) return true
+      if (knowledgeDefaultTeamId && attemptedTeamIdRef.current !== knowledgeDefaultTeamId) return true
+      return false
     }
 
-    // Mark this team ID as attempted (if provided)
-    if (knowledgeDefaultTeamId) {
-      attemptedTeamIdRef.current = knowledgeDefaultTeamId
-    }
+    if (!shouldAttempt()) return
+
+    // Mark this team ID as attempted
+    // Use sentinel value (-1) when team info is not yet loaded, so we can re-attempt when it arrives
+    attemptedTeamIdRef.current = knowledgeDefaultTeamId ?? ATTEMPTED_WITHOUT_TEAM
 
     // Priority 1: Try cached preference from localStorage
     if (knowledgeDefaultTeamId) {
