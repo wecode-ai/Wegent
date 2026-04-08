@@ -554,6 +554,47 @@ check_python_env() {
     cd "$SCRIPT_DIR"
 }
 
+# Patch backend DATABASE_URL and REDIS_URL to use configured MYSQL_PORT and REDIS_PORT.
+# When start.sh runs services locally, MySQL/Redis are exposed on host ports from
+# MYSQL_PORT/REDIS_PORT in .env, but backend/.env hardcodes the default ports (3306/6379).
+# This function reads backend/.env, patches the ports, and exports them as env vars
+# so pydantic-settings (which prefers env vars over .env file values) picks them up.
+patch_backend_service_urls() {
+    local backend_env="$SCRIPT_DIR/backend/.env"
+
+    if [ ! -f "$backend_env" ]; then
+        return
+    fi
+
+    # Patch DATABASE_URL with MYSQL_PORT if configured
+    if [ -n "$MYSQL_PORT" ]; then
+        local db_url
+        db_url=$(grep "^DATABASE_URL=" "$backend_env" | cut -d'=' -f2-)
+        if [ -n "$db_url" ]; then
+            # Replace port in @host:PORT pattern (supports optional trailing slash)
+            # e.g., @localhost:3306/db -> @localhost:23306/db
+            local patched_db_url
+            patched_db_url=$(echo "$db_url" | sed -E "s#(@[^/:]+):[0-9]+(/|$)#\1:$MYSQL_PORT\2#")
+            export DATABASE_URL="$patched_db_url"
+            echo -e "  ${GREEN}✓${NC} DATABASE_URL patched to use MYSQL_PORT=$MYSQL_PORT"
+        fi
+    fi
+
+    # Patch REDIS_URL with REDIS_PORT if configured
+    if [ -n "$REDIS_PORT" ]; then
+        local redis_url
+        redis_url=$(grep "^REDIS_URL=" "$backend_env" | cut -d'=' -f2-)
+        if [ -n "$redis_url" ]; then
+            # Replace port in host:PORT pattern (supports optional credentials and trailing slash)
+            # e.g., redis://127.0.0.1:6379/0 or redis://:pwd@127.0.0.1:6379/0
+            local patched_redis_url
+            patched_redis_url=$(echo "$redis_url" | sed -E "s#(//([^/@]+@)?[^/:]+):[0-9]+(/|$)#\1:$REDIS_PORT\3#")
+            export REDIS_URL="$patched_redis_url"
+            echo -e "  ${GREEN}✓${NC} REDIS_URL patched to use REDIS_PORT=$REDIS_PORT"
+        fi
+    fi
+}
+
 # Check frontend dependencies
 check_frontend_dependencies() {
     local frontend_dir="$SCRIPT_DIR/frontend"
@@ -1443,6 +1484,13 @@ start_services() {
     if [ "$start_chat_shell" = true ]; then
         check_python_env "chat_shell" "Chat Shell"
     fi
+    echo ""
+
+    # Patch backend connection URLs to use configured MYSQL_PORT / REDIS_PORT.
+    # backend/.env hardcodes default ports; this ensures the local backend process
+    # connects to the correct host ports exposed by docker-compose.
+    echo -e "${BLUE}Patching service connection URLs...${NC}"
+    patch_backend_service_urls
     echo ""
 
     # Check frontend dependencies

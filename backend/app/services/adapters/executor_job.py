@@ -11,6 +11,7 @@ from sqlalchemy import and_
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.db.session import SessionLocal
 from app.models.kind import Kind
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
@@ -131,12 +132,15 @@ class JobService(BaseService[Kind, None, None]):
                 )
                 return
 
-            # Deduplicate by (namespace, name) and collect task info for archiving
-            # Map: (namespace, name) -> (subtask, task) for archive operation
+            # Deduplicate by (namespace, name) and collect task info for archiving.
+            # Keep the matched subtask ids so the final update can target primary keys
+            # instead of scanning by executor fields again.
             executor_task_map: Dict[Tuple[str, str], Tuple[Subtask, TaskResource]] = {}
+            executor_subtask_ids: Dict[Tuple[str, str], List[int]] = {}
             for subtask in valid_candidates:
                 if subtask.executor_name:
                     key = (subtask.executor_namespace, subtask.executor_name)
+                    executor_subtask_ids.setdefault(key, []).append(subtask.id)
                     if key not in executor_task_map:
                         # Get task for this subtask
                         task = (
@@ -187,15 +191,8 @@ class JobService(BaseService[Kind, None, None]):
                         f"[executor_job] Scheduled deleting executor task ns={ns} name={name}"
                     )
                     res = executor_kinds_service.delete_executor_task_sync(name, ns)
-                    # Mark all subtasks with this (namespace, name) accordingly
-                    db.query(Subtask).filter(
-                        Subtask.executor_namespace == ns,
-                        Subtask.executor_name == name,
-                        Subtask.executor_deleted_at == False,
-                    ).update(
-                        {
-                            Subtask.executor_deleted_at: True,
-                        }
+                    self._mark_executor_deleted(
+                        executor_subtask_ids.get((ns, name), [])
                     )
                     db.commit()
                 except Exception as e:
@@ -259,6 +256,28 @@ class JobService(BaseService[Kind, None, None]):
         finally:
             loop.run_until_complete(loop.shutdown_asyncgens())
             loop.close()
+
+    def _mark_executor_deleted(self, subtask_ids: List[int]) -> None:
+        """Mark selected subtasks as deleted in a short-lived transaction."""
+        if not subtask_ids:
+            return
+
+        short_db = SessionLocal()
+        try:
+            short_db.query(Subtask).filter(
+                Subtask.id.in_(subtask_ids),
+                Subtask.executor_deleted_at == False,
+            ).update(
+                {
+                    Subtask.executor_deleted_at: True,
+                }
+            )
+            short_db.commit()
+        except Exception:
+            short_db.rollback()
+            raise
+        finally:
+            short_db.close()
 
 
 job_service = JobService(Kind)

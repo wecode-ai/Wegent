@@ -296,6 +296,14 @@ class LangChainModelFactory:
         add_span_event("instantiating_model_class", {"class": model_class.__name__})
         model = model_class(**params)
         add_span_event("model_instance_created")
+
+        # Attach provider metadata for downstream think-block normalization.
+        # These are read by LangGraphAgentBuilder to tag serialized messages
+        # with model_info, enabling cross-model think-block filtering.
+        model._wegent_provider = provider  # type: ignore[attr-defined]
+        model._wegent_model_id = cfg["model_id"]  # type: ignore[attr-defined]
+        model._wegent_api_format = cfg.get("api_format") or ""  # type: ignore[attr-defined]
+
         return model
 
     @classmethod
