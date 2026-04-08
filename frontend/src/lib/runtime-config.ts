@@ -47,6 +47,8 @@ export interface RuntimeConfig {
   bindGroupDesc: string
   /** Bind group steps configuration (JSON string with array of {title, hint}) */
   bindGroupSteps: string
+  /** Application version (e.g. "0.1.5"), "dev" in local development */
+  appVersion: string
 }
 
 /** Default bind group steps configuration */
@@ -118,6 +120,7 @@ export const fetchRuntimeConfig = async (): Promise<RuntimeConfig> => {
           process.env.NEXT_PUBLIC_OTEL_COLLECTOR_ENDPOINT || 'http://localhost:4318',
         bindGroupDesc: process.env.NEXT_PUBLIC_BIND_GROUP_DESC || '',
         bindGroupSteps: process.env.NEXT_PUBLIC_BIND_GROUP_STEPS || DEFAULT_BIND_GROUP_STEPS,
+        appVersion: process.env.NEXT_PUBLIC_APP_VERSION || 'dev',
       }
       runtimeConfigCache = fallback
       return fallback
@@ -157,6 +160,7 @@ export const getRuntimeConfigSync = (): RuntimeConfig => {
       process.env.NEXT_PUBLIC_OTEL_COLLECTOR_ENDPOINT || 'http://localhost:4318',
     bindGroupDesc: process.env.NEXT_PUBLIC_BIND_GROUP_DESC || '',
     bindGroupSteps: process.env.NEXT_PUBLIC_BIND_GROUP_STEPS || DEFAULT_BIND_GROUP_STEPS,
+    appVersion: process.env.NEXT_PUBLIC_APP_VERSION || 'dev',
   }
 }
 

@@ -125,6 +125,13 @@ export async function GET() {
         process.env.RUNTIME_BIND_GROUP_STEPS ||
         process.env.NEXT_PUBLIC_BIND_GROUP_STEPS ||
         DEFAULT_BIND_GROUP_STEPS,
+
+      // Application version (injected at Docker build time)
+      // Priority: RUNTIME_APP_VERSION > NEXT_PUBLIC_APP_VERSION > 'dev'
+      appVersion:
+        process.env.RUNTIME_APP_VERSION ||
+        process.env.NEXT_PUBLIC_APP_VERSION ||
+        'dev',
     },
     {
       headers: {

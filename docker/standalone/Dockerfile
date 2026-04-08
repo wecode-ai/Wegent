@@ -28,6 +28,10 @@ RUN npm ci && npm cache clean --force
 # Copy source code
 COPY frontend .
 
+# App version injected at build time (e.g. "0.1.5")
+ARG APP_VERSION="dev"
+ENV NEXT_PUBLIC_APP_VERSION=${APP_VERSION}
+
 # Disable Next.js telemetry
 ENV NEXT_TELEMETRY_DISABLED=1
 

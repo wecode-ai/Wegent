@@ -13,6 +13,7 @@ import { DocsButton } from '@/features/layout/DocsButton'
 import { FeedbackButton } from '@/features/layout/FeedbackButton'
 import { ThemeToggle } from '@/features/theme/ThemeToggle'
 import { paths } from '@/config/paths'
+import { getRuntimeConfigSync } from '@/lib/runtime-config'
 import {
   UserCircleIcon,
   Cog6ToothIcon,
@@ -38,6 +39,7 @@ export function UserFloatingMenu({ className = '' }: UserFloatingMenuProps) {
   const isAdmin = user?.role === 'admin'
   const currentLanguage = getCurrentLanguage()
   const supportedLanguages = getSupportedLanguages()
+  const appVersion = getRuntimeConfigSync().appVersion
 
   const handleLanguageClick = () => {
     const currentIndex = supportedLanguages.indexOf(currentLanguage)
@@ -220,6 +222,16 @@ export function UserFloatingMenu({ className = '' }: UserFloatingMenuProps) {
             <ArrowRightOnRectangleIcon className="w-4 h-4 text-text-muted" />
             {t('common:user.logout')}
           </button>
+
+          {/* Version info */}
+          <div className="px-3 py-1.5 text-center">
+            <span
+              className="text-xs text-text-muted/60"
+              data-testid="app-version"
+            >
+              v{appVersion}
+            </span>
+          </div>
         </div>
       </div>
     </div>
