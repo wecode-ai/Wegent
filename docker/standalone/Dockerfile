@@ -112,9 +112,7 @@ RUN cd /app/executor && uv pip install --system --no-cache -r pyproject.toml
 # - wegent-chat-shell = { path = "../chat_shell" } -> /app/chat_shell
 # - wegent-knowledge-engine = { path = "../knowledge_engine" } -> /app/knowledge_engine
 COPY backend/pyproject.toml /app/backend/pyproject.toml
-RUN cd /app/backend && \
-    sed -i '/\[tool\.uv\.sources\]/,/^$/d' pyproject.toml && \
-    uv pip install --system --no-cache -r pyproject.toml
+RUN cd /app/backend && uv pip install --system --no-cache -r pyproject.toml
 
 # Copy backend application code
 COPY backend/app /app/backend/app
