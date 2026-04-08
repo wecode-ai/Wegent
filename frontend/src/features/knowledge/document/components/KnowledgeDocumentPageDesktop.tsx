@@ -18,6 +18,7 @@ import { FolderOpen } from 'lucide-react'
 import { userApis } from '@/apis/user'
 import { teamService } from '@/features/tasks/service/teamService'
 import { saveGlobalModelPreference, type ModelPreference } from '@/utils/modelPreferences'
+import { getModelFromConfig } from '@/features/settings/services/bots'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useUser } from '@/features/common/UserContext'
 import { listKnowledgeBases } from '@/apis/knowledge'
@@ -154,9 +155,11 @@ export function KnowledgeDocumentPageDesktop() {
     loadDefaultTeamsAndTeams()
   }, [])
 
-  // Find knowledge mode default team ID
-  const knowledgeDefaultTeamId = useMemo(() => {
-    if (!defaultTeamsConfig?.knowledge || teams.length === 0) return null
+  // Find knowledge mode default team and its bind_model
+  const knowledgeTeamInfo = useMemo(() => {
+    if (!defaultTeamsConfig?.knowledge || teams.length === 0) {
+      return { id: null, bindModel: null as string | null }
+    }
 
     const { name, namespace } = defaultTeamsConfig.knowledge
     const normalizedNamespace = namespace || 'default'
@@ -166,8 +169,24 @@ export function KnowledgeDocumentPageDesktop() {
       return team.name === name && teamNamespace === normalizedNamespace
     })
 
-    return matchedTeam?.id ?? null
+    // Get bind_model from team's first bot config
+    let bindModel: string | null = null
+    if (matchedTeam?.bots?.length) {
+      const firstBot = matchedTeam.bots[0]
+      const botConfig = firstBot?.bot?.agent_config as Record<string, unknown> | undefined
+      if (botConfig) {
+        bindModel = getModelFromConfig(botConfig)
+      }
+    }
+
+    return {
+      id: matchedTeam?.id ?? null,
+      bindModel,
+    }
   }, [defaultTeamsConfig, teams])
+
+  const knowledgeDefaultTeamId = knowledgeTeamInfo.id
+  const knowledgeBindModel = knowledgeTeamInfo.bindModel
 
   // Helper: save summary model to knowledge team's preference
   const saveSummaryModelToPreference = useCallback(
@@ -501,8 +520,8 @@ export function KnowledgeDocumentPageDesktop() {
           exempt_calls_before_check: data.exempt_calls_before_check,
         })
 
-        // Save model preference for notebook type
-        if (kbType === 'notebook' && data.summary_enabled && data.summary_model_ref) {
+        // Save model preference when summary is enabled and model is selected
+        if (data.summary_enabled && data.summary_model_ref) {
           saveSummaryModelToPreference(data.summary_model_ref)
         }
         setShowCreateDialog(false)
@@ -545,7 +564,8 @@ export function KnowledgeDocumentPageDesktop() {
         const { updateKnowledgeBase } = await import('@/apis/knowledge')
         await updateKnowledgeBase(editingKb.id, data)
 
-        if (editingKb.kb_type === 'notebook' && data.summary_enabled && data.summary_model_ref) {
+        // Save model preference when summary is enabled and model is selected
+        if (data.summary_enabled && data.summary_model_ref) {
           saveSummaryModelToPreference(data.summary_model_ref)
         }
 
@@ -959,6 +979,7 @@ export function KnowledgeDocumentPageDesktop() {
         groupName={createGroupName}
         kbType={createKbType}
         knowledgeDefaultTeamId={knowledgeDefaultTeamId}
+        bindModel={knowledgeBindModel}
         showGroupSelector={showGroupSelector}
         availableGroups={availableGroupsForCreate}
         defaultGroupId="personal"
@@ -970,6 +991,7 @@ export function KnowledgeDocumentPageDesktop() {
         onSubmit={handleUpdate}
         loading={isUpdating}
         knowledgeDefaultTeamId={knowledgeDefaultTeamId}
+        bindModel={knowledgeBindModel}
       />
 
       <DeleteKnowledgeBaseDialog

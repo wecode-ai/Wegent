@@ -1101,6 +1101,7 @@ class KnowledgeOrchestrator:
         file_base64: Optional[str] = None,
         file_extension: Optional[str] = None,
         url: Optional[str] = None,
+        attachment_id: Optional[int] = None,
         trigger_indexing: bool = True,
         trigger_summary: bool = True,
         splitter_config: Optional[Dict[str, Any]] = None,
@@ -1115,11 +1116,12 @@ class KnowledgeOrchestrator:
             user: Current user
             knowledge_base_id: Target knowledge base ID
             name: Document name
-            source_type: Source type (text, file, web)
+            source_type: Source type (text, file, web, attachment)
             content: Text content for source_type="text"
             file_base64: Base64 encoded file for source_type="file"
             file_extension: File extension for source_type="file"
             url: URL for source_type="web"
+            attachment_id: Existing attachment ID for source_type="attachment"
             trigger_indexing: Whether to trigger RAG indexing
             trigger_summary: Whether to trigger summary generation
             splitter_config: Optional splitter configuration dict
@@ -1170,10 +1172,79 @@ class KnowledgeOrchestrator:
             # Scrape URL content
             binary_data, normalized_ext = self._scrape_url_content(url)
 
+        elif source_type == "attachment":
+            if not attachment_id:
+                raise ValueError(
+                    "attachment_id is required for source_type='attachment'"
+                )
+
+            # Import context type enum (context_service already imported at function start)
+            from app.models.subtask_context import ContextType
+
+            # 1. Verify attachment exists and user has access (ownership check)
+            source_context = context_service.get_context_optional(
+                db=db,
+                context_id=attachment_id,
+                user_id=user.id,
+            )
+            if not source_context:
+                raise ValueError(
+                    f"Attachment {attachment_id} not found or access denied"
+                )
+
+            if source_context.context_type != ContextType.ATTACHMENT.value:
+                raise ValueError(f"Context {attachment_id} is not an attachment")
+
+            # 2. Get binary data from source attachment (auto-decrypts if needed)
+            binary_data = context_service.get_attachment_binary_data(
+                db=db,
+                context=source_context,
+            )
+            if binary_data is None:
+                raise ValueError(
+                    f"Failed to retrieve content from attachment {attachment_id}"
+                )
+
+            # 3. Extract file info from source attachment
+            filename = source_context.name or f"document_{attachment_id}"
+            normalized_ext = (
+                source_context.file_extension or DEFAULT_TEXT_FILE_EXTENSION
+            )
+
+            # 4. Create a copy as a new attachment for the document
+            # This ensures the knowledge base document is independent of the original
+            attachment, _ = context_service.upload_attachment(
+                db=db,
+                user_id=user.id,
+                filename=filename,
+                binary_data=binary_data,
+                subtask_id=0,  # Unlinked attachment for knowledge base
+            )
+
+            # Create document using shared helper
+            doc_data = KnowledgeDocumentCreate(
+                name=name or filename,
+                source_type="file",  # Store as file type in the document
+                attachment_id=attachment.id,
+                file_extension=normalized_ext,
+                file_size=len(binary_data),
+            )
+
+            return self._create_and_index_document(
+                db=db,
+                user=user,
+                knowledge_base=kb,
+                knowledge_base_id=knowledge_base_id,
+                data=doc_data,
+                trigger_indexing=trigger_indexing,
+                trigger_summary=trigger_summary,
+                splitter_config=splitter_config,
+            )
+
         else:
             raise ValueError(f"Invalid source_type: {source_type}")
 
-        # Upload attachment
+        # Upload attachment (for text, file, web source types)
         filename = _build_filename(name, normalized_ext)
         attachment, _ = context_service.upload_attachment(
             db=db,

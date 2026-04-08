@@ -59,6 +59,8 @@ interface CreateKnowledgeBaseDialogProps {
   kbType?: KnowledgeBaseType
   /** Optional team ID for reading cached model preference */
   knowledgeDefaultTeamId?: number | null
+  /** Optional bind model name from team's bot config as fallback */
+  bindModel?: string | null
   /** Available groups for selection (for "All" mode) */
   availableGroups?: AvailableGroup[]
   /** Default selected group ID */
@@ -89,6 +91,7 @@ export function CreateKnowledgeBaseDialog({
   groupName,
   kbType: initialKbType = 'notebook',
   knowledgeDefaultTeamId,
+  bindModel,
   availableGroups,
   defaultGroupId,
   showGroupSelector = false,
@@ -98,8 +101,8 @@ export function CreateKnowledgeBaseDialog({
   const [description, setDescription] = useState('')
   // Selected KB type (can be changed by user)
   const [selectedKbType, setSelectedKbType] = useState<KnowledgeBaseType>(initialKbType)
-  // Default enable summary for notebook type, disable for classic type
-  const [summaryEnabled, setSummaryEnabled] = useState(initialKbType === 'notebook')
+  // Default enable summary for all KB types
+  const [summaryEnabled, setSummaryEnabled] = useState(true)
   const [summaryModelRef, setSummaryModelRef] = useState<SummaryModelRef | null>(null)
   const [summaryModelError, setSummaryModelError] = useState('')
   const [guidedQuestions, setGuidedQuestions] = useState<string[]>([])
@@ -119,19 +122,17 @@ export function CreateKnowledgeBaseDialog({
   // Selected group for creating KB (used when showGroupSelector is true)
   const [selectedGroupId, setSelectedGroupId] = useState<string>(defaultGroupId || 'personal')
 
-  // Reset summaryEnabled, selectedKbType and selectedGroupId when dialog opens
+  // Reset selectedKbType and selectedGroupId when dialog opens
   useEffect(() => {
     if (open) {
       setSelectedKbType(initialKbType)
-      setSummaryEnabled(initialKbType === 'notebook')
       setSelectedGroupId(defaultGroupId || 'personal')
     }
   }, [open, initialKbType, defaultGroupId])
 
-  // Update summaryEnabled when KB type changes
+  // Update selectedKbType when KB type changes (keep summaryEnabled unchanged)
   const handleKbTypeChange = (newType: KnowledgeBaseType) => {
     setSelectedKbType(newType)
-    setSummaryEnabled(newType === 'notebook')
   }
 
   // Note: Auto-selection of retriever and embedding model is handled by RetrievalSettingsSection
@@ -186,9 +187,9 @@ export function CreateKnowledgeBaseDialog({
       })
       setName('')
       setDescription('')
-      // Reset selectedKbType and summaryEnabled based on initialKbType
+      // Reset selectedKbType and keep summaryEnabled as true
       setSelectedKbType(initialKbType)
-      setSummaryEnabled(initialKbType === 'notebook')
+      setSummaryEnabled(true)
       setSummaryModelRef(null)
       setGuidedQuestions([])
       setRetrievalConfig({
@@ -211,9 +212,9 @@ export function CreateKnowledgeBaseDialog({
     if (!newOpen) {
       setName('')
       setDescription('')
-      // Reset selectedKbType and summaryEnabled based on initialKbType
+      // Reset selectedKbType and keep summaryEnabled as true
       setSelectedKbType(initialKbType)
-      setSummaryEnabled(initialKbType === 'notebook')
+      setSummaryEnabled(true)
       setSummaryModelRef(null)
       setSummaryModelError('')
       setGuidedQuestions([])
@@ -353,6 +354,7 @@ export function CreateKnowledgeBaseDialog({
               setSummaryModelError('')
             }}
             knowledgeDefaultTeamId={knowledgeDefaultTeamId}
+            bindModel={bindModel}
             callLimits={{ maxCalls, exemptCalls }}
             onCallLimitsChange={({ maxCalls: nextMax, exemptCalls: nextExempt }) => {
               setMaxCalls(nextMax)

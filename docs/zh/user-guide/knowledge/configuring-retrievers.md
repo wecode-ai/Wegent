@@ -178,26 +178,7 @@ Content-Type: application/json
 
 ## 使用检索器进行 RAG
 
-### 1. 上传和索引文档
-
-```bash
-POST /api/rag/documents/upload
-Content-Type: multipart/form-data
-
-- knowledge_id: "kb_001"
-- retriever_name: "my-es-retriever"
-- retriever_namespace: "default"
-- file: <document.pdf>
-- embedding_config: {
-    "provider": "openai",
-    "model": "text-embedding-3-small",
-    "api_key": "sk-..."
-  }
-```
-
-**支持的文件类型**：MD、PDF、TXT、DOCX 和代码文件
-
-### 2. 检索相关片段
+### 1. 检索相关片段
 
 ```bash
 POST /api/rag/retrieve
@@ -223,19 +204,6 @@ Content-Type: application/json
     "keyword_weight": 0.3
   }
 }
-```
-
-### 3. 管理文档
-
-```bash
-# 列出文档
-GET /api/rag/documents?knowledge_id=kb_001&retriever_name=my-es-retriever&page=1&page_size=20
-
-# 获取文档详情
-GET /api/rag/documents/{doc_ref}?knowledge_id=kb_001&retriever_name=my-es-retriever
-
-# 删除文档
-DELETE /api/rag/documents/{doc_ref}?knowledge_id=kb_001&retriever_name=my-es-retriever
 ```
 
 ## 嵌入提供商

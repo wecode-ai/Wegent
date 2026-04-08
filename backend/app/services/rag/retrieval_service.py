@@ -13,12 +13,13 @@ from typing import Any, Dict, List, Literal, Optional
 
 from sqlalchemy.orm import Session
 
-from app.services.adapters.retriever_kinds import retriever_kinds_service
-from app.services.knowledge import KnowledgeService
-from app.services.rag.embedding.factory import create_embedding_model_from_crd
-from app.services.rag.retrieval.retriever import DocumentRetriever
-from app.services.rag.storage.base import BaseStorageBackend
-from app.services.rag.storage.factory import create_storage_backend
+from app.core.config import settings
+from app.models.kind import Kind
+from app.services.rag.runtime_resolver import RagRuntimeResolver
+from knowledge_engine.embedding import create_embedding_model_from_runtime_config
+from knowledge_engine.query import QueryExecutor
+from knowledge_engine.storage.factory import create_storage_backend_from_runtime_config
+from shared.models import RemoteKnowledgeBaseQueryConfig
 from shared.telemetry.decorators import add_span_event, set_span_attribute, trace_async
 
 logger = logging.getLogger(__name__)
@@ -33,18 +34,12 @@ CHAT_SHELL_DIRECT_INJECTION_CHARS_PER_TOKEN = 4
 class RetrievalService:
     """
     High-level retrieval service.
-    Uses modular architecture with pluggable storage backends.
+    Owns Backend-side routing and permission-aware retrieval orchestration.
     """
 
-    def __init__(self, storage_backend: Optional[BaseStorageBackend] = None):
-        """
-        Initialize retrieval service.
-
-        Args:
-            storage_backend: Optional storage backend instance (Elasticsearch, Qdrant, etc.)
-                           If not provided, must be created from retriever configuration
-        """
-        self.storage_backend = storage_backend
+    def __init__(self):
+        """Initialize retrieval service."""
+        self.runtime_resolver = RagRuntimeResolver()
 
     @staticmethod
     def _build_document_filter(document_ids: Optional[list[int]]) -> Optional[Dict]:
@@ -62,6 +57,20 @@ class RetrievalService:
                     "value": doc_refs,
                 }
             ],
+        }
+
+    @staticmethod
+    def _combine_metadata_conditions(
+        *conditions: Optional[Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+        normalized_conditions = [condition for condition in conditions if condition]
+        if not normalized_conditions:
+            return None
+        if len(normalized_conditions) == 1:
+            return normalized_conditions[0]
+        return {
+            "operator": "and",
+            "conditions": normalized_conditions,
         }
 
     @staticmethod
@@ -113,6 +122,11 @@ class RetrievalService:
         # Aggregate functions may still return Decimal on some database/driver
         # combinations, so normalize to int before applying the heuristic.
         return int(normalized_text_length * 1.5)
+
+    @staticmethod
+    def _should_disable_auto_direct_injection() -> bool:
+        """Return whether automatic direct injection routing is globally disabled."""
+        return bool(settings.RAG_AUTO_DISABLE_DIRECT_INJECTION)
 
     @staticmethod
     def _should_use_direct_injection(
@@ -226,6 +240,67 @@ class RetrievalService:
                 return "runtime_budget_exceeded"
         return None
 
+    def decide_route_mode_for_chat_shell(
+        self,
+        *,
+        query: str,
+        knowledge_base_ids: list[int],
+        db: Session,
+        route_mode: Literal["auto", "direct_injection", "rag_retrieval"] = "auto",
+        document_ids: Optional[list[int]] = None,
+        metadata_condition: Optional[Dict[str, Any]] = None,
+        context_window: Optional[int] = None,
+        used_context_tokens: int = 0,
+        reserved_output_tokens: int = 4096,
+        context_buffer_ratio: float = 0.1,
+        max_direct_chunks: int = CHAT_SHELL_DEFAULT_MAX_DIRECT_CHUNKS,
+    ) -> Literal["direct_injection", "rag_retrieval"]:
+        """Resolve the coarse query route while keeping final direct-fit local."""
+        del query, max_direct_chunks
+        if not knowledge_base_ids:
+            return "rag_retrieval"
+        if metadata_condition is not None:
+            return "rag_retrieval"
+
+        if route_mode == "auto" and self._should_disable_auto_direct_injection():
+            logger.info(
+                "[RAG] auto direct injection disabled by config; forcing rag_retrieval"
+            )
+            return "rag_retrieval"
+
+        total_estimated_tokens = 0
+        if route_mode == "auto":
+            total_estimated_tokens = self._estimate_total_tokens_for_knowledge_bases(
+                db=db,
+                knowledge_base_ids=knowledge_base_ids,
+                document_ids=document_ids,
+            )
+
+        use_direct_injection = self._should_use_direct_injection(
+            context_window=context_window,
+            total_estimated_tokens=total_estimated_tokens,
+            route_mode=route_mode,
+        )
+        if not use_direct_injection:
+            return "rag_retrieval"
+
+        available_injection_tokens = self._calculate_available_injection_tokens(
+            context_window=context_window,
+            used_context_tokens=used_context_tokens,
+            reserved_output_tokens=reserved_output_tokens,
+            context_buffer_ratio=context_buffer_ratio,
+        )
+        if (
+            route_mode == "auto"
+            and available_injection_tokens is not None
+            and total_estimated_tokens > available_injection_tokens
+        ):
+            return "rag_retrieval"
+
+        if use_direct_injection:
+            return "direct_injection"
+        return "rag_retrieval"
+
     @trace_async(
         span_name="rag.retrieve_for_chat_shell",
         tracer_name="backend.services.rag",
@@ -237,6 +312,8 @@ class RetrievalService:
         db: Session,
         max_results: int = 5,
         document_ids: Optional[list[int]] = None,
+        metadata_condition: Optional[Dict[str, Any]] = None,
+        knowledge_base_configs: Optional[list[RemoteKnowledgeBaseQueryConfig]] = None,
         user_name: Optional[str] = None,
         context_window: Optional[int] = None,
         route_mode: Literal["auto", "direct_injection", "rag_retrieval"] = "auto",
@@ -267,18 +344,30 @@ class RetrievalService:
                 "total_estimated_tokens": 0,
             }
 
-        metadata_condition = self._build_document_filter(document_ids)
+        user_metadata_condition = metadata_condition
+        metadata_condition = self._combine_metadata_conditions(
+            self._build_document_filter(document_ids),
+            metadata_condition,
+        )
+        metadata_requires_rag = user_metadata_condition is not None
+        auto_direct_injection_disabled = (
+            route_mode == "auto" and self._should_disable_auto_direct_injection()
+        )
         total_estimated_tokens = 0
-        if route_mode == "auto":
+        if route_mode == "auto" and not auto_direct_injection_disabled:
             total_estimated_tokens = self._estimate_total_tokens_for_knowledge_bases(
                 db=db,
                 knowledge_base_ids=knowledge_base_ids,
                 document_ids=document_ids,
             )
-        use_direct_injection = self._should_use_direct_injection(
-            context_window=context_window,
-            total_estimated_tokens=total_estimated_tokens,
-            route_mode=route_mode,
+        use_direct_injection = (
+            False
+            if auto_direct_injection_disabled or metadata_requires_rag
+            else self._should_use_direct_injection(
+                context_window=context_window,
+                total_estimated_tokens=total_estimated_tokens,
+                route_mode=route_mode,
+            )
         )
         available_for_kb = self._calculate_ratio_based_direct_injection_budget(
             context_window=context_window
@@ -314,8 +403,19 @@ class RetrievalService:
             available_injection_tokens,
             use_direct_injection,
         )
+        if auto_direct_injection_disabled:
+            logger.info(
+                "[RAG] auto direct injection disabled by config; using rag_retrieval"
+            )
+        if metadata_requires_rag:
+            logger.info(
+                "[RAG] metadata_condition requires rag_retrieval; skipping direct injection"
+            )
 
         records: list[Dict[str, Any]] = []
+        runtime_config_by_kb_id = {
+            config.knowledge_base_id: config for config in knowledge_base_configs or []
+        }
 
         if use_direct_injection:
             direct_records: list[Dict[str, Any]] = []
@@ -328,6 +428,7 @@ class RetrievalService:
                     db=db,
                     max_chunks=CHAT_SHELL_MAX_ALL_CHUNKS,
                     query=query,
+                    metadata_condition=user_metadata_condition,
                 )
                 for chunk in chunks:
                     if (
@@ -407,6 +508,7 @@ class RetrievalService:
                     db=db,
                     metadata_condition=metadata_condition,
                     user_name=user_name,
+                    knowledge_base_config=runtime_config_by_kb_id.get(kb_id),
                 )
                 kb_records = result.get("records", [])[:max_results]
                 for record in kb_records:
@@ -431,215 +533,6 @@ class RetrievalService:
             "total_estimated_tokens": total_estimated_tokens,
         }
 
-    def _retrieve_sync(
-        self,
-        knowledge_id: str,
-        query: str,
-        embedding_model_name: str,
-        embedding_model_namespace: str,
-        user_id: int,
-        db: Session,
-        retrieval_setting: Dict[str, Any],
-        metadata_condition: Optional[Dict[str, Any]] = None,
-        user_name: Optional[str] = None,
-    ) -> Dict:
-        """
-        Synchronous retrieval implementation.
-        Runs in thread pool to avoid event loop conflicts.
-
-        Args:
-            knowledge_id: Knowledge base ID
-            query: Search query
-            embedding_model_name: Embedding model name
-            embedding_model_namespace: Embedding model namespace
-            user_id: User ID
-            db: Database session
-            retrieval_setting: Retrieval settings (Dify-style)
-            metadata_condition: Optional metadata filtering
-            user_name: User name for placeholder replacement in embedding headers (optional)
-
-        Returns:
-            Retrieval result dict
-        """
-        # Create embedding model from CRD
-        embed_model = create_embedding_model_from_crd(
-            db=db,
-            user_id=user_id,
-            model_name=embedding_model_name,
-            model_namespace=embedding_model_namespace,
-            user_name=user_name,
-        )
-
-        # Create retriever with storage backend
-        retriever = DocumentRetriever(
-            storage_backend=self.storage_backend, embed_model=embed_model
-        )
-
-        # Retrieve documents (pass user_id)
-        result = retriever.retrieve(
-            knowledge_id=knowledge_id,
-            query=query,
-            retrieval_setting=retrieval_setting,
-            metadata_condition=metadata_condition,
-            user_id=user_id,
-        )
-
-        return result
-
-    async def retrieve(
-        self,
-        query: str,
-        knowledge_id: str,
-        embedding_model_name: str,
-        embedding_model_namespace: str,
-        user_id: int,
-        db: Session,
-        top_k: int = 5,
-        score_threshold: float = 0.7,
-        retrieval_mode: str = "vector",
-        vector_weight: Optional[float] = None,
-        keyword_weight: Optional[float] = None,
-        metadata_condition: Optional[Dict[str, Any]] = None,
-        user_name: Optional[str] = None,
-    ) -> Dict:
-        """
-        Retrieve relevant document chunks (Dify-compatible API).
-
-        Args:
-            query: Search query
-            knowledge_id: Knowledge base ID
-            embedding_model_name: Embedding model name
-            embedding_model_namespace: Embedding model namespace
-            user_id: User ID
-            db: Database session
-            top_k: Maximum number of results
-            score_threshold: Minimum similarity score (0-1)
-            retrieval_mode: 'vector' or 'hybrid'
-            vector_weight: Weight for vector search (hybrid mode only)
-            keyword_weight: Weight for BM25 search (hybrid mode only)
-            metadata_condition: Optional metadata filtering conditions
-            user_name: User name for placeholder replacement in embedding headers (optional)
-
-        Returns:
-            Dict with Dify-compatible format:
-                {
-                    "records": [
-                        {
-                            "content": str,      # Chunk text content
-                            "score": float,      # Relevance score (0-1)
-                            "title": str,        # Document title/source file
-                            "metadata": dict     # Additional metadata
-                        }
-                    ]
-                }
-        """
-        # Build retrieval_setting dict (Dify-style API)
-        retrieval_setting = {
-            "top_k": top_k,
-            "score_threshold": score_threshold,
-            "retrieval_mode": retrieval_mode,
-        }
-
-        # Add hybrid search weights if provided
-        if retrieval_mode == "hybrid":
-            retrieval_setting["vector_weight"] = (
-                vector_weight if vector_weight is not None else 0.7
-            )
-            retrieval_setting["keyword_weight"] = (
-                keyword_weight if keyword_weight is not None else 0.3
-            )
-
-        # Run retrieval in thread pool to avoid uvloop conflicts
-        return await asyncio.to_thread(
-            self._retrieve_sync,
-            knowledge_id,
-            query,
-            embedding_model_name,
-            embedding_model_namespace,
-            user_id,
-            db,
-            retrieval_setting,
-            metadata_condition,
-            user_name,
-        )
-
-    async def retrieve_from_knowledge_base(
-        self,
-        query: str,
-        knowledge_base_id: int,
-        user_id: int,
-        db: Session,
-        metadata_condition: Optional[Dict[str, Any]] = None,
-    ) -> Dict:
-        """
-        Retrieve relevant chunks from a knowledge base using its configuration.
-
-        This method encapsulates the logic of:
-        1. Fetching knowledge base configuration
-        2. Getting retriever CRD
-        3. Creating storage backend
-        4. Performing retrieval with configured parameters
-
-        Args:
-            query: Search query
-            knowledge_base_id: Knowledge base ID
-            user_id: User ID
-            db: Database session
-            metadata_condition: Optional metadata filtering conditions
-
-        Returns:
-            Dict with retrieval results in Dify-compatible format:
-                {
-                    "records": [
-                        {
-                            "content": str,
-                            "score": float,
-                            "title": str,
-                            "metadata": dict
-                        }
-                    ]
-                }
-
-        Raises:
-            ValueError: If knowledge base not found, access denied, or configuration invalid
-        """
-        # Get knowledge base configuration with permission check
-        kb, has_access = KnowledgeService.get_knowledge_base(
-            db=db,
-            knowledge_base_id=knowledge_base_id,
-            user_id=user_id,
-        )
-
-        if not kb:
-            raise ValueError(f"Knowledge base {knowledge_base_id} not found")
-
-        if not has_access:
-            raise ValueError(
-                f"Access denied to knowledge base {knowledge_base_id} for user {user_id}"
-            )
-
-        # Check if user is a Restricted Analyst in the knowledge base's group
-        # Restricted Analysts cannot access knowledge base content
-        if kb.namespace != "default":
-            from app.services.group_permission import is_restricted_analyst
-
-            if is_restricted_analyst(db, user_id, kb.namespace):
-                logger.warning(
-                    f"[RetrievalService] User {user_id} is Restricted Analyst in group "
-                    f"'{kb.namespace}', blocking RAG retrieval from KB {knowledge_base_id}"
-                )
-                raise ValueError(
-                    f"Access denied: You have Restricted Analyst permissions in group "
-                    f"'{kb.namespace}'. You cannot retrieve content from this knowledge base."
-                )
-
-        return await self._retrieve_from_kb_internal(
-            query=query,
-            kb=kb,
-            db=db,
-            metadata_condition=metadata_condition,
-        )
-
     async def retrieve_from_knowledge_base_internal(
         self,
         query: str,
@@ -647,6 +540,7 @@ class RetrievalService:
         db: Session,
         metadata_condition: Optional[Dict[str, Any]] = None,
         user_name: Optional[str] = None,
+        knowledge_base_config: Optional[RemoteKnowledgeBaseQueryConfig] = None,
     ) -> Dict:
         """
         Internal method to retrieve from knowledge base without user permission check.
@@ -693,15 +587,17 @@ class RetrievalService:
             db=db,
             metadata_condition=metadata_condition,
             user_name=user_name,
+            knowledge_base_config=knowledge_base_config,
         )
 
     async def _retrieve_from_kb_internal(
         self,
         query: str,
-        kb,  # Kind instance
+        kb: Kind,
         db: Session,
         metadata_condition: Optional[Dict[str, Any]] = None,
         user_name: Optional[str] = None,
+        knowledge_base_config: Optional[RemoteKnowledgeBaseQueryConfig] = None,
     ) -> Dict:
         """
         Internal helper method to perform retrieval from a knowledge base.
@@ -719,126 +615,15 @@ class RetrievalService:
         Raises:
             ValueError: If configuration is invalid
         """
-        # Extract retrieval configuration from knowledge base spec
-        kb_json = kb.json or {}
-        spec = kb_json.get("spec", {})
-        retrieval_config = spec.get("retrievalConfig")
-
-        if not retrieval_config:
-            raise ValueError(f"Knowledge base {kb.id} has no retrieval configuration")
-
-        # Extract retriever reference
-        retriever_name = retrieval_config.get("retriever_name")
-        retriever_namespace = retrieval_config.get("retriever_namespace", "default")
-
-        if not retriever_name:
-            raise ValueError(
-                f"Knowledge base {kb.id} has incomplete retrieval config (missing retriever_name)"
-            )
-
-        logger.info(
-            f"[RAG] Using retriever: {retriever_name} (namespace: {retriever_namespace})"
-        )
-
-        # Determine the correct user_id for resource lookup
-        # For personal resources (namespace='default'), use the KB creator's user_id
-        # because the resources belong to the KB creator, not the current user
-        # For group resources (namespace!='default'), use KB creator's user_id as well
-        resource_owner_user_id = kb.user_id
-
-        # Get retriever CRD
-        retriever = retriever_kinds_service.get_retriever(
+        resolved_config = knowledge_base_config or self._build_runtime_query_config(
+            kb=kb,
             db=db,
-            user_id=resource_owner_user_id,
-            name=retriever_name,
-            namespace=retriever_namespace,
-        )
-
-        if not retriever:
-            raise ValueError(
-                f"Retriever {retriever_name} (namespace: {retriever_namespace}) not found"
-            )
-
-        # Create storage backend from retriever
-        storage_backend = create_storage_backend(retriever)
-        logger.info(
-            f"[RAG] Storage backend created: {storage_backend.__class__.__name__}"
-        )
-
-        # Extract embedding model configuration
-        embedding_config = retrieval_config.get("embedding_config", {})
-        embedding_model_name = embedding_config.get("model_name")
-        embedding_model_namespace = embedding_config.get("model_namespace", "default")
-
-        if not embedding_model_name:
-            raise ValueError(f"Knowledge base {kb.id} has incomplete embedding config")
-
-        # Determine the correct user_id for embedding model lookup
-        # Use KB creator's user_id for consistent resource access
-        embedding_owner_user_id = kb.user_id
-
-        # Extract retrieval parameters
-        # Increased default top_k from 5 to 20 for better RAG coverage
-        top_k = retrieval_config.get("top_k", 20)
-        score_threshold = retrieval_config.get("score_threshold", 0.7)
-        retrieval_mode = retrieval_config.get("retrieval_mode", "vector")
-
-        # Extract hybrid weights if in hybrid mode
-        vector_weight = None
-        keyword_weight = None
-        if retrieval_mode == "hybrid":
-            hybrid_weights = retrieval_config.get("hybrid_weights", {})
-            vector_weight = hybrid_weights.get("vector_weight", 0.7)
-            keyword_weight = hybrid_weights.get("keyword_weight", 0.3)
-
-        # Use knowledge base ID as knowledge_id for retrieval
-        knowledge_id = str(kb.id)
-
-        logger.info(
-            f"[RAG] Retrieving chunks: knowledge_id={knowledge_id}, "
-            f"embedding_model={embedding_model_name}, "
-            f"top_k={top_k}, score_threshold={score_threshold}, "
-            f"retrieval_mode={retrieval_mode}"
-        )
-
-        # Build retrieval_setting dict
-        retrieval_setting = {
-            "top_k": top_k,
-            "score_threshold": score_threshold,
-            "retrieval_mode": retrieval_mode,
-        }
-
-        # Add hybrid search weights if provided
-        if retrieval_mode == "hybrid":
-            retrieval_setting["vector_weight"] = vector_weight
-            retrieval_setting["keyword_weight"] = keyword_weight
-
-        # Create embedding model from CRD
-        # Use embedding_owner_user_id for correct resource lookup
-        # For group KBs, the embedding model may be created by other users in the same group
-        embed_model = create_embedding_model_from_crd(
-            db=db,
-            user_id=embedding_owner_user_id,
-            model_name=embedding_model_name,
-            model_namespace=embedding_model_namespace,
             user_name=user_name,
         )
-
-        # Create retriever with storage backend
-        retriever_instance = DocumentRetriever(
-            storage_backend=storage_backend, embed_model=embed_model
-        )
-
-        # Retrieve documents (run in thread pool to avoid event loop conflicts)
-        # Use KB creator's user_id for index naming (required for per_user strategy)
-        # This ensures consistent index access for all users accessing this KB
-        result = await asyncio.to_thread(
-            retriever_instance.retrieve,
-            knowledge_id=knowledge_id,
+        result = await self._execute_runtime_query(
             query=query,
-            retrieval_setting=retrieval_setting,
+            knowledge_base_config=resolved_config,
             metadata_condition=metadata_condition,
-            user_id=kb.user_id,
         )
 
         # Log detailed retrieval results for debugging
@@ -865,12 +650,56 @@ class RetrievalService:
 
         return result
 
+    def _build_runtime_query_config(
+        self,
+        *,
+        kb: Kind,
+        db: Session,
+        user_name: Optional[str] = None,
+    ) -> RemoteKnowledgeBaseQueryConfig:
+        configs = self.runtime_resolver.build_query_knowledge_base_configs(
+            db=db,
+            knowledge_base_ids=[kb.id],
+            user_name=user_name,
+        )
+        if not configs:
+            raise ValueError(
+                f"Failed to resolve runtime config for knowledge base {kb.id}"
+            )
+        return configs[0]
+
+    async def _execute_runtime_query(
+        self,
+        *,
+        query: str,
+        knowledge_base_config: RemoteKnowledgeBaseQueryConfig,
+        metadata_condition: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        storage_backend = create_storage_backend_from_runtime_config(
+            knowledge_base_config.retriever_config
+        )
+        embed_model = create_embedding_model_from_runtime_config(
+            knowledge_base_config.embedding_model_config
+        )
+        executor = QueryExecutor(
+            storage_backend=storage_backend,
+            embed_model=embed_model,
+        )
+        return await executor.execute(
+            knowledge_id=str(knowledge_base_config.knowledge_base_id),
+            query=query,
+            retrieval_config=knowledge_base_config.retrieval_config,
+            metadata_condition=metadata_condition,
+            user_id=knowledge_base_config.index_owner_user_id,
+        )
+
     async def get_all_chunks_from_knowledge_base(
         self,
         knowledge_base_id: int,
         db: Session,
         max_chunks: int = 10000,
         query: Optional[str] = None,
+        metadata_condition: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
         """
         Get all chunks from a knowledge base without permission check.
@@ -906,38 +735,13 @@ class RetrievalService:
         if not kb:
             raise ValueError(f"Knowledge base {knowledge_base_id} not found")
 
-        # Extract retrieval configuration from knowledge base spec
-        kb_json = kb.json or {}
-        spec = kb_json.get("spec", {})
-        retrieval_config = spec.get("retrievalConfig")
-
-        if not retrieval_config:
-            raise ValueError(f"Knowledge base {kb.id} has no retrieval configuration")
-
-        # Extract retriever reference
-        retriever_name = retrieval_config.get("retriever_name")
-        retriever_namespace = retrieval_config.get("retriever_namespace", "default")
-
-        if not retriever_name:
-            raise ValueError(
-                f"Knowledge base {kb.id} has incomplete retrieval config (missing retriever_name)"
-            )
-
-        # Get retriever CRD
-        retriever = retriever_kinds_service.get_retriever(
+        resolved_config = self._build_runtime_query_config(
+            kb=kb,
             db=db,
-            user_id=kb.user_id,
-            name=retriever_name,
-            namespace=retriever_namespace,
         )
-
-        if not retriever:
-            raise ValueError(
-                f"Retriever {retriever_name} (namespace: {retriever_namespace}) not found"
-            )
-
-        # Create storage backend from retriever
-        storage_backend = create_storage_backend(retriever)
+        storage_backend = create_storage_backend_from_runtime_config(
+            resolved_config.retriever_config
+        )
 
         # Use knowledge base ID as knowledge_id
         knowledge_id = str(kb.id)
@@ -967,8 +771,8 @@ class RetrievalService:
             knowledge_id,
             kb.namespace,
             backend_name,
-            retriever_namespace,
-            retriever_name,
+            resolved_config.retriever_config.namespace,
+            resolved_config.retriever_config.name,
             index_name or "<unknown>",
             max_chunks,
             kb.user_id,
@@ -982,6 +786,7 @@ class RetrievalService:
             knowledge_id=knowledge_id,
             max_chunks=max_chunks,
             user_id=kb.user_id,
+            metadata_condition=metadata_condition,
         )
 
         logger.info(
@@ -1003,8 +808,8 @@ class RetrievalService:
                 knowledge_id,
                 backend_name,
                 index_name or "<unknown>",
-                retriever_namespace,
-                retriever_name,
+                resolved_config.retriever_config.namespace,
+                resolved_config.retriever_config.name,
                 query_log,
             )
 

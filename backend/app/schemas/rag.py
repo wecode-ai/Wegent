@@ -175,30 +175,6 @@ class RetrieveRequest(BaseModel):
         return v
 
 
-class DocumentUploadRequest(BaseModel):
-    """Document upload request."""
-
-    knowledge_id: str = Field(..., description="Knowledge base ID")
-    retriever_ref: RetrieverRef = Field(
-        ..., description="Reference to Retriever configuration"
-    )
-    embedding_model_ref: EmbeddingModelRef = Field(
-        ..., description="Reference to embedding Model CRD"
-    )
-
-
-class DocumentUploadResponse(BaseModel):
-    """Document upload response."""
-
-    doc_ref: str
-    knowledge_id: str
-    source_file: str
-    chunk_count: int
-    index_name: str
-    status: str
-    created_at: str
-
-
 class RetrievalResult(BaseModel):
     """Single retrieval result (Dify-compatible format)."""
 
@@ -218,67 +194,22 @@ class RetrieveResponse(BaseModel):
     )
 
 
-class DocumentDeleteRequest(BaseModel):
-    """Document deletion request."""
+class RagChunkRecord(BaseModel):
+    """Single chunk record from the index engine."""
 
-    knowledge_id: str = Field(..., description="Knowledge base ID")
-    retriever_ref: RetrieverRef = Field(
-        ..., description="Reference to Retriever configuration"
+    content: str = Field(..., description="Chunk text content")
+    title: str = Field(..., description="Document title/source file")
+    chunk_id: Optional[int] = Field(None, description="Chunk identifier in index")
+    doc_ref: Optional[str] = Field(None, description="Document reference")
+    metadata: Optional[Dict] = Field(None, description="Chunk metadata")
+
+
+class RagChunkListResponse(BaseModel):
+    """Paginated chunk list response for index inspection."""
+
+    items: List[RagChunkRecord] = Field(
+        ..., description="Paginated chunk records from the index engine"
     )
-
-
-class DocumentDeleteResponse(BaseModel):
-    """Document deletion response."""
-
-    doc_ref: str
-    knowledge_id: str
-    deleted_chunks: int
-    status: str
-
-
-class DocumentDetailRequest(BaseModel):
-    """Document detail request."""
-
-    knowledge_id: str = Field(..., description="Knowledge base ID")
-    retriever_ref: RetrieverRef = Field(
-        ..., description="Reference to Retriever configuration"
-    )
-
-
-class DocumentDetailResponse(BaseModel):
-    """Document detail response."""
-
-    doc_ref: str
-    knowledge_id: str
-    source_file: str
-    chunk_count: int
-    chunks: List[Dict]
-
-
-class DocumentListRequest(BaseModel):
-    """Document list request."""
-
-    knowledge_id: str = Field(..., description="Knowledge base ID")
-    retriever_ref: RetrieverRef = Field(
-        ..., description="Reference to Retriever configuration"
-    )
-    page: int = Field(1, ge=1)
-    page_size: int = Field(20, ge=1, le=100)
-
-
-class DocumentListResponse(BaseModel):
-    """Document list response."""
-
-    documents: List[Dict]
-    total: int
-    page: int
-    page_size: int
-    knowledge_id: str
-
-
-class IndexNameResponse(BaseModel):
-    """Index name query response."""
-
-    knowledge_id: str = Field(..., description="Knowledge base ID")
-    index_name: str = Field(..., description="Computed index name")
-    index_strategy: str = Field(..., description="Index strategy mode used")
+    total: int = Field(..., description="Total chunk count available")
+    page: int = Field(..., ge=1, description="Current page number")
+    page_size: int = Field(..., ge=1, description="Current page size")

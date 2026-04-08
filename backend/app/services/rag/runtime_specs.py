@@ -1,6 +1,20 @@
 from typing import Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field
+
+from shared.models import (
+    RemoteKnowledgeBaseQueryConfig,
+    RuntimeEmbeddingModelConfig,
+    RuntimeRetrievalConfig,
+    RuntimeRetrieverConfig,
+)
+
+RetrievalPolicy = Literal[
+    "chunk_only",
+    "summary_first",
+    "summary_then_chunk_expand",
+    "hybrid",
+]
 
 
 class RuntimeSpecModel(BaseModel):
@@ -8,23 +22,8 @@ class RuntimeSpecModel(BaseModel):
 
 
 class IndexSource(RuntimeSpecModel):
-    source_type: Literal["attachment", "file_path"]
-    attachment_id: Optional[int] = None
-    file_path: Optional[str] = None
-
-    @model_validator(mode="after")
-    def validate_source_shape(self) -> "IndexSource":
-        if self.source_type == "attachment":
-            if self.attachment_id is None:
-                raise ValueError("attachment_id is required")
-            if self.file_path is not None:
-                raise ValueError("file_path must not be provided")
-        if self.source_type == "file_path":
-            if self.file_path is None:
-                raise ValueError("file_path is required")
-            if self.attachment_id is not None:
-                raise ValueError("attachment_id must not be provided")
-        return self
+    source_type: Literal["attachment"]
+    attachment_id: int
 
 
 class DirectInjectionBudget(RuntimeSpecModel):
@@ -44,9 +43,14 @@ class IndexRuntimeSpec(RuntimeSpecModel):
     embedding_model_name: str
     embedding_model_namespace: str
     source: IndexSource
+    retriever_config: RuntimeRetrieverConfig | None = None
+    embedding_model_config: RuntimeEmbeddingModelConfig | None = None
     index_families: list[str] = Field(default_factory=lambda: ["chunk_vector"])
     splitter_config: Optional[dict] = None
     user_name: Optional[str] = None
+
+
+QueryKnowledgeBaseRuntimeConfig = RemoteKnowledgeBaseQueryConfig
 
 
 class QueryRuntimeSpec(RuntimeSpecModel):
@@ -56,9 +60,36 @@ class QueryRuntimeSpec(RuntimeSpecModel):
     route_mode: Literal["auto", "direct_injection", "rag_retrieval"] = "auto"
     direct_injection_budget: Optional[DirectInjectionBudget] = None
     document_ids: Optional[list[int]] = None
+    metadata_condition: Optional[dict] = None
     restricted_mode: bool = False
     user_id: Optional[int] = None
     user_name: Optional[str] = None
+    knowledge_base_configs: list[QueryKnowledgeBaseRuntimeConfig] = Field(
+        default_factory=list
+    )
+    enabled_index_families: list[str] = Field(default_factory=lambda: ["chunk_vector"])
+    retrieval_policy: RetrievalPolicy = "chunk_only"
+
+
+class DeleteRuntimeSpec(RuntimeSpecModel):
+    knowledge_base_id: int
+    document_ref: str
+    index_owner_user_id: int
+    retriever_config: RuntimeRetrieverConfig
+    enabled_index_families: list[str] = Field(default_factory=lambda: ["chunk_vector"])
+
+
+class ListChunksRuntimeSpec(RuntimeSpecModel):
+    knowledge_base_id: int
+    index_owner_user_id: int
+    retriever_config: RuntimeRetrieverConfig
+    max_chunks: int = 10000
+    query: Optional[str] = None
+    metadata_condition: Optional[dict] = None
+
+
+class ConnectionTestRuntimeSpec(RuntimeSpecModel):
+    retriever_config: RuntimeRetrieverConfig
 
 
 DEFAULT_DIRECT_INJECTION_BUDGET = DirectInjectionBudget()

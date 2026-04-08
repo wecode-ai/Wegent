@@ -91,7 +91,8 @@ Thumbs.db
 coverage/
 
 # claude
-.claude/settings.local.json
+.claude/
+!.claude/settings.json
 .history
 .wegentrc
 .worktrees/

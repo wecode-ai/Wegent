@@ -11,6 +11,8 @@
 # - executor: pytest tests/
 # - executor_manager: pytest tests/
 # - shared: pytest tests/
+# - knowledge_engine: pytest tests/
+# - knowledge_runtime: pytest tests/
 # =============================================================================
 
 set -e
@@ -111,31 +113,43 @@ echo ""
 # Backend (use parallel testing with -n 4 for faster execution)
 BACKEND_CHANGES=$(echo "$CHANGED_FILES" | grep -E "^backend/.*\.py$" || true)
 if [ -n "$BACKEND_CHANGES" ]; then
-    run_module_tests "backend" "uv run pytest tests/ -x -q --tb=short -n 4 2>/dev/null || true" "$PROJECT_ROOT/backend"
+    run_module_tests "backend" "uv run pytest tests/ -x -q --tb=short -n 4 2>/dev/null" "$PROJECT_ROOT/backend"
 fi
 
 # Frontend
 FRONTEND_CHANGES=$(echo "$CHANGED_FILES" | grep -E "^frontend/.*\.(ts|tsx|js|jsx)$" || true)
 if [ -n "$FRONTEND_CHANGES" ]; then
-    run_module_tests "frontend" "npm test -- --passWithNoTests --watchAll=false 2>/dev/null || true" "$PROJECT_ROOT/frontend"
+    run_module_tests "frontend" "npm test -- --passWithNoTests --watchAll=false 2>/dev/null" "$PROJECT_ROOT/frontend"
 fi
 
 # Executor
 EXECUTOR_CHANGES=$(echo "$CHANGED_FILES" | grep -E "^executor/.*\.py$" || true)
 if [ -n "$EXECUTOR_CHANGES" ]; then
-    run_module_tests "executor" "uv run pytest tests/ -x -q --tb=short 2>/dev/null || true" "$PROJECT_ROOT/executor"
+    run_module_tests "executor" "uv run pytest tests/ -x -q --tb=short 2>/dev/null" "$PROJECT_ROOT/executor"
 fi
 
 # Executor Manager
 EXECUTOR_MANAGER_CHANGES=$(echo "$CHANGED_FILES" | grep -E "^executor_manager/.*\.py$" || true)
 if [ -n "$EXECUTOR_MANAGER_CHANGES" ]; then
-    run_module_tests "executor_manager" "uv run pytest tests/ -x -q --tb=short 2>/dev/null || true" "$PROJECT_ROOT/executor_manager"
+    run_module_tests "executor_manager" "uv run pytest tests/ -x -q --tb=short 2>/dev/null" "$PROJECT_ROOT/executor_manager"
 fi
 
 # Shared
 SHARED_CHANGES=$(echo "$CHANGED_FILES" | grep -E "^shared/.*\.py$" || true)
 if [ -n "$SHARED_CHANGES" ]; then
-    run_module_tests "shared" "uv run pytest tests/ -x -q --tb=short 2>/dev/null || true" "$PROJECT_ROOT/shared"
+    run_module_tests "shared" "uv run pytest tests/ -x -q --tb=short 2>/dev/null" "$PROJECT_ROOT/shared"
+fi
+
+# Knowledge Engine
+KNOWLEDGE_ENGINE_CHANGES=$(echo "$CHANGED_FILES" | grep -E "^knowledge_engine/" || true)
+if [ -n "$KNOWLEDGE_ENGINE_CHANGES" ]; then
+    run_module_tests "knowledge_engine" "uv run --group dev pytest tests/ -x -q --tb=short 2>/dev/null" "$PROJECT_ROOT/knowledge_engine"
+fi
+
+# Knowledge Runtime
+KNOWLEDGE_RUNTIME_CHANGES=$(echo "$CHANGED_FILES" | grep -E "^knowledge_runtime/" || true)
+if [ -n "$KNOWLEDGE_RUNTIME_CHANGES" ]; then
+    run_module_tests "knowledge_runtime" "uv run --group dev pytest tests/ -x -q --tb=short 2>/dev/null" "$PROJECT_ROOT/knowledge_runtime"
 fi
 # Summary
 echo ""

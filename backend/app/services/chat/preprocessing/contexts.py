@@ -503,6 +503,12 @@ def _sync_kb_contexts_to_task(
                     f"[_sync_kb_contexts_to_task] Synced KB {knowledge_id} "
                     f"from subtask to task {task.id}"
                 )
+            else:
+                logger.info(
+                    f"[_sync_kb_contexts_to_task] Sync skipped for KB {knowledge_id} "
+                    f"on task {task.id} selected by user {user_id}; "
+                    "see sync_subtask_kb_to_task info logs for the skip reason"
+                )
         except Exception as e:
             # Log but don't fail - syncing to task level is best-effort
             logger.warning(

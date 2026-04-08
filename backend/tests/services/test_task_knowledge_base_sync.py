@@ -14,6 +14,7 @@ NOTE:
 - KB meta prompt formatting is tested separately in chat preprocessing.
 """
 
+import logging
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
@@ -23,6 +24,7 @@ from app.models.kind import Kind
 from app.models.subtask_context import SubtaskContext
 from app.models.task import TaskResource
 from app.services.knowledge import TaskKnowledgeBaseService
+from app.services.share import knowledge_share_service
 
 
 @pytest.mark.unit
@@ -95,7 +97,13 @@ class TestSyncSubtaskKBToTask:
                 )
 
                 assert result is True
-                mock_access.assert_called_once_with(mock_db, 1, "Test KB", "default")
+                mock_access.assert_called_once_with(
+                    mock_db,
+                    1,
+                    "Test KB",
+                    "default",
+                    knowledge_id=10,
+                )
                 mock_db.commit.assert_called_once()
                 mock_flag.assert_called_once()
 
@@ -190,6 +198,74 @@ class TestSyncSubtaskKBToTask:
             # Should return False (no access)
             assert result is False
             mock_db.commit.assert_not_called()
+
+    def test_sync_kb_to_task_logs_skip_reason_at_info_level(
+        self, service, mock_db, mock_knowledge_base, mock_task, caplog
+    ):
+        """Skip reasons should be visible in info logs for production debugging."""
+        mock_query = MagicMock()
+        mock_db.query.return_value = mock_query
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = mock_knowledge_base
+
+        with patch.object(service, "can_access_knowledge_base", return_value=False):
+            with caplog.at_level(
+                logging.INFO,
+                logger="app.services.knowledge.task_knowledge_base_service",
+            ):
+                result = service.sync_subtask_kb_to_task(
+                    db=mock_db,
+                    task=mock_task,
+                    knowledge_id=10,
+                    user_id=1,
+                    user_name="testuser",
+                )
+
+        assert result is False
+        assert "has no access to KB Test KB/default" in caplog.text
+        assert "task_id=100" in caplog.text
+        assert "user_id=1" in caplog.text
+
+    def test_sync_kb_to_task_allows_explicitly_shared_personal_kb(
+        self, service, mock_db, mock_task
+    ):
+        """A personal KB shared via ResourceMember should still sync to task refs."""
+        shared_kb = Mock(spec=Kind)
+        shared_kb.id = 10
+        shared_kb.kind = "KnowledgeBase"
+        shared_kb.namespace = "default"
+        shared_kb.user_id = 2
+        shared_kb.is_active = True
+        shared_kb.json = {"spec": {"name": "Shared Personal KB"}}
+
+        mock_query = MagicMock()
+        mock_db.query.return_value = mock_query
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = shared_kb
+
+        with patch.object(
+            knowledge_share_service,
+            "_get_resource",
+            return_value=shared_kb,
+        ) as mock_get_resource:
+            with patch(
+                "app.services.knowledge.task_knowledge_base_service.flag_modified"
+            ):
+                result = service.sync_subtask_kb_to_task(
+                    db=mock_db,
+                    task=mock_task,
+                    knowledge_id=10,
+                    user_id=1,
+                    user_name="testuser",
+                )
+
+        assert result is True
+        mock_get_resource.assert_called_once_with(mock_db, 10, 1)
+        assert mock_task.json["spec"]["knowledgeBaseRefs"][0]["id"] == 10
+        assert (
+            mock_task.json["spec"]["knowledgeBaseRefs"][0]["name"]
+            == "Shared Personal KB"
+        )
 
     def test_sync_kb_to_task_kb_not_found(self, service, mock_db, mock_task):
         """Test that sync is skipped when KB is not found"""
@@ -724,6 +800,63 @@ class TestKBRefIdBasedLookup:
                     ref["id"] for ref in mock_task.json["spec"]["knowledgeBaseRefs"]
                 } == {11, 22, 33}
 
+    def test_sync_kb_uses_selected_kb_when_default_namespace_has_name_collision(
+        self, service, mock_db
+    ):
+        """Sync should trust the selected KB ID even if another user has the same name."""
+        mock_task = Mock(spec=TaskResource)
+        mock_task.id = 100
+        mock_task.json = {
+            "spec": {
+                "title": "Test Task",
+                "knowledgeBaseRefs": [],
+            }
+        }
+
+        selected_kb = Mock(spec=Kind)
+        selected_kb.id = 10
+        selected_kb.kind = "KnowledgeBase"
+        selected_kb.namespace = "default"
+        selected_kb.user_id = 1
+        selected_kb.is_active = True
+        selected_kb.json = {"spec": {"name": "Shared Name KB"}}
+
+        other_user_same_name_kb = Mock(spec=Kind)
+        other_user_same_name_kb.id = 99
+        other_user_same_name_kb.kind = "KnowledgeBase"
+        other_user_same_name_kb.namespace = "default"
+        other_user_same_name_kb.user_id = 2
+        other_user_same_name_kb.is_active = True
+        other_user_same_name_kb.json = {"spec": {"name": "Shared Name KB"}}
+
+        mock_query = MagicMock()
+        mock_db.query.return_value = mock_query
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = selected_kb
+        mock_query.all.return_value = [other_user_same_name_kb, selected_kb]
+
+        with patch.object(
+            service, "_is_kb_bound_to_user_group_chat", return_value=False
+        ):
+            with patch(
+                "app.services.knowledge.task_knowledge_base_service.flag_modified"
+            ):
+                result = service.sync_subtask_kb_to_task(
+                    db=mock_db,
+                    task=mock_task,
+                    knowledge_id=10,
+                    user_id=1,
+                    user_name="testuser",
+                )
+
+                assert result is True
+                kb_refs = mock_task.json["spec"]["knowledgeBaseRefs"]
+                assert len(kb_refs) == 1
+                assert kb_refs[0]["id"] == 10
+                assert kb_refs[0]["name"] == "Shared Name KB"
+                assert kb_refs[0]["boundBy"] == "testuser"
+                assert "boundAt" in kb_refs[0]
+
     def test_sync_kb_dedup_by_id(self, service, mock_db, mock_knowledge_base):
         """Test that sync deduplication works with ID"""
         mock_task = Mock(spec=TaskResource)
@@ -927,3 +1060,33 @@ class TestContextsIdBasedLookup:
             result = _get_bound_knowledge_base_ids(mock_db, task_id=100)
 
             assert result == []
+
+    def test_sync_kb_contexts_logs_info_when_sync_is_skipped(self, mock_db, caplog):
+        """Test that outer context sync emits info log when service returns False."""
+        from app.services.chat.preprocessing.contexts import _sync_kb_contexts_to_task
+
+        mock_task = Mock(spec=TaskResource)
+        mock_task.id = 100
+
+        kb_context = Mock(spec=SubtaskContext)
+        kb_context.type_data = {"knowledge_id": 10}
+
+        with patch(
+            "app.services.knowledge.TaskKnowledgeBaseService"
+        ) as mock_service_cls:
+            mock_service = mock_service_cls.return_value
+            mock_service.sync_subtask_kb_to_task.return_value = False
+
+            with caplog.at_level(
+                logging.INFO,
+                logger="app.services.chat.preprocessing.contexts",
+            ):
+                _sync_kb_contexts_to_task(
+                    db=mock_db,
+                    kb_contexts=[kb_context],
+                    task=mock_task,
+                    user_id=1,
+                    user_name="testuser",
+                )
+
+        assert "Sync skipped for KB 10 on task 100" in caplog.text

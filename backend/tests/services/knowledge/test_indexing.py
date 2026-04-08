@@ -12,6 +12,15 @@ def test_run_document_indexing_propagates_gateway_skip_status() -> None:
     db = MagicMock()
     db.query.return_value.filter.return_value.first.return_value = None
     kb_index_info = SimpleNamespace(index_owner_user_id=3, summary_enabled=False)
+    gateway = MagicMock()
+    gateway.index_document = AsyncMock(
+        return_value={
+            "status": "skipped",
+            "reason": "retriever_not_found",
+            "indexed_count": 0,
+            "index_name": "unknown",
+        }
+    )
 
     with (
         patch(
@@ -23,15 +32,9 @@ def test_run_document_indexing_propagates_gateway_skip_status() -> None:
             return_value=object(),
         ) as mock_build_runtime_spec,
         patch(
-            "app.services.knowledge.indexing.LocalRagGateway.index_document",
-            new_callable=AsyncMock,
-            return_value={
-                "status": "skipped",
-                "reason": "retriever_not_found",
-                "indexed_count": 0,
-                "index_name": "unknown",
-            },
-        ) as mock_index_document,
+            "app.services.knowledge.indexing.get_index_gateway",
+            return_value=gateway,
+        ),
     ):
         result = run_document_indexing(
             knowledge_base_id="1",
@@ -48,7 +51,7 @@ def test_run_document_indexing_propagates_gateway_skip_status() -> None:
             db=db,
         )
 
-    mock_index_document.assert_awaited_once_with(
+    gateway.index_document.assert_awaited_once_with(
         mock_build_runtime_spec.return_value,
         db=db,
     )
