@@ -12,7 +12,7 @@ from app.services.rag.runtime_specs import (
     ListChunksRuntimeSpec,
     QueryRuntimeSpec,
 )
-from app.services.rag.storage.factory import create_storage_backend_from_runtime_config
+from knowledge_engine.storage.factory import create_storage_backend_from_runtime_config
 from shared.telemetry.decorators import trace_async
 
 

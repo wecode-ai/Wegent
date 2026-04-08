@@ -44,3 +44,21 @@ def test_create_storage_backend_from_runtime_config_uses_registered_backend(
         "indexStrategy": {"mode": "per_dataset"},
         "ext": {"vector_size": 1536},
     }
+
+
+def test_get_storage_retrieval_methods_uses_registered_backends(monkeypatch) -> None:
+    from knowledge_engine.storage.factory import (
+        STORAGE_BACKEND_REGISTRY,
+        get_all_storage_retrieval_methods,
+        get_supported_retrieval_methods,
+    )
+
+    class FakeBackend:
+        @classmethod
+        def get_supported_retrieval_methods(cls):
+            return ["vector", "hybrid"]
+
+    monkeypatch.setitem(STORAGE_BACKEND_REGISTRY, "fake", FakeBackend)
+
+    assert get_supported_retrieval_methods("fake") == ["vector", "hybrid"]
+    assert get_all_storage_retrieval_methods()["fake"] == ["vector", "hybrid"]

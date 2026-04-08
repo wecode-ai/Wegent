@@ -2,10 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""
-Metadata filtering parser for RAG retrieval.
-Converts Dify-style metadata conditions to LlamaIndex MetadataFilters.
-"""
+"""Metadata filtering helpers for retrieval and direct-injection paths."""
 
 from typing import Any, Dict, List, Optional
 
@@ -142,3 +139,94 @@ def build_elasticsearch_filters(
             filters.append({"match": {f"metadata.{key}": value}})
 
     return filters
+
+
+def chunk_matches_metadata_condition(
+    metadata: Optional[Dict[str, Any]],
+    metadata_condition: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """Return whether chunk metadata satisfies a Dify-style condition tree."""
+
+    if not metadata_condition or "conditions" not in metadata_condition:
+        return True
+
+    conditions = metadata_condition.get("conditions") or []
+    if not conditions:
+        return True
+
+    operator = str(metadata_condition.get("operator", "and")).lower()
+    evaluations = [
+        _evaluate_single_condition(metadata or {}, condition)
+        for condition in conditions
+    ]
+
+    if operator == "or":
+        return any(evaluations)
+    return all(evaluations)
+
+
+def filter_chunk_records(
+    chunks: List[Dict[str, Any]],
+    metadata_condition: Optional[Dict[str, Any]] = None,
+) -> List[Dict[str, Any]]:
+    """Filter normalized chunk records using the same metadata condition contract."""
+
+    if not metadata_condition:
+        return chunks
+
+    return [
+        chunk
+        for chunk in chunks
+        if chunk_matches_metadata_condition(chunk.get("metadata"), metadata_condition)
+    ]
+
+
+def _evaluate_single_condition(
+    metadata: Dict[str, Any],
+    condition: Dict[str, Any],
+) -> bool:
+    key = condition.get("key")
+    if not key:
+        return True
+
+    operator = str(condition.get("operator", "eq")).lower()
+    operator = {"==": "eq", "!=": "ne"}.get(operator, operator)
+    value = condition.get("value")
+    actual = metadata.get(key)
+
+    if operator == "eq":
+        return actual == value
+    if operator == "ne":
+        return actual != value
+    if operator == "gt":
+        return _compare(actual, value, lambda left, right: left > right)
+    if operator == "gte":
+        return _compare(actual, value, lambda left, right: left >= right)
+    if operator == "lt":
+        return _compare(actual, value, lambda left, right: left < right)
+    if operator == "lte":
+        return _compare(actual, value, lambda left, right: left <= right)
+    if operator == "in":
+        return actual in (value or [])
+    if operator == "nin":
+        return actual not in (value or [])
+    if operator == "contains":
+        if actual is None:
+            return False
+        if isinstance(actual, (list, tuple, set)):
+            return value in actual
+        return str(value) in str(actual)
+    if operator == "text_match":
+        if actual is None:
+            return False
+        return str(value).lower() in str(actual).lower()
+    return actual == value
+
+
+def _compare(actual: Any, expected: Any, comparator) -> bool:
+    if actual is None or expected is None:
+        return False
+    try:
+        return comparator(actual, expected)
+    except TypeError:
+        return False

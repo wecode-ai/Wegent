@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
@@ -85,11 +86,11 @@ class RuntimeEmbeddingModelConfig(KnowledgeRuntimeProtocolModel):
 class RuntimeRetrievalConfig(KnowledgeRuntimeProtocolModel):
     """Normalized retrieval config for a single knowledge base target."""
 
-    top_k: int = 20
-    score_threshold: float = 0.7
+    top_k: int = Field(default=20, gt=0)
+    score_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
     retrieval_mode: RetrievalMode = "vector"
-    vector_weight: float | None = None
-    keyword_weight: float | None = None
+    vector_weight: float | None = Field(default=None, ge=0.0, le=1.0)
+    keyword_weight: float | None = Field(default=None, ge=0.0, le=1.0)
 
 
 class RemoteKnowledgeBaseQueryConfig(KnowledgeRuntimeProtocolModel):
@@ -137,7 +138,7 @@ class RemoteListChunksRequest(KnowledgeRuntimeProtocolModel):
     knowledge_base_id: int
     index_owner_user_id: int
     retriever_config: RuntimeRetrieverConfig
-    max_chunks: int = 10000
+    max_chunks: int = Field(default=10000, gt=0, le=10000)
     query: str | None = None
     extensions: dict[str, Any] | None = None
 
@@ -154,7 +155,7 @@ class RemoteQueryRequest(KnowledgeRuntimeProtocolModel):
 
     knowledge_base_ids: list[int]
     query: str
-    max_results: int = 5
+    max_results: int = Field(default=5, gt=0)
     document_ids: list[int] | None = None
     metadata_condition: dict[str, Any] | None = None
     user_name: str | None = None
@@ -172,9 +173,7 @@ class RemoteQueryRequest(KnowledgeRuntimeProtocolModel):
         configured_ids = [
             config.knowledge_base_id for config in self.knowledge_base_configs
         ]
-        if len(requested_ids) != len(configured_ids) or set(requested_ids) != set(
-            configured_ids
-        ):
+        if Counter(requested_ids) != Counter(configured_ids):
             raise ValueError(
                 "knowledge_base_configs must align with knowledge_base_ids"
             )

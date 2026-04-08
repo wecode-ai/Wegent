@@ -52,6 +52,14 @@ class RemoteRagGatewayError(RuntimeError):
         self.details = details
 
 
+def should_fallback_to_local(error: RemoteRagGatewayError) -> bool:
+    """Return whether a remote error is safe to retry locally."""
+
+    return error.retryable or (
+        error.status_code is not None and error.status_code >= 500
+    )
+
+
 class RemoteRagGateway:
     def __init__(
         self,
@@ -68,12 +76,20 @@ class RemoteRagGateway:
         return {"Authorization": f"Bearer {self._token}"}
 
     async def _post_model(self, path: str, payload: Any) -> dict[str, Any]:
-        async with httpx.AsyncClient(timeout=self._timeout) as client:
-            response = await client.post(
-                f"{self._base_url}{path}",
-                headers=self._build_headers(),
-                json=payload.model_dump(mode="json", exclude_none=True),
-            )
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                response = await client.post(
+                    f"{self._base_url}{path}",
+                    headers=self._build_headers(),
+                    json=payload.model_dump(mode="json", exclude_none=True),
+                )
+        except httpx.RequestError as exc:
+            raise RemoteRagGatewayError(
+                f"knowledge_runtime transport error: {exc}",
+                code="remote_transport_error",
+                retryable=True,
+                details={"path": path},
+            ) from exc
 
         if response.is_error:
             self._raise_remote_error(response)

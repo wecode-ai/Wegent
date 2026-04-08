@@ -9,7 +9,7 @@ import asyncio
 from sqlalchemy.orm import Session
 
 from app.services.rag.runtime_specs import ConnectionTestRuntimeSpec
-from app.services.rag.storage.factory import create_storage_backend_from_runtime_config
+from knowledge_engine.storage.factory import create_storage_backend_from_runtime_config
 
 
 async def test_connection_local(

@@ -111,8 +111,8 @@ def test_get_kb_index_info_falls_back_when_kb_is_missing() -> None:
 
 
 def test_splitter_runtime_parser_supports_smart_type() -> None:
-    from app.services.rag.splitter.runtime_config import parse_runtime_splitter_config
+    from app.services.knowledge.indexing import parse_splitter_config
 
-    splitter = parse_runtime_splitter_config({"type": "smart"})
+    splitter = parse_splitter_config({"type": "smart"})
 
     assert splitter.type == "smart"

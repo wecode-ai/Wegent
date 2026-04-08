@@ -322,6 +322,62 @@ async def test_remote_gateway_translates_structured_remote_errors(mocker) -> Non
 
 
 @pytest.mark.asyncio
+async def test_remote_gateway_wraps_transport_errors(mocker) -> None:
+    mocker.patch(
+        "httpx.AsyncClient.post",
+        side_effect=httpx.ConnectError(
+            "connection refused",
+            request=httpx.Request(
+                "POST", "http://knowledge-runtime/internal/rag/query"
+            ),
+        ),
+    )
+    gateway = RemoteRagGateway(
+        base_url="http://knowledge-runtime",
+        token="runtime-token",
+    )
+
+    with pytest.raises(RemoteRagGatewayError, match="transport error") as exc:
+        await gateway.query(
+            QueryRuntimeSpec(
+                knowledge_base_ids=[1],
+                query="release",
+                knowledge_base_configs=[
+                    QueryKnowledgeBaseRuntimeConfig(
+                        knowledge_base_id=1,
+                        index_owner_user_id=8,
+                        retriever_config=RuntimeRetrieverConfig(
+                            name="retriever-a",
+                            namespace="default",
+                            storage_config={
+                                "type": "qdrant",
+                                "url": "http://qdrant:6333",
+                            },
+                        ),
+                        embedding_model_config=RuntimeEmbeddingModelConfig(
+                            model_name="embedding-a",
+                            model_namespace="default",
+                            resolved_config={
+                                "protocol": "openai",
+                                "model_id": "text-embedding-3-small",
+                            },
+                        ),
+                        retrieval_config=RuntimeRetrievalConfig(
+                            top_k=20,
+                            score_threshold=0.7,
+                            retrieval_mode="vector",
+                        ),
+                    )
+                ],
+            )
+        )
+
+    assert exc.value.code == "remote_transport_error"
+    assert exc.value.retryable is True
+    assert exc.value.status_code is None
+
+
+@pytest.mark.asyncio
 async def test_remote_gateway_delete_posts_resolved_retriever_config(mocker) -> None:
     post_mock = mocker.patch(
         "httpx.AsyncClient.post",

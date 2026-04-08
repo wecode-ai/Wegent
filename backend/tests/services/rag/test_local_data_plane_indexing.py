@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -37,7 +38,7 @@ async def test_index_document_local_skips_missing_retriever() -> None:
             return_value=None,
         ) as mock_get_retriever,
         patch(
-            "app.services.rag.local_data_plane.indexing.create_storage_backend"
+            "app.services.rag.local_data_plane.indexing.create_storage_backend_from_runtime_config"
         ) as mock_create_storage_backend,
         patch(
             "app.services.rag.local_data_plane.indexing.EngineDocumentService.index_document_from_binary",
@@ -73,14 +74,30 @@ async def test_index_document_local_delegates_to_engine_document_service() -> No
     )
     storage_backend = MagicMock()
     embed_model = object()
+    retriever = SimpleNamespace(
+        metadata=SimpleNamespace(name="retriever-a", namespace="default"),
+        spec=SimpleNamespace(
+            storageConfig=SimpleNamespace(
+                type="qdrant",
+                url="http://qdrant:6333",
+                username=None,
+                password=None,
+                apiKey=None,
+                indexStrategy=SimpleNamespace(
+                    model_dump=lambda exclude_none=True: {"mode": "per_dataset"}
+                ),
+                ext={},
+            )
+        ),
+    )
 
     with (
         patch(
             "app.services.rag.local_data_plane.indexing.retriever_kinds_service.get_retriever",
-            return_value=MagicMock(),
+            return_value=retriever,
         ),
         patch(
-            "app.services.rag.local_data_plane.indexing.create_storage_backend",
+            "app.services.rag.local_data_plane.indexing.create_storage_backend_from_runtime_config",
             return_value=storage_backend,
         ),
         patch(

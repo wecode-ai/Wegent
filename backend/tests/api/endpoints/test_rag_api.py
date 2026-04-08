@@ -4,6 +4,7 @@
 
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
+from app.services.rag.remote_gateway import RemoteRagGatewayError
 from app.services.rag.runtime_specs import QueryRuntimeSpec
 
 
@@ -185,3 +186,70 @@ def test_public_rag_chunks_returns_paginated_index_chunks(
     )
     mock_get_gateway.assert_called_once()
     gateway.list_chunks.assert_awaited_once_with(runtime_spec, db=ANY)
+
+
+def test_public_rag_retrieve_returns_non_retryable_remote_error(
+    test_client,
+    test_token: str,
+):
+    runtime_spec = QueryRuntimeSpec(
+        knowledge_base_ids=[7],
+        query="release checklist",
+        route_mode="rag_retrieval",
+    )
+    gateway = AsyncMock()
+    gateway.query.side_effect = RemoteRagGatewayError(
+        "remote validation failed",
+        code="invalid_runtime_request",
+        retryable=False,
+        status_code=400,
+    )
+
+    with (
+        patch(
+            "app.api.endpoints.rag.runtime_resolver.build_public_query_runtime_spec",
+            create=True,
+            return_value=runtime_spec,
+        ),
+        patch(
+            "app.api.endpoints.rag.get_query_gateway",
+            return_value=gateway,
+        ),
+        patch(
+            "app.api.endpoints.rag.LocalRagGateway.query",
+            new_callable=AsyncMock,
+        ) as mock_local_query,
+    ):
+        response = test_client.post(
+            "/api/rag/retrieve",
+            headers=_auth_header(test_token),
+            json={
+                "query": "release checklist",
+                "knowledge_id": "7",
+                "retriever_ref": {"name": "retriever-a", "namespace": "default"},
+                "embedding_model_ref": {
+                    "model_name": "embed-a",
+                    "model_namespace": "default",
+                },
+                "top_k": 6,
+                "score_threshold": 0.45,
+                "retrieval_mode": "vector",
+            },
+        )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "remote validation failed"
+    mock_local_query.assert_not_called()
+
+
+def test_public_rag_chunks_rejects_pages_beyond_scan_limit(
+    test_client,
+    test_token: str,
+):
+    response = test_client.get(
+        "/api/rag/chunks?knowledge_id=7&page=201&page_size=50",
+        headers=_auth_header(test_token),
+    )
+
+    assert response.status_code == 400
+    assert "chunk scan limit" in response.json()["detail"]

@@ -366,7 +366,11 @@ class BaseStorageBackend(ABC):
 
     @abstractmethod
     def get_all_chunks(
-        self, knowledge_id: str, max_chunks: int = 10000, **kwargs
+        self,
+        knowledge_id: str,
+        max_chunks: int = 10000,
+        metadata_condition: Optional[Dict[str, Any]] = None,
+        **kwargs,
     ) -> List[Dict[str, Any]]:
         """
         Get all chunks from a knowledge base.
@@ -377,6 +381,7 @@ class BaseStorageBackend(ABC):
         Args:
             knowledge_id: Knowledge base ID
             max_chunks: Maximum number of chunks to retrieve (safety limit)
+            metadata_condition: Optional metadata filtering conditions
             **kwargs: Additional parameters (e.g., user_id for per_user strategy)
 
         Returns:

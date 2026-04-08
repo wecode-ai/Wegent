@@ -146,6 +146,7 @@ class TestGetAllChunksFromKnowledgeBase:
             knowledge_id="123",
             max_chunks=50,
             user_id=42,
+            metadata_condition=None,
         )
 
 
@@ -411,6 +412,7 @@ class TestRetrieveForChatShell:
                 db=db,
                 route_mode="auto",
                 context_window=10000,
+                metadata_condition=None,
             )
 
         mock_estimate.assert_called_once_with(
@@ -476,6 +478,26 @@ class TestRetrieveForChatShell:
 
         assert result == "rag_retrieval"
 
+    def test_decide_route_mode_for_chat_shell_forces_rag_when_metadata_filter_exists(
+        self,
+    ):
+        from app.services.rag.retrieval_service import RetrievalService
+
+        service = RetrievalService()
+
+        result = service.decide_route_mode_for_chat_shell(
+            query="test",
+            knowledge_base_ids=[123],
+            db=MagicMock(),
+            route_mode="direct_injection",
+            metadata_condition={
+                "operator": "and",
+                "conditions": [{"key": "source", "operator": "eq", "value": "kb"}],
+            },
+        )
+
+        assert result == "rag_retrieval"
+
     def test_estimate_total_tokens_supports_decimal_aggregate_result(self):
         """Aggregate text-length queries may return Decimal depending on the driver."""
         from app.services.rag.retrieval_service import RetrievalService
@@ -527,6 +549,42 @@ class TestRetrieveForChatShell:
         assert result["mode"] == "rag_retrieval"
         assert result["records"][0]["score"] == 0.9
         assert result["records"][0]["knowledge_base_id"] == 123
+
+    @pytest.mark.asyncio
+    async def test_metadata_filter_disables_direct_injection_and_uses_rag_path(self):
+        from app.services.rag.retrieval_service import RetrievalService
+
+        db = MagicMock()
+        service = RetrievalService()
+        service.get_all_chunks_from_knowledge_base = AsyncMock()
+        service.retrieve_from_knowledge_base_internal = AsyncMock(
+            return_value={
+                "records": [
+                    {
+                        "content": "retrieved",
+                        "score": 0.9,
+                        "title": "doc-1",
+                        "metadata": {"source": "kb"},
+                    }
+                ]
+            }
+        )
+
+        result = await service.retrieve_for_chat_shell(
+            query="test",
+            knowledge_base_ids=[123],
+            db=db,
+            max_results=5,
+            route_mode="direct_injection",
+            metadata_condition={
+                "operator": "and",
+                "conditions": [{"key": "source", "operator": "eq", "value": "kb"}],
+            },
+        )
+
+        assert result["mode"] == "rag_retrieval"
+        service.get_all_chunks_from_knowledge_base.assert_not_called()
+        service.retrieve_from_knowledge_base_internal.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_package_mode_resolves_document_names_before_retrieval(self):

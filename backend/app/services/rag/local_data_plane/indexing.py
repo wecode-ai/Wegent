@@ -14,11 +14,9 @@ from app.services.rag.embedding.factory import (
     create_embedding_model_from_runtime_config,
 )
 from app.services.rag.runtime_specs import DeleteRuntimeSpec, IndexRuntimeSpec
-from app.services.rag.storage.factory import (
-    create_storage_backend,
-    create_storage_backend_from_runtime_config,
-)
 from knowledge_engine.services import DocumentService as EngineDocumentService
+from knowledge_engine.storage.factory import create_storage_backend_from_runtime_config
+from shared.models import RuntimeRetrieverConfig
 from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
@@ -172,7 +170,26 @@ def _build_index_storage_backend(
     )
     if retriever is None:
         raise ValueError("retriever_not_found")
-    return create_storage_backend(retriever)
+    return create_storage_backend_from_runtime_config(
+        _build_runtime_retriever_config(retriever)
+    )
+
+
+def _build_runtime_retriever_config(retriever) -> RuntimeRetrieverConfig:
+    storage_config = retriever.spec.storageConfig
+    return RuntimeRetrieverConfig(
+        name=retriever.metadata.name,
+        namespace=retriever.metadata.namespace,
+        storage_config={
+            "type": storage_config.type.lower(),
+            "url": storage_config.url,
+            "username": storage_config.username,
+            "password": storage_config.password,
+            "apiKey": storage_config.apiKey,
+            "indexStrategy": storage_config.indexStrategy.model_dump(exclude_none=True),
+            "ext": storage_config.ext or {},
+        },
+    )
 
 
 def _build_index_embed_model(

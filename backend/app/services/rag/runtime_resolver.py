@@ -111,6 +111,14 @@ class RagRuntimeResolver:
                 max_direct_chunks=max_direct_chunks,
             )
 
+        knowledge_base_configs: list[QueryKnowledgeBaseRuntimeConfig] = []
+        if db is not None and route_mode == "rag_retrieval":
+            knowledge_base_configs = self.build_query_knowledge_base_configs(
+                db=db,
+                knowledge_base_ids=knowledge_base_ids,
+                user_name=user_name,
+            )
+
         return QueryRuntimeSpec(
             knowledge_base_ids=knowledge_base_ids,
             query=query,
@@ -121,15 +129,7 @@ class RagRuntimeResolver:
             restricted_mode=restricted_mode,
             user_id=user_id,
             user_name=user_name,
-            knowledge_base_configs=(
-                self.build_query_knowledge_base_configs(
-                    db=db,
-                    knowledge_base_ids=knowledge_base_ids,
-                    user_name=user_name,
-                )
-                if db is not None
-                else []
-            ),
+            knowledge_base_configs=knowledge_base_configs,
             enabled_index_families=enabled_index_families or ["chunk_vector"],
             retrieval_policy=retrieval_policy,
             direct_injection_budget=direct_injection_budget,

@@ -281,6 +281,45 @@ def test_remote_query_request_rejects_misaligned_knowledge_base_configs() -> Non
         )
 
 
+def test_remote_query_request_rejects_duplicate_alignment_mismatch() -> None:
+    remote_query_request = _require_model("RemoteQueryRequest")
+
+    with pytest.raises(ValidationError):
+        remote_query_request.model_validate(
+            {
+                "knowledge_base_ids": [1001, 1001],
+                "query": "release checklist",
+                "knowledge_base_configs": [
+                    {
+                        "knowledge_base_id": 1001,
+                        "index_owner_user_id": 42,
+                        "retriever_config": {
+                            "name": "retriever-a",
+                            "namespace": "default",
+                            "storage_config": {
+                                "type": "qdrant",
+                                "url": "http://qdrant:6333",
+                            },
+                        },
+                        "embedding_model_config": {
+                            "model_name": "embed-a",
+                            "model_namespace": "default",
+                            "resolved_config": {
+                                "protocol": "openai",
+                                "model_id": "text-embedding-3-small",
+                            },
+                        },
+                        "retrieval_config": {
+                            "top_k": 8,
+                            "score_threshold": 0.55,
+                            "retrieval_mode": "vector",
+                        },
+                    }
+                ],
+            }
+        )
+
+
 def test_remote_delete_request_requires_resolved_retriever_config() -> None:
     remote_delete_request = _require_model("RemoteDeleteDocumentIndexRequest")
 
@@ -323,3 +362,79 @@ def test_remote_test_connection_request_requires_retriever_config() -> None:
     )
 
     assert request.retriever_config.storage_config["type"] == "qdrant"
+
+
+@pytest.mark.parametrize(
+    ("model_name", "payload"),
+    [
+        (
+            "RuntimeRetrievalConfig",
+            {
+                "top_k": 0,
+                "score_threshold": 0.7,
+                "retrieval_mode": "vector",
+            },
+        ),
+        (
+            "RuntimeRetrievalConfig",
+            {
+                "top_k": 5,
+                "score_threshold": 1.5,
+                "retrieval_mode": "vector",
+            },
+        ),
+        (
+            "RemoteQueryRequest",
+            {
+                "knowledge_base_ids": [1],
+                "query": "release",
+                "max_results": 0,
+                "knowledge_base_configs": [
+                    {
+                        "knowledge_base_id": 1,
+                        "index_owner_user_id": 42,
+                        "retriever_config": {
+                            "name": "retriever-a",
+                            "namespace": "default",
+                            "storage_config": {
+                                "type": "qdrant",
+                                "url": "http://qdrant:6333",
+                            },
+                        },
+                        "embedding_model_config": {
+                            "model_name": "embed-a",
+                            "model_namespace": "default",
+                            "resolved_config": {"protocol": "openai"},
+                        },
+                        "retrieval_config": {
+                            "top_k": 8,
+                            "score_threshold": 0.55,
+                            "retrieval_mode": "vector",
+                        },
+                    }
+                ],
+            },
+        ),
+        (
+            "RemoteListChunksRequest",
+            {
+                "knowledge_base_id": 1001,
+                "index_owner_user_id": 42,
+                "retriever_config": {
+                    "name": "retriever-a",
+                    "namespace": "default",
+                    "storage_config": {"type": "qdrant", "url": "http://qdrant:6333"},
+                },
+                "max_chunks": 10001,
+            },
+        ),
+    ],
+)
+def test_protocol_models_reject_invalid_numeric_ranges(
+    model_name: str,
+    payload: dict,
+) -> None:
+    model = _require_model(model_name)
+
+    with pytest.raises(ValidationError):
+        model.model_validate(payload)

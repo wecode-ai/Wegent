@@ -248,6 +248,7 @@ class RetrievalService:
         db: Session,
         route_mode: Literal["auto", "direct_injection", "rag_retrieval"] = "auto",
         document_ids: Optional[list[int]] = None,
+        metadata_condition: Optional[Dict[str, Any]] = None,
         context_window: Optional[int] = None,
         used_context_tokens: int = 0,
         reserved_output_tokens: int = 4096,
@@ -257,6 +258,8 @@ class RetrievalService:
         """Resolve the coarse query route while keeping final direct-fit local."""
         del query, max_direct_chunks
         if not knowledge_base_ids:
+            return "rag_retrieval"
+        if metadata_condition is not None:
             return "rag_retrieval"
 
         if route_mode == "auto" and self._should_disable_auto_direct_injection():
@@ -341,10 +344,12 @@ class RetrievalService:
                 "total_estimated_tokens": 0,
             }
 
+        user_metadata_condition = metadata_condition
         metadata_condition = self._combine_metadata_conditions(
             self._build_document_filter(document_ids),
             metadata_condition,
         )
+        metadata_requires_rag = user_metadata_condition is not None
         auto_direct_injection_disabled = (
             route_mode == "auto" and self._should_disable_auto_direct_injection()
         )
@@ -357,7 +362,7 @@ class RetrievalService:
             )
         use_direct_injection = (
             False
-            if auto_direct_injection_disabled
+            if auto_direct_injection_disabled or metadata_requires_rag
             else self._should_use_direct_injection(
                 context_window=context_window,
                 total_estimated_tokens=total_estimated_tokens,
@@ -402,6 +407,10 @@ class RetrievalService:
             logger.info(
                 "[RAG] auto direct injection disabled by config; using rag_retrieval"
             )
+        if metadata_requires_rag:
+            logger.info(
+                "[RAG] metadata_condition requires rag_retrieval; skipping direct injection"
+            )
 
         records: list[Dict[str, Any]] = []
         runtime_config_by_kb_id = {
@@ -419,6 +428,7 @@ class RetrievalService:
                     db=db,
                     max_chunks=CHAT_SHELL_MAX_ALL_CHUNKS,
                     query=query,
+                    metadata_condition=user_metadata_condition,
                 )
                 for chunk in chunks:
                     if (
@@ -689,6 +699,7 @@ class RetrievalService:
         db: Session,
         max_chunks: int = 10000,
         query: Optional[str] = None,
+        metadata_condition: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
         """
         Get all chunks from a knowledge base without permission check.
@@ -775,6 +786,7 @@ class RetrievalService:
             knowledge_id=knowledge_id,
             max_chunks=max_chunks,
             user_id=kb.user_id,
+            metadata_condition=metadata_condition,
         )
 
         logger.info(

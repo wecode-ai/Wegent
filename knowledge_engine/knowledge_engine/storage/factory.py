@@ -25,6 +25,25 @@ def get_supported_storage_types() -> List[str]:
     return list(STORAGE_BACKEND_REGISTRY.keys())
 
 
+def get_supported_retrieval_methods(storage_type: str) -> List[str]:
+    normalized_type = storage_type.lower()
+    if normalized_type not in STORAGE_BACKEND_REGISTRY:
+        raise ValueError(
+            f"Unsupported storage type: {normalized_type}. "
+            f"Supported types: {list(STORAGE_BACKEND_REGISTRY.keys())}"
+        )
+
+    backend_class = STORAGE_BACKEND_REGISTRY[normalized_type]
+    return backend_class.get_supported_retrieval_methods()
+
+
+def get_all_storage_retrieval_methods() -> Dict[str, List[str]]:
+    return {
+        storage_type: backend_class.get_supported_retrieval_methods()
+        for storage_type, backend_class in STORAGE_BACKEND_REGISTRY.items()
+    }
+
+
 def create_storage_backend_from_config(
     storage_type: str,
     url: str,

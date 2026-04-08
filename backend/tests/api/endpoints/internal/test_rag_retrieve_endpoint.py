@@ -439,6 +439,7 @@ def test_internal_retrieve_auto_route_passes_runtime_budget_to_route_decision(
         db=ANY,
         route_mode="auto",
         document_ids=None,
+        metadata_condition=None,
         context_window=10000,
         used_context_tokens=4200,
         reserved_output_tokens=1024,
@@ -591,3 +592,59 @@ def test_internal_retrieve_falls_back_to_local_when_remote_query_fails(
     mock_local_query.assert_awaited_once_with(ANY, db=ANY)
     assert mock_local_query.await_args.args[0].route_mode == "rag_retrieval"
     mock_persist.assert_called_once()
+
+
+def test_internal_retrieve_returns_remote_error_without_local_fallback(
+    test_client, monkeypatch
+):
+    monkeypatch.setattr(settings, "RAG_RUNTIME_MODE", {"query": "remote"})
+
+    remote_gateway = AsyncMock()
+    remote_gateway.query.side_effect = RemoteRagGatewayError(
+        "remote validation failed",
+        code="invalid_runtime_request",
+        retryable=False,
+        status_code=400,
+    )
+
+    with (
+        patch(
+            "app.api.endpoints.internal.rag.RagRuntimeResolver.build_query_runtime_spec",
+            return_value=_make_runtime_spec(
+                knowledge_base_ids=[1],
+                query="How should we proceed?",
+                with_budget=True,
+            ),
+        ),
+        patch(
+            "app.api.endpoints.internal.rag.RetrievalService.decide_route_mode_for_chat_shell",
+            return_value="rag_retrieval",
+        ),
+        patch(
+            "app.api.endpoints.internal.rag.get_query_gateway",
+            return_value=remote_gateway,
+        ),
+        patch(
+            "app.api.endpoints.internal.rag.LocalRagGateway.query",
+            new_callable=AsyncMock,
+        ) as mock_local_query,
+    ):
+        response = test_client.post(
+            "/api/internal/rag/retrieve",
+            json={
+                "query": "How should we proceed?",
+                "knowledge_base_ids": [1],
+                "route_mode": "auto",
+                "runtime_context": {
+                    "context_window": 10000,
+                    "used_context_tokens": 100,
+                    "reserved_output_tokens": 2048,
+                    "context_buffer_ratio": 0.1,
+                    "max_direct_chunks": 500,
+                },
+            },
+        )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "remote validation failed"
+    mock_local_query.assert_not_called()

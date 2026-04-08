@@ -26,7 +26,11 @@ from app.services.knowledge.retrieval_persistence import (
 )
 from app.services.rag.gateway_factory import get_query_gateway
 from app.services.rag.local_gateway import LocalRagGateway
-from app.services.rag.remote_gateway import RemoteRagGatewayError
+from app.services.rag.remote_gateway import (
+    RemoteRagGateway,
+    RemoteRagGatewayError,
+    should_fallback_to_local,
+)
 from app.services.rag.retrieval_service import RetrievalService
 from app.services.rag.runtime_resolver import RagRuntimeResolver
 from app.services.rag.runtime_specs import ListChunksRuntimeSpec
@@ -225,6 +229,7 @@ def _finalize_query_runtime_spec(
         db=db,
         route_mode=runtime_spec.route_mode,
         document_ids=runtime_spec.document_ids,
+        metadata_condition=runtime_spec.metadata_condition,
         context_window=budget.context_window if budget else None,
         used_context_tokens=budget.used_context_tokens if budget else 0,
         reserved_output_tokens=budget.reserved_output_tokens if budget else 4096,
@@ -236,9 +241,25 @@ def _finalize_query_runtime_spec(
 
 async def _execute_query_with_remote_fallback(runtime_spec, db: Session):
     rag_gateway = _resolve_query_gateway(runtime_spec)
+    if (
+        isinstance(rag_gateway, RemoteRagGateway)
+        and getattr(runtime_spec, "route_mode", None) == "rag_retrieval"
+        and not getattr(runtime_spec, "knowledge_base_configs", None)
+    ):
+        runtime_spec = runtime_spec.model_copy(
+            update={
+                "knowledge_base_configs": runtime_resolver.build_query_knowledge_base_configs(
+                    db=db,
+                    knowledge_base_ids=runtime_spec.knowledge_base_ids,
+                    user_name=runtime_spec.user_name,
+                )
+            }
+        )
     try:
         return await rag_gateway.query(runtime_spec, db=db)
     except RemoteRagGatewayError as exc:
+        if not should_fallback_to_local(exc):
+            raise
         logger.warning(
             "[internal_rag] Remote query failed for KBs %s, falling back to local gateway: %s",
             getattr(runtime_spec, "knowledge_base_ids", []),
@@ -430,6 +451,9 @@ async def internal_retrieve(
     except ValueError as e:
         logger.warning("[internal_rag] Retrieval error: %s", e)
         raise HTTPException(status_code=400, detail=str(e))
+    except RemoteRagGatewayError as e:
+        logger.warning("[internal_rag] Remote retrieval failed: %s", e)
+        raise HTTPException(status_code=e.status_code or 502, detail=str(e)) from e
     except Exception as e:
         logger.error("[internal_rag] Retrieval failed: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))

@@ -32,7 +32,12 @@ from app.core.config import settings
 from app.db.session import SessionLocal
 from app.models.kind import Kind
 from app.models.subtask_context import ContextType, SubtaskContext
-from app.schemas.rag import SplitterConfig
+from app.schemas.rag import (
+    SemanticSplitterConfig,
+    SentenceSplitterConfig,
+    SmartSplitterConfig,
+    SplitterConfig,
+)
 from app.services.knowledge.index_runtime import (
     KnowledgeBaseIndexInfo,
     build_kb_index_info,
@@ -41,7 +46,6 @@ from app.services.knowledge.index_runtime import (
 )
 from app.services.rag.gateway_factory import get_index_gateway
 from app.services.rag.runtime_resolver import RagRuntimeResolver
-from app.services.rag.splitter.runtime_config import parse_runtime_splitter_config
 from shared.telemetry import add_span_event
 
 logger = logging.getLogger(__name__)
@@ -128,7 +132,15 @@ def parse_splitter_config(config_dict: dict) -> Optional[SplitterConfig]:
         SemanticSplitterConfig, SentenceSplitterConfig, or SmartSplitterConfig instance,
         or None if invalid
     """
-    return parse_runtime_splitter_config(config_dict)
+    if not config_dict:
+        return None
+
+    splitter_type = config_dict.get("type")
+    if splitter_type == "semantic":
+        return SemanticSplitterConfig(**config_dict)
+    if splitter_type == "smart":
+        return SmartSplitterConfig(**config_dict)
+    return SentenceSplitterConfig(**config_dict)
 
 
 def _serialize_splitter_config(

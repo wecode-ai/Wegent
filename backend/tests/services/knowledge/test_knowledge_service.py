@@ -206,8 +206,9 @@ class TestKnowledgeServiceDeleteDocument:
                 "_update_document_count_cache",
                 return_value=None,
             ),
-            patch(
-                "app.services.context.context_service.context_service.delete_context",
+            patch.object(
+                context_service,
+                "delete_context",
                 return_value=True,
             ),
             patch(

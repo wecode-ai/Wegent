@@ -28,7 +28,10 @@ from llama_index.core.vector_stores.types import (
 )
 from llama_index.vector_stores.elasticsearch import ElasticsearchStore
 
-from knowledge_engine.retrieval.filters import parse_metadata_filters
+from knowledge_engine.retrieval.filters import (
+    filter_chunk_records,
+    parse_metadata_filters,
+)
 from knowledge_engine.storage.base import BaseStorageBackend
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
 from shared.telemetry.decorators import add_span_event
@@ -550,7 +553,11 @@ class ElasticsearchBackend(BaseStorageBackend):
             return False
 
     def get_all_chunks(
-        self, knowledge_id: str, max_chunks: int = 10000, **kwargs
+        self,
+        knowledge_id: str,
+        max_chunks: int = 10000,
+        metadata_condition: Optional[Dict[str, Any]] = None,
+        **kwargs,
     ) -> List[Dict[str, Any]]:
         """
         Get all chunks from a knowledge base in Elasticsearch.
@@ -610,7 +617,7 @@ class ElasticsearchBackend(BaseStorageBackend):
                 if len(chunks) >= max_chunks:
                     break
 
-            return chunks
+            return filter_chunk_records(chunks, metadata_condition)
 
         except Exception as e:
             logger.warning(

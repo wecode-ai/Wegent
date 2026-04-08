@@ -18,7 +18,10 @@ from app.schemas.rag import (
 )
 from app.services.rag.gateway_factory import get_query_gateway
 from app.services.rag.local_gateway import LocalRagGateway
-from app.services.rag.remote_gateway import RemoteRagGatewayError
+from app.services.rag.remote_gateway import (
+    RemoteRagGatewayError,
+    should_fallback_to_local,
+)
 from app.services.rag.runtime_resolver import RagRuntimeResolver
 
 router = APIRouter()
@@ -107,12 +110,16 @@ async def retrieve_documents(
         gateway = get_query_gateway()
         try:
             result = await gateway.query(runtime_spec, db=db)
-        except RemoteRagGatewayError:
+        except RemoteRagGatewayError as exc:
+            if not should_fallback_to_local(exc):
+                raise
             result = await LocalRagGateway().query(runtime_spec, db=db)
 
         return {"records": result.get("records", [])}
     except HTTPException:
         raise
+    except RemoteRagGatewayError as e:
+        raise HTTPException(status_code=e.status_code or 502, detail=str(e)) from e
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
@@ -129,6 +136,12 @@ async def list_index_chunks(
 ):
     """List indexed chunks stored for a knowledge base."""
     try:
+        start = (page - 1) * page_size
+        if start >= INDEX_CHUNK_LIST_MAX_CHUNKS:
+            raise ValueError(
+                f"Requested page exceeds the chunk scan limit of {INDEX_CHUNK_LIST_MAX_CHUNKS}"
+            )
+
         runtime_spec = runtime_resolver.build_public_list_chunks_runtime_spec(
             db=db,
             knowledge_base_id=knowledge_id,
@@ -140,10 +153,11 @@ async def list_index_chunks(
         gateway = get_query_gateway()
         try:
             result = await gateway.list_chunks(runtime_spec, db=db)
-        except RemoteRagGatewayError:
+        except RemoteRagGatewayError as exc:
+            if not should_fallback_to_local(exc):
+                raise
             result = await LocalRagGateway().list_chunks(runtime_spec, db=db)
 
-        start = (page - 1) * page_size
         chunks = result.get("chunks", [])
         page_items = chunks[start : start + page_size]
 
@@ -164,6 +178,8 @@ async def list_index_chunks(
         )
     except HTTPException:
         raise
+    except RemoteRagGatewayError as e:
+        raise HTTPException(status_code=e.status_code or 502, detail=str(e)) from e
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:

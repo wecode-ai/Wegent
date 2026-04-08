@@ -569,6 +569,46 @@ class TestGetAllChunks:
         assert result == []
         mock_client.close.assert_called_once()
 
+    @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
+    def test_get_all_chunks_applies_metadata_condition(self, mock_client_class):
+        mock_client = MagicMock()
+        mock_client_class.return_value = mock_client
+        mock_client.list_collections.return_value = ["test_kb_kb_1"]
+        mock_client.query.return_value = [
+            {
+                "doc_ref": "doc_1",
+                "source_file": "file1.txt",
+                "chunk_index": 0,
+                "text": "chunk 1 content",
+                "lang": "zh",
+            },
+            {
+                "doc_ref": "doc_2",
+                "source_file": "file2.txt",
+                "chunk_index": 1,
+                "text": "chunk 2 content",
+                "lang": "en",
+            },
+        ]
+
+        config = {
+            "url": "http://localhost:19530/default",
+            "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
+        }
+        backend = MilvusBackend(config)
+
+        result = backend.get_all_chunks(
+            knowledge_id="kb_1",
+            max_chunks=100,
+            metadata_condition={
+                "operator": "and",
+                "conditions": [{"key": "lang", "operator": "eq", "value": "zh"}],
+            },
+        )
+
+        assert [chunk["doc_ref"] for chunk in result] == ["doc_1"]
+        mock_client.close.assert_called_once()
+
 
 class TestIndexWithMetadata:
     """Tests for index_with_metadata method.

@@ -24,6 +24,7 @@ from app.models.kind import Kind
 from app.models.subtask_context import SubtaskContext
 from app.models.task import TaskResource
 from app.services.knowledge import TaskKnowledgeBaseService
+from app.services.share import knowledge_share_service
 
 
 @pytest.mark.unit
@@ -242,8 +243,9 @@ class TestSyncSubtaskKBToTask:
         mock_query.filter.return_value = mock_query
         mock_query.first.return_value = shared_kb
 
-        with patch(
-            "app.services.share.knowledge_share_service.knowledge_share_service._get_resource",
+        with patch.object(
+            knowledge_share_service,
+            "_get_resource",
             return_value=shared_kb,
         ) as mock_get_resource:
             with patch(

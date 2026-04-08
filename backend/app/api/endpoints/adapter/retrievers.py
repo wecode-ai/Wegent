@@ -18,12 +18,15 @@ from app.services.rag.gateway_factory import get_query_gateway
 from app.services.rag.local_gateway import LocalRagGateway
 from app.services.rag.remote_gateway import RemoteRagGatewayError
 from app.services.rag.runtime_specs import ConnectionTestRuntimeSpec
+from knowledge_engine.storage.factory import (
+    create_storage_backend_from_config,
+    get_all_storage_retrieval_methods,
+    get_supported_retrieval_methods,
+    get_supported_storage_types,
+)
 from shared.models import RuntimeRetrieverConfig
 
-# RAG storage factory is conditionally imported based on STANDALONE_MODE
 # RAG module is heavy (llama_index, scipy, pandas, grpc) - skip in standalone mode
-if not settings.STANDALONE_MODE:
-    from app.services.rag.storage import factory as storage_factory
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -59,8 +62,8 @@ def get_storage_retrieval_methods():
     """
     _check_rag_available()
     return {
-        "data": storage_factory.get_all_storage_retrieval_methods(),
-        "storage_types": storage_factory.get_supported_storage_types(),
+        "data": get_all_storage_retrieval_methods(),
+        "storage_types": get_supported_storage_types(),
     }
 
 
@@ -84,7 +87,7 @@ def get_storage_type_retrieval_methods(storage_type: str):
     _check_rag_available()
 
     try:
-        methods = storage_factory.get_supported_retrieval_methods(storage_type)
+        methods = get_supported_retrieval_methods(storage_type)
         return {
             "storage_type": storage_type,
             "retrieval_methods": methods,
@@ -256,6 +259,15 @@ async def test_retriever_connection(
         }
 
     try:
+        create_storage_backend_from_config(
+            storage_type=storage_type,
+            url=url,
+            username=username,
+            password=password,
+            api_key=api_key,
+            index_strategy={"mode": "per_dataset"},
+            ext={},
+        )
         runtime_spec = ConnectionTestRuntimeSpec(
             retriever_config=RuntimeRetrieverConfig(
                 name="connection-test",

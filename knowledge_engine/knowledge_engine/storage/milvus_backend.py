@@ -29,7 +29,10 @@ from llama_index.vector_stores.milvus import MilvusVectorStore
 from llama_index.vector_stores.milvus.base import IndexManagement
 from pymilvus import AsyncMilvusClient, MilvusClient
 
-from knowledge_engine.retrieval.filters import parse_metadata_filters
+from knowledge_engine.retrieval.filters import (
+    filter_chunk_records,
+    parse_metadata_filters,
+)
 from knowledge_engine.storage.base import BaseStorageBackend
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
 
@@ -749,7 +752,11 @@ class MilvusBackend(BaseStorageBackend):
                     pass
 
     def get_all_chunks(
-        self, knowledge_id: str, max_chunks: int = MAX_QUERY_LIMIT, **kwargs
+        self,
+        knowledge_id: str,
+        max_chunks: int = MAX_QUERY_LIMIT,
+        metadata_condition: Optional[Dict[str, Any]] = None,
+        **kwargs,
     ) -> List[Dict[str, Any]]:
         """
         Get all chunks from a knowledge base in Milvus.
@@ -813,7 +820,8 @@ class MilvusBackend(BaseStorageBackend):
             # Sort by doc_ref and chunk_index
             chunks.sort(key=lambda x: (x.get("doc_ref", ""), x.get("chunk_id", 0)))
 
-            return chunks[:max_chunks]
+            filtered_chunks = filter_chunk_records(chunks, metadata_condition)
+            return filtered_chunks[:max_chunks]
 
         except Exception as e:
             logger.warning(

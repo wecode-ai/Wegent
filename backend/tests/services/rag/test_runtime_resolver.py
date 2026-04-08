@@ -117,7 +117,7 @@ def test_build_query_runtime_spec_maps_runtime_budget():
     assert spec.user_id == 5
     assert spec.user_name == "alice"
     assert spec.restricted_mode is True
-    assert spec.knowledge_base_configs[0].retrieval_config.top_k == 20
+    assert spec.knowledge_base_configs == []
     assert spec.enabled_index_families == ["chunk_vector", "summary_vector"]
     assert spec.retrieval_policy == "summary_first"
     assert spec.direct_injection_budget.context_window == 200000
@@ -147,6 +147,42 @@ def test_build_query_runtime_spec_omits_budget_without_context_window():
     assert spec.knowledge_base_configs == []
     assert spec.enabled_index_families == ["chunk_vector"]
     assert spec.retrieval_policy == "chunk_only"
+
+
+def test_build_query_runtime_spec_resolves_configs_for_forced_rag_route():
+    resolver = RagRuntimeResolver()
+    resolved_configs = [
+        RemoteKnowledgeBaseQueryConfig(
+            knowledge_base_id=1,
+            index_owner_user_id=5,
+            retriever_config=RuntimeRetrieverConfig(
+                name="retriever-a",
+                namespace="default",
+                storage_config={"type": "qdrant"},
+            ),
+            embedding_model_config=RuntimeEmbeddingModelConfig(
+                model_name="embed-a",
+                model_namespace="default",
+                resolved_config={"protocol": "openai"},
+            ),
+            retrieval_config=RuntimeRetrievalConfig(top_k=20),
+        )
+    ]
+
+    with patch.object(
+        resolver,
+        "_build_query_knowledge_base_configs",
+        return_value=resolved_configs,
+    ):
+        spec = resolver.build_query_runtime_spec(
+            db=MagicMock(),
+            knowledge_base_ids=[1],
+            query="release checklist",
+            max_results=3,
+            route_mode="rag_retrieval",
+        )
+
+    assert spec.knowledge_base_configs == resolved_configs
 
 
 def test_build_query_runtime_spec_rejects_control_plane_only_inputs():

@@ -29,7 +29,10 @@ from llama_index.vector_stores.qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
 from qdrant_client.http import models as qdrant_models
 
-from knowledge_engine.retrieval.filters import parse_metadata_filters
+from knowledge_engine.retrieval.filters import (
+    filter_chunk_records,
+    parse_metadata_filters,
+)
 from knowledge_engine.storage.base import BaseStorageBackend
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
 
@@ -481,7 +484,11 @@ class QdrantBackend(BaseStorageBackend):
             return False
 
     def get_all_chunks(
-        self, knowledge_id: str, max_chunks: int = 10000, **kwargs
+        self,
+        knowledge_id: str,
+        max_chunks: int = 10000,
+        metadata_condition: Optional[Dict[str, Any]] = None,
+        **kwargs,
     ) -> List[Dict[str, Any]]:
         """
         Get all chunks from a knowledge base in Qdrant.
@@ -558,7 +565,7 @@ class QdrantBackend(BaseStorageBackend):
             # Sort by doc_ref and chunk_index
             chunks.sort(key=lambda x: (x.get("doc_ref", ""), x.get("chunk_id", 0)))
 
-            return chunks
+            return filter_chunk_records(chunks, metadata_condition)
 
         except Exception as e:
             # Log error but return empty list to allow fallback to RAG
