@@ -222,12 +222,23 @@ class AgentService:
                 return TaskStatus.FAILED, msg
 
             try:
-                return await self.execute_agent_task(agent)
+                status, message = await self.execute_agent_task(agent)
+                # If agent returns RUNNING, it means it started a background task
+                # and will handle session cleanup itself when the task completes
+                if status == TaskStatus.RUNNING:
+                    logger.info(
+                        f"[{_format_task_log(task_id, subtask_id)}] Agent running in background, "
+                        f"skipping session cleanup - agent will handle it"
+                    )
+                return status, message
             finally:
-                # Always destroy agent session after subtask execution completes
-                # This ensures clean state for next execution
-                # Session continuity is maintained via .claude_session_id file
-                await self._destroy_agent_session(task_id)
+                # Only destroy session if agent didn't start a background task
+                # Background tasks (returning RUNNING) handle their own cleanup
+                if status != TaskStatus.RUNNING:
+                    # Destroy agent session after subtask execution completes
+                    # This ensures clean state for next execution
+                    # Session continuity is maintained via .claude_session_id file
+                    await self._destroy_agent_session(task_id)
         except Exception as e:
             logger.exception(
                 f"[{_format_task_log(task_id, subtask_id)}] Task execution error: {e}"
