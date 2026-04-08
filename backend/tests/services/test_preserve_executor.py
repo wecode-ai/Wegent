@@ -314,6 +314,68 @@ class TestCleanupStaleExecutorsWithPreserveFlag:
             "executor-1", "default"
         )
 
+    def test_cleanup_marks_deleted_using_subtask_ids(self, job_service, mock_db):
+        """Test cleanup passes subtask ids to the short-lived delete marker."""
+        mock_subtask = self._create_mock_subtask(1, 100)
+        mock_task = self._create_mock_task_resource(100, 1, preserve_executor=False)
+
+        mock_subtask_query = MagicMock()
+        mock_subtask_query.join.return_value = mock_subtask_query
+        mock_subtask_query.filter.return_value = mock_subtask_query
+        mock_subtask_query.all.return_value = [mock_subtask]
+
+        mock_task_query = MagicMock()
+        mock_task_query.filter.return_value = mock_task_query
+        mock_task_query.first.return_value = mock_task
+
+        def query_side_effect(model):
+            if model == Subtask:
+                return mock_subtask_query
+            if model == TaskResource:
+                return mock_task_query
+            return MagicMock()
+
+        mock_db.query.side_effect = query_side_effect
+
+        with (
+            patch.object(job_service, "_mark_executor_deleted") as mark_deleted_mock,
+            patch(
+                "app.services.adapters.executor_job.executor_kinds_service"
+            ) as mock_executor_service,
+            patch("app.services.adapters.executor_job.settings") as mock_settings,
+        ):
+            mock_settings.CHAT_TASK_EXECUTOR_DELETE_AFTER_HOURS = 24
+            mock_settings.CODE_TASK_EXECUTOR_DELETE_AFTER_HOURS = 48
+            mock_executor_service.delete_executor_task_sync.return_value = True
+
+            job_service.cleanup_stale_executors(mock_db)
+
+        mark_deleted_mock.assert_called_once_with([1])
+
+    def test_executor_deleted_flag_uses_short_lived_session(self, job_service, mock_db):
+        """Test executor_deleted_at is updated in a separate short-lived session."""
+        short_session = Mock(spec=Session)
+        short_subtask_query = MagicMock()
+        short_session.query.return_value = short_subtask_query
+        short_subtask_query.filter.return_value = short_subtask_query
+        short_subtask_query.update.return_value = 1
+
+        with patch(
+            "app.services.adapters.executor_job.SessionLocal"
+        ) as mock_session_local:
+            mock_session_local.return_value = short_session
+
+            job_service._mark_executor_deleted([1, 2])
+
+        short_session.query.assert_called_once_with(Subtask)
+        short_subtask_query.update.assert_called_once_with(
+            {
+                Subtask.executor_deleted_at: True,
+            }
+        )
+        short_session.commit.assert_called_once()
+        short_session.close.assert_called_once()
+
     def test_code_task_is_not_cleaned_up_before_code_threshold(
         self, job_service, mock_db
     ):
