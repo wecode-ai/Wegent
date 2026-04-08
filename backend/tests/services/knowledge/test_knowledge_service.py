@@ -66,6 +66,64 @@ class TestKnowledgeServiceUpdateDocumentContent:
 
 
 @pytest.mark.unit
+class TestKnowledgeServiceFindDocumentByName:
+    def test_find_document_by_name_returns_match(self) -> None:
+        """Returns a document when exact name matches in the knowledge base."""
+        db = MagicMock()
+        mock_kb = MagicMock()
+        with patch.object(
+            KnowledgeService, "get_knowledge_base", return_value=(mock_kb, True)
+        ):
+            mock_doc = MagicMock(spec=KnowledgeDocument)
+            mock_doc.name = "report.md"
+            db.query.return_value.filter.return_value.first.return_value = mock_doc
+
+            result = KnowledgeService.find_document_by_name(
+                db=db,
+                knowledge_base_id=1,
+                user_id=1,
+                name="report.md",
+            )
+
+            assert result is not None
+            assert result.name == "report.md"
+
+    def test_find_document_by_name_returns_none_when_no_match(self) -> None:
+        """Returns None when no document with given name exists."""
+        db = MagicMock()
+        mock_kb = MagicMock()
+        with patch.object(
+            KnowledgeService, "get_knowledge_base", return_value=(mock_kb, True)
+        ):
+            db.query.return_value.filter.return_value.first.return_value = None
+
+            result = KnowledgeService.find_document_by_name(
+                db=db,
+                knowledge_base_id=1,
+                user_id=1,
+                name="nonexistent.md",
+            )
+
+            assert result is None
+
+    def test_find_document_by_name_returns_none_when_no_access(self) -> None:
+        """Returns None when user has no access to the knowledge base."""
+        db = MagicMock()
+        with patch.object(
+            KnowledgeService, "get_knowledge_base", return_value=(None, False)
+        ):
+            result = KnowledgeService.find_document_by_name(
+                db=db,
+                knowledge_base_id=1,
+                user_id=999,
+                name="report.md",
+            )
+
+            assert result is None
+            db.query.assert_not_called()
+
+
+@pytest.mark.unit
 class TestKnowledgeServiceResolveDocumentIdsByNames:
     def test_resolve_document_ids_by_names_returns_only_active_docs_in_scope(
         self, test_db, test_user

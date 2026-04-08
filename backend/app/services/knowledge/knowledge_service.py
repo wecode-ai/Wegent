@@ -1106,6 +1106,43 @@ class KnowledgeService:
         )
 
     @staticmethod
+    def find_document_by_name(
+        db: Session,
+        knowledge_base_id: int,
+        user_id: int,
+        name: str,
+    ) -> Optional[KnowledgeDocument]:
+        """
+        Find a document by exact name match within a knowledge base.
+
+        This method is more efficient than listing all documents when
+        only a single document lookup by name is needed.
+
+        Args:
+            db: Database session
+            knowledge_base_id: Knowledge base ID
+            user_id: Requesting user ID
+            name: Document name to search for (case-sensitive exact match)
+
+        Returns:
+            KnowledgeDocument if found and accessible, None otherwise
+        """
+        kb, has_access = KnowledgeService.get_knowledge_base(
+            db, knowledge_base_id, user_id
+        )
+        if not kb or not has_access:
+            return None
+
+        return (
+            db.query(KnowledgeDocument)
+            .filter(
+                KnowledgeDocument.kind_id == knowledge_base_id,
+                KnowledgeDocument.name == name,
+            )
+            .first()
+        )
+
+    @staticmethod
     def _assert_can_manage_document(
         db: Session,
         kb: Kind,

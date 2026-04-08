@@ -1467,6 +1467,239 @@ class KnowledgeOrchestrator:
             "message": "Document content updated successfully",
         }
 
+    def sync_document(
+        self,
+        db: Session,
+        user: User,
+        knowledge_base_id: int,
+        name: str,
+        source_type: str,
+        content: Optional[str] = None,
+        file_base64: Optional[str] = None,
+        file_extension: Optional[str] = "md",
+        trigger_indexing: bool = True,
+        trigger_summary: bool = True,
+    ) -> Dict[str, Any]:
+        """
+        Sync a document to a knowledge base with create-or-update semantics.
+
+        If a document with the same name already exists in the knowledge base,
+        its content is replaced and re-indexed. Otherwise a new document is
+        created. This is useful for syncing external documents (e.g., from
+        DingTalk) into a knowledge base.
+
+        Args:
+            db: Database session
+            user: Current user
+            knowledge_base_id: Target knowledge base ID
+            name: Document name (used for matching existing documents)
+            source_type: Source type ("text" or "file")
+            content: Text content (for source_type="text")
+            file_base64: Base64-encoded file (for source_type="file")
+            file_extension: File extension (default "md")
+            trigger_indexing: Whether to trigger RAG indexing
+            trigger_summary: Whether to trigger summary generation
+
+        Returns:
+            Dict with "action" ("created" or "updated") and "document" info
+
+        Raises:
+            ValueError: If validation fails or access denied
+        """
+        # Verify KB access
+        kb, has_access = KnowledgeService.get_knowledge_base(
+            db=db,
+            knowledge_base_id=knowledge_base_id,
+            user_id=user.id,
+        )
+        if not kb:
+            raise ValueError("Knowledge base not found")
+        if not has_access:
+            raise ValueError("Access denied to knowledge base")
+
+        # Check for existing document with same name
+        existing_doc = KnowledgeService.find_document_by_name(
+            db=db,
+            knowledge_base_id=knowledge_base_id,
+            user_id=user.id,
+            name=name,
+        )
+
+        # Validate input and prepare binary data
+        normalized_ext = _normalize_file_extension(file_extension)
+        binary_data = self._prepare_binary_data(
+            source_type=source_type,
+            content=content,
+            file_base64=file_base64,
+            file_extension=normalized_ext,
+        )
+
+        if existing_doc:
+            return self._update_existing_document(
+                db=db,
+                user=user,
+                knowledge_base=kb,
+                document=existing_doc,
+                binary_data=binary_data,
+                normalized_ext=normalized_ext,
+                trigger_indexing=trigger_indexing,
+                trigger_summary=trigger_summary,
+            )
+        else:
+            return self._create_new_document(
+                db=db,
+                user=user,
+                knowledge_base_id=knowledge_base_id,
+                name=name,
+                source_type=source_type,
+                content=content,
+                file_base64=file_base64,
+                file_extension=file_extension,
+                trigger_indexing=trigger_indexing,
+                trigger_summary=trigger_summary,
+            )
+
+    def _prepare_binary_data(
+        self,
+        source_type: str,
+        content: Optional[str],
+        file_base64: Optional[str],
+        file_extension: str,
+    ) -> bytes:
+        """Validate input and return binary content for sync operations."""
+        if source_type == "text":
+            if not content:
+                raise ValueError("content is required for source_type='text'")
+            return content.encode("utf-8")
+        elif source_type == "file":
+            if not file_base64:
+                raise ValueError("file_base64 is required for source_type='file'")
+            try:
+                return base64.b64decode(file_base64)
+            except Exception as e:
+                raise ValueError(f"Invalid base64 encoding: {e}")
+        else:
+            raise ValueError(
+                f"Invalid source_type for sync: {source_type}. "
+                "Must be 'text' or 'file'."
+            )
+
+    def _update_existing_document(
+        self,
+        db: Session,
+        user: User,
+        knowledge_base: Kind,
+        document: KnowledgeDocument,
+        binary_data: bytes,
+        normalized_ext: str,
+        trigger_indexing: bool,
+        trigger_summary: bool,
+    ) -> Dict[str, Any]:
+        """Replace content of an existing document and optionally re-index."""
+        from app.services.context import context_service
+
+        filename = _build_filename(document.name, normalized_ext)
+
+        if document.attachment_id:
+            try:
+                context_service.overwrite_attachment(
+                    db=db,
+                    context_id=document.attachment_id,
+                    user_id=user.id,
+                    filename=filename,
+                    binary_data=binary_data,
+                )
+                logger.info(
+                    f"[Orchestrator] Overwrote attachment {document.attachment_id} "
+                    f"for document {document.id}"
+                )
+            except Exception as e:
+                logger.warning(
+                    f"[Orchestrator] Failed to overwrite attachment "
+                    f"{document.attachment_id}: {e}, creating new one"
+                )
+                attachment, _ = context_service.upload_attachment(
+                    db=db,
+                    user_id=user.id,
+                    filename=filename,
+                    binary_data=binary_data,
+                    subtask_id=0,
+                )
+                document.attachment_id = attachment.id
+        else:
+            attachment, _ = context_service.upload_attachment(
+                db=db,
+                user_id=user.id,
+                filename=filename,
+                binary_data=binary_data,
+                subtask_id=0,
+            )
+            document.attachment_id = attachment.id
+
+        # Update document metadata
+        document.file_size = len(binary_data)
+        document.file_extension = normalized_ext
+
+        try:
+            db.commit()
+            db.refresh(document)
+        except Exception as e:
+            db.rollback()
+            raise ValueError(f"Failed to update document: {e}") from e
+
+        logger.info(
+            f"[Orchestrator] Updated document {document.id} in KB "
+            f"{knowledge_base.id} via sync"
+        )
+
+        # Schedule re-indexing
+        if trigger_indexing:
+            self._schedule_indexing_celery(
+                db=db,
+                knowledge_base=knowledge_base,
+                document=document,
+                user=user,
+                trigger_summary=trigger_summary,
+                allow_if_success=True,
+                replace_active=True,
+            )
+
+        return {
+            "action": "updated",
+            "document": KnowledgeDocumentResponse.model_validate(document).model_dump(),
+        }
+
+    def _create_new_document(
+        self,
+        db: Session,
+        user: User,
+        knowledge_base_id: int,
+        name: str,
+        source_type: str,
+        content: Optional[str],
+        file_base64: Optional[str],
+        file_extension: Optional[str],
+        trigger_indexing: bool,
+        trigger_summary: bool,
+    ) -> Dict[str, Any]:
+        """Create a new document via the standard creation flow."""
+        result = self.create_document_with_content(
+            db=db,
+            user=user,
+            knowledge_base_id=knowledge_base_id,
+            name=name,
+            source_type=source_type,
+            content=content,
+            file_base64=file_base64,
+            file_extension=file_extension,
+            trigger_indexing=trigger_indexing,
+            trigger_summary=trigger_summary,
+        )
+        return {
+            "action": "created",
+            "document": result.model_dump(),
+        }
+
     def _scrape_url_content(self, url: str) -> tuple[bytes, str]:
         """
         Scrape content from URL.

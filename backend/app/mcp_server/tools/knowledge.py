@@ -427,6 +427,104 @@ def update_document_content(
         db.close()
 
 
+@mcp_tool(
+    name="sync_document",
+    description=(
+        "Sync a document to a knowledge base with create-or-update semantics. "
+        "If a document with the same name already exists in the target knowledge base, "
+        "its content will be replaced and re-indexed. Otherwise a new document is created. "
+        "This is useful for syncing external documents (e.g., from DingTalk Docs) "
+        "into a Wegent knowledge base."
+    ),
+    server="knowledge",
+    param_descriptions={
+        "knowledge_base_id": "Target knowledge base ID",
+        "name": (
+            "Document name used for matching existing documents. "
+            "If a document with this exact name exists, it will be updated."
+        ),
+        "source_type": "Source type: 'text' or 'file'",
+        "content": "Text content (for source_type='text')",
+        "file_base64": "Base64-encoded file content (for source_type='file')",
+        "file_extension": "File extension like 'txt', 'md', 'pdf' (default: 'md')",
+        "trigger_indexing": "Whether to trigger RAG indexing (default: True)",
+        "trigger_summary": "Whether to trigger summary generation (default: True)",
+    },
+)
+def sync_document(
+    token_info: TaskTokenInfo,
+    knowledge_base_id: int,
+    name: str,
+    source_type: str,
+    content: Optional[str] = None,
+    file_base64: Optional[str] = None,
+    file_extension: Optional[str] = "md",
+    trigger_indexing: bool = True,
+    trigger_summary: bool = True,
+) -> Dict[str, Any]:
+    """
+    Sync a document to a knowledge base (create or update).
+
+    If a document with the same name already exists in the target knowledge
+    base, its content is replaced and the document is re-indexed. Otherwise
+    a new document is created.
+
+    Supports two input methods:
+    - source_type="text": Direct text content via `content` parameter
+    - source_type="file": Base64-encoded file via `file_base64` parameter
+
+    Typical usage flow for syncing DingTalk documents:
+    1. Use DingTalk MCP's download_file to download the document
+    2. Read the file content and base64-encode it
+    3. Call this tool to sync it to the target knowledge base
+
+    Args:
+        token_info: Task token information containing user context
+        knowledge_base_id: Target knowledge base ID
+        name: Document name (used for matching existing documents)
+        source_type: Source type ("text" or "file")
+        content: Text content (for source_type="text")
+        file_base64: Base64-encoded file content (for source_type="file")
+        file_extension: File extension (default: "md")
+        trigger_indexing: Whether to trigger RAG indexing (default: True)
+        trigger_summary: Whether to trigger summary generation (default: True)
+
+    Returns:
+        Dict with "action" ("created" or "updated") and "document" info
+    """
+    db = SessionLocal()
+    try:
+        user = _get_user_from_token(db, token_info)
+        if not user:
+            return {"error": "User not found"}
+
+        result = knowledge_orchestrator.sync_document(
+            db=db,
+            user=user,
+            knowledge_base_id=knowledge_base_id,
+            name=name,
+            source_type=source_type,
+            content=content,
+            file_base64=file_base64,
+            file_extension=file_extension,
+            trigger_indexing=trigger_indexing,
+            trigger_summary=trigger_summary,
+        )
+
+        return result
+
+    except ValueError as e:
+        logger.warning(f"[MCP] sync_document validation error: {e}")
+        return {"error": str(e)}
+
+    except Exception as e:
+        logger.error(f"[MCP] sync_document error: {e}", exc_info=True)
+        return {"error": str(e)}
+
+    finally:
+        db.close()
+
+
 # Build tool registry from decorated functions
 # This maintains backward compatibility with the manual dict approach
 KNOWLEDGE_MCP_TOOLS = build_mcp_tools_dict(server="knowledge")

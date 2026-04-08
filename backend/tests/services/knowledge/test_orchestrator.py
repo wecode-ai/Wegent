@@ -1095,6 +1095,205 @@ class TestKnowledgeOrchestrator:
         assert result["index_generation"] == 8
         assert mock_schedule.call_args.kwargs["allow_if_success"] is True
 
+    def test_sync_document_creates_when_not_exists(
+        self, orchestrator, mock_db, mock_user
+    ):
+        """Test sync_document creates a new document when no match by name."""
+        with patch(
+            "app.services.knowledge.orchestrator.KnowledgeService"
+        ) as mock_service:
+            mock_kb = MagicMock()
+            mock_kb.id = 1
+            mock_kb.json = {"spec": {}}
+            mock_service.get_knowledge_base.return_value = (mock_kb, True)
+            mock_service.find_document_by_name.return_value = None
+
+            with patch.object(
+                orchestrator, "create_document_with_content"
+            ) as mock_create:
+                mock_doc_response = MagicMock()
+                mock_doc_response.model_dump.return_value = {"id": 1, "name": "new-doc"}
+                mock_create.return_value = mock_doc_response
+
+                result = orchestrator.sync_document(
+                    db=mock_db,
+                    user=mock_user,
+                    knowledge_base_id=1,
+                    name="new-doc",
+                    source_type="text",
+                    content="Hello world",
+                )
+
+                assert result["action"] == "created"
+                assert result["document"]["name"] == "new-doc"
+                mock_create.assert_called_once()
+                mock_service.find_document_by_name.assert_called_once_with(
+                    db=mock_db,
+                    knowledge_base_id=1,
+                    user_id=mock_user.id,
+                    name="new-doc",
+                )
+
+    def test_sync_document_updates_when_exists(self, orchestrator, mock_db, mock_user):
+        """Test sync_document updates an existing document with same name."""
+        with patch(
+            "app.services.knowledge.orchestrator.KnowledgeService"
+        ) as mock_service:
+            mock_kb = MagicMock()
+            mock_kb.id = 1
+            mock_kb.json = {"spec": {}}
+            mock_service.get_knowledge_base.return_value = (mock_kb, True)
+
+            existing_doc = MagicMock()
+            existing_doc.id = 10
+            existing_doc.name = "existing-doc"
+            existing_doc.attachment_id = 20
+            existing_doc.file_size = 100
+            existing_doc.file_extension = "md"
+            mock_service.find_document_by_name.return_value = existing_doc
+
+            with patch("app.services.context.context_service") as mock_context:
+                mock_context.overwrite_attachment.return_value = (
+                    MagicMock(id=20),
+                    None,
+                )
+
+                with patch(
+                    "app.services.knowledge.orchestrator.KnowledgeDocumentResponse"
+                ) as mock_response:
+                    mock_validated = MagicMock()
+                    mock_validated.model_dump.return_value = {
+                        "id": 10,
+                        "name": "existing-doc",
+                    }
+                    mock_response.model_validate.return_value = mock_validated
+
+                    with patch.object(
+                        orchestrator, "_schedule_indexing_celery"
+                    ) as mock_schedule:
+                        result = orchestrator.sync_document(
+                            db=mock_db,
+                            user=mock_user,
+                            knowledge_base_id=1,
+                            name="existing-doc",
+                            source_type="text",
+                            content="Updated content",
+                        )
+
+                        assert result["action"] == "updated"
+                        assert result["document"]["id"] == 10
+                        mock_context.overwrite_attachment.assert_called_once()
+                        mock_schedule.assert_called_once()
+                        # Verify allow_if_success and replace_active flags
+                        call_kwargs = mock_schedule.call_args.kwargs
+                        assert call_kwargs["allow_if_success"] is True
+                        assert call_kwargs["replace_active"] is True
+
+    def test_sync_document_raises_for_kb_not_found(
+        self, orchestrator, mock_db, mock_user
+    ):
+        """Test sync_document raises when KB not found."""
+        with patch(
+            "app.services.knowledge.orchestrator.KnowledgeService"
+        ) as mock_service:
+            mock_service.get_knowledge_base.return_value = (None, False)
+
+            with pytest.raises(ValueError, match="Knowledge base not found"):
+                orchestrator.sync_document(
+                    db=mock_db,
+                    user=mock_user,
+                    knowledge_base_id=999,
+                    name="doc",
+                    source_type="text",
+                    content="test",
+                )
+
+    def test_sync_document_raises_for_invalid_source_type(
+        self, orchestrator, mock_db, mock_user
+    ):
+        """Test sync_document raises for invalid source type."""
+        with patch(
+            "app.services.knowledge.orchestrator.KnowledgeService"
+        ) as mock_service:
+            mock_kb = MagicMock()
+            mock_service.get_knowledge_base.return_value = (mock_kb, True)
+            mock_service.find_document_by_name.return_value = None
+
+            with pytest.raises(ValueError, match="Invalid source_type for sync"):
+                orchestrator.sync_document(
+                    db=mock_db,
+                    user=mock_user,
+                    knowledge_base_id=1,
+                    name="doc",
+                    source_type="web",
+                    content="test",
+                )
+
+    def test_sync_document_raises_for_missing_content(
+        self, orchestrator, mock_db, mock_user
+    ):
+        """Test sync_document raises when content missing for text type."""
+        with patch(
+            "app.services.knowledge.orchestrator.KnowledgeService"
+        ) as mock_service:
+            mock_kb = MagicMock()
+            mock_service.get_knowledge_base.return_value = (mock_kb, True)
+            mock_service.find_document_by_name.return_value = None
+
+            with pytest.raises(ValueError, match="content is required"):
+                orchestrator.sync_document(
+                    db=mock_db,
+                    user=mock_user,
+                    knowledge_base_id=1,
+                    name="doc",
+                    source_type="text",
+                    content=None,
+                )
+
+    def test_sync_document_update_creates_new_attachment_when_no_existing(
+        self, orchestrator, mock_db, mock_user
+    ):
+        """Test sync update creates new attachment when doc has no attachment_id."""
+        with patch(
+            "app.services.knowledge.orchestrator.KnowledgeService"
+        ) as mock_service:
+            mock_kb = MagicMock()
+            mock_kb.id = 1
+            mock_kb.json = {"spec": {}}
+            mock_service.get_knowledge_base.return_value = (mock_kb, True)
+
+            existing_doc = MagicMock()
+            existing_doc.id = 10
+            existing_doc.name = "doc"
+            existing_doc.attachment_id = None
+            mock_service.find_document_by_name.return_value = existing_doc
+
+            with patch("app.services.context.context_service") as mock_context:
+                new_attachment = MagicMock()
+                new_attachment.id = 99
+                mock_context.upload_attachment.return_value = (new_attachment, None)
+
+                with patch(
+                    "app.services.knowledge.orchestrator.KnowledgeDocumentResponse"
+                ) as mock_response:
+                    mock_validated = MagicMock()
+                    mock_validated.model_dump.return_value = {"id": 10}
+                    mock_response.model_validate.return_value = mock_validated
+
+                    with patch.object(orchestrator, "_schedule_indexing_celery"):
+                        result = orchestrator.sync_document(
+                            db=mock_db,
+                            user=mock_user,
+                            knowledge_base_id=1,
+                            name="doc",
+                            source_type="text",
+                            content="content",
+                        )
+
+                        assert result["action"] == "updated"
+                        assert existing_doc.attachment_id == 99
+                        mock_context.upload_attachment.assert_called_once()
+
 
 class TestIndexingPolicy:
     """Tests for knowledge indexing skip policy."""
