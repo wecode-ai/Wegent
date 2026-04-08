@@ -162,3 +162,77 @@ class TestKnowledgeServiceGetDocumentPromptStats:
             "searchable_document_count": 2,
             "spreadsheet_document_count": 1,
         }
+
+
+@pytest.mark.unit
+class TestKnowledgeServiceDeleteDocument:
+    def test_delete_document_routes_cleanup_with_kb_owner_user_id(self) -> None:
+        db = MagicMock()
+        document = SimpleNamespace(
+            id=8,
+            kind_id=10,
+            attachment_id=20,
+        )
+        knowledge_base = SimpleNamespace(
+            id=10,
+            user_id=42,
+            namespace="default",
+            json={
+                "spec": {
+                    "retrievalConfig": {
+                        "retriever_name": "retriever-a",
+                        "retriever_namespace": "default",
+                    }
+                }
+            },
+        )
+
+        kb_query = MagicMock()
+        kb_query.filter.return_value.first.return_value = knowledge_base
+        db.query.return_value = kb_query
+        delete_runtime_spec = object()
+        mock_gateway = MagicMock()
+        mock_gateway.delete_document_index = MagicMock()
+
+        with (
+            patch.object(KnowledgeService, "get_document", return_value=document),
+            patch.object(
+                KnowledgeService,
+                "_assert_can_manage_document",
+                return_value=None,
+            ),
+            patch.object(
+                KnowledgeService,
+                "_update_document_count_cache",
+                return_value=None,
+            ),
+            patch.object(
+                context_service,
+                "delete_context",
+                return_value=True,
+            ),
+            patch(
+                "app.services.rag.gateway_factory.get_delete_gateway",
+                return_value=mock_gateway,
+            ),
+            patch(
+                "app.services.rag.runtime_resolver.RagRuntimeResolver.build_delete_runtime_spec",
+                return_value=delete_runtime_spec,
+            ) as mock_build_delete_runtime_spec,
+            patch(
+                "asyncio.run",
+                return_value={"status": "success"},
+            ),
+        ):
+            KnowledgeService.delete_document(
+                db=db,
+                document_id=8,
+                user_id=7,
+            )
+
+        mock_build_delete_runtime_spec.assert_called_once_with(
+            db=db,
+            knowledge_base_id=10,
+            document_ref="8",
+            index_owner_user_id=42,
+        )

@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import logging
-from typing import TYPE_CHECKING, Optional
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -14,11 +14,19 @@ from app.core.config import settings
 from app.models.user import User
 from app.schemas.kind import Retriever
 from app.services.adapters.retriever_kinds import retriever_kinds_service
+from app.services.rag.gateway_factory import get_query_gateway
+from app.services.rag.local_gateway import LocalRagGateway
+from app.services.rag.remote_gateway import RemoteRagGatewayError
+from app.services.rag.runtime_specs import ConnectionTestRuntimeSpec
+from knowledge_engine.storage.factory import (
+    create_storage_backend_from_config,
+    get_all_storage_retrieval_methods,
+    get_supported_retrieval_methods,
+    get_supported_storage_types,
+)
+from shared.models import RuntimeRetrieverConfig
 
-# RAG storage factory is conditionally imported based on STANDALONE_MODE
 # RAG module is heavy (llama_index, scipy, pandas, grpc) - skip in standalone mode
-if not settings.STANDALONE_MODE:
-    from app.services.rag.storage import factory as storage_factory
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -54,8 +62,8 @@ def get_storage_retrieval_methods():
     """
     _check_rag_available()
     return {
-        "data": storage_factory.get_all_storage_retrieval_methods(),
-        "storage_types": storage_factory.get_supported_storage_types(),
+        "data": get_all_storage_retrieval_methods(),
+        "storage_types": get_supported_storage_types(),
     }
 
 
@@ -79,7 +87,7 @@ def get_storage_type_retrieval_methods(storage_type: str):
     _check_rag_available()
 
     try:
-        methods = storage_factory.get_supported_retrieval_methods(storage_type)
+        methods = get_supported_retrieval_methods(storage_type)
         return {
             "storage_type": storage_type,
             "retrieval_methods": methods,
@@ -213,7 +221,7 @@ def delete_retriever(
 
 
 @router.post("/test-connection")
-def test_retriever_connection(
+async def test_retriever_connection(
     test_data: dict,
     current_user: User = Depends(security.get_current_user),
 ):
@@ -236,6 +244,7 @@ def test_retriever_connection(
     }
     """
     _check_rag_available()
+    del current_user
 
     storage_type = test_data.get("storage_type")
     url = test_data.get("url")
@@ -250,31 +259,37 @@ def test_retriever_connection(
         }
 
     try:
-        # Create storage backend from config
-        backend = storage_factory.create_storage_backend_from_config(
+        create_storage_backend_from_config(
             storage_type=storage_type,
             url=url,
             username=username,
             password=password,
             api_key=api_key,
+            index_strategy={"mode": "per_dataset"},
+            ext={},
         )
-
-        # Test connection using backend's test_connection method
-        success = backend.test_connection()
-
-        if success:
-            return {
-                "success": True,
-                "message": f"Successfully connected to {storage_type}",
-            }
-        else:
-            return {
-                "success": False,
-                "message": f"Failed to connect to {storage_type}",
-            }
+        runtime_spec = ConnectionTestRuntimeSpec(
+            retriever_config=RuntimeRetrieverConfig(
+                name="connection-test",
+                namespace="default",
+                storage_config={
+                    "type": storage_type,
+                    "url": url,
+                    "username": username,
+                    "password": password,
+                    "apiKey": api_key,
+                    "indexStrategy": {"mode": "per_dataset"},
+                    "ext": {},
+                },
+            )
+        )
+        gateway = get_query_gateway()
+        try:
+            return await gateway.test_connection(runtime_spec)
+        except RemoteRagGatewayError:
+            return await LocalRagGateway().test_connection(runtime_spec)
 
     except ValueError as e:
-        # Unsupported storage type
         return {"success": False, "message": str(e)}
 
     except Exception as e:

@@ -1203,10 +1203,10 @@ class KnowledgeService:
         import logging
 
         from app.services.context import context_service
-        from app.services.rag.local_gateway import LocalRagGateway
+        from app.services.rag.gateway_factory import get_delete_gateway
 
         logger = logging.getLogger(__name__)
-        rag_gateway = LocalRagGateway()
+        rag_gateway = get_delete_gateway()
 
         doc = KnowledgeService.get_document(db, document_id, user_id)
         if not doc:
@@ -1244,19 +1244,21 @@ class KnowledgeService:
 
                 if retriever_name:
                     try:
-                        if kb.namespace == "default" or is_organization_namespace(
-                            db, kb.namespace
-                        ):
-                            index_owner_user_id = user_id
-                        else:
-                            index_owner_user_id = kb.user_id
+                        index_owner_user_id = kb.user_id
 
-                        result = asyncio.run(
-                            rag_gateway.delete_document_index(
+                        from app.services.rag.runtime_resolver import RagRuntimeResolver
+
+                        delete_runtime_spec = (
+                            RagRuntimeResolver().build_delete_runtime_spec(
+                                db=db,
                                 knowledge_base_id=kind_id,
                                 document_ref=doc_ref,
-                                db=db,
                                 index_owner_user_id=index_owner_user_id,
+                            )
+                        )
+                        result = asyncio.run(
+                            rag_gateway.delete_document_index(
+                                delete_runtime_spec, db=db
                             )
                         )
                         if result.get("status") == "success":

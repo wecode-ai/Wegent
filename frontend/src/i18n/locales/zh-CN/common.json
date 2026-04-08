@@ -754,7 +754,8 @@
     "coming_soon": "即将推出",
     "version": "版本",
     "updated": "更新于",
-    "total": "总计"
+    "total": "总计",
+    "noResults": "暂无结果"
   },
   "dialog": {
     "confirm_close_title": "确认关闭",
