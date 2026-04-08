@@ -364,6 +364,52 @@ def test_build_delete_runtime_spec_resolves_retriever_config():
     assert spec.retriever_config.storage_config["type"] == "qdrant"
 
 
+def test_build_delete_runtime_spec_preserves_explicit_public_owner_scope():
+    resolver = RagRuntimeResolver()
+    db = MagicMock()
+
+    with (
+        patch.object(
+            resolver,
+            "_get_knowledge_base_record",
+            return_value=SimpleNamespace(
+                user_id=42,
+                json={
+                    "spec": {
+                        "retrievalConfig": {
+                            "retriever_name": "retriever-a",
+                            "retriever_namespace": "default",
+                        }
+                    }
+                },
+            ),
+        ),
+        patch.object(
+            resolver,
+            "_build_resolved_retriever_config",
+            return_value=RuntimeRetrieverConfig(
+                name="retriever-a",
+                namespace="default",
+                storage_config={"type": "qdrant"},
+            ),
+        ) as build_retriever,
+    ):
+        spec = resolver.build_delete_runtime_spec(
+            db=db,
+            knowledge_base_id=7,
+            document_ref="doc-8",
+            index_owner_user_id=0,
+        )
+
+    assert spec.index_owner_user_id == 0
+    build_retriever.assert_called_once_with(
+        db=db,
+        user_id=0,
+        name="retriever-a",
+        namespace="default",
+    )
+
+
 def test_build_public_query_runtime_spec_requires_kb_access():
     resolver = RagRuntimeResolver()
     db = MagicMock()

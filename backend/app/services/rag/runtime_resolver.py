@@ -320,7 +320,9 @@ class RagRuntimeResolver:
                 f"Knowledge base {knowledge_base_id} has incomplete retrieval config (missing retriever_name)"
             )
 
-        runtime_user_id = index_owner_user_id or kb.user_id
+        runtime_user_id = (
+            kb.user_id if index_owner_user_id is None else index_owner_user_id
+        )
         return DeleteRuntimeSpec(
             knowledge_base_id=knowledge_base_id,
             document_ref=document_ref,

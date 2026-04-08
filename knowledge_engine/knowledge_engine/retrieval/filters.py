@@ -4,7 +4,7 @@
 
 """Metadata filtering helpers for retrieval and direct-injection paths."""
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from llama_index.core.vector_stores import (
     ExactMatchFilter,
@@ -72,16 +72,14 @@ def parse_metadata_filters(
 
     # Parse additional metadata conditions
     if metadata_condition and "conditions" in metadata_condition:
-        for cond in metadata_condition["conditions"]:
+        for cond in _iter_valid_conditions(metadata_condition):
             key = cond.get("key")
-            operator = cond.get("operator", "eq")
             value = cond.get("value")
 
-            if not key or value is None:
-                continue
-
             # Map operator string to FilterOperator enum
-            filter_op = OPERATOR_MAP.get(operator.lower(), FilterOperator.EQ)
+            filter_op = OPERATOR_MAP.get(
+                _normalize_operator(cond.get("operator")), FilterOperator.EQ
+            )
 
             # Create MetadataFilter using LlamaIndex's built-in class
             filters.append(MetadataFilter(key=key, value=value, operator=filter_op))
@@ -112,14 +110,10 @@ def build_elasticsearch_filters(
     if not metadata_condition or "conditions" not in metadata_condition:
         return filters
 
-    for cond in metadata_condition["conditions"]:
+    for cond in _iter_valid_conditions(metadata_condition):
         key = cond.get("key")
-        raw_operator = cond.get("operator", "eq")
-        operator = "eq" if raw_operator is None else str(raw_operator).lower()
+        operator = _normalize_operator(cond.get("operator"))
         value = cond.get("value")
-
-        if not key or value is None:
-            continue
 
         field_name = f"metadata.{key}.keyword"
 
@@ -151,7 +145,7 @@ def chunk_matches_metadata_condition(
     if not metadata_condition or "conditions" not in metadata_condition:
         return True
 
-    conditions = metadata_condition.get("conditions") or []
+    conditions = _iter_valid_conditions(metadata_condition)
     if not conditions:
         return True
 
@@ -190,9 +184,7 @@ def _evaluate_single_condition(
     if not key:
         return True
 
-    raw_operator = condition.get("operator", "eq")
-    operator = "eq" if raw_operator is None else str(raw_operator).lower()
-    operator = {"==": "eq", "!=": "ne"}.get(operator, operator)
+    operator = _normalize_operator(condition.get("operator"))
     value = condition.get("value")
     actual = metadata.get(key)
 
@@ -225,7 +217,25 @@ def _evaluate_single_condition(
     return actual == value
 
 
-def _compare(actual: Any, expected: Any, comparator) -> bool:
+def _normalize_operator(raw_operator: Any) -> str:
+    operator = "eq" if raw_operator is None else str(raw_operator).strip().lower()
+    return {"==": "eq", "!=": "ne"}.get(operator, operator)
+
+
+def _iter_valid_conditions(metadata_condition: Dict[str, Any]) -> List[Dict[str, Any]]:
+    conditions = metadata_condition.get("conditions") or []
+    return [
+        condition
+        for condition in conditions
+        if condition.get("key") and condition.get("value") is not None
+    ]
+
+
+def _compare(
+    actual: Any,
+    expected: Any,
+    comparator: Callable[[Any, Any], bool],
+) -> bool:
     if actual is None or expected is None:
         return False
     try:
