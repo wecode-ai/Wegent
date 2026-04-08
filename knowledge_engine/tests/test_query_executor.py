@@ -1,0 +1,106 @@
+# SPDX-FileCopyrightText: 2026 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+from unittest.mock import MagicMock
+
+import pytest
+
+from shared.models import RuntimeRetrievalConfig
+
+
+@pytest.mark.asyncio
+async def test_query_executor_delegates_to_storage_backend_with_normalized_config() -> (
+    None
+):
+    from knowledge_engine.query import QueryExecutor
+
+    storage_backend = MagicMock()
+    storage_backend.retrieve.return_value = {
+        "records": [
+            {
+                "content": "Release checklist",
+                "score": 0.91,
+                "title": "Checklist",
+                "metadata": {"doc_ref": "12"},
+            }
+        ]
+    }
+    embed_model = object()
+    executor = QueryExecutor(storage_backend=storage_backend, embed_model=embed_model)
+
+    result = await executor.execute(
+        knowledge_id="1",
+        query="release checklist",
+        retrieval_config=RuntimeRetrievalConfig(
+            top_k=8,
+            score_threshold=0.45,
+            retrieval_mode="hybrid",
+            vector_weight=0.8,
+            keyword_weight=0.2,
+        ),
+        metadata_condition={
+            "operator": "and",
+            "conditions": [{"key": "doc_ref", "operator": "in", "value": ["12"]}],
+        },
+        user_id=7,
+    )
+
+    assert result == {
+        "records": [
+            {
+                "content": "Release checklist",
+                "score": 0.91,
+                "title": "Checklist",
+                "metadata": {"doc_ref": "12"},
+            }
+        ]
+    }
+    storage_backend.retrieve.assert_called_once_with(
+        knowledge_id="1",
+        query="release checklist",
+        embed_model=embed_model,
+        retrieval_setting={
+            "top_k": 8,
+            "score_threshold": 0.45,
+            "retrieval_mode": "hybrid",
+            "vector_weight": 0.8,
+            "keyword_weight": 0.2,
+        },
+        metadata_condition={
+            "operator": "and",
+            "conditions": [{"key": "doc_ref", "operator": "in", "value": ["12"]}],
+        },
+        user_id=7,
+    )
+
+
+@pytest.mark.asyncio
+async def test_query_executor_normalizes_explicit_none_values_to_defaults() -> None:
+    from knowledge_engine.query import QueryExecutor
+
+    storage_backend = MagicMock()
+    storage_backend.retrieve.return_value = {"records": []}
+    executor = QueryExecutor(storage_backend=storage_backend, embed_model=object())
+
+    await executor.execute(
+        knowledge_id="1",
+        query="release checklist",
+        retrieval_config={
+            "top_k": None,
+            "score_threshold": None,
+            "retrieval_mode": None,
+        },
+    )
+
+    storage_backend.retrieve.assert_called_once_with(
+        knowledge_id="1",
+        query="release checklist",
+        embed_model=executor.embed_model,
+        retrieval_setting={
+            "top_k": 20,
+            "score_threshold": 0.7,
+            "retrieval_mode": "vector",
+        },
+        metadata_condition=None,
+    )

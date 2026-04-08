@@ -218,16 +218,17 @@ def create_knowledge_base(
 
 @mcp_tool(
     name="create_document",
-    description="Create a document in a knowledge base. Supports text content, base64-encoded files, or URL scraping.",
+    description="Create a document in a knowledge base. Supports text content, base64-encoded files, URL scraping, or existing attachment reference.",
     server="knowledge",
     param_descriptions={
         "knowledge_base_id": "Target knowledge base ID",
         "name": "Document name",
-        "source_type": "Source type: 'text', 'file', or 'web'",
+        "source_type": "Source type: 'text', 'file', 'web', or 'attachment'",
         "content": "Text content (for source_type='text')",
         "file_base64": "Base64-encoded file content (for source_type='file')",
         "file_extension": "File extension like 'txt', 'md', 'pdf' (for source_type='file')",
         "url": "URL to scrape (for source_type='web')",
+        "attachment_id": "Existing attachment ID to copy into knowledge base (for source_type='attachment'). Recommended for large files to avoid base64 overhead.",
         "trigger_indexing": "Whether to trigger RAG indexing (default: True)",
         "trigger_summary": "Whether to trigger summary generation (default: True)",
     },
@@ -241,16 +242,18 @@ def create_document(
     file_base64: Optional[str] = None,
     file_extension: Optional[str] = None,
     url: Optional[str] = None,
+    attachment_id: Optional[int] = None,
     trigger_indexing: bool = True,
     trigger_summary: bool = True,
 ) -> Dict[str, Any]:
     """
     Create a document in a knowledge base.
 
-    Supports three input methods:
+    Supports four input methods:
     - source_type="text": Direct text content via `content` parameter
     - source_type="file": Base64-encoded file via `file_base64` and `file_extension`
     - source_type="web": URL content scraping via `url` parameter
+    - source_type="attachment": Copy existing attachment via `attachment_id` (recommended for large files)
 
     RAG indexing and summary generation are scheduled via Celery tasks
     and return immediately after document creation.
@@ -259,11 +262,12 @@ def create_document(
         token_info: Task token information containing user context
         knowledge_base_id: Target knowledge base ID
         name: Document name
-        source_type: Source type ("text", "file", or "web")
+        source_type: Source type ("text", "file", "web", or "attachment")
         content: Text content (for source_type="text")
         file_base64: Base64-encoded file content (for source_type="file")
         file_extension: File extension (for source_type="file", e.g., "txt", "md", "pdf")
         url: URL to scrape (for source_type="web")
+        attachment_id: Existing attachment ID (for source_type="attachment")
         trigger_indexing: Whether to trigger RAG indexing (default: True)
         trigger_summary: Whether to trigger summary generation (default: True)
 
@@ -287,6 +291,7 @@ def create_document(
             file_base64=file_base64,
             file_extension=file_extension,
             url=url,
+            attachment_id=attachment_id,
             trigger_indexing=trigger_indexing,
             trigger_summary=trigger_summary,
         )

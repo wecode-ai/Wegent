@@ -199,10 +199,12 @@ wegent-backend:
         - backend/**/*
         - wecode/docker/backend/**/*
         - shared/**/*
+        - knowledge_engine/**/*
     - changes:
       - backend/**/*
       - wecode/docker/backend/**/*
       - shared/**/*
+      - knowledge_engine/**/*
 
 trigger_update_backend_web:
     stage: production
@@ -224,6 +226,8 @@ trigger_update_backend_web:
         changes:
           - backend/**/*
           - wecode/docker/backend/**/*
+          - shared/**/*
+          - knowledge_engine/**/*
 
 wegent-chat-shell:
   stage: package

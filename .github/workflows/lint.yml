@@ -53,6 +53,42 @@ jobs:
           source $HOME/.cargo/env
           uv run isort --check-only --diff app/
 
+  lint-knowledge-engine:
+    name: Lint Knowledge Engine (Black & isort)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          source $HOME/.cargo/env
+
+      - name: Install dependencies
+        working-directory: ./knowledge_engine
+        run: |
+          source $HOME/.cargo/env
+          uv sync --dev
+
+      - name: Run Black format check
+        working-directory: ./knowledge_engine
+        run: |
+          source $HOME/.cargo/env
+          uv run black --check knowledge_engine tests
+
+      - name: Run isort check
+        working-directory: ./knowledge_engine
+        run: |
+          source $HOME/.cargo/env
+          uv run isort --check-only --diff knowledge_engine tests
+
   lint-frontend:
     name: Lint Frontend (ESLint & TypeScript)
     runs-on: ubuntu-latest
@@ -109,7 +145,7 @@ jobs:
   lint-summary:
     name: Lint Summary
     runs-on: ubuntu-latest
-    needs: [lint-backend, lint-frontend, check-settings-config, check-alembic-heads]
+    needs: [lint-backend, lint-knowledge-engine, lint-frontend, check-settings-config, check-alembic-heads]
     if: always()
 
     steps:
@@ -117,6 +153,7 @@ jobs:
         run: |
           echo "All lint jobs completed"
           if [[ "${{ needs.lint-backend.result }}" == "failure" ]] || \
+             [[ "${{ needs.lint-knowledge-engine.result }}" == "failure" ]] || \
              [[ "${{ needs.lint-frontend.result }}" == "failure" ]] || \
              [[ "${{ needs.check-settings-config.result }}" == "failure" ]] || \
              [[ "${{ needs.check-alembic-heads.result }}" == "failure" ]]; then

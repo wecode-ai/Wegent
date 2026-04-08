@@ -4,6 +4,11 @@
 
 """Authentication services."""
 
+from app.services.auth.rag_download_token import (
+    RagDownloadTokenInfo,
+    create_rag_download_token,
+    verify_rag_download_token,
+)
 from app.services.auth.skill_identity_token import (
     SkillIdentityTokenInfo,
     create_skill_identity_token,
@@ -25,6 +30,9 @@ __all__ = [
     "verify_task_token",
     "get_user_from_task_token",
     "extract_token_from_header",
+    "RagDownloadTokenInfo",
+    "create_rag_download_token",
+    "verify_rag_download_token",
     "SkillIdentityTokenInfo",
     "create_skill_identity_token",
     "verify_skill_identity_token",

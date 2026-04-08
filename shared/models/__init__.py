@@ -46,6 +46,25 @@ from .blocks import (
 
 # Unified execution protocol
 from .execution import EventType, ExecutionEvent, ExecutionRequest
+from .knowledge_runtime_protocol import (
+    BackendAttachmentStreamContentRef,
+    KnowledgeRuntimeAuth,
+    PresignedUrlContentRef,
+    RemoteDeleteDocumentIndexRequest,
+    RemoteIndexRequest,
+    RemoteKnowledgeBaseQueryConfig,
+    RemoteListChunkRecord,
+    RemoteListChunksRequest,
+    RemoteListChunksResponse,
+    RemoteQueryRecord,
+    RemoteQueryRequest,
+    RemoteQueryResponse,
+    RemoteRagError,
+    RemoteTestConnectionRequest,
+    RuntimeEmbeddingModelConfig,
+    RuntimeRetrievalConfig,
+    RuntimeRetrieverConfig,
+)
 
 # OpenAI Request Converter
 from .openai_converter import (
@@ -86,6 +105,23 @@ __all__ = [
     "EventType",
     "ExecutionEvent",
     "ExecutionRequest",
+    "BackendAttachmentStreamContentRef",
+    "PresignedUrlContentRef",
+    "KnowledgeRuntimeAuth",
+    "RemoteRagError",
+    "RuntimeRetrieverConfig",
+    "RuntimeEmbeddingModelConfig",
+    "RuntimeRetrievalConfig",
+    "RemoteKnowledgeBaseQueryConfig",
+    "RemoteIndexRequest",
+    "RemoteDeleteDocumentIndexRequest",
+    "RemoteListChunksRequest",
+    "RemoteListChunkRecord",
+    "RemoteListChunksResponse",
+    "RemoteTestConnectionRequest",
+    "RemoteQueryRequest",
+    "RemoteQueryRecord",
+    "RemoteQueryResponse",
     # OpenAI Responses API
     "ResponsesAPIStreamEvents",
     "ResponsesAPIStreamingResponse",

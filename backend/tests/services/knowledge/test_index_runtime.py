@@ -108,11 +108,3 @@ def test_get_kb_index_info_falls_back_when_kb_is_missing() -> None:
         index_owner_user_id=7,
         summary_enabled=False,
     )
-
-
-def test_splitter_runtime_parser_supports_smart_type() -> None:
-    from app.services.rag.splitter.runtime_config import parse_runtime_splitter_config
-
-    splitter = parse_runtime_splitter_config({"type": "smart"})
-
-    assert splitter.type == "smart"

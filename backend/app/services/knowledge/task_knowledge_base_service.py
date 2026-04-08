@@ -18,9 +18,8 @@ from app.models.kind import Kind
 from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.kind import KnowledgeBaseTaskRef
-from app.services.group_permission import get_effective_role_in_group
 from app.services.knowledge.knowledge_service import KnowledgeService
-from app.services.knowledge.namespace_utils import is_organization_namespace
+from app.services.share import knowledge_share_service
 from app.services.task_member_service import task_member_service
 
 logger = logging.getLogger(__name__)
@@ -94,7 +93,12 @@ class TaskKnowledgeBaseService:
         return spec.get("is_group_chat", False)
 
     def can_access_knowledge_base(
-        self, db: Session, user_id: int, kb_name: str, kb_namespace: str
+        self,
+        db: Session,
+        user_id: int,
+        kb_name: str,
+        kb_namespace: str,
+        knowledge_id: Optional[int] = None,
     ) -> bool:
         """Check if user has access to a knowledge base.
 
@@ -103,31 +107,31 @@ class TaskKnowledgeBaseService:
             user_id: User ID
             kb_name: Knowledge base display name (spec.name)
             kb_namespace: Knowledge base namespace
+            knowledge_id: Optional knowledge base Kind.id for unambiguous lookup
 
         Returns:
             True if user has access to the knowledge base
         """
-        # Find the knowledge base by display name (spec.name)
-        kb = self.get_knowledge_base_by_name(db, kb_name, kb_namespace)
+        if knowledge_id is not None:
+            return (
+                knowledge_share_service._get_resource(db, knowledge_id, user_id)
+                is not None
+            )
 
+        kb = self.get_knowledge_base_by_name(db, kb_name, kb_namespace)
         if not kb:
             return False
 
-        # For personal knowledge base (default namespace)
-        if kb.namespace == "default":
-            # Creator always has access
-            if kb.user_id == user_id:
-                return True
-            # Check if KB is bound to any group chat that the user is a member of
-            return self._is_kb_bound_to_user_group_chat(db, kb.id, user_id)
-
-        # For organization knowledge base, all authenticated users have access
-        if is_organization_namespace(db, kb.namespace):
+        resolved_kb = knowledge_share_service._get_resource(db, kb.id, user_id)
+        if resolved_kb is not None:
             return True
 
-        # For team knowledge base, check group membership
-        role = get_effective_role_in_group(db, user_id, kb.namespace)
-        return role is not None
+        if kb_namespace != "default":
+            return False
+
+        # Backward compatibility for default-namespace KB refs that were granted
+        # implicitly via existing group-chat bindings before share records existed.
+        return self._is_kb_bound_to_user_group_chat(db, kb.id, user_id)
 
     def _is_kb_bound_to_user_group_chat(
         self, db: Session, kb_id: int, user_id: int
@@ -916,8 +920,9 @@ class TaskKnowledgeBaseService:
             )
 
             if not kb:
-                logger.debug(
-                    f"[sync_subtask_kb_to_task] KB not found: knowledge_id={knowledge_id}"
+                logger.info(
+                    f"[sync_subtask_kb_to_task] Skip sync because KB was not found: "
+                    f"task_id={task.id}, knowledge_id={knowledge_id}, user_id={user_id}"
                 )
                 return False
 
@@ -927,16 +932,24 @@ class TaskKnowledgeBaseService:
             kb_namespace = kb.namespace
 
             if not kb_name:
-                logger.debug(
-                    f"[sync_subtask_kb_to_task] KB has no display name: knowledge_id={knowledge_id}"
+                logger.info(
+                    f"[sync_subtask_kb_to_task] Skip sync because KB has no display name: "
+                    f"task_id={task.id}, knowledge_id={knowledge_id}, user_id={user_id}"
                 )
                 return False
 
             # Check user access to the knowledge base
-            if not self.can_access_knowledge_base(db, user_id, kb_name, kb_namespace):
-                logger.debug(
-                    f"[sync_subtask_kb_to_task] User {user_id} has no access to KB "
-                    f"{kb_name}/{kb_namespace}"
+            if not self.can_access_knowledge_base(
+                db,
+                user_id,
+                kb_name,
+                kb_namespace,
+                knowledge_id=knowledge_id,
+            ):
+                logger.info(
+                    f"[sync_subtask_kb_to_task] Skip sync because user has no access "
+                    f"to KB {kb_name}/{kb_namespace}: task_id={task.id}, "
+                    f"knowledge_id={knowledge_id}, user_id={user_id}"
                 )
                 return False
 
@@ -947,9 +960,10 @@ class TaskKnowledgeBaseService:
 
             # Check binding limit - skip silently if reached
             if len(kb_refs) >= self.MAX_BOUND_KNOWLEDGE_BASES:
-                logger.debug(
-                    f"[sync_subtask_kb_to_task] KB limit reached for task {task.id}, "
-                    f"skipping sync of KB {kb_name}/{kb_namespace}"
+                logger.info(
+                    f"[sync_subtask_kb_to_task] Skip sync because KB limit was reached: "
+                    f"task_id={task.id}, knowledge_id={knowledge_id}, user_id={user_id}, "
+                    f"kb={kb_name}/{kb_namespace}, max_bound={self.MAX_BOUND_KNOWLEDGE_BASES}"
                 )
                 return False
 
@@ -959,9 +973,10 @@ class TaskKnowledgeBaseService:
                     ref.get("name") == kb_name
                     and ref.get("namespace", "default") == kb_namespace
                 ):
-                    logger.debug(
-                        f"[sync_subtask_kb_to_task] KB {kb_name}/{kb_namespace} "
-                        f"already bound to task {task.id}"
+                    logger.info(
+                        f"[sync_subtask_kb_to_task] Skip sync because KB is already "
+                        f"bound: task_id={task.id}, knowledge_id={knowledge_id}, "
+                        f"user_id={user_id}, kb={kb_name}/{kb_namespace}"
                     )
                     return False
 

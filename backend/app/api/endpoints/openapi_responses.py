@@ -389,6 +389,10 @@ async def _create_non_streaming_response_unified(
     # Extract knowledge base names from tool settings
     knowledge_base_names = tool_settings.get("knowledge_base_names", [])
 
+    # Auto-enable tools when knowledge_base is specified
+    # This ensures KB tools and skill tools are actually added to the agent
+    enable_tools = enable_chat_bot or bool(knowledge_base_names)
+
     # Build execution request
     try:
         execution_request = await build_execution_request(
@@ -397,7 +401,7 @@ async def _create_non_streaming_response_unified(
             team=team,
             user=user,
             message=input_text,
-            enable_tools=enable_chat_bot,
+            enable_tools=enable_tools,
             enable_deep_thinking=enable_chat_bot,
             enable_web_search=enable_chat_bot and settings.WEB_SEARCH_ENABLED,
             preload_skills=preload_skills,
@@ -671,6 +675,10 @@ async def _create_streaming_response_unified(
     # Extract knowledge base names from tool settings
     knowledge_base_names = tool_settings.get("knowledge_base_names", [])
 
+    # Auto-enable tools when knowledge_base is specified
+    # This ensures KB tools and skill tools are actually added to the agent
+    enable_tools = enable_chat_bot or bool(knowledge_base_names)
+
     # Build execution request using unified builder
     try:
         execution_request = await build_execution_request(
@@ -679,7 +687,7 @@ async def _create_streaming_response_unified(
             team=team,
             user=user,
             message=input_text,
-            enable_tools=enable_chat_bot,
+            enable_tools=enable_tools,
             enable_deep_thinking=enable_chat_bot,
             enable_web_search=enable_chat_bot and settings.WEB_SEARCH_ENABLED,
             preload_skills=preload_skills,

@@ -193,16 +193,19 @@ def test_index_document_task_routes_indexing_through_gateway():
                 return_value=object(),
             )
         )
-        mock_index = stack.enter_context(
+        mock_gateway = MagicMock()
+        mock_gateway.index_document = AsyncMock(
+            return_value={
+                "status": "success",
+                "document_id": 4,
+                "knowledge_base_id": "1",
+                "chunks_data": {"total_count": 8},
+            }
+        )
+        mock_get_index_gateway = stack.enter_context(
             patch(
-                "app.services.knowledge.indexing.LocalRagGateway.index_document",
-                new_callable=AsyncMock,
-                return_value={
-                    "status": "success",
-                    "document_id": 4,
-                    "knowledge_base_id": "1",
-                    "chunks_data": {"total_count": 8},
-                },
+                "app.services.knowledge.indexing.get_index_gateway",
+                return_value=mock_gateway,
             )
         )
         stack.enter_context(
@@ -222,7 +225,11 @@ def test_index_document_task_routes_indexing_through_gateway():
 
     assert result["status"] == "success"
     mock_resolve.assert_called_once()
-    mock_index.assert_awaited_once_with(mock_resolve.return_value, db=indexing_db)
+    mock_get_index_gateway.assert_called_once()
+    mock_gateway.index_document.assert_awaited_once_with(
+        mock_resolve.return_value,
+        db=indexing_db,
+    )
 
 
 def test_index_document_task_enqueues_summary_after_finalize(
