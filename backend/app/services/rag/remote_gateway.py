@@ -220,6 +220,7 @@ class RemoteRagGateway:
             retriever_config=spec.retriever_config,
             max_chunks=spec.max_chunks,
             query=spec.query,
+            metadata_condition=spec.metadata_condition,
         )
         response_payload = await self._post_model("/internal/rag/all-chunks", payload)
         response = RemoteListChunksResponse.model_validate(response_payload)

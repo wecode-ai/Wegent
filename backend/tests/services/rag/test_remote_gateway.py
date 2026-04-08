@@ -507,6 +507,12 @@ async def test_remote_gateway_list_chunks_posts_runtime_request(mocker) -> None:
         ),
         max_chunks=1000,
         query="list_index_chunks",
+        metadata_condition={
+            "operator": "and",
+            "conditions": [
+                {"key": "lang", "operator": "==", "value": "zh"},
+            ],
+        },
     )
 
     result = await gateway.list_chunks(spec)
@@ -538,6 +544,12 @@ async def test_remote_gateway_list_chunks_posts_runtime_request(mocker) -> None:
         },
         "max_chunks": 1000,
         "query": "list_index_chunks",
+        "metadata_condition": {
+            "operator": "and",
+            "conditions": [
+                {"key": "lang", "operator": "==", "value": "zh"},
+            ],
+        },
     }
 
 

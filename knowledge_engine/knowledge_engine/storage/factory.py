@@ -59,6 +59,8 @@ def create_storage_backend_from_config(
             f"Unsupported storage type: {normalized_type}. "
             f"Supported types: {list(STORAGE_BACKEND_REGISTRY.keys())}"
         )
+    if not url:
+        raise ValueError(f"storage url must be provided for {normalized_type} backend")
 
     config = {
         "url": url,
@@ -74,13 +76,17 @@ def create_storage_backend_from_config(
 
 def create_storage_backend_from_runtime_config(
     retriever_config: RuntimeRetrieverConfig,
-):
+) -> BaseStorageBackend:
     storage_config = retriever_config.storage_config or {}
     storage_type = (storage_config.get("type") or "").lower()
     if storage_type not in STORAGE_BACKEND_REGISTRY:
         raise ValueError(
             f"Unsupported storage type: {storage_type or '<missing>'}. "
             f"Supported types: {list(STORAGE_BACKEND_REGISTRY.keys())}"
+        )
+    if not storage_config.get("url"):
+        raise ValueError(
+            f"storage url must be provided for {storage_type or '<missing>'} backend"
         )
 
     config = {

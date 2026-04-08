@@ -22,3 +22,20 @@ def test_build_elasticsearch_filters_normalizes_mixed_case_operators() -> None:
         {"range": {"metadata.priority.keyword": {"gte": 3}}},
         {"wildcard": {"metadata.tag.keyword": "*release*"}},
     ]
+
+
+def test_build_elasticsearch_filters_defaults_none_operator_to_eq() -> None:
+    filters = build_elasticsearch_filters(
+        "kb_1",
+        {
+            "operator": "and",
+            "conditions": [
+                {"key": "priority", "operator": None, "value": 3},
+            ],
+        },
+    )
+
+    assert filters == [
+        {"term": {"metadata.knowledge_id.keyword": "kb_1"}},
+        {"term": {"metadata.priority.keyword": 3}},
+    ]

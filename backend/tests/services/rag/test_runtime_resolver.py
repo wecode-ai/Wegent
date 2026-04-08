@@ -185,6 +185,93 @@ def test_build_query_runtime_spec_resolves_configs_for_forced_rag_route():
     assert spec.knowledge_base_configs == resolved_configs
 
 
+def test_build_public_list_chunks_runtime_spec_carries_metadata_condition() -> None:
+    resolver = RagRuntimeResolver()
+    db = MagicMock()
+    kb = SimpleNamespace(
+        id=7,
+        user_id=42,
+        json={
+            "spec": {
+                "retrievalConfig": {
+                    "retriever_name": "retriever-a",
+                    "retriever_namespace": "default",
+                }
+            }
+        },
+    )
+
+    with (
+        patch(
+            "app.services.knowledge.knowledge_service.KnowledgeService.get_knowledge_base",
+            return_value=(kb, True),
+        ),
+        patch.object(
+            resolver,
+            "_build_resolved_retriever_config",
+            return_value=RuntimeRetrieverConfig(
+                name="retriever-a",
+                namespace="default",
+                storage_config={"type": "qdrant", "url": "http://qdrant:6333"},
+            ),
+        ),
+    ):
+        spec = resolver.build_public_list_chunks_runtime_spec(
+            db=db,
+            knowledge_base_id=7,
+            user_id=9,
+            user_name="alice",
+            max_chunks=500,
+            query="list_index_chunks",
+            metadata_condition={
+                "operator": "and",
+                "conditions": [
+                    {"key": "lang", "operator": "==", "value": "zh"},
+                ],
+            },
+        )
+
+    assert spec.knowledge_base_id == 7
+    assert spec.index_owner_user_id == 42
+    assert spec.max_chunks == 500
+    assert spec.metadata_condition == {
+        "operator": "and",
+        "conditions": [
+            {"key": "lang", "operator": "==", "value": "zh"},
+        ],
+    }
+
+
+def test_build_resolved_retriever_config_defaults_missing_index_strategy() -> None:
+    resolver = RagRuntimeResolver()
+    retriever = SimpleNamespace(
+        spec=SimpleNamespace(
+            storageConfig=SimpleNamespace(
+                type="qdrant",
+                url="http://qdrant:6333",
+                username=None,
+                password=None,
+                apiKey=None,
+                indexStrategy=None,
+                ext=None,
+            )
+        )
+    )
+
+    with patch(
+        "app.services.rag.runtime_resolver.retriever_kinds_service.get_retriever",
+        return_value=retriever,
+    ):
+        config = resolver._build_resolved_retriever_config(
+            db=MagicMock(),
+            user_id=7,
+            name="retriever-a",
+            namespace="default",
+        )
+
+    assert config.storage_config["indexStrategy"] == {"mode": "per_dataset"}
+
+
 def test_build_query_runtime_spec_rejects_control_plane_only_inputs():
     resolver = RagRuntimeResolver()
 

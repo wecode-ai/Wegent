@@ -33,7 +33,6 @@ from app.services.rag.remote_gateway import (
 )
 from app.services.rag.retrieval_service import RetrievalService
 from app.services.rag.runtime_resolver import RagRuntimeResolver
-from app.services.rag.runtime_specs import ListChunksRuntimeSpec
 from shared.models import (
     RemoteListChunkRecord,
     RemoteListChunksRequest,
@@ -645,14 +644,15 @@ async def get_all_chunks(
         All chunks from the knowledge base
     """
     try:
+        runtime_spec = runtime_resolver.build_internal_list_chunks_runtime_spec(
+            db=db,
+            knowledge_base_id=request.knowledge_base_id,
+            max_chunks=request.max_chunks,
+            query=request.query,
+            metadata_condition=request.metadata_condition,
+        )
         result = await LocalRagGateway().list_chunks(
-            ListChunksRuntimeSpec(
-                knowledge_base_id=request.knowledge_base_id,
-                index_owner_user_id=request.index_owner_user_id,
-                retriever_config=request.retriever_config,
-                max_chunks=request.max_chunks,
-                query=request.query,
-            ),
+            runtime_spec,
             db=db,
         )
         chunks = result.get("chunks", [])

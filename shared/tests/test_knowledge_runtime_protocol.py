@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2025 Weibo, Inc.
+# SPDX-FileCopyrightText: 2026 Weibo, Inc.
 #
 # SPDX-License-Identifier: Apache-2.0
 
@@ -153,11 +153,23 @@ def test_remote_list_chunks_request_accepts_resolved_retriever_config() -> None:
             },
             "max_chunks": 1000,
             "query": "list_index_chunks",
+            "metadata_condition": {
+                "operator": "and",
+                "conditions": [
+                    {"key": "lang", "operator": "==", "value": "zh"},
+                ],
+            },
         }
     )
 
     assert request.knowledge_base_id == 1001
     assert request.retriever_config.storage_config["type"] == "qdrant"
+    assert request.metadata_condition == {
+        "operator": "and",
+        "conditions": [
+            {"key": "lang", "operator": "==", "value": "zh"},
+        ],
+    }
 
 
 def test_remote_query_request_accepts_explicit_execution_configs() -> None:

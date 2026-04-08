@@ -93,6 +93,7 @@ async def list_chunks_local(
         knowledge_id=str(spec.knowledge_base_id),
         max_chunks=spec.max_chunks,
         user_id=spec.index_owner_user_id,
+        metadata_condition=spec.metadata_condition,
     )
     return {
         "chunks": chunks,

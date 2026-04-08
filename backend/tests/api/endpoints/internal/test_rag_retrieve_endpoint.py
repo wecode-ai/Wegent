@@ -9,7 +9,6 @@ from app.services.rag.remote_gateway import RemoteRagGatewayError
 from app.services.rag.runtime_specs import (
     DirectInjectionBudget,
     QueryRuntimeSpec,
-    RuntimeRetrieverConfig,
 )
 
 
@@ -129,24 +128,36 @@ def test_internal_all_chunks_routes_protocol_request_through_local_gateway(test_
         },
         "max_chunks": 1000,
         "query": "list_index_chunks",
-    }
-
-    with patch(
-        "app.api.endpoints.internal.rag.LocalRagGateway.list_chunks",
-        new_callable=AsyncMock,
-        return_value={
-            "chunks": [
-                {
-                    "content": "chunk-1",
-                    "title": "Doc 1",
-                    "chunk_id": 1,
-                    "doc_ref": "doc-1",
-                    "metadata": {"page": 1},
-                }
+        "metadata_condition": {
+            "operator": "and",
+            "conditions": [
+                {"key": "lang", "operator": "==", "value": "zh"},
             ],
-            "total": 1,
         },
-    ) as mock_list_chunks:
+    }
+    runtime_spec = object()
+    with (
+        patch(
+            "app.api.endpoints.internal.rag.runtime_resolver.build_internal_list_chunks_runtime_spec",
+            return_value=runtime_spec,
+        ) as mock_build_spec,
+        patch(
+            "app.api.endpoints.internal.rag.LocalRagGateway.list_chunks",
+            new_callable=AsyncMock,
+            return_value={
+                "chunks": [
+                    {
+                        "content": "chunk-1",
+                        "title": "Doc 1",
+                        "chunk_id": 1,
+                        "doc_ref": "doc-1",
+                        "metadata": {"page": 1},
+                    }
+                ],
+                "total": 1,
+            },
+        ) as mock_list_chunks,
+    ):
         response = test_client.post("/api/internal/rag/all-chunks", json=payload)
 
     assert response.status_code == 200
@@ -162,20 +173,14 @@ def test_internal_all_chunks_routes_protocol_request_through_local_gateway(test_
         ],
         "total": 1,
     }
-    mock_list_chunks.assert_awaited_once_with(ANY, db=ANY)
-    spec = mock_list_chunks.await_args.args[0]
-    assert spec.knowledge_base_id == 7
-    assert spec.index_owner_user_id == 9
-    assert spec.max_chunks == 1000
-    assert spec.query == "list_index_chunks"
-    assert spec.retriever_config == RuntimeRetrieverConfig(
-        name="retriever-a",
-        namespace="default",
-        storage_config={
-            "type": "qdrant",
-            "url": "http://qdrant:6333",
-        },
+    mock_build_spec.assert_called_once_with(
+        db=ANY,
+        knowledge_base_id=7,
+        max_chunks=1000,
+        query="list_index_chunks",
+        metadata_condition=payload["metadata_condition"],
     )
+    mock_list_chunks.assert_awaited_once_with(runtime_spec, db=ANY)
 
 
 def test_internal_retrieve_keeps_user_subtask_id_out_of_gateway(test_client):

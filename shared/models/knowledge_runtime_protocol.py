@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2025 Weibo, Inc.
+# SPDX-FileCopyrightText: 2026 Weibo, Inc.
 #
 # SPDX-License-Identifier: Apache-2.0
 
@@ -140,6 +140,7 @@ class RemoteListChunksRequest(KnowledgeRuntimeProtocolModel):
     retriever_config: RuntimeRetrieverConfig
     max_chunks: int = Field(default=10000, gt=0, le=10000)
     query: str | None = None
+    metadata_condition: dict[str, Any] | None = None
     extensions: dict[str, Any] | None = None
 
 

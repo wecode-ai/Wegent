@@ -173,3 +173,27 @@ async def test_delete_document_index_local_delegates_to_engine_document_service(
         doc_ref="doc-1",
         user_id=7,
     )
+
+
+@pytest.mark.asyncio
+async def test_delete_document_index_local_rejects_unsupported_index_families() -> None:
+    spec = DeleteRuntimeSpec(
+        knowledge_base_id=1,
+        document_ref="doc-1",
+        index_owner_user_id=7,
+        retriever_config=RuntimeRetrieverConfig(
+            name="retriever-a",
+            namespace="default",
+            storage_config={"type": "qdrant"},
+        ),
+        enabled_index_families=["chunk_vector", "summary_vector_index"],
+    )
+
+    with patch(
+        "app.services.rag.local_data_plane.indexing.EngineDocumentService.delete_document",
+        new_callable=AsyncMock,
+    ) as mock_delete_document:
+        with pytest.raises(ValueError, match="Local delete only supports chunk_vector"):
+            await delete_document_index_local(spec, db=MagicMock())
+
+    mock_delete_document.assert_not_awaited()

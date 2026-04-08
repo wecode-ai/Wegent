@@ -145,6 +145,15 @@ async def delete_document_index_local(
 ) -> dict:
     """Delete document chunks from the local storage backend."""
     del db
+    unsupported_families = [
+        family for family in spec.enabled_index_families if family != "chunk_vector"
+    ]
+    if unsupported_families:
+        raise ValueError(
+            "Local delete only supports chunk_vector index family; "
+            f"unsupported: {', '.join(sorted(set(unsupported_families)))}"
+        )
+
     storage_backend = create_storage_backend_from_runtime_config(spec.retriever_config)
     service = EngineDocumentService(storage_backend=storage_backend)
     return await service.delete_document(
@@ -186,7 +195,11 @@ def _build_runtime_retriever_config(retriever) -> RuntimeRetrieverConfig:
             "username": storage_config.username,
             "password": storage_config.password,
             "apiKey": storage_config.apiKey,
-            "indexStrategy": storage_config.indexStrategy.model_dump(exclude_none=True),
+            "indexStrategy": (
+                storage_config.indexStrategy.model_dump(exclude_none=True)
+                if storage_config.indexStrategy is not None
+                else {"mode": "per_dataset"}
+            ),
             "ext": storage_config.ext or {},
         },
     )

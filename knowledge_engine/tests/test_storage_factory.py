@@ -2,6 +2,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import pytest
+
 from shared.models import RuntimeRetrieverConfig
 
 
@@ -62,3 +64,19 @@ def test_get_storage_retrieval_methods_uses_registered_backends(monkeypatch) -> 
 
     assert get_supported_retrieval_methods("fake") == ["vector", "hybrid"]
     assert get_all_storage_retrieval_methods()["fake"] == ["vector", "hybrid"]
+
+
+def test_create_storage_backend_from_runtime_config_requires_url() -> None:
+    from knowledge_engine.storage.factory import (
+        create_storage_backend_from_runtime_config,
+    )
+
+    with pytest.raises(ValueError, match="storage url must be provided"):
+        create_storage_backend_from_runtime_config(
+            RuntimeRetrieverConfig(
+                name="retriever-a",
+                storage_config={
+                    "type": "qdrant",
+                },
+            )
+        )

@@ -85,6 +85,7 @@ class ListChunksRuntimeSpec(RuntimeSpecModel):
     retriever_config: RuntimeRetrieverConfig
     max_chunks: int = 10000
     query: Optional[str] = None
+    metadata_condition: Optional[dict] = None
 
 
 class ConnectionTestRuntimeSpec(RuntimeSpecModel):

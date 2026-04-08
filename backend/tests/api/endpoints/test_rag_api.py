@@ -67,7 +67,6 @@ def test_public_rag_retrieve_uses_gateway_runtime_spec(
     with (
         patch(
             "app.api.endpoints.rag.runtime_resolver.build_public_query_runtime_spec",
-            create=True,
             return_value=runtime_spec,
         ) as mock_build_spec,
         patch(
@@ -208,7 +207,6 @@ def test_public_rag_retrieve_returns_non_retryable_remote_error(
     with (
         patch(
             "app.api.endpoints.rag.runtime_resolver.build_public_query_runtime_spec",
-            create=True,
             return_value=runtime_spec,
         ),
         patch(
@@ -248,6 +246,19 @@ def test_public_rag_chunks_rejects_pages_beyond_scan_limit(
 ):
     response = test_client.get(
         "/api/rag/chunks?knowledge_id=7&page=201&page_size=50",
+        headers=_auth_header(test_token),
+    )
+
+    assert response.status_code == 400
+    assert "chunk scan limit" in response.json()["detail"]
+
+
+def test_public_rag_chunks_rejects_page_ranges_crossing_scan_limit(
+    test_client,
+    test_token: str,
+):
+    response = test_client.get(
+        "/api/rag/chunks?knowledge_id=7&page=67&page_size=150",
         headers=_auth_header(test_token),
     )
 

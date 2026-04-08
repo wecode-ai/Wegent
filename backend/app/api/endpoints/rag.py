@@ -137,9 +137,10 @@ async def list_index_chunks(
     """List indexed chunks stored for a knowledge base."""
     try:
         start = (page - 1) * page_size
-        if start >= INDEX_CHUNK_LIST_MAX_CHUNKS:
+        if start + page_size > INDEX_CHUNK_LIST_MAX_CHUNKS:
             raise ValueError(
-                f"Requested page exceeds the chunk scan limit of {INDEX_CHUNK_LIST_MAX_CHUNKS}"
+                "Requested page exceeds the chunk scan limit of "
+                f"{INDEX_CHUNK_LIST_MAX_CHUNKS}"
             )
 
         runtime_spec = runtime_resolver.build_public_list_chunks_runtime_spec(

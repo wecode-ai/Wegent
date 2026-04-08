@@ -224,6 +224,7 @@ class RagRuntimeResolver:
         user_name: str | None,
         max_chunks: int,
         query: str | None = None,
+        metadata_condition: dict | None = None,
     ) -> ListChunksRuntimeSpec:
         from app.services.knowledge.knowledge_service import KnowledgeService
 
@@ -237,16 +238,55 @@ class RagRuntimeResolver:
                 f"Knowledge base {knowledge_base_id} not found or access denied"
             )
 
+        del user_name
+        return self._build_list_chunks_runtime_spec(
+            db=db,
+            kb=kb,
+            max_chunks=max_chunks,
+            query=query,
+            metadata_condition=metadata_condition,
+        )
+
+    def build_internal_list_chunks_runtime_spec(
+        self,
+        *,
+        db: Session,
+        knowledge_base_id: int,
+        max_chunks: int,
+        query: str | None = None,
+        metadata_condition: dict | None = None,
+    ) -> ListChunksRuntimeSpec:
+        kb = self._get_knowledge_base_record(db=db, knowledge_base_id=knowledge_base_id)
+        if kb is None:
+            raise ValueError(f"Knowledge base {knowledge_base_id} not found")
+
+        return self._build_list_chunks_runtime_spec(
+            db=db,
+            kb=kb,
+            max_chunks=max_chunks,
+            query=query,
+            metadata_condition=metadata_condition,
+        )
+
+    def _build_list_chunks_runtime_spec(
+        self,
+        *,
+        db: Session,
+        kb: Kind,
+        max_chunks: int,
+        query: str | None,
+        metadata_condition: dict | None,
+    ) -> ListChunksRuntimeSpec:
         retrieval_config = (kb.json or {}).get("spec", {}).get("retrievalConfig") or {}
         retriever_name = retrieval_config.get("retriever_name")
         retriever_namespace = retrieval_config.get("retriever_namespace", "default")
         if not retriever_name:
             raise ValueError(
-                f"Knowledge base {knowledge_base_id} has incomplete retrieval config (missing retriever_name)"
+                f"Knowledge base {kb.id} has incomplete retrieval config (missing retriever_name)"
             )
 
         return ListChunksRuntimeSpec(
-            knowledge_base_id=knowledge_base_id,
+            knowledge_base_id=kb.id,
             index_owner_user_id=kb.user_id,
             retriever_config=self._build_resolved_retriever_config(
                 db=db,
@@ -256,6 +296,7 @@ class RagRuntimeResolver:
             ),
             max_chunks=max_chunks,
             query=query,
+            metadata_condition=metadata_condition,
         )
 
     def build_delete_runtime_spec(
@@ -410,8 +451,10 @@ class RagRuntimeResolver:
                 "username": storage_config.username,
                 "password": self._decrypt_optional_secret(storage_config.password),
                 "apiKey": self._decrypt_optional_secret(storage_config.apiKey),
-                "indexStrategy": storage_config.indexStrategy.model_dump(
-                    exclude_none=True
+                "indexStrategy": (
+                    storage_config.indexStrategy.model_dump(exclude_none=True)
+                    if storage_config.indexStrategy is not None
+                    else {"mode": "per_dataset"}
                 ),
                 "ext": storage_config.ext or {},
             },
@@ -481,7 +524,7 @@ class RagRuntimeResolver:
                     Kind.kind == "Model",
                     Kind.name == model_name,
                     Kind.namespace == model_namespace,
-                    Kind.is_active == True,
+                    Kind.is_active.is_(True),
                 )
                 .filter((Kind.user_id == user_id) | (Kind.user_id == 0))
                 .order_by(Kind.user_id.desc())
@@ -493,7 +536,7 @@ class RagRuntimeResolver:
                 Kind.kind == "Model",
                 Kind.name == model_name,
                 Kind.namespace == model_namespace,
-                Kind.is_active == True,
+                Kind.is_active.is_(True),
             )
             .first()
         )
