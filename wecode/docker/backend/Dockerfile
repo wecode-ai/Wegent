@@ -38,8 +38,12 @@ RUN uv pip install --system --no-cache /app/shared
 COPY chat_shell /app/chat_shell
 RUN uv pip install --system --no-cache /app/chat_shell
 
+# Copy and install knowledge_engine module
+COPY knowledge_engine /app/knowledge_engine
+RUN uv pip install --system --no-cache /app/knowledge_engine
+
 # Copy pyproject.toml and install dependencies
-# Remove [tool.uv.sources] section as shared is already installed
+# Remove [tool.uv.sources] section after local workspace packages are installed
 COPY backend/pyproject.toml .
 ENV EXECUTOR_ENV='{"DEFAULT_HEADERS":{"wecode-source":"agent","wecode-user":"${task_data.user.name}","wecode-action":"wegent","wecode-executor":"chat"}}'
 
