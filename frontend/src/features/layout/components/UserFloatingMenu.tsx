@@ -118,12 +118,17 @@ export function UserFloatingMenu({ className = '' }: UserFloatingMenuProps) {
               title={t('common:navigation.settings')}
             />
           </div>
-          {isAdmin && (
-            <span className="text-xs text-primary flex items-center gap-0.5">
-              <ShieldCheckIcon className="w-3 h-3" />
-              Admin
+          <div className="flex items-center gap-1.5">
+            {isAdmin && (
+              <span className="text-xs text-primary flex items-center gap-0.5">
+                <ShieldCheckIcon className="w-3 h-3" />
+                Admin
+              </span>
+            )}
+            <span className="text-xs text-text-muted/60" data-testid="app-version">
+              v{appVersion}
             </span>
-          )}
+          </div>
         </div>
         <ChevronUpIcon
           className={`w-3.5 h-3.5 text-text-muted transition-transform duration-200 flex-shrink-0 ${
@@ -222,16 +227,6 @@ export function UserFloatingMenu({ className = '' }: UserFloatingMenuProps) {
             <ArrowRightOnRectangleIcon className="w-4 h-4 text-text-muted" />
             {t('common:user.logout')}
           </button>
-
-          {/* Version info */}
-          <div className="px-3 py-1.5 text-center">
-            <span
-              className="text-xs text-text-muted/60"
-              data-testid="app-version"
-            >
-              v{appVersion}
-            </span>
-          </div>
         </div>
       </div>
     </div>
