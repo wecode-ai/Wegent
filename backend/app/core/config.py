@@ -465,6 +465,10 @@ class Settings(BaseSettings):
     # "remote"
     # {"default":"local","query":"remote"}
     RAG_RUNTIME_MODE: str | dict[str, str] = "local"
+    # Kill switch for auto route selection of direct injection.
+    # When enabled, route_mode="auto" will always choose rag_retrieval.
+    # Explicit route_mode="direct_injection" remains supported for manual testing.
+    RAG_AUTO_DISABLE_DIRECT_INJECTION: bool = False
 
     # Streaming architecture mode configuration
     # "legacy" - WebSocketStreamingHandler directly emits to WebSocket (current behavior)
@@ -591,7 +595,38 @@ class Settings(BaseSettings):
         return (
             init_settings,
             env_settings,
-            NoInterpolationDotEnvSettingsSource(settings_cls),
+            NoInterpolationDotEnvSettingsSource(
+                settings_cls,
+                env_file=getattr(dotenv_settings, "env_file", None),
+                env_file_encoding=getattr(
+                    dotenv_settings,
+                    "env_file_encoding",
+                    None,
+                ),
+                case_sensitive=getattr(dotenv_settings, "case_sensitive", None),
+                env_prefix=getattr(dotenv_settings, "env_prefix", None),
+                env_nested_delimiter=getattr(
+                    dotenv_settings,
+                    "env_nested_delimiter",
+                    None,
+                ),
+                env_nested_max_split=getattr(
+                    dotenv_settings,
+                    "env_nested_max_split",
+                    None,
+                ),
+                env_ignore_empty=getattr(
+                    dotenv_settings,
+                    "env_ignore_empty",
+                    None,
+                ),
+                env_parse_none_str=getattr(
+                    dotenv_settings,
+                    "env_parse_none_str",
+                    None,
+                ),
+                env_parse_enums=getattr(dotenv_settings, "env_parse_enums", None),
+            ),
             file_secret_settings,
         )
 

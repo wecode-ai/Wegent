@@ -27,6 +27,9 @@ def test_shared_models_exports_knowledge_runtime_protocol_types() -> None:
         "RemoteKnowledgeBaseQueryConfig",
         "RemoteDeleteDocumentIndexRequest",
         "RemoteIndexRequest",
+        "RemoteListChunksRequest",
+        "RemoteListChunksResponse",
+        "RemoteListChunkRecord",
         "RemoteQueryRequest",
         "RemoteQueryRecord",
         "RemoteQueryResponse",
@@ -131,6 +134,30 @@ def test_remote_query_response_preserves_index_family_per_record() -> None:
         "chunk_vector",
         "summary_vector",
     ]
+
+
+def test_remote_list_chunks_request_accepts_resolved_retriever_config() -> None:
+    remote_list_chunks_request = _require_model("RemoteListChunksRequest")
+
+    request = remote_list_chunks_request.model_validate(
+        {
+            "knowledge_base_id": 1001,
+            "index_owner_user_id": 42,
+            "retriever_config": {
+                "name": "retriever-a",
+                "namespace": "default",
+                "storage_config": {
+                    "type": "qdrant",
+                    "url": "http://qdrant:6333",
+                },
+            },
+            "max_chunks": 1000,
+            "query": "list_index_chunks",
+        }
+    )
+
+    assert request.knowledge_base_id == 1001
+    assert request.retriever_config.storage_config["type"] == "qdrant"
 
 
 def test_remote_query_request_accepts_explicit_execution_configs() -> None:

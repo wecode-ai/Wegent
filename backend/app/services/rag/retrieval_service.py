@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Literal, Optional
 
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.models.kind import Kind
 from app.services.rag.runtime_resolver import RagRuntimeResolver
 from knowledge_engine.embedding import create_embedding_model_from_runtime_config
@@ -121,6 +122,11 @@ class RetrievalService:
         # Aggregate functions may still return Decimal on some database/driver
         # combinations, so normalize to int before applying the heuristic.
         return int(normalized_text_length * 1.5)
+
+    @staticmethod
+    def _should_disable_auto_direct_injection() -> bool:
+        """Return whether automatic direct injection routing is globally disabled."""
+        return bool(settings.RAG_AUTO_DISABLE_DIRECT_INJECTION)
 
     @staticmethod
     def _should_use_direct_injection(
@@ -253,6 +259,12 @@ class RetrievalService:
         if not knowledge_base_ids:
             return "rag_retrieval"
 
+        if route_mode == "auto" and self._should_disable_auto_direct_injection():
+            logger.info(
+                "[RAG] auto direct injection disabled by config; forcing rag_retrieval"
+            )
+            return "rag_retrieval"
+
         total_estimated_tokens = 0
         if route_mode == "auto":
             total_estimated_tokens = self._estimate_total_tokens_for_knowledge_bases(
@@ -333,17 +345,24 @@ class RetrievalService:
             self._build_document_filter(document_ids),
             metadata_condition,
         )
+        auto_direct_injection_disabled = (
+            route_mode == "auto" and self._should_disable_auto_direct_injection()
+        )
         total_estimated_tokens = 0
-        if route_mode == "auto":
+        if route_mode == "auto" and not auto_direct_injection_disabled:
             total_estimated_tokens = self._estimate_total_tokens_for_knowledge_bases(
                 db=db,
                 knowledge_base_ids=knowledge_base_ids,
                 document_ids=document_ids,
             )
-        use_direct_injection = self._should_use_direct_injection(
-            context_window=context_window,
-            total_estimated_tokens=total_estimated_tokens,
-            route_mode=route_mode,
+        use_direct_injection = (
+            False
+            if auto_direct_injection_disabled
+            else self._should_use_direct_injection(
+                context_window=context_window,
+                total_estimated_tokens=total_estimated_tokens,
+                route_mode=route_mode,
+            )
         )
         available_for_kb = self._calculate_ratio_based_direct_injection_budget(
             context_window=context_window
@@ -379,6 +398,10 @@ class RetrievalService:
             available_injection_tokens,
             use_direct_injection,
         )
+        if auto_direct_injection_disabled:
+            logger.info(
+                "[RAG] auto direct injection disabled by config; using rag_retrieval"
+            )
 
         records: list[Dict[str, Any]] = []
         runtime_config_by_kb_id = {

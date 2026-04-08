@@ -79,6 +79,14 @@ class DeleteRuntimeSpec(RuntimeSpecModel):
     enabled_index_families: list[str] = Field(default_factory=lambda: ["chunk_vector"])
 
 
+class ListChunksRuntimeSpec(RuntimeSpecModel):
+    knowledge_base_id: int
+    index_owner_user_id: int
+    retriever_config: RuntimeRetrieverConfig
+    max_chunks: int = 10000
+    query: Optional[str] = None
+
+
 class ConnectionTestRuntimeSpec(RuntimeSpecModel):
     retriever_config: RuntimeRetrieverConfig
 

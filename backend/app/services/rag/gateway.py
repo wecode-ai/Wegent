@@ -6,6 +6,7 @@ from app.services.rag.runtime_specs import (
     ConnectionTestRuntimeSpec,
     DeleteRuntimeSpec,
     IndexRuntimeSpec,
+    ListChunksRuntimeSpec,
     QueryRuntimeSpec,
 )
 
@@ -30,6 +31,13 @@ class RagGateway(Protocol):
         spec: DeleteRuntimeSpec,
         *,
         db: Session,
+    ) -> dict: ...
+
+    async def list_chunks(
+        self,
+        spec: ListChunksRuntimeSpec,
+        *,
+        db: Session | None = None,
     ) -> dict: ...
 
     async def test_connection(

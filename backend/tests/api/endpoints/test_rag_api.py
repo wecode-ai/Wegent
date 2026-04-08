@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from unittest.mock import ANY, AsyncMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 from app.services.rag.runtime_specs import QueryRuntimeSpec
 
@@ -110,3 +110,78 @@ def test_public_rag_retrieve_uses_gateway_runtime_spec(
     )
     mock_get_gateway.assert_called_once()
     gateway.query.assert_awaited_once_with(runtime_spec, db=ANY)
+
+
+def test_public_rag_chunks_returns_paginated_index_chunks(
+    test_client,
+    test_token: str,
+):
+    runtime_spec = MagicMock()
+    gateway = AsyncMock()
+    gateway.list_chunks.return_value = {
+        "chunks": [
+            {
+                "content": "chunk-1",
+                "title": "Doc 1",
+                "chunk_id": 1,
+                "doc_ref": "doc-1",
+                "metadata": {"page": 1},
+            },
+            {
+                "content": "chunk-2",
+                "title": "Doc 2",
+                "chunk_id": 2,
+                "doc_ref": "doc-2",
+                "metadata": {"page": 2},
+            },
+            {
+                "content": "chunk-3",
+                "title": "Doc 3",
+                "chunk_id": 3,
+                "doc_ref": "doc-3",
+                "metadata": {"page": 3},
+            },
+        ],
+        "total": 3,
+    }
+
+    with (
+        patch(
+            "app.api.endpoints.rag.runtime_resolver.build_public_list_chunks_runtime_spec",
+            return_value=runtime_spec,
+        ) as mock_build_spec,
+        patch(
+            "app.api.endpoints.rag.get_query_gateway",
+            return_value=gateway,
+        ) as mock_get_gateway,
+    ):
+        response = test_client.get(
+            "/api/rag/chunks?knowledge_id=7&page=2&page_size=2",
+            headers=_auth_header(test_token),
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "items": [
+            {
+                "content": "chunk-3",
+                "title": "Doc 3",
+                "chunk_id": 3,
+                "doc_ref": "doc-3",
+                "metadata": {"page": 3},
+            }
+        ],
+        "total": 3,
+        "page": 2,
+        "page_size": 2,
+    }
+    mock_build_spec.assert_called_once_with(
+        db=ANY,
+        knowledge_base_id=7,
+        user_id=ANY,
+        user_name=ANY,
+        max_chunks=10000,
+        query="list_index_chunks",
+    )
+    mock_get_gateway.assert_called_once()
+    gateway.list_chunks.assert_awaited_once_with(runtime_spec, db=ANY)

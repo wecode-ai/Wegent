@@ -17,6 +17,7 @@ from app.services.rag.runtime_specs import (
     DirectInjectionBudget,
     IndexRuntimeSpec,
     IndexSource,
+    ListChunksRuntimeSpec,
     QueryKnowledgeBaseRuntimeConfig,
     QueryRuntimeSpec,
     RuntimeEmbeddingModelConfig,
@@ -212,6 +213,49 @@ class RagRuntimeResolver:
             db=db,
             knowledge_base_ids=knowledge_base_ids,
             user_name=user_name,
+        )
+
+    def build_public_list_chunks_runtime_spec(
+        self,
+        *,
+        db: Session,
+        knowledge_base_id: int,
+        user_id: int,
+        user_name: str | None,
+        max_chunks: int,
+        query: str | None = None,
+    ) -> ListChunksRuntimeSpec:
+        from app.services.knowledge.knowledge_service import KnowledgeService
+
+        kb, has_access = KnowledgeService.get_knowledge_base(
+            db=db,
+            knowledge_base_id=knowledge_base_id,
+            user_id=user_id,
+        )
+        if kb is None or not has_access:
+            raise ValueError(
+                f"Knowledge base {knowledge_base_id} not found or access denied"
+            )
+
+        retrieval_config = (kb.json or {}).get("spec", {}).get("retrievalConfig") or {}
+        retriever_name = retrieval_config.get("retriever_name")
+        retriever_namespace = retrieval_config.get("retriever_namespace", "default")
+        if not retriever_name:
+            raise ValueError(
+                f"Knowledge base {knowledge_base_id} has incomplete retrieval config (missing retriever_name)"
+            )
+
+        return ListChunksRuntimeSpec(
+            knowledge_base_id=knowledge_base_id,
+            index_owner_user_id=kb.user_id,
+            retriever_config=self._build_resolved_retriever_config(
+                db=db,
+                user_id=kb.user_id,
+                name=retriever_name,
+                namespace=retriever_namespace,
+            ),
+            max_chunks=max_chunks,
+            query=query,
         )
 
     def build_delete_runtime_spec(

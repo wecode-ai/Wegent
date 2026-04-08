@@ -12,6 +12,7 @@ from app.services.rag.runtime_specs import (
     DeleteRuntimeSpec,
     IndexRuntimeSpec,
     IndexSource,
+    ListChunksRuntimeSpec,
     QueryRuntimeSpec,
 )
 from shared.models import RuntimeRetrieverConfig
@@ -96,6 +97,30 @@ async def test_local_gateway_test_connection_delegates_to_connection_executor():
 
     assert result == {"success": True, "message": "Connection successful"}
     gateway._connection_test_executor.assert_awaited_once_with(spec, db=None)
+
+
+@pytest.mark.asyncio
+async def test_local_gateway_list_chunks_delegates_to_chunk_listing_executor():
+    gateway = LocalRagGateway()
+    gateway._list_chunks_executor = AsyncMock(
+        return_value={"chunks": [{"content": "chunk", "title": "Doc"}], "total": 1}
+    )
+    db = MagicMock()
+    spec = ListChunksRuntimeSpec(
+        knowledge_base_id=1,
+        index_owner_user_id=7,
+        retriever_config=RuntimeRetrieverConfig(
+            name="retriever-a",
+            namespace="default",
+            storage_config={"type": "qdrant"},
+        ),
+        max_chunks=1000,
+    )
+
+    result = await gateway.list_chunks(spec, db=db)
+
+    assert result == {"chunks": [{"content": "chunk", "title": "Doc"}], "total": 1}
+    gateway._list_chunks_executor.assert_awaited_once_with(spec, db=db)
 
 
 @pytest.mark.asyncio

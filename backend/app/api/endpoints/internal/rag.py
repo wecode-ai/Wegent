@@ -29,6 +29,12 @@ from app.services.rag.local_gateway import LocalRagGateway
 from app.services.rag.remote_gateway import RemoteRagGatewayError
 from app.services.rag.retrieval_service import RetrievalService
 from app.services.rag.runtime_resolver import RagRuntimeResolver
+from app.services.rag.runtime_specs import ListChunksRuntimeSpec
+from shared.models import (
+    RemoteListChunkRecord,
+    RemoteListChunksRequest,
+    RemoteListChunksResponse,
+)
 
 # Constants for document reading pagination
 DEFAULT_READ_DOC_LIMIT = 50_000  # Default characters to return
@@ -596,40 +602,9 @@ async def get_knowledge_base_info(
     )
 
 
-class AllChunksRequest(BaseModel):
-    """Request for getting all chunks from a knowledge base."""
-
-    knowledge_base_id: int = Field(..., description="Knowledge base ID")
-    max_chunks: int = Field(
-        default=10000,
-        description="Maximum number of chunks to retrieve (safety limit)",
-    )
-    query: Optional[str] = Field(
-        default=None,
-        description="Optional query string for logging purposes",
-    )
-
-
-class ChunkInfo(BaseModel):
-    """Information for a single chunk."""
-
-    content: str
-    title: str
-    chunk_id: Optional[int] = None
-    doc_ref: Optional[str] = None
-    metadata: Optional[dict] = None
-
-
-class AllChunksResponse(BaseModel):
-    """Response for all chunks query."""
-
-    chunks: list[ChunkInfo]
-    total: int
-
-
-@router.post("/all-chunks", response_model=AllChunksResponse)
+@router.post("/all-chunks", response_model=RemoteListChunksResponse)
 async def get_all_chunks(
-    request: AllChunksRequest,
+    request: RemoteListChunksRequest,
     db: Session = Depends(get_db),
 ):
     """
@@ -646,16 +621,17 @@ async def get_all_chunks(
         All chunks from the knowledge base
     """
     try:
-        from app.services.rag.retrieval_service import RetrievalService
-
-        retrieval_service = RetrievalService()
-
-        chunks = await retrieval_service.get_all_chunks_from_knowledge_base(
-            knowledge_base_id=request.knowledge_base_id,
+        result = await LocalRagGateway().list_chunks(
+            ListChunksRuntimeSpec(
+                knowledge_base_id=request.knowledge_base_id,
+                index_owner_user_id=request.index_owner_user_id,
+                retriever_config=request.retriever_config,
+                max_chunks=request.max_chunks,
+                query=request.query,
+            ),
             db=db,
-            max_chunks=request.max_chunks,
-            query=request.query,
         )
+        chunks = result.get("chunks", [])
 
         # Calculate total content size for logging
         total_content_chars = sum(len(c.get("content", "")) for c in chunks)
@@ -668,9 +644,9 @@ async def get_all_chunks(
             total_content_kb,
         )
 
-        return AllChunksResponse(
+        return RemoteListChunksResponse(
             chunks=[
-                ChunkInfo(
+                RemoteListChunkRecord(
                     content=c.get("content", ""),
                     title=c.get("title", "Unknown"),
                     chunk_id=c.get("chunk_id"),
@@ -679,7 +655,7 @@ async def get_all_chunks(
                 )
                 for c in chunks
             ],
-            total=len(chunks),
+            total=result.get("total", len(chunks)),
         )
 
     except ValueError as e:

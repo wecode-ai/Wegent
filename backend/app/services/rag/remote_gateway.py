@@ -18,11 +18,14 @@ from app.services.rag.runtime_specs import (
     ConnectionTestRuntimeSpec,
     DeleteRuntimeSpec,
     IndexRuntimeSpec,
+    ListChunksRuntimeSpec,
     QueryRuntimeSpec,
 )
 from shared.models import (
     RemoteDeleteDocumentIndexRequest,
     RemoteIndexRequest,
+    RemoteListChunksRequest,
+    RemoteListChunksResponse,
     RemoteQueryRequest,
     RemoteQueryResponse,
     RemoteRagError,
@@ -187,6 +190,24 @@ class RemoteRagGateway:
             enabled_index_families=spec.enabled_index_families,
         )
         return await self._post_model("/internal/rag/delete-document-index", payload)
+
+    async def list_chunks(
+        self,
+        spec: ListChunksRuntimeSpec,
+        *,
+        db: Session | None = None,
+    ) -> dict[str, Any]:
+        del db
+        payload = RemoteListChunksRequest(
+            knowledge_base_id=spec.knowledge_base_id,
+            index_owner_user_id=spec.index_owner_user_id,
+            retriever_config=spec.retriever_config,
+            max_chunks=spec.max_chunks,
+            query=spec.query,
+        )
+        response_payload = await self._post_model("/internal/rag/all-chunks", payload)
+        response = RemoteListChunksResponse.model_validate(response_payload)
+        return response.model_dump()
 
     async def test_connection(
         self,

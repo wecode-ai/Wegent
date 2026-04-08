@@ -8,6 +8,18 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def set_auto_direct_injection_enabled_by_default(monkeypatch):
+    from app.core.config import settings
+
+    monkeypatch.setattr(
+        settings,
+        "RAG_AUTO_DISABLE_DIRECT_INJECTION",
+        False,
+        raising=False,
+    )
+
+
 @pytest.mark.asyncio
 async def test_retrieve_for_chat_shell_no_longer_persists_subtask_context():
     from app.services.context.context_service import context_service
@@ -407,6 +419,38 @@ class TestRetrieveForChatShell:
             document_ids=None,
         )
         assert result == "direct_injection"
+
+    def test_decide_route_mode_for_chat_shell_skips_direct_injection_when_auto_disabled(
+        self, monkeypatch
+    ):
+        from app.core.config import settings
+        from app.services.rag.retrieval_service import RetrievalService
+
+        monkeypatch.setattr(
+            settings,
+            "RAG_AUTO_DISABLE_DIRECT_INJECTION",
+            True,
+            raising=False,
+        )
+
+        service = RetrievalService()
+        db = MagicMock()
+
+        with patch.object(
+            RetrievalService,
+            "_estimate_total_tokens_for_knowledge_bases",
+            return_value=100,
+        ) as mock_estimate:
+            result = service.decide_route_mode_for_chat_shell(
+                query="test",
+                knowledge_base_ids=[123],
+                db=db,
+                route_mode="auto",
+                context_window=10000,
+            )
+
+        mock_estimate.assert_not_called()
+        assert result == "rag_retrieval"
 
     def test_decide_route_mode_for_chat_shell_uses_live_runtime_budget(self):
         from app.services.rag.retrieval_service import RetrievalService

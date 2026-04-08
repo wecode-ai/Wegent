@@ -4,13 +4,15 @@
 
 """Public RAG compatibility routes."""
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core.security import get_current_user
 from app.models.user import User
 from app.schemas.rag import (
+    RagChunkListResponse,
+    RagChunkRecord,
     RetrieveRequest,
     RetrieveResponse,
 )
@@ -21,6 +23,7 @@ from app.services.rag.runtime_resolver import RagRuntimeResolver
 
 router = APIRouter()
 runtime_resolver = RagRuntimeResolver()
+INDEX_CHUNK_LIST_MAX_CHUNKS = 10000
 
 
 @router.post("/retrieve", response_model=RetrieveResponse)
@@ -108,6 +111,57 @@ async def retrieve_documents(
             result = await LocalRagGateway().query(runtime_spec, db=db)
 
         return {"records": result.get("records", [])}
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.get("/chunks", response_model=RagChunkListResponse)
+async def list_index_chunks(
+    knowledge_id: int = Query(..., description="Knowledge base ID"),
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(50, ge=1, le=500, description="Page size"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """List indexed chunks stored for a knowledge base."""
+    try:
+        runtime_spec = runtime_resolver.build_public_list_chunks_runtime_spec(
+            db=db,
+            knowledge_base_id=knowledge_id,
+            user_id=current_user.id,
+            user_name=current_user.user_name,
+            max_chunks=INDEX_CHUNK_LIST_MAX_CHUNKS,
+            query="list_index_chunks",
+        )
+        gateway = get_query_gateway()
+        try:
+            result = await gateway.list_chunks(runtime_spec, db=db)
+        except RemoteRagGatewayError:
+            result = await LocalRagGateway().list_chunks(runtime_spec, db=db)
+
+        start = (page - 1) * page_size
+        chunks = result.get("chunks", [])
+        page_items = chunks[start : start + page_size]
+
+        return RagChunkListResponse(
+            items=[
+                RagChunkRecord(
+                    content=chunk.get("content", ""),
+                    title=chunk.get("title", "Unknown"),
+                    chunk_id=chunk.get("chunk_id"),
+                    doc_ref=chunk.get("doc_ref"),
+                    metadata=chunk.get("metadata"),
+                )
+                for chunk in page_items
+            ],
+            total=result.get("total", len(chunks)),
+            page=page,
+            page_size=page_size,
+        )
     except HTTPException:
         raise
     except ValueError as e:

@@ -22,6 +22,7 @@ from app.services.rag.runtime_specs import (
     DeleteRuntimeSpec,
     IndexRuntimeSpec,
     IndexSource,
+    ListChunksRuntimeSpec,
     QueryKnowledgeBaseRuntimeConfig,
     QueryRuntimeSpec,
     RuntimeEmbeddingModelConfig,
@@ -409,6 +410,78 @@ async def test_remote_gateway_test_connection_posts_resolved_retriever_config(
                 "url": "http://es:9200",
             },
         }
+    }
+
+
+@pytest.mark.asyncio
+async def test_remote_gateway_list_chunks_posts_runtime_request(mocker) -> None:
+    post_mock = mocker.patch(
+        "httpx.AsyncClient.post",
+        return_value=_build_response(
+            url="http://knowledge-runtime/internal/rag/all-chunks",
+            status_code=200,
+            json_body={
+                "chunks": [
+                    {
+                        "content": "Chunk A",
+                        "title": "Doc A",
+                        "chunk_id": 1,
+                        "doc_ref": "doc-1",
+                        "metadata": {"page": 1},
+                    }
+                ],
+                "total": 1,
+            },
+        ),
+    )
+    gateway = RemoteRagGateway(
+        base_url="http://knowledge-runtime",
+        token="runtime-token",
+    )
+    spec = ListChunksRuntimeSpec(
+        knowledge_base_id=1,
+        index_owner_user_id=8,
+        retriever_config=RuntimeRetrieverConfig(
+            name="retriever-a",
+            namespace="default",
+            storage_config={
+                "type": "qdrant",
+                "url": "http://qdrant:6333",
+            },
+        ),
+        max_chunks=1000,
+        query="list_index_chunks",
+    )
+
+    result = await gateway.list_chunks(spec)
+
+    assert result == {
+        "chunks": [
+            {
+                "content": "Chunk A",
+                "title": "Doc A",
+                "chunk_id": 1,
+                "doc_ref": "doc-1",
+                "metadata": {"page": 1},
+            }
+        ],
+        "total": 1,
+    }
+    args, kwargs = post_mock.await_args
+    assert args[0] == "http://knowledge-runtime/internal/rag/all-chunks"
+    assert kwargs["json"] == {
+        "knowledge_base_id": 1,
+        "index_owner_user_id": 8,
+        "retriever_config": {
+            "name": "retriever-a",
+            "namespace": "default",
+            "storage_config": {
+                "type": "qdrant",
+                "url": "http://qdrant:6333",
+            },
+        },
+        "max_chunks": 1000,
+        "query": "list_index_chunks",
     }
 
 

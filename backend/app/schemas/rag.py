@@ -192,3 +192,24 @@ class RetrieveResponse(BaseModel):
     records: List[RetrievalResult] = Field(
         ..., description="List of records from querying the knowledge base"
     )
+
+
+class RagChunkRecord(BaseModel):
+    """Single chunk record from the index engine."""
+
+    content: str = Field(..., description="Chunk text content")
+    title: str = Field(..., description="Document title/source file")
+    chunk_id: Optional[int] = Field(None, description="Chunk identifier in index")
+    doc_ref: Optional[str] = Field(None, description="Document reference")
+    metadata: Optional[Dict] = Field(None, description="Chunk metadata")
+
+
+class RagChunkListResponse(BaseModel):
+    """Paginated chunk list response for index inspection."""
+
+    items: List[RagChunkRecord] = Field(
+        ..., description="Paginated chunk records from the index engine"
+    )
+    total: int = Field(..., description="Total chunk count available")
+    page: int = Field(..., ge=1, description="Current page number")
+    page_size: int = Field(..., ge=1, description="Current page size")

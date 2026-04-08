@@ -131,6 +131,17 @@ class RemoteDeleteDocumentIndexRequest(KnowledgeRuntimeProtocolModel):
     extensions: dict[str, Any] | None = None
 
 
+class RemoteListChunksRequest(KnowledgeRuntimeProtocolModel):
+    """List-chunks request sent from Backend to knowledge_runtime."""
+
+    knowledge_base_id: int
+    index_owner_user_id: int
+    retriever_config: RuntimeRetrieverConfig
+    max_chunks: int = 10000
+    query: str | None = None
+    extensions: dict[str, Any] | None = None
+
+
 class RemoteTestConnectionRequest(KnowledgeRuntimeProtocolModel):
     """Test-connection request sent from Backend to knowledge_runtime."""
 
@@ -188,3 +199,20 @@ class RemoteQueryResponse(KnowledgeRuntimeProtocolModel):
     records: list[RemoteQueryRecord]
     total: int
     total_estimated_tokens: int = 0
+
+
+class RemoteListChunkRecord(KnowledgeRuntimeProtocolModel):
+    """Single chunk returned by knowledge_runtime list-chunks endpoint."""
+
+    content: str
+    title: str
+    chunk_id: int | None = None
+    doc_ref: str | None = None
+    metadata: dict[str, Any] | None = None
+
+
+class RemoteListChunksResponse(KnowledgeRuntimeProtocolModel):
+    """Chunk listing response returned by knowledge_runtime."""
+
+    chunks: list[RemoteListChunkRecord]
+    total: int
