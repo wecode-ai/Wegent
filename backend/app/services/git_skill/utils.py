@@ -148,9 +148,9 @@ def get_user_git_info(
     Returns:
         Git info dict with decrypted token, or None if not found
     """
-    from shared.models.db.user import User
+    from app.services.user import user_service
 
-    user = db.query(User).filter(User.id == user_id).first()
+    user = user_service.get_user_by_id(db, user_id)
     if not user or not user.git_info:
         return None
 

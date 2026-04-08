@@ -36,6 +36,7 @@ import { useSchemeMessageActions } from '@/lib/scheme'
 import { useSkillSelector } from '../../hooks/useSkillSelector'
 import { useModelSelection } from '../../hooks/useModelSelection'
 import { QueueMessageHandler } from '@/features/inbox'
+import type { ChatAreaExtension } from './types'
 
 /**
  * Threshold in pixels for determining when to collapse selectors.
@@ -78,6 +79,8 @@ interface ChatAreaProps {
   inputAlwaysAtBottom?: boolean
   /** Custom content to display when there are no messages (used in knowledge notebook mode for KnowledgeBaseSummaryCard) */
   emptyStateContent?: React.ReactNode
+  /** Extension for team editing functionality (injected from parent to avoid module coupling) */
+  extension?: ChatAreaExtension
 }
 
 /**
@@ -102,6 +105,7 @@ function ChatAreaContent({
   guidedQuestions,
   inputAlwaysAtBottom,
   emptyStateContent,
+  extension,
 }: ChatAreaProps) {
   const { t } = useTranslation()
   const router = useRouter()
@@ -743,7 +747,7 @@ function ChatAreaContent({
 
       const currentContexts = selectedContextsRef.current
       const isAlreadySelected = currentContexts.some(
-        c => c.type === contextItem.type && c.id === contextItem.id
+        c => c.type === contextItem!.type && c.id === contextItem!.id
       )
       if (isAlreadySelected) return
 
@@ -1058,6 +1062,8 @@ function ChatAreaContent({
     onGenerateModeChange,
     // Hide all selectors (for OpenClaw devices)
     hideSelectors,
+    // Team edit callback - only provided when team is editable
+    onEditTeam: extension?.teamEdit?.canEdit ? extension.teamEdit.onEdit : undefined,
   }
 
   return (
@@ -1252,6 +1258,9 @@ function ChatAreaContent({
           </div>
         )}
       </div>
+
+      {/* Team Edit Dialog - rendered via extension if provided */}
+      {extension?.teamEdit?.renderDialog()}
     </div>
   )
 }

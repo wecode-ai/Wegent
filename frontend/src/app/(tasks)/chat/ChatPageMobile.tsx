@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { UserGroupIcon } from '@heroicons/react/24/outline'
 import { useTeamContext } from '@/contexts/TeamContext'
@@ -21,6 +21,13 @@ import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useSearchShortcut } from '@/features/tasks/hooks/useSearchShortcut'
 import { ChatArea } from '@/features/tasks/components/chat'
+import { useTeamEditExtension } from '@/features/tasks/hooks/useTeamEditExtension'
+import { useToast } from '@/hooks/use-toast'
+import { canEditTeam } from '@/utils/team-permissions'
+import { listGroups } from '@/apis/groups'
+import { fetchBotsList } from '@/features/settings/services/bots'
+import TeamEditDialog from '@/features/settings/components/TeamEditDialog'
+import type { BaseRole } from '@/types/base-role'
 import { CreateGroupChatDialog } from '@/features/tasks/components/group-chat'
 
 /**
@@ -107,6 +114,84 @@ export function ChatPageMobile() {
   // Search dialog state (controlled from page level for global shortcut support)
   const [isSearchDialogOpen, setIsSearchDialogOpen] = useState(false)
 
+  // Toast for notifications
+  const { toast } = useToast()
+
+  // Group role map for permission checks
+  const [groupRoleMap, setGroupRoleMap] = useState<Map<string, BaseRole>>(new Map())
+
+  // Fetch group role map once on mount
+  useEffect(() => {
+    listGroups()
+      .then(response => {
+        const roleMap = new Map<string, BaseRole>()
+        response.items.forEach(group => {
+          if (group.my_role) {
+            roleMap.set(group.name, group.my_role)
+          }
+        })
+        setGroupRoleMap(roleMap)
+      })
+      .catch(() => {
+        // Ignore errors - permissions will default to non-editable
+      })
+  }, [])
+
+  // Memoize deps to prevent infinite re-renders
+  const teamEditDeps = useMemo(
+    () => ({
+      getGroupRoleMap: () => groupRoleMap,
+      checkCanEdit: (_teamId: number, userId: number, roleMap: Map<string, BaseRole>) => {
+        if (!selectedTaskDetail?.team) return false
+        return canEditTeam(selectedTaskDetail.team, userId, roleMap)
+      },
+      fetchBots: fetchBotsList,
+      createDialogComponent: ({
+        open,
+        onClose,
+        bots,
+      }: {
+        open: boolean
+        onClose: () => void
+        bots: import('@/types/api').Bot[]
+      }) => {
+        if (!selectedTaskDetail?.team) return null
+        const team = selectedTaskDetail.team
+        return (
+          <TeamEditDialog
+            open={open}
+            onClose={onClose}
+            teams={teams}
+            setTeams={() => {
+              // Teams are managed by TeamContext; refresh on dialog close instead
+            }}
+            editingTeamId={team.id}
+            bots={bots}
+            setBots={() => {
+              // Bots are managed locally in the hook
+            }}
+            toast={toast}
+            scope={team.namespace && team.namespace !== 'default' ? 'group' : 'personal'}
+            groupName={team.namespace && team.namespace !== 'default' ? team.namespace : undefined}
+          />
+        )
+      },
+    }),
+    [groupRoleMap, selectedTaskDetail?.team, teams, toast]
+  )
+
+  // Team edit extension with dependency injection
+  const teamEditExtension = useTeamEditExtension({
+    currentTeamId: selectedTaskDetail?.team?.id ?? null,
+    currentTeamNamespace: selectedTaskDetail?.team?.namespace ?? null,
+    userId: user?.id,
+    deps: teamEditDeps,
+    onTeamUpdated: useCallback(() => {
+      refreshTasks()
+      refreshSelectedTaskDetail(false)
+    }, [refreshTasks, refreshSelectedTaskDetail]),
+  })
+
   // Toggle search dialog callback
   const toggleSearchDialog = useCallback(() => {
     setIsSearchDialogOpen(prev => !prev)
@@ -185,6 +270,7 @@ export function ChatPageMobile() {
           onShareButtonRender={handleShareButtonRender}
           onRefreshTeams={handleRefreshTeams}
           disabledReason={disabledReason}
+          extension={{ teamEdit: teamEditExtension }}
         />
       </div>
       {/* Create Group Chat Dialog */}

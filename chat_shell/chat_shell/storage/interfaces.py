@@ -31,6 +31,9 @@ class Message:
     loaded_skills: Optional[list] = (
         None  # Skills loaded via load_skill tool in this turn
     )
+    model_info: Optional[dict] = (
+        None  # Provider/model metadata for think-block filtering
+    )
 
     def to_dict(self) -> dict:
         """Convert to dictionary."""
@@ -52,6 +55,8 @@ class Message:
             result["metadata"] = self.metadata
         if self.loaded_skills:
             result["loaded_skills"] = self.loaded_skills
+        if self.model_info:
+            result["model_info"] = self.model_info
         return result
 
     @classmethod
@@ -67,6 +72,7 @@ class Message:
             created_at=data.get("created_at"),
             metadata=data.get("metadata", {}),
             loaded_skills=data.get("loaded_skills"),
+            model_info=data.get("model_info"),
         )
 
 

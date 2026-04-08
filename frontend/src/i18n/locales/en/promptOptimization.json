@@ -1,0 +1,11 @@
+{
+  "ghost_prompt_change": "Modify \"{{name}}\" prompt",
+  "member_prompt_change": "Modify \"{{name}}\" (team member) prompt",
+  "view_full_prompt": "View full prompt",
+  "hide_full_prompt": "Hide full prompt",
+  "apply": "Apply",
+  "apply_success": "Applied",
+  "rollback": "Rollback",
+  "rollback_success": "Rolled back",
+  "action_error": "Action failed"
+}

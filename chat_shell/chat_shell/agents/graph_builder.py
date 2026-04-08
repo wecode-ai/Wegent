@@ -172,14 +172,149 @@ def _validate_tool_message_sequence(
 
 
 def _convert_validated_messages(
-    messages: list[dict[str, Any]], *, context: str
+    messages: list[dict[str, Any]],
+    *,
+    context: str,
+    target_provider: str = "",
+    target_model_id: str = "",
+    target_api_format: str = "",
 ) -> list[BaseMessage]:
-    """Validate canonical message linkage, then convert to LangChain messages."""
+    """Validate canonical message linkage, then convert to LangChain messages.
+
+    When ``target_provider`` is set, foreign reasoning blocks are stripped
+    before conversion to prevent cross-model API errors.
+    """
+    if target_provider:
+        from chat_shell.messages.think_block_filter import (  # noqa: PLC0415
+            strip_foreign_reasoning_blocks,
+        )
+
+        messages = strip_foreign_reasoning_blocks(
+            messages,
+            target_provider,
+            target_model_id=target_model_id,
+            target_api_format=target_api_format,
+        )
     _validate_tool_message_sequence(messages, context=context)
     return convert_to_messages(messages)
 
 
-def _serialize_messages_chain(messages: list[BaseMessage]) -> list[dict[str, Any]]:
+def _normalize_content_block(block: dict[str, Any]) -> dict[str, Any] | None:
+    """Convert a single provider-specific content block to canonical format.
+
+    Returns the normalized block, or None if the block should be dropped.
+
+    Canonical reasoning format (LangChain ``ReasoningContentBlock``)::
+
+        {"type": "reasoning", "reasoning": "<text>", "extras": {...}}
+    """
+    block_type = block.get("type")
+
+    if block_type == "thinking":
+        # Claude: {"type": "thinking", "thinking": "...", "signature": "...", ...}
+        reasoning_text = block.get("thinking", "")
+        extras = {k: v for k, v in block.items() if k not in ("type", "thinking")}
+        result: dict[str, Any] = {"type": "reasoning", "reasoning": reasoning_text}
+        if extras:
+            result["extras"] = extras
+        return result
+
+    # "text", "reasoning" (already canonical), or other block types: keep as-is
+    return block
+
+
+def _normalize_content_blocks(blocks: list) -> list:
+    """Normalize a list of content blocks to canonical format.
+
+    Handles:
+    - Claude ``thinking`` blocks → ``reasoning`` blocks
+    - OpenAI Responses API ``reasoning`` with ``summary`` → exploded ``reasoning`` blocks
+    - All other block types passed through unchanged
+    """
+    result: list = []
+    for block in blocks:
+        if not isinstance(block, dict):
+            result.append(block)
+            continue
+
+        block_type = block.get("type")
+        if block_type == "reasoning" and "summary" in block:
+            # Explode OpenAI Responses API reasoning summary items
+            for item in block.get("summary") or []:
+                if isinstance(item, dict) and item.get("type") == "summary_text":
+                    text = item.get("text", "")
+                    reasoning_block: dict[str, Any] = {
+                        "type": "reasoning",
+                        "reasoning": text,
+                    }
+                    # Preserve non-summary fields as extras
+                    extras = {
+                        k: v
+                        for k, v in block.items()
+                        if k not in ("type", "summary", "reasoning")
+                    }
+                    if extras:
+                        reasoning_block["extras"] = extras
+                    result.append(reasoning_block)
+            if not block.get("summary"):
+                # Empty summary: keep a reasoning block without text but
+                # preserve non-summary fields (id, encrypted_content, etc.)
+                # so the block can round-trip correctly.
+                empty_block: dict[str, Any] = {
+                    "type": "reasoning",
+                    "reasoning": "",
+                }
+                extras = {
+                    k: v
+                    for k, v in block.items()
+                    if k not in ("type", "summary", "reasoning")
+                }
+                if extras:
+                    empty_block["extras"] = extras
+                result.append(empty_block)
+        else:
+            normalized = _normalize_content_block(block)
+            if normalized is not None:
+                result.append(normalized)
+    return result
+
+
+def _normalize_content_for_storage(msg: AIMessage) -> str | list:
+    """Normalize an AIMessage's content for cross-model compatible storage.
+
+    Converts provider-specific think blocks to canonical ``ReasoningContentBlock``
+    format. Also bridges ``reasoning_content`` from ``additional_kwargs``
+    (DeepSeek/Kimi/QwQ) into the content block list.
+
+    Returns:
+        Normalized content: either a string (no think blocks) or a list of blocks.
+    """
+    # Bridge reasoning_content from additional_kwargs into content blocks
+    reasoning_content = msg.additional_kwargs.get("reasoning_content")
+
+    if isinstance(msg.content, list):
+        normalized = _normalize_content_blocks(msg.content)
+        if reasoning_content:
+            normalized.insert(0, {"type": "reasoning", "reasoning": reasoning_content})
+        return normalized
+
+    # String content
+    if reasoning_content:
+        blocks: list[dict[str, Any]] = [
+            {"type": "reasoning", "reasoning": reasoning_content},
+        ]
+        if msg.content:
+            blocks.append({"type": "text", "text": msg.content})
+        return blocks
+
+    return msg.content
+
+
+def _serialize_messages_chain(
+    messages: list[BaseMessage],
+    provider: str = "",
+    model_id: str = "",
+) -> list[dict[str, Any]]:
     """Serialize LangChain messages to OpenAI-compatible dicts for history persistence.
 
     Converts AIMessage and ToolMessage objects produced during a single agent turn
@@ -188,11 +323,18 @@ def _serialize_messages_chain(messages: list[BaseMessage]) -> list[dict[str, Any
     2. Loaded back via ``langchain_core.messages.utils.convert_to_messages``
 
     Preserves tool_calls, tool results, and reasoning_content.
+    When ``provider`` is given, each assistant entry includes a ``model_info``
+    dict so downstream consumers can identify the originating model.
     """
     chain: list[dict[str, Any]] = []
     for msg in messages:
         if isinstance(msg, AIMessage):
-            entry: dict[str, Any] = {"role": "assistant", "content": msg.content}
+            # Normalize content: convert provider-specific think blocks to
+            # canonical ReasoningContentBlock format for cross-model compat.
+            content = _normalize_content_for_storage(msg)
+            entry: dict[str, Any] = {"role": "assistant", "content": content}
+            if provider:
+                entry["model_info"] = {"provider": provider, "model": model_id}
             if msg.tool_calls:
                 entry["tool_calls"] = [
                     {
@@ -212,12 +354,6 @@ def _serialize_messages_chain(messages: list[BaseMessage]) -> list[dict[str, Any
                     }
                     for tc in msg.tool_calls
                 ]
-            # Preserve reasoning content (DeepSeek R1 and similar models)
-            reasoning = msg.additional_kwargs.get("reasoning_content")
-            if reasoning:
-                entry.setdefault("additional_kwargs", {})[
-                    "reasoning_content"
-                ] = reasoning
             chain.append(entry)
         elif isinstance(msg, ToolMessage):
             entry = {
@@ -240,9 +376,11 @@ def _serialize_messages_chain(messages: list[BaseMessage]) -> list[dict[str, Any
 
 def _serialize_validated_messages_chain(
     messages: list[BaseMessage],
+    provider: str = "",
+    model_id: str = "",
 ) -> list[dict[str, Any]]:
     """Serialize a generated turn and fail fast on broken tool-call linkage."""
-    chain = _serialize_messages_chain(messages)
+    chain = _serialize_messages_chain(messages, provider=provider, model_id=model_id)
     _validate_tool_message_sequence(chain, context="serialized messages_chain")
     return chain
 
@@ -279,6 +417,11 @@ class LangGraphAgentBuilder:
         )
         self._agent = None
 
+        # Provider metadata set by LangChainModelFactory for think-block handling
+        self._provider: str = getattr(llm, "_wegent_provider", "unknown")
+        self._model_id: str = getattr(llm, "_wegent_model_id", "")
+        self._api_format: str = getattr(llm, "_wegent_api_format", "")
+
         # Get all LangChain tools from registry
         self.tools: list[BaseTool] = []
         if self.tool_registry:
@@ -308,6 +451,9 @@ class LangGraphAgentBuilder:
         lc_messages = _convert_validated_messages(
             messages,
             context="agent execution input messages",
+            target_provider=self._provider,
+            target_model_id=self._model_id,
+            target_api_format=self._api_format,
         )
         exec_config = {"configurable": config} if config else None
 
@@ -784,6 +930,9 @@ class LangGraphAgentBuilder:
         lc_messages = _convert_validated_messages(
             messages,
             context="stream_execute input messages",
+            target_provider=self._provider,
+            target_model_id=self._model_id,
+            target_api_format=self._api_format,
         )
 
         exec_config = {"configurable": config} if config else None
@@ -840,6 +989,9 @@ class LangGraphAgentBuilder:
         lc_messages = _convert_validated_messages(
             messages,
             context="stream_tokens input messages",
+            target_provider=self._provider,
+            target_model_id=self._model_id,
+            target_api_format=self._api_format,
         )
         add_span_event(
             "convert_to_messages_completed", {"lc_message_count": len(lc_messages)}
@@ -1302,7 +1454,9 @@ class LangGraphAgentBuilder:
             if _collected_state_messages:
                 new_msgs = _collected_state_messages[len(lc_messages) :]
                 self._last_messages_chain = _serialize_validated_messages_chain(
-                    new_msgs
+                    new_msgs,
+                    provider=self._provider,
+                    model_id=self._model_id,
                 )
             else:
                 self._last_messages_chain = []
@@ -1382,7 +1536,9 @@ class LangGraphAgentBuilder:
             if _collected_state_messages:
                 new_msgs = _collected_state_messages[len(lc_messages) :]
                 self._last_messages_chain = _serialize_validated_messages_chain(
-                    new_msgs
+                    new_msgs,
+                    provider=self._provider,
+                    model_id=self._model_id,
                 )
             raise
 
@@ -1398,7 +1554,9 @@ class LangGraphAgentBuilder:
             if _collected_state_messages:
                 new_msgs = _collected_state_messages[len(lc_messages) :]
                 self._last_messages_chain = _serialize_validated_messages_chain(
-                    new_msgs
+                    new_msgs,
+                    provider=self._provider,
+                    model_id=self._model_id,
                 )
 
             # Build messages with the limit reached notice

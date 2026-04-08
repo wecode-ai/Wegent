@@ -610,6 +610,22 @@ class ClaudeCodeAgent(Agent):
             return await self._async_execute()
         except Exception as e:
             return self._handle_execution_error(e, "Claude Code Agent async execution")
+        finally:
+            # Self-cleanup: destroy session when background task completes
+            # This is necessary because execute() returns RUNNING immediately
+            # and the caller (AgentService.execute_task) skips cleanup for RUNNING tasks
+            try:
+                from executor.services.agent_service import AgentService
+
+                agent_service = AgentService()
+                await agent_service._destroy_agent_session(self.task_id)
+                logger.info(
+                    f"Task {self.task_id} session cleaned up by execute_async finally block"
+                )
+            except Exception as cleanup_error:
+                logger.warning(
+                    f"Task {self.task_id} error during self-cleanup: {cleanup_error}"
+                )
 
     async def _async_execute(self) -> TaskStatus:
         """
@@ -1272,8 +1288,14 @@ class ClaudeCodeAgent(Agent):
                 # Check if we're in an async context
                 try:
                     loop = asyncio.get_running_loop()
-                    # If we're in an async context, create a task
-                    asyncio.create_task(self._async_cancel_run())
+                    # If we're in an async context, use run_coroutine_threadsafe
+                    # to ensure interrupt() is actually executed
+                    future = asyncio.run_coroutine_threadsafe(
+                        self._async_cancel_run(), loop
+                    )
+                    # Wait for the interrupt to complete with a timeout
+                    # This ensures cancel_run() doesn't return before interrupt() is sent
+                    future.result(timeout=5)
                 except RuntimeError:
                     # No running event loop, run the async method in a new loop
                     # Copy ContextVars before creating new event loop

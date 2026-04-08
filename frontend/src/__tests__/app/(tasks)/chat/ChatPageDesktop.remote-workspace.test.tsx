@@ -116,6 +116,25 @@ jest.mock('@/features/tasks/components/group-chat', () => ({
   CreateGroupChatDialog: () => <div>create-group-chat-dialog</div>,
 }))
 
+// Mock EnhancedMarkdown and other ESM-heavy components to avoid Jest ESM issues
+jest.mock('@/components/common/EnhancedMarkdown', () => ({
+  __esModule: true,
+  default: ({ children }: { children?: string }) => (
+    <div data-testid="enhanced-markdown">{children}</div>
+  ),
+  CodeBlock: ({ children }: { children?: string }) => (
+    <pre data-testid="code-block">{children}</pre>
+  ),
+}))
+
+jest.mock('@/features/tasks/components/message', () => ({
+  MessageBubble: ({ content }: { content?: string }) => (
+    <div data-testid="message-bubble">{content}</div>
+  ),
+  MessageSkeleton: () => <div data-testid="message-skeleton">Loading...</div>,
+  WelcomeMessage: () => <div data-testid="welcome-message">Welcome</div>,
+}))
+
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
     t: (key: string) => key,

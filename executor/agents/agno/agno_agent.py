@@ -485,6 +485,22 @@ class AgnoAgent(Agent):
             return await self._async_execute()
         except Exception as e:
             return self._handle_execution_error(e, "Agno Agent async execution")
+        finally:
+            # Self-cleanup: destroy session when background task completes
+            # This is necessary because execute() returns RUNNING immediately
+            # and the caller (AgentService.execute_task) skips cleanup for RUNNING tasks
+            try:
+                from executor.services.agent_service import AgentService
+
+                agent_service = AgentService()
+                await agent_service._destroy_agent_session(self.task_id)
+                logger.info(
+                    f"Task {self.task_id} session cleaned up by execute_async finally block"
+                )
+            except Exception as cleanup_error:
+                logger.warning(
+                    f"Task {self.task_id} error during self-cleanup: {cleanup_error}"
+                )
 
     async def _async_execute(self) -> TaskStatus:
         """

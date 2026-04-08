@@ -30,6 +30,7 @@ import { Label } from '@/components/ui/label'
 import { useTranslation } from '@/hooks/useTranslation'
 import { apiClient } from '@/apis/client'
 import { retrieverApis, type RetrievalMethodType } from '@/apis/retrievers'
+import { getKnowledgeBase } from '@/apis/knowledge'
 import type { KnowledgeBase } from '@/types/knowledge'
 
 interface RetrievalResult {
@@ -59,7 +60,7 @@ interface TestConfig {
 export function RetrievalTestDialog({
   open,
   onOpenChange,
-  knowledgeBase,
+  knowledgeBase: knowledgeBaseProp,
 }: RetrievalTestDialogProps) {
   const { t } = useTranslation()
   const [query, setQuery] = useState('')
@@ -68,6 +69,10 @@ export function RetrievalTestDialog({
   const [error, setError] = useState<string | null>(null)
   const [hasSearched, setHasSearched] = useState(false)
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null)
+
+  // Full knowledge base data fetched from detail API (includes retrieval_config)
+  const [fullKnowledgeBase, setFullKnowledgeBase] = useState<KnowledgeBase | null>(null)
+  const [loadingKb, setLoadingKb] = useState(false)
 
   // Retrieval methods supported by the retriever
   const [supportedMethods, setSupportedMethods] = useState<RetrievalMethodType[]>([])
@@ -82,15 +87,49 @@ export function RetrievalTestDialog({
 
   const maxQueryLength = 200
 
+  // Use full knowledge base data if available, otherwise fall back to prop
+  const knowledgeBase = fullKnowledgeBase || knowledgeBaseProp
+
   // Check if retrieval config is available
   const hasRetrievalConfig =
     knowledgeBase.retrieval_config?.retriever_name &&
     knowledgeBase.retrieval_config?.embedding_config?.model_name
 
+  // Fetch full knowledge base data when dialog opens
+  // This ensures we have retrieval_config even if the prop came from a list API
+  useEffect(() => {
+    const fetchFullKnowledgeBase = async () => {
+      if (!open || !knowledgeBaseProp.id) return
+
+      // If prop already has retrieval_config, no need to fetch
+      if (
+        knowledgeBaseProp.retrieval_config?.retriever_name &&
+        knowledgeBaseProp.retrieval_config?.embedding_config?.model_name
+      ) {
+        setFullKnowledgeBase(knowledgeBaseProp)
+        return
+      }
+
+      setLoadingKb(true)
+      try {
+        const fullKb = await getKnowledgeBase(knowledgeBaseProp.id)
+        setFullKnowledgeBase(fullKb)
+      } catch (err) {
+        console.error('Failed to fetch knowledge base details:', err)
+        // Fall back to prop data
+        setFullKnowledgeBase(knowledgeBaseProp)
+      } finally {
+        setLoadingKb(false)
+      }
+    }
+
+    fetchFullKnowledgeBase()
+  }, [open, knowledgeBaseProp])
+
   // Load supported retrieval methods based on retriever's storage type
   useEffect(() => {
     const loadSupportedMethods = async () => {
-      if (!open || !hasRetrievalConfig) return
+      if (!open || !hasRetrievalConfig || loadingKb) return
 
       const retrieverName = knowledgeBase.retrieval_config?.retriever_name
       const retrieverNamespace = knowledgeBase.retrieval_config?.retriever_namespace || 'default'
@@ -124,7 +163,7 @@ export function RetrievalTestDialog({
     }
 
     loadSupportedMethods()
-  }, [open, hasRetrievalConfig, knowledgeBase.retrieval_config])
+  }, [open, hasRetrievalConfig, knowledgeBase.retrieval_config, loadingKb])
 
   const handleSearch = useCallback(async () => {
     if (!query.trim() || !hasRetrievalConfig) return
@@ -185,6 +224,7 @@ export function RetrievalTestDialog({
     setError(null)
     setHasSearched(false)
     setExpandedIndex(null)
+    setFullKnowledgeBase(null)
     onOpenChange(false)
   }
 
@@ -379,9 +419,16 @@ export function RetrievalTestDialog({
                 </Button>
               </div>
             </div>
+            {/* Loading knowledge base data */}
+            {loadingKb && (
+              <div className="mt-3 p-3 bg-surface border border-border rounded-lg text-sm text-text-secondary flex items-center gap-2">
+                <Spinner className="w-4 h-4" />
+                {t('common:loading')}
+              </div>
+            )}
 
-            {/* No config warning */}
-            {!hasRetrievalConfig && (
+            {/* No config warning - only show after loading is complete */}
+            {!loadingKb && !hasRetrievalConfig && (
               <div className="mt-3 p-3 bg-warning/10 border border-warning/20 rounded-lg text-sm text-warning">
                 {t('knowledge:document.retrievalTest.noConfig')}
               </div>
