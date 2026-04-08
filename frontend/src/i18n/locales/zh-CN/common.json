@@ -740,7 +740,8 @@
     "page_info": "第 {{current}} 页 / 共 {{total}} 页",
     "warning": "警告",
     "cannotUndo": "此操作无法撤销",
-    "coming_soon": "即将推出"
+    "coming_soon": "即将推出",
+    "noResults": "暂无结果"
   },
   "dialog": {
     "confirm_close_title": "确认关闭",
