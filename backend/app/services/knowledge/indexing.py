@@ -32,12 +32,7 @@ from app.core.config import settings
 from app.db.session import SessionLocal
 from app.models.kind import Kind
 from app.models.subtask_context import ContextType, SubtaskContext
-from app.schemas.rag import (
-    SemanticSplitterConfig,
-    SentenceSplitterConfig,
-    SmartSplitterConfig,
-    SplitterConfig,
-)
+from app.schemas.rag import SplitterConfig
 from app.services.knowledge.index_runtime import (
     KnowledgeBaseIndexInfo,
     build_kb_index_info,
@@ -116,31 +111,6 @@ def get_rag_indexing_skip_reason(
             return f"EXCEL_FILE_SIZE_EXCEEDED|{normalized_extension}|{limit_mb:.0f}|{size_mb:.2f}"
 
     return None
-
-
-def parse_splitter_config(config_dict: dict) -> Optional[SplitterConfig]:
-    """
-    Parse a dictionary into the appropriate SplitterConfig type.
-
-    Since SplitterConfig is a Union type, it cannot be instantiated directly.
-    This function determines the correct type based on the 'type' field.
-
-    Args:
-        config_dict: Dictionary containing splitter configuration
-
-    Returns:
-        SemanticSplitterConfig, SentenceSplitterConfig, or SmartSplitterConfig instance,
-        or None if invalid
-    """
-    if not config_dict:
-        return None
-
-    splitter_type = config_dict.get("type")
-    if splitter_type == "semantic":
-        return SemanticSplitterConfig(**config_dict)
-    if splitter_type == "smart":
-        return SmartSplitterConfig(**config_dict)
-    return SentenceSplitterConfig(**config_dict)
 
 
 def _serialize_splitter_config(
