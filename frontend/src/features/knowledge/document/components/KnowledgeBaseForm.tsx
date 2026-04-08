@@ -35,6 +35,8 @@ interface KnowledgeBaseFormProps {
   summaryModelError?: string
   onSummaryModelChange: (value: SummaryModelRef | null) => void
   knowledgeDefaultTeamId?: number | null
+  /** Optional bind model name from team's bot config as fallback */
+  bindModel?: string | null
   callLimits: {
     maxCalls: number
     exemptCalls: number
@@ -71,6 +73,7 @@ export function KnowledgeBaseForm({
   summaryModelError,
   onSummaryModelChange,
   knowledgeDefaultTeamId,
+  bindModel,
   callLimits,
   onCallLimitsChange,
   advancedVariant,
@@ -244,6 +247,7 @@ export function KnowledgeBaseForm({
               onChange={onSummaryModelChange}
               error={summaryModelError}
               knowledgeDefaultTeamId={knowledgeDefaultTeamId}
+              bindModel={bindModel}
             />
           </div>
         )}
