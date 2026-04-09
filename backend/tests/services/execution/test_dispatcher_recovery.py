@@ -59,10 +59,12 @@ async def test_dispatch_recovers_deleted_executor_before_http_callback():
 
     db.query.side_effect = query_side_effect
 
-    async def recover_side_effect(*, db, subtask, task, user_id, user_name):
+    async def recover_side_effect(*, db, subtask, task, request):
         subtask.executor_name = "recovered-executor"
         subtask.executor_namespace = "default"
         subtask.executor_deleted_at = False
+        request.executor_name = "recovered-executor"
+        request.executor_namespace = "default"
         return True
 
     recovery_service = MagicMock()
