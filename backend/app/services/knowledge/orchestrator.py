@@ -1519,23 +1519,20 @@ class KnowledgeOrchestrator:
         if not has_access:
             raise ValueError("Access denied to knowledge base")
 
+        # Validate source_type early (sync does not support "web")
+        valid_sync_types = {"text", "file", "attachment"}
+        if source_type not in valid_sync_types:
+            raise ValueError(
+                f"Invalid source_type for sync: {source_type}. "
+                f"Must be {', '.join(repr(t) for t in sorted(valid_sync_types))}."
+            )
+
         # Check for existing document with same name
         existing_doc = KnowledgeService.find_document_by_name(
             db=db,
             knowledge_base_id=knowledge_base_id,
             user_id=user.id,
             name=name,
-        )
-
-        # Resolve binary data and file extension from input
-        binary_data, normalized_ext = self._resolve_sync_content(
-            db=db,
-            user=user,
-            source_type=source_type,
-            content=content,
-            file_base64=file_base64,
-            file_extension=file_extension,
-            attachment_id=attachment_id,
         )
 
         if existing_doc:
@@ -1547,6 +1544,18 @@ class KnowledgeOrchestrator:
                     "You do not have permission to manage this document "
                     "in this knowledge base"
                 )
+
+            # Resolve content only after permission is confirmed (avoid
+            # unnecessary I/O for unauthorized requests and large files)
+            binary_data, normalized_ext = self._resolve_sync_content(
+                db=db,
+                user=user,
+                source_type=source_type,
+                content=content,
+                file_base64=file_base64,
+                file_extension=file_extension,
+                attachment_id=attachment_id,
+            )
 
             return self._update_existing_document(
                 db=db,
@@ -1674,6 +1683,7 @@ class KnowledgeOrchestrator:
         trigger_summary: bool,
     ) -> Dict[str, Any]:
         """Replace content of an existing document and optionally re-index."""
+        from app.core.exceptions import NotFoundException
         from app.services.context import context_service
         from app.services.knowledge.indexing import get_rag_indexing_skip_reason
 
@@ -1692,10 +1702,11 @@ class KnowledgeOrchestrator:
                     f"[Orchestrator] Overwrote attachment {document.attachment_id} "
                     f"for document {document.id}"
                 )
-            except Exception as e:
+            except NotFoundException:
+                # Original attachment was deleted; create a replacement
                 logger.warning(
-                    f"[Orchestrator] Failed to overwrite attachment "
-                    f"{document.attachment_id}: {e}, creating new one"
+                    f"[Orchestrator] Attachment {document.attachment_id} not found, "
+                    f"creating new one for document {document.id}"
                 )
                 attachment, _ = context_service.upload_attachment(
                     db=db,
