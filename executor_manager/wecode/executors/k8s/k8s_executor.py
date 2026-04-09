@@ -185,6 +185,7 @@ class K8sExecutor(Executor):
         is_validation_task = task_type == "validation"
         is_subagent_task = task_type == "subagent"
         is_sandbox_task = task_type == "sandbox"
+        prepare_only = bool(get_metadata_field(task_dict, "prepare_only", False))
 
         status = "success"
         progress = 30
@@ -195,20 +196,28 @@ class K8sExecutor(Executor):
         should_create_new_pod = not executor_name
 
         if executor_name:
-            result = self._submit_to_existing_executor(
-                task=task_dict,
-                executor_name=executor_name,
-                task_id=task_id,
-                subtask_id=subtask_id,
-            )
-            # If pod completed, need to create a new pod
-            if result["status"] == "pod_completed":
-                should_create_new_pod = True
+            if prepare_only:
+                pod_result = self.get_pods_by_executor_name(executor_name)
+                pod_list = pod_result.get("pods", [])
+                if pod_list and pod_list[0].get("status") != "Succeeded":
+                    self.wait_instance_ready(executor_name)
+                else:
+                    should_create_new_pod = True
             else:
-                status = result["status"]
-                progress = result["progress"]
-                error_msg = result["error_msg"]
-                callback_status = result["callback_status"]
+                result = self._submit_to_existing_executor(
+                    task=task_dict,
+                    executor_name=executor_name,
+                    task_id=task_id,
+                    subtask_id=subtask_id,
+                )
+                # If pod completed, need to create a new pod
+                if result["status"] == "pod_completed":
+                    should_create_new_pod = True
+                else:
+                    status = result["status"]
+                    progress = result["progress"]
+                    error_msg = result["error_msg"]
+                    callback_status = result["callback_status"]
 
         if should_create_new_pod:
             # Create new pod, reuse executor_name if pod was completed, otherwise generate new one
@@ -232,8 +241,8 @@ class K8sExecutor(Executor):
                     task_info["executor_name"] = executor_name
                     self.create_instance(task_dict, task_info, executor_name)
 
-                    # Non-sandbox tasks must be explicitly dispatched after pod ready.
-                    if not is_sandbox_task:
+                    # Sandbox containers and prepare-only requests are intentionally started idle.
+                    if not is_sandbox_task and not prepare_only:
                         try:
                             ready_info = self.wait_instance_ready(executor_name)
                             dispatch_result = self.dispatch_task_to_instance(

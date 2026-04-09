@@ -446,13 +446,6 @@ class ExecutionDispatcher:
                     f"Task {request.task_id} not found for executor recovery"
                 )
 
-            user_id = request.user.get("id") if request.user else request.user_id
-            user_name = (
-                request.user.get("name")
-                if request.user and request.user.get("name")
-                else request.user_name
-            )
-
             logger.info(
                 "[ExecutionDispatcher] Recovering deleted executor: "
                 "task_id=%s, subtask_id=%s, executor=%s",
@@ -465,8 +458,7 @@ class ExecutionDispatcher:
                 db=db,
                 subtask=subtask,
                 task=task,
-                user_id=user_id,
-                user_name=user_name,
+                request=request,
             )
             if not recovered:
                 raise RuntimeError(

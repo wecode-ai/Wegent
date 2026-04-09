@@ -1203,6 +1203,49 @@ async def cancel_task_v1(request: CancelRequest, http_request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@api_router.post("/executors/prepare")
+async def prepare_executor(request: ExecutionRequest, http_request: Request):
+    """Prepare a normal executor runtime without dispatching the task."""
+    client_ip = http_request.client.host if http_request.client else "unknown"
+    logger.info(
+        f"[executors/prepare] Received request: task_id={request.task_id}, "
+        f"subtask_id={request.subtask_id} from {client_ip}"
+    )
+
+    set_task_context(task_id=request.task_id, subtask_id=request.subtask_id)
+
+    try:
+        task_dict = request.to_dict()
+        task_dict["prepare_only"] = True
+
+        result_map = await asyncio.to_thread(task_processor.process_tasks, [task_dict])
+        result = result_map.get(request.task_id) or next(
+            iter(result_map.values()),
+            None,
+        )
+
+        if not result:
+            raise HTTPException(status_code=500, detail="No executor result returned")
+        if result.get("status") != "success":
+            raise HTTPException(
+                status_code=500,
+                detail=result.get("error_msg", "Failed to prepare executor"),
+            )
+
+        return {
+            "status": result.get("status"),
+            "executor_name": result.get("executor_name"),
+            "executor_namespace": result.get("executor_namespace"),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            f"[executors/prepare] Error preparing executor for task {request.task_id}: {e}"
+        )
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 async def _cleanup_task_heartbeat(task_id: int) -> None:
     """Clean up heartbeat data for a cancelled task.
 

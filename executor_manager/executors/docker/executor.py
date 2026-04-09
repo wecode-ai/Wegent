@@ -169,6 +169,7 @@ class DockerExecutor(Executor):
         is_validation_task = get_metadata_field(task_dict, "type") == "validation"
         # Check if this is a Sandbox task (internal tasks with callback routing)
         is_sandbox_task = get_metadata_field(task_dict, "type") == "sandbox"
+        prepare_only = bool(get_metadata_field(task_dict, "prepare_only", False))
 
         # Initialize execution status
         execution_status = {
@@ -186,6 +187,8 @@ class DockerExecutor(Executor):
                 if self._should_recreate_container(executor_name, task_id):
                     execution_status["executor_name"] = executor_name
                     self._create_new_container(task_dict, task_info, execution_status)
+                elif prepare_only:
+                    self.wait_instance_ready(executor_name)
                 else:
                     self._execute_in_existing_container(task_dict, execution_status)
             else:
@@ -374,12 +377,12 @@ class DockerExecutor(Executor):
     ) -> None:
         """Create new Docker container"""
         is_sandbox_task = get_metadata_field(task, "type") == "sandbox"
+        prepare_only = bool(get_metadata_field(task, "prepare_only", False))
         executor_name = status["executor_name"]
         self.create_instance(task, task_info, executor_name)
 
-        # For non-sandbox tasks, dispatch the first HTTP request after startup.
-        # Sandbox containers are intentionally started idle and wait for /execute requests.
-        if not is_sandbox_task:
+        # Sandbox containers and prepare-only requests are intentionally started idle.
+        if not is_sandbox_task and not prepare_only:
             try:
                 ready_info = self.wait_instance_ready(executor_name)
                 self.dispatch_task_to_instance(task, executor_name, ready_info)
