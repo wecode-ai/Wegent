@@ -50,9 +50,7 @@ def _infer_provider(msg: dict[str, Any]) -> str | None:
             if block_type == _REASONING_TYPE and "summary" in block:
                 # OpenAI Responses API format (pre-normalization legacy)
                 return "openai"
-            if block_type == _REASONING_TYPE and isinstance(
-                block.get("extras"), dict
-            ):
+            if block_type == _REASONING_TYPE and isinstance(block.get("extras"), dict):
                 extras = block["extras"]
                 if extras.get("signature"):
                     # Canonical reasoning with Anthropic signature
@@ -101,11 +99,27 @@ def _denormalize_for_anthropic(content: list) -> list:
     Such blocks originate from non-Claude providers (e.g. Kimi) that use
     the Anthropic protocol without producing signatures.
 
-    Non-reasoning blocks are passed through unchanged.
+    Non-reasoning blocks are passed through unchanged.  Legacy ``thinking``
+    blocks (pre-normalization data) are validated: kept if they carry a
+    ``signature``, dropped otherwise.
     """
     result: list = []
     for block in content:
-        if not isinstance(block, dict) or block.get("type") != _REASONING_TYPE:
+        if not isinstance(block, dict):
+            result.append(block)
+            continue
+
+        block_type = block.get("type")
+
+        # Legacy "thinking" blocks stored before normalization was introduced.
+        # Claude API requires signature on every thinking block, so drop
+        # legacy blocks that lack one.
+        if block_type == _LEGACY_ANTHROPIC_TYPE:
+            if block.get("signature"):
+                result.append(block)
+            continue
+
+        if block_type != _REASONING_TYPE:
             result.append(block)
             continue
 
@@ -139,6 +153,10 @@ def _denormalize_for_openai_responses(content: list) -> list:
          "summary": [{"type": "summary_text", "text": "text"}],
          "encrypted_content": "gAAAA..."}
 
+    Multiple canonical blocks that share the same ``extras.id`` (produced
+    when the original reasoning block had multiple ``summary_text`` items)
+    are merged back into a single Responses API reasoning item.
+
     Blocks without ``extras.id`` or ``extras.encrypted_content`` (i.e. not
     originating from the Responses API) are passed through unchanged.
 
@@ -149,6 +167,10 @@ def _denormalize_for_openai_responses(content: list) -> list:
     """
     result: list = []
     has_reasoning_id = False
+    # Track the last rebuilt reasoning item by id so that consecutive
+    # canonical blocks that were exploded from the same original reasoning
+    # block are merged back into one item with multiple summary_text entries.
+    _last_reasoning_by_id: dict[str, dict[str, Any]] = {}
 
     for block in content:
         if not isinstance(block, dict) or block.get("type") != _REASONING_TYPE:
@@ -159,24 +181,46 @@ def _denormalize_for_openai_responses(content: list) -> list:
         if not isinstance(extras, dict) or (
             "id" not in extras and "encrypted_content" not in extras
         ):
+            # Check for raw (pre-normalization) Responses API format where
+            # ``id``, ``summary``, ``encrypted_content`` live at the top
+            # level instead of inside ``extras``.  These blocks are already
+            # in valid Responses API format and can be passed through, but
+            # we must set ``has_reasoning_id`` so that sibling text-block
+            # ids are preserved (the API needs them to pair the reasoning
+            # item with its output message).
+            if "summary" in block and ("id" in block or "encrypted_content" in block):
+                has_reasoning_id = True
+                result.append(block)
+                continue
+
             # Not an exploded Responses API reasoning block — pass through
             result.append(block)
             continue
 
         has_reasoning_id = True
+        reasoning_text = block.get("reasoning", "")
+        block_id = extras.get("id")
+
+        # Merge into an existing rebuilt item if one shares the same id
+        if block_id and block_id in _last_reasoning_by_id:
+            _last_reasoning_by_id[block_id]["summary"].append(
+                {"type": "summary_text", "text": reasoning_text}
+            )
+            continue
 
         # Reconstruct the original Responses API format
         rebuilt: dict[str, Any] = {"type": _REASONING_TYPE}
-        if "id" in extras:
-            rebuilt["id"] = extras["id"]
+        if block_id:
+            rebuilt["id"] = block_id
 
-        reasoning_text = block.get("reasoning", "")
         rebuilt["summary"] = [{"type": "summary_text", "text": reasoning_text}]
 
         if "encrypted_content" in extras:
             rebuilt["encrypted_content"] = extras["encrypted_content"]
 
         result.append(rebuilt)
+        if block_id:
+            _last_reasoning_by_id[block_id] = rebuilt
 
     # If no reasoning block had an id (corrupted/legacy data), strip ``id``
     # from text blocks to prevent orphaned message references that the
@@ -338,9 +382,7 @@ def strip_foreign_reasoning_blocks(
         if source_provider == target_provider:
             if target_provider == "anthropic" and isinstance(content, list):
                 source_model = (
-                    model_info.get("model", "")
-                    if isinstance(model_info, dict)
-                    else ""
+                    model_info.get("model", "") if isinstance(model_info, dict) else ""
                 )
                 # Non-Claude models using the Anthropic protocol (Minimax,
                 # Kimi, GLM) may produce fake signatures that the Claude API
@@ -348,15 +390,11 @@ def strip_foreign_reasoning_blocks(
                 # if it is actually Claude.  Legacy messages without
                 # model_info are assumed to be real Claude (backward compat).
                 has_model_info = isinstance(model_info, dict)
-                is_real_claude = not has_model_info or _is_claude_model(
-                    source_model
-                )
+                is_real_claude = not has_model_info or _is_claude_model(source_model)
                 if is_real_claude:
                     denormalized = copy.deepcopy(msg)
                     denormalized["content"] = _denormalize_for_anthropic(content)
-                    denormalized["response_metadata"] = {
-                        "model_provider": "anthropic"
-                    }
+                    denormalized["response_metadata"] = {"model_provider": "anthropic"}
                     result.append(denormalized)
                 else:
                     # Non-Claude model — strip reasoning blocks
@@ -426,6 +464,53 @@ def strip_foreign_reasoning_blocks(
     # Sanitize IDs from other providers (e.g. Kimi's "functions.load_skill:10").
     if target_provider == "anthropic":
         result = _sanitize_tool_ids_for_anthropic(result)
+
+    # Ensure every assistant message ending with a reasoning block has a
+    # following output item.  The Responses API rejects orphaned reasoning
+    # items, so we append a placeholder text block as a safety net.
+    if target_uses_responses:
+        result = _ensure_reasoning_has_output(result)
+
+    return result
+
+
+def _ensure_reasoning_has_output(
+    messages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Ensure assistant messages don't end with an orphaned reasoning block.
+
+    The OpenAI Responses API requires that every ``reasoning`` item is
+    followed by its output (a ``message`` or ``function_call`` item).
+    When the last content block of an assistant message is ``reasoning``
+    (and the message has no ``tool_calls``), the API will reject it.
+
+    This function appends a placeholder ``text`` block so that the
+    reasoning block always has a valid following item.
+    """
+    result: list[dict[str, Any]] = []
+    for msg in messages:
+        if msg.get("role") != "assistant":
+            result.append(msg)
+            continue
+
+        content = msg.get("content")
+        if not isinstance(content, list) or not content:
+            result.append(msg)
+            continue
+
+        last_block = content[-1]
+        has_tool_calls = bool(msg.get("tool_calls"))
+        is_orphaned_reasoning = (
+            isinstance(last_block, dict)
+            and last_block.get("type") in (_REASONING_TYPE, _LEGACY_ANTHROPIC_TYPE)
+            and not has_tool_calls
+        )
+
+        if is_orphaned_reasoning:
+            patched = {**msg, "content": list(content) + [{"type": "text", "text": ""}]}
+            result.append(patched)
+        else:
+            result.append(msg)
 
     return result
 

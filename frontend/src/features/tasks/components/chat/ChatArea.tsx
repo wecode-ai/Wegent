@@ -33,6 +33,7 @@ import { useFloatingInput } from '../hooks/useFloatingInput'
 import { getAttachment } from '@/apis/attachments'
 import { useAttachmentUpload } from '../hooks/useAttachmentUpload'
 import { useSchemeMessageActions } from '@/lib/scheme'
+import { QueryParamAutoSend } from '../params'
 import { useSkillSelector } from '../../hooks/useSkillSelector'
 import { useModelSelection } from '../../hooks/useModelSelection'
 import { QueueMessageHandler } from '@/features/inbox'
@@ -1076,6 +1077,17 @@ function ChatAreaContent({
       {taskType === 'chat' && (
         <QueueMessageHandler onQueueMessageLoaded={handleQueueMessageLoaded} />
       )}
+
+      {/* Auto-send message from URL query parameter ?q=xxx&teamId=xxx */}
+      <QueryParamAutoSend
+        teams={teams}
+        isTeamsLoading={isTeamsLoading}
+        selectedTeam={chatState.selectedTeam}
+        onTeamChange={handleTeamChange}
+        onSendMessage={streamHandlers.handleSendMessage}
+        hasTaskId={!!taskIdFromUrl}
+        onPrefillMessage={chatState.setTaskInputMessage}
+      />
 
       {/* Pipeline Stage Indicator - shows current stage progress for pipeline mode */}
       {hasMessages && selectedTaskDetail?.id && (

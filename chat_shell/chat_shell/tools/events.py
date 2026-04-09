@@ -234,6 +234,7 @@ def _handle_tool_end(
             call_id=tool_use_id,
             name=tool_name,
             arguments=arguments,
+            output=serializable_output,
         )
     )
 

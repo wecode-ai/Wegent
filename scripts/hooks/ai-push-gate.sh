@@ -106,7 +106,9 @@ FRONTEND_COUNT=$(echo "$CHANGED_FILES" | grep -c "^frontend/" 2>/dev/null || ech
 EXECUTOR_COUNT=$(echo "$CHANGED_FILES" | grep -c "^executor/" 2>/dev/null || echo 0)
 EXECUTOR_MGR_COUNT=$(echo "$CHANGED_FILES" | grep -c "^executor_manager/" 2>/dev/null || echo 0)
 SHARED_COUNT=$(echo "$CHANGED_FILES" | grep -c "^shared/" 2>/dev/null || echo 0)
-OTHER_COUNT=$(echo "$CHANGED_FILES" | grep -cvE "^(backend|frontend|executor|executor_manager|shared)/" 2>/dev/null || echo 0)
+KNOWLEDGE_ENGINE_COUNT=$(echo "$CHANGED_FILES" | grep -c "^knowledge_engine/" 2>/dev/null || echo 0)
+KNOWLEDGE_RUNTIME_COUNT=$(echo "$CHANGED_FILES" | grep -c "^knowledge_runtime/" 2>/dev/null || echo 0)
+OTHER_COUNT=$(echo "$CHANGED_FILES" | grep -cvE "^(backend|frontend|executor|executor_manager|shared|knowledge_engine|knowledge_runtime)/" 2>/dev/null || echo 0)
 
 echo -e "   ${BLUE}Modules affected:${NC}"
 [ "$BACKEND_COUNT" -gt 0 ] 2>/dev/null && echo -e "   - Backend: $BACKEND_COUNT file(s)"
@@ -114,6 +116,8 @@ echo -e "   ${BLUE}Modules affected:${NC}"
 [ "$EXECUTOR_COUNT" -gt 0 ] 2>/dev/null && echo -e "   - Executor: $EXECUTOR_COUNT file(s)"
 [ "$EXECUTOR_MGR_COUNT" -gt 0 ] 2>/dev/null && echo -e "   - Executor Manager: $EXECUTOR_MGR_COUNT file(s)"
 [ "$SHARED_COUNT" -gt 0 ] 2>/dev/null && echo -e "   - Shared: $SHARED_COUNT file(s)"
+[ "$KNOWLEDGE_ENGINE_COUNT" -gt 0 ] 2>/dev/null && echo -e "   - Knowledge Engine: $KNOWLEDGE_ENGINE_COUNT file(s)"
+[ "$KNOWLEDGE_RUNTIME_COUNT" -gt 0 ] 2>/dev/null && echo -e "   - Knowledge Runtime: $KNOWLEDGE_RUNTIME_COUNT file(s)"
 [ "$OTHER_COUNT" -gt 0 ] 2>/dev/null && echo -e "   - Other: $OTHER_COUNT file(s)"
 echo ""
 
@@ -147,7 +151,7 @@ if [ -n "$CONFIG_FILES" ]; then
 fi
 
 # Any code change → Consider updating AGENTS.md and README
-ANY_CODE=$(echo "$CHANGED_FILES" | grep -E "^(backend|frontend|executor|executor_manager|shared)/.*\.(py|ts|tsx)$" || true)
+ANY_CODE=$(echo "$CHANGED_FILES" | grep -E "^(backend|frontend|executor|executor_manager|shared|knowledge_engine|knowledge_runtime)/.*\.(py|ts|tsx)$" || true)
 if [ -n "$ANY_CODE" ]; then
     DOC_REMINDERS+=("Code changed → Consider updating AGENTS.md and README.md/README_zh.md if needed")
 fi
@@ -414,6 +418,74 @@ if [ "$BACKEND_COUNT" -gt 0 ] 2>/dev/null; then
     else
         echo -e "   ${YELLOW}⚠️ SKIP: Settings check script not found${NC}"
         WARNINGS+=("Settings: check script not found at $SETTINGS_CHECK_SCRIPT")
+    fi
+    echo ""
+fi
+
+# -----------------------------------------------------------------------------
+# Knowledge Engine Checks (if knowledge_engine files changed)
+# -----------------------------------------------------------------------------
+if [ "$KNOWLEDGE_ENGINE_COUNT" -gt 0 ] 2>/dev/null; then
+    echo -e "${BLUE}🔍 Knowledge Engine Checks:${NC}"
+
+    if [ ! -d "knowledge_engine" ]; then
+        echo -e "   ${YELLOW}⚠️ SKIP: knowledge_engine directory not found${NC}"
+        WARNINGS+=("Knowledge Engine: project directory not found")
+    else
+        cd knowledge_engine
+
+        if [ ! -d "tests" ]; then
+            echo -e "   ${YELLOW}⚠️ SKIP: tests directory not found${NC}"
+            WARNINGS+=("Knowledge Engine: tests directory not found")
+        else
+            echo -e "   Running pytest..."
+            uv run --group dev pytest tests/ --tb=short -q > "$TEMP_DIR/knowledge_engine_pytest.log" 2>&1
+            PYTEST_EXIT=$?
+            if [ $PYTEST_EXIT -eq 0 ]; then
+                echo -e "   ${GREEN}✅ Pytest: PASSED${NC}"
+            else
+                echo -e "   ${RED}❌ Pytest: FAILED${NC}"
+                CHECK_FAILED=1
+                FAILED_CHECKS+=("Knowledge Engine Pytest")
+                FAILED_LOGS+=("$TEMP_DIR/knowledge_engine_pytest.log")
+            fi
+        fi
+
+        cd ..
+    fi
+    echo ""
+fi
+
+# -----------------------------------------------------------------------------
+# Knowledge Runtime Checks (if knowledge_runtime files changed)
+# -----------------------------------------------------------------------------
+if [ "$KNOWLEDGE_RUNTIME_COUNT" -gt 0 ] 2>/dev/null; then
+    echo -e "${BLUE}🔍 Knowledge Runtime Checks:${NC}"
+
+    if [ ! -d "knowledge_runtime" ]; then
+        echo -e "   ${YELLOW}⚠️ SKIP: knowledge_runtime directory not found${NC}"
+        WARNINGS+=("Knowledge Runtime: project directory not found")
+    else
+        cd knowledge_runtime
+
+        if [ ! -d "tests" ]; then
+            echo -e "   ${YELLOW}⚠️ SKIP: tests directory not found${NC}"
+            WARNINGS+=("Knowledge Runtime: tests directory not found")
+        else
+            echo -e "   Running pytest..."
+            uv run --group dev pytest tests/ --tb=short -q > "$TEMP_DIR/knowledge_runtime_pytest.log" 2>&1
+            PYTEST_EXIT=$?
+            if [ $PYTEST_EXIT -eq 0 ]; then
+                echo -e "   ${GREEN}✅ Pytest: PASSED${NC}"
+            else
+                echo -e "   ${RED}❌ Pytest: FAILED${NC}"
+                CHECK_FAILED=1
+                FAILED_CHECKS+=("Knowledge Runtime Pytest")
+                FAILED_LOGS+=("$TEMP_DIR/knowledge_runtime_pytest.log")
+            fi
+        fi
+
+        cd ..
     fi
     echo ""
 fi

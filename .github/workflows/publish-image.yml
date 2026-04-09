@@ -331,6 +331,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=frontend-amd64
           build-args: |
             NEXT_TELEMETRY_DISABLED=1
+            APP_VERSION=${{ needs.prepare-release.outputs.new_version }}
 
   build-frontend-arm64:
     needs: prepare-release
@@ -365,6 +366,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=frontend-arm64
           build-args: |
             NEXT_TELEMETRY_DISABLED=1
+            APP_VERSION=${{ needs.prepare-release.outputs.new_version }}
 
   # ============================================================================
   # Chat Shell Image Build (parallel AMD64 + ARM64)
@@ -468,6 +470,8 @@ jobs:
           tags: ${{ env.IMAGE_PREFIX }}/wegent-standalone:${{ needs.prepare-release.outputs.new_version }}-amd64
           cache-from: type=gha,scope=standalone-amd64
           cache-to: type=gha,mode=max,scope=standalone-amd64
+          build-args: |
+            APP_VERSION=${{ needs.prepare-release.outputs.new_version }}
 
   build-standalone-arm64:
     needs: prepare-release
@@ -500,6 +504,8 @@ jobs:
           tags: ${{ env.IMAGE_PREFIX }}/wegent-standalone:${{ needs.prepare-release.outputs.new_version }}-arm64
           cache-from: type=gha,scope=standalone-arm64
           cache-to: type=gha,mode=max,scope=standalone-arm64
+          build-args: |
+            APP_VERSION=${{ needs.prepare-release.outputs.new_version }}
 
   # ============================================================================
   # Executor Local Binary Build (macOS)

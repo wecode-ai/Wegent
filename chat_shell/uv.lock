@@ -3312,6 +3312,18 @@ wheels = [
 ]
 
 [[package]]
+name = "redis"
+version = "7.4.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "async-timeout", marker = "python_full_version < '3.11.3'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/7b/7f/3759b1d0d72b7c92f0d70ffd9dc962b7b7b5ee74e135f9d7d8ab06b8a318/redis-7.4.0.tar.gz", hash = "sha256:64a6ea7bf567ad43c964d2c30d82853f8df927c5c9017766c55a1d1ed95d18ad", size = 4943913, upload-time = "2026-03-24T09:14:37.53Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/74/3a/95deec7db1eb53979973ebd156f3369a72732208d1391cd2e5d127062a32/redis-7.4.0-py3-none-any.whl", hash = "sha256:a9c74a5c893a5ef8455a5adb793a31bb70feb821c86eccb62eebef5a19c429ec", size = 409772, upload-time = "2026-03-24T09:14:35.968Z" },
+]
+
+[[package]]
 name = "referencing"
 version = "0.37.0"
 source = { registry = "https://pypi.org/simple" }
@@ -4105,6 +4117,7 @@ dependencies = [
     { name = "python-dotenv" },
     { name = "python-multipart" },
     { name = "pyyaml" },
+    { name = "redis" },
     { name = "sqlalchemy" },
     { name = "sse-starlette" },
     { name = "structlog" },
@@ -4176,6 +4189,7 @@ requires-dist = [
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "python-multipart", specifier = ">=0.0.6" },
     { name = "pyyaml", specifier = ">=6.0.1" },
+    { name = "redis", specifier = ">=5.0.0" },
     { name = "rich", marker = "extra == 'rich'", specifier = ">=13.0.0" },
     { name = "sqlalchemy", specifier = ">=2.0.25" },
     { name = "sse-starlette", specifier = ">=1.6.5" },

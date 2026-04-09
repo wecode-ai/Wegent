@@ -42,6 +42,32 @@ class NoInterpolationDotEnvSettingsSource(DotEnvSettingsSource):
         return parse_env_vars(file_vars, case_sensitive, ignore_empty, parse_none_str)
 
 
+VALID_RAG_RUNTIME_MODES = {"local", "remote"}
+
+
+def _normalize_rag_runtime_mode_value(value: Any, *, label: str) -> str:
+    normalized = str(value).strip().lower()
+    if normalized in VALID_RAG_RUNTIME_MODES:
+        return normalized
+    raise ValueError(
+        f"Invalid RAG runtime mode for {label}: {value!r}. "
+        f"Expected one of {sorted(VALID_RAG_RUNTIME_MODES)}"
+    )
+
+
+def _normalize_rag_runtime_mode_mapping(value: Mapping[Any, Any]) -> dict[str, str]:
+    normalized_mapping: dict[str, str] = {}
+    for key, item in value.items():
+        normalized_key = str(key).strip().lower()
+        if not normalized_key:
+            continue
+        normalized_mapping[normalized_key] = _normalize_rag_runtime_mode_value(
+            item,
+            label=f"operation {normalized_key!r}",
+        )
+    return normalized_mapping
+
+
 class Settings(BaseSettings):
     # Project configuration
     PROJECT_NAME: str = "Task Manager Backend"
@@ -235,6 +261,31 @@ class Settings(BaseSettings):
             return [item.strip() for item in raw.split(",") if item.strip()]
         return v
 
+    @field_validator("RAG_RUNTIME_MODE", mode="before")
+    @classmethod
+    def parse_rag_runtime_mode(cls, v: Any) -> str | dict[str, str]:
+        """Parse RAG runtime mode from a global value or JSON operation map."""
+        if v is None:
+            return "local"
+        if isinstance(v, Mapping):
+            return _normalize_rag_runtime_mode_mapping(v)
+        if isinstance(v, str):
+            raw = v.strip()
+            if not raw:
+                return "local"
+            if raw.startswith("{"):
+                try:
+                    parsed = json.loads(raw)
+                except json.JSONDecodeError as exc:
+                    raise ValueError(
+                        "RAG_RUNTIME_MODE malformed JSON override"
+                    ) from exc
+                if isinstance(parsed, Mapping):
+                    return _normalize_rag_runtime_mode_mapping(parsed)
+                raise ValueError("RAG_RUNTIME_MODE JSON override must be an object")
+            return _normalize_rag_runtime_mode_value(raw, label="global")
+        raise ValueError(f"Unsupported RAG_RUNTIME_MODE value: {v!r}")
+
     # Scheduler backend configuration
     # Supported backends: "celery" (default), "apscheduler", "xxljob"
     SCHEDULER_BACKEND: str = "celery"
@@ -346,6 +397,12 @@ class Settings(BaseSettings):
 
     OTEL_ENABLED: bool = False
 
+    # Logging configuration
+    # Enable/disable file logging (default: disabled, logs only to console)
+    LOG_FILE_ENABLED: bool = False
+    # Log file directory (default: ./logs in project root)
+    LOG_DIR: str = "./logs"
+
     # Web scraper proxy configuration
     # Supports HTTP, HTTPS, SOCKS5 proxy formats:
     # - Simple: "http://proxy.example.com:8080"
@@ -406,6 +463,18 @@ class Settings(BaseSettings):
     # Backend internal URL (for service-to-service communication)
     # Used by chat_shell to download skill binaries
     BACKEND_INTERNAL_URL: str = "http://localhost:8000"
+    # Knowledge runtime service URL for remote RAG execution
+    KNOWLEDGE_RUNTIME_URL: str = "http://localhost:8200"
+    # RAG data-plane execution mode
+    # "local" keeps execution in Backend, "remote" forwards to knowledge_runtime
+    # Accepts either a global mode string or a JSON object with per-operation overrides:
+    # "remote"
+    # {"default":"local","query":"remote"}
+    RAG_RUNTIME_MODE: str | dict[str, str] = "local"
+    # Kill switch for auto route selection of direct injection.
+    # When enabled, route_mode="auto" will always choose rag_retrieval.
+    # Explicit route_mode="direct_injection" remains supported for manual testing.
+    RAG_AUTO_DISABLE_DIRECT_INJECTION: bool = False
 
     # Streaming architecture mode configuration
     # "legacy" - WebSocketStreamingHandler directly emits to WebSocket (current behavior)
@@ -502,6 +571,18 @@ class Settings(BaseSettings):
     # Use: from shared.telemetry.config import get_otel_config
     # All OTEL_* environment variables are read from there
 
+    def get_rag_runtime_mode(self, operation: str) -> str:
+        """Resolve the effective RAG runtime mode for an operation."""
+        config = self.RAG_RUNTIME_MODE
+        if isinstance(config, Mapping):
+            normalized_operation = operation.strip().lower()
+            mode = config.get(normalized_operation) or config.get("default", "local")
+            return _normalize_rag_runtime_mode_value(
+                mode,
+                label=f"operation {normalized_operation!r}",
+            )
+        return _normalize_rag_runtime_mode_value(config, label="global")
+
     @classmethod
     def settings_customise_sources(
         cls,
@@ -520,7 +601,38 @@ class Settings(BaseSettings):
         return (
             init_settings,
             env_settings,
-            NoInterpolationDotEnvSettingsSource(settings_cls),
+            NoInterpolationDotEnvSettingsSource(
+                settings_cls,
+                env_file=getattr(dotenv_settings, "env_file", None),
+                env_file_encoding=getattr(
+                    dotenv_settings,
+                    "env_file_encoding",
+                    None,
+                ),
+                case_sensitive=getattr(dotenv_settings, "case_sensitive", None),
+                env_prefix=getattr(dotenv_settings, "env_prefix", None),
+                env_nested_delimiter=getattr(
+                    dotenv_settings,
+                    "env_nested_delimiter",
+                    None,
+                ),
+                env_nested_max_split=getattr(
+                    dotenv_settings,
+                    "env_nested_max_split",
+                    None,
+                ),
+                env_ignore_empty=getattr(
+                    dotenv_settings,
+                    "env_ignore_empty",
+                    None,
+                ),
+                env_parse_none_str=getattr(
+                    dotenv_settings,
+                    "env_parse_none_str",
+                    None,
+                ),
+                env_parse_enums=getattr(dotenv_settings, "env_parse_enums", None),
+            ),
             file_secret_settings,
         )
 

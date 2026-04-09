@@ -5868,6 +5868,7 @@ dependencies = [
     { name = "tenacity" },
     { name = "uvicorn", extra = ["standard"] },
     { name = "wegent-chat-shell" },
+    { name = "wegent-knowledge-engine" },
     { name = "wegent-shared" },
 ]
 
@@ -5973,6 +5974,7 @@ requires-dist = [
     { name = "tenacity", specifier = ">=8.2.3" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.27.0" },
     { name = "wegent-chat-shell", editable = "../chat_shell" },
+    { name = "wegent-knowledge-engine", editable = "../knowledge_engine" },
     { name = "wegent-shared", editable = "../shared" },
 ]
 
@@ -6039,6 +6041,7 @@ dependencies = [
     { name = "python-dotenv" },
     { name = "python-multipart" },
     { name = "pyyaml" },
+    { name = "redis" },
     { name = "sqlalchemy" },
     { name = "sse-starlette" },
     { name = "structlog" },
@@ -6091,6 +6094,7 @@ requires-dist = [
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "python-multipart", specifier = ">=0.0.6" },
     { name = "pyyaml", specifier = ">=6.0.1" },
+    { name = "redis", specifier = ">=5.0.0" },
     { name = "rich", marker = "extra == 'rich'", specifier = ">=13.0.0" },
     { name = "sqlalchemy", specifier = ">=2.0.25" },
     { name = "sse-starlette", specifier = ">=1.6.5" },
@@ -6114,6 +6118,86 @@ dev = [
     { name = "pytest-httpx", specifier = ">=0.36.0" },
     { name = "pytest-mock", specifier = ">=3.15.1" },
     { name = "pytest-xdist", specifier = ">=3.5.0" },
+]
+
+[[package]]
+name = "wegent-knowledge-engine"
+version = "1.0.0"
+source = { editable = "../knowledge_engine" }
+dependencies = [
+    { name = "beautifulsoup4" },
+    { name = "chardet" },
+    { name = "docx2txt" },
+    { name = "emoji" },
+    { name = "html2text" },
+    { name = "httpx", extra = ["brotli", "socks"] },
+    { name = "langchain-text-splitters" },
+    { name = "llama-index-core" },
+    { name = "llama-index-embeddings-openai" },
+    { name = "llama-index-readers-file" },
+    { name = "llama-index-vector-stores-elasticsearch" },
+    { name = "llama-index-vector-stores-milvus" },
+    { name = "llama-index-vector-stores-qdrant" },
+    { name = "markdown" },
+    { name = "openpyxl" },
+    { name = "orjson" },
+    { name = "pdf2image" },
+    { name = "pillow" },
+    { name = "pydantic" },
+    { name = "pymilvus" },
+    { name = "pypdf2" },
+    { name = "pytesseract" },
+    { name = "python-docx" },
+    { name = "python-dotenv" },
+    { name = "python-magic" },
+    { name = "python-pptx" },
+    { name = "sqlalchemy" },
+    { name = "tenacity" },
+    { name = "wegent-shared" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "beautifulsoup4", specifier = ">=4.12.0" },
+    { name = "chardet", specifier = ">=5.0.0" },
+    { name = "docx2txt", specifier = ">=0.8" },
+    { name = "emoji", specifier = ">=2.9.0" },
+    { name = "html2text", specifier = ">=2024.2.26" },
+    { name = "httpx", extras = ["brotli", "socks"], specifier = ">=0.26.0" },
+    { name = "langchain-text-splitters", specifier = ">=0.3.0" },
+    { name = "llama-index-core", specifier = ">=0.12.0" },
+    { name = "llama-index-embeddings-openai", specifier = ">=0.3.0" },
+    { name = "llama-index-readers-file", specifier = ">=0.4.0" },
+    { name = "llama-index-vector-stores-elasticsearch", specifier = ">=0.4.0" },
+    { name = "llama-index-vector-stores-milvus", specifier = ">=0.4.0" },
+    { name = "llama-index-vector-stores-qdrant", specifier = ">=0.9.0" },
+    { name = "markdown", specifier = ">=3.5.0" },
+    { name = "openpyxl", specifier = ">=3.1.2" },
+    { name = "orjson", specifier = ">=3.9.0" },
+    { name = "pdf2image", specifier = ">=1.16.0" },
+    { name = "pillow", specifier = ">=12.0.0" },
+    { name = "pydantic", specifier = ">=2.5.3" },
+    { name = "pymilvus", specifier = ">=2.4.0,<2.6.4" },
+    { name = "pypdf2", specifier = ">=3.0.0" },
+    { name = "pytesseract", specifier = ">=0.3.10" },
+    { name = "python-docx", specifier = ">=1.1.0" },
+    { name = "python-dotenv", specifier = ">=1.0.0" },
+    { name = "python-magic", specifier = ">=0.4.27" },
+    { name = "python-pptx", specifier = ">=0.6.23" },
+    { name = "sqlalchemy", specifier = ">=2.0.25" },
+    { name = "tenacity", specifier = ">=8.2.3" },
+    { name = "wegent-shared", editable = "../shared" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "black", specifier = ">=23.7.0" },
+    { name = "flake8", specifier = ">=6.0.0" },
+    { name = "isort", specifier = ">=5.12.0" },
+    { name = "pytest", specifier = ">=9.0.1" },
+    { name = "pytest-asyncio", specifier = ">=1.3.0" },
+    { name = "pytest-cov", specifier = ">=7.0.0" },
+    { name = "pytest-mock", specifier = ">=3.15.1" },
 ]
 
 [[package]]

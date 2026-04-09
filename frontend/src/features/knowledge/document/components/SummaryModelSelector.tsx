@@ -30,6 +30,8 @@ interface SummaryModelSelectorProps {
   error?: string
   /** Optional team ID to read cached model preference from localStorage */
   knowledgeDefaultTeamId?: number | null
+  /** Optional bind model name from team's bot config as fallback */
+  bindModel?: string | null
 }
 
 export function SummaryModelSelector({
@@ -38,6 +40,7 @@ export function SummaryModelSelector({
   disabled = false,
   error,
   knowledgeDefaultTeamId,
+  bindModel,
 }: SummaryModelSelectorProps) {
   const { t } = useTranslation('knowledge')
   const [open, setOpen] = useState(false)
@@ -45,7 +48,10 @@ export function SummaryModelSelector({
   const [loading, setLoading] = useState(false)
   // Track the last team ID for which we attempted preselection
   // This allows re-attempting when the team ID changes or dialog reopens
-  const attemptedTeamIdRef = useRef<number | null>(null)
+  // ATTEMPTED_WITHOUT_TEAM (-1) is a sentinel value indicating we attempted
+  // preselection before team info was loaded, allowing re-attempt when team info arrives
+  const ATTEMPTED_WITHOUT_TEAM = -1
+  const attemptedTeamIdRef = useRef<number | null | typeof ATTEMPTED_WITHOUT_TEAM>(null)
 
   // Fetch models on mount
   useEffect(() => {
@@ -72,53 +78,90 @@ export function SummaryModelSelector({
     fetchModels()
   }, [])
 
-  // Auto-preselect model from cached preference when:
-  // 1. Models are loaded
-  // 2. No value is currently selected
-  // 3. Valid knowledgeDefaultTeamId is provided
-  // 4. Haven't attempted preselection for this team ID yet (allows re-attempting when team changes)
+  // Auto-preselect model with priority:
+  // 1. Cached preference from localStorage
+  // 2. Team's bind_model from bot config
+  // 3. First available model in the list
+  //
+  // Conditions:
+  // - Models are loaded
+  // - No value is currently selected
+  // - Valid knowledgeDefaultTeamId is provided (for cache and tracking)
+  // - Haven't attempted preselection for this team ID yet
   useEffect(() => {
-    // Skip if value exists, still loading, or no teamId
-    if (value || loading || models.length === 0 || !knowledgeDefaultTeamId) {
+    // Skip if value exists, still loading
+    if (value || loading || models.length === 0) {
       return
     }
 
-    // Skip if we already attempted preselection for this team ID
-    if (attemptedTeamIdRef.current === knowledgeDefaultTeamId) {
-      return
+    // Determine if we should attempt preselection
+    // - First attempt: attemptedTeamIdRef.current is null
+    // - Re-attempt: previously attempted without team info (-1), now have teamId
+    // - Re-attempt: teamId changed to a different value
+    const shouldAttempt = () => {
+      if (attemptedTeamIdRef.current === null) return true
+      if (attemptedTeamIdRef.current === ATTEMPTED_WITHOUT_TEAM && knowledgeDefaultTeamId) return true
+      if (knowledgeDefaultTeamId && attemptedTeamIdRef.current !== knowledgeDefaultTeamId) return true
+      return false
     }
+
+    if (!shouldAttempt()) return
 
     // Mark this team ID as attempted
-    attemptedTeamIdRef.current = knowledgeDefaultTeamId
+    // Use sentinel value (-1) when team info is not yet loaded, so we can re-attempt when it arrives
+    attemptedTeamIdRef.current = knowledgeDefaultTeamId ?? ATTEMPTED_WITHOUT_TEAM
 
-    // Read cached preference from localStorage
-    const cachedPreference = getGlobalModelPreference(knowledgeDefaultTeamId)
-    if (!cachedPreference?.modelName) {
-      return
+    // Priority 1: Try cached preference from localStorage
+    if (knowledgeDefaultTeamId) {
+      const cachedPreference = getGlobalModelPreference(knowledgeDefaultTeamId)
+
+      if (cachedPreference?.modelName) {
+        const matchedModel = models.find(model => {
+          if (model.name !== cachedPreference.modelName) {
+            return false
+          }
+          if (cachedPreference.modelType && model.type !== cachedPreference.modelType) {
+            return false
+          }
+          return true
+        })
+
+        if (matchedModel) {
+          onChange({
+            name: matchedModel.name,
+            namespace: matchedModel.namespace || 'default',
+            type: matchedModel.type,
+          })
+          return
+        }
+      }
     }
 
-    // Find matching model in the models list
-    const matchedModel = models.find(model => {
-      // Match by modelName (required)
-      if (model.name !== cachedPreference.modelName) {
-        return false
+    // Priority 2: Try team's bind_model from bot config
+    if (bindModel) {
+      const matchedModel = models.find(model =>
+        model.name === bindModel || model.displayName === bindModel
+      )
+      if (matchedModel) {
+        onChange({
+          name: matchedModel.name,
+          namespace: matchedModel.namespace || 'default',
+          type: matchedModel.type,
+        })
+        return
       }
-      // If modelType is specified in preference, also match by type
-      if (cachedPreference.modelType && model.type !== cachedPreference.modelType) {
-        return false
-      }
-      return true
-    })
+    }
 
-    if (matchedModel) {
-      // Auto-select the matched model
+    // Priority 3: Select the first available model
+    const firstModel = models[0]
+    if (firstModel) {
       onChange({
-        name: matchedModel.name,
-        namespace: matchedModel.namespace || 'default',
-        type: matchedModel.type,
+        name: firstModel.name,
+        namespace: firstModel.namespace || 'default',
+        type: firstModel.type,
       })
     }
-  }, [models, value, loading, knowledgeDefaultTeamId, onChange])
+  }, [models, value, loading, knowledgeDefaultTeamId, bindModel, onChange])
 
   // Find selected model
   const selectedModel = useMemo(() => {

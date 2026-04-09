@@ -740,7 +740,8 @@
     "page_info": "Page {{current}} of {{total}}",
     "warning": "Warning",
     "cannotUndo": "This action cannot be undone",
-    "coming_soon": "Coming Soon"
+    "coming_soon": "Coming Soon",
+    "noResults": "No results found"
   },
   "dialog": {
     "confirm_close_title": "Confirm Close",

@@ -60,6 +60,7 @@ from app.api.endpoints.internal import bots_router as internal_bots_router
 from app.api.endpoints.internal import (
     callback_router,
     chat_storage_router,
+    rag_content_router,
     services_router,
     skills_router,
     subscriptions_router,
@@ -200,6 +201,9 @@ api_router.include_router(k_router)
 # Internal API endpoints (for service-to-service communication)
 api_router.include_router(
     chat_storage_router, prefix="/internal", tags=["internal-chat"]
+)
+api_router.include_router(
+    rag_content_router, prefix="/internal", tags=["internal-rag-content"]
 )
 
 # RAG internal router is conditionally registered based on STANDALONE_MODE

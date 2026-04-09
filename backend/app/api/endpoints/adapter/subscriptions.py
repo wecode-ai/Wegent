@@ -522,3 +522,104 @@ def trigger_subscription(
         subscription_id=subscription_id,
         user_id=current_user.id,
     )
+
+
+# ========== Preview Confirmation Endpoint ==========
+
+
+@router.post("/preview/{preview_id}/confirm", response_model=SubscriptionInDB)
+def confirm_subscription_preview(
+    preview_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Confirm a subscription preview and create the actual subscription.
+    """
+    import json
+
+    import redis
+
+    from app.core.config import settings
+    from app.schemas.subscription import (
+        SubscriptionCreate,
+        SubscriptionTaskType,
+        SubscriptionTriggerType,
+    )
+
+    # Get preview data from Redis
+    try:
+        client = redis.from_url(settings.REDIS_URL, decode_responses=True)
+        key = f"subscription:preview:{preview_id}"
+        data = client.get(key)
+        if not data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Preview not found or expired",
+            )
+        preview_data = json.loads(data)
+    except redis.ConnectionError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Service temporarily unavailable",
+        )
+    except json.JSONDecodeError:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Invalid preview data",
+        )
+
+    # Validate user matches preview
+    if preview_data.get("user_id") != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized to confirm this preview",
+        )
+
+    # Parse expires_at if present
+    expires_at = None
+    expires_at_str = preview_data.get("expires_at")
+    if expires_at_str:
+        try:
+            expires_at = datetime.fromisoformat(expires_at_str.replace("Z", "+00:00"))
+        except (ValueError, AttributeError):
+            pass
+
+    # Build model_ref if present
+    model_ref = None
+    if preview_data.get("model_name"):
+        model_ref = {
+            "name": preview_data["model_name"],
+            "namespace": preview_data.get("model_namespace", "default"),
+        }
+
+    # Create subscription
+    subscription_data = SubscriptionCreate(
+        name=f"sub-{preview_data['display_name'].lower().replace(' ', '-')[:30]}-{preview_id.split('_')[1][:8]}",
+        namespace=preview_data.get("team_namespace", "default"),
+        display_name=preview_data["display_name"],
+        description=preview_data.get("description"),
+        task_type=SubscriptionTaskType.COLLECTION,
+        trigger_type=SubscriptionTriggerType(preview_data["trigger_type"]),
+        trigger_config=preview_data["trigger_config"],
+        team_id=preview_data["team_id"],
+        prompt_template=preview_data["prompt_template"],
+        preserve_history=preview_data.get("preserve_history", False),
+        history_message_count=preview_data.get("history_message_count", 10),
+        retry_count=preview_data.get("retry_count", 1),
+        timeout_seconds=preview_data.get("timeout_seconds", 600),
+        enabled=True,
+        model_ref=model_ref,
+        expires_at=expires_at,
+    )
+
+    result = subscription_service.create_subscription(
+        db=db,
+        subscription_in=subscription_data,
+        user_id=current_user.id,
+    )
+
+    # Clear preview from Redis
+    client.delete(key)
+
+    return result

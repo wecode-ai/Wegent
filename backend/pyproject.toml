@@ -123,6 +123,8 @@ dependencies = [
     "docx2txt>=0.8", # Required by llama-index-readers-file for Word document parsing
     # Chat Shell (local workspace dependency for Package mode)
     "wegent-chat-shell",
+    # Knowledge Engine (monorepo workspace dependency)
+    "wegent-knowledge-engine",
     # Shared utilities (monorepo workspace dependency)
     "wegent-shared",
     "minio>=7.2.20",
@@ -130,6 +132,7 @@ dependencies = [
 
 [tool.uv.sources]
 wegent-chat-shell = { path = "../chat_shell", editable = true }
+wegent-knowledge-engine = { path = "../knowledge_engine", editable = true }
 wegent-shared = { path = "../shared", editable = true }
 
 [dependency-groups]
@@ -190,7 +193,7 @@ use_parentheses = true
 ensure_newline_before_comments = true
 skip = ["alembic", ".venv", "venv"]
 skip_gitignore = true
-known_first_party = ["app", "shared", "chat_shell"]
+known_first_party = ["app", "shared", "chat_shell", "knowledge_engine"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

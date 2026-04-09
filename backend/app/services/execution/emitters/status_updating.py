@@ -118,6 +118,7 @@ class StatusUpdatingEmitter(ResultEmitter):
                     tool_use_id=event.tool_use_id,
                     status="done",
                     tool_output=event.tool_output,
+                    tool_input=event.tool_input,
                 )
         elif event.type == EventType.CHUNK.value:
             # Accumulate content and track text blocks

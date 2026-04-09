@@ -204,5 +204,25 @@
     "error_desc": "Could not update executor preservation setting.",
     "tooltip_preserved": "Executor is preserved and will not be cleaned up",
     "tooltip_not_preserved": "Click to preserve executor from cleanup"
+  },
+  "preview": {
+    "title": "Subscription Preview",
+    "task_name": "Task Name",
+    "trigger": "Trigger",
+    "prompt": "Prompt",
+    "preserve_history": "Preserve History",
+    "retry": "Retry",
+    "timeout": "Timeout",
+    "cancel": "Cancel",
+    "confirm": "Confirm Create",
+    "create_success": "Subscription created successfully",
+    "create_error": "Failed to create subscription",
+    "cancelled": "Cancelled",
+    "confirmed_title": "Created Successfully",
+    "confirmed_desc": "The subscription has been created and will execute automatically.",
+    "cancelled_title": "Cancelled",
+    "cancelled_desc": "Subscription creation has been cancelled.",
+    "expired_title": "Preview Expired",
+    "expired_desc": "This preview has expired. Please generate a new preview."
   }
 }

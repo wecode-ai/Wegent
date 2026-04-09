@@ -28,6 +28,10 @@ RUN npm ci && npm cache clean --force
 # Copy source code
 COPY frontend .
 
+# App version injected at build time (e.g. "0.1.5")
+ARG APP_VERSION="dev"
+ENV NEXT_PUBLIC_APP_VERSION=${APP_VERSION}
+
 # Disable Next.js telemetry
 ENV NEXT_TELEMETRY_DISABLED=1
 
@@ -87,13 +91,18 @@ FROM python-base AS runtime
 WORKDIR /app
 
 # Copy all Python modules to /app directory for consistent structure
-# All modules will be under /app: /app/shared, /app/chat_shell, /app/executor, /app/backend
+# All modules will be under /app: /app/shared, /app/chat_shell,
+# /app/knowledge_engine, /app/executor, /app/backend
 COPY shared /app/shared
 COPY chat_shell /app/chat_shell
+COPY knowledge_engine /app/knowledge_engine
 COPY executor /app/executor
 
 # Install shared module first
 RUN uv pip install --system --no-cache /app/shared
+
+# Install knowledge_engine (depends on shared via ../shared -> /app/shared)
+RUN cd /app/knowledge_engine && uv pip install --system --no-cache -r pyproject.toml
 
 # Install chat_shell (depends on shared via ../shared -> /app/shared)
 RUN cd /app/chat_shell && uv pip install --system --no-cache -r pyproject.toml
@@ -105,6 +114,7 @@ RUN cd /app/executor && uv pip install --system --no-cache -r pyproject.toml
 # Backend's pyproject.toml references:
 # - wegent-shared = { path = "../shared" } -> /app/shared
 # - wegent-chat-shell = { path = "../chat_shell" } -> /app/chat_shell
+# - wegent-knowledge-engine = { path = "../knowledge_engine" } -> /app/knowledge_engine
 COPY backend/pyproject.toml /app/backend/pyproject.toml
 RUN cd /app/backend && uv pip install --system --no-cache -r pyproject.toml
 

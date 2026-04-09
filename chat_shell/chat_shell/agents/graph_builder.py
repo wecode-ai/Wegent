@@ -310,6 +310,32 @@ def _normalize_content_for_storage(msg: AIMessage) -> str | list:
     return msg.content
 
 
+def _truncate_tool_result_for_storage(content: str) -> str:
+    """Truncate a tool result string if it exceeds the configured maximum length.
+
+    Keeps the beginning (60%) and end (40%) of the content with a truncation
+    notice in between, following the same pattern as
+    ``ToolResultTruncationStrategy._truncate_content``.
+    """
+    from chat_shell.core.config import settings  # noqa: PLC0415
+
+    max_len = settings.MAX_TOOL_RESULT_LENGTH
+    if max_len <= 0 or len(content) <= max_len:
+        return content
+
+    begin_length = int(max_len * 0.6)
+    end_length = max_len - begin_length
+    removed = len(content) - max_len
+
+    return (
+        content[:begin_length] + f"\n\n[... Tool output truncated at serialization. "
+        f"Original: {len(content)} chars, "
+        f"removed {removed} chars from middle, "
+        f"keeping first {begin_length} and last {end_length} chars ...]\n\n"
+        + content[-end_length:]
+    )
+
+
 def _serialize_messages_chain(
     messages: list[BaseMessage],
     provider: str = "",
@@ -356,13 +382,13 @@ def _serialize_messages_chain(
                 ]
             chain.append(entry)
         elif isinstance(msg, ToolMessage):
+            content_str = (
+                msg.content if isinstance(msg.content, str) else json.dumps(msg.content)
+            )
+            content_str = _truncate_tool_result_for_storage(content_str)
             entry = {
                 "role": "tool",
-                "content": (
-                    msg.content
-                    if isinstance(msg.content, str)
-                    else json.dumps(msg.content)
-                ),
+                "content": content_str,
                 "tool_call_id": _require_non_empty_tool_id(
                     msg.tool_call_id,
                     "serialized messages_chain: tool message tool_call_id",

@@ -24,9 +24,20 @@ from app.services.knowledge.protected_mediation import (
 from app.services.knowledge.retrieval_persistence import (
     retrieval_persistence_service,
 )
+from app.services.rag.gateway_factory import get_query_gateway
 from app.services.rag.local_gateway import LocalRagGateway
+from app.services.rag.remote_gateway import (
+    RemoteRagGateway,
+    RemoteRagGatewayError,
+    should_fallback_to_local,
+)
 from app.services.rag.retrieval_service import RetrievalService
 from app.services.rag.runtime_resolver import RagRuntimeResolver
+from shared.models import (
+    RemoteListChunkRecord,
+    RemoteListChunksRequest,
+    RemoteListChunksResponse,
+)
 
 # Constants for document reading pagination
 DEFAULT_READ_DOC_LIMIT = 50_000  # Default characters to return
@@ -36,7 +47,6 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/rag", tags=["internal-rag"])
 runtime_resolver = RagRuntimeResolver()
-rag_gateway = LocalRagGateway()
 
 
 class DirectInjectionRuntimeContext(BaseModel):
@@ -186,6 +196,77 @@ def _resolve_document_names(
     )
 
 
+def _resolve_query_gateway(runtime_spec):
+    route_mode = getattr(runtime_spec, "route_mode", "auto")
+    if route_mode == "rag_retrieval":
+        return get_query_gateway()
+    return LocalRagGateway()
+
+
+def _finalize_query_runtime_spec(
+    runtime_spec,
+    db: Session,
+    runtime_context: DirectInjectionRuntimeContext | None = None,
+):
+    if getattr(runtime_spec, "route_mode", "auto") != "auto":
+        return runtime_spec
+    required_attributes = (
+        "query",
+        "knowledge_base_ids",
+        "document_ids",
+        "direct_injection_budget",
+        "model_copy",
+    )
+    if not all(hasattr(runtime_spec, attr) for attr in required_attributes):
+        return runtime_spec
+
+    retrieval_service = RetrievalService()
+    budget = runtime_context or getattr(runtime_spec, "direct_injection_budget", None)
+    resolved_route_mode = retrieval_service.decide_route_mode_for_chat_shell(
+        query=runtime_spec.query,
+        knowledge_base_ids=runtime_spec.knowledge_base_ids,
+        db=db,
+        route_mode=runtime_spec.route_mode,
+        document_ids=runtime_spec.document_ids,
+        metadata_condition=runtime_spec.metadata_condition,
+        context_window=budget.context_window if budget else None,
+        used_context_tokens=budget.used_context_tokens if budget else 0,
+        reserved_output_tokens=budget.reserved_output_tokens if budget else 4096,
+        context_buffer_ratio=budget.context_buffer_ratio if budget else 0.1,
+        max_direct_chunks=budget.max_direct_chunks if budget else 500,
+    )
+    return runtime_spec.model_copy(update={"route_mode": resolved_route_mode})
+
+
+async def _execute_query_with_remote_fallback(runtime_spec, db: Session):
+    rag_gateway = _resolve_query_gateway(runtime_spec)
+    if (
+        isinstance(rag_gateway, RemoteRagGateway)
+        and getattr(runtime_spec, "route_mode", None) == "rag_retrieval"
+        and not getattr(runtime_spec, "knowledge_base_configs", None)
+    ):
+        runtime_spec = runtime_spec.model_copy(
+            update={
+                "knowledge_base_configs": runtime_resolver.build_query_knowledge_base_configs(
+                    db=db,
+                    knowledge_base_ids=runtime_spec.knowledge_base_ids,
+                    user_name=runtime_spec.user_name,
+                )
+            }
+        )
+    try:
+        return await rag_gateway.query(runtime_spec, db=db)
+    except RemoteRagGatewayError as exc:
+        if not should_fallback_to_local(exc):
+            raise
+        logger.warning(
+            "[internal_rag] Remote query failed for KBs %s, falling back to local gateway: %s",
+            getattr(runtime_spec, "knowledge_base_ids", []),
+            exc,
+        )
+        return await LocalRagGateway().query(runtime_spec, db=db)
+
+
 @router.post(
     "/retrieve",
     response_model=InternalRetrieveResponse | ProtectedKnowledgeMediationResponse,
@@ -243,6 +324,7 @@ async def internal_retrieve(
         )
 
         runtime_spec = runtime_resolver.build_query_runtime_spec(
+            db=db,
             knowledge_base_ids=knowledge_base_ids,
             query=request.query,
             max_results=request.max_results,
@@ -265,10 +347,8 @@ async def internal_retrieve(
             ),
             restricted_mode=restricted_mode,
         )
-        result = await rag_gateway.query(
-            runtime_spec,
-            db=db,
-        )
+        runtime_spec = _finalize_query_runtime_spec(runtime_spec, db, runtime_context)
+        result = await _execute_query_with_remote_fallback(runtime_spec, db)
 
         records = result.get("records", [])
 
@@ -370,6 +450,9 @@ async def internal_retrieve(
     except ValueError as e:
         logger.warning("[internal_rag] Retrieval error: %s", e)
         raise HTTPException(status_code=400, detail=str(e))
+    except RemoteRagGatewayError as e:
+        logger.warning("[internal_rag] Remote retrieval failed: %s", e)
+        raise HTTPException(status_code=e.status_code or 502, detail=str(e)) from e
     except Exception as e:
         logger.error("[internal_rag] Retrieval failed: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
@@ -542,40 +625,9 @@ async def get_knowledge_base_info(
     )
 
 
-class AllChunksRequest(BaseModel):
-    """Request for getting all chunks from a knowledge base."""
-
-    knowledge_base_id: int = Field(..., description="Knowledge base ID")
-    max_chunks: int = Field(
-        default=10000,
-        description="Maximum number of chunks to retrieve (safety limit)",
-    )
-    query: Optional[str] = Field(
-        default=None,
-        description="Optional query string for logging purposes",
-    )
-
-
-class ChunkInfo(BaseModel):
-    """Information for a single chunk."""
-
-    content: str
-    title: str
-    chunk_id: Optional[int] = None
-    doc_ref: Optional[str] = None
-    metadata: Optional[dict] = None
-
-
-class AllChunksResponse(BaseModel):
-    """Response for all chunks query."""
-
-    chunks: list[ChunkInfo]
-    total: int
-
-
-@router.post("/all-chunks", response_model=AllChunksResponse)
+@router.post("/all-chunks", response_model=RemoteListChunksResponse)
 async def get_all_chunks(
-    request: AllChunksRequest,
+    request: RemoteListChunksRequest,
     db: Session = Depends(get_db),
 ):
     """
@@ -592,16 +644,18 @@ async def get_all_chunks(
         All chunks from the knowledge base
     """
     try:
-        from app.services.rag.retrieval_service import RetrievalService
-
-        retrieval_service = RetrievalService()
-
-        chunks = await retrieval_service.get_all_chunks_from_knowledge_base(
-            knowledge_base_id=request.knowledge_base_id,
+        runtime_spec = runtime_resolver.build_internal_list_chunks_runtime_spec(
             db=db,
+            knowledge_base_id=request.knowledge_base_id,
             max_chunks=request.max_chunks,
             query=request.query,
+            metadata_condition=request.metadata_condition,
         )
+        result = await LocalRagGateway().list_chunks(
+            runtime_spec,
+            db=db,
+        )
+        chunks = result.get("chunks", [])
 
         # Calculate total content size for logging
         total_content_chars = sum(len(c.get("content", "")) for c in chunks)
@@ -614,9 +668,9 @@ async def get_all_chunks(
             total_content_kb,
         )
 
-        return AllChunksResponse(
+        return RemoteListChunksResponse(
             chunks=[
-                ChunkInfo(
+                RemoteListChunkRecord(
                     content=c.get("content", ""),
                     title=c.get("title", "Unknown"),
                     chunk_id=c.get("chunk_id"),
@@ -625,7 +679,7 @@ async def get_all_chunks(
                 )
                 for c in chunks
             ],
-            total=len(chunks),
+            total=result.get("total", len(chunks)),
         )
 
     except ValueError as e:

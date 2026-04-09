@@ -37,6 +37,8 @@ interface EditKnowledgeBaseDialogProps {
   loading?: boolean
   /** Optional team ID for reading cached model preference (only used when KB has no existing summary_model_ref) */
   knowledgeDefaultTeamId?: number | null
+  /** Optional bind model name from team's bot config as fallback */
+  bindModel?: string | null
   /** Callback when knowledge base type is converted */
   onTypeConverted?: (updatedKb: KnowledgeBase) => void
 }
@@ -48,6 +50,7 @@ export function EditKnowledgeBaseDialog({
   onSubmit,
   loading,
   knowledgeDefaultTeamId,
+  bindModel,
   onTypeConverted,
 }: EditKnowledgeBaseDialogProps) {
   const { t } = useTranslation()
@@ -240,6 +243,7 @@ export function EditKnowledgeBaseDialog({
                 setSummaryModelError('')
               }}
               knowledgeDefaultTeamId={!kb?.summary_model_ref ? knowledgeDefaultTeamId : undefined}
+              bindModel={bindModel}
               callLimits={{ maxCalls, exemptCalls }}
               onCallLimitsChange={({ maxCalls: nextMax, exemptCalls: nextExempt }) => {
                 setMaxCalls(nextMax)

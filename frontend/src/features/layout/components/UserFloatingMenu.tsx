@@ -13,6 +13,7 @@ import { DocsButton } from '@/features/layout/DocsButton'
 import { FeedbackButton } from '@/features/layout/FeedbackButton'
 import { ThemeToggle } from '@/features/theme/ThemeToggle'
 import { paths } from '@/config/paths'
+import { getRuntimeConfigSync } from '@/lib/runtime-config'
 import {
   UserCircleIcon,
   Cog6ToothIcon,
@@ -38,6 +39,7 @@ export function UserFloatingMenu({ className = '' }: UserFloatingMenuProps) {
   const isAdmin = user?.role === 'admin'
   const currentLanguage = getCurrentLanguage()
   const supportedLanguages = getSupportedLanguages()
+  const appVersion = getRuntimeConfigSync().appVersion
 
   const handleLanguageClick = () => {
     const currentIndex = supportedLanguages.indexOf(currentLanguage)
@@ -116,12 +118,17 @@ export function UserFloatingMenu({ className = '' }: UserFloatingMenuProps) {
               title={t('common:navigation.settings')}
             />
           </div>
-          {isAdmin && (
-            <span className="text-xs text-primary flex items-center gap-0.5">
-              <ShieldCheckIcon className="w-3 h-3" />
-              Admin
+          <div className="flex items-center gap-1.5">
+            {isAdmin && (
+              <span className="text-xs text-primary flex items-center gap-0.5">
+                <ShieldCheckIcon className="w-3 h-3" />
+                Admin
+              </span>
+            )}
+            <span className="text-xs text-text-muted/60" data-testid="app-version">
+              v{appVersion}
             </span>
-          )}
+          </div>
         </div>
         <ChevronUpIcon
           className={`w-3.5 h-3.5 text-text-muted transition-transform duration-200 flex-shrink-0 ${
