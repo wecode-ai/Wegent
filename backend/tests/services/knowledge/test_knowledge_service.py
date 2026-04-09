@@ -76,7 +76,9 @@ class TestKnowledgeServiceFindDocumentByName:
         ):
             mock_doc = MagicMock(spec=KnowledgeDocument)
             mock_doc.name = "report.md"
-            db.query.return_value.filter.return_value.first.return_value = mock_doc
+            db.query.return_value.filter.return_value.order_by.return_value.first.return_value = (
+                mock_doc
+            )
 
             result = KnowledgeService.find_document_by_name(
                 db=db,
@@ -95,7 +97,9 @@ class TestKnowledgeServiceFindDocumentByName:
         with patch.object(
             KnowledgeService, "get_knowledge_base", return_value=(mock_kb, True)
         ):
-            db.query.return_value.filter.return_value.first.return_value = None
+            db.query.return_value.filter.return_value.order_by.return_value.first.return_value = (
+                None
+            )
 
             result = KnowledgeService.find_document_by_name(
                 db=db,
