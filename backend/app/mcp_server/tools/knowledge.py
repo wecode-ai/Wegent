@@ -446,7 +446,10 @@ def update_document_content(
         "source_type": "Source type: 'text', 'file', or 'attachment'",
         "content": "Text content (for source_type='text')",
         "file_base64": "Base64-encoded file content (for source_type='file')",
-        "file_extension": "File extension like 'txt', 'md', 'pdf' (default: 'md')",
+        "file_extension": (
+            "File extension like 'txt', 'md', 'pdf'. "
+            "If omitted, inferred from the attachment metadata."
+        ),
         "attachment_id": (
             "Existing attachment ID (for source_type='attachment'). "
             "Recommended for large files to avoid base64 overhead."
@@ -462,7 +465,7 @@ def sync_document(
     source_type: str,
     content: Optional[str] = None,
     file_base64: Optional[str] = None,
-    file_extension: Optional[str] = "md",
+    file_extension: Optional[str] = None,
     attachment_id: Optional[int] = None,
     trigger_indexing: bool = True,
     trigger_summary: bool = True,
@@ -491,7 +494,7 @@ def sync_document(
         source_type: Source type ("text", "file", or "attachment")
         content: Text content (for source_type="text")
         file_base64: Base64-encoded file content (for source_type="file")
-        file_extension: File extension (default: "md")
+        file_extension: File extension (None to infer from attachment)
         attachment_id: Existing attachment ID (for source_type="attachment")
         trigger_indexing: Whether to trigger RAG indexing (default: True)
         trigger_summary: Whether to trigger summary generation (default: True)

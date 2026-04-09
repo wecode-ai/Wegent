@@ -1139,6 +1139,7 @@ class KnowledgeService:
                 KnowledgeDocument.kind_id == knowledge_base_id,
                 KnowledgeDocument.name == name,
             )
+            .order_by(KnowledgeDocument.id.asc())
             .first()
         )
 

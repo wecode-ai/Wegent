@@ -1476,7 +1476,7 @@ class KnowledgeOrchestrator:
         source_type: str,
         content: Optional[str] = None,
         file_base64: Optional[str] = None,
-        file_extension: Optional[str] = "md",
+        file_extension: Optional[str] = None,
         attachment_id: Optional[int] = None,
         trigger_indexing: bool = True,
         trigger_summary: bool = True,
@@ -1497,7 +1497,7 @@ class KnowledgeOrchestrator:
             source_type: Source type ("text", "file", or "attachment")
             content: Text content (for source_type="text")
             file_base64: Base64-encoded file (for source_type="file")
-            file_extension: File extension (default "md")
+            file_extension: File extension (None to infer from attachment)
             attachment_id: Existing attachment ID (for source_type="attachment")
             trigger_indexing: Whether to trigger RAG indexing
             trigger_summary: Whether to trigger summary generation
@@ -1539,6 +1539,15 @@ class KnowledgeOrchestrator:
         )
 
         if existing_doc:
+            # Enforce document-level manage permission before updating
+            if not KnowledgeService.can_manage_knowledge_document(
+                db, knowledge_base_id, user.id, existing_doc.user_id
+            ):
+                raise ValueError(
+                    "You do not have permission to manage this document "
+                    "in this knowledge base"
+                )
+
             return self._update_existing_document(
                 db=db,
                 user=user,
@@ -1546,6 +1555,7 @@ class KnowledgeOrchestrator:
                 document=existing_doc,
                 binary_data=binary_data,
                 normalized_ext=normalized_ext,
+                source_type=source_type,
                 trigger_indexing=trigger_indexing,
                 trigger_summary=trigger_summary,
             )
@@ -1659,11 +1669,13 @@ class KnowledgeOrchestrator:
         document: KnowledgeDocument,
         binary_data: bytes,
         normalized_ext: str,
+        source_type: str,
         trigger_indexing: bool,
         trigger_summary: bool,
     ) -> Dict[str, Any]:
         """Replace content of an existing document and optionally re-index."""
         from app.services.context import context_service
+        from app.services.knowledge.indexing import get_rag_indexing_skip_reason
 
         filename = _build_filename(document.name, normalized_ext)
 
@@ -1703,9 +1715,15 @@ class KnowledgeOrchestrator:
             )
             document.attachment_id = attachment.id
 
-        # Update document metadata
+        # Update document metadata including source info
         document.file_size = len(binary_data)
         document.file_extension = normalized_ext
+
+        # Map incoming source_type to stored value; "attachment" is stored as "file"
+        stored_source_type = "file" if source_type == "attachment" else source_type
+        document.source_type = stored_source_type
+        # Clear stale source_config (e.g., old web URL) when source changes
+        document.source_config = None
 
         try:
             db.commit()
@@ -1719,17 +1737,28 @@ class KnowledgeOrchestrator:
             f"{knowledge_base.id} via sync"
         )
 
-        # Schedule re-indexing
+        # Schedule re-indexing (respecting the standard skip gate)
         if trigger_indexing:
-            self._schedule_indexing_celery(
-                db=db,
-                knowledge_base=knowledge_base,
-                document=document,
-                user=user,
-                trigger_summary=trigger_summary,
-                allow_if_success=True,
-                replace_active=True,
+            skip_reason = get_rag_indexing_skip_reason(
+                stored_source_type,
+                normalized_ext,
+                len(binary_data),
             )
+            if skip_reason:
+                logger.info(
+                    f"[Orchestrator] Skipping re-indexing for synced document "
+                    f"{document.id}: {skip_reason}"
+                )
+            else:
+                self._schedule_indexing_celery(
+                    db=db,
+                    knowledge_base=knowledge_base,
+                    document=document,
+                    user=user,
+                    trigger_summary=trigger_summary,
+                    allow_if_success=True,
+                    replace_active=True,
+                )
 
         return {
             "action": "updated",

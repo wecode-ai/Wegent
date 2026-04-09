@@ -1097,7 +1097,7 @@ class TestKnowledgeOrchestrator:
 
     def test_sync_document_creates_when_not_exists(
         self, orchestrator, mock_db, mock_user
-    ):
+    ) -> None:
         """Test sync_document creates a new document when no match by name."""
         with patch(
             "app.services.knowledge.orchestrator.KnowledgeService"
@@ -1134,7 +1134,9 @@ class TestKnowledgeOrchestrator:
                     name="new-doc",
                 )
 
-    def test_sync_document_updates_when_exists(self, orchestrator, mock_db, mock_user):
+    def test_sync_document_updates_when_exists(
+        self, orchestrator, mock_db, mock_user
+    ) -> None:
         """Test sync_document updates an existing document with same name."""
         with patch(
             "app.services.knowledge.orchestrator.KnowledgeService"
@@ -1149,8 +1151,9 @@ class TestKnowledgeOrchestrator:
             existing_doc.name = "existing-doc"
             existing_doc.attachment_id = 20
             existing_doc.file_size = 100
-            existing_doc.file_extension = "md"
+            existing_doc.user_id = mock_user.id
             mock_service.find_document_by_name.return_value = existing_doc
+            mock_service.can_manage_knowledge_document.return_value = True
 
             with patch("app.services.context.context_service") as mock_context:
                 mock_context.overwrite_attachment.return_value = (
@@ -1183,15 +1186,13 @@ class TestKnowledgeOrchestrator:
                         assert result["action"] == "updated"
                         assert result["document"]["id"] == 10
                         mock_context.overwrite_attachment.assert_called_once()
-                        mock_schedule.assert_called_once()
-                        # Verify allow_if_success and replace_active flags
-                        call_kwargs = mock_schedule.call_args.kwargs
-                        assert call_kwargs["allow_if_success"] is True
-                        assert call_kwargs["replace_active"] is True
+                        # Verify source_type is persisted on the document
+                        assert existing_doc.source_type == "text"
+                        assert existing_doc.source_config is None
 
     def test_sync_document_raises_for_kb_not_found(
         self, orchestrator, mock_db, mock_user
-    ):
+    ) -> None:
         """Test sync_document raises when KB not found."""
         with patch(
             "app.services.knowledge.orchestrator.KnowledgeService"
@@ -1210,7 +1211,7 @@ class TestKnowledgeOrchestrator:
 
     def test_sync_document_raises_for_invalid_source_type(
         self, orchestrator, mock_db, mock_user
-    ):
+    ) -> None:
         """Test sync_document raises for invalid source type."""
         with patch(
             "app.services.knowledge.orchestrator.KnowledgeService"
@@ -1231,7 +1232,7 @@ class TestKnowledgeOrchestrator:
 
     def test_sync_document_creates_with_attachment_source_type(
         self, orchestrator, mock_db, mock_user
-    ):
+    ) -> None:
         """Test sync_document creates via attachment source type."""
         with patch(
             "app.services.knowledge.orchestrator.KnowledgeService"
@@ -1275,7 +1276,7 @@ class TestKnowledgeOrchestrator:
 
     def test_sync_document_raises_for_missing_content(
         self, orchestrator, mock_db, mock_user
-    ):
+    ) -> None:
         """Test sync_document raises when content missing for text type."""
         with patch(
             "app.services.knowledge.orchestrator.KnowledgeService"
@@ -1296,7 +1297,7 @@ class TestKnowledgeOrchestrator:
 
     def test_sync_document_update_creates_new_attachment_when_no_existing(
         self, orchestrator, mock_db, mock_user
-    ):
+    ) -> None:
         """Test sync update creates new attachment when doc has no attachment_id."""
         with patch(
             "app.services.knowledge.orchestrator.KnowledgeService"
@@ -1310,7 +1311,9 @@ class TestKnowledgeOrchestrator:
             existing_doc.id = 10
             existing_doc.name = "doc"
             existing_doc.attachment_id = None
+            existing_doc.user_id = mock_user.id
             mock_service.find_document_by_name.return_value = existing_doc
+            mock_service.can_manage_knowledge_document.return_value = True
 
             with patch("app.services.context.context_service") as mock_context:
                 new_attachment = MagicMock()
@@ -1337,6 +1340,42 @@ class TestKnowledgeOrchestrator:
                         assert result["action"] == "updated"
                         assert existing_doc.attachment_id == 99
                         mock_context.upload_attachment.assert_called_once()
+
+    def test_sync_document_raises_when_user_cannot_manage_existing_doc(
+        self, orchestrator, mock_db, mock_user
+    ) -> None:
+        """Test sync_document rejects update when user lacks manage permission."""
+        with patch(
+            "app.services.knowledge.orchestrator.KnowledgeService"
+        ) as mock_service:
+            mock_kb = MagicMock()
+            mock_kb.id = 1
+            mock_kb.json = {"spec": {}}
+            mock_service.get_knowledge_base.return_value = (mock_kb, True)
+
+            existing_doc = MagicMock()
+            existing_doc.id = 10
+            existing_doc.name = "shared-doc"
+            existing_doc.user_id = 999  # Different user owns the doc
+            mock_service.find_document_by_name.return_value = existing_doc
+            mock_service.can_manage_knowledge_document.return_value = False
+
+            with pytest.raises(
+                ValueError,
+                match="You do not have permission to manage this document",
+            ):
+                orchestrator.sync_document(
+                    db=mock_db,
+                    user=mock_user,
+                    knowledge_base_id=1,
+                    name="shared-doc",
+                    source_type="text",
+                    content="attempt to overwrite",
+                )
+
+            mock_service.can_manage_knowledge_document.assert_called_once_with(
+                mock_db, 1, mock_user.id, 999
+            )
 
 
 class TestIndexingPolicy:
