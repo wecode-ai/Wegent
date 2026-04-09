@@ -102,6 +102,8 @@ class _SandboxManagerClient:
                         self.sandbox_id = data.get("sandbox_id")
                         self.container_name = data.get("container_name")
                         self.base_url = data.get("base_url")
+                        self.executor_namespace = data.get("executor_namespace")
+                        self.metadata = data.get("metadata", {})
 
                 return SimpleSandbox(data), None
         except Exception as e:

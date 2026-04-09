@@ -74,6 +74,10 @@ class CreateSandboxResponse(BaseModel):
     status: str = Field(..., description="Current sandbox status")
     container_name: str = Field(..., description="Docker container name")
     shell_type: str = Field(..., description="Execution environment type")
+    executor_namespace: Optional[str] = Field(
+        None,
+        description="Executor namespace when available",
+    )
     created_at: float = Field(..., description="Creation timestamp")
     expires_at: Optional[float] = Field(None, description="Expiration timestamp")
     message: Optional[str] = Field(None, description="Status message")

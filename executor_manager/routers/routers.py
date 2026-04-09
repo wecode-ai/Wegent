@@ -399,12 +399,19 @@ async def get_executor_load(http_request: Request):
 
 
 @api_router.get("/executor/address")
-async def get_executor_address(executor_name: str, http_request: Request):
+async def get_executor_address(
+    executor_name: str,
+    http_request: Request,
+    executor_namespace: Optional[str] = None,
+):
     """Get executor runtime address by executor name."""
     try:
         client_ip = http_request.client.host if http_request.client else "unknown"
         logger.info(
-            f"Received request to get executor address: {executor_name} from {client_ip}"
+            "Received request to get executor address: %s namespace=%s from %s",
+            executor_name,
+            executor_namespace,
+            client_ip,
         )
 
         executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
@@ -413,10 +420,14 @@ async def get_executor_address(executor_name: str, http_request: Request):
                 status_code=501, detail="Executor address lookup is not supported"
             )
 
-        result = executor.get_container_address(executor_name)
-        logger.info(
-            "Resolved executor address: executor_name=%s result=%s",
+        result = executor.get_container_address(
             executor_name,
+            executor_namespace=executor_namespace,
+        )
+        logger.info(
+            "Resolved executor address: executor_name=%s executor_namespace=%s result=%s",
+            executor_name,
+            executor_namespace,
             result,
         )
         return result
@@ -1385,7 +1396,10 @@ async def archive_executor_workspace(
                 detail="Executor address lookup is not supported",
             )
 
-        result = executor.get_container_address(request.executor_name)
+        result = executor.get_container_address(
+            request.executor_name,
+            executor_namespace=request.executor_namespace,
+        )
         status = str(result.get("status", "")).lower()
         base_url = result.get("base_url")
 
@@ -1456,7 +1470,10 @@ async def restore_executor_workspace(
                 detail="Executor address lookup is not supported",
             )
 
-        result = executor.get_container_address(request.executor_name)
+        result = executor.get_container_address(
+            request.executor_name,
+            executor_namespace=request.executor_namespace,
+        )
         status = str(result.get("status", "")).lower()
         base_url = result.get("base_url")
 

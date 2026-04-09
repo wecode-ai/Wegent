@@ -1349,7 +1349,11 @@ class DockerExecutor(Executor):
                 "error_msg": f"Error getting current task IDs: {str(e)}",
             }
 
-    def get_container_address(self, executor_name: str) -> Dict[str, Any]:
+    def get_container_address(
+        self,
+        executor_name: str,
+        executor_namespace: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """Get container base URL for sandbox proxy.
 
         This method is called by SandboxManager to get the address for proxying
@@ -1357,6 +1361,7 @@ class DockerExecutor(Executor):
 
         Args:
             executor_name: Container name
+            executor_namespace: Executor namespace if applicable
 
         Returns:
             Dict with status and base_url (e.g., http://localhost:8080)

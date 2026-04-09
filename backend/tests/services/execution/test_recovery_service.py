@@ -50,7 +50,10 @@ async def test_recover_without_archive_uses_normal_clone():
         executor_deleted_at=True,
     )
     task = SimpleNamespace(id=22)
-    sandbox = SimpleNamespace(container_name="new-executor")
+    sandbox = SimpleNamespace(
+        container_name="new-executor",
+        executor_namespace="wegent-pod",
+    )
 
     with (
         patch.object(
@@ -74,7 +77,7 @@ async def test_recover_without_archive_uses_normal_clone():
 
     assert result is True
     assert subtask.executor_name == "new-executor"
-    assert subtask.executor_namespace == "default"
+    assert subtask.executor_namespace == "wegent-pod"
     assert subtask.executor_deleted_at is False
     assert create_sandbox_mock.await_args.kwargs["skip_git_clone"] is False
 
@@ -91,7 +94,10 @@ async def test_recover_with_archive_continues_when_restore_fails():
         executor_deleted_at=True,
     )
     task = SimpleNamespace(id=22)
-    sandbox = SimpleNamespace(container_name="new-executor")
+    sandbox = SimpleNamespace(
+        container_name="new-executor",
+        executor_namespace="wegent-pod",
+    )
 
     with (
         patch.object(
@@ -120,7 +126,7 @@ async def test_recover_with_archive_continues_when_restore_fails():
 
     assert result is True
     assert subtask.executor_name == "new-executor"
-    assert subtask.executor_namespace == "default"
+    assert subtask.executor_namespace == "wegent-pod"
     assert subtask.executor_deleted_at is False
     assert create_sandbox_mock.await_args.kwargs["skip_git_clone"] is True
     restore_mock.assert_awaited_once()

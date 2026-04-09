@@ -49,6 +49,26 @@ class ExecutorRecoveryService:
     3. Return success
     """
 
+    def _resolve_executor_namespace(
+        self,
+        sandbox: object,
+        previous_namespace: Optional[str],
+    ) -> str:
+        namespace = getattr(sandbox, "executor_namespace", None)
+        if isinstance(namespace, str) and namespace.strip():
+            return namespace.strip()
+
+        metadata = getattr(sandbox, "metadata", None)
+        if isinstance(metadata, dict):
+            metadata_namespace = metadata.get("executor_namespace")
+            if isinstance(metadata_namespace, str) and metadata_namespace.strip():
+                return metadata_namespace.strip()
+
+        if isinstance(previous_namespace, str) and previous_namespace.strip():
+            return previous_namespace.strip()
+
+        return "default"
+
     async def recover(
         self,
         db: Session,
@@ -170,7 +190,10 @@ class ExecutorRecoveryService:
                 return False
 
             executor_name = sandbox.container_name
-            executor_namespace = "default"
+            executor_namespace = self._resolve_executor_namespace(
+                sandbox=sandbox,
+                previous_namespace=subtask.executor_namespace,
+            )
 
             # Restore workspace from archive
             restore_success = await archive_service.restore_workspace(
@@ -249,7 +272,10 @@ class ExecutorRecoveryService:
                 return False
 
             executor_name = sandbox.container_name
-            executor_namespace = "default"
+            executor_namespace = self._resolve_executor_namespace(
+                sandbox=sandbox,
+                previous_namespace=subtask.executor_namespace,
+            )
 
             # Update subtask with new executor info and reset deleted flag
             subtask.executor_name = executor_name
@@ -308,6 +334,8 @@ class ExecutorRecoveryService:
             "subtask_id": subtask.id,
             "skip_git_clone": skip_git_clone,
         }
+        if subtask.executor_namespace:
+            metadata["executor_namespace"] = subtask.executor_namespace
 
         # Get workspace ref if available
         workspace_ref = (

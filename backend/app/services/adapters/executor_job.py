@@ -4,9 +4,10 @@
 
 import asyncio
 import logging
-from datetime import datetime, timedelta, timezone
-from typing import Dict, List, Set, Tuple
+from datetime import datetime, timedelta
+from typing import Dict, List, Tuple
 
+from fastapi import HTTPException
 from sqlalchemy import and_
 from sqlalchemy.orm import Session
 
@@ -26,6 +27,38 @@ class JobService(BaseService[Kind, None, None]):
     """
     Job service for background tasks using kinds table
     """
+
+    def cleanup_task_executor(
+        self, db: Session, *, task_id: int, user_id: int
+    ) -> Dict[str, object]:
+        """Manually clean up executor resources for a single task."""
+        from app.services.task_member_service import task_member_service
+
+        if not task_member_service.is_member(db, task_id, user_id):
+            raise HTTPException(
+                status_code=404, detail="Task not found or no permission"
+            )
+
+        task = self._get_active_task_resource(db, task_id)
+        task_crd = Task.model_validate(task.json)
+        task_status = task_crd.status.status if task_crd.status else "PENDING"
+
+        if task_status not in ["COMPLETED", "FAILED", "CANCELLED"]:
+            return self._build_cleanup_result(task_id, "task_not_finished")
+
+        if self._preserve_executor_enabled(task_crd):
+            return self._build_cleanup_result(task_id, "preserve_executor")
+
+        subtasks = self._get_cleanup_subtasks_for_task(db, task_id)
+        if not subtasks:
+            return self._build_cleanup_result(task_id, "executor_not_found")
+
+        return self._cleanup_executor_entries(
+            db=db,
+            task_id=task_id,
+            task=task,
+            subtasks=subtasks,
+        )
 
     def cleanup_stale_executors(self, db: Session) -> None:
         """
@@ -78,18 +111,16 @@ class JobService(BaseService[Kind, None, None]):
                 return
 
             # Filter candidates by checking task status from JSON
-            valid_candidates = []
+            task_map: Dict[int, TaskResource] = {}
+            valid_candidates: List[Subtask] = []
             for subtask in candidates:
-                # Get task from tasks table
-                task = (
-                    db.query(TaskResource)
-                    .filter(
-                        TaskResource.id == subtask.task_id,
-                        TaskResource.kind == "Task",
-                        TaskResource.is_active == TaskResource.STATE_ACTIVE,
+                task = task_map.get(subtask.task_id)
+                if task is None:
+                    task = self._get_active_task_resource(
+                        db, subtask.task_id, raise_not_found=False
                     )
-                    .first()
-                )
+                    if task is not None:
+                        task_map[subtask.task_id] = task
 
                 if not task:
                     continue
@@ -99,11 +130,7 @@ class JobService(BaseService[Kind, None, None]):
 
                 # Check if task has preserveExecutor label set to "true"
                 # If so, skip this task's executor from cleanup
-                preserve_executor = (
-                    task_crd.metadata.labels
-                    and task_crd.metadata.labels.get("preserveExecutor") == "true"
-                )
-                if preserve_executor:
+                if self._preserve_executor_enabled(task_crd):
                     logger.info(
                         f"[executor_job] Skipping executor cleanup for task {subtask.task_id} "
                         f"ns={subtask.executor_namespace} name={subtask.executor_name} "
@@ -111,11 +138,7 @@ class JobService(BaseService[Kind, None, None]):
                     )
                     continue
 
-                task_type = (
-                    task_crd.metadata.labels
-                    and task_crd.metadata.labels.get("taskType")
-                    or "chat"
-                )
+                task_type = self._get_task_type(task_crd)
                 if task_type == "code":
                     if (
                         datetime.now() - subtask.updated_at
@@ -132,76 +155,150 @@ class JobService(BaseService[Kind, None, None]):
                 )
                 return
 
-            # Deduplicate by (namespace, name) and collect task info for archiving.
-            # Keep the matched subtask ids so the final update can target primary keys
-            # instead of scanning by executor fields again.
-            executor_task_map: Dict[Tuple[str, str], Tuple[Subtask, TaskResource]] = {}
-            executor_subtask_ids: Dict[Tuple[str, str], List[int]] = {}
+            task_subtasks: Dict[int, List[Subtask]] = {}
             for subtask in valid_candidates:
-                if subtask.executor_name:
-                    key = (subtask.executor_namespace, subtask.executor_name)
-                    executor_subtask_ids.setdefault(key, []).append(subtask.id)
-                    if key not in executor_task_map:
-                        # Get task for this subtask
-                        task = (
-                            db.query(TaskResource)
-                            .filter(
-                                TaskResource.id == subtask.task_id,
-                                TaskResource.kind == "Task",
-                                TaskResource.is_active == TaskResource.STATE_ACTIVE,
-                            )
-                            .first()
-                        )
-                        if task:
-                            executor_task_map[key] = (subtask, task)
+                task_subtasks.setdefault(subtask.task_id, []).append(subtask)
 
-            if not executor_task_map:
-                return
-
-            # Use sync version to avoid event loop issues
-            for (ns, name), (subtask, task) in executor_task_map.items():
+            for task_id, subtasks in task_subtasks.items():
                 try:
-                    # Archive workspace before deletion (for code tasks)
-                    task_crd = Task.model_validate(task.json)
-                    task_type = (
-                        task_crd.metadata.labels
-                        and task_crd.metadata.labels.get("taskType")
-                        or "chat"
-                    )
+                    task = task_map.get(task_id)
+                    if not task:
+                        continue
 
-                    if task_type == "code":
-                        # Try to archive workspace before deletion
-                        try:
-                            self._archive_workspace_sync(
-                                db=db,
-                                subtask=subtask,
-                                task=task,
-                                executor_name=name,
-                                executor_namespace=ns,
-                            )
-                        except Exception as archive_error:
-                            # Log but continue with deletion
-                            # Recovery will fall back to git clone if archive failed
-                            logger.warning(
-                                f"[executor_job] Failed to archive workspace for task {task.id} "
-                                f"ns={ns} name={name}: {archive_error}"
-                            )
-
-                    logger.info(
-                        f"[executor_job] Scheduled deleting executor task ns={ns} name={name}"
+                    self._cleanup_executor_entries(
+                        db=db,
+                        task_id=task_id,
+                        task=task,
+                        subtasks=subtasks,
                     )
-                    res = executor_kinds_service.delete_executor_task_sync(name, ns)
-                    self._mark_executor_deleted(
-                        executor_subtask_ids.get((ns, name), [])
-                    )
-                    db.commit()
                 except Exception as e:
                     # Log but continue
                     logger.warning(
-                        f"[executor_job] Failed to scheduled delete executor task ns={ns} name={name}: {e}"
+                        f"[executor_job] Failed to scheduled delete executor task for task {task_id}: {e}"
                     )
         except Exception as e:
             logger.error(f"[executor_job] cleanup_stale_executors error: {e}")
+
+    def _build_cleanup_result(
+        self,
+        task_id: int,
+        reason: str,
+        executors: List[Dict[str, str]] | None = None,
+    ) -> Dict[str, object]:
+        """Build a consistent cleanup result payload."""
+        return {
+            "task_id": task_id,
+            "deleted": reason == "executor_deleted",
+            "skipped": reason != "executor_deleted",
+            "reason": reason,
+            "executors": executors or [],
+        }
+
+    def _get_active_task_resource(
+        self, db: Session, task_id: int, *, raise_not_found: bool = True
+    ) -> TaskResource | None:
+        """Load an active task resource by id."""
+        task = (
+            db.query(TaskResource)
+            .filter(
+                TaskResource.id == task_id,
+                TaskResource.kind == "Task",
+                TaskResource.is_active == TaskResource.STATE_ACTIVE,
+            )
+            .first()
+        )
+
+        if task or not raise_not_found:
+            return task
+
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    def _get_cleanup_subtasks_for_task(
+        self, db: Session, task_id: int
+    ) -> List[Subtask]:
+        """Load undeleted executor subtasks for a specific task."""
+        return (
+            db.query(Subtask)
+            .filter(
+                Subtask.task_id == task_id,
+                Subtask.executor_name.isnot(None),
+                Subtask.executor_name != "",
+                Subtask.executor_deleted_at == False,
+            )
+            .all()
+        )
+
+    def _cleanup_executor_entries(
+        self,
+        db: Session,
+        *,
+        task_id: int,
+        task: TaskResource,
+        subtasks: List[Subtask],
+    ) -> Dict[str, object]:
+        """Delete deduplicated executors and mark the related subtasks as deleted."""
+        executor_subtask_ids: Dict[Tuple[str, str], List[int]] = {}
+        executor_subtasks: Dict[Tuple[str, str], Subtask] = {}
+
+        for subtask in subtasks:
+            if not subtask.executor_name:
+                continue
+            key = (subtask.executor_namespace, subtask.executor_name)
+            executor_subtask_ids.setdefault(key, []).append(subtask.id)
+            executor_subtasks.setdefault(key, subtask)
+
+        if not executor_subtasks:
+            return self._build_cleanup_result(task_id, "executor_not_found")
+
+        task_crd = Task.model_validate(task.json)
+        task_type = self._get_task_type(task_crd)
+        deleted_executors: List[Dict[str, str]] = []
+
+        for (namespace, name), subtask in executor_subtasks.items():
+            if task_type == "code":
+                try:
+                    self._archive_workspace_sync(
+                        db=db,
+                        subtask=subtask,
+                        task=task,
+                        executor_name=name,
+                        executor_namespace=namespace,
+                    )
+                except Exception as archive_error:
+                    logger.warning(
+                        f"[executor_job] Failed to archive workspace for task {task.id} "
+                        f"ns={namespace} name={name}: {archive_error}"
+                    )
+
+            logger.info(
+                f"[executor_job] Scheduled deleting executor task ns={namespace} name={name}"
+            )
+            executor_kinds_service.delete_executor_task_sync(name, namespace)
+            self._mark_executor_deleted(executor_subtask_ids[(namespace, name)])
+            db.commit()
+            deleted_executors.append(
+                {
+                    "executor_name": name,
+                    "executor_namespace": namespace,
+                }
+            )
+
+        return self._build_cleanup_result(
+            task_id, "executor_deleted", deleted_executors
+        )
+
+    def _preserve_executor_enabled(self, task_crd: Task) -> bool:
+        """Check whether the task is marked to preserve its executor."""
+        return bool(
+            task_crd.metadata.labels
+            and task_crd.metadata.labels.get("preserveExecutor") == "true"
+        )
+
+    def _get_task_type(self, task_crd: Task) -> str:
+        """Return the normalized task type label."""
+        return (
+            task_crd.metadata.labels and task_crd.metadata.labels.get("taskType")
+        ) or "chat"
 
     def _archive_workspace_sync(
         self,
