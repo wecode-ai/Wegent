@@ -7,21 +7,21 @@ FROM ghcr.io/wecode-ai/wegent-base-python3.12:1.2.1
 # Set working directory
 WORKDIR /app
 
-# Copy local dependencies first (required for pyproject.toml)
-# Paths must match pyproject.toml [tool.uv.sources] relative paths from /app:
-# - wegent-chat-shell = { path = "../chat_shell" } -> /chat_shell
-# - wegent-shared = { path = "../shared" } -> /shared
-COPY chat_shell /chat_shell
-COPY shared /shared
+# Copy local workspace dependencies so backend can resolve them via
+# `pyproject.toml` [tool.uv.sources] relative paths from /app/backend:
+# - wegent-shared = { path = "../shared" } -> /app/shared
+# - wegent-chat-shell = { path = "../chat_shell" } -> /app/chat_shell
+# - wegent-knowledge-engine = { path = "../knowledge_engine" } -> /app/knowledge_engine
+COPY shared /app/shared
+COPY chat_shell /app/chat_shell
+COPY knowledge_engine /app/knowledge_engine
 
 # Copy pyproject.toml and install dependencies
-COPY backend/pyproject.toml .
-RUN uv pip install --system --no-cache -r pyproject.toml
+COPY backend/pyproject.toml /app/backend/pyproject.toml
+RUN cd /app/backend && uv pip install --system --no-cache -r pyproject.toml
 
 # Copy application code
 COPY backend /app
-# Also copy shared to /app/shared for PYTHONPATH imports
-COPY shared /app/shared
 
 # Copy init_data directory with default resources and skills into the image
 # This includes:
