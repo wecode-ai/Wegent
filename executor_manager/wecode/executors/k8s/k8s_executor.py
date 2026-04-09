@@ -241,14 +241,18 @@ class K8sExecutor(Executor):
                     task_info["executor_name"] = executor_name
                     self.create_instance(task_dict, task_info, executor_name)
 
-                    # Sandbox containers and prepare-only requests are intentionally started idle.
-                    if not is_sandbox_task and not prepare_only:
+                    if not is_sandbox_task:
                         try:
                             ready_info = self.wait_instance_ready(executor_name)
-                            dispatch_result = self.dispatch_task_to_instance(
-                                task_dict, executor_name, ready_info
-                            )
-                            error_msg = dispatch_result.get("error_msg", "")
+                            if prepare_only:
+                                logger.info(
+                                    f"Prepared pod {executor_name} and confirmed it is ready"
+                                )
+                            else:
+                                dispatch_result = self.dispatch_task_to_instance(
+                                    task_dict, executor_name, ready_info
+                                )
+                                error_msg = dispatch_result.get("error_msg", "")
                         except Exception:
                             # Pod is intentionally kept alive for debugging.
                             # Do NOT delete it here; the failure callback below

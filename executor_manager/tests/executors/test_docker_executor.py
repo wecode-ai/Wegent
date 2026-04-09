@@ -351,7 +351,7 @@ class TestDockerExecutor:
             executor._create_new_container(prepare_task, task_info, status)
 
         mock_create.assert_called_once_with(prepare_task, task_info, "prepare-executor")
-        mock_wait_ready.assert_not_called()
+        mock_wait_ready.assert_called_once_with("prepare-executor")
         mock_dispatch_task_to_instance.assert_not_called()
 
     @patch.dict(

@@ -381,11 +381,11 @@ class DockerExecutor(Executor):
         executor_name = status["executor_name"]
         self.create_instance(task, task_info, executor_name)
 
-        # Sandbox containers and prepare-only requests are intentionally started idle.
-        if not is_sandbox_task and not prepare_only:
+        if not is_sandbox_task:
             try:
                 ready_info = self.wait_instance_ready(executor_name)
-                self.dispatch_task_to_instance(task, executor_name, ready_info)
+                if not prepare_only:
+                    self.dispatch_task_to_instance(task, executor_name, ready_info)
             except Exception:
                 # Avoid leaking an idle container when initial dispatch fails.
                 if self._should_keep_failed_validation_container(task):

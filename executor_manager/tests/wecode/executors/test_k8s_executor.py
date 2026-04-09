@@ -97,6 +97,6 @@ def test_submit_executor_prepare_only_skips_initial_dispatch(mocker):
     assert result["status"] == "success"
     assert result["executor_name"]
     mock_create_instance.assert_called_once()
-    mock_wait_ready.assert_not_called()
+    mock_wait_ready.assert_called_once_with(result["executor_name"])
     mock_dispatch.assert_not_called()
     mock_register.assert_called_once()
