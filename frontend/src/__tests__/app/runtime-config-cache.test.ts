@@ -31,6 +31,7 @@ describe('runtime config caching', () => {
         otelCollectorEndpoint: 'http://localhost:4318',
         bindGroupDesc: '',
         bindGroupSteps: '{"variables":{"botName":"机器人"},"steps":[]}',
+        appVersion: 'dev',
       }),
     }) as typeof fetch
   })

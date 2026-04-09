@@ -276,3 +276,73 @@ class TestSerializeMessagesChain:
         assert result[0]["content"] == [
             {"type": "reasoning", "reasoning": "thinking..."},
         ]
+
+
+class TestToolResultTruncationAtSerialization:
+    """Tests for tool result truncation in _serialize_messages_chain."""
+
+    def test_short_tool_result_unchanged(self):
+        """Tool results within the limit are not truncated."""
+        msg = ToolMessage(
+            content="short result",
+            tool_call_id="call_1",
+            name="test_tool",
+        )
+        result = _serialize_messages_chain([msg])
+        assert result[0]["content"] == "short result"
+
+    def test_long_tool_result_truncated(self, monkeypatch):
+        """Tool results exceeding MAX_TOOL_RESULT_LENGTH are truncated."""
+        # Set a small limit for testing
+        from chat_shell.core import config as config_module
+
+        original_settings = config_module.settings
+        monkeypatch.setattr(
+            config_module,
+            "settings",
+            type(original_settings).model_construct(
+                **{
+                    **original_settings.model_dump(),
+                    "MAX_TOOL_RESULT_LENGTH": 200,
+                }
+            ),
+        )
+
+        long_content = "A" * 500
+        msg = ToolMessage(
+            content=long_content,
+            tool_call_id="call_1",
+            name="test_tool",
+        )
+        result = _serialize_messages_chain([msg])
+        content = result[0]["content"]
+        assert len(content) < 500
+        assert "Tool output truncated at serialization" in content
+        # Beginning and end preserved
+        assert content.startswith("A" * 50)
+        assert content.endswith("A" * 50)
+
+    def test_truncation_disabled_when_zero(self, monkeypatch):
+        """Setting MAX_TOOL_RESULT_LENGTH=0 disables truncation."""
+        from chat_shell.core import config as config_module
+
+        original_settings = config_module.settings
+        monkeypatch.setattr(
+            config_module,
+            "settings",
+            type(original_settings).model_construct(
+                **{
+                    **original_settings.model_dump(),
+                    "MAX_TOOL_RESULT_LENGTH": 0,
+                }
+            ),
+        )
+
+        long_content = "B" * 100000
+        msg = ToolMessage(
+            content=long_content,
+            tool_call_id="call_1",
+            name="test_tool",
+        )
+        result = _serialize_messages_chain([msg])
+        assert result[0]["content"] == long_content

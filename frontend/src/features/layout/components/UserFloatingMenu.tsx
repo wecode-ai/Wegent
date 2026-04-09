@@ -116,12 +116,14 @@ export function UserFloatingMenu({ className = '' }: UserFloatingMenuProps) {
               title={t('common:navigation.settings')}
             />
           </div>
-          {isAdmin && (
-            <span className="text-xs text-primary flex items-center gap-0.5">
-              <ShieldCheckIcon className="w-3 h-3" />
-              Admin
-            </span>
-          )}
+          <div className="flex items-center gap-1.5">
+            {isAdmin && (
+              <span className="text-xs text-primary flex items-center gap-0.5">
+                <ShieldCheckIcon className="w-3 h-3" />
+                Admin
+              </span>
+            )}
+          </div>
         </div>
         <ChevronUpIcon
           className={`w-3.5 h-3.5 text-text-muted transition-transform duration-200 flex-shrink-0 ${

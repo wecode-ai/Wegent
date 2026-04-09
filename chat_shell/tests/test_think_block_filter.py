@@ -280,7 +280,9 @@ class TestStripForeignReasoningBlocks:
         assert reasoning_block == {
             "type": "reasoning",
             "id": "rs_abc123",
-            "summary": [{"type": "summary_text", "text": "I considered the options..."}],
+            "summary": [
+                {"type": "summary_text", "text": "I considered the options..."}
+            ],
             "encrypted_content": "gAAAA_encrypted_data",
         }
         # Text block unchanged
@@ -515,6 +517,198 @@ class TestStripForeignReasoningBlocks:
             for b in content
         )
 
+    # ---- Fix 1: raw Responses API format recognition ----
+
+    def test_openai_same_provider_raw_format_preserves_text_id(self):
+        """Raw Responses API reasoning blocks (no extras) preserve sibling text block ids.
+
+        When reasoning blocks have id/summary/encrypted_content at the top
+        level (pre-normalization format), has_reasoning_id must be set to
+        True so that sibling text block ids are NOT stripped.
+        """
+        messages = [
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "id": "rs_abc123",
+                        "type": "reasoning",
+                        "index": 0,
+                        "summary": [
+                            {"type": "summary_text", "text": "Thinking..."},
+                        ],
+                        "encrypted_content": "gAAAA_encrypted",
+                    },
+                    {
+                        "id": "msg_xyz789",
+                        "type": "text",
+                        "text": "Final answer",
+                        "index": 1,
+                    },
+                ],
+            },
+        ]
+        result = strip_foreign_reasoning_blocks(
+            messages, "openai", target_api_format="responses"
+        )
+        text_block = result[0]["content"][1]
+        # id must be preserved (not stripped)
+        assert text_block.get("id") == "msg_xyz789"
+        assert text_block["text"] == "Final answer"
+        # reasoning block passed through unchanged
+        assert result[0]["content"][0]["id"] == "rs_abc123"
+
+    def test_openai_same_provider_raw_format_empty_summary(self):
+        """Raw format with empty summary list still preserves text ids."""
+        messages = [
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "id": "rs_test",
+                        "type": "reasoning",
+                        "index": 0,
+                        "summary": [],
+                        "encrypted_content": "gAAAA_data",
+                    },
+                    {
+                        "id": "msg_test",
+                        "type": "text",
+                        "text": "answer",
+                    },
+                ],
+            },
+        ]
+        result = strip_foreign_reasoning_blocks(
+            messages, "openai", target_api_format="responses"
+        )
+        # Text block id preserved
+        assert result[0]["content"][1].get("id") == "msg_test"
+        # Reasoning block unchanged
+        assert result[0]["content"][0]["id"] == "rs_test"
+        assert result[0]["content"][0]["summary"] == []
+
+    def test_openai_same_provider_raw_format_only_id_no_encrypted(self):
+        """Raw format with only id (no encrypted_content) still sets has_reasoning_id."""
+        messages = [
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "id": "rs_only_id",
+                        "type": "reasoning",
+                        "summary": [{"type": "summary_text", "text": "thought"}],
+                    },
+                    {
+                        "id": "msg_abc",
+                        "type": "text",
+                        "text": "answer",
+                    },
+                ],
+            },
+        ]
+        result = strip_foreign_reasoning_blocks(
+            messages, "openai", target_api_format="responses"
+        )
+        assert result[0]["content"][1].get("id") == "msg_abc"
+
+    # ---- Fix 3: reasoning sequence validation ----
+
+    def test_reasoning_only_content_gets_empty_text_appended(self):
+        """Assistant message with only reasoning block gets a placeholder text block."""
+        messages = [
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "reasoning",
+                        "reasoning": "",
+                        "extras": {"id": "rs_1", "encrypted_content": "enc"},
+                    },
+                ],
+                "model_info": {"provider": "openai", "model": "gpt-5.4"},
+            },
+        ]
+        result = strip_foreign_reasoning_blocks(
+            messages, "openai", target_api_format="responses"
+        )
+        content = result[0]["content"]
+        # Reasoning is denormalized, then a placeholder text is appended
+        assert len(content) == 2
+        assert content[0]["type"] == "reasoning"
+        assert content[-1] == {"type": "text", "text": ""}
+
+    def test_reasoning_with_text_unchanged(self):
+        """Assistant message with reasoning + text is not modified."""
+        messages = [
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "reasoning",
+                        "reasoning": "thinking...",
+                        "extras": {"id": "rs_1", "encrypted_content": "enc"},
+                    },
+                    {"type": "text", "text": "answer"},
+                ],
+                "model_info": {"provider": "openai", "model": "gpt-5.4"},
+            },
+        ]
+        result = strip_foreign_reasoning_blocks(
+            messages, "openai", target_api_format="responses"
+        )
+        content = result[0]["content"]
+        # Reasoning denormalized + text block = 2 blocks, no placeholder added
+        assert len(content) == 2
+        assert content[-1]["type"] == "text"
+        assert content[-1]["text"] == "answer"
+
+    def test_reasoning_with_tool_calls_not_patched(self):
+        """Assistant with reasoning + tool_calls should NOT get a placeholder text."""
+        messages = [
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "reasoning",
+                        "reasoning": "",
+                        "extras": {"id": "rs_1", "encrypted_content": "enc"},
+                    },
+                ],
+                "model_info": {"provider": "openai", "model": "gpt-5.4"},
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": "test", "arguments": "{}"},
+                    },
+                ],
+            },
+        ]
+        result = strip_foreign_reasoning_blocks(
+            messages, "openai", target_api_format="responses"
+        )
+        content = result[0]["content"]
+        # Should NOT have a placeholder — tool_calls serve as the output
+        assert len(content) == 1
+        assert content[0]["type"] == "reasoning"
+
+    def test_non_responses_api_no_reasoning_validation(self):
+        """Reasoning validation only applies to Responses API format."""
+        messages = [
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "reasoning", "reasoning": "thinking..."},
+                ],
+            },
+        ]
+        # Chat Completions format — no target_api_format
+        result = strip_foreign_reasoning_blocks(messages, "openai")
+        content = result[0]["content"]
+        # Should NOT be patched for non-Responses API
+        assert len(content) == 1
+
 
 class TestInferProvider:
     """Tests for _infer_provider heuristic."""
@@ -587,8 +781,11 @@ class TestSanitizeToolIdsForAnthropic:
                     },
                 ],
                 "tool_calls": [
-                    {"id": "functions.load_skill:10", "type": "function",
-                     "function": {"name": "load_skill", "arguments": "{}"}}
+                    {
+                        "id": "functions.load_skill:10",
+                        "type": "function",
+                        "function": {"name": "load_skill", "arguments": "{}"},
+                    }
                 ],
                 "model_info": {"provider": "openai", "model": "moonshot-kimi-k2.5"},
             },
@@ -611,8 +808,11 @@ class TestSanitizeToolIdsForAnthropic:
                 "role": "assistant",
                 "content": "answer",
                 "tool_calls": [
-                    {"id": "call_abc123", "type": "function",
-                     "function": {"name": "test", "arguments": "{}"}}
+                    {
+                        "id": "call_abc123",
+                        "type": "function",
+                        "function": {"name": "test", "arguments": "{}"},
+                    }
                 ],
                 "model_info": {"provider": "openai", "model": "gpt-5"},
             },
@@ -633,8 +833,11 @@ class TestSanitizeToolIdsForAnthropic:
                 "role": "assistant",
                 "content": "answer",
                 "tool_calls": [
-                    {"id": "functions.test:1", "type": "function",
-                     "function": {"name": "test", "arguments": "{}"}}
+                    {
+                        "id": "functions.test:1",
+                        "type": "function",
+                        "function": {"name": "test", "arguments": "{}"},
+                    }
                 ],
                 "model_info": {"provider": "openai", "model": "kimi"},
             },

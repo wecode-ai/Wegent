@@ -14,7 +14,7 @@ import { useTheme } from '@/features/theme/ThemeProvider'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useRouter } from 'next/navigation'
 import { useToast } from '@/hooks/use-toast'
-import { useChatStreamContext } from '../../contexts/chatStreamContext'
+import { useOptionalChatStreamContext } from '../../contexts/chatStreamContext'
 import { Textarea } from '@/components/ui/textarea'
 
 interface FinalPromptMessageProps {
@@ -52,7 +52,8 @@ export default function FinalPromptMessage({
   const { toast } = useToast()
   const { theme } = useTheme()
   const router = useRouter()
-  const { sendMessage } = useChatStreamContext()
+  const chatStreamContext = useOptionalChatStreamContext()
+  const sendMessage = chatStreamContext?.sendMessage
   const [copied, setCopied] = useState(false)
   const [isEditing, setIsEditing] = useState(false)
   const [editedPrompt, setEditedPrompt] = useState(data.final_prompt)
@@ -133,6 +134,15 @@ export default function FinalPromptMessage({
       toast({
         variant: 'destructive',
         title: t('pipeline.no_task_id'),
+      })
+      return
+    }
+
+    // sendMessage is only available within ChatStreamProvider
+    if (!sendMessage) {
+      toast({
+        variant: 'destructive',
+        title: t('pipeline.confirm_failed'),
       })
       return
     }

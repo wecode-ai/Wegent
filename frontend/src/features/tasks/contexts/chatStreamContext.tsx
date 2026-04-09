@@ -943,6 +943,14 @@ export function useChatStreamContext(): ChatStreamContextType {
 }
 
 /**
+ * Optional hook to use chat stream context without throwing.
+ * Returns null when used outside of ChatStreamProvider (e.g., shared/public pages).
+ */
+export function useOptionalChatStreamContext(): ChatStreamContextType | null {
+  return useContext(ChatStreamContext) ?? null
+}
+
+/**
  * Helper function to compute isStreaming from messages (for backward compatibility)
  */
 export function computeIsStreaming(messages: Map<string, UnifiedMessage> | undefined): boolean {
