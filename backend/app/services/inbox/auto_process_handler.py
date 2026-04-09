@@ -143,8 +143,19 @@ class InboxAutoProcessHandler:
                 # Build inbox context for prompt template
                 inbox_context = self._build_inbox_context(message, work_queue, event)
 
-                # Create execution and dispatch
-                self._dispatch_execution(db, subscription, message, inbox_context)
+                # Create execution and dispatch; mark message FAILED on error
+                try:
+                    self._dispatch_execution(db, subscription, message, inbox_context)
+                except Exception as dispatch_exc:
+                    logger.error(
+                        f"[InboxAutoProcess] Dispatch failed for message "
+                        f"{event.message_id}: {dispatch_exc}",
+                        exc_info=True,
+                    )
+                    message.status = QueueMessageStatus.FAILED
+                    message.process_error = f"Dispatch failed: {dispatch_exc}"
+                    db.commit()
+                    return
 
                 logger.info(
                     f"[InboxAutoProcess] Dispatched auto-processing for "
@@ -164,14 +175,18 @@ class InboxAutoProcessHandler:
         ref: SubscriptionRef,
         queue_owner_user_id: int,
     ) -> Optional[Kind]:
-        """Resolve subscription by reference triple."""
+        """Resolve subscription by reference triple.
+
+        Uses queue_owner_user_id instead of ref.userId to prevent
+        clients from referencing another user's subscriptions.
+        """
         return (
             db.query(Kind)
             .filter(
                 Kind.kind == "Subscription",
                 Kind.namespace == ref.namespace,
                 Kind.name == ref.name,
-                Kind.user_id == ref.userId,
+                Kind.user_id == queue_owner_user_id,
                 Kind.is_active == True,
             )
             .first()

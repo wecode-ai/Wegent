@@ -14,9 +14,13 @@ to originating inbox messages. Also adds 'failed' enum value to
 queue message status.
 """
 
+import logging
+
 import sqlalchemy as sa
 
 from alembic import op
+
+logger = logging.getLogger(__name__)
 
 revision = "a1b2c3d4e5f6"
 down_revision = "b1c2d3e4f607"
@@ -40,9 +44,13 @@ def upgrade() -> None:
                     "NOT NULL DEFAULT 'unread'"
                 )
             )
-        except Exception:
-            # Column may already have the 'failed' value
-            pass
+        except Exception as exc:
+            # Tolerate "already has the value" errors (e.g. re-run)
+            logger.warning(
+                "Could not add 'failed' to queue_messages.status enum "
+                "(may already exist): %s",
+                exc,
+            )
 
     # --- queue_messages: new columns ---
     qm_columns = {column["name"] for column in inspector.get_columns("queue_messages")}
@@ -171,5 +179,10 @@ def downgrade() -> None:
                     "NOT NULL DEFAULT 'unread'"
                 )
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            # Tolerate "already reverted" errors (e.g. re-run)
+            logger.warning(
+                "Could not revert queue_messages.status enum "
+                "(may already be reverted): %s",
+                exc,
+            )

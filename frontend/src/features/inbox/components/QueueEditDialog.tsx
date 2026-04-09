@@ -86,21 +86,28 @@ export function QueueEditDialog({ queue, open, onOpenChange }: QueueEditDialogPr
         userId?: number
         user_id?: number
         spec?: { displayName?: string; trigger?: { event?: { event_type?: string } } }
-        json?: { spec?: { displayName?: string; trigger?: { event?: { event_type?: string } } }; _internal?: Record<string, unknown> }
+        json?: {
+          spec?: { displayName?: string; trigger?: { event?: { event_type?: string } } }
+          _internal?: Record<string, unknown>
+        }
       }>
       const inboxSubscriptions = items
-        .filter((sub) => {
+        .filter(sub => {
           const eventType =
-            sub.spec?.trigger?.event?.event_type ||
-            sub.json?.spec?.trigger?.event?.event_type
+            sub.spec?.trigger?.event?.event_type || sub.json?.spec?.trigger?.event?.event_type
           return eventType === 'inbox_message'
         })
-        .map((sub) => ({
+        .filter(sub => {
+          // Discard subscriptions without a valid userId
+          const uid = sub.userId || sub.user_id
+          return uid && uid > 0
+        })
+        .map(sub => ({
           id: sub.id,
           name: sub.name,
           namespace: sub.namespace || 'default',
           displayName: sub.spec?.displayName || sub.json?.spec?.displayName || sub.name,
-          userId: sub.userId || sub.user_id || 0,
+          userId: (sub.userId || sub.user_id) as number,
         }))
       setSubscriptions(inboxSubscriptions)
     } catch (error) {
@@ -151,7 +158,7 @@ export function QueueEditDialog({ queue, open, onOpenChange }: QueueEditDialogPr
     if (queue?.autoProcess?.subscriptionRef && subscriptions.length > 0) {
       const ref = queue.autoProcess.subscriptionRef
       const match = subscriptions.find(
-        (s) => s.name === ref.name && s.namespace === ref.namespace && s.userId === ref.userId
+        s => s.name === ref.name && s.namespace === ref.namespace && s.userId === ref.userId
       )
       if (match) {
         setSelectedSubscriptionId(String(match.id))
@@ -173,7 +180,7 @@ export function QueueEditDialog({ queue, open, onOpenChange }: QueueEditDialogPr
     // Build subscriptionRef from selected subscription
     let subscriptionRef: SubscriptionRef | undefined
     if (autoProcessEnabled && selectedSubscriptionId) {
-      const sub = subscriptions.find((s) => String(s.id) === selectedSubscriptionId)
+      const sub = subscriptions.find(s => String(s.id) === selectedSubscriptionId)
       if (sub) {
         subscriptionRef = {
           namespace: sub.namespace,
@@ -239,7 +246,7 @@ export function QueueEditDialog({ queue, open, onOpenChange }: QueueEditDialogPr
               <Input
                 id="name"
                 value={name}
-                onChange={(e) => setName(e.target.value)}
+                onChange={e => setName(e.target.value)}
                 placeholder={t('queues.name_placeholder')}
                 data-testid="queue-name-input"
               />
@@ -252,7 +259,7 @@ export function QueueEditDialog({ queue, open, onOpenChange }: QueueEditDialogPr
             <Input
               id="displayName"
               value={displayName}
-              onChange={(e) => setDisplayName(e.target.value)}
+              onChange={e => setDisplayName(e.target.value)}
               placeholder={t('queues.display_name_placeholder')}
               data-testid="queue-display-name-input"
             />
@@ -264,7 +271,7 @@ export function QueueEditDialog({ queue, open, onOpenChange }: QueueEditDialogPr
             <Textarea
               id="description"
               value={description}
-              onChange={(e) => setDescription(e.target.value)}
+              onChange={e => setDescription(e.target.value)}
               placeholder={t('queues.description_placeholder')}
               rows={2}
               data-testid="queue-description-input"
@@ -274,7 +281,7 @@ export function QueueEditDialog({ queue, open, onOpenChange }: QueueEditDialogPr
           {/* Visibility */}
           <div className="space-y-2">
             <Label>{t('queues.visibility')}</Label>
-            <Select value={visibility} onValueChange={(v) => setVisibility(v as QueueVisibility)}>
+            <Select value={visibility} onValueChange={v => setVisibility(v as QueueVisibility)}>
               <SelectTrigger data-testid="queue-visibility-select">
                 <SelectValue />
               </SelectTrigger>
@@ -302,10 +309,7 @@ export function QueueEditDialog({ queue, open, onOpenChange }: QueueEditDialogPr
               {/* Trigger Mode */}
               <div className="space-y-2">
                 <Label>{t('queues.trigger_mode')}</Label>
-                <Select
-                  value={triggerMode}
-                  onValueChange={(v) => setTriggerMode(v as TriggerMode)}
-                >
+                <Select value={triggerMode} onValueChange={v => setTriggerMode(v as TriggerMode)}>
                   <SelectTrigger data-testid="queue-trigger-mode-select">
                     <SelectValue />
                   </SelectTrigger>
@@ -320,23 +324,18 @@ export function QueueEditDialog({ queue, open, onOpenChange }: QueueEditDialogPr
               <div className="space-y-2">
                 <Label>{t('queues.auto_process_subscription')}</Label>
                 {loadingSubscriptions ? (
-                  <div className="text-sm text-text-secondary">
-                    {t('common:actions.loading')}
-                  </div>
+                  <div className="text-sm text-text-secondary">{t('common:actions.loading')}</div>
                 ) : subscriptions.length === 0 ? (
                   <div className="text-sm text-text-secondary">
                     {t('queues.no_inbox_subscriptions')}
                   </div>
                 ) : (
-                  <Select
-                    value={selectedSubscriptionId}
-                    onValueChange={setSelectedSubscriptionId}
-                  >
+                  <Select value={selectedSubscriptionId} onValueChange={setSelectedSubscriptionId}>
                     <SelectTrigger data-testid="subscription-select">
                       <SelectValue placeholder={t('queues.select_subscription_placeholder')} />
                     </SelectTrigger>
                     <SelectContent>
-                      {subscriptions.map((sub) => (
+                      {subscriptions.map(sub => (
                         <SelectItem key={sub.id} value={String(sub.id)}>
                           {sub.displayName}
                         </SelectItem>

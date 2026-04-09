@@ -468,13 +468,14 @@ class WorkQueueService:
                 # Validate subscriptionRef if auto-process is enabled
                 if data.autoProcess.enabled and data.autoProcess.subscriptionRef:
                     ref = data.autoProcess.subscriptionRef
+                    # Resolve under authenticated user to prevent cross-tenant access
                     subscription = (
                         db.query(Kind)
                         .filter(
                             Kind.kind == "Subscription",
                             Kind.namespace == ref.namespace,
                             Kind.name == ref.name,
-                            Kind.user_id == ref.userId,
+                            Kind.user_id == user_id,
                             Kind.is_active == True,
                         )
                         .first()
@@ -555,13 +556,14 @@ class WorkQueueService:
                 # Validate subscriptionRef if auto-process is enabled
                 if data.autoProcess.enabled and data.autoProcess.subscriptionRef:
                     ref = data.autoProcess.subscriptionRef
+                    # Resolve under authenticated user to prevent cross-tenant access
                     subscription = (
                         db.query(Kind)
                         .filter(
                             Kind.kind == "Subscription",
                             Kind.namespace == ref.namespace,
                             Kind.name == ref.name,
-                            Kind.user_id == ref.userId,
+                            Kind.user_id == user_id,
                             Kind.is_active == True,
                         )
                         .first()
@@ -1255,12 +1257,13 @@ class QueueMessageService:
             if not queue:
                 raise NotFoundException("Work queue not found")
 
-            # Check idempotency
+            # Check idempotency (scoped to queue to prevent cross-tenant leaks)
             if request.idempotencyKey:
                 existing = (
                     db.query(QueueMessage)
                     .filter(
                         QueueMessage.idempotency_key == request.idempotencyKey,
+                        QueueMessage.queue_id == queue_id,
                     )
                     .first()
                 )
@@ -1274,16 +1277,17 @@ class QueueMessageService:
                         return self._build_message_response(existing, sender)
 
             # Build content snapshot from ingested content
-            content_snapshot = [
-                {
-                    "role": "USER",
-                    "content": request.content,
-                    "senderUserName": (
-                        request.sender.displayName if request.sender else None
-                    ),
-                    "createdAt": datetime.now(timezone.utc).isoformat(),
-                }
-            ]
+            snapshot_entry = {
+                "role": "USER",
+                "content": request.content,
+                "senderUserName": (
+                    request.sender.displayName if request.sender else None
+                ),
+                "createdAt": datetime.now(timezone.utc).isoformat(),
+            }
+            if request.attachments:
+                snapshot_entry["attachments"] = request.attachments
+            content_snapshot = [snapshot_entry]
 
             # Create message
             db_message = QueueMessage(
@@ -1360,6 +1364,9 @@ class QueueMessageService:
             message.status = QueueMessageStatus.UNREAD
             message.process_error = None
             message.processing_started_at = None
+            message.process_subscription_id = None
+            message.process_result = {}
+            message.processed_at = None
             message.retry_count += 1
             db.commit()
             db.refresh(message)
