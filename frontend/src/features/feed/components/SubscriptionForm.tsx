@@ -313,6 +313,13 @@ export function SubscriptionForm({
   const [availableDevices, setAvailableDevices] = useState<DeviceInfo[]>([])
   const [devicesLoading, setDevicesLoading] = useState(false)
 
+  // Expiration state
+  const [expirationType, setExpirationType] = useState<'none' | 'fixed_date' | 'duration_days'>(
+    'none'
+  )
+  const [expirationDate, setExpirationDate] = useState<Date | undefined>(undefined)
+  const [durationDays, setDurationDays] = useState<number>(30)
+
   // Knowledge base selection state
   const [knowledgeBaseRefs, setKnowledgeBaseRefs] = useState<SubscriptionKnowledgeBaseRef[]>([])
 
@@ -604,6 +611,15 @@ export function SubscriptionForm({
       } else {
         setSelectedModel(null)
       }
+      // Restore expiration state from subscription
+      if (subscription.expires_at) {
+        setExpirationType('fixed_date')
+        setExpirationDate(new Date(subscription.expires_at))
+      } else {
+        setExpirationType('none')
+        setExpirationDate(undefined)
+      }
+      setDurationDays(30)
     } else {
       setDisplayName(initialData?.displayName || '')
       setDescription(initialData?.description || '')
@@ -628,6 +644,10 @@ export function SubscriptionForm({
       setKnowledgeBaseRefs([])
       setSkillRefs([])
       setNotificationWebhooks([])
+      // Reset expiration state
+      setExpirationType('none')
+      setExpirationDate(undefined)
+      setDurationDays(30)
     }
   }, [subscription, open, initialData])
 
@@ -747,6 +767,15 @@ export function SubscriptionForm({
           knowledge_base_refs: knowledgeBaseRefs.length > 0 ? knowledgeBaseRefs : undefined,
           skill_refs: skillRefs.length > 0 ? skillRefs : undefined,
           notification_webhooks: notificationWebhooks.length > 0 ? notificationWebhooks : undefined,
+          // Expiration settings
+          ...(expirationType !== 'none' && {
+            expires_at:
+              expirationType === 'fixed_date' && expirationDate
+                ? expirationDate.toISOString()
+                : expirationType === 'duration_days'
+                  ? new Date(Date.now() + durationDays * 24 * 60 * 60 * 1000).toISOString()
+                  : undefined,
+          }),
         }
         await subscriptionApis.updateSubscription(subscription.id, updateData)
 
@@ -799,6 +828,15 @@ export function SubscriptionForm({
           knowledge_base_refs: knowledgeBaseRefs.length > 0 ? knowledgeBaseRefs : undefined,
           skill_refs: skillRefs.length > 0 ? skillRefs : undefined,
           notification_webhooks: notificationWebhooks.length > 0 ? notificationWebhooks : undefined,
+          // Expiration settings
+          ...(expirationType !== 'none' && {
+            expires_at:
+              expirationType === 'fixed_date' && expirationDate
+                ? expirationDate.toISOString()
+                : expirationType === 'duration_days'
+                  ? new Date(Date.now() + durationDays * 24 * 60 * 60 * 1000).toISOString()
+                  : undefined,
+          }),
         }
         const createdSubscription = await subscriptionApis.createSubscription(createData)
 
@@ -856,6 +894,9 @@ export function SubscriptionForm({
     devNotificationLevel,
     devNotificationChannels,
     channelBindingConfigs,
+    expirationType,
+    expirationDate,
+    durationDays,
   ])
 
   const startBindingSession = useCallback(
@@ -1022,6 +1063,12 @@ export function SubscriptionForm({
             setRetryCount={setRetryCount}
             timeoutSeconds={timeoutSeconds}
             setTimeoutSeconds={setTimeoutSeconds}
+            expirationType={expirationType}
+            setExpirationType={setExpirationType}
+            expirationDate={expirationDate}
+            setExpirationDate={setExpirationDate}
+            durationDays={durationDays}
+            setDurationDays={setDurationDays}
           />
 
           {/* Webhook API Usage - Only show for event trigger with webhook when editing */}

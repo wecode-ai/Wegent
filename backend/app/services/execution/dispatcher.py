@@ -190,11 +190,20 @@ class ResponsesAPIEventParser:
                 data.get("call_id") or data.get("item_id"),
                 context="function_call_arguments.done",
             )
+            # Parse arguments from the event data to get tool_input
+            arguments_str = data.get("arguments", "")
+            tool_input = None
+            if arguments_str:
+                try:
+                    tool_input = json.loads(arguments_str)
+                except (json.JSONDecodeError, TypeError):
+                    pass
             return ExecutionEvent(
                 type=EventType.TOOL_RESULT,
                 task_id=task_id,
                 subtask_id=subtask_id,
                 tool_use_id=tool_use_id,
+                tool_input=tool_input,
                 tool_output=data.get("output"),
                 data={"blocks": data.get("blocks", [])},
                 message_id=message_id,

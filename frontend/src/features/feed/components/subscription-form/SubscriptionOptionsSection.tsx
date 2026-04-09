@@ -81,6 +81,12 @@ export function SubscriptionOptionsSection({
   setRetryCount,
   timeoutSeconds,
   setTimeoutSeconds,
+  expirationType,
+  setExpirationType,
+  expirationDate,
+  setExpirationDate,
+  durationDays,
+  setDurationDays,
 }: SubscriptionOptionsSectionProps) {
   const { t } = useTranslation('feed')
 
@@ -344,6 +350,73 @@ export function SubscriptionOptionsSection({
         </div>
       </div>
       <p className="text-xs text-text-muted -mt-2">{t('timeout_hint')}</p>
+
+      {/* Expiration Settings */}
+      <div className="rounded-lg border border-border bg-background p-4">
+        <div className="mb-3 text-sm font-medium text-text-secondary flex items-center gap-2">
+          {t('expiration_settings') || 'Expiration Settings'}
+        </div>
+        <div className="space-y-4">
+          {/* Expiration Type */}
+          <div className="space-y-2">
+            <Label className="text-sm font-medium">
+              {t('expiration_type') || 'Expiration Type'}
+            </Label>
+            <Select
+              value={expirationType}
+              onValueChange={value =>
+                setExpirationType(value as 'none' | 'fixed_date' | 'duration_days')
+              }
+            >
+              <SelectTrigger className="h-10">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">{t('expiration_none') || 'No Expiration'}</SelectItem>
+                <SelectItem value="fixed_date">
+                  {t('expiration_fixed_date') || 'Fixed Date'}
+                </SelectItem>
+                <SelectItem value="duration_days">
+                  {t('expiration_duration_days') || 'Duration (Days)'}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Fixed Date Picker */}
+          {expirationType === 'fixed_date' && (
+            <div className="space-y-2">
+              <Label className="text-sm font-medium">
+                {t('expiration_date') || 'Expiration Date'}
+              </Label>
+              <DateTimePicker
+                value={expirationDate}
+                onChange={setExpirationDate}
+                placeholder={t('select_expiration_date') || 'Select expiration date and time'}
+              />
+            </div>
+          )}
+
+          {/* Duration Days Input */}
+          {expirationType === 'duration_days' && (
+            <div className="space-y-2">
+              <Label className="text-sm font-medium">{t('duration_days') || 'Duration Days'}</Label>
+              <Input
+                type="number"
+                min={1}
+                max={365}
+                value={durationDays}
+                onChange={e => setDurationDays(parseInt(e.target.value) || 1)}
+                placeholder={t('duration_days_placeholder') || 'Enter number of days'}
+              />
+              <p className="text-xs text-text-muted">
+                {t('duration_days_hint') ||
+                  'Subscription will expire after this many days from creation'}
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
 
       {/* Repository Selection - Only show for code-type teams */}
       {isCodeTypeTeam && (

@@ -18,6 +18,10 @@ import { ImageGallery } from '../ImageGallery'
 import { AskUserForm } from '../../clarification'
 import type { AskUserFormData } from '@/types/api'
 import { blockRendererRegistry } from '../block-registry'
+import {
+  SubscriptionPreviewCard,
+  type SubscriptionPreviewBlock,
+} from '../../subscription/SubscriptionPreviewCard'
 // Import to register prompt optimization block renderer
 import '@/features/prompt-optimization/block-renderer'
 
@@ -130,6 +134,14 @@ const MixedContentView = memo(function MixedContentView({
               imageCount: block.image_count ?? 0,
               status: block.status,
               message: block.content, // Progress message
+            }
+          } else if (block.type === 'subscription_preview') {
+            // Subscription preview block - render SubscriptionPreviewCard
+            return {
+              type: 'subscription_preview' as const,
+              data: block as unknown as SubscriptionPreviewBlock,
+              blockId: block.id,
+              status: block.status,
             }
           } else if (block.type === 'tool') {
             // Check if this is an ask_user_question tool - render as interactive form
@@ -354,7 +366,22 @@ const MixedContentView = memo(function MixedContentView({
       return []
     }
 
-    const items: Array<{ type: 'content'; content: string } | { type: 'tool'; tool: ToolPair }> = []
+    const items: Array<
+      | { type: 'content'; content: string }
+      | { type: 'tool'; tool: ToolPair }
+      | {
+          type: 'interactive_form_question'
+          data: AskUserFormData
+          blockId: string
+          status: string
+        }
+      | {
+          type: 'subscription_preview'
+          data: SubscriptionPreviewBlock
+          blockId: string
+          status: string
+        }
+    > = []
 
     let hasShownMainContent = false
 
@@ -524,6 +551,13 @@ const MixedContentView = memo(function MixedContentView({
                 blockStatus={item.status}
                 onSubmit={onAskUserSubmit}
               />
+            </div>
+          )
+        } else if (item.type === 'subscription_preview') {
+          // Render subscription preview card with confirm/cancel buttons
+          return (
+            <div key={item.blockId} className="pb-4">
+              <SubscriptionPreviewCard data={item.data} />
             </div>
           )
         } else if (item.type === 'tool') {

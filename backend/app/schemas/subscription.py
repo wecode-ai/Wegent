@@ -437,6 +437,10 @@ class SubscriptionCreate(SubscriptionBase):
     """Subscription creation model."""
 
     namespace: str = Field("default", description="Namespace")
+    # Expiration settings
+    expires_at: Optional[datetime] = Field(
+        None, description="Expiration timestamp (ISO format)"
+    )
 
 
 class SubscriptionUpdate(BaseModel):
@@ -474,6 +478,10 @@ class SubscriptionUpdate(BaseModel):
     skill_refs: Optional[List[SubscriptionSkillRef]] = None
     # Market whitelist
     market_whitelist_user_ids: Optional[List[int]] = None
+    # Expiration settings
+    expires_at: Optional[datetime] = Field(
+        None, description="Expiration timestamp (ISO format)"
+    )
 
 
 class SubscriptionInDB(SubscriptionBase):
@@ -520,6 +528,11 @@ class SubscriptionInDB(SubscriptionBase):
     trigger_config_error: Optional[str] = Field(
         None, description="Error message if trigger config is invalid"
     )
+    # Expiration fields
+    expires_at: Optional[datetime] = Field(
+        None, description="Calculated expiration timestamp"
+    )
+    is_expired: bool = Field(False, description="Whether the subscription has expired")
     created_at: datetime
     updated_at: datetime
 

@@ -74,6 +74,7 @@ async def lifespan(app: FastAPI):
         interactive_form_question_mcp_server,
         knowledge_mcp_server,
         prompt_optimization_mcp_server,
+        subscription_mcp_server,
         system_mcp_server,
     )
 
@@ -318,7 +319,9 @@ async def lifespan(app: FastAPI):
                     logger.info(
                         "✓ Prompt optimization MCP server session manager started"
                     )
-                    yield
+                    async with subscription_mcp_server.session_manager.run():
+                        logger.info("✓ Subscription MCP server session manager started")
+                        yield
 
     # ==================== SHUTDOWN ====================
     logger.info("=" * 60)
