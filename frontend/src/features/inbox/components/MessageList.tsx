@@ -549,7 +549,7 @@ export function MessageList({
                     {/* Failed message error display */}
                     {message.status === 'failed' && message.processError && (
                       <div className="flex items-center gap-1 mt-1">
-                        <Badge variant="destructive" className="text-xs">
+                        <Badge variant="error" className="text-xs">
                           {t('messages.process_error')}: {message.processError}
                         </Badge>
                       </div>
@@ -588,12 +588,14 @@ export function MessageList({
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
                         {/* Process action */}
-                        {message.status !== 'processed' && message.status !== 'processing' && message.status !== 'failed' && (
-                          <DropdownMenuItem onClick={() => onProcessMessage(message)}>
-                            <Play className="mr-2 h-4 w-4" />
-                            {t('messages.process')}
-                          </DropdownMenuItem>
-                        )}
+                        {message.status !== 'processed' &&
+                          message.status !== 'processing' &&
+                          message.status !== 'failed' && (
+                            <DropdownMenuItem onClick={() => onProcessMessage(message)}>
+                              <Play className="mr-2 h-4 w-4" />
+                              {t('messages.process')}
+                            </DropdownMenuItem>
+                          )}
 
                         {/* Retry action for failed messages */}
                         {message.status === 'failed' && (

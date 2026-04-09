@@ -26,6 +26,7 @@ const statusLabels: Record<QueueMessageStatus, string> = {
   read: 'messages.status.read',
   processing: 'messages.status.processing',
   processed: 'messages.status.processed',
+  failed: 'messages.status.failed',
   archived: 'messages.status.archived',
 }
 
@@ -40,6 +41,7 @@ const statusColors: Record<QueueMessageStatus, string> = {
   read: 'bg-surface text-text-secondary',
   processing: 'bg-amber-100 text-amber-700',
   processed: 'bg-green-100 text-green-700',
+  failed: 'bg-red-100 text-red-700',
   archived: 'bg-surface text-text-muted',
 }
 
