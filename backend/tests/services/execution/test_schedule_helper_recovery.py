@@ -24,9 +24,9 @@ async def test_recover_executor_propagates_expired_archive_error():
     request = ExecutionRequest(
         task_id=1,
         subtask_id=123,
-        user={"id": 7, "name": "yunpeng7"},
+        user={"id": 7, "name": "user7"},
         user_id=7,
-        user_name="yunpeng7",
+        user_name="user7",
         bot=[{"shell_type": "ClaudeCode"}],
     )
 

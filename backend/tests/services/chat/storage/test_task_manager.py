@@ -25,7 +25,7 @@ def test_create_assistant_subtask_inherits_deleted_executor_state(
         bot_ids=[1255],
         role=SubtaskRole.ASSISTANT,
         executor_namespace="default",
-        executor_name="wegent-task-yunpeng7-20c72b0bdbd63d7",
+        executor_name="wegent-task-user7-pod7",
         executor_deleted_at=True,
         prompt="",
         status=SubtaskStatus.COMPLETED,

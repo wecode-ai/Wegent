@@ -39,7 +39,7 @@ async def test_create_sandbox_uses_plural_sandboxes_endpoint():
         sandbox, error = await get_executor_runtime_client().create_sandbox(
             shell_type="ClaudeCode",
             user_id=2,
-            user_name="yunpeng7",
+            user_name="user7",
         )
 
     assert error is None
@@ -69,9 +69,9 @@ async def test_prepare_executor_uses_prepare_endpoint():
     request = ExecutionRequest(
         task_id=22,
         subtask_id=11,
-        user={"id": 2, "name": "yunpeng7"},
+        user={"id": 2, "name": "user7"},
         user_id=2,
-        user_name="yunpeng7",
+        user_name="user7",
         bot=[{"shell_type": "ClaudeCode"}],
     )
 

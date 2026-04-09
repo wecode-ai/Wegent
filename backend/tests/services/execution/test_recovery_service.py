@@ -54,9 +54,9 @@ async def test_recover_without_archive_uses_normal_clone():
     request = ExecutionRequest(
         task_id=22,
         subtask_id=11,
-        user={"id": 7, "name": "yunpeng7"},
+        user={"id": 7, "name": "user7"},
         user_id=7,
-        user_name="yunpeng7",
+        user_name="user7",
         bot=[{"shell_type": "Agno", "agent_config": {"model": "test"}}],
         executor_name="old",
     )
@@ -127,9 +127,9 @@ async def test_recover_with_archive_continues_when_restore_fails():
     request = ExecutionRequest(
         task_id=22,
         subtask_id=11,
-        user={"id": 7, "name": "yunpeng7"},
+        user={"id": 7, "name": "user7"},
         user_id=7,
-        user_name="yunpeng7",
+        user_name="user7",
         bot=[{"shell_type": "ClaudeCode", "agent_config": {"model": "test"}}],
         executor_name="old",
     )

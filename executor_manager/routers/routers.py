@@ -420,10 +420,14 @@ async def get_executor_address(
                 status_code=501, detail="Executor address lookup is not supported"
             )
 
-        result = executor.get_container_address(
-            executor_name,
-            executor_namespace=executor_namespace,
-        )
+        try:
+            result = executor.get_container_address(
+                executor_name,
+                executor_namespace=executor_namespace,
+            )
+        except TypeError:
+            # Fallback to legacy signature without executor_namespace
+            result = executor.get_container_address(executor_name)
         logger.info(
             "Resolved executor address: executor_name=%s executor_namespace=%s result=%s",
             executor_name,
