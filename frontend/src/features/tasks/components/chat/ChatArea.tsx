@@ -1086,6 +1086,7 @@ function ChatAreaContent({
         onTeamChange={handleTeamChange}
         onSendMessage={streamHandlers.handleSendMessage}
         hasTaskId={!!taskIdFromUrl}
+        onPrefillMessage={chatState.setTaskInputMessage}
       />
 
       {/* Pipeline Stage Indicator - shows current stage progress for pipeline mode */}

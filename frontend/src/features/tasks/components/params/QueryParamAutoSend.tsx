@@ -28,18 +28,22 @@ interface QueryParamAutoSendProps {
   onSendMessage: (message: string) => Promise<void>
   /** Whether there is an existing task selected (taskId in URL) */
   hasTaskId: boolean
+  /** Callback to prefill the input box with the query text (called immediately on mount) */
+  onPrefillMessage?: (message: string) => void
 }
 
 /**
- * Monitors URL query parameters `q` and `teamId` to automatically
+ * Monitors URL query parameters `q`, `teamId`, `teamName`, `teamNamespace`, and `autoSend` to automatically
  * initiate a new conversation when the chat page is opened via an
- * external link like `/chat?q=hello&teamId=123`.
+ * external link like `/chat?q=hello&teamName=myAgent&teamNamespace=default&autoSend=true`.
  *
  * Behavior:
  * - Only fires when `q` is present and non-empty, and no `taskId` exists.
+ * - `q` content is always prefilled into the input box immediately on mount.
+ * - Auto-send only happens when `autoSend=true` is present in the URL.
  * - Waits for WebSocket connection + teams loaded before sending.
- * - Clears `q` and `teamId` from URL after sending (taskId is set by the
- *   normal send flow).
+ * - Clears `q`, `teamId`, `teamName`, `teamNamespace`, and `autoSend` from URL after sending (taskId is
+ *   set by the normal send flow).
  * - Uses a ref guard to guarantee the message is sent at most once, even
  *   under React StrictMode double-render.
  */
@@ -50,6 +54,7 @@ export default function QueryParamAutoSend({
   onTeamChange,
   onSendMessage,
   hasTaskId,
+  onPrefillMessage,
 }: QueryParamAutoSendProps) {
   const searchParams = useSearchParams()
   const router = useRouter()
@@ -59,6 +64,38 @@ export default function QueryParamAutoSend({
   const processedRef = useRef(false)
   // Track if user manually interacted before auto-send fires
   const userInteractedRef = useRef(false)
+
+  // Keep latest values in refs so setTimeout callbacks always read current state
+  const isConnectedRef = useRef(isConnected)
+  const isTeamsLoadingRef = useRef(isTeamsLoading)
+  const teamsRef = useRef(teams)
+  const selectedTeamRef = useRef(selectedTeam)
+  const onTeamChangeRef = useRef(onTeamChange)
+  const onSendMessageRef = useRef(onSendMessage)
+
+  useEffect(() => {
+    isConnectedRef.current = isConnected
+  }, [isConnected])
+
+  useEffect(() => {
+    isTeamsLoadingRef.current = isTeamsLoading
+  }, [isTeamsLoading])
+
+  useEffect(() => {
+    teamsRef.current = teams
+  }, [teams])
+
+  useEffect(() => {
+    selectedTeamRef.current = selectedTeam
+  }, [selectedTeam])
+
+  useEffect(() => {
+    onTeamChangeRef.current = onTeamChange
+  }, [onTeamChange])
+
+  useEffect(() => {
+    onSendMessageRef.current = onSendMessage
+  }, [onSendMessage])
 
   // Detect user interaction (typing / team switch) to cancel auto-send
   useEffect(() => {
@@ -71,13 +108,33 @@ export default function QueryParamAutoSend({
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [])
 
-  // Remove q and teamId from URL without adding browser history entries
+  // Remove q, teamId, teamName, teamNamespace, and autoSend from URL without adding browser history entries
   const clearQueryParams = useCallback(() => {
     const url = new URL(window.location.href)
     url.searchParams.delete('q')
     url.searchParams.delete('teamId')
+    url.searchParams.delete('teamName')
+    url.searchParams.delete('teamNamespace')
+    url.searchParams.delete('autosend')
     router.replace(url.pathname + url.search)
   }, [router])
+
+  // Prefill input box immediately when q param is present (even before auto-send conditions are met)
+  const prefillDoneRef = useRef(false)
+  useEffect(() => {
+    if (prefillDoneRef.current) return
+    if (hasTaskId) return
+
+    const query = searchParams.get('q')
+    if (!query) return
+
+    const decodedMessage = decodeURIComponent(query).trim()
+    if (!decodedMessage) return
+
+    prefillDoneRef.current = true
+    onPrefillMessage?.(decodedMessage)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, hasTaskId])
 
   useEffect(() => {
     // Already processed or user interacted
@@ -95,8 +152,21 @@ export default function QueryParamAutoSend({
     const decodedMessage = decodeURIComponent(query).trim()
     if (!decodedMessage) return
 
+    // Only auto-send when autoSend=true is explicitly set in the URL
+    // Support both camelCase (autoSend) and lowercase (autosend) parameter names
+    const autoSendParam = searchParams.get('autoSend') ?? searchParams.get('autosend')
+    if (autoSendParam?.toLowerCase() !== 'true') {
+      // No auto-send requested - just prefill (already done above) and stop
+      processedRef.current = true
+      return
+    }
+
     const teamIdParam = searchParams.get('teamId')
     const targetTeamId = teamIdParam ? Number(teamIdParam) : null
+
+    // Support team lookup by name and namespace (user-friendly alternative to teamId)
+    const teamNameParam = searchParams.get('teamName')
+    const teamNamespaceParam = searchParams.get('teamNamespace') || 'default'
 
     // Mark processed immediately to prevent duplicate triggers
     processedRef.current = true
@@ -115,8 +185,13 @@ export default function QueryParamAutoSend({
 
       const elapsed = Date.now() - startTime
 
+      // Read latest values from refs to avoid stale closure
+      const connected = isConnectedRef.current
+      const teamsLoading = isTeamsLoadingRef.current
+      const currentTeams = teamsRef.current
+
       // Check WebSocket readiness
-      if (!isConnected) {
+      if (!connected) {
         if (elapsed > WS_READY_TIMEOUT) {
           // Timeout - clean up params and give up
           clearQueryParams()
@@ -128,7 +203,7 @@ export default function QueryParamAutoSend({
       }
 
       // Check teams loaded
-      if (isTeamsLoading || teams.length === 0) {
+      if (teamsLoading || currentTeams.length === 0) {
         if (elapsed > WS_READY_TIMEOUT) {
           clearQueryParams()
           return
@@ -136,12 +211,23 @@ export default function QueryParamAutoSend({
         setTimeout(tryExecute, POLL_INTERVAL)
         return
       }
+      // Switch team if requested (by ID or by name+namespace)
+      let targetTeam: Team | undefined
 
-      // Switch team if requested
       if (targetTeamId) {
-        const targetTeam = teams.find(t => t.id === targetTeamId)
-        if (targetTeam && selectedTeam?.id !== targetTeamId) {
-          onTeamChange(targetTeam)
+        // Lookup by ID (backward compatible)
+        targetTeam = currentTeams.find(t => t.id === targetTeamId)
+      } else if (teamNameParam) {
+        // Lookup by name and namespace (user-friendly)
+        targetTeam = currentTeams.find(
+          t => t.name === teamNameParam && t.namespace === teamNamespaceParam
+        )
+      }
+
+      if (targetTeam) {
+        const currentSelectedTeam = selectedTeamRef.current
+        if (currentSelectedTeam?.id !== targetTeam.id) {
+          onTeamChangeRef.current(targetTeam)
           // Allow a tick for the team change to propagate
           setTimeout(() => {
             if (!cancelled && !userInteractedRef.current) {
@@ -150,8 +236,8 @@ export default function QueryParamAutoSend({
           }, POLL_INTERVAL)
           return
         }
-        // targetTeamId not found - fall through to use current/default team
       }
+      // Team not found or already selected - fall through to use current/default team
 
       executeAutoSend(decodedMessage)
     }
@@ -163,7 +249,7 @@ export default function QueryParamAutoSend({
       }
       // Clean URL params before sending; the send handler will set taskId
       clearQueryParams()
-      onSendMessage(message).catch(() => {
+      onSendMessageRef.current(message).catch(() => {
         // Error handling is done inside onSendMessage (toast etc.)
       })
     }
