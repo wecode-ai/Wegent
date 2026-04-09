@@ -420,10 +420,14 @@ async def get_executor_address(
                 status_code=501, detail="Executor address lookup is not supported"
             )
 
-        result = executor.get_container_address(
-            executor_name,
-            executor_namespace=executor_namespace,
-        )
+        try:
+            result = executor.get_container_address(
+                executor_name,
+                executor_namespace=executor_namespace,
+            )
+        except TypeError:
+            # Fallback to legacy signature without executor_namespace
+            result = executor.get_container_address(executor_name)
         logger.info(
             "Resolved executor address: executor_name=%s executor_namespace=%s result=%s",
             executor_name,
@@ -1200,6 +1204,49 @@ async def cancel_task_v1(request: CancelRequest, http_request: Request):
         raise
     except Exception as e:
         logger.error(f"[v1/cancel] Error cancelling task {request.task_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.post("/executors/prepare")
+async def prepare_executor(request: ExecutionRequest, http_request: Request):
+    """Prepare a normal executor runtime without dispatching the task."""
+    client_ip = http_request.client.host if http_request.client else "unknown"
+    logger.info(
+        f"[executors/prepare] Received request: task_id={request.task_id}, "
+        f"subtask_id={request.subtask_id} from {client_ip}"
+    )
+
+    set_task_context(task_id=request.task_id, subtask_id=request.subtask_id)
+
+    try:
+        task_dict = request.to_dict()
+        task_dict["prepare_only"] = True
+
+        result_map = await asyncio.to_thread(task_processor.process_tasks, [task_dict])
+        result = result_map.get(request.task_id) or next(
+            iter(result_map.values()),
+            None,
+        )
+
+        if not result:
+            raise HTTPException(status_code=500, detail="No executor result returned")
+        if result.get("status") != "success":
+            raise HTTPException(
+                status_code=500,
+                detail=result.get("error_msg", "Failed to prepare executor"),
+            )
+
+        return {
+            "status": result.get("status"),
+            "executor_name": result.get("executor_name"),
+            "executor_namespace": result.get("executor_namespace"),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            f"[executors/prepare] Error preparing executor for task {request.task_id}: {e}"
+        )
         raise HTTPException(status_code=500, detail=str(e))
 
 
