@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
 from executor.config.config import get_wegent_mcp_url
+
 from shared.logger import setup_logger
 from shared.models.execution import ExecutionRequest
 from shared.utils.crypto import decrypt_sensitive_data, is_data_encrypted
@@ -396,6 +397,23 @@ def extract_claude_options(task_data: ExecutionRequest) -> Dict[str, Any]:
             logger.info(
                 f"Added wegent MCP server (HTTP) for subscription task at {wegent_mcp_url}"
             )
+
+            # Also inject knowledge MCP so subscription tasks can sync documents
+            if task_data.backend_url and task_data.auth_token:
+                knowledge_mcp = {
+                    "wegent-knowledge": {
+                        "type": "streamable-http",
+                        "url": f"{task_data.backend_url}/mcp/knowledge/sse",
+                        "headers": {
+                            "Authorization": f"Bearer {task_data.auth_token}",
+                        },
+                        "timeout": 300,
+                    }
+                }
+                mcp_servers = bot_config["mcp_servers"]
+                if isinstance(mcp_servers, dict):
+                    mcp_servers.update(knowledge_mcp)
+                logger.info("Added wegent-knowledge MCP server for subscription task")
 
         for key in valid_options:
             if key in bot_config and bot_config[key] is not None:

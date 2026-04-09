@@ -25,8 +25,22 @@ def build_task_identity_env(
 
 
 def build_task_identity_context(request: ExecutionRequest) -> dict[str, str]:
-    """Build task identity env from an execution request."""
-    return build_task_identity_env(
+    """Build task identity env from an execution request.
+
+    Includes skill identity variables and backend connection variables
+    so that the agent can call backend APIs (e.g., attachment upload)
+    directly via curl.
+    """
+    env = build_task_identity_env(
         skill_identity_token=request.skill_identity_token,
         user_name=request.user_name,
     )
+
+    # Expose backend URL and task token so the agent can call
+    # backend REST APIs directly (e.g., POST /api/attachments/upload)
+    if request.backend_url:
+        env["WEGENT_BACKEND_URL"] = request.backend_url
+    if request.auth_token:
+        env["WEGENT_TASK_TOKEN"] = request.auth_token
+
+    return env

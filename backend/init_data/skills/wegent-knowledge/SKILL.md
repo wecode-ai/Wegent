@@ -61,6 +61,17 @@ You now have access to Wegent Knowledge Base management tools.
   - content: New content (replaces existing content)
   - trigger_reindex: Whether to trigger RAG re-indexing (default: true)
 
+- **sync_document**: Sync (create or update) a document to a knowledge base
+  - knowledge_base_id: Target knowledge base ID
+  - name: Document name (used as the unique key — if a document with this name already exists, it will be updated)
+  - source_type: "text" (paste content), "file" (base64 encoded), or "attachment" (reference an uploaded attachment by ID)
+  - content: Document content when source_type="text"
+  - file_base64: Base64 encoded file when source_type="file"
+  - file_extension: File extension (optional — inferred from attachment metadata if omitted)
+  - attachment_id: Attachment ID when source_type="attachment" (recommended for binary/large files)
+  - trigger_indexing: Whether to trigger RAG indexing (default: true)
+  - trigger_summary: Whether to trigger summary generation (default: true)
+
 ## Usage Notes
 
 - All operations inherit the current user's permissions
@@ -120,3 +131,56 @@ You now have access to Wegent Knowledge Base management tools.
      offset=0
    )
    ```
+
+## Syncing External Documents (e.g., DingTalk)
+
+When you need to sync an external document (e.g., from DingTalk) into a Wegent knowledge base, use one of the following approaches depending on the document type.
+
+### For DingTalk Online Documents (text-based)
+
+If the DingTalk MCP `get_document_content` tool is available, read the document content as Markdown and sync directly:
+
+```
+content = get_document_content(nodeId="<document_id>")
+sync_document(
+  knowledge_base_id=123,
+  name="Meeting Notes.md",
+  source_type="text",
+  content=content
+)
+```
+
+### For Binary Files (PDF, DOCX, Excel, etc.)
+
+Binary files require a three-step flow: **download → upload as attachment → sync**.
+
+**Step 1**: Use DingTalk MCP `download_file` to get download credentials:
+```
+credentials = download_file(nodeId="<document_id>")
+# Returns: resourceUrl (array of URLs) and headers (signed request headers)
+```
+
+**Step 2**: Download the file locally and upload it as an attachment via `curl`:
+```bash
+# Download the file using credentials from step 1
+curl -o /tmp/document.pdf "<resourceUrl>" -H "<header1>" -H "<header2>"
+
+# Upload to Wegent as an attachment (returns JSON with attachment id)
+curl -s -X POST \
+  -H "Authorization: Bearer $WEGENT_TASK_TOKEN" \
+  -F "file=@/tmp/document.pdf" \
+  "$WEGENT_BACKEND_URL/api/attachments/upload"
+# Response: {"id": 456, "filename": "document.pdf", ...}
+```
+
+**Step 3**: Sync the attachment to the knowledge base:
+```
+sync_document(
+  knowledge_base_id=123,
+  name="document.pdf",
+  source_type="attachment",
+  attachment_id=456
+)
+```
+
+**Environment variables** `$WEGENT_BACKEND_URL` and `$WEGENT_TASK_TOKEN` are pre-configured in the executor environment.
