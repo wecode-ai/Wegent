@@ -328,6 +328,32 @@ class TestDockerExecutor:
             mock_wait_ready.assert_not_called()
             mock_dispatch.assert_not_called()
 
+    def test_create_new_container_prepare_only_skips_initial_dispatch(self, executor):
+        """Prepare-only regular tasks should create the container without dispatching."""
+        prepare_task = {
+            "task_id": 123,
+            "subtask_id": 456,
+            "user": {"name": "test_user"},
+            "executor_image": "test/executor:latest",
+            "type": "online",
+            "prepare_only": True,
+        }
+        status = {"executor_name": "prepare-executor"}
+        task_info = executor._extract_task_info(prepare_task)
+
+        with (
+            patch.object(executor, "create_instance") as mock_create,
+            patch.object(executor, "wait_instance_ready") as mock_wait_ready,
+            patch.object(
+                executor, "dispatch_task_to_instance"
+            ) as mock_dispatch_task_to_instance,
+        ):
+            executor._create_new_container(prepare_task, task_info, status)
+
+        mock_create.assert_called_once_with(prepare_task, task_info, "prepare-executor")
+        mock_wait_ready.assert_called_once_with("prepare-executor")
+        mock_dispatch_task_to_instance.assert_not_called()
+
     @patch.dict(
         os.environ,
         {
