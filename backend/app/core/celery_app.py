@@ -29,7 +29,7 @@ from celery import Celery
 from celery.signals import after_setup_logger, after_setup_task_logger
 
 from app.core.config import settings
-from app.core.logging import RequestIdFilter
+from app.core.logging import RequestIdFilter, _create_file_handler
 
 # Use configured broker/backend or fallback to REDIS_URL
 # Settings validator already converts empty strings to None
@@ -82,44 +82,56 @@ celery_app.conf.update(
 
 
 # Configure Celery logging to use the same format as backend (with request_id)
-@after_setup_logger.connect
-def setup_celery_logger(logger, *args, **kwargs):
+def _apply_backend_format(logger: logging.Logger) -> None:
     """
-    Configure Celery logger to use backend's log format with request_id.
+    Apply backend log format to all existing handlers of *logger*,
+    then attach a TimedRotatingFileHandler so that logs are also
+    written to the shared log file (same as uvicorn workers).
 
-    This signal handler is called after Celery sets up its logger,
-    allowing us to override the format to match backend's format.
+    Celery rebuilds logger handlers via its own signals, so the file
+    handler added by setup_logging() would be lost without this call.
     """
     log_format = (
         "%(asctime)s %(levelname)-4s [%(request_id)s] "
         "%(pathname)s:%(lineno)d : %(message)s"
     )
-    formatter = logging.Formatter(log_format, datefmt="%Y-%m-%d %H:%M:%S")
+    datefmt = "%Y-%m-%d %H:%M:%S"
+    formatter = logging.Formatter(log_format, datefmt=datefmt)
 
-    # Add RequestIdFilter to all handlers
+    # Re-format existing (console) handlers
     for handler in logger.handlers:
         handler.setFormatter(formatter)
         handler.addFilter(RequestIdFilter())
+
+    # Attach file handler if enabled and not already present
+    if settings.LOG_FILE_ENABLED:
+        from logging.handlers import TimedRotatingFileHandler
+
+        already_has_file = any(
+            isinstance(h, TimedRotatingFileHandler) for h in logger.handlers
+        )
+        if not already_has_file:
+            file_handler = _create_file_handler(log_format, datefmt)
+            if file_handler is not None:
+                logger.addHandler(file_handler)
+
+
+@after_setup_logger.connect
+def setup_celery_logger(logger, *args, **kwargs):
+    """
+    Configure Celery logger to use backend's log format with request_id
+    and write to the rotating log file.
+    """
+    _apply_backend_format(logger)
 
 
 @after_setup_task_logger.connect
 def setup_celery_task_logger(logger, *args, **kwargs):
     """
-    Configure Celery task logger to use backend's log format with request_id.
-
-    This signal handler is called after Celery sets up its task logger,
-    allowing us to override the format to match backend's format.
+    Configure Celery task logger to use backend's log format with request_id
+    and write to the rotating log file.
     """
-    log_format = (
-        "%(asctime)s %(levelname)-4s [%(request_id)s] "
-        "%(pathname)s:%(lineno)d : %(message)s"
-    )
-    formatter = logging.Formatter(log_format, datefmt="%Y-%m-%d %H:%M:%S")
-
-    # Add RequestIdFilter to all handlers
-    for handler in logger.handlers:
-        handler.setFormatter(formatter)
-        handler.addFilter(RequestIdFilter())
+    _apply_backend_format(logger)
 
 
 # Import dead letter queue handlers to register signal handlers

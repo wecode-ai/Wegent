@@ -62,6 +62,10 @@ ENV BACKEND_API_URL=http://wegent-backend-web.wb-plat-ide.svc.cluster.local:8000
 ENV EXECUTOR_MANAGER_URL=http://wegent-executor-manager-web.wb-plat-ide.svc.cluster.local:8080
 ENV E2B_API_KEY=kucvaN-qowmax-kyvni7
 
+# LOG
+ENV LOG_DIR="/data1/weibo/logs"
+ENV LOG_FILE_ENABLED=true
+
 # Expose port
 EXPOSE ${PORT}
 

@@ -59,6 +59,10 @@ ENV GRACEFUL_SHUTDOWN_TIMEOUT=600
 # Reject new requests during shutdown with 503 Service Unavailable
 ENV SHUTDOWN_REJECT_NEW_REQUESTS=true
 
+# LOG
+ENV LOG_DIR="/data1/weibo/logs"
+ENV LOG_FILE_ENABLED=true
+
 RUN sed -i '/\[tool\.uv\.sources\]/,/^$/d' pyproject.toml && \
     uv pip install --system --no-cache -r pyproject.toml
 

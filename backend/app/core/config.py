@@ -356,6 +356,12 @@ class Settings(BaseSettings):
 
     OTEL_ENABLED: bool = False
 
+    # Logging configuration
+    # Enable/disable file logging (default: disabled, logs only to console)
+    LOG_FILE_ENABLED: bool = False
+    # Log file directory (default: ./logs in project root)
+    LOG_DIR: str = "./logs"
+
     # Web scraper proxy configuration
     # Supports HTTP, HTTPS, SOCKS5 proxy formats:
     # - Simple: "http://proxy.example.com:8080"
