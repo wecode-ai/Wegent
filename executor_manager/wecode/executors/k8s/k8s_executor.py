@@ -555,9 +555,7 @@ class K8sExecutor(Executor):
             if attempt < max_retries and retry_interval > 0:
                 time.sleep(retry_interval)
 
-        raise RuntimeError(
-            f"Pod {executor_name} failed to become ready: {last_error}"
-        )
+        raise RuntimeError(f"Pod {executor_name} failed to become ready: {last_error}")
 
     def dispatch_task_to_instance(
         self,
@@ -1272,7 +1270,11 @@ class K8sExecutor(Executor):
             logger.error(f"Error listing Kubernetes pods: {e}")
         return 0
 
-    def get_pods_by_executor_name(self, executor_name: str) -> Dict[str, Any]:
+    def get_pods_by_executor_name(
+        self,
+        executor_name: str,
+        executor_namespace: Optional[str] = None,
+    ) -> Dict[str, Any]:
         try:
             core_v1 = self._get_core_v1_api()
             if core_v1 is None:
@@ -1283,9 +1285,10 @@ class K8sExecutor(Executor):
                 }
 
             # Query related pods directly using executor name
+            namespace = K8S_NAMESPACE or executor_namespace
             label_selector = f"aigc.weibo.com/executor=wegent,app={executor_name}"
             pods = core_v1.list_namespaced_pod(
-                namespace=K8S_NAMESPACE, label_selector=label_selector
+                namespace=namespace, label_selector=label_selector
             )
 
             pod_list = []
@@ -1298,7 +1301,7 @@ class K8sExecutor(Executor):
                 }
                 pod_list.append(pod_info)
             logger.info(
-                f"Found {len(pod_list)} pods for executor '{executor_name}' in namespace {K8S_NAMESPACE}"
+                f"Found {len(pod_list)} pods for executor '{executor_name}' in namespace {namespace}"
             )
             return {"status": "success", "pods": pod_list}
         except ApiException as e:
@@ -1314,7 +1317,11 @@ class K8sExecutor(Executor):
             logger.error(f"Error listing pods for executor '{executor_name}': {e}")
             return {"status": "failed", "error_msg": f"Error: {e}", "pods": []}
 
-    def get_container_address(self, executor_name: str) -> Dict[str, Any]:
+    def get_container_address(
+        self,
+        executor_name: str,
+        executor_namespace: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """Get container base URL for sandbox proxy.
 
         This method is called by SandboxManager to get the address for proxying
@@ -1322,11 +1329,15 @@ class K8sExecutor(Executor):
 
         Args:
             executor_name: Executor/Pod name
+            executor_namespace: Executor namespace override when available
 
         Returns:
             Dict with status and base_url (e.g., http://10.0.0.1:8080)
         """
-        pod_result = self.get_pods_by_executor_name(executor_name)
+        pod_result = self.get_pods_by_executor_name(
+            executor_name,
+            executor_namespace=executor_namespace,
+        )
         if pod_result.get("status") != "success":
             return {
                 "status": "failed",
@@ -1664,7 +1675,7 @@ class K8sExecutor(Executor):
             from executor_manager.clients.callback_client import get_callback_client
 
             cb_client = get_callback_client()
-            
+
             # Create a new event loop to avoid conflicts with existing loops
             # This prevents "RuntimeError: This event loop is already running"
             # when called from async contexts (e.g., FastAPI routes, APScheduler)
@@ -1681,7 +1692,7 @@ class K8sExecutor(Executor):
                 )
             finally:
                 loop.close()
-            
+
             logger.info(
                 f"Sent dispatch failure callback for task {task_id}/{subtask_id}"
             )
