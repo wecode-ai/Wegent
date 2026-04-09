@@ -73,3 +73,30 @@ def test_get_container_address_forwards_executor_namespace(mocker):
     get_pods_by_executor_name.assert_called_once_with(
         "executor-1", executor_namespace="custom-ns"
     )
+
+
+def test_submit_executor_prepare_only_skips_initial_dispatch(mocker):
+    executor = object.__new__(K8sExecutor)
+    prepare_task = {
+        "task_id": 123,
+        "subtask_id": 456,
+        "user": {"name": "test_user"},
+        "type": "online",
+        "prepare_only": True,
+    }
+
+    mocker.patch.object(executor, "get_user_pods", return_value=0)
+    mocker.patch.object(executor, "get_user_max_tasks", return_value=5)
+    mock_create_instance = mocker.patch.object(executor, "create_instance")
+    mock_wait_ready = mocker.patch.object(executor, "wait_instance_ready")
+    mock_dispatch = mocker.patch.object(executor, "dispatch_task_to_instance")
+    mock_register = mocker.patch.object(executor, "register_task_for_heartbeat")
+
+    result = executor.submit_executor(prepare_task)
+
+    assert result["status"] == "success"
+    assert result["executor_name"]
+    mock_create_instance.assert_called_once()
+    mock_wait_ready.assert_called_once_with(result["executor_name"])
+    mock_dispatch.assert_not_called()
+    mock_register.assert_called_once()
