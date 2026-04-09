@@ -13,7 +13,6 @@ import { DocsButton } from '@/features/layout/DocsButton'
 import { FeedbackButton } from '@/features/layout/FeedbackButton'
 import { ThemeToggle } from '@/features/theme/ThemeToggle'
 import { paths } from '@/config/paths'
-import { getRuntimeConfigSync } from '@/lib/runtime-config'
 import {
   UserCircleIcon,
   Cog6ToothIcon,
@@ -39,7 +38,6 @@ export function UserFloatingMenu({ className = '' }: UserFloatingMenuProps) {
   const isAdmin = user?.role === 'admin'
   const currentLanguage = getCurrentLanguage()
   const supportedLanguages = getSupportedLanguages()
-  const appVersion = getRuntimeConfigSync().appVersion
 
   const handleLanguageClick = () => {
     const currentIndex = supportedLanguages.indexOf(currentLanguage)
@@ -125,9 +123,6 @@ export function UserFloatingMenu({ className = '' }: UserFloatingMenuProps) {
                 Admin
               </span>
             )}
-            <span className="text-xs text-text-muted/60" data-testid="app-version">
-              v{appVersion}
-            </span>
           </div>
         </div>
         <ChevronUpIcon
