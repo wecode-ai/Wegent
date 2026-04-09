@@ -85,16 +85,27 @@ export function QueueEditDialog({ queue, open, onOpenChange }: QueueEditDialogPr
         displayName?: string
         userId?: number
         user_id?: number
-        spec?: { displayName?: string; trigger?: { event?: { event_type?: string } } }
+        spec?: {
+          displayName?: string
+          trigger?: { event?: { event_type?: string } }
+          trigger_config?: { event_type?: string }
+        }
         json?: {
-          spec?: { displayName?: string; trigger?: { event?: { event_type?: string } } }
+          spec?: {
+            displayName?: string
+            trigger?: { event?: { event_type?: string } }
+            trigger_config?: { event_type?: string }
+          }
           _internal?: Record<string, unknown>
         }
       }>
       const inboxSubscriptions = items
         .filter(sub => {
           const eventType =
-            sub.spec?.trigger?.event?.event_type || sub.json?.spec?.trigger?.event?.event_type
+            sub.spec?.trigger?.event?.event_type ||
+            sub.json?.spec?.trigger?.event?.event_type ||
+            sub.spec?.trigger_config?.event_type ||
+            sub.json?.spec?.trigger_config?.event_type
           return eventType === 'inbox_message'
         })
         .filter(sub => {

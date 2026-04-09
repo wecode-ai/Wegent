@@ -168,6 +168,24 @@ class InboxAutoProcessHandler:
                 f"{event.message_id}: {e}",
                 exc_info=True,
             )
+            # Mark message as FAILED if it was left in PROCESSING state
+            try:
+                with get_db_session() as db:
+                    message = (
+                        db.query(QueueMessage)
+                        .filter(QueueMessage.id == event.message_id)
+                        .first()
+                    )
+                    if message and message.status == QueueMessageStatus.PROCESSING:
+                        message.status = QueueMessageStatus.FAILED
+                        message.process_error = f"Processing failed: {e}"
+                        db.commit()
+            except Exception:
+                logger.error(
+                    f"[InboxAutoProcess] Failed to mark message "
+                    f"{event.message_id} as FAILED after error",
+                    exc_info=True,
+                )
 
     def _resolve_subscription(
         self,
