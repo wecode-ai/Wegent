@@ -443,10 +443,14 @@ def update_document_content(
             "Document name used for matching existing documents. "
             "If a document with this exact name exists, it will be updated."
         ),
-        "source_type": "Source type: 'text' or 'file'",
+        "source_type": "Source type: 'text', 'file', or 'attachment'",
         "content": "Text content (for source_type='text')",
         "file_base64": "Base64-encoded file content (for source_type='file')",
         "file_extension": "File extension like 'txt', 'md', 'pdf' (default: 'md')",
+        "attachment_id": (
+            "Existing attachment ID (for source_type='attachment'). "
+            "Recommended for large files to avoid base64 overhead."
+        ),
         "trigger_indexing": "Whether to trigger RAG indexing (default: True)",
         "trigger_summary": "Whether to trigger summary generation (default: True)",
     },
@@ -459,6 +463,7 @@ def sync_document(
     content: Optional[str] = None,
     file_base64: Optional[str] = None,
     file_extension: Optional[str] = "md",
+    attachment_id: Optional[int] = None,
     trigger_indexing: bool = True,
     trigger_summary: bool = True,
 ) -> Dict[str, Any]:
@@ -469,23 +474,25 @@ def sync_document(
     base, its content is replaced and the document is re-indexed. Otherwise
     a new document is created.
 
-    Supports two input methods:
+    Supports three input methods:
     - source_type="text": Direct text content via `content` parameter
     - source_type="file": Base64-encoded file via `file_base64` parameter
+    - source_type="attachment": Existing attachment via `attachment_id` (recommended)
 
     Typical usage flow for syncing DingTalk documents:
     1. Use DingTalk MCP's download_file to download the document
-    2. Read the file content and base64-encode it
-    3. Call this tool to sync it to the target knowledge base
+    2. The downloaded file is saved as an attachment in the sandbox
+    3. Call this tool with source_type='attachment' and the attachment_id
 
     Args:
         token_info: Task token information containing user context
         knowledge_base_id: Target knowledge base ID
         name: Document name (used for matching existing documents)
-        source_type: Source type ("text" or "file")
+        source_type: Source type ("text", "file", or "attachment")
         content: Text content (for source_type="text")
         file_base64: Base64-encoded file content (for source_type="file")
         file_extension: File extension (default: "md")
+        attachment_id: Existing attachment ID (for source_type="attachment")
         trigger_indexing: Whether to trigger RAG indexing (default: True)
         trigger_summary: Whether to trigger summary generation (default: True)
 
@@ -507,6 +514,7 @@ def sync_document(
             content=content,
             file_base64=file_base64,
             file_extension=file_extension,
+            attachment_id=attachment_id,
             trigger_indexing=trigger_indexing,
             trigger_summary=trigger_summary,
         )

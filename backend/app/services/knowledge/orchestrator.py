@@ -1477,6 +1477,7 @@ class KnowledgeOrchestrator:
         content: Optional[str] = None,
         file_base64: Optional[str] = None,
         file_extension: Optional[str] = "md",
+        attachment_id: Optional[int] = None,
         trigger_indexing: bool = True,
         trigger_summary: bool = True,
     ) -> Dict[str, Any]:
@@ -1493,10 +1494,11 @@ class KnowledgeOrchestrator:
             user: Current user
             knowledge_base_id: Target knowledge base ID
             name: Document name (used for matching existing documents)
-            source_type: Source type ("text" or "file")
+            source_type: Source type ("text", "file", or "attachment")
             content: Text content (for source_type="text")
             file_base64: Base64-encoded file (for source_type="file")
             file_extension: File extension (default "md")
+            attachment_id: Existing attachment ID (for source_type="attachment")
             trigger_indexing: Whether to trigger RAG indexing
             trigger_summary: Whether to trigger summary generation
 
@@ -1525,13 +1527,15 @@ class KnowledgeOrchestrator:
             name=name,
         )
 
-        # Validate input and prepare binary data
-        normalized_ext = _normalize_file_extension(file_extension)
-        binary_data = self._prepare_binary_data(
+        # Resolve binary data and file extension from input
+        binary_data, normalized_ext = self._resolve_sync_content(
+            db=db,
+            user=user,
             source_type=source_type,
             content=content,
             file_base64=file_base64,
-            file_extension=normalized_ext,
+            file_extension=file_extension,
+            attachment_id=attachment_id,
         )
 
         if existing_doc:
@@ -1555,34 +1559,97 @@ class KnowledgeOrchestrator:
                 content=content,
                 file_base64=file_base64,
                 file_extension=file_extension,
+                attachment_id=attachment_id,
                 trigger_indexing=trigger_indexing,
                 trigger_summary=trigger_summary,
             )
 
-    def _prepare_binary_data(
+    def _resolve_sync_content(
         self,
+        db: Session,
+        user: User,
         source_type: str,
         content: Optional[str],
         file_base64: Optional[str],
-        file_extension: str,
-    ) -> bytes:
-        """Validate input and return binary content for sync operations."""
+        file_extension: Optional[str],
+        attachment_id: Optional[int],
+    ) -> tuple[bytes, str]:
+        """Validate input and return (binary_data, normalized_ext) for sync.
+
+        Supports three source types:
+        - "text": direct text content
+        - "file": base64-encoded file
+        - "attachment": existing attachment ID (recommended for large files)
+        """
         if source_type == "text":
             if not content:
                 raise ValueError("content is required for source_type='text'")
-            return content.encode("utf-8")
+            return content.encode("utf-8"), _normalize_file_extension(file_extension)
+
         elif source_type == "file":
             if not file_base64:
                 raise ValueError("file_base64 is required for source_type='file'")
             try:
-                return base64.b64decode(file_base64)
+                binary_data = base64.b64decode(file_base64)
             except Exception as e:
                 raise ValueError(f"Invalid base64 encoding: {e}")
+            return binary_data, _normalize_file_extension(file_extension)
+
+        elif source_type == "attachment":
+            if not attachment_id:
+                raise ValueError(
+                    "attachment_id is required for source_type='attachment'"
+                )
+            return self._read_attachment_content(
+                db, user, attachment_id, file_extension
+            )
+
         else:
             raise ValueError(
                 f"Invalid source_type for sync: {source_type}. "
-                "Must be 'text' or 'file'."
+                "Must be 'text', 'file', or 'attachment'."
             )
+
+    def _read_attachment_content(
+        self,
+        db: Session,
+        user: User,
+        attachment_id: int,
+        file_extension: Optional[str],
+    ) -> tuple[bytes, str]:
+        """Read binary data and file extension from an existing attachment."""
+        from app.models.subtask_context import ContextType
+        from app.services.context import context_service
+
+        source_context = context_service.get_context_optional(
+            db=db,
+            context_id=attachment_id,
+            user_id=user.id,
+        )
+        if not source_context:
+            raise ValueError(f"Attachment {attachment_id} not found or access denied")
+
+        if source_context.context_type != ContextType.ATTACHMENT.value:
+            raise ValueError(f"Context {attachment_id} is not an attachment")
+
+        binary_data = context_service.get_attachment_binary_data(
+            db=db,
+            context=source_context,
+        )
+        if binary_data is None:
+            raise ValueError(
+                f"Failed to retrieve content from attachment {attachment_id}"
+            )
+
+        # Use explicit file_extension if provided, otherwise infer from attachment
+        if file_extension:
+            normalized_ext = _normalize_file_extension(file_extension)
+        else:
+            normalized_ext = (
+                source_context.file_extension or DEFAULT_TEXT_FILE_EXTENSION
+            )
+
+        return binary_data, normalized_ext
 
     def _update_existing_document(
         self,
@@ -1679,8 +1746,9 @@ class KnowledgeOrchestrator:
         content: Optional[str],
         file_base64: Optional[str],
         file_extension: Optional[str],
-        trigger_indexing: bool,
-        trigger_summary: bool,
+        attachment_id: Optional[int] = None,
+        trigger_indexing: bool = True,
+        trigger_summary: bool = True,
     ) -> Dict[str, Any]:
         """Create a new document via the standard creation flow."""
         result = self.create_document_with_content(
@@ -1692,6 +1760,7 @@ class KnowledgeOrchestrator:
             content=content,
             file_base64=file_base64,
             file_extension=file_extension,
+            attachment_id=attachment_id,
             trigger_indexing=trigger_indexing,
             trigger_summary=trigger_summary,
         )

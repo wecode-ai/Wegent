@@ -1229,6 +1229,50 @@ class TestKnowledgeOrchestrator:
                     content="test",
                 )
 
+    def test_sync_document_creates_with_attachment_source_type(
+        self, orchestrator, mock_db, mock_user
+    ):
+        """Test sync_document creates via attachment source type."""
+        with patch(
+            "app.services.knowledge.orchestrator.KnowledgeService"
+        ) as mock_service:
+            mock_kb = MagicMock()
+            mock_kb.id = 1
+            mock_kb.json = {"spec": {}}
+            mock_service.get_knowledge_base.return_value = (mock_kb, True)
+            mock_service.find_document_by_name.return_value = None
+
+            with patch.object(
+                orchestrator, "_read_attachment_content"
+            ) as mock_read_att:
+                mock_read_att.return_value = (b"file content", "md")
+
+                with patch.object(
+                    orchestrator, "create_document_with_content"
+                ) as mock_create:
+                    mock_doc_response = MagicMock()
+                    mock_doc_response.model_dump.return_value = {
+                        "id": 1,
+                        "name": "doc",
+                    }
+                    mock_create.return_value = mock_doc_response
+
+                    result = orchestrator.sync_document(
+                        db=mock_db,
+                        user=mock_user,
+                        knowledge_base_id=1,
+                        name="doc",
+                        source_type="attachment",
+                        attachment_id=42,
+                    )
+
+                    assert result["action"] == "created"
+                    mock_create.assert_called_once()
+                    # Verify attachment_id is forwarded to create
+                    call_kwargs = mock_create.call_args.kwargs
+                    assert call_kwargs["attachment_id"] == 42
+                    assert call_kwargs["source_type"] == "attachment"
+
     def test_sync_document_raises_for_missing_content(
         self, orchestrator, mock_db, mock_user
     ):
