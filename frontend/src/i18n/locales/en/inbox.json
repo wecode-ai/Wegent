@@ -25,6 +25,11 @@
     "auto_process": "Auto Process",
     "auto_process_enabled": "Enable auto processing",
     "auto_process_team": "Processing Agent",
+    "auto_process_subscription": "Linked Subscription",
+    "select_subscription": "Select Subscription",
+    "select_subscription_placeholder": "Choose a subscription...",
+    "no_inbox_subscriptions": "No inbox-type subscriptions available",
+    "subscription_ref_label": "Auto-Process Subscription",
     "trigger_mode": "Processing Mode",
     "trigger_immediate": "Immediate",
     "trigger_manual": "Manual",
@@ -61,11 +66,18 @@
     "process": "Process",
     "view_original": "View original conversation",
     "view_result": "View result",
+    "retry": "Retry",
+    "retry_success": "Retry initiated",
+    "processing_failed": "Processing failed",
+    "process_error": "Error",
+    "view_processing_task": "View Processing Task",
+    "retry_count": "Retry Count",
     "status": {
       "unread": "Unread",
       "read": "Read",
       "processing": "Processing",
       "processed": "Processed",
+      "failed": "Failed",
       "archived": "Archived"
     },
     "priority": {
@@ -85,6 +97,7 @@
       "read": "Read",
       "processing": "Processing",
       "processed": "Processed",
+      "failed": "Failed",
       "archived": "Archived"
     },
     "sort": {

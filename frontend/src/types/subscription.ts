@@ -17,7 +17,7 @@ export type SubscriptionVisibility = 'public' | 'private' | 'market'
 export type SubscriptionTriggerType = 'cron' | 'interval' | 'one_time' | 'event'
 
 // Event trigger sub-type enumeration
-export type SubscriptionEventType = 'webhook' | 'git_push'
+export type SubscriptionEventType = 'webhook' | 'git_push' | 'inbox_message'
 
 export type SubscriptionExecutionTargetType = 'managed' | 'local' | 'cloud'
 

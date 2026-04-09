@@ -29,6 +29,7 @@ class QueueMessageStatus(str, Enum):
     PROCESSING = "processing"
     PROCESSED = "processed"
     ARCHIVED = "archived"
+    FAILED = "failed"
 
 
 class QueueMessagePriority(str, Enum):
@@ -70,6 +71,14 @@ class TeamRef(BaseModel):
     name: str
 
 
+class SubscriptionRef(BaseModel):
+    """Reference to a Subscription for auto-processing."""
+
+    namespace: str = "default"
+    name: str
+    userId: int
+
+
 class ProcessCondition(BaseModel):
     """Condition rule for auto-processing."""
 
@@ -83,6 +92,7 @@ class AutoProcessConfig(BaseModel):
 
     enabled: bool = False
     teamRef: Optional[TeamRef] = None
+    subscriptionRef: Optional[SubscriptionRef] = None
     triggerMode: TriggerMode = TriggerMode.MANUAL
     scheduleInterval: Optional[int] = Field(
         None, ge=15, description="Schedule interval in minutes (min: 15)"
@@ -232,6 +242,10 @@ class QueueMessageResponse(BaseModel):
     status: QueueMessageStatus
     processResult: Dict[str, Any] = Field(default_factory=dict)
     processTaskId: int = 0
+    processSubscriptionId: Optional[int] = None
+    processError: Optional[str] = None
+    processingStartedAt: Optional[datetime] = None
+    retryCount: int = 0
     createdAt: datetime
     updatedAt: datetime
     processedAt: datetime
@@ -362,3 +376,30 @@ class UnreadCountResponse(BaseModel):
     byQueue: Dict[int, int] = Field(
         default_factory=dict, description="Unread count by queue ID"
     )
+
+
+class ExternalSender(BaseModel):
+    """External sender information for ingest API."""
+
+    externalId: Optional[str] = None
+    displayName: Optional[str] = None
+
+
+class IngestSource(BaseModel):
+    """Source information for ingested messages."""
+
+    type: str = "api"
+    name: Optional[str] = None
+
+
+class IngestMessageRequest(BaseModel):
+    """Request model for ingesting messages into a queue."""
+
+    content: str = Field(..., min_length=1, max_length=50000)
+    title: Optional[str] = Field(None, max_length=200)
+    note: Optional[str] = Field(None, max_length=1000)
+    sender: Optional[ExternalSender] = None
+    attachments: Optional[List[Dict[str, Any]]] = None
+    source: Optional[IngestSource] = None
+    idempotencyKey: Optional[str] = Field(None, max_length=255)
+    priority: QueueMessagePriority = QueueMessagePriority.NORMAL

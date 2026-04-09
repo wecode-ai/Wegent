@@ -51,6 +51,15 @@ class BackgroundExecution(Base):
         Integer, nullable=False, default=0, index=True
     )  # 0 means no task yet
 
+    # Inbox auto-processing link
+    inbox_message_id = Column(
+        Integer,
+        nullable=True,
+        default=None,
+        index=True,
+        comment="Originating QueueMessage ID for inbox auto-processing",
+    )
+
     # Trigger information
     trigger_type = Column(String(50), nullable=False)  # cron, interval, webhook, etc.
     trigger_reason = Column(

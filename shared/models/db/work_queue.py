@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import JSON, Column, DateTime
 from sqlalchemy import Enum as SQLEnum
-from sqlalchemy import Index, Integer, Text
+from sqlalchemy import Index, Integer, String, Text
 
 from .base import Base
 from .enums import QueueMessagePriority, QueueMessageStatus
@@ -72,6 +72,31 @@ class QueueMessage(Base):
         nullable=False,
         default=0,
         comment="Task ID created for processing (0 = not processed)",
+    )
+    process_subscription_id = Column(
+        Integer,
+        nullable=True,
+        default=None,
+        comment="Subscription Kind.id used for processing",
+    )
+    process_error = Column(
+        Text, nullable=True, default=None, comment="Error message on processing failure"
+    )
+    processing_started_at = Column(
+        DateTime,
+        nullable=True,
+        default=None,
+        comment="Processing start time",
+    )
+    retry_count = Column(
+        Integer, nullable=False, default=0, comment="Retry attempt count"
+    )
+    idempotency_key = Column(
+        String(255),
+        nullable=True,
+        unique=True,
+        index=True,
+        comment="Idempotency key for deduplication",
     )
     created_at = Column(DateTime, nullable=False, default=utc_now, index=True)
     updated_at = Column(DateTime, nullable=False, default=utc_now, onupdate=utc_now)

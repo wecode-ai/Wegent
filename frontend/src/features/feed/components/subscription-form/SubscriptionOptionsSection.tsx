@@ -215,6 +215,7 @@ export function SubscriptionOptionsSection({
               <SelectContent>
                 <SelectItem value="webhook">Webhook</SelectItem>
                 <SelectItem value="git_push">Git Push</SelectItem>
+                <SelectItem value="inbox_message">Inbox Message</SelectItem>
               </SelectContent>
             </Select>
             {triggerConfig.event_type === 'git_push' && (

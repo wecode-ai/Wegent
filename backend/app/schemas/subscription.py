@@ -47,6 +47,7 @@ class SubscriptionEventType(str, Enum):
 
     WEBHOOK = "webhook"  # Webhook trigger
     GIT_PUSH = "git_push"  # Git push trigger
+    INBOX_MESSAGE = "inbox_message"  # Inbox message trigger
 
 
 class SubscriptionExecutionTargetType(str, Enum):
@@ -124,6 +125,12 @@ class GitPushEventConfig(BaseModel):
     branch: Optional[str] = Field(None, description="Branch to monitor (default: all)")
 
 
+class InboxMessageEventConfig(BaseModel):
+    """Configuration for inbox message event triggers."""
+
+    queue_filter: Optional[str] = Field(None, description="Optional queue name filter")
+
+
 class EventTriggerConfig(BaseModel):
     """Event trigger configuration."""
 
@@ -133,6 +140,7 @@ class EventTriggerConfig(BaseModel):
     git_push: Optional[GitPushEventConfig] = Field(
         None, description="Git push configuration (when event_type is 'git_push')"
     )
+    inbox_message: Optional[InboxMessageEventConfig] = None
 
 
 class SubscriptionTriggerConfig(BaseModel):

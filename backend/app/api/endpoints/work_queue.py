@@ -19,6 +19,7 @@ from app.schemas.work_queue import (
     BatchStatusUpdate,
     ForwardMessageRequest,
     ForwardMessageResponse,
+    IngestMessageRequest,
     PublicQueueResponse,
     QueueMessageListResponse,
     QueueMessagePriority,
@@ -180,6 +181,33 @@ async def list_queue_messages(
     return QueueMessageListResponse(items=items, total=total, unreadCount=unread)
 
 
+@router.post(
+    "/{queue_id}/messages/ingest",
+    response_model=QueueMessageResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def ingest_message(
+    queue_id: int,
+    request: IngestMessageRequest,
+    current_user: User = Depends(security.get_current_user),
+):
+    """Ingest a message into a work queue for processing.
+
+    Standard API for external systems to submit content to an Inbox queue.
+    Supports idempotency via idempotencyKey.
+    """
+    try:
+        return queue_message_service.ingest_message(
+            user_id=current_user.id,
+            queue_id=queue_id,
+            request=request,
+        )
+    except NotFoundException as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except ConflictException as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+
+
 # ==================== Message Operations ====================
 
 messages_router = APIRouter()
@@ -239,6 +267,29 @@ async def delete_queue_message(
         queue_message_service.delete_message(current_user.id, message_id)
     except NotFoundException as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+
+@messages_router.post("/{message_id}/retry", response_model=QueueMessageResponse)
+async def retry_message(
+    message_id: int,
+    current_user: User = Depends(security.get_current_user),
+):
+    """Retry processing a failed inbox message.
+
+    Only messages with status 'failed' can be retried.
+    Resets the message to 'unread' and re-triggers auto-processing.
+    """
+    try:
+        return queue_message_service.retry_message(
+            user_id=current_user.id,
+            message_id=message_id,
+        )
+    except NotFoundException as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except ForbiddenException as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except ConflictException as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
 
 
 # ==================== Batch Operations ====================

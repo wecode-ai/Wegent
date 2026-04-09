@@ -465,6 +465,24 @@ class WorkQueueService:
 
             if data.autoProcess:
                 spec["autoProcess"] = data.autoProcess.model_dump()
+                # Validate subscriptionRef if auto-process is enabled
+                if data.autoProcess.enabled and data.autoProcess.subscriptionRef:
+                    ref = data.autoProcess.subscriptionRef
+                    subscription = (
+                        db.query(Kind)
+                        .filter(
+                            Kind.kind == "Subscription",
+                            Kind.namespace == ref.namespace,
+                            Kind.name == ref.name,
+                            Kind.user_id == ref.userId,
+                            Kind.is_active == True,
+                        )
+                        .first()
+                    )
+                    if not subscription:
+                        raise NotFoundException(
+                            "Referenced subscription not found or not accessible"
+                        )
             if data.resultFeedback:
                 spec["resultFeedback"] = data.resultFeedback.model_dump()
 
@@ -534,6 +552,24 @@ class WorkQueueService:
                 spec["visibleToGroups"] = data.visibleToGroups
             if data.autoProcess is not None:
                 spec["autoProcess"] = data.autoProcess.model_dump()
+                # Validate subscriptionRef if auto-process is enabled
+                if data.autoProcess.enabled and data.autoProcess.subscriptionRef:
+                    ref = data.autoProcess.subscriptionRef
+                    subscription = (
+                        db.query(Kind)
+                        .filter(
+                            Kind.kind == "Subscription",
+                            Kind.namespace == ref.namespace,
+                            Kind.name == ref.name,
+                            Kind.user_id == ref.userId,
+                            Kind.is_active == True,
+                        )
+                        .first()
+                    )
+                    if not subscription:
+                        raise NotFoundException(
+                            "Referenced subscription not found or not accessible"
+                        )
             if data.resultFeedback is not None:
                 spec["resultFeedback"] = data.resultFeedback.model_dump()
 
@@ -857,6 +893,14 @@ class QueueMessageService:
             status=db_message.status,
             processResult=db_message.process_result,
             processTaskId=db_message.process_task_id,
+            processSubscriptionId=getattr(
+                db_message, "process_subscription_id", None
+            ),
+            processError=getattr(db_message, "process_error", None),
+            processingStartedAt=getattr(
+                db_message, "processing_started_at", None
+            ),
+            retryCount=getattr(db_message, "retry_count", 0),
             createdAt=db_message.created_at,
             updatedAt=db_message.updated_at,
             processedAt=db_message.processed_at,
@@ -976,6 +1020,30 @@ class QueueMessageService:
             db.add(db_message)
             db.commit()
             db.refresh(db_message)
+
+            # Publish event for auto-processing
+            try:
+                from app.core.events import (
+                    QueueMessageCreatedEvent,
+                    get_event_bus,
+                )
+
+                event_bus = get_event_bus()
+                event_bus.publish_sync(
+                    QueueMessageCreatedEvent(
+                        message_id=db_message.id,
+                        queue_id=data.queue_id,
+                        recipient_user_id=data.recipient_user_id,
+                        sender_user_id=data.sender_user_id,
+                        priority=data.priority.value
+                        if hasattr(data.priority, "value")
+                        else str(data.priority),
+                    )
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Failed to publish QueueMessageCreatedEvent: {e}"
+                )
 
             logger.info(
                 f"Created queue message: id={db_message.id}, "
@@ -1160,6 +1228,191 @@ class QueueMessageService:
             )
 
             return success_count, failed_count, failed_ids
+
+    def ingest_message(
+        self,
+        user_id: int,
+        queue_id: int,
+        request: Any,
+    ) -> QueueMessageResponse:
+        """Ingest a message into a queue from external source.
+
+        Supports idempotency via idempotencyKey.
+
+        Args:
+            user_id: Current user ID (queue owner)
+            queue_id: Target work queue ID
+            request: IngestMessageRequest with content, note, priority, etc.
+        """
+        with self.get_db() as db:
+            # Validate queue exists and belongs to user
+            queue = (
+                db.query(Kind)
+                .filter(
+                    Kind.id == queue_id,
+                    Kind.kind == "WorkQueue",
+                    Kind.user_id == user_id,
+                    Kind.is_active == True,
+                )
+                .first()
+            )
+            if not queue:
+                raise NotFoundException("Work queue not found")
+
+            # Check idempotency
+            if request.idempotencyKey:
+                existing = (
+                    db.query(QueueMessage)
+                    .filter(
+                        QueueMessage.idempotency_key == request.idempotencyKey,
+                    )
+                    .first()
+                )
+                if existing:
+                    sender = (
+                        db.query(User)
+                        .filter(User.id == existing.sender_user_id)
+                        .first()
+                    )
+                    if sender:
+                        return self._build_message_response(existing, sender)
+
+            # Build content snapshot from ingested content
+            content_snapshot = [
+                {
+                    "role": "USER",
+                    "content": request.content,
+                    "senderUserName": (
+                        request.sender.displayName
+                        if request.sender
+                        else None
+                    ),
+                    "createdAt": datetime.now(timezone.utc).isoformat(),
+                }
+            ]
+
+            # Create message
+            db_message = QueueMessage(
+                queue_id=queue_id,
+                sender_user_id=user_id,
+                recipient_user_id=user_id,
+                source_task_id=0,
+                source_subtask_ids=[],
+                content_snapshot=content_snapshot,
+                note=request.note or "",
+                priority=request.priority,
+                process_result={},
+                process_task_id=0,
+                idempotency_key=request.idempotencyKey,
+            )
+            db.add(db_message)
+            db.commit()
+            db.refresh(db_message)
+
+            logger.info(
+                f"Ingested message: id={db_message.id}, queue_id={queue_id}"
+            )
+
+            # Publish event for auto-processing
+            try:
+                from app.core.events import (
+                    QueueMessageCreatedEvent,
+                    get_event_bus,
+                )
+
+                event_bus = get_event_bus()
+                event_bus.publish_sync(
+                    QueueMessageCreatedEvent(
+                        message_id=db_message.id,
+                        queue_id=queue_id,
+                        recipient_user_id=user_id,
+                        sender_user_id=user_id,
+                        priority=request.priority.value
+                        if hasattr(request.priority, "value")
+                        else str(request.priority),
+                    )
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Failed to publish QueueMessageCreatedEvent: {e}"
+                )
+
+            sender = db.query(User).filter(User.id == user_id).first()
+            return self._build_message_response(db_message, sender)
+
+    def retry_message(
+        self, user_id: int, message_id: int
+    ) -> QueueMessageResponse:
+        """Retry processing a failed message.
+
+        Only messages with status 'failed' can be retried.
+        Resets the message to 'unread' and re-triggers auto-processing.
+        """
+        with self.get_db() as db:
+            message = (
+                db.query(QueueMessage)
+                .filter(QueueMessage.id == message_id)
+                .first()
+            )
+            if not message:
+                raise NotFoundException("Message not found")
+
+            # Verify ownership
+            if message.recipient_user_id != user_id:
+                raise ForbiddenException(
+                    "Not authorized to retry this message"
+                )
+
+            # Only failed messages can be retried
+            if message.status != QueueMessageStatus.FAILED:
+                raise ConflictException(
+                    f"Only failed messages can be retried, "
+                    f"current status: {message.status}"
+                )
+
+            # Reset message for re-processing
+            message.status = QueueMessageStatus.UNREAD
+            message.process_error = None
+            message.processing_started_at = None
+            message.retry_count += 1
+            db.commit()
+            db.refresh(message)
+
+            logger.info(
+                f"Retrying message: id={message_id}, "
+                f"retry_count={message.retry_count}"
+            )
+
+            # Re-publish event for auto-processing
+            try:
+                from app.core.events import (
+                    QueueMessageCreatedEvent,
+                    get_event_bus,
+                )
+
+                event_bus = get_event_bus()
+                event_bus.publish_sync(
+                    QueueMessageCreatedEvent(
+                        message_id=message.id,
+                        queue_id=message.queue_id,
+                        recipient_user_id=message.recipient_user_id,
+                        sender_user_id=message.sender_user_id,
+                        priority=message.priority.value
+                        if hasattr(message.priority, "value")
+                        else str(message.priority),
+                    )
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Failed to publish QueueMessageCreatedEvent: {e}"
+                )
+
+            sender = (
+                db.query(User)
+                .filter(User.id == message.sender_user_id)
+                .first()
+            )
+            return self._build_message_response(message, sender)
 
 
 class ContactService:

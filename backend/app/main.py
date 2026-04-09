@@ -263,6 +263,13 @@ async def lifespan(app: FastAPI):
     event_bus.subscribe(TaskCompletedEvent, handle_channel_task_completed)
     logger.info("✓ IM channel task completion handler registered")
 
+    # Register inbox auto-process handler
+    from app.core.events import QueueMessageCreatedEvent
+    from app.services.inbox.auto_process_handler import handle_inbox_message_created
+
+    event_bus.subscribe(QueueMessageCreatedEvent, handle_inbox_message_created)
+    logger.info("✓ Inbox auto-process handler registered")
+
     logger.info("✓ Event bus initialized and handlers registered")
 
     # Initialize PendingRequestRegistry for skill frontend interactions
