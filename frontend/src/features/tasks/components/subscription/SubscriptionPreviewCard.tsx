@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Calendar, CheckCircle2, Clock, XCircle, Bell, Settings } from 'lucide-react'
 import { toast } from 'sonner'
+import { subscriptionApis } from '@/apis/subscription'
 
 interface SubscriptionPreviewConfig {
   display_name: string
@@ -71,19 +72,7 @@ export function SubscriptionPreviewCard({ data }: SubscriptionPreviewCardProps) 
 
     setIsLoading(true)
     try {
-      const response = await fetch(`/api/subscriptions/preview/${data.preview_id}/confirm`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      })
-
-      if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.detail || 'Failed to create subscription')
-      }
-
-      const result = await response.json()
+      const result = await subscriptionApis.confirmPreviewSubscription(data.preview_id)
       setStatus('confirmed')
       toast.success(t('preview.create_success', { name: result.display_name }))
     } catch (error) {
