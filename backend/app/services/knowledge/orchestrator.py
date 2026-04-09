@@ -1609,9 +1609,9 @@ class KnowledgeOrchestrator:
             if not file_base64:
                 raise ValueError("file_base64 is required for source_type='file'")
             try:
-                binary_data = base64.b64decode(file_base64)
+                binary_data = base64.b64decode(file_base64, validate=True)
             except Exception as e:
-                raise ValueError(f"Invalid base64 encoding: {e}")
+                raise ValueError(f"Invalid base64 encoding: {e}") from e
             return binary_data, _normalize_file_extension(file_extension)
 
         elif source_type == "attachment":
