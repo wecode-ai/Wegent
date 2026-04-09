@@ -101,12 +101,49 @@ class TestStripForeignReasoningBlocks:
                 ],
             },
         ]
-        # Same provider (anthropic inferred) -> keep
+        # Same provider (anthropic inferred): legacy thinking without signature
+        # should be dropped to prevent 400 errors from Claude API.
         result = strip_foreign_reasoning_blocks(messages, "anthropic")
-        assert len(result[0]["content"]) == 2
+        assert result[0]["content"] == [{"type": "text", "text": "answer"}]
 
         # Different provider -> strip
         result = strip_foreign_reasoning_blocks(messages, "openai")
+        assert result[0]["content"] == [{"type": "text", "text": "answer"}]
+
+    def test_legacy_thinking_block_with_signature_preserved(self):
+        """Legacy thinking blocks WITH signature are preserved on same-provider."""
+        messages = [
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "thinking",
+                        "thinking": "old format with sig",
+                        "signature": "valid_sig_abc",
+                    },
+                    {"type": "text", "text": "answer"},
+                ],
+            },
+        ]
+        result = strip_foreign_reasoning_blocks(messages, "anthropic")
+        content = result[0]["content"]
+        assert len(content) == 2
+        assert content[0]["type"] == "thinking"
+        assert content[0]["signature"] == "valid_sig_abc"
+
+    def test_legacy_thinking_block_without_signature_dropped(self):
+        """Legacy thinking blocks WITHOUT signature are dropped on same-provider."""
+        messages = [
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "no sig", "index": 0},
+                    {"type": "text", "text": "answer"},
+                ],
+            },
+        ]
+        result = strip_foreign_reasoning_blocks(messages, "anthropic")
+        # Thinking block without signature dropped; text block remains
         assert result[0]["content"] == [{"type": "text", "text": "answer"}]
 
     def test_legacy_reasoning_content_in_additional_kwargs(self):
@@ -326,7 +363,7 @@ class TestStripForeignReasoningBlocks:
         assert messages[0]["content"] == original_content
 
     def test_openai_same_provider_multiple_reasoning_blocks(self):
-        """Multiple exploded reasoning blocks are each reconstructed."""
+        """Multiple exploded reasoning blocks with same id are merged back."""
         messages = [
             {
                 "role": "assistant",
@@ -352,16 +389,13 @@ class TestStripForeignReasoningBlocks:
         assert result[0]["content"][0] == {
             "type": "reasoning",
             "id": "rs_1",
-            "summary": [{"type": "summary_text", "text": "Step 1"}],
+            "summary": [
+                {"type": "summary_text", "text": "Step 1"},
+                {"type": "summary_text", "text": "Step 2"},
+            ],
             "encrypted_content": "enc1",
         }
-        assert result[0]["content"][1] == {
-            "type": "reasoning",
-            "id": "rs_1",
-            "summary": [{"type": "summary_text", "text": "Step 2"}],
-            "encrypted_content": "enc1",
-        }
-        assert result[0]["content"][2] == {"type": "text", "text": "answer"}
+        assert result[0]["content"][1] == {"type": "text", "text": "answer"}
 
     def test_openai_same_provider_orphaned_text_id_stripped(self):
         """When reasoning blocks lack extras (corrupted data), text block ids are stripped.

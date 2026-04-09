@@ -361,6 +361,38 @@ function preprocessLatexSyntax(text: string): string {
 }
 
 /**
+ * Pre-process bold/italic markdown to fix CJK punctuation edge cases.
+ *
+ * Per CommonMark spec, a right-flanking delimiter run (**) requires:
+ *   - NOT preceded by Unicode whitespace, AND
+ *   - either NOT preceded by Unicode punctuation,
+ *     OR preceded by punctuation but followed by whitespace or punctuation.
+ *
+ * Full-width CJK closing punctuation (e.g. ）、。，】） is Unicode punctuation (Pe/Po),
+ * so "text）**" fails the right-flanking check when followed by a non-punctuation
+ * character like a CJK letter, causing ** to NOT be recognized as a closing delimiter.
+ *
+ * Fix: insert a zero-width space (U+200B) between the CJK/full-width punctuation
+ * and the closing **, making ** "preceded by whitespace" and thus a valid
+ * right-flanking delimiter.
+ *
+ * This is the standard approach recommended by the micromark/remark community.
+ * See: https://github.com/micromark/micromark/issues/123
+ */
+function preprocessCjkBoldEdgeCases(text: string): string {
+  // Full-width and CJK punctuation Unicode ranges:
+  //   \u3000-\u303F  CJK Symbols and Punctuation (e.g. 。、「」【】)
+  //   \uFF00-\uFFEF  Halfwidth and Fullwidth Forms (e.g. ）（！？，。)
+  //   \u2018-\u201F  General quotation marks (' ' " ")
+  //   \u2E00-\u2E7F  Supplemental Punctuation
+  // Insert U+200B (zero-width space) between such punctuation and ** or *
+  // so that the asterisks become valid right-flanking delimiters.
+  return text
+    .replace(/([\u3000-\u303F\uFF00-\uFFEF\u2018-\u201F\u2E00-\u2E7F])\*\*/g, '$1\u200B**')
+    .replace(/([\u3000-\u303F\uFF00-\uFFEF\u2018-\u201F\u2E00-\u2E7F])\*(?!\*)/g, '$1\u200B*')
+}
+
+/**
  * Enhanced Markdown renderer with Mermaid diagram and LaTeX math formula support
  *
  * Detects ```mermaid code blocks and renders them using MermaidDiagram component.
@@ -375,8 +407,12 @@ export const EnhancedMarkdown = memo(function EnhancedMarkdown({
 }: EnhancedMarkdownProps) {
   // Pre-process source:
   // 1. Convert \[...\] and \(...\) to dollar syntax for LaTeX
-  // 2. Convert bare URLs to markdown link format (iOS 16 Safari compatibility)
-  const processedSource = useMemo(() => autolinkUrls(preprocessLatexSyntax(source)), [source])
+  // 2. Fix CJK punctuation + ** edge cases (CommonMark right-flanking delimiter rule)
+  // 3. Convert bare URLs to markdown link format (iOS 16 Safari compatibility)
+  const processedSource = useMemo(
+    () => autolinkUrls(preprocessCjkBoldEdgeCases(preprocessLatexSyntax(source))),
+    [source]
+  )
 
   // Check if source contains math formulas
   const hasMath = useMemo(() => containsMathFormulas(processedSource), [processedSource])
