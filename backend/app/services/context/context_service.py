@@ -315,6 +315,8 @@ class ContextService:
         filename: str,
         binary_data: bytes,
         subtask_id: int = 0,
+        async_parse: bool = False,
+        background_tasks=None,
     ) -> Tuple[SubtaskContext, Optional[TruncationInfo]]:
         """
         Upload and process a file attachment.
@@ -325,15 +327,25 @@ class ContextService:
             filename: Original filename
             binary_data: File binary data
             subtask_id: Subtask ID to link to (0 means unlinked)
+            async_parse: If True, return immediately with PARSING status
+                        and parse document in background
+            background_tasks: FastAPI BackgroundTasks instance (required if async_parse=True)
 
         Returns:
             Tuple of (Created SubtaskContext record, TruncationInfo if truncated)
+            For async_parse=True, truncation_info is always None
 
         Raises:
-            ValueError: If file validation fails
-            DocumentParseError: If document parsing fails
+            ValueError: If file validation fails or background_tasks not provided for async
+            DocumentParseError: If document parsing fails (sync mode only)
             StorageError: If storage operation fails
         """
+        import os
+
+        # Validate async requirements
+        if async_parse and background_tasks is None:
+            raise ValueError("background_tasks is required for async parsing")
+
         extension, file_size, mime_type = self._validate_attachment_input(
             filename, binary_data
         )
@@ -374,11 +386,33 @@ class ContextService:
             db.rollback()
             raise
 
-        # Update status to PARSING
+        if async_parse:
+            # Async mode: set PARSING status and schedule background task
+            context.status = ContextStatus.PARSING.value
+            db.commit()
+            db.refresh(context)
+
+            # Schedule background parsing
+            _, ext = os.path.splitext(filename)
+            background_tasks.add_task(
+                _parse_attachment_background,
+                context_id=context.id,
+                user_id=user_id,
+                binary_data=binary_data,
+                extension=ext.lower(),
+            )
+
+            logger.info(
+                f"Attachment uploaded asynchronously: id={context.id}, "
+                f"filename={filename}, status=PARSING, "
+                f"storage_backend={storage_backend.backend_type}"
+            )
+            return context, None
+
+        # Sync mode: parse document immediately
         context.status = ContextStatus.PARSING.value
         db.flush()
 
-        # Parse document
         try:
             truncation_info = self._parse_and_update_context(
                 context=context,
@@ -1536,3 +1570,90 @@ class ContextService:
 
 # Global service instance
 context_service = ContextService()
+
+
+# =============================================================================
+# Async Document Parsing (Background Tasks)
+# =============================================================================
+
+
+def _parse_attachment_background(
+    context_id: int,
+    user_id: int,
+    binary_data: bytes,
+    extension: str,
+) -> None:
+    """
+    Background task for parsing attachment content.
+
+    This function runs in a FastAPI BackgroundTask and parses the document
+    asynchronously. It updates the SubtaskContext with the parsed content
+    and status (READY or FAILED).
+
+    Args:
+        context_id: Attachment context ID
+        user_id: User ID for ownership validation
+        binary_data: File binary data
+        extension: File extension (e.g., '.pdf')
+    """
+    from app.database import SessionLocal
+
+    parser = DocumentParser()
+
+    # Parse document first (before opening DB session to minimize connection hold time)
+    try:
+        parse_result: ParseResult = parser.parse(binary_data, extension)
+        extracted_text = parse_result.text if parse_result.text else ""
+        text_length = parse_result.text_length if parse_result.text_length else 0
+        image_base64 = parse_result.image_base64 if parse_result.image_base64 else ""
+        status = ContextStatus.READY.value
+        error_message = ""
+        logger.info(
+            f"Async parsing completed for context {context_id}: "
+            f"text_length={text_length}, status=READY"
+        )
+    except DocumentParseError as e:
+        logger.exception(f"Document parsing failed for context {context_id}: {e}")
+        extracted_text = ""
+        text_length = 0
+        image_base64 = ""
+        status = ContextStatus.FAILED.value
+        error_message = str(e)
+    except Exception as e:
+        logger.exception(
+            f"Unexpected error parsing document for context {context_id}: {e}"
+        )
+        extracted_text = ""
+        text_length = 0
+        image_base64 = ""
+        status = ContextStatus.FAILED.value
+        error_message = f"Parse failed: {str(e)}"
+
+    # Open DB session only for update (minimize connection hold time)
+    db = SessionLocal()
+    try:
+        # Get the context and update
+        context = (
+            db.query(SubtaskContext)
+            .filter(
+                SubtaskContext.id == context_id,
+                SubtaskContext.user_id == user_id,
+            )
+            .first()
+        )
+
+        if not context:
+            logger.error(f"Context {context_id} not found for async parsing")
+            return
+
+        context.extracted_text = extracted_text
+        context.text_length = text_length
+        context.image_base64 = image_base64
+        context.status = status
+        context.error_message = error_message
+
+        db.commit()
+    except Exception as e:
+        logger.exception(f"Error in async parsing task for context {context_id}: {e}")
+    finally:
+        db.close()

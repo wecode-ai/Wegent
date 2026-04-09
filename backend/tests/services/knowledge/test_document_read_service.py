@@ -25,9 +25,9 @@ class TestDocumentReadService:
             21: SimpleNamespace(id=21, name="doc-21", attachment_id=201, kind_id=2),
         }
         attachments = {
-            101: SimpleNamespace(id=101, extracted_text="abcdefghijk"),
-            102: SimpleNamespace(id=102, extracted_text="lmnopqrstuv"),
-            201: SimpleNamespace(id=201, extracted_text="wxyz0123456"),
+            101: SimpleNamespace(id=101, extracted_text="abcdefghijk", status="READY", error_message=""),
+            102: SimpleNamespace(id=102, extracted_text="lmnopqrstuv", status="READY", error_message=""),
+            201: SimpleNamespace(id=201, extracted_text="wxyz0123456", status="READY", error_message=""),
         }
         existing_context = MagicMock(id=900)
         mock_get_context_map = MagicMock()
@@ -97,8 +97,8 @@ class TestDocumentReadService:
             21: SimpleNamespace(id=21, name="doc-21", attachment_id=201, kind_id=3),
         }
         attachments = {
-            101: SimpleNamespace(id=101, extracted_text="abcdefghijk"),
-            201: SimpleNamespace(id=201, extracted_text="lmnopqrstuv"),
+            101: SimpleNamespace(id=101, extracted_text="abcdefghijk", status="READY", error_message=""),
+            201: SimpleNamespace(id=201, extracted_text="lmnopqrstuv", status="READY", error_message=""),
         }
         mock_get_context_map = MagicMock()
         mock_create_context = MagicMock()
@@ -168,7 +168,7 @@ class TestDocumentReadService:
             11: SimpleNamespace(id=11, name="doc-11", attachment_id=101, kind_id=1),
         }
         attachments = {
-            101: SimpleNamespace(id=101, extracted_text="abcdefghijk"),
+            101: SimpleNamespace(id=101, extracted_text="abcdefghijk", status="READY", error_message=""),
         }
 
         with (

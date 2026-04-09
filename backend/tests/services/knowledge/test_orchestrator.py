@@ -236,7 +236,7 @@ class TestKnowledgeOrchestrator:
         self, orchestrator, mock_db, mock_user
     ):
         """Test read_document_content returns the paginated raw content payload."""
-        document = SimpleNamespace(id=9, name="roadmap", kind_id=77)
+        document = SimpleNamespace(id=9, name="roadmap", kind_id=77, attachment_id=None)
         mock_db.query.return_value.filter.return_value.first.return_value = document
 
         with patch(
@@ -330,7 +330,7 @@ class TestKnowledgeOrchestrator:
         self, orchestrator, mock_db, mock_user
     ):
         """Test read_document_content maps stable missing-document error codes."""
-        document = SimpleNamespace(id=9, name="roadmap", kind_id=77)
+        document = SimpleNamespace(id=9, name="roadmap", kind_id=77, attachment_id=None)
         mock_db.query.return_value.filter.return_value.first.return_value = document
 
         with patch(
@@ -360,7 +360,7 @@ class TestKnowledgeOrchestrator:
         self, orchestrator, mock_db, mock_user
     ):
         """Test read_document_content raises when the reader returns no rows."""
-        document = SimpleNamespace(id=9, name="roadmap", kind_id=77)
+        document = SimpleNamespace(id=9, name="roadmap", kind_id=77, attachment_id=None)
         mock_db.query.return_value.filter.return_value.first.return_value = document
 
         with patch(
@@ -384,7 +384,7 @@ class TestKnowledgeOrchestrator:
         self, orchestrator, mock_db, mock_user
     ):
         """Test read_document_content surfaces reader access errors unchanged."""
-        document = SimpleNamespace(id=9, name="roadmap", kind_id=77)
+        document = SimpleNamespace(id=9, name="roadmap", kind_id=77, attachment_id=None)
         mock_db.query.return_value.filter.return_value.first.return_value = document
 
         with patch(
@@ -416,7 +416,7 @@ class TestKnowledgeOrchestrator:
         self, orchestrator, mock_db, mock_user
     ):
         """Test read_document_content rejects incomplete reader payloads."""
-        document = SimpleNamespace(id=9, name="roadmap", kind_id=77)
+        document = SimpleNamespace(id=9, name="roadmap", kind_id=77, attachment_id=None)
         mock_db.query.return_value.filter.return_value.first.return_value = document
 
         with patch(
@@ -462,6 +462,8 @@ class TestKnowledgeOrchestrator:
             returned_length=4,
             has_more=True,
             kb_id=77,
+            attachment_status=None,
+            attachment_error_message=None,
         )
         summary_service = MagicMock()
         summary_service.get_document_summary = AsyncMock(
@@ -629,6 +631,8 @@ class TestKnowledgeOrchestrator:
             returned_length=2,
             has_more=False,
             kb_id=77,
+            attachment_status=None,
+            attachment_error_message=None,
         )
 
         with patch.object(

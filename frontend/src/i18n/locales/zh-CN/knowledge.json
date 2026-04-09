@@ -184,6 +184,12 @@
         "indexing": "索引中",
         "indexingHint": "索引正在生成中，稍后刷新页面查看最新状态"
       },
+      "attachmentStatus": {
+        "parsing": "解析中",
+        "parsingHint": "文档正在后台解析，完成后将自动更新",
+        "failed": "解析失败",
+        "failedHint": "文档解析失败，请删除后重新上传"
+      },
       "reindex": "重新索引",
       "index": "开始索引",
       "reindexing": "索引中...",
@@ -289,8 +295,13 @@
         "pending": "等待中",
         "uploading": "上传中",
         "success": "已上传",
-        "error": "失败"
+        "error": "失败",
+        "parsing": "解析中",
+        "parsingHint": "文档正在后台解析，完成后将自动更新"
       },
+      "retry": "重试",
+      "asyncSubmit": "异步提交",
+      "asyncSubmitHint": "文件较大，建议使用异步提交以避免超时",
       "uploadFile": "上传文件",
       "pasteText": "粘贴文本",
       "pasteTextHint": "在下方粘贴文本内容，即可将其作为文档上传到知识库。",

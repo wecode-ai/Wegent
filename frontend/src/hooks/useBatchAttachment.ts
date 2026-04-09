@@ -66,6 +66,10 @@ interface UseBatchAttachmentReturn {
   startUpload: () => Promise<void>
   /** Retry uploading a failed file */
   retryFile: (id: string) => Promise<void>
+  /** Check if error is a timeout error */
+  isTimeoutError: (errorMessage: string) => boolean
+  /** Retry uploading a failed file with async mode */
+  retryFileAsync: (id: string) => Promise<void>
   /** Rename a file by ID (only for successfully uploaded files) */
   renameFile: (id: string, newName: string) => void
   /** Reset the entire state */
@@ -167,7 +171,7 @@ export function useBatchAttachment(): UseBatchAttachmentReturn {
   }, [])
 
   const uploadSingleFile = useCallback(
-    async (fileItem: FileUploadItem): Promise<FileUploadItem> => {
+    async (fileItem: FileUploadItem, parseAsync = false): Promise<FileUploadItem> => {
       // Update status to uploading
       setState(prev => ({
         ...prev,
@@ -182,9 +186,33 @@ export function useBatchAttachment(): UseBatchAttachmentReturn {
             ...prev,
             files: prev.files.map(f => (f.id === fileItem.id ? { ...f, progress } : f)),
           }))
-        })
+        }, parseAsync)
 
-        // Check if parsing succeeded
+        // For async upload, status will be 'parsing' - this is expected
+        if (parseAsync && attachment.status === 'parsing') {
+          return {
+            ...fileItem,
+            status: 'success',
+            progress: 100,
+            error: null,
+            attachment: {
+              id: attachment.id,
+              filename: attachment.filename,
+              file_size: attachment.file_size,
+              mime_type: attachment.mime_type,
+              status: attachment.status,
+              text_length: attachment.text_length,
+              error_message: attachment.error_message,
+              error_code: attachment.error_code,
+              subtask_id: null,
+              file_extension: fileItem.file.name.substring(fileItem.file.name.lastIndexOf('.')),
+              created_at: new Date().toISOString(),
+              truncation_info: attachment.truncation_info,
+            },
+          }
+        }
+
+        // Check if parsing succeeded (sync mode)
         if (attachment.status === 'failed') {
           const errorMessage =
             getErrorMessageFromCode(attachment.error_code, t) ||
@@ -310,6 +338,59 @@ export function useBatchAttachment(): UseBatchAttachmentReturn {
     [state.files, uploadSingleFile]
   )
 
+  /**
+   * Check if error is a timeout error (504 Gateway Timeout or similar)
+   */
+  const isTimeoutError = useCallback((errorMessage: string): boolean => {
+    const timeoutPatterns = [
+      '504',
+      'timeout',
+      'time out',
+      'gateway timeout',
+      'network error',
+      'failed to fetch',
+    ]
+    const lowerError = errorMessage.toLowerCase()
+    return timeoutPatterns.some(pattern => lowerError.includes(pattern))
+  }, [])
+
+  /**
+   * Retry a failed file with async parsing mode
+   */
+  const retryFileAsync = useCallback(
+    async (id: string) => {
+      const fileItem = state.files.find(f => f.id === id)
+      if (!fileItem) return
+
+      // Reset the file status to pending
+      setState(prev => ({
+        ...prev,
+        files: prev.files.map(f =>
+          f.id === id
+            ? { ...f, status: 'pending' as FileUploadStatus, error: null, progress: 0 }
+            : f
+        ),
+        summary: null,
+      }))
+
+      const resetFileItem = {
+        ...fileItem,
+        status: 'pending' as FileUploadStatus,
+        error: null,
+        progress: 0,
+      }
+
+      // Upload with async mode
+      const result = await uploadSingleFile(resetFileItem, true)
+
+      setState(prev => ({
+        ...prev,
+        files: prev.files.map(f => (f.id === id ? result : f)),
+      }))
+    },
+    [state.files, uploadSingleFile]
+  )
+
   const reset = useCallback(() => {
     setState({
       files: [],
@@ -352,6 +433,8 @@ export function useBatchAttachment(): UseBatchAttachmentReturn {
     clearFiles,
     startUpload,
     retryFile,
+    isTimeoutError,
+    retryFileAsync,
     renameFile,
     reset,
     getSuccessfulAttachments,

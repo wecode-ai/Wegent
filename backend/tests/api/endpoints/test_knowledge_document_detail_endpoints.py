@@ -66,6 +66,8 @@ def test_kb_scoped_detail_uses_orchestrator(
         "content_length": 10,
         "truncated": False,
         "summary": {"summary": "hello"},
+        "attachment_status": None,
+        "attachment_error_message": None,
     }
     document = KnowledgeDocument(
         id=9,

@@ -17,6 +17,8 @@ import {
   Code,
   Maximize2,
   Minimize2,
+  Loader2,
+  AlertTriangle,
 } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
@@ -40,6 +42,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Spinner } from '@/components/ui/spinner'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { useDocumentDetail } from '../hooks/useDocumentDetail'
 import { ChunksSection } from './ChunksSection'
 import { knowledgeBaseApi } from '@/apis/knowledge-base'
@@ -561,6 +564,35 @@ export function DocumentDetailDialog({
                         )}
                       </div>
                     </div>
+
+                    {/* Attachment Status Alert */}
+                    {!isEditing && detail?.attachment_status && (
+                      <>
+                        {detail.attachment_status === 'PARSING' && (
+                          <Alert variant="warning" className="mt-3">
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            <AlertTitle>
+                              {t('document.document.item.attachmentStatus.parsing')}
+                            </AlertTitle>
+                            <AlertDescription>
+                              {t('document.document.item.attachmentStatus.parsingHint')}
+                            </AlertDescription>
+                          </Alert>
+                        )}
+                        {detail.attachment_status === 'FAILED' && (
+                          <Alert variant="destructive" className="mt-3">
+                            <AlertTriangle className="h-4 w-4" />
+                            <AlertTitle>
+                              {t('document.document.item.attachmentStatus.failed')}
+                            </AlertTitle>
+                            <AlertDescription>
+                              {detail.attachment_error_message ||
+                                t('document.document.item.attachmentStatus.failedHint')}
+                            </AlertDescription>
+                          </Alert>
+                        )}
+                      </>
+                    )}
 
                     {isEditing ? (
                       <div

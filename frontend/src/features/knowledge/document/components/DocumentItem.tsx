@@ -159,6 +159,10 @@ export function DocumentItem({
     (isIndexFailed || isNotIndexed) &&
     !showIndexingState
 
+  // Check attachment parsing status
+  const isAttachmentParsing = document.attachment_status === 'parsing'
+  const isAttachmentFailed = document.attachment_status === 'failed'
+
   // Check if Excel file exceeds size limit (2MB)
   const EXCEL_FILE_SIZE_LIMIT = 2 * 1024 * 1024 // 2MB
   const isExcel = ['xls', 'xlsx'].includes(document.file_extension?.toLowerCase() || '')
@@ -268,8 +272,35 @@ export function DocumentItem({
                 {formatFileSize(document.file_size)}
               </span>
             )}
-            {/* Status indicator */}
-            {document.is_active ? (
+            {/* Status indicator - prioritize attachment status over index status */}
+            {isAttachmentParsing ? (
+              <TooltipProvider>
+                <Tooltip delayDuration={200}>
+                  <TooltipTrigger asChild>
+                    <span className="w-1 h-1 rounded-full flex-shrink-0 bg-yellow-500 cursor-help animate-pulse" />
+                  </TooltipTrigger>
+                  <TooltipContent side="top" className="max-w-xs">
+                    <p className="text-xs">
+                      {t('knowledge:document.document.attachmentStatus.parsingHint')}
+                    </p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            ) : isAttachmentFailed ? (
+              <TooltipProvider>
+                <Tooltip delayDuration={200}>
+                  <TooltipTrigger asChild>
+                    <span className="w-1 h-1 rounded-full flex-shrink-0 bg-red-500 cursor-help" />
+                  </TooltipTrigger>
+                  <TooltipContent side="top" className="max-w-xs">
+                    <p className="text-xs">
+                      {document.attachment_error_message ||
+                        t('knowledge:document.document.attachmentStatus.failedHint')}
+                    </p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            ) : document.is_active ? (
               <span
                 className="w-1 h-1 rounded-full flex-shrink-0 bg-green-500"
                 title={t('knowledge:document.document.indexStatus.available')}

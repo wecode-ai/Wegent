@@ -171,6 +171,10 @@ export interface KnowledgeDocument {
   splitter_config?: SplitterConfig
   source_type: DocumentSourceType
   source_config: Record<string, unknown>
+  /** Attachment parsing status: uploading, parsing, ready, failed */
+  attachment_status?: string | null
+  /** Error message if attachment parsing failed */
+  attachment_error_message?: string | null
   created_at: string
   updated_at: string
 }
@@ -280,6 +284,10 @@ export interface DocumentDetailResponse {
   content_length?: number
   truncated?: boolean
   summary?: DocumentSummary | null
+  /** Attachment parsing status: uploading, parsing, ready, failed */
+  attachment_status?: string | null
+  /** Error message if attachment parsing failed */
+  attachment_error_message?: string | null
 }
 
 // Web Scraper types

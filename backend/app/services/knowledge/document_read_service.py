@@ -83,6 +83,10 @@ class DocumentReadService:
             "returned_length": returned_length,
             "has_more": has_more,
             "kb_id": document.kind_id,
+            "attachment_status": attachment.status if attachment else None,
+            "attachment_error_message": (
+                attachment.error_message if attachment else None
+            ),
         }
 
     @staticmethod

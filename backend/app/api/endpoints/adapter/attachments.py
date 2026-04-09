@@ -9,11 +9,13 @@ Uses the unified context service for managing attachments as subtask contexts.
 """
 
 import logging
+import os
 from typing import List, Optional
 from urllib.parse import quote
 
 from fastapi import (
     APIRouter,
+    BackgroundTasks,
     Depends,
     File,
     Header,
@@ -40,7 +42,9 @@ from app.schemas.subtask_context import (
 from app.services.attachment.parser import DocumentParseError, DocumentParser
 from app.services.auth.task_token import extract_token_from_header, verify_task_token
 from app.services.context import context_service
-from app.services.context.context_service import NotFoundException
+from app.services.context.context_service import (
+    NotFoundException,
+)
 from app.services.shared_task import shared_task_service
 
 logger = logging.getLogger(__name__)
@@ -275,10 +279,15 @@ def _validate_share_token_access(
 async def upload_attachment(
     file: UploadFile = File(...),
     overwrite_attachment_id: Optional[int] = None,
+    parse_async: bool = Query(
+        default=False,
+        description="Parse document asynchronously. When enabled, file is saved immediately with PARSING status and parsing happens in background. Useful for large files that may cause timeout.",
+    ),
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user_jwt_apikey_tasktoken),
     authorization: str = Header(default=""),
-):
+    background_tasks: BackgroundTasks = None,
+) -> AttachmentResponse:
     """
     Upload a document file for chat attachment.
 
@@ -300,13 +309,14 @@ async def upload_attachment(
 
     Optional:
         overwrite_attachment_id: Existing attachment ID to overwrite in-place
+        parse_async: Parse document asynchronously (all supported document types)
     """
     # Extract subtask_id from task token (for executor-uploaded attachments)
     subtask_id = _extract_subtask_id_from_task_token(authorization)
 
     logger.info(
         f"[attachments.py] upload_attachment: user_id={current_user.id}, "
-        f"filename={file.filename}, subtask_id={subtask_id}"
+        f"filename={file.filename}, subtask_id={subtask_id}, parse_async={parse_async}"
     )
 
     if not file.filename:
@@ -329,12 +339,16 @@ async def upload_attachment(
             detail=f"File size exceeds maximum limit ({max_size_mb} MB)",
         )
 
+    # Determine if we should use async parsing (only for supported file types)
+    use_async = parse_async and DocumentParser.is_supported_extension(file.filename)
+
     try:
         if overwrite_attachment_id is not None:
             if overwrite_attachment_id <= 0:
                 raise HTTPException(
                     status_code=400, detail="overwrite_attachment_id must be positive"
                 )
+            # Overwrite always uses sync mode
             context, truncation_info = context_service.overwrite_attachment(
                 db=db,
                 context_id=overwrite_attachment_id,
@@ -343,12 +357,15 @@ async def upload_attachment(
                 binary_data=binary_data,
             )
         else:
+            # Upload with async or sync parsing (service handles the logic)
             context, truncation_info = context_service.upload_attachment(
                 db=db,
                 user_id=current_user.id,
                 filename=file.filename,
                 binary_data=binary_data,
                 subtask_id=subtask_id,
+                async_parse=use_async,
+                background_tasks=background_tasks,
             )
 
         return _build_attachment_response(context, truncation_info)
