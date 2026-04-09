@@ -893,13 +893,9 @@ class QueueMessageService:
             status=db_message.status,
             processResult=db_message.process_result,
             processTaskId=db_message.process_task_id,
-            processSubscriptionId=getattr(
-                db_message, "process_subscription_id", None
-            ),
+            processSubscriptionId=getattr(db_message, "process_subscription_id", None),
             processError=getattr(db_message, "process_error", None),
-            processingStartedAt=getattr(
-                db_message, "processing_started_at", None
-            ),
+            processingStartedAt=getattr(db_message, "processing_started_at", None),
             retryCount=getattr(db_message, "retry_count", 0),
             createdAt=db_message.created_at,
             updatedAt=db_message.updated_at,
@@ -1035,15 +1031,15 @@ class QueueMessageService:
                         queue_id=data.queue_id,
                         recipient_user_id=data.recipient_user_id,
                         sender_user_id=data.sender_user_id,
-                        priority=data.priority.value
-                        if hasattr(data.priority, "value")
-                        else str(data.priority),
+                        priority=(
+                            data.priority.value
+                            if hasattr(data.priority, "value")
+                            else str(data.priority)
+                        ),
                     )
                 )
             except Exception as e:
-                logger.warning(
-                    f"Failed to publish QueueMessageCreatedEvent: {e}"
-                )
+                logger.warning(f"Failed to publish QueueMessageCreatedEvent: {e}")
 
             logger.info(
                 f"Created queue message: id={db_message.id}, "
@@ -1283,9 +1279,7 @@ class QueueMessageService:
                     "role": "USER",
                     "content": request.content,
                     "senderUserName": (
-                        request.sender.displayName
-                        if request.sender
-                        else None
+                        request.sender.displayName if request.sender else None
                     ),
                     "createdAt": datetime.now(timezone.utc).isoformat(),
                 }
@@ -1309,9 +1303,7 @@ class QueueMessageService:
             db.commit()
             db.refresh(db_message)
 
-            logger.info(
-                f"Ingested message: id={db_message.id}, queue_id={queue_id}"
-            )
+            logger.info(f"Ingested message: id={db_message.id}, queue_id={queue_id}")
 
             # Publish event for auto-processing
             try:
@@ -1327,22 +1319,20 @@ class QueueMessageService:
                         queue_id=queue_id,
                         recipient_user_id=user_id,
                         sender_user_id=user_id,
-                        priority=request.priority.value
-                        if hasattr(request.priority, "value")
-                        else str(request.priority),
+                        priority=(
+                            request.priority.value
+                            if hasattr(request.priority, "value")
+                            else str(request.priority)
+                        ),
                     )
                 )
             except Exception as e:
-                logger.warning(
-                    f"Failed to publish QueueMessageCreatedEvent: {e}"
-                )
+                logger.warning(f"Failed to publish QueueMessageCreatedEvent: {e}")
 
             sender = db.query(User).filter(User.id == user_id).first()
             return self._build_message_response(db_message, sender)
 
-    def retry_message(
-        self, user_id: int, message_id: int
-    ) -> QueueMessageResponse:
+    def retry_message(self, user_id: int, message_id: int) -> QueueMessageResponse:
         """Retry processing a failed message.
 
         Only messages with status 'failed' can be retried.
@@ -1350,18 +1340,14 @@ class QueueMessageService:
         """
         with self.get_db() as db:
             message = (
-                db.query(QueueMessage)
-                .filter(QueueMessage.id == message_id)
-                .first()
+                db.query(QueueMessage).filter(QueueMessage.id == message_id).first()
             )
             if not message:
                 raise NotFoundException("Message not found")
 
             # Verify ownership
             if message.recipient_user_id != user_id:
-                raise ForbiddenException(
-                    "Not authorized to retry this message"
-                )
+                raise ForbiddenException("Not authorized to retry this message")
 
             # Only failed messages can be retried
             if message.status != QueueMessageStatus.FAILED:
@@ -1397,21 +1383,17 @@ class QueueMessageService:
                         queue_id=message.queue_id,
                         recipient_user_id=message.recipient_user_id,
                         sender_user_id=message.sender_user_id,
-                        priority=message.priority.value
-                        if hasattr(message.priority, "value")
-                        else str(message.priority),
+                        priority=(
+                            message.priority.value
+                            if hasattr(message.priority, "value")
+                            else str(message.priority)
+                        ),
                     )
                 )
             except Exception as e:
-                logger.warning(
-                    f"Failed to publish QueueMessageCreatedEvent: {e}"
-                )
+                logger.warning(f"Failed to publish QueueMessageCreatedEvent: {e}")
 
-            sender = (
-                db.query(User)
-                .filter(User.id == message.sender_user_id)
-                .first()
-            )
+            sender = db.query(User).filter(User.id == message.sender_user_id).first()
             return self._build_message_response(message, sender)
 
 

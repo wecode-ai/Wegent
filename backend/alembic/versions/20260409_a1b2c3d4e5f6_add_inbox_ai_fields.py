@@ -45,9 +45,7 @@ def upgrade() -> None:
             pass
 
     # --- queue_messages: new columns ---
-    qm_columns = {
-        column["name"] for column in inspector.get_columns("queue_messages")
-    }
+    qm_columns = {column["name"] for column in inspector.get_columns("queue_messages")}
 
     if "process_subscription_id" not in qm_columns:
         op.add_column(
@@ -144,20 +142,14 @@ def downgrade() -> None:
         column["name"] for column in inspector.get_columns("background_executions")
     }
     if "inbox_message_id" in be_columns:
-        op.drop_index(
-            "ix_bg_exec_inbox_message_id", table_name="background_executions"
-        )
+        op.drop_index("ix_bg_exec_inbox_message_id", table_name="background_executions")
         op.drop_column("background_executions", "inbox_message_id")
 
     # --- queue_messages ---
-    qm_columns = {
-        column["name"] for column in inspector.get_columns("queue_messages")
-    }
+    qm_columns = {column["name"] for column in inspector.get_columns("queue_messages")}
 
     if "idempotency_key" in qm_columns:
-        op.drop_index(
-            "ix_queue_messages_idempotency_key", table_name="queue_messages"
-        )
+        op.drop_index("ix_queue_messages_idempotency_key", table_name="queue_messages")
         op.drop_column("queue_messages", "idempotency_key")
 
     for col in [

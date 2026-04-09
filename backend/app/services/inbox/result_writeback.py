@@ -33,11 +33,7 @@ def write_execution_result_to_message(
         error_message: Error message if failed
         task_id: Task ID created for processing
     """
-    message = (
-        db.query(QueueMessage)
-        .filter(QueueMessage.id == inbox_message_id)
-        .first()
-    )
+    message = db.query(QueueMessage).filter(QueueMessage.id == inbox_message_id).first()
 
     if not message:
         logger.warning(
@@ -56,9 +52,7 @@ def write_execution_result_to_message(
             message.process_task_id = task_id
         message.processed_at = datetime.now(timezone.utc)
 
-        logger.info(
-            f"[InboxWriteback] Message {inbox_message_id} marked as PROCESSED"
-        )
+        logger.info(f"[InboxWriteback] Message {inbox_message_id} marked as PROCESSED")
 
     elif status == "FAILED":
         message.status = QueueMessageStatus.FAILED

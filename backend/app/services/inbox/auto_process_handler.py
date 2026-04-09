@@ -141,14 +141,10 @@ class InboxAutoProcessHandler:
                 db.commit()
 
                 # Build inbox context for prompt template
-                inbox_context = self._build_inbox_context(
-                    message, work_queue, event
-                )
+                inbox_context = self._build_inbox_context(message, work_queue, event)
 
                 # Create execution and dispatch
-                self._dispatch_execution(
-                    db, subscription, message, inbox_context
-                )
+                self._dispatch_execution(db, subscription, message, inbox_context)
 
                 logger.info(
                     f"[InboxAutoProcess] Dispatched auto-processing for "
@@ -296,9 +292,7 @@ class InboxAutoProcessHandler:
         )
 
         # Dispatch for async processing
-        subscription_service.dispatch_background_execution(
-            subscription, execution
-        )
+        subscription_service.dispatch_background_execution(subscription, execution)
 
 
 # Singleton instance
