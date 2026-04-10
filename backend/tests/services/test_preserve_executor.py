@@ -25,22 +25,7 @@ from app.services.adapters.executor_job import JobService
 from app.services.adapters.task_kinds import TaskKindsService
 
 
-@pytest.mark.unit
-class TestCleanupStaleExecutorsWithPreserveFlag:
-    """Test cleanup_stale_executors skips tasks with preserveExecutor label"""
-
-    @pytest.fixture
-    def job_service(self):
-        """Create JobService instance"""
-        from app.models.kind import Kind
-
-        return JobService(Kind)
-
-    @pytest.fixture
-    def mock_db(self):
-        """Create a mock database session"""
-        return Mock(spec=Session)
-
+class CleanupExecutorTestHelpers:
     def _create_mock_task_resource(
         self, task_id: int, user_id: int, preserve_executor: bool = False
     ):
@@ -95,6 +80,44 @@ class TestCleanupStaleExecutorsWithPreserveFlag:
         subtask.status = SubtaskStatus.COMPLETED
         subtask.updated_at = datetime.now() - timedelta(hours=48)
         return subtask
+
+    def _setup_task_and_subtask_queries(self, mock_db, task, subtasks):
+        """Configure task/subtask query mocks for cleanup tests."""
+        mock_subtask_query = MagicMock()
+        mock_subtask_query.join.return_value = mock_subtask_query
+        mock_subtask_query.filter.return_value = mock_subtask_query
+        mock_subtask_query.all.return_value = subtasks
+
+        mock_task_query = MagicMock()
+        mock_task_query.filter.return_value = mock_task_query
+        mock_task_query.first.return_value = task
+
+        def query_side_effect(model):
+            if model == Subtask:
+                return mock_subtask_query
+            if model == TaskResource:
+                return mock_task_query
+            return MagicMock()
+
+        mock_db.query.side_effect = query_side_effect
+        return mock_subtask_query, mock_task_query
+
+
+@pytest.mark.unit
+class TestCleanupStaleExecutorsWithPreserveFlag(CleanupExecutorTestHelpers):
+    """Test cleanup_stale_executors skips tasks with preserveExecutor label"""
+
+    @pytest.fixture
+    def job_service(self):
+        """Create JobService instance"""
+        from app.models.kind import Kind
+
+        return JobService(Kind)
+
+    @pytest.fixture
+    def mock_db(self):
+        """Create a mock database session"""
+        return Mock(spec=Session)
 
     def test_skips_task_with_preserve_executor_true(self, job_service, mock_db):
         """Test that tasks with preserveExecutor=true are skipped during cleanup"""
@@ -417,6 +440,124 @@ class TestCleanupStaleExecutorsWithPreserveFlag:
 
         archive_mock.assert_not_called()
         mock_executor_service.delete_executor_task_sync.assert_not_called()
+
+
+@pytest.mark.unit
+class TestCleanupTaskExecutorAPI(CleanupExecutorTestHelpers):
+    """Test task-scoped executor cleanup service behavior."""
+
+    @pytest.fixture
+    def job_service(self):
+        """Create JobService instance"""
+        from app.models.kind import Kind
+
+        return JobService(Kind)
+
+    @pytest.fixture
+    def mock_db(self):
+        """Create a mock database session"""
+        return Mock(spec=Session)
+
+    def test_cleanup_task_executor_deletes_current_task_executor(
+        self, job_service, mock_db
+    ):
+        """Test manual cleanup deletes the current task executor."""
+        mock_task = self._create_mock_task_resource(100, 1, preserve_executor=False)
+        mock_subtask = self._create_mock_subtask(1, 100)
+        self._setup_task_and_subtask_queries(mock_db, mock_task, [mock_subtask])
+
+        with (
+            patch("app.services.task_member_service.task_member_service") as members,
+            patch.object(job_service, "_mark_executor_deleted") as mark_deleted,
+            patch(
+                "app.services.adapters.executor_job.executor_kinds_service"
+            ) as executor_service,
+        ):
+            members.is_member.return_value = True
+            executor_service.delete_executor_task_sync.return_value = {"success": True}
+
+            result = job_service.cleanup_task_executor(mock_db, task_id=100, user_id=1)
+
+        assert result == {
+            "task_id": 100,
+            "deleted": True,
+            "skipped": False,
+            "reason": "executor_deleted",
+            "executors": [
+                {
+                    "executor_name": "executor-1",
+                    "executor_namespace": "default",
+                }
+            ],
+        }
+        executor_service.delete_executor_task_sync.assert_called_once_with(
+            "executor-1", "default"
+        )
+        mark_deleted.assert_called_once_with([1])
+
+    def test_cleanup_task_executor_skips_preserved_task(self, job_service, mock_db):
+        """Test manual cleanup respects preserveExecutor=true."""
+        mock_task = self._create_mock_task_resource(100, 1, preserve_executor=True)
+        self._setup_task_and_subtask_queries(mock_db, mock_task, [])
+
+        with patch("app.services.task_member_service.task_member_service") as members:
+            members.is_member.return_value = True
+
+            result = job_service.cleanup_task_executor(mock_db, task_id=100, user_id=1)
+
+        assert result == {
+            "task_id": 100,
+            "deleted": False,
+            "skipped": True,
+            "reason": "preserve_executor",
+            "executors": [],
+        }
+
+    def test_cleanup_task_executor_skips_non_terminal_task(self, job_service, mock_db):
+        """Test manual cleanup skips non-terminal tasks."""
+        mock_task = self._create_mock_task_resource(100, 1, preserve_executor=False)
+        mock_task.json["status"]["status"] = "RUNNING"
+        self._setup_task_and_subtask_queries(mock_db, mock_task, [])
+
+        with patch("app.services.task_member_service.task_member_service") as members:
+            members.is_member.return_value = True
+
+            result = job_service.cleanup_task_executor(mock_db, task_id=100, user_id=1)
+
+        assert result["task_id"] == 100
+        assert result["deleted"] is False
+        assert result["skipped"] is True
+        assert result["reason"] == "task_not_finished"
+
+    def test_cleanup_task_executor_deduplicates_executor_names(
+        self, job_service, mock_db
+    ):
+        """Test manual cleanup deletes a shared executor only once."""
+        mock_task = self._create_mock_task_resource(100, 1, preserve_executor=False)
+        subtask_a = self._create_mock_subtask(1, 100)
+        subtask_b = self._create_mock_subtask(2, 100)
+        self._setup_task_and_subtask_queries(mock_db, mock_task, [subtask_a, subtask_b])
+
+        with (
+            patch("app.services.task_member_service.task_member_service") as members,
+            patch.object(job_service, "_mark_executor_deleted") as mark_deleted,
+            patch(
+                "app.services.adapters.executor_job.executor_kinds_service"
+            ) as executor_service,
+        ):
+            members.is_member.return_value = True
+            executor_service.delete_executor_task_sync.return_value = {"success": True}
+
+            result = job_service.cleanup_task_executor(mock_db, task_id=100, user_id=1)
+
+        assert result["task_id"] == 100
+        assert result["deleted"] is True
+        assert result["skipped"] is False
+        assert result["reason"] == "executor_deleted"
+        executor_service.delete_executor_task_sync.assert_called_once_with(
+            "executor-1", "default"
+        )
+        mark_deleted.assert_called_once_with([1, 2])
 
 
 @pytest.mark.unit

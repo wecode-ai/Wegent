@@ -385,11 +385,17 @@ export function SubscriptionList({
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
                           <span className="truncate font-medium">{subscription.display_name}</span>
+                          {/* Expired badge */}
+                          {subscription.is_expired && (
+                            <Badge variant="error" className="text-xs">
+                              {t('expired')}
+                            </Badge>
+                          )}
                           {/* Invalid schedule warning badge */}
                           {subscription.trigger_config_valid === false && (
                             <Tooltip>
                               <TooltipTrigger asChild>
-                                <Badge variant="error" className="text-xs cursor-help">
+                                <Badge variant="warning" className="text-xs cursor-help">
                                   <AlertCircle className="h-3 w-3 mr-1" />
                                   {t('invalid_schedule')}
                                 </Badge>

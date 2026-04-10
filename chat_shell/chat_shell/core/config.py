@@ -91,6 +91,12 @@ class Settings(BaseSettings):
     MESSAGE_COMPRESSION_LAST_MESSAGES: int = 10
     MESSAGE_COMPRESSION_ATTACHMENT_LENGTH: int = 50000
 
+    # Maximum length (in characters) for a single tool result stored in
+    # messages_chain.  Results exceeding this limit are truncated at
+    # serialization time (beginning + end kept, middle removed).
+    # Set to 0 to disable.
+    MAX_TOOL_RESULT_LENGTH: int = 50000
+
     # MCP configuration for Chat Shell
     CHAT_MCP_ENABLED: bool = False
     CHAT_MCP_SERVERS: str = "{}"

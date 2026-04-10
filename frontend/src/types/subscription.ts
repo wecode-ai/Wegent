@@ -157,6 +157,9 @@ export interface Subscription {
   // Trigger config validation status
   trigger_config_valid?: boolean
   trigger_config_error?: string
+  // Expiration settings
+  expires_at?: string // ISO format datetime
+  is_expired?: boolean // Whether the subscription has expired
   created_at: string
   updated_at: string
 }
@@ -197,6 +200,8 @@ export interface SubscriptionCreateRequest {
   notification_webhooks?: NotificationWebhook[]
   // Market whitelist (empty means visible to all market users)
   market_whitelist_user_ids?: number[]
+  // Expiration settings
+  expires_at?: string // ISO format datetime, e.g., '2025-12-31T23:59:59'
 }
 
 // Subscription update request
@@ -233,6 +238,8 @@ export interface SubscriptionUpdateRequest {
   notification_webhooks?: NotificationWebhook[]
   // Market whitelist (empty means visible to all market users)
   market_whitelist_user_ids?: number[]
+  // Expiration settings
+  expires_at?: string // ISO format datetime, e.g., '2025-12-31T23:59:59'
 }
 
 // Subscription list response

@@ -266,6 +266,7 @@ class WebSocketResultEmitter(BaseResultEmitter):
             subtask_id=event.subtask_id,
             block_id=event.tool_use_id or "",
             tool_output=event.tool_output,
+            tool_input=event.tool_input,
             status=status.value,
         )
         logger.debug(

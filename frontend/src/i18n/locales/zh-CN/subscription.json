@@ -1,0 +1,33 @@
+{
+  "preview": {
+    "title": "订阅任务预览",
+    "task_name": "任务名称",
+    "trigger": "触发方式",
+    "trigger_settings": "触发设置",
+    "trigger_type": "类型",
+    "cron_expression": "表达式",
+    "timezone": "时区",
+    "execution_settings": "执行设置",
+    "prompt": "执行内容",
+    "preserve_history": "保留历史",
+    "retry": "重试次数",
+    "timeout": "超时时间",
+    "cancel": "取消",
+    "confirm": "确认创建",
+    "create_success": "订阅任务 \"{{name}}\" 创建成功！",
+    "create_error": "创建订阅任务失败",
+    "cancelled": "已取消创建",
+    "confirmed_title": "订阅任务已创建",
+    "confirmed_desc": "任务将在设定的时间自动执行",
+    "cancelled_title": "已取消",
+    "cancelled_desc": "订阅任务创建已取消",
+    "expired_title": "预览已过期",
+    "expired_desc": "该预览已超过 24 小时有效期，请重新生成预览"
+  },
+  "common": {
+    "yes": "是",
+    "no": "否",
+    "creating": "创建中...",
+    "times": "次"
+  }
+}

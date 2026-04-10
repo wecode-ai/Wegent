@@ -656,3 +656,31 @@ def extract_result_summary(result: Optional[Dict[str, Any]]) -> Optional[str]:
 
     # Return full content - database column is TEXT type which can store large content
     return value
+
+
+def is_subscription_expired(
+    expires_at: Optional[datetime],
+    current_time: Optional[datetime] = None,
+) -> bool:
+    """Check if a subscription has expired.
+
+    Args:
+        expires_at: The expiration timestamp (stored in _internal.expires_at)
+        current_time: Optional current time (defaults to UTC now)
+
+    Returns:
+        True if expired, False otherwise
+    """
+    if not expires_at:
+        return False
+
+    if current_time is None:
+        current_time = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    # Handle timezone-aware comparison
+    if expires_at.tzinfo and not current_time.tzinfo:
+        current_time = current_time.replace(tzinfo=timezone.utc)
+    elif not expires_at.tzinfo and current_time.tzinfo:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+
+    return current_time >= expires_at

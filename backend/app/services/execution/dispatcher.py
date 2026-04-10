@@ -190,11 +190,20 @@ class ResponsesAPIEventParser:
                 data.get("call_id") or data.get("item_id"),
                 context="function_call_arguments.done",
             )
+            # Parse arguments from the event data to get tool_input
+            arguments_str = data.get("arguments", "")
+            tool_input = None
+            if arguments_str:
+                try:
+                    tool_input = json.loads(arguments_str)
+                except (json.JSONDecodeError, TypeError):
+                    pass
             return ExecutionEvent(
                 type=EventType.TOOL_RESULT,
                 task_id=task_id,
                 subtask_id=subtask_id,
                 tool_use_id=tool_use_id,
+                tool_input=tool_input,
                 tool_output=data.get("output"),
                 data={"blocks": data.get("blocks", [])},
                 message_id=message_id,
@@ -437,13 +446,6 @@ class ExecutionDispatcher:
                     f"Task {request.task_id} not found for executor recovery"
                 )
 
-            user_id = request.user.get("id") if request.user else request.user_id
-            user_name = (
-                request.user.get("name")
-                if request.user and request.user.get("name")
-                else request.user_name
-            )
-
             logger.info(
                 "[ExecutionDispatcher] Recovering deleted executor: "
                 "task_id=%s, subtask_id=%s, executor=%s",
@@ -456,8 +458,7 @@ class ExecutionDispatcher:
                 db=db,
                 subtask=subtask,
                 task=task,
-                user_id=user_id,
-                user_name=user_name,
+                request=request,
             )
             if not recovered:
                 raise RuntimeError(

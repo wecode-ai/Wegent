@@ -240,11 +240,13 @@ class RemoteWorkspaceService:
             db=db, task_id=task_id, user_id=user_id
         )
 
-    def _get_connected_executor_name(
+    def _get_connected_executor_binding(
         self, task_detail: dict[str, Any]
-    ) -> Optional[str]:
+    ) -> Optional[tuple[str, str]]:
         subtasks = task_detail.get("subtasks") or []
-        for subtask in subtasks:
+        latest_deleted_binding: Optional[tuple[str, str]] = None
+
+        for subtask in reversed(subtasks):
             if not isinstance(subtask, dict):
                 continue
 
@@ -253,12 +255,37 @@ class RemoteWorkspaceService:
                 continue
 
             normalized_executor_name = executor_name.strip()
-            if normalized_executor_name:
-                return normalized_executor_name
-        return None
+            if not normalized_executor_name:
+                continue
+
+            executor_namespace = subtask.get("executor_namespace")
+            normalized_executor_namespace = (
+                executor_namespace.strip()
+                if isinstance(executor_namespace, str)
+                else ""
+            )
+
+            if not bool(subtask.get("executor_deleted_at", False)):
+                return normalized_executor_name, normalized_executor_namespace
+
+            if latest_deleted_binding is None:
+                latest_deleted_binding = (
+                    normalized_executor_name,
+                    normalized_executor_namespace,
+                )
+
+        return latest_deleted_binding
+
+    def _get_connected_executor_name(
+        self, task_detail: dict[str, Any]
+    ) -> Optional[str]:
+        binding = self._get_connected_executor_binding(task_detail)
+        if binding is None:
+            return None
+        return binding[0]
 
     def _has_executor_binding(self, task_detail: dict[str, Any]) -> bool:
-        return self._get_connected_executor_name(task_detail) is not None
+        return self._get_connected_executor_binding(task_detail) is not None
 
     def _resolve_workspace_base_url(
         self,
@@ -278,25 +305,31 @@ class RemoteWorkspaceService:
                 )
                 return sandbox_base_url.rstrip("/")
 
-        executor_name = self._get_connected_executor_name(task_detail)
-        if not executor_name:
+        executor_binding = self._get_connected_executor_binding(task_detail)
+        if not executor_binding:
             logger.info(
                 "[remote_workspace] base_url unresolved task_id=%s reason=no_executor_binding",
                 task_id,
             )
             return None
+        executor_name, executor_namespace = executor_binding
 
         logger.info(
-            "[remote_workspace] base_url fallback to executor task_id=%s executor_name=%s",
+            "[remote_workspace] base_url fallback to executor task_id=%s executor_name=%s executor_namespace=%s",
             task_id,
             executor_name,
+            executor_namespace,
         )
-        executor_payload = self._get_executor_payload(executor_name=executor_name)
+        executor_payload = self._get_executor_payload(
+            executor_name=executor_name,
+            executor_namespace=executor_namespace,
+        )
         if not executor_payload:
             logger.warning(
-                "[remote_workspace] base_url unresolved task_id=%s executor_name=%s reason=empty_executor_payload",
+                "[remote_workspace] base_url unresolved task_id=%s executor_name=%s executor_namespace=%s reason=empty_executor_payload",
                 task_id,
                 executor_name,
+                executor_namespace,
             )
             return None
 
@@ -304,26 +337,29 @@ class RemoteWorkspaceService:
         base_url = executor_payload.get("base_url")
         if not isinstance(base_url, str) or not base_url:
             logger.warning(
-                "[remote_workspace] base_url unresolved task_id=%s executor_name=%s reason=missing_base_url payload=%s",
+                "[remote_workspace] base_url unresolved task_id=%s executor_name=%s executor_namespace=%s reason=missing_base_url payload=%s",
                 task_id,
                 executor_name,
+                executor_namespace,
                 executor_payload,
             )
             return None
         if status and status != "success":
             logger.warning(
-                "[remote_workspace] base_url unresolved task_id=%s executor_name=%s reason=non_success_status status=%s payload=%s",
+                "[remote_workspace] base_url unresolved task_id=%s executor_name=%s executor_namespace=%s reason=non_success_status status=%s payload=%s",
                 task_id,
                 executor_name,
+                executor_namespace,
                 status,
                 executor_payload,
             )
             return None
 
         logger.info(
-            "[remote_workspace] base_url resolved via executor task_id=%s executor_name=%s base_url=%s",
+            "[remote_workspace] base_url resolved via executor task_id=%s executor_name=%s executor_namespace=%s base_url=%s",
             task_id,
             executor_name,
+            executor_namespace,
             base_url,
         )
         return base_url.rstrip("/")
@@ -395,22 +431,32 @@ class RemoteWorkspaceService:
             return SANDBOX_HOME_ROOT
         return _build_task_workspace_root(task_id)
 
-    def _get_executor_payload(self, executor_name: str) -> Optional[dict[str, Any]]:
+    def _get_executor_payload(
+        self,
+        executor_name: str,
+        executor_namespace: Optional[str] = None,
+    ) -> Optional[dict[str, Any]]:
         address_url = f"{self.executor_manager_url}/executor-manager/executor/address"
         logger.info(
-            "[remote_workspace] querying executor address executor_name=%s url=%s",
+            "[remote_workspace] querying executor address executor_name=%s executor_namespace=%s url=%s",
             executor_name,
+            executor_namespace,
             address_url,
         )
         try:
             with httpx.Client(timeout=self.request_timeout) as client:
+                params = {"executor_name": executor_name}
+                if executor_namespace is not None:
+                    params["executor_namespace"] = executor_namespace
                 response = client.get(
-                    address_url, params={"executor_name": executor_name}
+                    address_url,
+                    params=params,
                 )
         except Exception as exc:
             logger.warning(
-                "[remote_workspace] executor address query failed executor_name=%s url=%s error=%s",
+                "[remote_workspace] executor address query failed executor_name=%s executor_namespace=%s url=%s error=%s",
                 executor_name,
+                executor_namespace,
                 address_url,
                 exc,
             )
@@ -418,16 +464,18 @@ class RemoteWorkspaceService:
 
         if response.status_code != 200:
             logger.info(
-                "[remote_workspace] executor address query non_200 executor_name=%s status_code=%s body_preview=%s",
+                "[remote_workspace] executor address query non_200 executor_name=%s executor_namespace=%s status_code=%s body_preview=%s",
                 executor_name,
+                executor_namespace,
                 response.status_code,
                 self._to_log_preview(response.text),
             )
             return None
         if not response.content:
             logger.warning(
-                "[remote_workspace] executor address query empty body executor_name=%s",
+                "[remote_workspace] executor address query empty body executor_name=%s executor_namespace=%s",
                 executor_name,
+                executor_namespace,
             )
             return None
 
@@ -435,8 +483,9 @@ class RemoteWorkspaceService:
             payload = response.json()
         except ValueError as exc:
             logger.warning(
-                "[remote_workspace] executor address query invalid json executor_name=%s error=%s body_preview=%s",
+                "[remote_workspace] executor address query invalid json executor_name=%s executor_namespace=%s error=%s body_preview=%s",
                 executor_name,
+                executor_namespace,
                 exc,
                 self._to_log_preview(response.text),
             )

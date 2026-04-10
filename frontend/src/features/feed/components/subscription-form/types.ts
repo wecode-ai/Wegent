@@ -85,6 +85,9 @@ export interface MetaInfoSectionProps {
   isRental: boolean
 }
 
+// Expiration type for subscription
+export type SubscriptionExpirationType = 'none' | 'fixed_date' | 'duration_days'
+
 // Props for Subscription Options Section
 export interface SubscriptionOptionsSectionProps {
   // Trigger
@@ -103,6 +106,13 @@ export interface SubscriptionOptionsSectionProps {
   setRetryCount: (value: number) => void
   timeoutSeconds: number
   setTimeoutSeconds: (value: number) => void
+  // Expiration settings
+  expirationType: SubscriptionExpirationType
+  setExpirationType: (value: SubscriptionExpirationType) => void
+  expirationDate?: Date
+  setExpirationDate: (value: Date | undefined) => void
+  durationDays: number
+  setDurationDays: (value: number) => void
 }
 
 // Props for Notification Section

@@ -284,6 +284,7 @@ class WebSocketEmitter:
         block_id: str,
         content: Optional[str] = None,
         tool_output: Optional[Any] = None,
+        tool_input: Optional[Any] = None,
         status: Optional[str] = None,
     ) -> None:
         """
@@ -297,6 +298,7 @@ class WebSocketEmitter:
             block_id: Block ID to update
             content: Optional text content update
             tool_output: Optional tool output data
+            tool_input: Optional tool input data
             status: Optional status update (pending, streaming, done, error)
         """
         payload: Dict[str, Any] = {
@@ -308,6 +310,8 @@ class WebSocketEmitter:
             payload["content"] = content
         if tool_output is not None:
             payload["tool_output"] = tool_output
+        if tool_input is not None:
+            payload["tool_input"] = tool_input
         if status is not None:
             payload["status"] = status
 

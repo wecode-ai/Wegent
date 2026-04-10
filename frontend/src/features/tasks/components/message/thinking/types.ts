@@ -201,6 +201,35 @@ export interface PromptOptimizationBlock extends BaseBlock {
 }
 
 /**
+ * Subscription preview config
+ */
+export interface SubscriptionPreviewConfig {
+  display_name: string
+  description?: string
+  trigger_type: 'cron' | 'interval' | 'one_time'
+  trigger_display: string
+  prompt_preview: string
+  preserve_history: boolean
+  history_message_count: number
+  retry_count: number
+  timeout_seconds: number
+  expires_at?: string
+}
+
+/**
+ * Subscription preview block - for subscription task preview
+ */
+export interface SubscriptionPreviewBlockType extends BaseBlock {
+  type: 'subscription_preview'
+  preview_id: string
+  execution_id: string
+  task_id: number
+  subtask_id: number
+  config: SubscriptionPreviewConfig
+  created_at: string
+}
+
+/**
  * Union type of all message block types.
  * Use this for type-safe block handling with discriminated unions.
  */
@@ -212,6 +241,7 @@ export type MessageBlock =
   | VideoBlock
   | ImageBlock
   | PromptOptimizationBlock
+  | SubscriptionPreviewBlockType
 
 /**
  * Type guard for TextBlock

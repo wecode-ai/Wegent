@@ -204,6 +204,13 @@ class TaskRequestBuilder:
             preload_skills=effective_preload_skills,
         )
 
+        # Inject subscription-manager skill for scheduled task creation
+        # This provides preview_subscription and create_subscription MCP tools
+        effective_preload_skills = self._inject_subscription_manager_skill(
+            effective_preload_skills,
+            is_subscription=is_subscription,
+        )
+
         user_preload_skills = None
         if effective_preload_skills:
             user_preload_skills = [
@@ -1637,6 +1644,54 @@ Response template:
             logger.info(
                 "[TaskRequestBuilder] Injected clarification skill '%s' into preload_skills",
                 clarification_skill_name,
+            )
+
+        return preload_skills
+
+    @staticmethod
+    def _inject_subscription_manager_skill(
+        preload_skills: list, is_subscription: bool = False
+    ) -> list:
+        """Inject the subscription-manager skill for scheduled task creation.
+
+        The subscription-manager skill provides MCP tools (preview_subscription,
+        create_subscription) for creating scheduled/recurring tasks. It is
+        auto-injected into all non-subscription tasks to prevent nested subscriptions.
+
+        Args:
+            preload_skills: Current list of preload skills
+            is_subscription: Whether this is a subscription task (if True, skip injection)
+
+        Returns:
+            Updated preload_skills list with subscription-manager skill injected
+        """
+        # Skip injection in subscription tasks to prevent nested subscriptions
+        if is_subscription:
+            logger.debug(
+                "[TaskRequestBuilder] Skipping subscription-manager injection in subscription task"
+            )
+            return preload_skills
+
+        subscription_skill_name = "subscription-manager"
+
+        # Check if already present (avoid duplicates)
+        existing_names = {
+            skill if isinstance(skill, str) else skill.get("name", "")
+            for skill in preload_skills
+            if isinstance(skill, (str, dict))
+        }
+
+        if subscription_skill_name not in existing_names:
+            preload_skills = list(preload_skills)
+            preload_skills.append(
+                {
+                    "name": subscription_skill_name,
+                    "namespace": "default",
+                    "is_public": True,
+                }
+            )
+            logger.info(
+                "[TaskRequestBuilder] Injected subscription-manager skill into preload_skills"
             )
 
         return preload_skills
