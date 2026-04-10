@@ -897,6 +897,7 @@
     "preload_skills_section": "预加载技能",
     "preload_skills_description": "预加载的技能会自动注入到系统提示词中",
     "preload_only_public_hint": "注意：只有公共技能才能被设置为预加载",
+    "preload_hint": "勾选复选框可将技能设为预加载（技能将自动注入到系统提示词中）",
     "no_skills_selected": "请先选择技能",
     "delete_success": "技能删除成功",
     "delete_failed": "删除技能失败",
