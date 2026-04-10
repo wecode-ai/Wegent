@@ -200,6 +200,12 @@ class SandboxManager(metaclass=SingletonMeta):
         # Get container name
         container_name = result.get("executor_name", sandbox.container_name)
         sandbox.container_name = container_name
+        executor_namespace = result.get("executor_namespace") or sandbox.metadata.get(
+            "executor_namespace"
+        )
+        if executor_namespace:
+            sandbox.executor_namespace = executor_namespace
+            sandbox.metadata["executor_namespace"] = executor_namespace
 
         # Wait for container to be ready and get base_url
         base_url = await self._wait_for_container_ready(executor, container_name)

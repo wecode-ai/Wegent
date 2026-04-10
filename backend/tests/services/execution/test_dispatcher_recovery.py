@@ -23,9 +23,9 @@ async def test_dispatch_recovers_deleted_executor_before_http_callback():
         task_id=1385,
         subtask_id=1861,
         message_id=3,
-        user={"id": 7, "name": "yunpeng7"},
+        user={"id": 7, "name": "user7"},
         user_id=7,
-        user_name="yunpeng7",
+        user_name="user7",
         bot=[{"shell_type": "ClaudeCode"}],
         executor_name="old-executor",
     )
@@ -59,10 +59,12 @@ async def test_dispatch_recovers_deleted_executor_before_http_callback():
 
     db.query.side_effect = query_side_effect
 
-    async def recover_side_effect(*, db, subtask, task, user_id, user_name):
+    async def recover_side_effect(*, db, subtask, task, request):
         subtask.executor_name = "recovered-executor"
         subtask.executor_namespace = "default"
         subtask.executor_deleted_at = False
+        request.executor_name = "recovered-executor"
+        request.executor_namespace = "default"
         return True
 
     recovery_service = MagicMock()
@@ -106,9 +108,9 @@ async def test_dispatch_raises_when_recovery_returns_false_and_emits_error():
         task_id=2468,
         subtask_id=9753,
         message_id=7,
-        user={"id": 7, "name": "yunpeng7"},
+        user={"id": 7, "name": "user7"},
         user_id=7,
-        user_name="yunpeng7",
+        user_name="user7",
         bot=[{"shell_type": "ClaudeCode"}],
         executor_name="deleted-executor",
     )
@@ -177,9 +179,9 @@ async def test_dispatch_skips_recovery_for_chat_shell():
         task_id=1385,
         subtask_id=1861,
         message_id=3,
-        user={"id": 7, "name": "yunpeng7"},
+        user={"id": 7, "name": "user7"},
         user_id=7,
-        user_name="yunpeng7",
+        user_name="user7",
         bot=[{"shell_type": "Chat"}],
         executor_name="existing-executor",
     )

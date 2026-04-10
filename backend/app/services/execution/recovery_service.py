@@ -16,7 +16,6 @@ If archive is not available or expired, the Pod is created normally
 with git clone enabled.
 """
 
-import asyncio
 import logging
 from typing import Optional
 
@@ -24,8 +23,8 @@ from sqlalchemy.orm import Session
 
 from app.models.subtask import Subtask
 from app.models.task import TaskResource
-from app.schemas.kind import Task
 from app.services.workspace_archive import archive_service
+from shared.models import ExecutionRequest
 
 logger = logging.getLogger(__name__)
 
@@ -49,13 +48,32 @@ class ExecutorRecoveryService:
     3. Return success
     """
 
+    def _resolve_executor_namespace(
+        self,
+        sandbox: object,
+        previous_namespace: Optional[str],
+    ) -> str:
+        namespace = getattr(sandbox, "executor_namespace", None)
+        if isinstance(namespace, str) and namespace.strip():
+            return namespace.strip()
+
+        metadata = getattr(sandbox, "metadata", None)
+        if isinstance(metadata, dict):
+            metadata_namespace = metadata.get("executor_namespace")
+            if isinstance(metadata_namespace, str) and metadata_namespace.strip():
+                return metadata_namespace.strip()
+
+        if isinstance(previous_namespace, str) and previous_namespace.strip():
+            return previous_namespace.strip()
+
+        return "default"
+
     async def recover(
         self,
         db: Session,
         subtask: Subtask,
         task: TaskResource,
-        user_id: int,
-        user_name: str,
+        request: ExecutionRequest,
     ) -> bool:
         """Recover executor Pod for a task.
 
@@ -63,8 +81,7 @@ class ExecutorRecoveryService:
             db: Database session
             subtask: Subtask with executor_deleted_at=True
             task: Parent task
-            user_id: User ID
-            user_name: Username
+            request: Execution request carrying the normal executor config
 
         Returns:
             True if recovery successful, False otherwise
@@ -102,8 +119,7 @@ class ExecutorRecoveryService:
                     db=db,
                     subtask=subtask,
                     task=task,
-                    user_id=user_id,
-                    user_name=user_name,
+                    request=request,
                 )
             else:
                 logger.info(
@@ -114,8 +130,7 @@ class ExecutorRecoveryService:
                     db=db,
                     subtask=subtask,
                     task=task,
-                    user_id=user_id,
-                    user_name=user_name,
+                    request=request,
                 )
 
         except RuntimeError:
@@ -132,8 +147,7 @@ class ExecutorRecoveryService:
         db: Session,
         subtask: Subtask,
         task: TaskResource,
-        user_id: int,
-        user_name: str,
+        request: ExecutionRequest,
     ) -> bool:
         """Recover Pod using workspace archive.
 
@@ -145,8 +159,7 @@ class ExecutorRecoveryService:
             db: Database session
             subtask: Subtask
             task: Task
-            user_id: User ID
-            user_name: Username
+            request: Execution request carrying the normal executor config
 
         Returns:
             True if successful, False otherwise
@@ -154,23 +167,23 @@ class ExecutorRecoveryService:
         task_id = task.id
 
         try:
-            # Create Pod with skip_git_clone=true
-            sandbox, error = await self._create_sandbox(
-                task=task,
-                subtask=subtask,
-                user_id=user_id,
-                user_name=user_name,
-                skip_git_clone=True,
-            )
+            request.skip_git_clone = True
+            request.executor_name = None
+            request.executor_namespace = None
 
-            if error or not sandbox:
+            executor, error = await self._prepare_executor(request, True)
+
+            if error or not executor:
                 logger.error(
-                    f"[RecoveryService] Failed to create sandbox for task {task_id}: {error}"
+                    f"[RecoveryService] Failed to prepare executor for task {task_id}: {error}"
                 )
                 return False
 
-            executor_name = sandbox.container_name
-            executor_namespace = "default"
+            executor_name = executor.container_name
+            executor_namespace = self._resolve_executor_namespace(
+                sandbox=executor,
+                previous_namespace=subtask.executor_namespace,
+            )
 
             # Restore workspace from archive
             restore_success = await archive_service.restore_workspace(
@@ -190,6 +203,8 @@ class ExecutorRecoveryService:
             subtask.executor_name = executor_name
             subtask.executor_namespace = executor_namespace
             subtask.executor_deleted_at = False
+            request.executor_name = executor_name
+            request.executor_namespace = executor_namespace
             db.add(subtask)
             db.commit()
 
@@ -212,8 +227,7 @@ class ExecutorRecoveryService:
         db: Session,
         subtask: Subtask,
         task: TaskResource,
-        user_id: int,
-        user_name: str,
+        request: ExecutionRequest,
     ) -> bool:
         """Recover Pod with normal git clone (no archive).
 
@@ -224,8 +238,7 @@ class ExecutorRecoveryService:
             db: Database session
             subtask: Subtask
             task: Task
-            user_id: User ID
-            user_name: Username
+            request: Execution request carrying the normal executor config
 
         Returns:
             True if successful, False otherwise
@@ -233,28 +246,30 @@ class ExecutorRecoveryService:
         task_id = task.id
 
         try:
-            # Create Pod normally
-            sandbox, error = await self._create_sandbox(
-                task=task,
-                subtask=subtask,
-                user_id=user_id,
-                user_name=user_name,
-                skip_git_clone=False,
-            )
+            request.skip_git_clone = False
+            request.executor_name = None
+            request.executor_namespace = None
 
-            if error or not sandbox:
+            executor, error = await self._prepare_executor(request, False)
+
+            if error or not executor:
                 logger.error(
-                    f"[RecoveryService] Failed to create sandbox for task {task_id}: {error}"
+                    f"[RecoveryService] Failed to prepare executor for task {task_id}: {error}"
                 )
                 return False
 
-            executor_name = sandbox.container_name
-            executor_namespace = "default"
+            executor_name = executor.container_name
+            executor_namespace = self._resolve_executor_namespace(
+                sandbox=executor,
+                previous_namespace=subtask.executor_namespace,
+            )
 
             # Update subtask with new executor info and reset deleted flag
             subtask.executor_name = executor_name
             subtask.executor_namespace = executor_namespace
             subtask.executor_deleted_at = False
+            request.executor_name = executor_name
+            request.executor_namespace = executor_namespace
             db.add(subtask)
             db.commit()
 
@@ -272,60 +287,32 @@ class ExecutorRecoveryService:
             )
             return False
 
-    async def _create_sandbox(
+    async def _prepare_executor(
         self,
-        task: TaskResource,
-        subtask: Subtask,
-        user_id: int,
-        user_name: str,
+        request: ExecutionRequest,
         skip_git_clone: bool,
     ):
-        """Create a new sandbox Pod for the task.
+        """Prepare a normal executor runtime without initial dispatch.
 
         Args:
-            task: Task resource
-            subtask: Subtask
-            user_id: User ID
-            user_name: Username
+            request: Execution request carrying the normal executor config
             skip_git_clone: Whether to skip git clone
 
         Returns:
-            Tuple of (Sandbox, error_message)
+            Tuple of (executor runtime, error_message)
         """
-        from app.services.execution import get_sandbox_manager
+        from app.services.execution import get_executor_runtime_client
 
-        task_crd = Task.model_validate(task.json)
+        runtime_client = get_executor_runtime_client()
+        request.skip_git_clone = skip_git_clone
+        request.executor_name = None
+        request.executor_namespace = None
 
-        # Get shell type from subtask or task
-        shell_type = "ClaudeCode"  # Default
-
-        # Build bot_config from task
-        bot_config = {}
-
-        # Build metadata
-        metadata = {
-            "task_id": task.id,
-            "subtask_id": subtask.id,
-            "skip_git_clone": skip_git_clone,
-        }
-
-        # Get workspace ref if available
-        workspace_ref = (
-            task_crd.spec.workspaceRef.name if task_crd.spec.workspaceRef else None
+        executor, error = await runtime_client.prepare_executor(
+            request=request,
         )
 
-        # Create sandbox
-        sandbox_manager = get_sandbox_manager()
-        sandbox, error = await sandbox_manager.create_sandbox(
-            shell_type=shell_type,
-            user_id=user_id,
-            user_name=user_name,
-            workspace_ref=workspace_ref,
-            bot_config=bot_config,
-            metadata=metadata,
-        )
-
-        return sandbox, error
+        return executor, error
 
 
 # Global service instance

@@ -22,7 +22,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from chat_shell.core.config import settings
 from chat_shell.core.database import get_db_context
-from chat_shell.tools.builtin import PreviewSubscriptionTool
 from shared.models.execution import ExecutionRequest
 from shared.telemetry.decorators import add_span_event, trace_async
 
@@ -800,75 +799,9 @@ class ChatContext:
                 len(self._request.table_contexts),
             )
 
-        # Add CreateSubscriptionTool and PreviewSubscriptionTool
-        # Only enabled when NOT in a subscription task execution (prevent nested subscriptions)
-        if not self._request.is_subscription:
-            from chat_shell.tools.builtin import CreateSubscriptionTool
-
-            # Derive backend_url from REMOTE_STORAGE_URL (remove /api/internal suffix)
-            backend_url = None
-            if settings.REMOTE_STORAGE_URL:
-                # REMOTE_STORAGE_URL is like "http://localhost:8000/api/internal"
-                # We need "http://localhost:8000" for the subscription API
-                base_url = settings.REMOTE_STORAGE_URL
-                if base_url.endswith("/api/internal"):
-                    backend_url = base_url[: -len("/api/internal")]
-                elif base_url.endswith("/api"):
-                    backend_url = base_url[: -len("/api")]
-                else:
-                    backend_url = base_url
-
-            # Extract model_name and model_namespace from model_config for subscription
-            model_name = None
-            model_namespace = "default"
-            if self._request.model_config:
-                model_name = self._request.model_config.get("model_name")
-                # Use `or "default"` to handle both missing key and None value
-                model_namespace = (
-                    self._request.model_config.get("model_namespace") or "default"
-                )
-
-            create_subscription_tool = CreateSubscriptionTool(
-                user_id=self._request.user_id,
-                team_id=self._request.team_id,
-                team_name=self._request.team_name,
-                team_namespace=self._request.bot_namespace or "default",
-                timezone=self._request.timezone,
-                backend_url=backend_url,
-                model_name=model_name,
-                model_namespace=model_namespace,
-            )
-
-            extra_tools.append(create_subscription_tool)
-
-            preview_subscription_tool = PreviewSubscriptionTool(
-                user_id=self._request.user_id,
-                team_id=self._request.team_id,
-                team_name=self._request.team_name,
-                team_namespace=self._request.bot_namespace or "default",
-                timezone=self._request.timezone,
-                model_name=model_name,
-                model_namespace=model_namespace,
-            )
-
-            extra_tools.append(preview_subscription_tool)
-            logger.debug(
-                "[CHAT_CONTEXT] Added CreateSubscriptionTool: team_id=%d, team_name=%s, "
-                "model_name=%s, model_namespace=%s, backend_url=%s",
-                self._request.team_id,
-                self._request.team_name,
-                model_name,
-                model_namespace,
-                backend_url,
-            )
-        else:
-            logger.info(
-                "[CHAT_CONTEXT] Skipped CreateSubscriptionTool in subscription context: "
-                "task_id=%d, subtask_id=%d",
-                self._request.task_id,
-                self._request.subtask_id,
-            )
-
+        # Note: Subscription tools (preview_subscription, create_subscription) have been moved
+        # to Backend MCP Server and are now provided via the subscription-manager skill.
+        # They are automatically injected by Backend into skill_configs for all non-subscription tasks.
         # Note: SilentExitTool has been removed.
         # silent_exit functionality is now provided by Backend MCP Server.
         # For subscription tasks, the system MCP server is loaded via MCP tools.

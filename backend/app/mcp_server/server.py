@@ -55,6 +55,8 @@ INTERACTIVE_FORM_MCP_MOUNT_PATH = "/mcp/interactive-form-question"
 INTERACTIVE_FORM_MCP_TRANSPORT_PATH = "/sse"
 PROMPT_OPTIMIZATION_MCP_MOUNT_PATH = "/mcp/prompt-optimization"
 PROMPT_OPTIMIZATION_MCP_TRANSPORT_PATH = "/sse"
+SUBSCRIPTION_MCP_MOUNT_PATH = "/mcp/subscription"
+SUBSCRIPTION_MCP_TRANSPORT_PATH = "/sse"
 
 
 @dataclass(frozen=True)
@@ -352,6 +354,65 @@ def ensure_prompt_optimization_tools_registered() -> None:
     _register_prompt_optimization_tools()
 
 
+# ============== Subscription MCP Server ==============
+# Provides subscription management tools (preview_subscription, create_subscription)
+# Available via Skill configuration
+# Uses decorator-based auto-registration from @mcp_tool decorated endpoints
+
+subscription_mcp_server = FastMCP(
+    "wegent-subscription-mcp",
+    stateless_http=True,
+    json_response=True,
+    streamable_http_path="/",
+    transport_security=_build_transport_security_settings(),
+)
+
+# Store for subscription MCP request context (used by McpAppSpec)
+_subscription_request_token_info: contextvars.ContextVar[Optional[TaskTokenInfo]] = (
+    contextvars.ContextVar("_subscription_request_token_info", default=None)
+)
+
+# Flag to track if tools have been registered
+_subscription_tools_registered = False
+
+
+def _get_subscription_token_info_from_context() -> Optional[TaskTokenInfo]:
+    """Get token info from subscription MCP request context."""
+    return _subscription_request_token_info.get()
+
+
+def _register_subscription_tools() -> None:
+    """Register subscription tools from @mcp_tool decorated endpoints.
+
+    This function imports the subscription tools module to trigger decorator
+    registration, then registers all collected tools to the subscription MCP server.
+    """
+    global _subscription_tools_registered
+    if _subscription_tools_registered:
+        return
+
+    # Import MCP tools module to trigger @mcp_tool decorator registration
+    from app.mcp_server.tool_registry import register_tools_to_server
+    from app.mcp_server.tools import (  # noqa: F401 side-effect: triggers @mcp_tool registration
+        subscription,
+    )
+
+    # Register all collected tools to the subscription server
+    count = register_tools_to_server(subscription_mcp_server, "subscription")
+    logger.info(f"[MCP:Subscription] Registered {count} tools from decorated endpoints")
+
+    _subscription_tools_registered = True
+
+
+def ensure_subscription_tools_registered() -> None:
+    """Ensure subscription MCP tools are registered.
+
+    This should be called during application startup to register
+    all @mcp_tool decorated endpoints as MCP tools.
+    """
+    _register_subscription_tools()
+
+
 # ============== Starlette App Factory ==============
 
 _SYSTEM_MCP_SPEC = McpAppSpec(
@@ -398,11 +459,23 @@ _PROMPT_OPTIMIZATION_MCP_SPEC = McpAppSpec(
     include_root_metadata=True,
 )
 
+_SUBSCRIPTION_MCP_SPEC = McpAppSpec(
+    name="subscription",
+    service_name="wegent-subscription-mcp",
+    mount_path=SUBSCRIPTION_MCP_MOUNT_PATH,
+    transport_path=SUBSCRIPTION_MCP_TRANSPORT_PATH,
+    server=subscription_mcp_server,
+    token_context=_subscription_request_token_info,
+    log_prefix="Subscription",
+    include_root_metadata=True,
+)
+
 MCP_APP_SPECS = (
     _SYSTEM_MCP_SPEC,
     _KNOWLEDGE_MCP_SPEC,
     _INTERACTIVE_FORM_MCP_SPEC,
     _PROMPT_OPTIMIZATION_MCP_SPEC,
+    _SUBSCRIPTION_MCP_SPEC,
 )
 
 
@@ -426,6 +499,8 @@ def _build_mcp_app(spec: McpAppSpec) -> Starlette:
         ensure_interactive_form_question_tools_registered()
     elif spec.name == "prompt_optimization":
         ensure_prompt_optimization_tools_registered()
+    elif spec.name == "subscription":
+        ensure_subscription_tools_registered()
 
     async def health_check(request: Request) -> JSONResponse:
         return JSONResponse({"status": "healthy", "service": spec.service_name})
@@ -460,6 +535,7 @@ def _build_mcp_app(spec: McpAppSpec) -> Starlette:
                     "knowledge",
                     "interactive_form_question",
                     "prompt_optimization",
+                    "subscription",
                 ):
                     mcp_ctx = MCPRequestContext(
                         token_info=token_info,
@@ -681,3 +757,21 @@ def _build_streamable_http_config(
             "timeout": timeout,
         }
     }
+
+
+def get_mcp_subscription_config(backend_url: str, auth_token: str) -> Dict[str, Any]:
+    """Get subscription MCP server configuration for Skill injection.
+
+    Args:
+        backend_url: Backend URL (e.g., "http://localhost:8000")
+        auth_token: Authentication token for MCP server (uses placeholder for Skill)
+
+    Returns:
+        MCP server configuration dictionary
+    """
+    return _build_streamable_http_config(
+        name="wegent-subscription",
+        url=f"{backend_url}{SUBSCRIPTION_MCP_MOUNT_PATH}{SUBSCRIPTION_MCP_TRANSPORT_PATH}",
+        auth_token=auth_token,
+        timeout=60,
+    )

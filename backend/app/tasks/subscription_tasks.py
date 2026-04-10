@@ -747,6 +747,28 @@ def check_due_subscriptions(self):
                     if not internal.get("enabled", True):
                         continue
 
+                    # Skip expired subscriptions
+                    expires_at_str = internal.get("expires_at")
+                    if expires_at_str:
+                        try:
+                            from app.services.subscription.helpers import (
+                                is_subscription_expired,
+                            )
+
+                            expires_at = datetime.fromisoformat(expires_at_str)
+                            if is_subscription_expired(expires_at, now_utc):
+                                # Auto-disable expired subscription
+                                internal["enabled"] = False
+                                sub.json["_internal"] = internal
+                                flag_modified(sub, "json")
+                                db.commit()
+                                logger.info(
+                                    f"[subscription_tasks] Subscription {sub.id} has expired and been disabled"
+                                )
+                                continue
+                        except (ValueError, TypeError):
+                            pass
+
                     trigger_type = internal.get("trigger_type")
                     if trigger_type not in [
                         SubscriptionTriggerType.CRON.value,
@@ -1609,6 +1631,30 @@ def check_due_subscriptions_sync():
                 internal = sub.json.get("_internal", {})
                 if not internal.get("enabled", True):
                     continue
+
+                # Skip expired subscriptions
+                expires_at_str = internal.get("expires_at")
+                if expires_at_str:
+                    try:
+                        from sqlalchemy.orm.attributes import flag_modified
+
+                        from app.services.subscription.helpers import (
+                            is_subscription_expired,
+                        )
+
+                        expires_at = datetime.fromisoformat(expires_at_str)
+                        if is_subscription_expired(expires_at, now_utc):
+                            # Auto-disable expired subscription
+                            internal["enabled"] = False
+                            sub.json["_internal"] = internal
+                            flag_modified(sub, "json")
+                            db.commit()
+                            logger.info(
+                                f"[subscription_tasks] Subscription {sub.id} has expired and been disabled (sync)"
+                            )
+                            continue
+                    except (ValueError, TypeError):
+                        pass
 
                 trigger_type = internal.get("trigger_type")
                 if trigger_type not in [

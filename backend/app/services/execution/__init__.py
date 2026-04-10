@@ -14,6 +14,8 @@ This module provides unified task dispatch functionality including:
 - ExecutorRecoveryService: Recovers executor Pods after deletion
 """
 
+from shared.models import ExecutionRequest
+
 from .dispatcher import ExecutionDispatcher, execution_dispatcher
 from .emitters import (
     BaseResultEmitter,
@@ -35,24 +37,13 @@ from .router import CommunicationMode, ExecutionRouter, ExecutionTarget
 from .schedule_helper import schedule_dispatch
 
 
-def get_sandbox_manager():
-    """Get the SandboxManager instance for creating sandboxes.
-
-    Returns:
-        SandboxManager instance from executor_manager service
-    """
-    import httpx
-
-    from app.core.config import settings
-
-    # For recovery, we need to call executor_manager's sandbox API
-    # This is a thin wrapper that will be replaced with direct call
-    # when executor_manager is properly integrated
-    return _SandboxManagerClient()
+def get_executor_runtime_client():
+    """Get the executor runtime client for runtime preparation APIs."""
+    return _ExecutorRuntimeClient()
 
 
-class _SandboxManagerClient:
-    """Thin client for calling executor_manager sandbox API."""
+class _ExecutorRuntimeClient:
+    """Thin client for calling executor_manager runtime APIs."""
 
     async def create_sandbox(
         self,
@@ -102,6 +93,37 @@ class _SandboxManagerClient:
                         self.sandbox_id = data.get("sandbox_id")
                         self.container_name = data.get("container_name")
                         self.base_url = data.get("base_url")
+                        self.executor_namespace = data.get("executor_namespace")
+                        self.metadata = data.get("metadata", {})
+
+                return SimpleSandbox(data), None
+        except Exception as e:
+            return None, str(e)
+
+    async def prepare_executor(self, request: ExecutionRequest):
+        """Prepare a normal executor runtime without dispatching the task."""
+        import httpx
+
+        from app.core.config import settings
+
+        base_url = settings.EXECUTOR_MANAGER_URL.rstrip("/")
+        url = f"{base_url}/executor-manager/executors/prepare"
+
+        try:
+            async with httpx.AsyncClient(timeout=180.0) as client:
+                response = await client.post(
+                    url,
+                    json=request.to_dict(),
+                    headers={"Content-Type": "application/json"},
+                )
+                response.raise_for_status()
+                data = response.json()
+
+                class SimpleSandbox:
+                    def __init__(self, data):
+                        self.container_name = data.get("executor_name")
+                        self.executor_namespace = data.get("executor_namespace")
+                        self.metadata = data
 
                 return SimpleSandbox(data), None
         except Exception as e:
@@ -123,7 +145,7 @@ __all__ = [
     # Recovery Service
     "ExecutorRecoveryService",
     "recovery_service",
-    "get_sandbox_manager",
+    "get_executor_runtime_client",
     # Emitters - Protocol
     "ResultEmitter",
     "StreamableEmitter",

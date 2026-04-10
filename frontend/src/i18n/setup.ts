@@ -34,6 +34,7 @@ async function loadTranslations() {
     'inbox',
     'evaluation',
     'promptOptimization',
+    'subscription',
   ]
 
   for (const lng of supportedLanguages) {
@@ -91,6 +92,7 @@ export async function initI18n() {
       'inbox',
       'evaluation',
       'promptOptimization',
+      'subscription',
     ],
   })
 

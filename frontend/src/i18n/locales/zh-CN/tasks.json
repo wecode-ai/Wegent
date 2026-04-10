@@ -200,5 +200,25 @@
     "error_desc": "无法更新执行环境保留设置。",
     "tooltip_preserved": "执行环境已保留，不会被清理",
     "tooltip_not_preserved": "点击保留执行环境，防止被清理"
+  },
+  "preview": {
+    "title": "订阅任务预览",
+    "task_name": "任务名称",
+    "trigger": "触发方式",
+    "prompt": "执行提示",
+    "preserve_history": "保留历史",
+    "retry": "重试次数",
+    "timeout": "超时时间",
+    "cancel": "取消",
+    "confirm": "确认创建",
+    "create_success": "订阅任务创建成功",
+    "create_error": "创建订阅任务失败",
+    "cancelled": "已取消创建",
+    "confirmed_title": "创建成功",
+    "confirmed_desc": "订阅任务已成功创建，将按照设定的时间自动执行。",
+    "cancelled_title": "已取消",
+    "cancelled_desc": "订阅任务创建已取消。",
+    "expired_title": "预览已过期",
+    "expired_desc": "该预览已过期，请重新生成预览。"
   }
 }

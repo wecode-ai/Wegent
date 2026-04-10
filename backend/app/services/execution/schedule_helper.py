@@ -183,6 +183,19 @@ async def _dispatch_task_async(task_id: int) -> None:
 
         for subtask in subtasks:
             try:
+                # Extract original user text from stored prompt to prevent
+                # double-wrapping of already-formatted content arrays.
+                message = extract_display_prompt(subtask.prompt) or ""
+
+                # Build ExecutionRequest
+                request = builder.build(
+                    subtask=subtask,
+                    task=task,
+                    user=user,
+                    team=team,
+                    message=message,
+                )
+
                 # Check if executor needs recovery (deleted after previous completion)
                 if subtask.executor_deleted_at:
                     logger.info(
@@ -193,7 +206,7 @@ async def _dispatch_task_async(task_id: int) -> None:
                         db=db,
                         subtask=subtask,
                         task=task,
-                        user=user,
+                        request=request,
                     )
                     if not recovery_success:
                         logger.error(
@@ -209,19 +222,6 @@ async def _dispatch_task_async(task_id: int) -> None:
                 # Update subtask status to RUNNING
                 subtask.status = SubtaskStatus.RUNNING
                 db.commit()
-
-                # Extract original user text from stored prompt to prevent
-                # double-wrapping of already-formatted content arrays.
-                message = extract_display_prompt(subtask.prompt) or ""
-
-                # Build ExecutionRequest
-                request = builder.build(
-                    subtask=subtask,
-                    task=task,
-                    user=user,
-                    team=team,
-                    message=message,
-                )
 
                 # Dispatch using HTTP+Callback mode
                 await execution_dispatcher.dispatch(request)
@@ -254,7 +254,7 @@ async def _recover_executor(
     db: Session,
     subtask: "Subtask",
     task: "TaskResource",
-    user: "User",
+    request,
 ) -> bool:
     """Recover executor Pod for a subtask after it was deleted.
 
@@ -266,7 +266,7 @@ async def _recover_executor(
         db: Database session
         subtask: Subtask with deleted executor
         task: Parent task
-        user: User
+        request: ExecutionRequest with the normal executor config
 
     Returns:
         True if recovery successful, False otherwise
@@ -278,8 +278,7 @@ async def _recover_executor(
             db=db,
             subtask=subtask,
             task=task,
-            user_id=user.id,
-            user_name=user.name or user.email or str(user.id),
+            request=request,
         )
         return success
     except RuntimeError:

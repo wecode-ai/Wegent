@@ -10,6 +10,7 @@ import io
 import logging
 import zipfile
 from typing import Any, Dict, List, Optional
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
@@ -1302,12 +1303,15 @@ def download_skill(
         raise HTTPException(status_code=404, detail="Skill binary not found")
 
     # Return as streaming response
+    # RFC 5987 encoding for non-ASCII filenames
+    filename = f"{skill.metadata.name}.zip"
+    encoded_filename = quote(filename, safe="")
+    content_disposition = f"attachment; filename*=UTF-8''{encoded_filename}"
+
     return StreamingResponse(
         io.BytesIO(binary_data),
         media_type="application/zip",
-        headers={
-            "Content-Disposition": f"attachment; filename={skill.metadata.name}.zip"
-        },
+        headers={"Content-Disposition": content_disposition},
     )
 
 

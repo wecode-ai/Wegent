@@ -584,11 +584,6 @@ const MessageBubble = memo(
       const rawMarkdownResult = fencedMatch ? fencedMatch[1] : trimmed
       let normalizedResult = rawMarkdownResult
 
-      // Pre-process markdown to handle edge cases where ** is followed by punctuation
-      // Markdown parsers don't recognize **'text'** or **text**。 as bold
-      // Convert these patterns to HTML <strong> tags for proper rendering
-      normalizedResult = normalizedResult.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-
       // Process [cite: X, Y, Z] patterns to clickable markdown links
       // Only process when annotations are available from Gemini Deep Research
       const annotations = msg.result?.annotations

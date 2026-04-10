@@ -112,6 +112,7 @@ class SandboxRepository(metaclass=SingletonMeta):
                 "shell_type": sandbox.shell_type,
                 "user_id": sandbox.user_id,
                 "user_name": sandbox.user_name,
+                "executor_namespace": sandbox.executor_namespace,
                 "metadata": sandbox.metadata,
             }
 
@@ -177,6 +178,7 @@ class SandboxRepository(metaclass=SingletonMeta):
                 user_id=sandbox_info["user_id"],
                 user_name=sandbox_info["user_name"],
                 base_url=base_url,
+                executor_namespace=sandbox_info.get("executor_namespace"),
                 created_at=sandbox_info["created_at"],
                 started_at=sandbox_info.get("started_at"),
                 last_activity_at=sandbox_info.get(
@@ -240,6 +242,7 @@ class SandboxRepository(metaclass=SingletonMeta):
                 user_id=sandbox_info["user_id"],
                 user_name=sandbox_info["user_name"],
                 base_url=base_url,
+                executor_namespace=sandbox_info.get("executor_namespace"),
                 created_at=sandbox_info["created_at"],
                 started_at=sandbox_info.get("started_at"),
                 last_activity_at=sandbox_info.get(

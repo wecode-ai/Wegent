@@ -735,8 +735,9 @@ class SessionManager:
     ) -> None:
         """Update tool block status, output, and/or input.
 
-        Note: This requires reading and updating the block, which is O(n).
-        However, tool blocks are relatively rare compared to text chunks.
+        This is a convenience wrapper around add_block() for tool blocks.
+        It retrieves the existing block, updates the specified fields, and
+        calls add_block() with upsert semantics.
 
         Args:
             subtask_id: Subtask ID
@@ -746,40 +747,106 @@ class SessionManager:
             tool_input: Optional tool input/arguments to update (used by interactive_form_question MCP tool)
         """
         try:
-            blocks_key = self._get_blocks_key(subtask_id)
-            redis_client = await self._cache._get_client()
-            try:
-                # Get all blocks
-                blocks_raw = await redis_client.lrange(blocks_key, 0, -1)
-                if not blocks_raw:
-                    return
+            # Get existing blocks to find the tool block
+            blocks = await self.get_blocks(subtask_id)
+            existing_block = None
+            for block in blocks:
+                if (
+                    block.get("type") == "tool"
+                    and block.get("tool_use_id") == tool_use_id
+                ):
+                    existing_block = block
+                    break
 
-                # Find and update the tool block
-                for i, block_json in enumerate(blocks_raw):
-                    block = json.loads(block_json)
-                    if (
-                        block.get("type") == "tool"
-                        and block.get("tool_use_id") == tool_use_id
-                    ):
-                        if status is not None:
-                            block["status"] = status
-                        if tool_output is not None:
-                            block["tool_output"] = tool_output
-                        if tool_input is not None:
-                            block["tool_input"] = tool_input
-                        # Update the block in place
-                        await redis_client.lset(blocks_key, i, json.dumps(block))
-                        logger.debug(
-                            f"[SessionManager] Updated tool block for subtask {subtask_id}: "
-                            f"id={tool_use_id}, status={status}, "
-                            f"has_tool_input={tool_input is not None}"
-                        )
-                        break
-            finally:
-                await redis_client.aclose()
+            if existing_block:
+                # Update existing block
+                if status is not None:
+                    existing_block["status"] = status
+                if tool_output is not None:
+                    existing_block["tool_output"] = tool_output
+                if tool_input is not None:
+                    existing_block["tool_input"] = tool_input
+                await self.add_block(subtask_id, existing_block)
+                logger.debug(
+                    f"[SessionManager] Updated tool block for subtask {subtask_id}: "
+                    f"id={tool_use_id}, status={status}, "
+                    f"has_tool_input={tool_input is not None}"
+                )
+            else:
+                logger.warning(
+                    f"[SessionManager] Tool block not found for subtask {subtask_id}: "
+                    f"tool_use_id={tool_use_id}"
+                )
         except Exception as e:
             logger.error(
                 f"[SessionManager] Failed to update tool block status for subtask {subtask_id}: {e}"
+            )
+
+    async def add_block(self, subtask_id: int, block: Dict[str, Any]) -> None:
+        """Add or update a block for the subtask.
+
+        This is the unified method for block management (upsert semantics):
+        - If block with same id exists -> update it
+        - If block doesn't exist -> append it
+        - If no id provided -> generate one and append
+
+        Used for custom block types like subscription_preview, video, image,
+        and also as the internal implementation for tool block updates.
+
+        Args:
+            subtask_id: Subtask ID
+            block: Block data dict with at least 'type', optionally 'id'
+        """
+        try:
+            # Finalize current text block before adding new block (to maintain order)
+            await self._finalize_current_text_block(subtask_id)
+
+            # Ensure block has id
+            block_id = block.get("id")
+            if not block_id:
+                block_id = f"block-{int(asyncio.get_event_loop().time() * 1000)}"
+                block["id"] = block_id
+
+            # Ensure block has timestamp
+            if "timestamp" not in block:
+                block["timestamp"] = int(asyncio.get_event_loop().time() * 1000)
+
+            blocks_key = self._get_blocks_key(subtask_id)
+            redis_client = await self._cache._get_client()
+            try:
+                # Check if block with this id already exists (upsert logic)
+                blocks_raw = await redis_client.lrange(blocks_key, 0, -1)
+                existing_index = None
+                for i, block_json in enumerate(blocks_raw):
+                    existing_block = json.loads(block_json)
+                    if existing_block.get("id") == block_id:
+                        existing_index = i
+                        break
+
+                if existing_index is not None:
+                    # Update existing block
+                    await redis_client.lset(
+                        blocks_key, existing_index, json.dumps(block)
+                    )
+                    logger.debug(
+                        f"[SessionManager] Updated block for subtask {subtask_id}: "
+                        f"id={block_id}, type={block.get('type')}"
+                    )
+                else:
+                    # Append new block
+                    await redis_client.rpush(blocks_key, json.dumps(block))
+                    logger.info(
+                        f"[SessionManager] Added block for subtask {subtask_id}: "
+                        f"id={block_id}, type={block.get('type')}"
+                    )
+
+                await redis_client.expire(blocks_key, STREAMING_TTL)
+            finally:
+                await redis_client.aclose()
+
+        except Exception as e:
+            logger.error(
+                f"[SessionManager] Failed to add block for subtask {subtask_id}: {e}"
             )
 
     async def add_text_content(self, subtask_id: int, content: str) -> None:

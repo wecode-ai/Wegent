@@ -46,6 +46,7 @@ from app.schemas.task import (
     TaskUpdate,
 )
 from app.services import prompt_draft_service
+from app.services.adapters.executor_job import job_service
 from app.services.adapters.task_kinds import task_kinds_service
 from app.services.remote_workspace_service import remote_workspace_service
 from app.services.shared_task import shared_task_service
@@ -839,4 +840,23 @@ def cancel_preserve_executor(
     """
     return task_kinds_service.set_preserve_executor(
         db=db, task_id=task_id, user_id=current_user.id, preserve=False
+    )
+
+
+@router.post("/{task_id}/cleanup-executor", response_model=dict)
+def cleanup_task_executor(
+    task_id: int = Depends(with_task_telemetry),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Clean up the executor for a finished task.
+
+    This endpoint reuses the same cleanup rules as the scheduled executor cleanup
+    job and only affects the specified task.
+    """
+    return job_service.cleanup_task_executor(
+        db=db,
+        task_id=task_id,
+        user_id=current_user.id,
     )
