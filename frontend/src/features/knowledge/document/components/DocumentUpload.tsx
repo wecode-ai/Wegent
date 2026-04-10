@@ -963,16 +963,33 @@ export function DocumentUpload({
                         )}
                       </div>
                       <div className="flex items-center gap-1">
-                        {item.status === 'error' && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-7 w-7"
-                            onClick={() => handleRetryFile(item.id)}
-                            disabled={state.isUploading}
-                          >
-                            <RefreshCw className="w-3.5 h-3.5" />
-                          </Button>
+                        {/* DEBUG: Always show async submit button for testing */}
+                        {(item.status === 'error' || item.status === 'success') && (
+                          <>
+                            {item.status === 'error' && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7"
+                                onClick={() => handleRetryFile(item.id)}
+                                disabled={state.isUploading}
+                                title={t('document.upload.retry')}
+                              >
+                                <RefreshCw className="w-3.5 h-3.5" />
+                              </Button>
+                            )}
+                            {/* DEBUG: Always show async submit button for testing */}
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-7 px-2 text-xs"
+                              onClick={() => retryFileAsync(item.id)}
+                              disabled={state.isUploading}
+                              title={t('document.upload.asyncSubmitHint')}
+                            >
+                              {t('document.upload.asyncSubmit')}
+                            </Button>
+                          </>
                         )}
                         {!state.isUploading && item.status !== 'uploading' && (
                           <Button
