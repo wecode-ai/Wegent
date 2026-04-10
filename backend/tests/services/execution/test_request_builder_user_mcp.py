@@ -486,3 +486,77 @@ class TestUserScopedMcpInjection:
 
         assert shell_info_one == {"shell_type": "ClaudeCode", "base_image": "img-a"}
         assert shell_info_two == {"shell_type": "Agno", "base_image": "img-b"}
+
+
+class TestGetUserProviderMcpServers:
+    """Tests for _get_user_provider_mcp_servers subscription injection."""
+
+    def test_returns_enabled_dingtalk_docs(self, test_db):
+        builder = TaskRequestBuilder(test_db)
+        preferences = user_mcp_service.dump_preferences(
+            user_mcp_service.set_provider_service_config(
+                None,
+                provider_id="dingtalk",
+                service_id="docs",
+                enabled=True,
+                url="https://mcp.dingtalk.com/docs?token=abc",
+            )
+        )
+        user = SimpleNamespace(preferences=preferences)
+
+        result = builder._get_user_provider_mcp_servers(user)
+
+        assert len(result) == 1
+        assert result[0]["name"] == "dingtalk_docs"
+        assert result[0]["url"] == "https://mcp.dingtalk.com/docs?token=abc"
+        assert result[0]["type"] == "streamable-http"
+
+    def test_returns_empty_when_no_preferences(self, test_db):
+        builder = TaskRequestBuilder(test_db)
+        user = SimpleNamespace(preferences=None)
+
+        result = builder._get_user_provider_mcp_servers(user)
+
+        assert result == []
+
+    def test_skips_disabled_service(self, test_db):
+        builder = TaskRequestBuilder(test_db)
+        preferences = user_mcp_service.dump_preferences(
+            user_mcp_service.set_provider_service_config(
+                None,
+                provider_id="dingtalk",
+                service_id="docs",
+                enabled=False,
+                url="https://mcp.dingtalk.com/docs?token=abc",
+            )
+        )
+        user = SimpleNamespace(preferences=preferences)
+
+        result = builder._get_user_provider_mcp_servers(user)
+
+        assert result == []
+
+    def test_returns_multiple_services(self, test_db):
+        builder = TaskRequestBuilder(test_db)
+        prefs = user_mcp_service.set_provider_service_config(
+            None,
+            provider_id="dingtalk",
+            service_id="docs",
+            enabled=True,
+            url="https://mcp.dingtalk.com/docs",
+        )
+        prefs = user_mcp_service.set_provider_service_config(
+            user_mcp_service.dump_preferences(prefs),
+            provider_id="dingtalk",
+            service_id="table",
+            enabled=True,
+            url="https://mcp.dingtalk.com/table",
+        )
+        preferences = user_mcp_service.dump_preferences(prefs)
+        user = SimpleNamespace(preferences=preferences)
+
+        result = builder._get_user_provider_mcp_servers(user)
+
+        names = {s["name"] for s in result}
+        assert "dingtalk_docs" in names
+        assert "dingtalk_table" in names

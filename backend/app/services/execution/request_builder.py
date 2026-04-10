@@ -1490,6 +1490,7 @@ Response template:
         1. System-level MCP servers (from CHAT_MCP_SERVERS setting)
         2. Bot-level MCP servers (from Ghost CRD mcpServers config)
         3. Auto-injected System MCP (for subscription tasks)
+        4. User-configured provider MCPs (for subscription tasks)
 
         Bot-level servers take precedence over system-level servers
         when there are name conflicts.
@@ -1503,6 +1504,7 @@ Response template:
         Args:
             bot: Bot Kind object
             team: Team Kind object
+            user: User object (for fetching MCP preferences)
             is_subscription: Whether this is a subscription task
             auth_token: Authentication token for MCP server
 
@@ -1519,6 +1521,19 @@ Response template:
                 system_mcp_servers.extend(system_mcp_config)
                 logger.info(
                     "[TaskRequestBuilder] Auto-injected System MCP for subscription task"
+                )
+
+            # Auto-inject user-configured provider MCPs for subscription tasks
+            # (e.g., DingTalk docs, DingTalk table) so the agent can access
+            # external tools even when the provider skill is not explicitly loaded.
+            user_provider_servers = self._get_user_provider_mcp_servers(user)
+            if user_provider_servers:
+                system_mcp_servers.extend(user_provider_servers)
+                logger.info(
+                    "[TaskRequestBuilder] Auto-injected %d user provider MCP(s) "
+                    "for subscription task: %s",
+                    len(user_provider_servers),
+                    [s["name"] for s in user_provider_servers],
                 )
 
         # Load bot-level MCP servers from Ghost CRD
@@ -1967,6 +1982,52 @@ Response template:
             "[TaskRequestBuilder] Generated System MCP config: %s",
             [s["name"] for s in result],
         )
+
+        return result
+
+    @staticmethod
+    def _get_user_provider_mcp_servers(user: User) -> list[dict]:
+        """Get user-configured provider MCP servers for subscription tasks.
+
+        Extracts enabled MCP provider services (e.g., DingTalk docs) from the
+        user's integration preferences and returns them as MCP server configs.
+        This ensures subscription tasks can access external MCP tools even when
+        the provider skill is not explicitly loaded.
+
+        Args:
+            user: User object with preferences
+
+        Returns:
+            List of MCP server configs in list format:
+            [{"name": "dingtalk_docs", "url": "...", "type": "streamable-http"}]
+        """
+        from app.services.mcp_provider_registry import (
+            get_mcp_provider_service,
+            list_mcp_providers,
+        )
+
+        preferences = getattr(user, "preferences", None)
+        if not preferences:
+            return []
+
+        result: list[dict] = []
+        for provider in list_mcp_providers():
+            provider_id = provider["provider_id"]
+            for service_id, service_def in provider["services"].items():
+                configured = user_mcp_service.get_enabled_mcp_server(
+                    preferences,
+                    provider_id,
+                    service_id,
+                )
+                if configured:
+                    result.append(configured)
+                    logger.info(
+                        "[TaskRequestBuilder] Found user provider MCP '%s' "
+                        "(provider=%s, service=%s)",
+                        configured["name"],
+                        provider_id,
+                        service_id,
+                    )
 
         return result
 

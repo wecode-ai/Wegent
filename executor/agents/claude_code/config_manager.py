@@ -264,10 +264,17 @@ def _extract_user_provider_mcps(
     """
     td = getattr(task_data, "task_data", None)
     if not isinstance(td, dict):
+        logger.debug(
+            "[MCP] No task_data dict on ExecutionRequest, "
+            "skipping user provider MCP extraction"
+        )
         return {}
 
     user_mcps = td.get("user_mcps")
     if not isinstance(user_mcps, dict):
+        logger.debug(
+            "[MCP] No user_mcps in task_data, " "skipping user provider MCP extraction"
+        )
         return {}
 
     result: Dict[str, Any] = {}
