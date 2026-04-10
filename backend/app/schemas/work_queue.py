@@ -243,8 +243,6 @@ class QueueMessageResponse(BaseModel):
     processResult: Dict[str, Any] = Field(default_factory=dict)
     processTaskId: int = 0
     processSubscriptionId: Optional[int] = None
-    processError: Optional[str] = None
-    processingStartedAt: Optional[datetime] = None
     retryCount: int = 0
     createdAt: datetime
     updatedAt: datetime

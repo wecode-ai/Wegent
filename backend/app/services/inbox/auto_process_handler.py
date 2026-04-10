@@ -2,7 +2,6 @@
 
 import json
 import logging
-from datetime import datetime, timezone
 from typing import List, Optional
 
 from sqlalchemy.orm import Session
@@ -137,7 +136,6 @@ class InboxAutoProcessHandler:
                 # Update message status to PROCESSING
                 message.status = QueueMessageStatus.PROCESSING
                 message.process_subscription_id = subscription.id
-                message.processing_started_at = datetime.now(timezone.utc)
                 db.commit()
 
                 # Build inbox context for prompt template
@@ -155,7 +153,9 @@ class InboxAutoProcessHandler:
                         exc_info=True,
                     )
                     message.status = QueueMessageStatus.FAILED
-                    message.process_error = f"Dispatch failed: {dispatch_exc}"
+                    message.process_result = {
+                        "error": f"Dispatch failed: {dispatch_exc}"
+                    }
                     db.commit()
                     return
 
@@ -180,7 +180,7 @@ class InboxAutoProcessHandler:
                     )
                     if message and message.status == QueueMessageStatus.PROCESSING:
                         message.status = QueueMessageStatus.FAILED
-                        message.process_error = f"Processing failed: {e}"
+                        message.process_result = {"error": f"Processing failed: {e}"}
                         db.commit()
             except Exception:
                 logger.error(
@@ -254,7 +254,7 @@ class InboxAutoProcessHandler:
     ) -> None:
         """Mark a message as failed with error details."""
         message.status = QueueMessageStatus.FAILED
-        message.process_error = error
+        message.process_result = {"error": error}
         db.commit()
         logger.warning(
             f"[InboxAutoProcess] Message {message.id} marked as failed: {error}"

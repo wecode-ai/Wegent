@@ -79,15 +79,6 @@ class QueueMessage(Base):
         default=None,
         comment="Subscription Kind.id used for processing",
     )
-    process_error = Column(
-        Text, nullable=True, default=None, comment="Error message on processing failure"
-    )
-    processing_started_at = Column(
-        DateTime,
-        nullable=True,
-        default=None,
-        comment="Processing start time",
-    )
     retry_count = Column(
         Integer, nullable=False, default=0, comment="Retry attempt count"
     )

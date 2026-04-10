@@ -912,8 +912,6 @@ class QueueMessageService:
             processResult=db_message.process_result,
             processTaskId=db_message.process_task_id,
             processSubscriptionId=getattr(db_message, "process_subscription_id", None),
-            processError=getattr(db_message, "process_error", None),
-            processingStartedAt=getattr(db_message, "processing_started_at", None),
             retryCount=getattr(db_message, "retry_count", 0),
             createdAt=db_message.created_at,
             updatedAt=db_message.updated_at,
@@ -1430,8 +1428,6 @@ class QueueMessageService:
 
             # Reset message for re-processing
             message.status = QueueMessageStatus.UNREAD
-            message.process_error = None
-            message.processing_started_at = None
             message.process_subscription_id = None
             message.process_result = {}
             message.processed_at = None

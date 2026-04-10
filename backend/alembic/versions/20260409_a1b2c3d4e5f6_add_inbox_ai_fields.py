@@ -67,28 +67,6 @@ def upgrade() -> None:
             ),
         )
 
-    if "process_error" not in qm_columns:
-        op.add_column(
-            "queue_messages",
-            sa.Column(
-                "process_error",
-                sa.Text(),
-                nullable=True,
-                comment="Error message on processing failure",
-            ),
-        )
-
-    if "processing_started_at" not in qm_columns:
-        op.add_column(
-            "queue_messages",
-            sa.Column(
-                "processing_started_at",
-                sa.DateTime(),
-                nullable=True,
-                comment="Processing start time",
-            ),
-        )
-
     if "retry_count" not in qm_columns:
         op.add_column(
             "queue_messages",
@@ -175,8 +153,6 @@ def downgrade() -> None:
     for col in [
         "content_attachment_ids",
         "retry_count",
-        "processing_started_at",
-        "process_error",
         "process_subscription_id",
     ]:
         if col in qm_columns:

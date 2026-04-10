@@ -547,10 +547,10 @@ export function MessageList({
                     )}
                     <p className="text-sm text-text-secondary mt-1 line-clamp-2">{preview}</p>
                     {/* Failed message error display */}
-                    {message.status === 'failed' && message.processError && (
+                    {message.status === 'failed' && message.processResult?.error && (
                       <div className="flex items-center gap-1 mt-1">
                         <Badge variant="error" className="text-xs">
-                          {t('messages.process_error')}: {message.processError}
+                          {t('messages.process_error')}: {message.processResult.error as string}
                         </Badge>
                       </div>
                     )}

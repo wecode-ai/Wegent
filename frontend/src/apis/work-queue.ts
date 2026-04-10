@@ -6,7 +6,13 @@ import { apiClient } from './client'
 
 // Enums
 export type QueueVisibility = 'private' | 'public' | 'group_visible' | 'invite_only'
-export type QueueMessageStatus = 'unread' | 'read' | 'processing' | 'processed' | 'failed' | 'archived'
+export type QueueMessageStatus =
+  | 'unread'
+  | 'read'
+  | 'processing'
+  | 'processed'
+  | 'failed'
+  | 'archived'
 export type QueueMessagePriority = 'low' | 'normal' | 'high'
 export type TriggerMode = 'immediate' | 'manual' | 'scheduled' | 'condition_based'
 export type ConditionType = 'priority_high' | 'specific_sender'
@@ -121,8 +127,6 @@ export interface QueueMessage {
   processResult?: Record<string, unknown>
   processTaskId?: number
   processSubscriptionId?: number | null
-  processError?: string | null
-  processingStartedAt?: string | null
   retryCount?: number
   createdAt: string
   updatedAt: string

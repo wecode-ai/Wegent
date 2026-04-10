@@ -56,7 +56,7 @@ def write_execution_result_to_message(
 
     elif status == "FAILED":
         message.status = QueueMessageStatus.FAILED
-        message.process_error = error_message or "Execution failed"
+        message.process_result = {"error": error_message or "Execution failed"}
         if task_id:
             message.process_task_id = task_id
 
@@ -67,9 +67,8 @@ def write_execution_result_to_message(
 
     elif status == "CANCELLED":
         message.status = QueueMessageStatus.UNREAD
-        message.process_error = "Processing was cancelled"
+        message.process_result = {"error": "Processing was cancelled"}
         message.process_subscription_id = None
-        message.processing_started_at = None
 
         logger.info(
             f"[InboxWriteback] Message {inbox_message_id} reset to UNREAD "
