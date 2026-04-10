@@ -148,7 +148,9 @@ export function UserSearchSelect<T extends SearchUser = SearchUser>({
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
             onFocus={() => {
-              if (searchResults.length > 0) {
+              // Show dropdown if there are search results or if user has typed something
+              // (to show "no results" or "loading" state)
+              if (searchResults.length > 0 || searchQuery.trim()) {
                 setShowDropdown(true)
               }
             }}
