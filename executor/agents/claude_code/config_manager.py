@@ -18,7 +18,6 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
 from executor.config.config import get_wegent_mcp_url
-
 from shared.logger import setup_logger
 from shared.models.execution import ExecutionRequest
 from shared.utils.crypto import decrypt_sensitive_data, is_data_encrypted
@@ -231,6 +230,78 @@ def create_claude_model_config(
     return final_claude_code_config
 
 
+def _extract_user_provider_mcps(
+    task_data: ExecutionRequest,
+) -> Dict[str, Any]:
+    """Extract user-configured MCP provider servers from task_data.
+
+    When users configure external MCP providers (e.g., DingTalk docs) in
+    Settings > Integrations, the backend stores the decrypted URLs in
+    ``task_data.task_data.user_mcps``.  For subscription tasks we need to
+    inject these MCP servers so the agent can call external tools like
+    DingTalk ``download_file`` / ``get_document_content``.
+
+    The ``user_mcps`` structure (produced by
+    ``UserMCPService.get_enabled_decrypted_mcp_preferences``) looks like::
+
+        {
+            "<provider_id>": {
+                "services": {
+                    "<service_id>": {
+                        "enabled": true,
+                        "credentials": {"url": "https://..."}
+                    }
+                }
+            }
+        }
+
+    We map each enabled service to a dict-format MCP server entry using the
+    ``server_name`` from ``MCP_PROVIDER_REGISTRY``.
+
+    Returns:
+        Dict of ``{server_name: {"type": "streamable-http", "url": ...}}``.
+        Empty dict if no user provider MCPs are configured.
+    """
+    td = getattr(task_data, "task_data", None)
+    if not isinstance(td, dict):
+        return {}
+
+    user_mcps = td.get("user_mcps")
+    if not isinstance(user_mcps, dict):
+        return {}
+
+    result: Dict[str, Any] = {}
+    for provider_id, provider in user_mcps.items():
+        services = provider.get("services") if isinstance(provider, dict) else None
+        if not isinstance(services, dict):
+            continue
+
+        for service_id, service in services.items():
+            if not isinstance(service, dict) or not service.get("enabled"):
+                continue
+
+            credentials = service.get("credentials")
+            url = credentials.get("url") if isinstance(credentials, dict) else None
+            if not isinstance(url, str) or not url.strip():
+                continue
+
+            # Server name follows the registry convention: {provider_id}_{service_id}
+            # e.g., "dingtalk_docs", "dingtalk_table", "dingtalk_ai_table"
+            server_name = f"{provider_id}_{service_id}"
+            result[server_name] = {
+                "type": "streamable-http",
+                "url": url.strip(),
+            }
+            logger.info(
+                "[MCP] Extracted user provider MCP '%s' (provider=%s, service=%s)",
+                server_name,
+                provider_id,
+                service_id,
+            )
+
+    return result
+
+
 def _convert_mcp_servers_list_to_dict(mcp_servers: Any) -> Dict[str, Any]:
     """Convert MCP servers from list format to dict format.
 
@@ -414,6 +485,19 @@ def extract_claude_options(task_data: ExecutionRequest) -> Dict[str, Any]:
                 if isinstance(mcp_servers, dict):
                     mcp_servers.update(knowledge_mcp)
                 logger.info("Added wegent-knowledge MCP server for subscription task")
+
+            # Inject user-configured provider MCPs (e.g., DingTalk docs)
+            # so subscription tasks can call external MCP tools directly
+            user_provider_mcps = _extract_user_provider_mcps(task_data)
+            if user_provider_mcps:
+                mcp_servers = bot_config.get("mcp_servers", {})
+                if isinstance(mcp_servers, dict):
+                    mcp_servers.update(user_provider_mcps)
+                    bot_config["mcp_servers"] = mcp_servers
+                logger.info(
+                    "Added user-configured provider MCP servers for subscription task: %s",
+                    list(user_provider_mcps.keys()),
+                )
 
         for key in valid_options:
             if key in bot_config and bot_config[key] is not None:

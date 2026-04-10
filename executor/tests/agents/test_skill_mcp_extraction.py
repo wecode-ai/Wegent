@@ -12,6 +12,7 @@ bot_config into Claude Code SDK options.
 """
 
 from executor.agents.claude_code.config_manager import (
+    _extract_user_provider_mcps,
     extract_claude_options,
 )
 from shared.models.execution import ExecutionRequest
@@ -72,3 +73,136 @@ class TestExtractClaudeOptionsWithMcp:
         task_data = ExecutionRequest(task_id=1, bot=[])
         options = extract_claude_options(task_data)
         assert "mcp_servers" not in options
+
+
+class TestExtractUserProviderMcps:
+    """Tests for _extract_user_provider_mcps."""
+
+    def test_extracts_dingtalk_docs(self):
+        """Extracts DingTalk docs MCP from user_mcps."""
+        task_data = ExecutionRequest(
+            task_id=1,
+            task_data={
+                "user_mcps": {
+                    "dingtalk": {
+                        "services": {
+                            "docs": {
+                                "enabled": True,
+                                "credentials": {
+                                    "url": "https://mcp.dingtalk.com/v1/docs?token=abc"
+                                },
+                            }
+                        }
+                    }
+                }
+            },
+        )
+        result = _extract_user_provider_mcps(task_data)
+        assert "dingtalk_docs" in result
+        assert result["dingtalk_docs"]["type"] == "streamable-http"
+        assert (
+            result["dingtalk_docs"]["url"]
+            == "https://mcp.dingtalk.com/v1/docs?token=abc"
+        )
+
+    def test_extracts_multiple_services(self):
+        """Extracts multiple enabled services from same provider."""
+        task_data = ExecutionRequest(
+            task_id=1,
+            task_data={
+                "user_mcps": {
+                    "dingtalk": {
+                        "services": {
+                            "docs": {
+                                "enabled": True,
+                                "credentials": {"url": "https://mcp.dingtalk.com/docs"},
+                            },
+                            "table": {
+                                "enabled": True,
+                                "credentials": {
+                                    "url": "https://mcp.dingtalk.com/table"
+                                },
+                            },
+                        }
+                    }
+                }
+            },
+        )
+        result = _extract_user_provider_mcps(task_data)
+        assert len(result) == 2
+        assert "dingtalk_docs" in result
+        assert "dingtalk_table" in result
+
+    def test_skips_disabled_service(self):
+        """Disabled services are not included."""
+        task_data = ExecutionRequest(
+            task_id=1,
+            task_data={
+                "user_mcps": {
+                    "dingtalk": {
+                        "services": {
+                            "docs": {
+                                "enabled": False,
+                                "credentials": {"url": "https://mcp.dingtalk.com/docs"},
+                            }
+                        }
+                    }
+                }
+            },
+        )
+        result = _extract_user_provider_mcps(task_data)
+        assert result == {}
+
+    def test_skips_empty_url(self):
+        """Services with empty URL are not included."""
+        task_data = ExecutionRequest(
+            task_id=1,
+            task_data={
+                "user_mcps": {
+                    "dingtalk": {
+                        "services": {
+                            "docs": {
+                                "enabled": True,
+                                "credentials": {"url": ""},
+                            }
+                        }
+                    }
+                }
+            },
+        )
+        result = _extract_user_provider_mcps(task_data)
+        assert result == {}
+
+    def test_returns_empty_when_no_task_data(self):
+        """Returns empty dict when task_data is None."""
+        task_data = ExecutionRequest(task_id=1)
+        result = _extract_user_provider_mcps(task_data)
+        assert result == {}
+
+    def test_returns_empty_when_no_user_mcps(self):
+        """Returns empty dict when user_mcps is not present."""
+        task_data = ExecutionRequest(task_id=1, task_data={"other_key": "value"})
+        result = _extract_user_provider_mcps(task_data)
+        assert result == {}
+
+    def test_strips_whitespace_from_url(self):
+        """URL whitespace is stripped."""
+        task_data = ExecutionRequest(
+            task_id=1,
+            task_data={
+                "user_mcps": {
+                    "dingtalk": {
+                        "services": {
+                            "docs": {
+                                "enabled": True,
+                                "credentials": {
+                                    "url": "  https://mcp.dingtalk.com/docs  "
+                                },
+                            }
+                        }
+                    }
+                }
+            },
+        )
+        result = _extract_user_provider_mcps(task_data)
+        assert result["dingtalk_docs"]["url"] == "https://mcp.dingtalk.com/docs"
