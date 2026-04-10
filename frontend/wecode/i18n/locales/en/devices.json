@@ -62,6 +62,7 @@
   "vnc_files_tab": "Files",
   "vnc_files_loading": "Loading files service...",
   "vnc_files_credentials": "Login: admin, Password: {{password}}",
+  "vnc_files_open_in_new_window": "Open files in new window",
   "vnc_files_unavailable": "Files service unavailable",
   "vnc_files_unavailable_hint": "The cloud device is not serving /files/ on port 8080 right now.",
   "vnc_fullscreen": "Fullscreen",
