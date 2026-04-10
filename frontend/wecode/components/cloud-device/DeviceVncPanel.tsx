@@ -2,9 +2,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
-import { X, Maximize2, Minimize2 } from 'lucide-react'
+import { X, Maximize2, Minimize2, ExternalLink } from 'lucide-react'
 
 import { useTranslation } from '@/hooks/useTranslation'
 
@@ -41,10 +41,26 @@ export function DeviceVncPanel({
 }: DeviceVncPanelProps) {
   const { t } = useTranslation('devices')
   const [activeTab, setActiveTab] = useState<'desktop' | 'files'>('desktop')
+  const [filesUrl, setFilesUrl] = useState<string | null>(null)
   const showFilesTab = !hideFilesTab
   const credentialsText = t('vnc_files_credentials', {
     password: deviceId,
   })
+
+  useEffect(() => {
+    setFilesUrl(null)
+  }, [deviceId])
+
+  const handleFilesConfigChange = (
+    config: { available: boolean; files_url?: string | null } | null
+  ) => {
+    if (!config?.available || !config.files_url) {
+      setFilesUrl(null)
+      return
+    }
+
+    setFilesUrl(config.files_url)
+  }
 
   return (
     <div
@@ -93,6 +109,18 @@ export function DeviceVncPanel({
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {activeTab === 'files' && filesUrl && (
+            <button
+              type="button"
+              onClick={() => window.open(filesUrl, '_blank', 'noopener,noreferrer')}
+              className="flex h-8 w-8 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-hover hover:text-text-primary"
+              title={t('vnc_files_open_in_new_window')}
+              aria-label={t('vnc_files_open_in_new_window')}
+              data-testid="cloud-device-files-open-button"
+            >
+              <ExternalLink className="h-4 w-4" />
+            </button>
+          )}
           {onToggleFullscreen && (
             <button
               onClick={onToggleFullscreen}
@@ -131,7 +159,11 @@ export function DeviceVncPanel({
         {activeTab === 'desktop' ? (
           <VncViewer deviceId={deviceId} />
         ) : (
-          <CloudDeviceFilesViewer deviceId={deviceId} isActive />
+          <CloudDeviceFilesViewer
+            deviceId={deviceId}
+            isActive
+            onFileConfigChange={handleFilesConfigChange}
+          />
         )}
       </div>
     </div>
