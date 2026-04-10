@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 from sqlalchemy.orm import Session
 
+from app.db.session import SessionLocal
 from app.models.subtask_context import (
     ContextStatus,
     ContextType,
@@ -1596,8 +1597,6 @@ def _parse_attachment_background(
         binary_data: File binary data
         extension: File extension (e.g., '.pdf')
     """
-    from app.database import SessionLocal
-
     parser = DocumentParser()
 
     # Parse document first (before opening DB session to minimize connection hold time)
@@ -1654,6 +1653,7 @@ def _parse_attachment_background(
 
         db.commit()
     except Exception as e:
+        db.rollback()
         logger.exception(f"Error in async parsing task for context {context_id}: {e}")
     finally:
         db.close()

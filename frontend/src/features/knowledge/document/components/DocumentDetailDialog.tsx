@@ -178,6 +178,9 @@ export function DocumentDetailDialog({
 
   // Track if content has changed
   const hasChanges = editedContent !== (detail?.content || '')
+  const attachmentStatus = detail?.attachment_status?.toLowerCase() || null
+  const isAttachmentParsing = attachmentStatus === 'parsing'
+  const isAttachmentFailed = attachmentStatus === 'failed'
 
   // Check if content should be rendered as markdown (based on file extension or content detection)
   const isMarkdownContent = useMemo(() => {
@@ -566,28 +569,28 @@ export function DocumentDetailDialog({
                     </div>
 
                     {/* Attachment Status Alert */}
-                    {!isEditing && detail?.attachment_status && (
+                    {!isEditing && attachmentStatus && detail.content && (
                       <>
-                        {detail.attachment_status === 'PARSING' && (
+                        {isAttachmentParsing && (
                           <Alert variant="warning" className="mt-3">
                             <Loader2 className="h-4 w-4 animate-spin" />
                             <AlertTitle>
-                              {t('document.document.item.attachmentStatus.parsing')}
+                              {t('document.document.attachmentStatus.parsing')}
                             </AlertTitle>
                             <AlertDescription>
-                              {t('document.document.item.attachmentStatus.parsingHint')}
+                              {t('document.document.attachmentStatus.parsingHint')}
                             </AlertDescription>
                           </Alert>
                         )}
-                        {detail.attachment_status === 'FAILED' && (
+                        {isAttachmentFailed && (
                           <Alert variant="destructive" className="mt-3">
                             <AlertTriangle className="h-4 w-4" />
                             <AlertTitle>
-                              {t('document.document.item.attachmentStatus.failed')}
+                              {t('document.document.attachmentStatus.failed')}
                             </AlertTitle>
                             <AlertDescription>
                               {detail.attachment_error_message ||
-                                t('document.document.item.attachmentStatus.failedHint')}
+                                t('document.document.attachmentStatus.failedHint')}
                             </AlertDescription>
                           </Alert>
                         )}
@@ -625,6 +628,27 @@ export function DocumentDetailDialog({
                             {t('document.document.detail.characters')}
                           </div>
                         )}
+                      </div>
+                    ) : isAttachmentParsing ? (
+                      <div className="p-4 bg-surface rounded-lg border border-border text-sm">
+                        <div className="flex items-center justify-center gap-2 text-text-primary">
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          <span>{t('document.document.attachmentStatus.parsing')}</span>
+                        </div>
+                        <p className="mt-2 text-center text-text-muted">
+                          {t('document.document.attachmentStatus.parsingHint')}
+                        </p>
+                      </div>
+                    ) : isAttachmentFailed ? (
+                      <div className="p-4 rounded-lg border border-destructive/20 bg-destructive/5 text-sm">
+                        <div className="flex items-center justify-center gap-2 text-destructive">
+                          <AlertTriangle className="h-4 w-4" />
+                          <span>{t('document.document.attachmentStatus.failed')}</span>
+                        </div>
+                        <p className="mt-2 text-center text-text-secondary">
+                          {detail.attachment_error_message ||
+                            t('document.document.attachmentStatus.failedHint')}
+                        </p>
                       </div>
                     ) : (
                       <div className="p-4 bg-surface rounded-lg border border-border text-center text-sm text-text-muted">

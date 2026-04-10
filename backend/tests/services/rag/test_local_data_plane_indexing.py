@@ -7,7 +7,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.models.subtask_context import ContextStatus, ContextType
 from app.services.rag.local_data_plane.indexing import (
+    _get_attachment_binary_source,
     delete_document_index_local,
     index_document_local,
 )
@@ -136,6 +138,30 @@ async def test_index_document_local_delegates_to_engine_document_service() -> No
         user_id=3,
         splitter_config={"type": "sentence", "chunk_size": 256, "chunk_overlap": 32},
         document_id=2,
+    )
+
+
+def test_get_attachment_binary_source_allows_parsing_attachment() -> None:
+    context = SimpleNamespace(
+        id=9,
+        context_type=ContextType.ATTACHMENT.value,
+        status=ContextStatus.PARSING.value,
+        original_filename="report.pdf",
+        file_extension=".pdf",
+    )
+    mock_db = MagicMock()
+    mock_db.query.return_value.filter.return_value.first.return_value = context
+
+    with patch(
+        "app.services.rag.local_data_plane.indexing.context_service.get_attachment_binary_data",
+        return_value=b"hello world",
+    ) as mock_get_binary:
+        result = _get_attachment_binary_source(mock_db, 9)
+
+    assert result == (b"hello world", "report.pdf", ".pdf")
+    mock_get_binary.assert_called_once_with(
+        db=mock_db,
+        context=context,
     )
 
 

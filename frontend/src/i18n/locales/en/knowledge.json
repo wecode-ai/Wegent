@@ -186,7 +186,7 @@
       },
       "attachmentStatus": {
         "parsing": "Parsing",
-        "parsingHint": "Document is being parsed in background. It will update automatically when complete.",
+        "parsingHint": "Document is being parsed in the background. Refresh in a moment; if it stays like this for too long, parsing likely failed and you should re-upload it.",
         "failed": "Parse Failed",
         "failedHint": "Document parsing failed. Please delete and re-upload."
       },

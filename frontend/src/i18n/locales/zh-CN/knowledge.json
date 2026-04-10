@@ -186,7 +186,7 @@
       },
       "attachmentStatus": {
         "parsing": "解析中",
-        "parsingHint": "文档正在后台解析，完成后将自动更新",
+        "parsingHint": "文档正在后台解析，请稍后刷新查看；若长时间保持该状态，可能解析失败，请尝试重新上传。",
         "failed": "解析失败",
         "failedHint": "文档解析失败，请删除后重新上传"
       },
