@@ -27,6 +27,7 @@ from shared.models import (
 )
 from shared.models.responses_api import ResponsesAPIStreamEvents
 from shared.models.responses_api_emitter import EventTransport
+from shared.status import TaskStatus
 
 from .dispatcher import _require_non_empty_tool_use_id, extract_completed_result
 from .emitters import ResultEmitter
@@ -263,11 +264,17 @@ class InprocessExecutor:
         request: ExecutionRequest,
         emitter: ResultEmitter,
     ) -> None:
-        """Execute task in-process.
+        """Execute one standalone task inside the backend process.
 
         Args:
             request: Execution request
             emitter: Result emitter for event emission
+
+        Raises:
+            RuntimeError: When agent creation fails or the in-process lifecycle
+                returns a terminal failure status. The exception is re-raised
+                after emitting an error event so outer dispatcher layers can
+                keep their normal failure handling.
         """
         logger.info(
             f"[InprocessExecutor] Starting in-process execution: "
@@ -297,15 +304,12 @@ class InprocessExecutor:
                 .build()
             )
 
-            # Convert request to task_data dict for AgentService
-            task_data = request.to_dict()
-
             # Get or create agent service (singleton)
             agent_service = AgentService()
 
             # Create agent with custom emitter
             # AgentService caches agents by task_id, so same task reuses the same agent
-            agent = agent_service.create_agent(task_data)
+            agent = agent_service.create_agent(request)
             if not agent:
                 raise RuntimeError(f"Failed to create agent for task {request.task_id}")
 
@@ -337,6 +341,12 @@ class InprocessExecutor:
                 f"task_id={request.task_id}, status={status}, error={error_message}"
             )
 
+            if status == TaskStatus.FAILED:
+                raise RuntimeError(
+                    error_message
+                    or f"In-process execution failed for task {request.task_id}"
+                )
+
             # Note: The agent's emitter will have already sent DONE/ERROR events
             # through the bridge transport, so we don't need to emit them again here
 
@@ -363,28 +373,33 @@ class InprocessExecutor:
         self,
         agent,
     ) -> tuple:
-        """Execute agent asynchronously in the current event loop.
+        """Run the agent lifecycle in the current event loop.
 
-        This method handles the agent lifecycle (pre_execute, execute, post_execute)
-        similar to Agent.handle(), but uses async methods to stay in the current
-        event loop.
+        This mirrors ``Agent.handle()`` for standalone mode by awaiting
+        ``pre_execute()`` and then using ``execute_async()`` when available.
+        It returns a ``FAILED`` status tuple instead of raising so ``execute()``
+        can centralize frontend error emission and dispatcher propagation.
 
         Args:
             agent: The agent instance to execute
 
         Returns:
-            Tuple of (TaskStatus, error_message)
+            Tuple of ``(TaskStatus, error_message)`` where ``error_message`` is
+            populated only for failure states.
         """
         from shared.status import TaskStatus
 
         try:
-            # Pre-execute phase (sync, but fast)
+            # Mirror Agent.handle() semantics in the current event loop.
             logger.info(
                 f"Agent[{agent.get_name()}][{agent.task_id}] handle: Starting pre_execute."
             )
-            pre_status = agent.pre_execute()
-            if pre_status not in (TaskStatus.SUCCESS, TaskStatus.RUNNING):
-                return pre_status, f"Pre-execute failed with status: {pre_status}"
+            pre_status, pre_error = await agent.pre_execute()
+            if pre_status != TaskStatus.SUCCESS:
+                error_msg = f"Pre-execute failed with status: {pre_status}"
+                if pre_error:
+                    error_msg = f"{error_msg}\n{pre_error}"
+                return TaskStatus.FAILED, error_msg
 
             # Execute phase - use async method if available
             logger.info(
@@ -403,9 +418,6 @@ class InprocessExecutor:
             logger.info(
                 f"Agent[{agent.get_name()}][{agent.task_id}] handle: execute finished with result: {status}"
             )
-
-            # Post-execute phase (sync, but fast)
-            agent.post_execute()
 
             return status, None
 

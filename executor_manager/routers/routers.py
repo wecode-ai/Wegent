@@ -399,12 +399,19 @@ async def get_executor_load(http_request: Request):
 
 
 @api_router.get("/executor/address")
-async def get_executor_address(executor_name: str, http_request: Request):
+async def get_executor_address(
+    executor_name: str,
+    http_request: Request,
+    executor_namespace: Optional[str] = None,
+):
     """Get executor runtime address by executor name."""
     try:
         client_ip = http_request.client.host if http_request.client else "unknown"
         logger.info(
-            f"Received request to get executor address: {executor_name} from {client_ip}"
+            "Received request to get executor address: %s namespace=%s from %s",
+            executor_name,
+            executor_namespace,
+            client_ip,
         )
 
         executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
@@ -413,10 +420,18 @@ async def get_executor_address(executor_name: str, http_request: Request):
                 status_code=501, detail="Executor address lookup is not supported"
             )
 
-        result = executor.get_container_address(executor_name)
+        try:
+            result = executor.get_container_address(
+                executor_name,
+                executor_namespace=executor_namespace,
+            )
+        except TypeError:
+            # Fallback to legacy signature without executor_namespace
+            result = executor.get_container_address(executor_name)
         logger.info(
-            "Resolved executor address: executor_name=%s result=%s",
+            "Resolved executor address: executor_name=%s executor_namespace=%s result=%s",
             executor_name,
+            executor_namespace,
             result,
         )
         return result
@@ -1192,6 +1207,49 @@ async def cancel_task_v1(request: CancelRequest, http_request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@api_router.post("/executors/prepare")
+async def prepare_executor(request: ExecutionRequest, http_request: Request):
+    """Prepare a normal executor runtime without dispatching the task."""
+    client_ip = http_request.client.host if http_request.client else "unknown"
+    logger.info(
+        f"[executors/prepare] Received request: task_id={request.task_id}, "
+        f"subtask_id={request.subtask_id} from {client_ip}"
+    )
+
+    set_task_context(task_id=request.task_id, subtask_id=request.subtask_id)
+
+    try:
+        task_dict = request.to_dict()
+        task_dict["prepare_only"] = True
+
+        result_map = await asyncio.to_thread(task_processor.process_tasks, [task_dict])
+        result = result_map.get(request.task_id) or next(
+            iter(result_map.values()),
+            None,
+        )
+
+        if not result:
+            raise HTTPException(status_code=500, detail="No executor result returned")
+        if result.get("status") != "success":
+            raise HTTPException(
+                status_code=500,
+                detail=result.get("error_msg", "Failed to prepare executor"),
+            )
+
+        return {
+            "status": result.get("status"),
+            "executor_name": result.get("executor_name"),
+            "executor_namespace": result.get("executor_namespace"),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            f"[executors/prepare] Error preparing executor for task {request.task_id}: {e}"
+        )
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 async def _cleanup_task_heartbeat(task_id: int) -> None:
     """Clean up heartbeat data for a cancelled task.
 
@@ -1385,7 +1443,10 @@ async def archive_executor_workspace(
                 detail="Executor address lookup is not supported",
             )
 
-        result = executor.get_container_address(request.executor_name)
+        result = executor.get_container_address(
+            request.executor_name,
+            executor_namespace=request.executor_namespace,
+        )
         status = str(result.get("status", "")).lower()
         base_url = result.get("base_url")
 
@@ -1456,7 +1517,10 @@ async def restore_executor_workspace(
                 detail="Executor address lookup is not supported",
             )
 
-        result = executor.get_container_address(request.executor_name)
+        result = executor.get_container_address(
+            request.executor_name,
+            executor_namespace=request.executor_namespace,
+        )
         status = str(result.get("status", "")).lower()
         base_url = result.get("base_url")
 

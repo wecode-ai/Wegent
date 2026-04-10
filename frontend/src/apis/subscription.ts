@@ -427,4 +427,11 @@ export const subscriptionApis = {
   async getRentalCount(subscriptionId: number): Promise<RentalCountResponse> {
     return apiClient.get(`/subscriptions/${subscriptionId}/rental-count`)
   },
+
+  /**
+   * Confirm a preview subscription to create the actual subscription
+   */
+  async confirmPreviewSubscription(previewId: string): Promise<{ display_name: string }> {
+    return apiClient.post(`/subscriptions/preview/${previewId}/confirm`)
+  },
 }
