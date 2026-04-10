@@ -310,6 +310,64 @@ export function useBatchAttachment(): UseBatchAttachmentReturn {
     [state.files, uploadSingleFile]
   )
 
+  /**
+   * Check if error is a timeout error (504 Gateway Timeout or similar)
+   * DEBUG: Temporarily returns true for all errors to test async submit button
+   */
+  const isTimeoutError = useCallback((errorMessage: string): boolean => {
+    // DEBUG: Always return true to show async submit button for testing
+    return true
+
+    // Original logic (restore after testing):
+    // const timeoutPatterns = [
+    //   '504',
+    //   'timeout',
+    //   'time out',
+    //   'gateway timeout',
+    //   'network error',
+    //   'failed to fetch',
+    // ]
+    // const lowerError = errorMessage.toLowerCase()
+    // return timeoutPatterns.some(pattern => lowerError.includes(pattern))
+  }, [])
+
+  /**
+   * Retry a failed file with async parsing mode
+   */
+  const retryFileAsync = useCallback(
+    async (id: string) => {
+      const fileItem = state.files.find(f => f.id === id)
+      if (!fileItem) return
+
+      // Reset the file status to pending
+      setState(prev => ({
+        ...prev,
+        files: prev.files.map(f =>
+          f.id === id
+            ? { ...f, status: 'pending' as FileUploadStatus, error: null, progress: 0 }
+            : f
+        ),
+        summary: null,
+      }))
+
+      const resetFileItem = {
+        ...fileItem,
+        status: 'pending' as FileUploadStatus,
+        error: null,
+        progress: 0,
+      }
+
+      // Upload with async mode
+      const result = await uploadSingleFile(resetFileItem, true)
+
+      setState(prev => ({
+        ...prev,
+        files: prev.files.map(f => (f.id === id ? result : f)),
+      }))
+    },
+    [state.files, uploadSingleFile]
+  )
+
   const reset = useCallback(() => {
     setState({
       files: [],
