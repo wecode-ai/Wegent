@@ -79,7 +79,7 @@ async def create_work_queue(
 
 @router.get("", response_model=WorkQueueListResponse)
 async def list_work_queues(
-    current_user: User = Depends(security.get_current_user),
+    current_user: User = Depends(_ingest_auth),
 ):
     """List all work queues for the current user."""
     queues = work_queue_service.list_queues(current_user.id)
