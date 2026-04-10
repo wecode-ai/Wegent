@@ -40,6 +40,9 @@ export interface SendAreaSectionProps {
   // Prompt
   promptTemplate: string
   setPromptTemplate: (value: string) => void
+  // Trigger type (used to show context-specific variables)
+  triggerType: SubscriptionTriggerType
+  triggerConfig: Record<string, unknown>
   // Team
   teamId: number | null
   setTeamId: (value: number | null) => void

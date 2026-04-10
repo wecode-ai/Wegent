@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy import and_, func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import (
@@ -425,6 +426,21 @@ class WorkQueueService:
                 .filter(
                     Kind.id == queue_id,
                     Kind.kind == self.WORK_QUEUE_KIND,
+                    Kind.is_active == True,
+                )
+                .first()
+            )
+
+    def get_queue_by_name(self, user_id: int, queue_name: str) -> Optional[Kind]:
+        """Get a queue Kind by name for a specific user (internal use)."""
+        with self.get_db() as db:
+            return (
+                db.query(Kind)
+                .filter(
+                    Kind.user_id == user_id,
+                    Kind.name == queue_name,
+                    Kind.kind == self.WORK_QUEUE_KIND,
+                    Kind.namespace == "default",
                     Kind.is_active == True,
                 )
                 .first()
@@ -1304,8 +1320,34 @@ class QueueMessageService:
                 idempotency_key=request.idempotencyKey,
             )
             db.add(db_message)
-            db.commit()
-            db.refresh(db_message)
+            try:
+                db.commit()
+                db.refresh(db_message)
+            except IntegrityError:
+                # Handle race condition: another request inserted the same idempotency_key
+                db.rollback()
+                if request.idempotencyKey:
+                    existing = (
+                        db.query(QueueMessage)
+                        .filter(
+                            QueueMessage.idempotency_key == request.idempotencyKey,
+                            QueueMessage.queue_id == queue_id,
+                        )
+                        .first()
+                    )
+                    if existing:
+                        sender = (
+                            db.query(User)
+                            .filter(User.id == existing.sender_user_id)
+                            .first()
+                        )
+                        if sender:
+                            logger.info(
+                                f"Returning existing message due to duplicate idempotency_key: "
+                                f"key={request.idempotencyKey}, queue_id={queue_id}"
+                            )
+                            return self._build_message_response(existing, sender)
+                raise
 
             logger.info(f"Ingested message: id={db_message.id}, queue_id={queue_id}")
 
@@ -1335,6 +1377,26 @@ class QueueMessageService:
 
             sender = db.query(User).filter(User.id == user_id).first()
             return self._build_message_response(db_message, sender)
+
+    def ingest_message_by_name(
+        self,
+        user_id: int,
+        queue_name: str,
+        request: Any,
+    ) -> QueueMessageResponse:
+        """Ingest a message into a queue identified by name.
+
+        Resolves the queue by (user_id, queue_name) then delegates to ingest_message.
+
+        Args:
+            user_id: Current user ID (queue owner)
+            queue_name: Target work queue name (e.g. "inbox")
+            request: IngestMessageRequest with content, note, priority, etc.
+        """
+        queue = work_queue_service.get_queue_by_name(user_id, queue_name)
+        if not queue:
+            raise NotFoundException(f"Work queue '{queue_name}' not found")
+        return self.ingest_message(user_id, queue.id, request)
 
     def retry_message(self, user_id: int, message_id: int) -> QueueMessageResponse:
         """Retry processing a failed message.

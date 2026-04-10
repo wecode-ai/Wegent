@@ -42,6 +42,9 @@ from app.services.work_queue_service import (
     work_queue_service,
 )
 
+# get_current_user_flexible_for_executor supports both JWT and API Key (wg- prefix)
+_ingest_auth = security.get_current_user_flexible_for_executor
+
 router = APIRouter()
 
 
@@ -189,7 +192,7 @@ async def list_queue_messages(
 async def ingest_message(
     queue_id: int,
     request: IngestMessageRequest,
-    current_user: User = Depends(security.get_current_user),
+    current_user: User = Depends(_ingest_auth),
 ):
     """Ingest a message into a work queue for processing.
 
@@ -200,6 +203,35 @@ async def ingest_message(
         return queue_message_service.ingest_message(
             user_id=current_user.id,
             queue_id=queue_id,
+            request=request,
+        )
+    except NotFoundException as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except ConflictException as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+
+
+@router.post(
+    "/by-name/{queue_name}/messages/ingest",
+    response_model=QueueMessageResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def ingest_message_by_name(
+    queue_name: str,
+    request: IngestMessageRequest,
+    current_user: User = Depends(_ingest_auth),
+):
+    """Ingest a message into a work queue identified by name.
+
+    Convenience endpoint that resolves the queue by name instead of ID.
+    Useful for scripting and external integrations where the queue name
+    (e.g. "inbox") is known but the numeric ID is not.
+    Supports idempotency via idempotencyKey.
+    """
+    try:
+        return queue_message_service.ingest_message_by_name(
+            user_id=current_user.id,
+            queue_name=queue_name,
             request=request,
         )
     except NotFoundException as e:

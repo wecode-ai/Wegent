@@ -78,47 +78,19 @@ export function QueueEditDialog({ queue, open, onOpenChange }: QueueEditDialogPr
         'event'
       )
       // Filter to inbox_message event type subscriptions
-      const items = (response.items || response || []) as Array<{
-        id: number
-        name: string
-        namespace: string
-        displayName?: string
-        userId?: number
-        user_id?: number
-        spec?: {
-          displayName?: string
-          trigger?: { event?: { event_type?: string } }
-          trigger_config?: { event_type?: string }
-        }
-        json?: {
-          spec?: {
-            displayName?: string
-            trigger?: { event?: { event_type?: string } }
-            trigger_config?: { event_type?: string }
-          }
-          _internal?: Record<string, unknown>
-        }
-      }>
+      // API returns flat SubscriptionInDB objects where trigger_config is { event_type: 'inbox_message' }
+      const items = response.items || []
       const inboxSubscriptions = items
         .filter(sub => {
-          const eventType =
-            sub.spec?.trigger?.event?.event_type ||
-            sub.json?.spec?.trigger?.event?.event_type ||
-            sub.spec?.trigger_config?.event_type ||
-            sub.json?.spec?.trigger_config?.event_type
-          return eventType === 'inbox_message'
-        })
-        .filter(sub => {
-          // Discard subscriptions without a valid userId
-          const uid = sub.userId || sub.user_id
-          return uid && uid > 0
+          const triggerConfig = sub.trigger_config as Record<string, unknown>
+          return triggerConfig?.event_type === 'inbox_message'
         })
         .map(sub => ({
           id: sub.id,
           name: sub.name,
           namespace: sub.namespace || 'default',
-          displayName: sub.spec?.displayName || sub.json?.spec?.displayName || sub.name,
-          userId: (sub.userId || sub.user_id) as number,
+          displayName: sub.display_name || sub.name,
+          userId: sub.user_id,
         }))
       setSubscriptions(inboxSubscriptions)
     } catch (error) {
@@ -128,7 +100,6 @@ export function QueueEditDialog({ queue, open, onOpenChange }: QueueEditDialogPr
       setLoadingSubscriptions(false)
     }
   }, [])
-
   // Reset form when dialog opens/closes or queue changes
   useEffect(() => {
     if (open && queue) {
