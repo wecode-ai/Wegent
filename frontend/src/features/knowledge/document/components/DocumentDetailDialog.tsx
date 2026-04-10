@@ -17,6 +17,8 @@ import {
   Code,
   Maximize2,
   Minimize2,
+  Loader2,
+  AlertTriangle,
 } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
@@ -40,6 +42,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Spinner } from '@/components/ui/spinner'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { useDocumentDetail } from '../hooks/useDocumentDetail'
 import { ChunksSection } from './ChunksSection'
 import { knowledgeBaseApi } from '@/apis/knowledge-base'
@@ -562,6 +565,35 @@ export function DocumentDetailDialog({
                       </div>
                     </div>
 
+                    {/* Attachment Status Alert */}
+                    {!isEditing && detail?.attachment_status && (
+                      <>
+                        {detail.attachment_status === 'PARSING' && (
+                          <Alert variant="warning" className="mt-3">
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            <AlertTitle>
+                              {t('document.document.item.attachmentStatus.parsing')}
+                            </AlertTitle>
+                            <AlertDescription>
+                              {t('document.document.item.attachmentStatus.parsingHint')}
+                            </AlertDescription>
+                          </Alert>
+                        )}
+                        {detail.attachment_status === 'FAILED' && (
+                          <Alert variant="destructive" className="mt-3">
+                            <AlertTriangle className="h-4 w-4" />
+                            <AlertTitle>
+                              {t('document.document.item.attachmentStatus.failed')}
+                            </AlertTitle>
+                            <AlertDescription>
+                              {detail.attachment_error_message ||
+                                t('document.document.item.attachmentStatus.failedHint')}
+                            </AlertDescription>
+                          </Alert>
+                        )}
+                      </>
+                    )}
+
                     {isEditing ? (
                       <div
                         className={cn(
@@ -593,6 +625,36 @@ export function DocumentDetailDialog({
                             {t('document.document.detail.characters')}
                           </div>
                         )}
+                      </div>
+                    ) : detail.attachment_status === 'PARSING' ? (
+                      <div className="p-8 bg-surface rounded-lg border border-border text-center space-y-3">
+                        <Loader2 className="h-8 w-8 animate-spin mx-auto text-primary" />
+                        <div className="space-y-1">
+                          <p className="text-sm font-medium text-text-primary">
+                            {t('document.document.item.attachmentStatus.parsingNoContent')}
+                          </p>
+                          {/* Show timeout warning if parsing takes longer than 5 minutes */}
+                          {document.created_at &&
+                            Date.now() - new Date(document.created_at).getTime() >
+                              5 * 60 * 1000 && (
+                              <p className="text-xs text-text-muted">
+                                {t('document.document.item.attachmentStatus.parsingTimeoutWarning')}
+                              </p>
+                            )}
+                        </div>
+                      </div>
+                    ) : detail.attachment_status === 'FAILED' ? (
+                      <div className="p-8 bg-destructive/5 rounded-lg border border-destructive/20 text-center space-y-3">
+                        <AlertTriangle className="h-8 w-8 mx-auto text-destructive" />
+                        <div className="space-y-1">
+                          <p className="text-sm font-medium text-destructive">
+                            {t('document.document.item.attachmentStatus.failed')}
+                          </p>
+                          <p className="text-xs text-text-muted">
+                            {detail.attachment_error_message ||
+                              t('document.document.item.attachmentStatus.failedHint')}
+                          </p>
+                        </div>
                       </div>
                     ) : (
                       <div className="p-4 bg-surface rounded-lg border border-border text-center text-sm text-text-muted">

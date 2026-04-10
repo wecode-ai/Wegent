@@ -62,10 +62,21 @@ def _get_attachment_binary_source(
     )
     if not context:
         raise ValueError(f"Attachment context {attachment_id} not found")
-    if context.status != ContextStatus.READY.value:
+
+    # Knowledge engine has its own parsing flow and only needs binary_data.
+    # Binary data is available immediately after upload, regardless of parsing status.
+    # Even FAILED status may have binary_data available, so we check the actual data
+    # instead of status. The only invalid status is UPLOADING (binary not yet stored).
+    if context.status == ContextStatus.UPLOADING.value:
         raise ValueError(
-            f"Attachment context {attachment_id} is not ready (status: {context.status})"
+            f"Attachment context {attachment_id} is still uploading (binary data not available yet)"
         )
+
+    # Check required metadata fields
+    if not context.original_filename:
+        raise ValueError(f"Attachment context {attachment_id} has no original_filename")
+    if not context.file_extension:
+        raise ValueError(f"Attachment context {attachment_id} has no file_extension")
 
     binary_data = context_service.get_attachment_binary_data(
         db=db,
