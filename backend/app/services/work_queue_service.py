@@ -893,6 +893,7 @@ class QueueMessageService:
         self, db_message: QueueMessage, sender: User
     ) -> QueueMessageResponse:
         """Build QueueMessageResponse from QueueMessage model."""
+        content_snapshot = self._enrich_snapshot_with_attachments(db_message)
         return QueueMessageResponse(
             id=db_message.id,
             queueId=db_message.queue_id,
@@ -903,9 +904,7 @@ class QueueMessageService:
             ),
             sourceTaskId=db_message.source_task_id,
             sourceSubtaskIds=db_message.source_subtask_ids,
-            contentSnapshot=[
-                MessageContentSnapshot(**msg) for msg in db_message.content_snapshot
-            ],
+            contentSnapshot=content_snapshot,
             note=db_message.note,
             priority=db_message.priority,
             status=db_message.status,
@@ -917,6 +916,73 @@ class QueueMessageService:
             updatedAt=db_message.updated_at,
             processedAt=db_message.processed_at,
         )
+
+    def _enrich_snapshot_with_attachments(self, db_message: QueueMessage) -> list:
+        """Enrich content_snapshot with attachment info from content_attachment_ids.
+
+        When a message is ingested with file uploads, the files are stored as
+        SubtaskContext records and their IDs are saved in content_attachment_ids.
+        However, content_snapshot[].attachments is not populated in this path.
+        This method queries the attachment metadata and injects it into the
+        first USER message's attachments field so the frontend can display them.
+        """
+        raw_snapshot = db_message.content_snapshot or []
+        attachment_ids = getattr(db_message, "content_attachment_ids", None) or []
+
+        if not attachment_ids:
+            # No file attachments to enrich - return snapshot as-is
+            return [MessageContentSnapshot(**msg) for msg in raw_snapshot]
+
+        # Query attachment metadata from SubtaskContext
+        try:
+            from app.models.subtask_context import SubtaskContext
+            from app.schemas.subtask_context import SubtaskContextBrief
+
+            with self.get_db() as db:
+                contexts = (
+                    db.query(SubtaskContext)
+                    .filter(SubtaskContext.id.in_(attachment_ids))
+                    .all()
+                )
+                # Filter out system-generated inbox_message_*.md files
+                # These are created by auto_process_handler for LLM context injection
+                # and should not be shown to users as user-uploaded attachments
+                attachment_briefs = [
+                    SubtaskContextBrief.from_model(ctx).model_dump()
+                    for ctx in contexts
+                    if not (
+                        ctx.name.startswith("inbox_message_")
+                        and ctx.name.endswith(".md")
+                    )
+                ]
+        except Exception as e:
+            logger.warning(
+                f"[_enrich_snapshot_with_attachments] Failed to query attachments "
+                f"for message {db_message.id}: {e}"
+            )
+            return [MessageContentSnapshot(**msg) for msg in raw_snapshot]
+
+        if not attachment_briefs:
+            return [MessageContentSnapshot(**msg) for msg in raw_snapshot]
+
+        # Inject attachment info into the first USER message that has no attachments yet
+        enriched = []
+        injected = False
+        for msg in raw_snapshot:
+            msg_copy = dict(msg)
+            role = msg_copy.get("role", "").upper()
+            if not injected and role == "USER" and not msg_copy.get("attachments"):
+                msg_copy["attachments"] = attachment_briefs
+                injected = True
+            enriched.append(MessageContentSnapshot(**msg_copy))
+
+        # If no USER message found, inject into the first message
+        if not injected and enriched:
+            first = dict(raw_snapshot[0])
+            first["attachments"] = attachment_briefs
+            enriched[0] = MessageContentSnapshot(**first)
+
+        return enriched
 
     def list_messages(
         self,
