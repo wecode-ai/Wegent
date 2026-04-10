@@ -1,65 +1,52 @@
-# SPDX-FileCopyrightText: 2026 Weibo, Inc.
-#
-# SPDX-License-Identifier: Apache-2.0
+from __future__ import annotations
 
-from typing import Literal, Optional
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class SplitterConfigModel(BaseModel):
+    """Base model for splitter configuration payloads."""
+
     model_config = ConfigDict(extra="forbid")
 
 
 class SemanticSplitterConfig(SplitterConfigModel):
+    """Legacy semantic splitter configuration."""
+
     type: Literal["semantic"] = "semantic"
-    buffer_size: int = Field(1, ge=1, le=10)
-    breakpoint_percentile_threshold: int = Field(95, ge=50, le=100)
-
-
-class SentenceSplitterConfig(SplitterConfigModel):
-    type: Literal["sentence"] = "sentence"
-    chunk_size: int = Field(1024, ge=128, le=8192)
-    chunk_overlap: int = Field(200, ge=0, le=2048)
-    separator: str = "\n\n"
-
-    @field_validator("chunk_overlap")
-    @classmethod
-    def validate_overlap(cls, value: int, info) -> int:
-        chunk_size = info.data.get("chunk_size", 1024)
-        if value >= chunk_size:
-            raise ValueError(
-                f"chunk_overlap ({value}) must be less than chunk_size ({chunk_size})"
-            )
-        return value
-
-
-class SmartSplitterConfig(SplitterConfigModel):
-    type: Literal["smart"] = "smart"
-    chunk_size: int = Field(1024, ge=128, le=8192)
-    chunk_overlap: int = Field(50, ge=0, le=2048)
-    file_extension: Optional[str] = None
-    subtype: Optional[str] = None
-
-    @field_validator("chunk_overlap")
-    @classmethod
-    def validate_overlap(cls, value: int, info) -> int:
-        chunk_size = info.data.get("chunk_size", 1024)
-        if value >= chunk_size:
-            raise ValueError(
-                f"chunk_overlap ({value}) must be less than chunk_size ({chunk_size})"
-            )
-        return value
+    buffer_size: int = Field(
+        1, ge=1, le=10, description="Buffer size for semantic splitter"
+    )
+    breakpoint_percentile_threshold: int = Field(
+        95,
+        ge=50,
+        le=100,
+        description="Percentile threshold for determining breakpoints",
+    )
 
 
 class FlatChunkConfig(SplitterConfigModel):
-    chunk_size: int = Field(1024, ge=128, le=8192)
-    chunk_overlap: int = Field(200, ge=0, le=2048)
-    separator: str = "\n\n"
+    """Configuration for flat chunking."""
+
+    chunk_size: int = Field(
+        1024, ge=128, le=8192, description="Maximum chunk size in characters"
+    )
+    chunk_overlap: int = Field(
+        200,
+        ge=0,
+        le=2048,
+        description="Number of characters to overlap between chunks",
+    )
+    separator: str = Field(
+        "\n\n",
+        description="Separator for splitting. Common options: '\\n\\n' (paragraph, default), '\\n' (newline), ' ' (space), '.' (sentence)",
+    )
 
     @field_validator("chunk_overlap")
     @classmethod
-    def validate_overlap(cls, value: int, info) -> int:
+    def validate_overlap(cls, value: int, info):
+        """Validate that chunk_overlap is less than chunk_size."""
         chunk_size = info.data.get("chunk_size", 1024)
         if value >= chunk_size:
             raise ValueError(
@@ -69,13 +56,25 @@ class FlatChunkConfig(SplitterConfigModel):
 
 
 class HierarchicalChunkConfig(SplitterConfigModel):
-    parent_chunk_size: int = Field(2048, ge=256, le=16384)
-    child_chunk_size: int = Field(512, ge=128, le=8192)
-    child_chunk_overlap: int = Field(64, ge=0, le=2048)
+    """Configuration for parent-child chunking."""
+
+    parent_chunk_size: int = Field(
+        2048, ge=256, le=16384, description="Parent chunk size in characters"
+    )
+    child_chunk_size: int = Field(
+        512, ge=128, le=8192, description="Child chunk size in characters"
+    )
+    child_chunk_overlap: int = Field(
+        64,
+        ge=0,
+        le=2048,
+        description="Number of characters to overlap between child chunks",
+    )
 
     @field_validator("child_chunk_overlap")
     @classmethod
-    def validate_child_overlap(cls, value: int, info) -> int:
+    def validate_child_overlap(cls, value: int, info):
+        """Validate that child_chunk_overlap is less than child_chunk_size."""
         child_chunk_size = info.data.get("child_chunk_size", 512)
         if value >= child_chunk_size:
             raise ValueError(
@@ -86,10 +85,14 @@ class HierarchicalChunkConfig(SplitterConfigModel):
 
 
 class MarkdownEnhancementConfig(SplitterConfigModel):
+    """Markdown title enhancement settings."""
+
     enabled: bool = False
 
 
 class NormalizedSplitterConfig(SplitterConfigModel):
+    """Normalized splitter configuration shared by backend and runtime."""
+
     chunk_strategy: Literal["flat", "hierarchical", "semantic"]
     format_enhancement: Literal["none", "file_aware"] = "none"
     flat_config: FlatChunkConfig | None = None
@@ -102,6 +105,7 @@ class NormalizedSplitterConfig(SplitterConfigModel):
 
     @model_validator(mode="after")
     def validate_strategy_config(self) -> "NormalizedSplitterConfig":
+        """Ensure the config block matches the selected chunk strategy."""
         if self.chunk_strategy == "flat":
             if self.flat_config is None:
                 self.flat_config = FlatChunkConfig()
@@ -118,37 +122,32 @@ class NormalizedSplitterConfig(SplitterConfigModel):
         return self
 
 
-LegacySplitterConfig = (
-    SemanticSplitterConfig | SentenceSplitterConfig | SmartSplitterConfig
-)
-SplitterConfig = NormalizedSplitterConfig
-
-
 def normalize_splitter_config(
-    config: dict | SplitterConfigModel | None,
+    raw: dict | SplitterConfigModel | None,
 ) -> NormalizedSplitterConfig:
-    if config is None or config == {}:
+    """Convert legacy and normalized splitter payloads to one stable shape."""
+    if raw is None or raw == {}:
         return NormalizedSplitterConfig(
             chunk_strategy="flat",
             format_enhancement="none",
             flat_config=FlatChunkConfig(),
         )
 
-    if isinstance(config, NormalizedSplitterConfig):
-        return config
+    if isinstance(raw, NormalizedSplitterConfig):
+        return raw
 
-    if isinstance(config, SplitterConfigModel):
-        config = config.model_dump(exclude_none=True)
+    if isinstance(raw, SplitterConfigModel):
+        raw = raw.model_dump(exclude_none=True)
 
-    splitter_type = config.get("type")
+    splitter_type = raw.get("type")
     if splitter_type == "smart":
         return NormalizedSplitterConfig(
             chunk_strategy="flat",
             format_enhancement="file_aware",
             flat_config=FlatChunkConfig(
-                chunk_size=config.get("chunk_size", 1024),
-                chunk_overlap=config.get("chunk_overlap", 50),
-                separator=config.get("separator", "\n\n"),
+                chunk_size=raw.get("chunk_size", 1024),
+                chunk_overlap=raw.get("chunk_overlap", 50),
+                separator=raw.get("separator", "\n\n"),
             ),
             markdown_enhancement=MarkdownEnhancementConfig(enabled=True),
             legacy_type="smart",
@@ -159,9 +158,9 @@ def normalize_splitter_config(
             chunk_strategy="flat",
             format_enhancement="none",
             flat_config=FlatChunkConfig(
-                chunk_size=config.get("chunk_size", 1024),
-                chunk_overlap=config.get("chunk_overlap", 200),
-                separator=config.get("separator", "\n\n"),
+                chunk_size=raw.get("chunk_size", 1024),
+                chunk_overlap=raw.get("chunk_overlap", 200),
+                separator=raw.get("separator", "\n\n"),
             ),
             markdown_enhancement=MarkdownEnhancementConfig(enabled=False),
             legacy_type="sentence",
@@ -172,8 +171,8 @@ def normalize_splitter_config(
             chunk_strategy="semantic",
             format_enhancement="none",
             semantic_config=SemanticSplitterConfig(
-                buffer_size=config.get("buffer_size", 1),
-                breakpoint_percentile_threshold=config.get(
+                buffer_size=raw.get("buffer_size", 1),
+                breakpoint_percentile_threshold=raw.get(
                     "breakpoint_percentile_threshold", 95
                 ),
             ),
@@ -181,17 +180,9 @@ def normalize_splitter_config(
             legacy_type="semantic",
         )
 
-    return NormalizedSplitterConfig.model_validate(config)
+    return NormalizedSplitterConfig.model_validate(raw)
 
 
 def serialize_splitter_config(config: NormalizedSplitterConfig) -> dict:
+    """Serialize normalized splitter config for transport and persistence."""
     return config.model_dump(exclude_none=True)
-
-
-def parse_splitter_config(
-    config: dict | SplitterConfigModel | None,
-) -> NormalizedSplitterConfig | None:
-    if config is None:
-        return None
-
-    return normalize_splitter_config(config)

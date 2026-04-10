@@ -65,6 +65,50 @@ async def test_index_document_from_binary_delegates_to_indexer() -> None:
 
 
 @pytest.mark.asyncio
+async def test_index_document_from_binary_normalizes_legacy_splitter_config() -> None:
+    from knowledge_engine.services.document_service import DocumentService
+
+    storage_backend = MagicMock()
+    embed_model = object()
+    indexer = MagicMock()
+    indexer.index_from_binary.return_value = {
+        "indexed_count": 1,
+        "index_name": "wegent_kb_1",
+        "status": "success",
+        "chunks_data": [{"chunk_index": 0}],
+    }
+
+    service = DocumentService(storage_backend=storage_backend)
+
+    with patch(
+        "knowledge_engine.services.document_service.DocumentIndexer",
+        return_value=indexer,
+    ) as document_indexer_cls:
+        await service.index_document_from_binary(
+            knowledge_id="1",
+            binary_data=b"hello world",
+            source_file="notes.md",
+            file_extension=".md",
+            embed_model=embed_model,
+            user_id=7,
+            splitter_config={"type": "smart"},
+            document_id=9,
+        )
+
+    assert document_indexer_cls.call_args.kwargs["splitter_config"] == {
+        "chunk_strategy": "flat",
+        "format_enhancement": "file_aware",
+        "flat_config": {
+            "chunk_size": 1024,
+            "chunk_overlap": 50,
+            "separator": "\n\n",
+        },
+        "markdown_enhancement": {"enabled": True},
+        "legacy_type": "smart",
+    }
+
+
+@pytest.mark.asyncio
 async def test_delete_document_delegates_to_storage_backend() -> None:
     from knowledge_engine.services.document_service import DocumentService
 

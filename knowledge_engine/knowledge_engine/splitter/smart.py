@@ -13,6 +13,7 @@ from llama_index.core.node_parser import (
 )
 from llama_index.core.schema import BaseNode
 
+from knowledge_engine.splitter.markdown_enhancement import enhance_markdown_nodes
 from shared.telemetry.decorators import set_span_attribute, trace_sync
 
 
@@ -26,10 +27,12 @@ class SmartSplitter:
         file_extension: str,
         chunk_size: int = DEFAULT_CHUNK_SIZE,
         chunk_overlap: int = DEFAULT_CHUNK_OVERLAP,
+        markdown_enhancement_enabled: bool = False,
     ):
         self.file_extension = file_extension.lower()
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
+        self.markdown_enhancement_enabled = markdown_enhancement_enabled
 
     @classmethod
     def supports_smart_split(cls, file_extension: str) -> bool:
@@ -50,6 +53,8 @@ class SmartSplitter:
     def _split_markdown(self, documents: List[Document]) -> List[BaseNode]:
         markdown_parser = MarkdownNodeParser()
         nodes = markdown_parser.get_nodes_from_documents(documents)
+        if self.markdown_enhancement_enabled:
+            nodes = enhance_markdown_nodes(nodes)
         sentence_splitter = SentenceSplitter(
             chunk_size=self.chunk_size,
             chunk_overlap=self.chunk_overlap,

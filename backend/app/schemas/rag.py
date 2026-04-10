@@ -3,11 +3,18 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from enum import Enum
-from typing import Dict, List, Literal, Optional, Union
+from typing import Annotated, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, Field, field_validator
 
 from app.schemas.kind import EmbeddingModelRef, RetrieverRef
+from app.services.knowledge.splitter_config import (
+    FlatChunkConfig,
+    HierarchicalChunkConfig,
+    MarkdownEnhancementConfig,
+    NormalizedSplitterConfig,
+    SemanticSplitterConfig,
+)
 
 
 class RetrievalMode(str, Enum):
@@ -21,24 +28,9 @@ class RetrievalMode(str, Enum):
 class SplitterType(str, Enum):
     """Document splitter type enum."""
 
-    SEMANTIC = "semantic"  # Semantic-based splitting using embeddings
-    SENTENCE = "sentence"  # Sentence/text-based splitting with separators
-    SMART = "smart"  # Smart splitting based on file type
-
-
-class SemanticSplitterConfig(BaseModel):
-    """Configuration for semantic splitter."""
-
-    type: Literal["semantic"] = "semantic"
-    buffer_size: int = Field(
-        1, ge=1, le=10, description="Buffer size for semantic splitter"
-    )
-    breakpoint_percentile_threshold: int = Field(
-        95,
-        ge=50,
-        le=100,
-        description="Percentile threshold for determining breakpoints",
-    )
+    FLAT = "flat"
+    HIERARCHICAL = "hierarchical"
+    SEMANTIC = "semantic"
 
 
 class SentenceSplitterConfig(BaseModel):
@@ -105,9 +97,17 @@ class SmartSplitterConfig(BaseModel):
         return v
 
 
-# Union type for splitter configuration
-SplitterConfig = Union[
+LegacySplitterConfig = Union[
     SemanticSplitterConfig, SentenceSplitterConfig, SmartSplitterConfig
+]
+SplitterConfig = Annotated[
+    Union[
+        NormalizedSplitterConfig,
+        SemanticSplitterConfig,
+        SentenceSplitterConfig,
+        SmartSplitterConfig,
+    ],
+    Field(union_mode="left_to_right"),
 ]
 
 

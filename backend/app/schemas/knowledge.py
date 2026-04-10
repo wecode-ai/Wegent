@@ -23,6 +23,7 @@ from app.schemas.kind import (
 
 # Import SplitterConfig from rag.py to use unified splitter configuration
 from app.schemas.rag import SplitterConfig
+from app.services.knowledge.splitter_config import normalize_splitter_config
 
 
 class DocumentStatus(str, Enum):
@@ -381,6 +382,14 @@ class KnowledgeDocumentResponse(BaseModel):
         if v is None:
             return {}
         return v
+
+    @field_validator("splitter_config", mode="before")
+    @classmethod
+    def normalize_splitter_config_for_response(cls, v):
+        """Return normalized splitter config payloads in API responses."""
+        if not v:
+            return v
+        return normalize_splitter_config(v)
 
     class Config:
         from_attributes = True

@@ -44,6 +44,7 @@ import { SplitterSettingsSection, type SplitterConfig } from './SplitterSettings
 import type { Attachment } from '@/types/api'
 import { cn } from '@/lib/utils'
 import { validateTableUrl } from '@/apis/knowledge'
+import { DEFAULT_FLAT_CHUNK_CONFIG, DEFAULT_SPLITTER_CONFIG } from '@/types/knowledge'
 
 // Unsupported file extensions that need friendly error message (images are not supported for RAG)
 const KB_UNSUPPORTED_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp']
@@ -56,24 +57,16 @@ function isKBUnsupportedExtension(filename: string): boolean {
   return KB_UNSUPPORTED_EXTENSIONS.includes(ext)
 }
 
-// Smart splitter supported file extensions
-const SMART_SUPPORTED_EXTENSIONS = ['.pdf', '.txt', '.doc', '.docx', '.md']
-
-/**
- * Check if a file extension is supported by smart splitter
- */
-function isSmartSupportedExtension(filename: string): boolean {
-  const ext = filename.toLowerCase().slice(filename.lastIndexOf('.'))
-  return SMART_SUPPORTED_EXTENSIONS.includes(ext)
-}
-
-/**
- * Check if all files are supported by smart splitter
- */
-function areAllFilesSmartSupported(files: { file: File; status: string }[]): boolean {
-  const successFiles = files.filter(f => f.status === 'success')
-  if (successFiles.length === 0) return false
-  return successFiles.every(f => isSmartSupportedExtension(f.file.name))
+function buildDefaultSplitterConfig(): Partial<SplitterConfig> {
+  return {
+    ...DEFAULT_SPLITTER_CONFIG,
+    flat_config: {
+      ...DEFAULT_FLAT_CHUNK_CONFIG,
+    },
+    markdown_enhancement: {
+      enabled: DEFAULT_SPLITTER_CONFIG.markdown_enhancement?.enabled ?? true,
+    },
+  }
 }
 
 // Upload mode type
@@ -117,12 +110,9 @@ export function DocumentUpload({
   const fileInputRef = useRef<HTMLInputElement>(null)
   const { state, addFiles, removeFile, clearFiles, startUpload, retryFile, renameFile, reset } =
     useBatchAttachment()
-  const [splitterConfig, setSplitterConfig] = useState<Partial<SplitterConfig>>({
-    type: 'sentence',
-    separator: '\n\n',
-    chunk_size: 1024,
-    chunk_overlap: 50,
-  })
+  const [splitterConfig, setSplitterConfig] = useState<Partial<SplitterConfig>>(
+    buildDefaultSplitterConfig
+  )
   const [isDragOver, setIsDragOver] = useState(false)
   const [validationError, setValidationError] = useState<string | null>(null)
   const [isConfirming, setIsConfirming] = useState(false)
@@ -268,12 +258,7 @@ export function DocumentUpload({
     try {
       await onUploadComplete(successfulAttachments, splitterConfig)
       reset()
-      setSplitterConfig({
-        type: 'sentence',
-        separator: '\n\n',
-        chunk_size: 1024,
-        chunk_overlap: 50,
-      })
+      setSplitterConfig(buildDefaultSplitterConfig())
     } catch {
       // Error handled by parent
     } finally {
@@ -283,12 +268,7 @@ export function DocumentUpload({
 
   const handleClose = () => {
     reset()
-    setSplitterConfig({
-      type: 'sentence',
-      separator: '\n\n',
-      chunk_size: 1024,
-      chunk_overlap: 50,
-    })
+    setSplitterConfig(buildDefaultSplitterConfig())
     setValidationError(null)
     setUploadMode('file')
     setTextContent('')
@@ -609,32 +589,10 @@ export function DocumentUpload({
   useEffect(() => {
     if (open) {
       reset()
-      setSplitterConfig({
-        type: 'sentence',
-        separator: '\n\n',
-        chunk_size: 1024,
-        chunk_overlap: 50,
-      })
+      setSplitterConfig(buildDefaultSplitterConfig())
       setValidationError(null)
     }
   }, [open, reset])
-
-  // Auto-select smart splitter when all successful files support it
-  useEffect(() => {
-    // Only check when all uploads are complete and there are successful files
-    if (!allUploadsComplete || successCount === 0) return
-
-    // Check if all successful files support smart splitter
-    if (areAllFilesSmartSupported(state.files)) {
-      // Auto-select smart type if not already selected
-      setSplitterConfig(prev => {
-        if (prev.type !== 'smart') {
-          return { ...prev, type: 'smart' }
-        }
-        return prev
-      })
-    }
-  }, [allUploadsComplete, successCount, state.files])
 
   // Render text input mode
   const renderTextMode = () => (

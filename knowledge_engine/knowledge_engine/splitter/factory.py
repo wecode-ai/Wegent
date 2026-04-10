@@ -5,9 +5,9 @@
 from llama_index.core.base.embeddings.base import BaseEmbedding
 
 from knowledge_engine.splitter.config import (
+    FlatChunkConfig,
+    NormalizedSplitterConfig,
     SemanticSplitterConfig,
-    SentenceSplitterConfig,
-    SmartSplitterConfig,
     SplitterConfig,
 )
 from knowledge_engine.splitter.smart import SmartSplitter
@@ -22,26 +22,46 @@ def create_splitter(
     if config is None:
         return SemanticSplitter(embed_model=embed_model)
 
+    if isinstance(config, NormalizedSplitterConfig):
+        if config.chunk_strategy == "semantic":
+            semantic_config = config.semantic_config or SemanticSplitterConfig()
+            return SemanticSplitter(
+                embed_model=embed_model,
+                buffer_size=semantic_config.buffer_size,
+                breakpoint_percentile_threshold=(
+                    semantic_config.breakpoint_percentile_threshold
+                ),
+            )
+
+        if config.chunk_strategy == "hierarchical":
+            hierarchical_config = config.hierarchical_config
+            return SentenceSplitter(
+                chunk_size=hierarchical_config.child_chunk_size,
+                chunk_overlap=hierarchical_config.child_chunk_overlap,
+                separator="\n\n",
+            )
+
+        flat_config = config.flat_config or FlatChunkConfig()
+        if config.format_enhancement == "file_aware":
+            ext = file_extension or ".txt"
+            return SmartSplitter(
+                file_extension=ext,
+                chunk_size=flat_config.chunk_size,
+                chunk_overlap=flat_config.chunk_overlap,
+                markdown_enhancement_enabled=config.markdown_enhancement.enabled,
+            )
+
+        return SentenceSplitter(
+            chunk_size=flat_config.chunk_size,
+            chunk_overlap=flat_config.chunk_overlap,
+            separator=flat_config.separator,
+        )
+
     if isinstance(config, SemanticSplitterConfig):
         return SemanticSplitter(
             embed_model=embed_model,
             buffer_size=config.buffer_size,
             breakpoint_percentile_threshold=config.breakpoint_percentile_threshold,
-        )
-
-    if isinstance(config, SentenceSplitterConfig):
-        return SentenceSplitter(
-            chunk_size=config.chunk_size,
-            chunk_overlap=config.chunk_overlap,
-            separator=config.separator,
-        )
-
-    if isinstance(config, SmartSplitterConfig):
-        ext = config.file_extension or file_extension or ".txt"
-        return SmartSplitter(
-            file_extension=ext,
-            chunk_size=config.chunk_size,
-            chunk_overlap=config.chunk_overlap,
         )
 
     raise ValueError(f"Unknown splitter config type: {type(config)}")

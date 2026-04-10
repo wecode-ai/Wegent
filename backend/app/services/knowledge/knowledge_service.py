@@ -1022,7 +1022,9 @@ class KnowledgeService:
             file_size=data.file_size,
             user_id=user_id,
             splitter_config=(
-                data.splitter_config.model_dump() if data.splitter_config else {}
+                data.splitter_config.model_dump(exclude_none=True)
+                if data.splitter_config
+                else {}
             ),  # Save splitter_config with default {}
             source_type=data.source_type.value if data.source_type else "file",
             source_config=data.source_config if data.source_config else {},
@@ -1173,7 +1175,7 @@ class KnowledgeService:
             doc.status = DocumentStatus(data.status.value)
 
         if data.splitter_config is not None:
-            doc.splitter_config = data.splitter_config.model_dump()
+            doc.splitter_config = data.splitter_config.model_dump(exclude_none=True)
 
         db.commit()
         db.refresh(doc)

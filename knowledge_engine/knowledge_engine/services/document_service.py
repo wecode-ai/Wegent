@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Dict
 
 from knowledge_engine.index.indexer import DocumentIndexer
+from knowledge_engine.splitter.config import normalize_splitter_config
 from knowledge_engine.storage.base import BaseStorageBackend
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
 
@@ -110,7 +111,11 @@ class DocumentService:
         indexer = DocumentIndexer(
             storage_backend=self.storage_backend,
             embed_model=embed_model,
-            splitter_config=splitter_config,
+            splitter_config=(
+                normalize_splitter_config(splitter_config).model_dump(exclude_none=True)
+                if splitter_config is not None
+                else None
+            ),
             file_extension=file_extension,
         )
         result = indexer.index_from_binary(
@@ -140,7 +145,11 @@ class DocumentService:
         indexer = DocumentIndexer(
             storage_backend=self.storage_backend,
             embed_model=embed_model,
-            splitter_config=splitter_config,
+            splitter_config=(
+                normalize_splitter_config(splitter_config).model_dump(exclude_none=True)
+                if splitter_config is not None
+                else None
+            ),
             file_extension=file_extension,
         )
         result = indexer.index_document(

@@ -576,3 +576,83 @@ class QdrantBackend(BaseStorageBackend):
                 f"[Qdrant] Failed to get all chunks for KB {knowledge_id}: {e}"
             )
             return []
+
+    def save_parent_nodes(
+        self,
+        knowledge_id: str,
+        parent_nodes: List[BaseNode],
+        **kwargs,
+    ) -> Dict[str, Any]:
+        if not parent_nodes:
+            return {"stored_count": 0}
+
+        collection_name = self.get_parent_store_name(knowledge_id, **kwargs)
+        if not self.client.collection_exists(collection_name):
+            self.client.create_collection(
+                collection_name=collection_name,
+                vectors_config=qdrant_models.VectorParams(
+                    size=1,
+                    distance=qdrant_models.Distance.COSINE,
+                ),
+            )
+
+        points = [
+            qdrant_models.PointStruct(
+                id=node.node_id,
+                vector=[0.0],
+                payload={
+                    "parent_node_id": node.node_id,
+                    "knowledge_id": knowledge_id,
+                    "doc_ref": node.metadata.get("doc_ref"),
+                    "source_file": node.metadata.get("source_file"),
+                    "content": node.text,
+                    "title": node.metadata.get("source_file", ""),
+                    "metadata": node.metadata,
+                },
+            )
+            for node in parent_nodes
+        ]
+        self.client.upsert(collection_name=collection_name, points=points, wait=True)
+        return {"stored_count": len(parent_nodes)}
+
+    def get_parent_nodes(
+        self,
+        knowledge_id: str,
+        parent_node_ids: List[str],
+        **kwargs,
+    ) -> Dict[str, Dict[str, Any]]:
+        collection_name = self.get_parent_store_name(knowledge_id, **kwargs)
+        if not parent_node_ids or not self.client.collection_exists(collection_name):
+            return {}
+
+        parent_records: Dict[str, Dict[str, Any]] = {}
+        for parent_node_id in parent_node_ids:
+            scroll_filter = qdrant_models.Filter(
+                must=[
+                    qdrant_models.FieldCondition(
+                        key="knowledge_id",
+                        match=qdrant_models.MatchValue(value=knowledge_id),
+                    ),
+                    qdrant_models.FieldCondition(
+                        key="parent_node_id",
+                        match=qdrant_models.MatchValue(value=parent_node_id),
+                    ),
+                ]
+            )
+            records, _ = self.client.scroll(
+                collection_name=collection_name,
+                scroll_filter=scroll_filter,
+                limit=1,
+                with_payload=True,
+                with_vectors=False,
+            )
+            if not records:
+                continue
+            payload = records[0].payload or {}
+            parent_records[parent_node_id] = {
+                "content": payload.get("content", ""),
+                "title": payload.get("title", ""),
+                "metadata": payload.get("metadata", {}),
+            }
+
+        return parent_records

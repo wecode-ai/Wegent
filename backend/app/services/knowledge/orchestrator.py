@@ -1319,7 +1319,7 @@ class KnowledgeOrchestrator:
         # Get splitter config from data if provided
         splitter_config_dict = None
         if data.splitter_config:
-            splitter_config_dict = data.splitter_config.model_dump()
+            splitter_config_dict = data.splitter_config.model_dump(exclude_none=True)
 
         return self._create_and_index_document(
             db=db,

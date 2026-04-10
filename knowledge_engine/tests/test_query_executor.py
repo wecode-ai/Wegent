@@ -104,3 +104,62 @@ async def test_query_executor_normalizes_explicit_none_values_to_defaults() -> N
         },
         metadata_condition=None,
     )
+
+
+@pytest.mark.asyncio
+async def test_query_executor_merges_hierarchical_child_hits_into_parent_content() -> (
+    None
+):
+    from knowledge_engine.query import QueryExecutor
+
+    storage_backend = MagicMock()
+    storage_backend.retrieve.return_value = {
+        "records": [
+            {
+                "content": "child chunk",
+                "score": 0.92,
+                "title": "Doc",
+                "metadata": {
+                    "chunk_strategy": "hierarchical",
+                    "parent_node_id": "parent-1",
+                    "doc_ref": "doc_1",
+                },
+            }
+        ]
+    }
+    storage_backend.get_parent_nodes.return_value = {
+        "parent-1": {
+            "content": "parent context",
+            "title": "Doc",
+            "metadata": {
+                "chunk_strategy": "hierarchical",
+                "doc_ref": "doc_1",
+            },
+        }
+    }
+    executor = QueryExecutor(storage_backend=storage_backend, embed_model=object())
+
+    result = await executor.execute(
+        knowledge_id="1",
+        query="parent question",
+        retrieval_config={"top_k": 5, "retrieval_mode": "vector"},
+    )
+
+    assert result == {
+        "records": [
+            {
+                "content": "parent context",
+                "score": 0.92,
+                "title": "Doc",
+                "metadata": {
+                    "chunk_strategy": "hierarchical",
+                    "doc_ref": "doc_1",
+                    "parent_node_id": "parent-1",
+                },
+            }
+        ]
+    }
+    storage_backend.get_parent_nodes.assert_called_once_with(
+        knowledge_id="1",
+        parent_node_ids=["parent-1"],
+    )

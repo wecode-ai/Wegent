@@ -11,7 +11,11 @@ from typing import Any, Dict, List
 from llama_index.core import Document, SimpleDirectoryReader
 
 from knowledge_engine.splitter import SmartSplitter, create_splitter
-from knowledge_engine.splitter.config import parse_splitter_config
+from knowledge_engine.splitter.config import (
+    NormalizedSplitterConfig,
+    parse_splitter_config,
+)
+from knowledge_engine.splitter.hierarchical import build_hierarchical_nodes
 from knowledge_engine.splitter.splitter import SentenceSplitter
 from knowledge_engine.storage.base import BaseStorageBackend
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
@@ -53,8 +57,9 @@ class DocumentIndexer:
         self.storage_backend = storage_backend
         self.embed_model = embed_model
         self.file_extension = file_extension
+        self.splitter_config = parse_splitter_config(splitter_config)
         self.splitter = create_splitter(
-            parse_splitter_config(splitter_config),
+            self.splitter_config,
             embed_model,
             file_extension,
         )
@@ -126,7 +131,24 @@ class DocumentIndexer:
         for doc in documents:
             doc.metadata = sanitize_metadata(doc.metadata)
 
-        nodes = self.splitter.split_documents(documents)
+        if self._is_hierarchical():
+            hierarchical_config = self.splitter_config.hierarchical_config
+            hierarchical_nodes = build_hierarchical_nodes(
+                documents=documents,
+                parent_chunk_size=hierarchical_config.parent_chunk_size,
+                child_chunk_size=hierarchical_config.child_chunk_size,
+                child_chunk_overlap=hierarchical_config.child_chunk_overlap,
+            )
+            chunk_metadata.apply_to_nodes(hierarchical_nodes.parent_nodes)
+            self.storage_backend.save_parent_nodes(
+                knowledge_id=chunk_metadata.knowledge_id,
+                parent_nodes=hierarchical_nodes.parent_nodes,
+                **kwargs,
+            )
+            nodes = hierarchical_nodes.child_nodes
+        else:
+            nodes = self.splitter.split_documents(documents)
+
         chunk_metadata.apply_to_nodes(nodes)
 
         add_span_event(
@@ -180,7 +202,9 @@ class DocumentIndexer:
 
         splitter_type = "semantic"
         splitter_subtype = None
-        if isinstance(self.splitter, SmartSplitter):
+        if self._is_hierarchical():
+            splitter_type = "hierarchical"
+        elif isinstance(self.splitter, SmartSplitter):
             splitter_type = "smart"
             splitter_subtype = self.splitter._get_subtype()
         elif isinstance(self.splitter, SentenceSplitter):
@@ -193,3 +217,10 @@ class DocumentIndexer:
             "splitter_subtype": splitter_subtype,
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
+
+    def _is_hierarchical(self) -> bool:
+        return (
+            isinstance(self.splitter_config, NormalizedSplitterConfig)
+            and self.splitter_config.chunk_strategy == "hierarchical"
+            and self.splitter_config.hierarchical_config is not None
+        )

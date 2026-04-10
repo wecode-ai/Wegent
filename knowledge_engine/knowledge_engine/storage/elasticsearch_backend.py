@@ -629,3 +629,74 @@ class ElasticsearchBackend(BaseStorageBackend):
                 e,
             )
             return []
+
+    def save_parent_nodes(
+        self,
+        knowledge_id: str,
+        parent_nodes: List[BaseNode],
+        **kwargs,
+    ) -> Dict[str, Any]:
+        if not parent_nodes:
+            return {"stored_count": 0}
+
+        index_name = self.get_parent_store_name(knowledge_id, **kwargs)
+        es_client = Elasticsearch(self.url, **self.es_kwargs)
+
+        for node in parent_nodes:
+            es_client.index(
+                index=index_name,
+                id=node.node_id,
+                document={
+                    "parent_node_id": node.node_id,
+                    "knowledge_id": knowledge_id,
+                    "doc_ref": node.metadata.get("doc_ref"),
+                    "source_file": node.metadata.get("source_file"),
+                    "content": node.text,
+                    "title": node.metadata.get("source_file", ""),
+                    "metadata": node.metadata,
+                },
+                refresh="wait_for",
+            )
+
+        return {"stored_count": len(parent_nodes)}
+
+    def get_parent_nodes(
+        self,
+        knowledge_id: str,
+        parent_node_ids: List[str],
+        **kwargs,
+    ) -> Dict[str, Dict[str, Any]]:
+        if not parent_node_ids:
+            return {}
+
+        index_name = self.get_parent_store_name(knowledge_id, **kwargs)
+        es_client = Elasticsearch(self.url, **self.es_kwargs)
+        if not es_client.indices.exists(index=index_name):
+            return {}
+
+        response = es_client.search(
+            index=index_name,
+            query={
+                "bool": {
+                    "filter": [
+                        {"term": {"knowledge_id.keyword": knowledge_id}},
+                        {"terms": {"parent_node_id.keyword": parent_node_ids}},
+                    ]
+                }
+            },
+            size=len(parent_node_ids),
+        )
+
+        parent_records: Dict[str, Dict[str, Any]] = {}
+        for hit in response["hits"]["hits"]:
+            source = hit.get("_source", {})
+            parent_node_id = source.get("parent_node_id")
+            if not parent_node_id:
+                continue
+            parent_records[parent_node_id] = {
+                "content": source.get("content", ""),
+                "title": source.get("title", ""),
+                "metadata": source.get("metadata", {}),
+            }
+
+        return parent_records

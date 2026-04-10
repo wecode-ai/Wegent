@@ -393,3 +393,27 @@ class BaseStorageBackend(ABC):
                 - metadata: dict, additional metadata
         """
         pass
+
+    def get_parent_store_name(self, knowledge_id: str, **kwargs) -> str:
+        """Return the dedicated sidecar store name for hierarchical parent nodes."""
+        return f"{self.get_index_name(knowledge_id, **kwargs)}__parents"
+
+    def save_parent_nodes(
+        self,
+        knowledge_id: str,
+        parent_nodes: List[BaseNode],
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """Persist hierarchical parent nodes for later recall."""
+        del knowledge_id, parent_nodes, kwargs
+        return {"stored_count": 0}
+
+    def get_parent_nodes(
+        self,
+        knowledge_id: str,
+        parent_node_ids: List[str],
+        **kwargs,
+    ) -> Dict[str, Dict[str, Any]]:
+        """Load hierarchical parent nodes by id."""
+        del knowledge_id, parent_node_ids, kwargs
+        return {}
