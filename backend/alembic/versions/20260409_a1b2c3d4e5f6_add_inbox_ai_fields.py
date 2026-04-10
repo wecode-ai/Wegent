@@ -11,7 +11,8 @@ Create Date: 2026-04-09
 Add columns to queue_messages for inbox AI auto-processing support,
 and inbox_message_id to background_executions for linking executions
 to originating inbox messages. Also adds 'failed' enum value to
-queue message status.
+queue message status. Adds content_attachment_ids JSON column to
+store pre-written subtask_contexts IDs for LLM output window optimization.
 """
 
 import logging
@@ -100,6 +101,17 @@ def upgrade() -> None:
             ),
         )
 
+    if "content_attachment_ids" not in qm_columns:
+        op.add_column(
+            "queue_messages",
+            sa.Column(
+                "content_attachment_ids",
+                sa.JSON(),
+                nullable=True,
+                comment="List of subtask_contexts IDs pre-written from message content/files",
+            ),
+        )
+
     if "idempotency_key" not in qm_columns:
         op.add_column(
             "queue_messages",
@@ -161,6 +173,7 @@ def downgrade() -> None:
         op.drop_column("queue_messages", "idempotency_key")
 
     for col in [
+        "content_attachment_ids",
         "retry_count",
         "processing_started_at",
         "process_error",

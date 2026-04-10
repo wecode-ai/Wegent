@@ -3,7 +3,7 @@
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Optional
+from typing import List, Optional
 
 from sqlalchemy.orm import Session
 
@@ -141,7 +141,9 @@ class InboxAutoProcessHandler:
                 db.commit()
 
                 # Build inbox context for prompt template
-                inbox_context = self._build_inbox_context(message, work_queue, event)
+                inbox_context = self._build_inbox_context(
+                    message, work_queue, event, db
+                )
 
                 # Create execution and dispatch; mark message FAILED on error
                 try:
@@ -258,14 +260,89 @@ class InboxAutoProcessHandler:
             f"[InboxAutoProcess] Message {message.id} marked as failed: {error}"
         )
 
+    def _pre_write_content_as_attachment(
+        self,
+        message: QueueMessage,
+        user_id: int,
+    ) -> List[int]:
+        """Pre-write message text content to subtask_contexts as a .md attachment.
+
+        This allows the LLM to reference content by attachment_id instead of
+        re-outputting the full text through the model output window.
+
+        Returns:
+            List of attachment context IDs (text content first, then existing file IDs).
+        """
+        from app.services.context.context_service import context_service
+
+        attachment_ids: List[int] = []
+
+        # Pre-write text content from content_snapshot as a .md attachment
+        content_snapshot = message.content_snapshot or []
+        text_parts = [
+            snap.get("content", "")
+            for snap in content_snapshot
+            if snap.get("content", "").strip()
+        ]
+        combined_text = "\n\n---\n\n".join(text_parts)
+
+        if combined_text.strip():
+            try:
+                with get_db_session() as db:
+                    ctx, _ = context_service.upload_attachment(
+                        db=db,
+                        user_id=user_id,
+                        filename=f"inbox_message_{message.id}.md",
+                        binary_data=combined_text.encode("utf-8"),
+                        subtask_id=0,
+                    )
+                    attachment_ids.append(ctx.id)
+                    logger.info(
+                        f"[InboxAutoProcess] Pre-wrote message {message.id} text "
+                        f"as attachment context {ctx.id} ({len(combined_text)} chars)"
+                    )
+            except Exception as e:
+                logger.warning(
+                    f"[InboxAutoProcess] Failed to pre-write text content for "
+                    f"message {message.id}: {e}"
+                )
+
+        # Append pre-existing file attachment IDs (uploaded via ingest endpoint)
+        existing_ids = message.content_attachment_ids or []
+        attachment_ids.extend(existing_ids)
+
+        return attachment_ids
+
     def _build_inbox_context(
         self,
         message: QueueMessage,
         work_queue: Kind,
         event: QueueMessageCreatedEvent,
+        db: Session,
     ) -> str:
-        """Build standardized inbox context for subscription prompt."""
+        """Build standardized inbox context for subscription prompt.
+
+        Pre-writes message content to subtask_contexts so the LLM can use
+        create_document(source_type='attachment', attachment_id=...) without
+        re-outputting the full content through the model output window.
+
+        Also persists all attachment IDs (text pre-write + uploaded files) back
+        to message.content_attachment_ids so that _link_inbox_attachments_to_subtask()
+        can retrieve them when the subscription task executes.
+        """
         spec = work_queue.json.get("spec", {})
+
+        # Pre-write content as attachment and collect all attachment IDs
+        content_attachment_ids = self._pre_write_content_as_attachment(
+            message=message,
+            user_id=work_queue.user_id,
+        )
+
+        # Persist all attachment IDs back to message so the subscription task
+        # can retrieve them via message.content_attachment_ids when linking to subtask.
+        if content_attachment_ids:
+            message.content_attachment_ids = content_attachment_ids
+            db.commit()
 
         context = {
             "trigger": {
@@ -294,6 +371,10 @@ class InboxAutoProcessHandler:
                 "id": event.sender_user_id,
             },
             "contentSnapshot": message.content_snapshot or [],
+            # Pre-written attachment IDs for LLM to use with create_document.
+            # Use create_document(source_type='attachment', attachment_id=<id>)
+            # to save content to knowledge base WITHOUT re-outputting it.
+            "contentAttachmentIds": content_attachment_ids,
             "executionContext": {
                 "triggeredBy": "auto_process",
                 "retryCount": message.retry_count,

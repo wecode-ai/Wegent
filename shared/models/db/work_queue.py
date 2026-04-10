@@ -91,6 +91,12 @@ class QueueMessage(Base):
     retry_count = Column(
         Integer, nullable=False, default=0, comment="Retry attempt count"
     )
+    content_attachment_ids = Column(
+        JSON,
+        nullable=True,
+        default=None,
+        comment="List of subtask_contexts IDs pre-written from message content/files",
+    )
     idempotency_key = Column(
         String(255),
         nullable=True,

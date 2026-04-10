@@ -1295,7 +1295,7 @@ class QueueMessageService:
             # Build content snapshot from ingested content
             snapshot_entry = {
                 "role": "USER",
-                "content": request.content,
+                "content": request.content or "",
                 "senderUserName": (
                     request.sender.displayName if request.sender else None
                 ),
@@ -1304,6 +1304,9 @@ class QueueMessageService:
             if request.attachments:
                 snapshot_entry["attachments"] = request.attachments
             content_snapshot = [snapshot_entry]
+
+            # Collect pre-written attachment context IDs (from file uploads)
+            attachment_context_ids = list(request.attachmentContextIds or [])
 
             # Create message
             db_message = QueueMessage(
@@ -1318,6 +1321,9 @@ class QueueMessageService:
                 process_result={},
                 process_task_id=0,
                 idempotency_key=request.idempotencyKey,
+                content_attachment_ids=(
+                    attachment_context_ids if attachment_context_ids else None
+                ),
             )
             db.add(db_message)
             try:

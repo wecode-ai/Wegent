@@ -361,6 +361,64 @@ def _bind_task_to_subscription(db: Session, subscription: Any, task_id: int) -> 
     )
 
 
+def _link_inbox_attachments_to_subtask(
+    db: Session,
+    user_subtask_id: int,
+    user_id: int,
+    inbox_message_id: int,
+) -> None:
+    """
+    Link inbox message attachments to user_subtask for context injection.
+
+    When a subscription is triggered by an inbox message, the message's
+    pre-written attachments (content_attachment_ids) must be linked to the
+    user subtask so that prepare_contexts_for_chat() can inject the file
+    content into the LLM context window.
+
+    This mirrors the chat namespace flow where link_contexts_to_subtask()
+    is called after the user sends a message with attachments.
+
+    Args:
+        db: Database session
+        user_subtask_id: User subtask ID to link attachments to
+        user_id: User ID
+        inbox_message_id: QueueMessage ID to load attachment IDs from
+    """
+    from app.services.chat.preprocessing import link_contexts_to_subtask
+    from shared.models.db.work_queue import QueueMessage
+
+    # Load the inbox message to get pre-written attachment IDs
+    message = db.query(QueueMessage).filter(QueueMessage.id == inbox_message_id).first()
+
+    if not message:
+        logger.warning(
+            f"[_link_inbox_attachments_to_subtask] QueueMessage {inbox_message_id} not found"
+        )
+        return
+
+    attachment_ids = message.content_attachment_ids or []
+    if not attachment_ids:
+        logger.debug(
+            f"[_link_inbox_attachments_to_subtask] No attachment IDs for message {inbox_message_id}"
+        )
+        return
+
+    # Link attachments to user subtask so prepare_contexts_for_chat() can inject content
+    linked_ids = link_contexts_to_subtask(
+        db=db,
+        subtask_id=user_subtask_id,
+        user_id=user_id,
+        attachment_ids=attachment_ids,
+        contexts=None,
+        task=None,
+        user_name=None,
+    )
+    logger.info(
+        f"[_link_inbox_attachments_to_subtask] Linked {len(linked_ids)} inbox attachment(s) "
+        f"(message_id={inbox_message_id}) to user_subtask {user_subtask_id}"
+    )
+
+
 def _link_subscription_knowledge_bases(
     db: Session,
     user_subtask_id: int,
@@ -576,6 +634,18 @@ async def _create_subscription_task(
             user_subtask_id=result.user_subtask.id,
             user_id=ctx.user.id,
             kb_refs=kb_refs,
+        )
+
+    # Link inbox message attachments to user_subtask for context injection.
+    # When triggered by an inbox message, pre-written attachments (content_attachment_ids)
+    # must be linked so prepare_contexts_for_chat() can inject file content into LLM context.
+    inbox_message_id = getattr(ctx.execution, "inbox_message_id", None)
+    if inbox_message_id and result.user_subtask:
+        _link_inbox_attachments_to_subtask(
+            db=db,
+            user_subtask_id=result.user_subtask.id,
+            user_id=ctx.user.id,
+            inbox_message_id=inbox_message_id,
         )
 
     return SubscriptionTaskResult(

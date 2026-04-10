@@ -8,7 +8,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 # Re-export enums for API use
@@ -393,13 +393,30 @@ class IngestSource(BaseModel):
 
 
 class IngestMessageRequest(BaseModel):
-    """Request model for ingesting messages into a queue."""
+    """Request model for ingesting messages into a queue.
 
-    content: str = Field(..., min_length=1, max_length=50000)
+    Either `content` or `attachmentContextIds` must be provided.
+    When files are uploaded via the multipart endpoint, the caller
+    pre-writes them to subtask_contexts and passes the resulting IDs
+    in `attachmentContextIds`, allowing `content` to be omitted.
+    """
+
+    content: Optional[str] = Field(None, max_length=50000)
     title: Optional[str] = Field(None, max_length=200)
     note: Optional[str] = Field(None, max_length=1000)
     sender: Optional[ExternalSender] = None
     attachments: Optional[List[Dict[str, Any]]] = None
+    # IDs of subtask_contexts records pre-written from uploaded files
+    attachmentContextIds: Optional[List[int]] = None
     source: Optional[IngestSource] = None
     idempotencyKey: Optional[str] = Field(None, max_length=255)
     priority: QueueMessagePriority = QueueMessagePriority.NORMAL
+
+    @model_validator(mode="after")
+    def validate_content_or_attachments(self) -> "IngestMessageRequest":
+        """Ensure at least one of content or attachmentContextIds is provided."""
+        if not self.content and not self.attachmentContextIds:
+            raise ValueError(
+                "Either 'content' or 'attachmentContextIds' must be provided"
+            )
+        return self

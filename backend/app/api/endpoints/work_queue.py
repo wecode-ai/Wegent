@@ -4,9 +4,19 @@
 
 """Work Queue API endpoints."""
 
-from typing import Optional
+import logging
+from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    UploadFile,
+    status,
+)
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
@@ -17,9 +27,11 @@ from app.schemas.work_queue import (
     BatchMessageIds,
     BatchOperationResult,
     BatchStatusUpdate,
+    ExternalSender,
     ForwardMessageRequest,
     ForwardMessageResponse,
     IngestMessageRequest,
+    IngestSource,
     PublicQueueResponse,
     QueueMessageListResponse,
     QueueMessagePriority,
@@ -41,6 +53,8 @@ from app.services.work_queue_service import (
     queue_message_service,
     work_queue_service,
 )
+
+logger = logging.getLogger(__name__)
 
 # get_current_user_flexible_for_executor supports both JWT and API Key (wg- prefix)
 _ingest_auth = security.get_current_user_flexible_for_executor
@@ -184,31 +198,86 @@ async def list_queue_messages(
     return QueueMessageListResponse(items=items, total=total, unreadCount=unread)
 
 
-@router.post(
-    "/{queue_id}/messages/ingest",
-    response_model=QueueMessageResponse,
-    status_code=status.HTTP_201_CREATED,
-)
-async def ingest_message(
-    queue_id: int,
-    request: IngestMessageRequest,
-    current_user: User = Depends(_ingest_auth),
-):
-    """Ingest a message into a work queue for processing.
+async def _build_ingest_request_with_files(
+    content: Optional[str],
+    title: Optional[str],
+    note: Optional[str],
+    priority: str,
+    idempotency_key: Optional[str],
+    sender_external_id: Optional[str],
+    sender_display_name: Optional[str],
+    source_type: Optional[str],
+    source_name: Optional[str],
+    files: List[UploadFile],
+    user_id: int,
+    db: Session,
+) -> IngestMessageRequest:
+    """Upload files to subtask_contexts and build IngestMessageRequest.
 
-    Standard API for external systems to submit content to an Inbox queue.
-    Supports idempotency via idempotencyKey.
+    Files are pre-written as attachments so the LLM can reference them
+    by attachment_id without re-outputting content through the output window.
     """
-    try:
-        return queue_message_service.ingest_message(
-            user_id=current_user.id,
-            queue_id=queue_id,
-            request=request,
+    from app.services.context.context_service import context_service
+
+    attachment_context_ids: List[int] = []
+
+    for upload_file in files:
+        if not upload_file.filename:
+            continue
+        try:
+            binary_data = await upload_file.read()
+            if not binary_data:
+                continue
+            ctx, _ = context_service.upload_attachment(
+                db=db,
+                user_id=user_id,
+                filename=upload_file.filename,
+                binary_data=binary_data,
+                subtask_id=0,
+            )
+            attachment_context_ids.append(ctx.id)
+            logger.info(
+                f"[ingest] Uploaded file '{upload_file.filename}' "
+                f"as attachment context {ctx.id}"
+            )
+        except Exception as e:
+            logger.warning(
+                f"[ingest] Failed to upload file '{upload_file.filename}': {e}"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Failed to process file '{upload_file.filename}': {e}",
+            )
+
+    sender = None
+    if sender_external_id or sender_display_name:
+        sender = ExternalSender(
+            externalId=sender_external_id,
+            displayName=sender_display_name,
         )
-    except NotFoundException as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
-    except ConflictException as e:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+
+    source = None
+    if source_type or source_name:
+        source = IngestSource(
+            type=source_type or "api",
+            name=source_name,
+        )
+
+    try:
+        priority_enum = QueueMessagePriority(priority)
+    except ValueError:
+        priority_enum = QueueMessagePriority.NORMAL
+
+    return IngestMessageRequest(
+        content=content or None,
+        title=title,
+        note=note,
+        sender=sender,
+        source=source,
+        idempotencyKey=idempotency_key,
+        priority=priority_enum,
+        attachmentContextIds=attachment_context_ids if attachment_context_ids else None,
+    )
 
 
 @router.post(
@@ -218,16 +287,54 @@ async def ingest_message(
 )
 async def ingest_message_by_name(
     queue_name: str,
-    request: IngestMessageRequest,
+    db: Session = Depends(get_db),
     current_user: User = Depends(_ingest_auth),
+    # Text fields via Form (multipart/form-data)
+    content: Optional[str] = Form(None, description="Message text content"),
+    title: Optional[str] = Form(None, description="Optional title"),
+    note: Optional[str] = Form(None, description="Optional note"),
+    priority: str = Form("normal", description="Priority: low, normal, high"),
+    idempotency_key: Optional[str] = Form(None, alias="idempotencyKey"),
+    sender_external_id: Optional[str] = Form(None, alias="senderExternalId"),
+    sender_display_name: Optional[str] = Form(None, alias="senderDisplayName"),
+    source_type: Optional[str] = Form(None, alias="sourceType"),
+    source_name: Optional[str] = Form(None, alias="sourceName"),
+    # File uploads (optional)
+    files: List[UploadFile] = File(default=[], description="Files to attach"),
 ):
     """Ingest a message into a work queue identified by name.
 
     Convenience endpoint that resolves the queue by name instead of ID.
     Useful for scripting and external integrations where the queue name
     (e.g. "inbox") is known but the numeric ID is not.
-    Supports idempotency via idempotencyKey.
+
+    Accepts multipart/form-data with optional file attachments.
+    Files are pre-stored as attachments so the LLM can reference them
+    by ID without re-outputting content through the model output window.
+
+    Example (text only):
+        curl -X POST .../by-name/inbox/messages/ingest -F "content=Hello world"
+
+    Example (with files):
+        curl -X POST .../by-name/inbox/messages/ingest \\
+          -F "content=See attached" -F "files=@doc.pdf" -F "files=@notes.md"
+
+    Supports idempotency via idempotencyKey form field.
     """
+    request = await _build_ingest_request_with_files(
+        content=content,
+        title=title,
+        note=note,
+        priority=priority,
+        idempotency_key=idempotency_key,
+        sender_external_id=sender_external_id,
+        sender_display_name=sender_display_name,
+        source_type=source_type,
+        source_name=source_name,
+        files=files,
+        user_id=current_user.id,
+        db=db,
+    )
     try:
         return queue_message_service.ingest_message_by_name(
             user_id=current_user.id,
