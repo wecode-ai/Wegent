@@ -43,23 +43,24 @@ def enhance_markdown_nodes(nodes: Iterable[TextNode]) -> list[TextNode]:
     """Merge heading-only or low-information markdown sections into the next node."""
     enhanced_nodes: list[TextNode] = []
     pending_prefix = ""
+    pending_node: TextNode | None = None
 
     for node in nodes:
         node_text = getattr(node, "text", "") or ""
         if _is_weak_markdown_section(node_text):
             pending_prefix = _merge_text(pending_prefix, node_text)
+            pending_node = node
             continue
 
-        merged_text = _merge_text(pending_prefix, node_text)
-        enhanced_nodes.append(
-            TextNode(
-                text=merged_text,
-                metadata=dict(getattr(node, "metadata", {}) or {}),
-            )
-        )
+        if pending_prefix:
+            merged_text = _merge_text(pending_prefix, node_text)
+            enhanced_nodes.append(node.model_copy(update={"text": merged_text}))
+        else:
+            enhanced_nodes.append(node)
         pending_prefix = ""
+        pending_node = None
 
-    if pending_prefix:
-        enhanced_nodes.append(TextNode(text=pending_prefix))
+    if pending_prefix and pending_node is not None:
+        enhanced_nodes.append(pending_node.model_copy(update={"text": pending_prefix}))
 
     return enhanced_nodes

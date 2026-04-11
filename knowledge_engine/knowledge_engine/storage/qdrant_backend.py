@@ -304,6 +304,7 @@ class QdrantBackend(BaseStorageBackend):
 
         # Delete nodes using LlamaIndex API
         vector_store.delete_nodes(filters=filters)
+        self.delete_parent_nodes(knowledge_id, doc_ref, **kwargs)
 
         return {
             "doc_ref": doc_ref,
@@ -311,6 +312,30 @@ class QdrantBackend(BaseStorageBackend):
             "deleted_chunks": deleted_count,
             "status": "deleted",
         }
+
+    def delete_parent_nodes(self, knowledge_id: str, doc_ref: str, **kwargs) -> int:
+        collection_name = self.get_parent_store_name(knowledge_id, **kwargs)
+        if not self.client.collection_exists(collection_name):
+            return 0
+
+        scroll_filter = qdrant_models.Filter(
+            must=[
+                qdrant_models.FieldCondition(
+                    key="knowledge_id",
+                    match=qdrant_models.MatchValue(value=knowledge_id),
+                ),
+                qdrant_models.FieldCondition(
+                    key="doc_ref",
+                    match=qdrant_models.MatchValue(value=doc_ref),
+                ),
+            ]
+        )
+        self.client.delete(
+            collection_name=collection_name,
+            points_selector=qdrant_models.FilterSelector(filter=scroll_filter),
+            wait=True,
+        )
+        return 0
 
     def get_document(self, knowledge_id: str, doc_ref: str, **kwargs) -> Dict:
         """

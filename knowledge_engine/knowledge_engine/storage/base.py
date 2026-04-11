@@ -408,6 +408,16 @@ class BaseStorageBackend(ABC):
         del knowledge_id, parent_nodes, kwargs
         return {"stored_count": 0}
 
+    def delete_parent_nodes(
+        self,
+        knowledge_id: str,
+        doc_ref: str,
+        **kwargs,
+    ) -> int:
+        """Delete hierarchical parent nodes for a document."""
+        del knowledge_id, doc_ref, kwargs
+        return 0
+
     def get_parent_nodes(
         self,
         knowledge_id: str,

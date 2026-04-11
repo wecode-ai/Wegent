@@ -339,8 +339,13 @@ class TestDeleteDocument:
     """Tests for delete_document method."""
 
     @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
-    def test_delete_document(self, mock_milvus_vs):
+    @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
+    def test_delete_document(self, mock_client_class, mock_milvus_vs):
         """Test deleting a document."""
+        mock_client = MagicMock()
+        mock_client_class.return_value = mock_client
+        mock_client.has_collection.return_value = True
+
         mock_store = MagicMock()
         mock_milvus_vs.return_value = mock_store
 
@@ -360,6 +365,54 @@ class TestDeleteDocument:
         assert result["deleted_chunks"] == 2
         assert result["status"] == "deleted"
         mock_store.delete_nodes.assert_called_once()
+        mock_client.delete.assert_called_once_with(
+            collection_name="test_kb_kb_1__parents",
+            filter='knowledge_id == "kb_1" and doc_ref == "doc_123"',
+        )
+        mock_client.close.assert_called_once()
+
+
+class TestSaveParentNodes:
+    """Tests for parent-node persistence."""
+
+    @patch("knowledge_engine.storage.milvus_backend.MilvusClient")
+    def test_save_parent_nodes_replaces_existing_rows(self, mock_client_class):
+        """Test parent-node writes are idempotent for retries."""
+        mock_client = MagicMock()
+        mock_client_class.return_value = mock_client
+        mock_client.has_collection.return_value = True
+
+        parent_node = MagicMock()
+        parent_node.node_id = "parent-1"
+        parent_node.text = "parent content"
+        parent_node.metadata = {
+            "doc_ref": "doc_123",
+            "source_file": "test.txt",
+            "chunk_strategy": "hierarchical",
+        }
+
+        config = {
+            "url": "http://localhost:19530/default",
+            "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
+        }
+        backend = MilvusBackend(config)
+
+        backend.save_parent_nodes(
+            knowledge_id="kb_1",
+            parent_nodes=[parent_node],
+        )
+        backend.save_parent_nodes(
+            knowledge_id="kb_1",
+            parent_nodes=[parent_node],
+        )
+
+        assert mock_client.delete.call_count == 2
+        assert mock_client.insert.call_count == 2
+        mock_client.delete.assert_called_with(
+            collection_name="test_kb_kb_1__parents",
+            filter='knowledge_id == "kb_1" and doc_ref == "doc_123"',
+        )
+        assert mock_client.close.call_count == 2
 
 
 class TestGetDocument:

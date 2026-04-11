@@ -215,7 +215,7 @@ export function normalizeSplitterConfigForDisplay(
           DEFAULT_SEMANTIC_CHUNK_CONFIG.breakpoint_percentile_threshold,
       },
       markdown_enhancement: {
-        enabled: true,
+        enabled: false,
       },
     }
   }
@@ -246,7 +246,7 @@ export function normalizeSplitterConfigForDisplay(
         chunk_overlap: config.chunk_overlap ?? DEFAULT_FLAT_CHUNK_CONFIG.chunk_overlap,
       },
       markdown_enhancement: {
-        enabled: true,
+        enabled: false,
       },
     }
   }

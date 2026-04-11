@@ -343,6 +343,46 @@ class MilvusBackend(BaseStorageBackend):
             "status": "success",
         }
 
+    @staticmethod
+    def _build_parent_node_filter_expr(knowledge_id: str, doc_ref: str) -> str:
+        safe_knowledge_id = MilvusBackend._sanitize_filter_value(knowledge_id)
+        safe_doc_ref = MilvusBackend._sanitize_filter_value(doc_ref)
+        return f'knowledge_id == "{safe_knowledge_id}" and doc_ref == "{safe_doc_ref}"'
+
+    def _delete_parent_nodes_with_client(
+        self,
+        client: MilvusClient,
+        collection_name: str,
+        knowledge_id: str,
+        doc_ref: str,
+    ) -> int:
+        if not client.has_collection(collection_name):
+            return 0
+
+        filter_expr = self._build_parent_node_filter_expr(knowledge_id, doc_ref)
+        try:
+            client.delete(collection_name=collection_name, filter=filter_expr)
+        except TypeError:
+            client.delete(collection_name=collection_name, expr=filter_expr)
+        return 0
+
+    def delete_parent_nodes(self, knowledge_id: str, doc_ref: str, **kwargs) -> int:
+        collection_name = self.get_parent_store_name(knowledge_id, **kwargs)
+        client = self._get_client()
+
+        try:
+            return self._delete_parent_nodes_with_client(
+                client,
+                collection_name,
+                knowledge_id,
+                doc_ref,
+            )
+        finally:
+            try:
+                client.close()
+            except Exception:
+                pass
+
     def retrieve(
         self,
         knowledge_id: str,
@@ -535,6 +575,7 @@ class MilvusBackend(BaseStorageBackend):
 
         # Delete nodes using LlamaIndex API
         vector_store.delete_nodes(filters=filters)
+        self.delete_parent_nodes(knowledge_id, doc_ref, **kwargs)
 
         return {
             "doc_ref": doc_ref,
@@ -748,6 +789,13 @@ class MilvusBackend(BaseStorageBackend):
                     dimension=1,
                     auto_id=True,
                     enable_dynamic_field=True,
+                )
+            else:
+                self._delete_parent_nodes_with_client(
+                    client,
+                    collection_name,
+                    knowledge_id,
+                    parent_nodes[0].metadata.get("doc_ref", ""),
                 )
 
             client.insert(

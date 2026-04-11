@@ -7,6 +7,7 @@
 import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
 import { SearchableSelect } from '@/components/ui/searchable-select'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
@@ -43,6 +44,10 @@ export function SplitterSettingsSection({
   const hierarchicalConfig = {
     ...DEFAULT_HIERARCHICAL_CHUNK_CONFIG,
     ...normalizedConfig.hierarchical_config,
+  }
+  const flatConfig = {
+    ...DEFAULT_FLAT_CHUNK_CONFIG,
+    ...normalizedConfig.flat_config,
   }
   const semanticConfig = {
     ...DEFAULT_SEMANTIC_CHUNK_CONFIG,
@@ -107,6 +112,42 @@ export function SplitterSettingsSection({
       ...buildStrategyConfig(chunkStrategy),
       markdown_enhancement: {
         enabled: checked,
+      },
+    })
+  }
+
+  const handleFlatChunkSizeChange = (value: number) => {
+    const newValue = Math.max(128, Math.min(8192, value))
+    const currentChunkOverlap =
+      flatConfig.chunk_overlap ?? DEFAULT_FLAT_CHUNK_CONFIG.chunk_overlap ?? 50
+    updateConfig({
+      ...buildStrategyConfig('flat'),
+      flat_config: {
+        ...flatConfig,
+        chunk_size: newValue,
+        chunk_overlap: Math.min(currentChunkOverlap, newValue - 1),
+      },
+    })
+  }
+
+  const handleFlatChunkOverlapChange = (value: number) => {
+    const chunkSize = flatConfig.chunk_size ?? DEFAULT_FLAT_CHUNK_CONFIG.chunk_size ?? 1024
+    const newValue = Math.max(0, Math.min(chunkSize - 1, value))
+    updateConfig({
+      ...buildStrategyConfig('flat'),
+      flat_config: {
+        ...flatConfig,
+        chunk_overlap: newValue,
+      },
+    })
+  }
+
+  const handleSeparatorChange = (value: string) => {
+    updateConfig({
+      ...buildStrategyConfig('flat'),
+      flat_config: {
+        ...flatConfig,
+        separator: value,
       },
     })
   }
@@ -222,6 +263,68 @@ export function SplitterSettingsSection({
           {t('knowledge:document.splitter.titleEnhancement')}
         </Label>
       </div>
+
+      {chunkStrategy === 'flat' && (
+        <>
+          <div className="space-y-2">
+            <Label htmlFor="chunk-size">{t('knowledge:document.splitter.chunkSize')}</Label>
+            <div className="flex items-center gap-2">
+              <Input
+                id="chunk-size"
+                type="number"
+                min={128}
+                max={8192}
+                value={flatConfig.chunk_size ?? DEFAULT_FLAT_CHUNK_CONFIG.chunk_size}
+                onChange={e => handleFlatChunkSizeChange(parseInt(e.target.value) || 1024)}
+                disabled={readOnly}
+                className="flex-1"
+              />
+              <span className="text-sm text-text-secondary whitespace-nowrap">
+                {t('knowledge:document.splitter.characters')}
+              </span>
+            </div>
+            <p className="text-xs text-text-muted">
+              {t('knowledge:document.splitter.chunkSizeHint')}
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="chunk-overlap">{t('knowledge:document.splitter.chunkOverlap')}</Label>
+            <div className="flex items-center gap-2">
+              <Input
+                id="chunk-overlap"
+                type="number"
+                min={0}
+                max={(flatConfig.chunk_size ?? DEFAULT_FLAT_CHUNK_CONFIG.chunk_size ?? 1024) - 1}
+                value={flatConfig.chunk_overlap ?? DEFAULT_FLAT_CHUNK_CONFIG.chunk_overlap}
+                onChange={e => handleFlatChunkOverlapChange(parseInt(e.target.value) || 0)}
+                disabled={readOnly}
+                className="flex-1"
+              />
+              <span className="text-sm text-text-secondary whitespace-nowrap">
+                {t('knowledge:document.splitter.characters')}
+              </span>
+            </div>
+            <p className="text-xs text-text-muted">
+              {t('knowledge:document.splitter.chunkOverlapHint')}
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="separator">{t('knowledge:document.splitter.separator')}</Label>
+            <Textarea
+              id="separator"
+              value={flatConfig.separator ?? DEFAULT_FLAT_CHUNK_CONFIG.separator}
+              onChange={e => handleSeparatorChange(e.target.value)}
+              disabled={readOnly}
+              className="min-h-20 font-mono"
+            />
+            <p className="text-xs text-text-muted">
+              {t('knowledge:document.splitter.separatorHint')}
+            </p>
+          </div>
+        </>
+      )}
 
       {chunkStrategy === 'hierarchical' && (
         <>

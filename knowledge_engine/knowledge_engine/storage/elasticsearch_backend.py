@@ -377,6 +377,7 @@ class ElasticsearchBackend(BaseStorageBackend):
 
         # Delete nodes using LlamaIndex API
         vector_store.delete_nodes(filters=filters)
+        self.delete_parent_nodes(knowledge_id, doc_ref, **kwargs)
 
         return {
             "doc_ref": doc_ref,
@@ -384,6 +385,27 @@ class ElasticsearchBackend(BaseStorageBackend):
             "deleted_chunks": deleted_count,
             "status": "deleted",
         }
+
+    def delete_parent_nodes(self, knowledge_id: str, doc_ref: str, **kwargs) -> int:
+        index_name = self.get_parent_store_name(knowledge_id, **kwargs)
+        es_client = Elasticsearch(self.url, **self.es_kwargs)
+
+        if not es_client.indices.exists(index=index_name):
+            return 0
+
+        response = es_client.delete_by_query(
+            index=index_name,
+            query={
+                "bool": {
+                    "filter": [
+                        {"term": {"knowledge_id.keyword": knowledge_id}},
+                        {"term": {"doc_ref.keyword": doc_ref}},
+                    ]
+                }
+            },
+            refresh=True,
+        )
+        return int(response.get("deleted", 0))
 
     def get_document(self, knowledge_id: str, doc_ref: str, **kwargs) -> Dict:
         """

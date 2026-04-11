@@ -157,3 +157,45 @@ class TestListDocuments:
             "knowledge_id": "kb_1",
         }
         mock_client.search.assert_not_called()
+
+
+class TestDeleteDocument:
+    @patch("knowledge_engine.storage.elasticsearch_backend.ElasticsearchStore")
+    @patch("knowledge_engine.storage.elasticsearch_backend.Elasticsearch")
+    def test_delete_document_removes_parent_nodes(
+        self, mock_es_class, mock_store_class
+    ):
+        from knowledge_engine.storage.elasticsearch_backend import ElasticsearchBackend
+
+        mock_store = MagicMock()
+        mock_store.get_nodes.return_value = [MagicMock()]
+        mock_store_class.return_value = mock_store
+
+        mock_client = MagicMock()
+        mock_client.indices.exists.return_value = True
+        mock_client.delete_by_query.return_value = {"deleted": 1}
+        mock_es_class.return_value = mock_client
+
+        backend = ElasticsearchBackend(
+            {
+                "url": "http://localhost:9200",
+                "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
+            }
+        )
+
+        result = backend.delete_document(knowledge_id="kb_1", doc_ref="doc_1")
+
+        assert result["deleted_chunks"] == 1
+        mock_store.delete_nodes.assert_called_once()
+        mock_client.delete_by_query.assert_called_once_with(
+            index="test_kb_kb_1__parents",
+            query={
+                "bool": {
+                    "filter": [
+                        {"term": {"knowledge_id.keyword": "kb_1"}},
+                        {"term": {"doc_ref.keyword": "doc_1"}},
+                    ]
+                }
+            },
+            refresh=True,
+        )

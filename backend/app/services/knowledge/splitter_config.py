@@ -83,6 +83,16 @@ class HierarchicalChunkConfig(SplitterConfigModel):
             )
         return value
 
+    @model_validator(mode="after")
+    def validate_child_size(self) -> "HierarchicalChunkConfig":
+        """Validate that child_chunk_size is strictly smaller than parent_chunk_size."""
+        if self.child_chunk_size >= self.parent_chunk_size:
+            raise ValueError(
+                "child_chunk_size "
+                f"({self.child_chunk_size}) must be less than parent_chunk_size ({self.parent_chunk_size})"
+            )
+        return self
+
 
 class MarkdownEnhancementConfig(SplitterConfigModel):
     """Markdown title enhancement settings."""

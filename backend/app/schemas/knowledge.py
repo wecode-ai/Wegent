@@ -387,7 +387,7 @@ class KnowledgeDocumentResponse(BaseModel):
     @classmethod
     def normalize_splitter_config_for_response(cls, v):
         """Return normalized splitter config payloads in API responses."""
-        if not v:
+        if v is None:
             return v
         return normalize_splitter_config(v)
 
