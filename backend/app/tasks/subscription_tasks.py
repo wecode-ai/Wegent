@@ -700,6 +700,8 @@ def check_due_subscriptions(self):
 
     Runs every FLOW_SCHEDULER_INTERVAL_SECONDS (default: 60 seconds).
     """
+    from sqlalchemy.orm.attributes import flag_modified
+
     from app.core.distributed_lock import distributed_lock
     from app.db.session import get_db_session
     from app.models.kind import Kind
