@@ -407,7 +407,7 @@ export function NotificationSection({
         title={t('notification_settings.bind_private_title', '绑定到私聊')}
         description={t(
           'notification_settings.bind_private_desc',
-          '请在钉钉私聊机器人发送任意消息，系统将自动完成绑定。'
+          '请在钉钉私聊"WegentBot"机器人发送任意消息，系统将自动完成绑定。'
         )}
         state={privateBindingState}
         steps={[
@@ -416,7 +416,7 @@ export function NotificationSection({
             title: t('notification_settings.step_send_message', '发送消息'),
             hint: t(
               'notification_settings.bind_private_desc',
-              '请在钉钉私聊机器人发送任意消息，系统将自动完成绑定。'
+              '请在钉钉私聊"WegentBot"机器人发送任意消息，系统将自动完成绑定。'
             ),
           },
           { title: t('notification_settings.step_complete', '完成绑定') },
@@ -425,7 +425,7 @@ export function NotificationSection({
         waitingTitle={t('notification_settings.waiting_binding', '正在等待绑定...')}
         waitingHint={t(
           'notification_settings.bind_private_desc',
-          '请在钉钉私聊机器人发送任意消息，系统将自动完成绑定。'
+          '请在钉钉私聊"WegentBot"机器人发送任意消息，系统将自动完成绑定。'
         )}
         successTitle={t('notification_settings.binding_success', '绑定成功')}
         successHint={boundPrivateName}
