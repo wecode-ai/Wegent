@@ -271,7 +271,8 @@ class InboxAutoProcessHandler:
         re-outputting the full text through the model output window.
 
         Returns:
-            List of attachment context IDs (text content first, then existing file IDs).
+            List of attachment context IDs (text content first, then existing file IDs
+            stored in each USER message's attachmentContextIds field).
         """
         from app.services.context.context_service import context_service
 
@@ -307,9 +308,11 @@ class InboxAutoProcessHandler:
                     f"message {message.id}: {e}"
                 )
 
-        # Append pre-existing file attachment IDs (uploaded via ingest endpoint)
-        existing_ids = message.content_attachment_ids or []
-        attachment_ids.extend(existing_ids)
+        # Collect pre-existing file attachment IDs stored in each USER message's
+        # attachmentContextIds field (written by ingest_message when files are uploaded).
+        for snap in content_snapshot:
+            existing_ids = snap.get("attachmentContextIds") or []
+            attachment_ids.extend(existing_ids)
 
         return attachment_ids
 
@@ -327,8 +330,9 @@ class InboxAutoProcessHandler:
         re-outputting the full content through the model output window.
 
         Also persists all attachment IDs (text pre-write + uploaded files) back
-        to message.content_attachment_ids so that _link_inbox_attachments_to_subtask()
-        can retrieve them when the subscription task executes.
+        into the first USER message's attachmentContextIds field inside
+        content_snapshot so that _link_inbox_attachments_to_subtask() can
+        retrieve them when the subscription task executes.
         """
         spec = work_queue.json.get("spec", {})
 
@@ -338,10 +342,25 @@ class InboxAutoProcessHandler:
             user_id=work_queue.user_id,
         )
 
-        # Persist all attachment IDs back to message so the subscription task
-        # can retrieve them via message.content_attachment_ids when linking to subtask.
+        # Persist all attachment IDs back into the first USER message's
+        # attachmentContextIds field so the subscription task can retrieve them
+        # via content_snapshot without a separate DB column.
         if content_attachment_ids:
-            message.content_attachment_ids = content_attachment_ids
+            snapshot = list(message.content_snapshot or [])
+            injected = False
+            for i, snap in enumerate(snapshot):
+                if snap.get("role", "").upper() == "USER":
+                    snap_copy = dict(snap)
+                    snap_copy["attachmentContextIds"] = content_attachment_ids
+                    snapshot[i] = snap_copy
+                    injected = True
+                    break
+            if not injected and snapshot:
+                # Fallback: inject into first message if no USER message found
+                snap_copy = dict(snapshot[0])
+                snap_copy["attachmentContextIds"] = content_attachment_ids
+                snapshot[0] = snap_copy
+            message.content_snapshot = snapshot
             db.commit()
 
         context = {
@@ -377,7 +396,7 @@ class InboxAutoProcessHandler:
             "contentAttachmentIds": content_attachment_ids,
             "executionContext": {
                 "triggeredBy": "auto_process",
-                "retryCount": message.retry_count,
+                "retryCount": (message.process_result or {}).get("retry_count", 0),
             },
         }
 

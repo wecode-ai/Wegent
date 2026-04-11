@@ -205,6 +205,11 @@ class MessageContentSnapshot(BaseModel):
     senderUserName: Optional[str] = None
     createdAt: Optional[str] = None
     attachments: Optional[List[Dict[str, Any]]] = None
+    # IDs of subtask_contexts records pre-written from uploaded files/content.
+    # Stored on the USER message that owns the attachments so that
+    # _link_inbox_attachments_to_subtask() can retrieve them without a
+    # separate DB column.
+    attachmentContextIds: Optional[List[int]] = None
 
 
 class QueueMessageCreate(BaseModel):
@@ -407,7 +412,6 @@ class IngestMessageRequest(BaseModel):
     # IDs of subtask_contexts records pre-written from uploaded files
     attachmentContextIds: Optional[List[int]] = None
     source: Optional[IngestSource] = None
-    idempotencyKey: Optional[str] = Field(None, max_length=255)
     priority: QueueMessagePriority = QueueMessagePriority.NORMAL
 
     @model_validator(mode="after")

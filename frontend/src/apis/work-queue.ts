@@ -112,6 +112,9 @@ export interface MessageContentSnapshot {
     file_extension?: string
     file_size?: number
   }>
+  // IDs of subtask_contexts records pre-written from uploaded files/content.
+  // Stored on the USER message that owns the attachments.
+  attachmentContextIds?: number[]
 }
 
 export interface QueueMessage {
@@ -336,7 +339,6 @@ export interface IngestMessageRequest {
   sender?: { externalId?: string; displayName?: string }
   attachments?: unknown[]
   source?: { type: string; name?: string }
-  idempotencyKey?: string
   priority?: QueueMessagePriority
 }
 

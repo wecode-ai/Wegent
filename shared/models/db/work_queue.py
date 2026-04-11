@@ -75,25 +75,9 @@ class QueueMessage(Base):
     )
     process_subscription_id = Column(
         Integer,
-        nullable=True,
-        default=None,
-        comment="Subscription Kind.id used for processing",
-    )
-    retry_count = Column(
-        Integer, nullable=False, default=0, comment="Retry attempt count"
-    )
-    content_attachment_ids = Column(
-        JSON,
-        nullable=True,
-        default=None,
-        comment="List of subtask_contexts IDs pre-written from message content/files",
-    )
-    idempotency_key = Column(
-        String(255),
-        nullable=True,
-        unique=True,
-        index=True,
-        comment="Idempotency key for deduplication",
+        nullable=False,
+        default=0,
+        comment="Subscription Kind.id used for processing (0 = none)",
     )
     created_at = Column(DateTime, nullable=False, default=utc_now, index=True)
     updated_at = Column(DateTime, nullable=False, default=utc_now, onupdate=utc_now)
@@ -123,7 +107,9 @@ class RecentContact(Base):
     contact_user_id = Column(
         Integer, nullable=False, index=True, comment="Contact user ID"
     )
-    last_contact_at = Column(DateTime, default=utc_now, comment="Last contact time")
+    last_contact_at = Column(
+        DateTime, nullable=False, default=utc_now, comment="Last contact time"
+    )
     contact_count = Column(Integer, nullable=False, default=1, comment="Contact count")
 
     __table_args__ = (

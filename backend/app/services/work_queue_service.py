@@ -10,7 +10,6 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy import and_, func
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import (
@@ -911,23 +910,28 @@ class QueueMessageService:
             processResult=db_message.process_result,
             processTaskId=db_message.process_task_id,
             processSubscriptionId=getattr(db_message, "process_subscription_id", None),
-            retryCount=getattr(db_message, "retry_count", 0),
+            retryCount=(db_message.process_result or {}).get("retry_count", 0),
             createdAt=db_message.created_at,
             updatedAt=db_message.updated_at,
             processedAt=db_message.processed_at,
         )
 
     def _enrich_snapshot_with_attachments(self, db_message: QueueMessage) -> list:
-        """Enrich content_snapshot with attachment info from content_attachment_ids.
+        """Enrich content_snapshot with attachment info from attachmentContextIds.
 
         When a message is ingested with file uploads, the files are stored as
-        SubtaskContext records and their IDs are saved in content_attachment_ids.
-        However, content_snapshot[].attachments is not populated in this path.
+        SubtaskContext records and their IDs are saved in the USER message's
+        attachmentContextIds field inside content_snapshot.
         This method queries the attachment metadata and injects it into the
-        first USER message's attachments field so the frontend can display them.
+        USER message's attachments field so the frontend can display them.
         """
         raw_snapshot = db_message.content_snapshot or []
-        attachment_ids = getattr(db_message, "content_attachment_ids", None) or []
+
+        # Collect all attachment context IDs from USER messages in the snapshot
+        attachment_ids: list = []
+        for msg in raw_snapshot:
+            ids = msg.get("attachmentContextIds") or []
+            attachment_ids.extend(ids)
 
         if not attachment_ids:
             # No file attachments to enrich - return snapshot as-is
@@ -947,14 +951,14 @@ class QueueMessageService:
                 # Filter out system-generated inbox_message_*.md files
                 # These are created by auto_process_handler for LLM context injection
                 # and should not be shown to users as user-uploaded attachments
-                attachment_briefs = [
-                    SubtaskContextBrief.from_model(ctx).model_dump()
+                context_map = {
+                    ctx.id: SubtaskContextBrief.from_model(ctx).model_dump()
                     for ctx in contexts
                     if not (
                         ctx.name.startswith("inbox_message_")
                         and ctx.name.endswith(".md")
                     )
-                ]
+                }
         except Exception as e:
             logger.warning(
                 f"[_enrich_snapshot_with_attachments] Failed to query attachments "
@@ -962,25 +966,21 @@ class QueueMessageService:
             )
             return [MessageContentSnapshot(**msg) for msg in raw_snapshot]
 
-        if not attachment_briefs:
+        if not context_map:
             return [MessageContentSnapshot(**msg) for msg in raw_snapshot]
 
-        # Inject attachment info into the first USER message that has no attachments yet
+        # Inject attachment info into each USER message based on its own attachmentContextIds
         enriched = []
-        injected = False
         for msg in raw_snapshot:
             msg_copy = dict(msg)
-            role = msg_copy.get("role", "").upper()
-            if not injected and role == "USER" and not msg_copy.get("attachments"):
-                msg_copy["attachments"] = attachment_briefs
-                injected = True
+            msg_attachment_ids = msg_copy.get("attachmentContextIds") or []
+            if msg_attachment_ids and not msg_copy.get("attachments"):
+                briefs = [
+                    context_map[aid] for aid in msg_attachment_ids if aid in context_map
+                ]
+                if briefs:
+                    msg_copy["attachments"] = briefs
             enriched.append(MessageContentSnapshot(**msg_copy))
-
-        # If no USER message found, inject into the first message
-        if not injected and enriched:
-            first = dict(raw_snapshot[0])
-            first["attachments"] = attachment_briefs
-            enriched[0] = MessageContentSnapshot(**first)
 
         return enriched
 
@@ -1315,8 +1315,6 @@ class QueueMessageService:
     ) -> QueueMessageResponse:
         """Ingest a message into a queue from external source.
 
-        Supports idempotency via idempotencyKey.
-
         Args:
             user_id: Current user ID (queue owner)
             queue_id: Target work queue ID
@@ -1337,25 +1335,6 @@ class QueueMessageService:
             if not queue:
                 raise NotFoundException("Work queue not found")
 
-            # Check idempotency (scoped to queue to prevent cross-tenant leaks)
-            if request.idempotencyKey:
-                existing = (
-                    db.query(QueueMessage)
-                    .filter(
-                        QueueMessage.idempotency_key == request.idempotencyKey,
-                        QueueMessage.queue_id == queue_id,
-                    )
-                    .first()
-                )
-                if existing:
-                    sender = (
-                        db.query(User)
-                        .filter(User.id == existing.sender_user_id)
-                        .first()
-                    )
-                    if sender:
-                        return self._build_message_response(existing, sender)
-
             # Build content snapshot from ingested content
             snapshot_entry = {
                 "role": "USER",
@@ -1369,8 +1348,12 @@ class QueueMessageService:
                 snapshot_entry["attachments"] = request.attachments
             content_snapshot = [snapshot_entry]
 
-            # Collect pre-written attachment context IDs (from file uploads)
+            # Embed pre-written attachment context IDs into the USER message snapshot
             attachment_context_ids = list(request.attachmentContextIds or [])
+            if attachment_context_ids:
+                # Store IDs on the first (and only) snapshot entry so they travel
+                # with the message without requiring a separate DB column.
+                content_snapshot[0]["attachmentContextIds"] = attachment_context_ids
 
             # Create message
             db_message = QueueMessage(
@@ -1384,40 +1367,10 @@ class QueueMessageService:
                 priority=request.priority,
                 process_result={},
                 process_task_id=0,
-                idempotency_key=request.idempotencyKey,
-                content_attachment_ids=(
-                    attachment_context_ids if attachment_context_ids else None
-                ),
             )
             db.add(db_message)
-            try:
-                db.commit()
-                db.refresh(db_message)
-            except IntegrityError:
-                # Handle race condition: another request inserted the same idempotency_key
-                db.rollback()
-                if request.idempotencyKey:
-                    existing = (
-                        db.query(QueueMessage)
-                        .filter(
-                            QueueMessage.idempotency_key == request.idempotencyKey,
-                            QueueMessage.queue_id == queue_id,
-                        )
-                        .first()
-                    )
-                    if existing:
-                        sender = (
-                            db.query(User)
-                            .filter(User.id == existing.sender_user_id)
-                            .first()
-                        )
-                        if sender:
-                            logger.info(
-                                f"Returning existing message due to duplicate idempotency_key: "
-                                f"key={request.idempotencyKey}, queue_id={queue_id}"
-                            )
-                            return self._build_message_response(existing, sender)
-                raise
+            db.commit()
+            db.refresh(db_message)
 
             logger.info(f"Ingested message: id={db_message.id}, queue_id={queue_id}")
 
@@ -1497,13 +1450,15 @@ class QueueMessageService:
             message.process_subscription_id = None
             message.process_result = {}
             message.processed_at = None
-            message.retry_count += 1
+            process_result = dict(message.process_result or {})
+            process_result["retry_count"] = process_result.get("retry_count", 0) + 1
+            message.process_result = process_result
             db.commit()
             db.refresh(message)
 
             logger.info(
                 f"Retrying message: id={message_id}, "
-                f"retry_count={message.retry_count}"
+                f"retry_count={message.process_result.get('retry_count', 0)}"
             )
 
             # Re-publish event for auto-processing

@@ -371,9 +371,10 @@ def _link_inbox_attachments_to_subtask(
     Link inbox message attachments to user_subtask for context injection.
 
     When a subscription is triggered by an inbox message, the message's
-    pre-written attachments (content_attachment_ids) must be linked to the
-    user subtask so that prepare_contexts_for_chat() can inject the file
-    content into the LLM context window.
+    pre-written attachments (stored in each USER message's attachmentContextIds
+    field inside content_snapshot) must be linked to the user subtask so that
+    prepare_contexts_for_chat() can inject the file content into the LLM context
+    window.
 
     This mirrors the chat namespace flow where link_contexts_to_subtask()
     is called after the user sends a message with attachments.
@@ -396,7 +397,12 @@ def _link_inbox_attachments_to_subtask(
         )
         return
 
-    attachment_ids = message.content_attachment_ids or []
+    # Collect attachment context IDs from each message's attachmentContextIds field
+    attachment_ids: list = []
+    for snap in message.content_snapshot or []:
+        ids = snap.get("attachmentContextIds") or []
+        attachment_ids.extend(ids)
+
     if not attachment_ids:
         logger.debug(
             f"[_link_inbox_attachments_to_subtask] No attachment IDs for message {inbox_message_id}"

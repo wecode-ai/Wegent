@@ -11,8 +11,11 @@ Create Date: 2026-04-09
 Add columns to queue_messages for inbox AI auto-processing support,
 and inbox_message_id to background_executions for linking executions
 to originating inbox messages. Also adds 'failed' enum value to
-queue message status. Adds content_attachment_ids JSON column to
-store pre-written subtask_contexts IDs for LLM output window optimization.
+queue message status.
+
+Note: content_attachment_ids column was removed - attachment context IDs
+are now stored inside each message's attachmentContextIds field within
+the content_snapshot JSON array, eliminating the need for a separate column.
 """
 
 import logging
@@ -62,49 +65,10 @@ def upgrade() -> None:
             sa.Column(
                 "process_subscription_id",
                 sa.Integer(),
-                nullable=True,
-                comment="Subscription Kind.id used for processing",
-            ),
-        )
-
-    if "retry_count" not in qm_columns:
-        op.add_column(
-            "queue_messages",
-            sa.Column(
-                "retry_count",
-                sa.Integer(),
                 nullable=False,
                 server_default="0",
-                comment="Retry attempt count",
+                comment="Subscription Kind.id used for processing (0 = none)",
             ),
-        )
-
-    if "content_attachment_ids" not in qm_columns:
-        op.add_column(
-            "queue_messages",
-            sa.Column(
-                "content_attachment_ids",
-                sa.JSON(),
-                nullable=True,
-                comment="List of subtask_contexts IDs pre-written from message content/files",
-            ),
-        )
-
-    if "idempotency_key" not in qm_columns:
-        op.add_column(
-            "queue_messages",
-            sa.Column(
-                "idempotency_key",
-                sa.String(255),
-                nullable=True,
-                comment="Idempotency key for deduplication",
-            ),
-        )
-        op.create_index(
-            "ix_queue_messages_idempotency_key",
-            "queue_messages",
-            ["idempotency_key"],
-            unique=True,
         )
 
     # --- background_executions: inbox_message_id ---
@@ -146,17 +110,8 @@ def downgrade() -> None:
     # --- queue_messages ---
     qm_columns = {column["name"] for column in inspector.get_columns("queue_messages")}
 
-    if "idempotency_key" in qm_columns:
-        op.drop_index("ix_queue_messages_idempotency_key", table_name="queue_messages")
-        op.drop_column("queue_messages", "idempotency_key")
-
-    for col in [
-        "content_attachment_ids",
-        "retry_count",
-        "process_subscription_id",
-    ]:
-        if col in qm_columns:
-            op.drop_column("queue_messages", col)
+    if "process_subscription_id" in qm_columns:
+        op.drop_column("queue_messages", "process_subscription_id")
 
     # Revert enum (MySQL only)
     if dialect == "mysql":

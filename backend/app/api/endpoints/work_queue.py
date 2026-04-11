@@ -203,7 +203,6 @@ async def _build_ingest_request_with_files(
     title: Optional[str],
     note: Optional[str],
     priority: str,
-    idempotency_key: Optional[str],
     sender_external_id: Optional[str],
     sender_display_name: Optional[str],
     source_type: Optional[str],
@@ -274,7 +273,6 @@ async def _build_ingest_request_with_files(
         note=note,
         sender=sender,
         source=source,
-        idempotencyKey=idempotency_key,
         priority=priority_enum,
         attachmentContextIds=attachment_context_ids if attachment_context_ids else None,
     )
@@ -294,7 +292,6 @@ async def ingest_message_by_name(
     title: Optional[str] = Form(None, description="Optional title"),
     note: Optional[str] = Form(None, description="Optional note"),
     priority: str = Form("normal", description="Priority: low, normal, high"),
-    idempotency_key: Optional[str] = Form(None, alias="idempotencyKey"),
     sender_external_id: Optional[str] = Form(None, alias="senderExternalId"),
     sender_display_name: Optional[str] = Form(None, alias="senderDisplayName"),
     source_type: Optional[str] = Form(None, alias="sourceType"),
@@ -317,16 +314,13 @@ async def ingest_message_by_name(
 
     Example (with files):
         curl -X POST .../by-name/inbox/messages/ingest \\
-          -F "content=See attached" -F "files=@doc.pdf" -F "files=@notes.md"
-
-    Supports idempotency via idempotencyKey form field.
+            -F "content=See attached" -F "files=@doc.pdf" -F "files=@notes.md"
     """
     request = await _build_ingest_request_with_files(
         content=content,
         title=title,
         note=note,
         priority=priority,
-        idempotency_key=idempotency_key,
         sender_external_id=sender_external_id,
         sender_display_name=sender_display_name,
         source_type=source_type,
