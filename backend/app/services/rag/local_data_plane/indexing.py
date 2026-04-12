@@ -16,7 +16,7 @@ from app.services.rag.embedding.factory import (
 from app.services.rag.runtime_specs import DeleteRuntimeSpec, IndexRuntimeSpec
 from knowledge_engine.services import DocumentService as EngineDocumentService
 from knowledge_engine.storage.factory import create_storage_backend_from_runtime_config
-from shared.models import RuntimeRetrieverConfig
+from shared.models import RuntimeRetrieverConfig, serialize_splitter_config
 from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
@@ -124,7 +124,7 @@ async def index_document_local(
             file_extension=file_extension,
             embed_model=embed_model,
             user_id=spec.index_owner_user_id,
-            splitter_config=spec.splitter_config.model_dump(exclude_none=True),
+            splitter_config=serialize_splitter_config(spec.splitter_config),
             document_id=spec.document_id,
         )
 

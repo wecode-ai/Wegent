@@ -6,6 +6,7 @@ from llama_index.core.base.embeddings.base import BaseEmbedding
 
 from knowledge_engine.splitter.config import (
     FlatChunkConfig,
+    HierarchicalChunkConfig,
     NormalizedSplitterConfig,
     SemanticSplitterConfig,
     SplitterConfig,
@@ -38,7 +39,9 @@ def create_splitter(
             )
 
         if config.chunk_strategy == "hierarchical":
-            hierarchical_config = config.hierarchical_config
+            hierarchical_config = (
+                config.hierarchical_config or HierarchicalChunkConfig()
+            )
             return SentenceSplitter(
                 chunk_size=hierarchical_config.child_chunk_size,
                 chunk_overlap=hierarchical_config.child_chunk_overlap,

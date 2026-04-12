@@ -5,15 +5,18 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pytest
 from llama_index.core import Document
 from llama_index.core.schema import TextNode
 
 from knowledge_engine.embedding.custom import CustomEmbedding
 from knowledge_engine.index.indexer import DocumentIndexer
 from knowledge_engine.ingestion.pipeline import (
+    _build_file_aware_transformations,
     build_ingestion_result,
     prepare_ingestion,
 )
+from knowledge_engine.splitter.config import FlatChunkConfig, MarkdownEnhancementConfig
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
 
 
@@ -58,6 +61,28 @@ def test_prepare_ingestion_with_hierarchical_pdf_file_aware_hides_parser_subtype
     assert preparation.normalized_splitter_config.chunk_strategy == "hierarchical"
     assert preparation.parser_subtype is None
     assert "parser_subtype" not in preparation.ingestion_metadata
+
+
+@pytest.mark.parametrize("parser_subtype", ["markdown_sentence", "sentence"])
+def test_build_file_aware_transformations_passes_separator_to_sentence_splitter(
+    parser_subtype: str,
+) -> None:
+    with patch("knowledge_engine.ingestion.pipeline.LlamaSentenceSplitter") as mock:
+        _build_file_aware_transformations(
+            parser_subtype=parser_subtype,
+            flat_config=FlatChunkConfig(
+                chunk_size=512,
+                chunk_overlap=64,
+                separator="|",
+            ),
+            markdown_enhancement=MarkdownEnhancementConfig(enabled=False),
+        )
+
+    mock.assert_called_once_with(
+        chunk_size=512,
+        chunk_overlap=64,
+        separator="|",
+    )
 
 
 def test_build_ingestion_result_without_splitter_config_uses_flat_file_aware_default() -> (

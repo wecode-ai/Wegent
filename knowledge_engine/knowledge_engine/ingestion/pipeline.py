@@ -289,6 +289,7 @@ def _build_file_aware_transformations(
             LlamaSentenceSplitter(
                 chunk_size=flat_config.chunk_size,
                 chunk_overlap=flat_config.chunk_overlap,
+                separator=flat_config.separator,
             )
         )
         return transformations
@@ -298,6 +299,7 @@ def _build_file_aware_transformations(
             LlamaSentenceSplitter(
                 chunk_size=flat_config.chunk_size,
                 chunk_overlap=flat_config.chunk_overlap,
+                separator=flat_config.separator,
             )
         ]
 

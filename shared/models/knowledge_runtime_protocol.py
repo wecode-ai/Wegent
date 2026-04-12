@@ -12,7 +12,10 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from .splitter_config import NormalizedSplitterConfig
+from .splitter_config import (
+    NormalizedSplitterConfig,
+    build_runtime_default_splitter_config,
+)
 
 
 class KnowledgeRuntimeProtocolModel(BaseModel):
@@ -113,7 +116,9 @@ class RemoteIndexRequest(KnowledgeRuntimeProtocolModel):
     index_owner_user_id: int
     retriever_config: RuntimeRetrieverConfig
     embedding_model_config: RuntimeEmbeddingModelConfig
-    splitter_config: NormalizedSplitterConfig
+    splitter_config: NormalizedSplitterConfig = Field(
+        default_factory=build_runtime_default_splitter_config
+    )
     source_file: str | None = None
     file_extension: str | None = None
     index_families: list[str] = Field(default_factory=lambda: ["chunk_vector"])

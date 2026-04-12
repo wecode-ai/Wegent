@@ -187,11 +187,13 @@ class NormalizedSplitterConfig(SplitterConfigModel):
         if self.chunk_strategy == "flat":
             if self.flat_config is None:
                 self.flat_config = FlatChunkConfig()
+            self.semantic_config = None
             self.hierarchical_config = None
         elif self.chunk_strategy == "hierarchical":
             if self.hierarchical_config is None:
                 self.hierarchical_config = HierarchicalChunkConfig()
             self.flat_config = None
+            self.semantic_config = None
         elif self.chunk_strategy == "semantic":
             if self.semantic_config is None:
                 self.semantic_config = SemanticSplitterConfig()

@@ -76,10 +76,10 @@ def enrich_node_metadata(
 ) -> BaseNode:
     """Apply stable ingestion metadata to a single node."""
     metadata = dict(node.metadata or {})
-    heading_path = normalize_heading_path(
-        metadata.get(HEADING_PATH_KEY) or metadata.get(HEADER_PATH_KEY)
-    )
+    raw_heading_path = metadata.get(HEADING_PATH_KEY) or metadata.get(HEADER_PATH_KEY)
     metadata.pop(HEADER_PATH_KEY, None)
+    metadata.pop(HEADING_PATH_KEY, None)
+    heading_path = normalize_heading_path(raw_heading_path)
 
     if heading_path is not None:
         metadata[HEADING_PATH_KEY] = heading_path
