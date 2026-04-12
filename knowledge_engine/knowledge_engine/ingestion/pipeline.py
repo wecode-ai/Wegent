@@ -31,6 +31,7 @@ from knowledge_engine.splitter.config import (
     normalize_runtime_splitter_config,
 )
 from knowledge_engine.splitter.file_aware import resolve_file_aware_parser_subtype
+from knowledge_engine.splitter.hierarchical import build_hierarchical_nodes
 from knowledge_engine.splitter.markdown_enhancement import enhance_markdown_nodes
 
 DEFAULT_FILE_AWARE_EXTENSION = ".txt"
@@ -49,10 +50,17 @@ class IngestionPreparation:
 class IngestionResult:
     """Result of running the ingestion pipeline for one document batch."""
 
-    nodes: list[BaseNode]
+    index_nodes: list[BaseNode]
+    parent_nodes: list[BaseNode] | None
+    child_nodes: list[BaseNode] | None
     normalized_splitter_config: NormalizedSplitterConfig
     ingestion_metadata: dict[str, Any]
     parser_subtype: str | None = None
+
+    @property
+    def nodes(self) -> list[BaseNode]:
+        """Backwards-compatible alias for the index nodes."""
+        return self.index_nodes
 
 
 class MarkdownEnhancementTransform(TransformComponent):
@@ -92,15 +100,16 @@ def resolve_parser_subtype(
     file_extension: str | None = None,
 ) -> str | None:
     """Resolve the parser subtype used for the ingestion path."""
-    if (
-        splitter_config.chunk_strategy != "flat"
-        or splitter_config.format_enhancement != "file_aware"
-    ):
+    if splitter_config.format_enhancement != "file_aware":
         return None
 
-    return resolve_file_aware_parser_subtype(
+    parser_subtype = resolve_file_aware_parser_subtype(
         (file_extension or DEFAULT_FILE_AWARE_EXTENSION).lower()
     )
+    if splitter_config.chunk_strategy == "hierarchical":
+        return parser_subtype if parser_subtype == "markdown_sentence" else None
+
+    return parser_subtype
 
 
 def prepare_ingestion(
@@ -132,11 +141,57 @@ def build_ingestion_result(
     file_extension: str | None,
     embed_model,
 ) -> IngestionResult:
-    """Run the lightweight ingestion pipeline for non-hierarchical indexing."""
+    """Run the ingestion pipeline and return structured node outputs."""
     preparation = prepare_ingestion(
         splitter_config,
         file_extension=file_extension,
     )
+    if preparation.normalized_splitter_config.chunk_strategy == "hierarchical":
+        hierarchical_config = preparation.normalized_splitter_config.hierarchical_config
+        if hierarchical_config is None:
+            raise ValueError(
+                "hierarchical_config is required for hierarchical strategy"
+            )
+        hierarchical_parser_subtype = (
+            preparation.parser_subtype
+            if preparation.parser_subtype == "markdown_sentence"
+            else None
+        )
+        hierarchical_ingestion_metadata = build_ingestion_metadata(
+            preparation.normalized_splitter_config,
+            parser_subtype=hierarchical_parser_subtype,
+        )
+        hierarchical_documents = documents
+        if preparation.parser_subtype == "markdown_sentence":
+            hierarchical_documents = _prepare_hierarchical_documents(
+                documents,
+                markdown_enhancement=(
+                    preparation.normalized_splitter_config.markdown_enhancement
+                ),
+            )
+        hierarchical_nodes = build_hierarchical_nodes(
+            documents=hierarchical_documents,
+            parent_chunk_size=hierarchical_config.parent_chunk_size,
+            child_chunk_size=hierarchical_config.child_chunk_size,
+            child_chunk_overlap=hierarchical_config.child_chunk_overlap,
+        )
+        parent_nodes = enrich_nodes_metadata(
+            hierarchical_nodes.parent_nodes,
+            ingestion_metadata=hierarchical_ingestion_metadata,
+        )
+        child_nodes = enrich_nodes_metadata(
+            hierarchical_nodes.child_nodes,
+            ingestion_metadata=hierarchical_ingestion_metadata,
+        )
+        return IngestionResult(
+            index_nodes=child_nodes,
+            parent_nodes=parent_nodes,
+            child_nodes=child_nodes,
+            normalized_splitter_config=preparation.normalized_splitter_config,
+            ingestion_metadata=hierarchical_ingestion_metadata,
+            parser_subtype=hierarchical_parser_subtype,
+        )
+
     pipeline = IngestionPipeline(
         transformations=_build_transformations(
             preparation.normalized_splitter_config,
@@ -147,11 +202,32 @@ def build_ingestion_result(
     )
     nodes = list(pipeline.run(documents=documents))
     return IngestionResult(
-        nodes=nodes,
+        index_nodes=nodes,
+        parent_nodes=None,
+        child_nodes=None,
         normalized_splitter_config=preparation.normalized_splitter_config,
         ingestion_metadata=preparation.ingestion_metadata,
         parser_subtype=preparation.parser_subtype,
     )
+
+
+def _prepare_hierarchical_documents(
+    documents: list[Document],
+    *,
+    markdown_enhancement: MarkdownEnhancementConfig,
+) -> list[Document]:
+    """Prepare markdown-aware hierarchical inputs before parent construction."""
+    markdown_nodes = MarkdownNodeParser().get_nodes_from_documents(documents)
+    if markdown_enhancement.enabled:
+        markdown_nodes = enhance_markdown_nodes(markdown_nodes)
+
+    return [
+        Document(
+            text=node.text,
+            metadata=dict(node.metadata or {}),
+        )
+        for node in markdown_nodes
+    ]
 
 
 def _build_transformations(

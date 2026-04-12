@@ -198,6 +198,66 @@ async def test_index_document_local_applies_runtime_default_when_splitter_config
 
 
 @pytest.mark.asyncio
+async def test_index_document_local_accepts_hierarchical_splitter_config() -> None:
+    spec = IndexRuntimeSpec(
+        knowledge_base_id=1,
+        document_id=2,
+        index_owner_user_id=3,
+        retriever_name="retriever-a",
+        retriever_namespace="default",
+        embedding_model_name="embed-a",
+        embedding_model_namespace="default",
+        retriever_config=RuntimeRetrieverConfig(
+            name="retriever-a",
+            namespace="default",
+            storage_config={"type": "qdrant"},
+        ),
+        source=IndexSource(source_type="attachment", attachment_id=9),
+        splitter_config={
+            "chunk_strategy": "hierarchical",
+            "format_enhancement": "file_aware",
+            "hierarchical_config": {
+                "parent_chunk_size": 1024,
+                "child_chunk_size": 256,
+                "child_chunk_overlap": 32,
+            },
+        },
+    )
+
+    with (
+        patch(
+            "app.services.rag.local_data_plane.indexing.create_storage_backend_from_runtime_config",
+            return_value=MagicMock(),
+        ),
+        patch(
+            "app.services.rag.local_data_plane.indexing.create_embedding_model_from_crd",
+            return_value=object(),
+        ),
+        patch(
+            "app.services.rag.local_data_plane.indexing._get_attachment_binary_source",
+            return_value=(b"hello world", "notes.md", ".md"),
+        ),
+        patch(
+            "app.services.rag.local_data_plane.indexing.EngineDocumentService.index_document_from_binary",
+            new_callable=AsyncMock,
+            return_value={"status": "success"},
+        ) as mock_index_document,
+    ):
+        await index_document_local(spec, db=MagicMock())
+
+    assert mock_index_document.await_args.kwargs["splitter_config"] == {
+        "chunk_strategy": "hierarchical",
+        "format_enhancement": "file_aware",
+        "hierarchical_config": {
+            "parent_chunk_size": 1024,
+            "child_chunk_size": 256,
+            "child_chunk_overlap": 32,
+        },
+        "markdown_enhancement": {"enabled": False},
+    }
+
+
+@pytest.mark.asyncio
 async def test_delete_document_index_local_delegates_to_engine_document_service() -> (
     None
 ):

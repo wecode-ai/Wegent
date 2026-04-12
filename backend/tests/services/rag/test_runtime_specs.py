@@ -102,6 +102,39 @@ def test_index_runtime_spec_defaults_missing_splitter_config_to_runtime_default(
     }
 
 
+def test_index_runtime_spec_accepts_hierarchical_splitter_config():
+    spec = IndexRuntimeSpec(
+        knowledge_base_id=7,
+        document_id=8,
+        index_owner_user_id=9,
+        retriever_name="retriever-a",
+        retriever_namespace="default",
+        embedding_model_name="embed-a",
+        embedding_model_namespace="default",
+        source=IndexSource(attachment_id=123, source_type="attachment"),
+        splitter_config={
+            "chunk_strategy": "hierarchical",
+            "format_enhancement": "file_aware",
+            "hierarchical_config": {
+                "parent_chunk_size": 1024,
+                "child_chunk_size": 256,
+                "child_chunk_overlap": 32,
+            },
+        },
+    )
+
+    assert spec.splitter_config.model_dump(exclude_none=True) == {
+        "chunk_strategy": "hierarchical",
+        "format_enhancement": "file_aware",
+        "hierarchical_config": {
+            "parent_chunk_size": 1024,
+            "child_chunk_size": 256,
+            "child_chunk_overlap": 32,
+        },
+        "markdown_enhancement": {"enabled": False},
+    }
+
+
 def test_query_runtime_spec_keeps_direct_injection_budget():
     spec = QueryRuntimeSpec(
         knowledge_base_ids=[1, 2],

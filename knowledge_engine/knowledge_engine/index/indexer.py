@@ -10,13 +10,10 @@ from typing import Any, Dict, List
 
 from llama_index.core import Document, SimpleDirectoryReader
 
-from knowledge_engine.ingestion.metadata import enrich_nodes_metadata
 from knowledge_engine.ingestion.pipeline import (
     build_ingestion_result,
     prepare_ingestion,
 )
-from knowledge_engine.splitter.config import NormalizedSplitterConfig
-from knowledge_engine.splitter.hierarchical import build_hierarchical_nodes
 from knowledge_engine.storage.base import BaseStorageBackend
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
 from shared.telemetry.decorators import add_span_event
@@ -57,11 +54,11 @@ class DocumentIndexer:
         self.storage_backend = storage_backend
         self.embed_model = embed_model
         self.file_extension = file_extension
-        self.ingestion_preparation = prepare_ingestion(
+        ingestion_preparation = prepare_ingestion(
             splitter_config,
             file_extension=file_extension,
         )
-        self.splitter_config = self.ingestion_preparation.normalized_splitter_config
+        self.splitter_config = ingestion_preparation.normalized_splitter_config
 
     def index_document(
         self,
@@ -130,39 +127,23 @@ class DocumentIndexer:
         for doc in documents:
             doc.metadata = sanitize_metadata(doc.metadata)
 
-        parser_subtype: str | None = None
-        if self._is_hierarchical():
-            hierarchical_config = self.splitter_config.hierarchical_config
-            hierarchical_nodes = build_hierarchical_nodes(
-                documents=documents,
-                parent_chunk_size=hierarchical_config.parent_chunk_size,
-                child_chunk_size=hierarchical_config.child_chunk_size,
-                child_chunk_overlap=hierarchical_config.child_chunk_overlap,
-            )
-            parent_nodes = enrich_nodes_metadata(
-                hierarchical_nodes.parent_nodes,
-                ingestion_metadata=self.ingestion_preparation.ingestion_metadata,
-            )
-            child_nodes = enrich_nodes_metadata(
-                hierarchical_nodes.child_nodes,
-                ingestion_metadata=self.ingestion_preparation.ingestion_metadata,
-            )
-            chunk_metadata.apply_to_nodes(parent_nodes)
+        ingestion_result = build_ingestion_result(
+            documents=documents,
+            splitter_config=self.splitter_config,
+            file_extension=self.file_extension,
+            embed_model=self.embed_model,
+        )
+        parser_subtype = ingestion_result.parser_subtype
+
+        if ingestion_result.parent_nodes is not None:
+            chunk_metadata.apply_to_nodes(ingestion_result.parent_nodes)
             self.storage_backend.save_parent_nodes(
                 knowledge_id=chunk_metadata.knowledge_id,
-                parent_nodes=parent_nodes,
+                parent_nodes=ingestion_result.parent_nodes,
                 **kwargs,
             )
-            nodes = child_nodes
-        else:
-            ingestion_result = build_ingestion_result(
-                documents=documents,
-                splitter_config=self.splitter_config,
-                file_extension=self.file_extension,
-                embed_model=self.embed_model,
-            )
-            parser_subtype = ingestion_result.parser_subtype
-            nodes = ingestion_result.nodes
+
+        nodes = ingestion_result.index_nodes
 
         chunk_metadata.apply_to_nodes(nodes)
 
@@ -230,10 +211,3 @@ class DocumentIndexer:
             "splitter_subtype": parser_subtype,
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
-
-    def _is_hierarchical(self) -> bool:
-        return (
-            isinstance(self.splitter_config, NormalizedSplitterConfig)
-            and self.splitter_config.chunk_strategy == "hierarchical"
-            and self.splitter_config.hierarchical_config is not None
-        )

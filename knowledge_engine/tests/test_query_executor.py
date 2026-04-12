@@ -163,3 +163,82 @@ async def test_query_executor_merges_hierarchical_child_hits_into_parent_content
         knowledge_id="1",
         parent_node_ids=["parent-1"],
     )
+
+
+@pytest.mark.asyncio
+async def test_query_executor_only_merges_hierarchical_hits_and_preserves_record_order() -> (
+    None
+):
+    from knowledge_engine.query import QueryExecutor
+
+    storage_backend = MagicMock()
+    storage_backend.retrieve.return_value = {
+        "records": [
+            {
+                "content": "parent candidate",
+                "score": 0.95,
+                "title": "Hierarchical Doc",
+                "metadata": {
+                    "chunk_strategy": "hierarchical",
+                    "parent_node_id": "parent-1",
+                    "doc_ref": "doc_1",
+                },
+            },
+            {
+                "content": "plain chunk",
+                "score": 0.81,
+                "title": "Flat Doc",
+                "metadata": {
+                    "chunk_strategy": "flat",
+                    "doc_ref": "doc_2",
+                },
+            },
+        ]
+    }
+    storage_backend.get_parent_nodes.return_value = {
+        "parent-1": {
+            "content": "resolved parent",
+            "title": "Hierarchical Doc",
+            "metadata": {
+                "chunk_strategy": "hierarchical",
+                "doc_ref": "doc_1",
+            },
+        }
+    }
+    executor = QueryExecutor(storage_backend=storage_backend, embed_model=object())
+
+    result = await executor.execute(
+        knowledge_id="1",
+        query="mixed question",
+        retrieval_config={"top_k": 5, "retrieval_mode": "vector"},
+        user_id=11,
+    )
+
+    assert result == {
+        "records": [
+            {
+                "content": "resolved parent",
+                "score": 0.95,
+                "title": "Hierarchical Doc",
+                "metadata": {
+                    "chunk_strategy": "hierarchical",
+                    "doc_ref": "doc_1",
+                    "parent_node_id": "parent-1",
+                },
+            },
+            {
+                "content": "plain chunk",
+                "score": 0.81,
+                "title": "Flat Doc",
+                "metadata": {
+                    "chunk_strategy": "flat",
+                    "doc_ref": "doc_2",
+                },
+            },
+        ]
+    }
+    storage_backend.get_parent_nodes.assert_called_once_with(
+        knowledge_id="1",
+        parent_node_ids=["parent-1"],
+        user_id=11,
+    )
