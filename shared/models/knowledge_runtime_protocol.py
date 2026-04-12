@@ -12,6 +12,8 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from .splitter_config import NormalizedSplitterConfig
+
 
 class KnowledgeRuntimeProtocolModel(BaseModel):
     """Base protocol model with strict field validation."""
@@ -111,7 +113,7 @@ class RemoteIndexRequest(KnowledgeRuntimeProtocolModel):
     index_owner_user_id: int
     retriever_config: RuntimeRetrieverConfig
     embedding_model_config: RuntimeEmbeddingModelConfig
-    splitter_config: dict[str, Any] | None = None
+    splitter_config: NormalizedSplitterConfig
     source_file: str | None = None
     file_extension: str | None = None
     index_families: list[str] = Field(default_factory=lambda: ["chunk_vector"])

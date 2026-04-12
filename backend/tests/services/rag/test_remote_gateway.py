@@ -130,7 +130,17 @@ async def test_remote_gateway_index_document_posts_runtime_request(mocker) -> No
                 "base_url": "https://api.openai.com/v1",
             },
         },
-        "splitter_config": {"type": "sentence"},
+        "splitter_config": {
+            "chunk_strategy": "flat",
+            "format_enhancement": "none",
+            "flat_config": {
+                "chunk_size": 1024,
+                "chunk_overlap": 200,
+                "separator": "\n\n",
+            },
+            "markdown_enhancement": {"enabled": False},
+            "legacy_type": "sentence",
+        },
         "index_families": ["chunk_vector", "summary_vector_index"],
         "content_ref": {
             "kind": "presigned_url",

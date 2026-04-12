@@ -55,7 +55,7 @@ export function ChunksSection({ documentId, enabled = true }: ChunksSectionProps
   // Format splitter type for display
   const formatSplitterType = (type?: string, subtype?: string) => {
     if (!type) return null
-    if (type === 'smart' && subtype) {
+    if (subtype) {
       return `${type} (${subtype})`
     }
     return type

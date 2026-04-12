@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Dict
 
 from knowledge_engine.index.indexer import DocumentIndexer
-from knowledge_engine.splitter.config import normalize_splitter_config
+from knowledge_engine.ingestion.pipeline import IngestionPreparation, prepare_ingestion
 from knowledge_engine.storage.base import BaseStorageBackend
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
 
@@ -103,6 +103,10 @@ class DocumentService:
         splitter_config: dict | None,
         document_id: int | None,
     ) -> Dict:
+        ingestion_preparation = self._prepare_ingestion(
+            splitter_config,
+            file_extension=file_extension,
+        )
         chunk_metadata = self._build_chunk_metadata(
             knowledge_id=knowledge_id,
             source_file=source_file,
@@ -111,10 +115,8 @@ class DocumentService:
         indexer = DocumentIndexer(
             storage_backend=self.storage_backend,
             embed_model=embed_model,
-            splitter_config=(
-                normalize_splitter_config(splitter_config).model_dump(exclude_none=True)
-                if splitter_config is not None
-                else None
+            splitter_config=ingestion_preparation.normalized_splitter_config.model_dump(
+                exclude_none=True
             ),
             file_extension=file_extension,
         )
@@ -137,6 +139,10 @@ class DocumentService:
     ) -> Dict:
         source_file = Path(file_path).name
         file_extension = Path(file_path).suffix.lower()
+        ingestion_preparation = self._prepare_ingestion(
+            splitter_config,
+            file_extension=file_extension,
+        )
         chunk_metadata = self._build_chunk_metadata(
             knowledge_id=knowledge_id,
             source_file=source_file,
@@ -145,10 +151,8 @@ class DocumentService:
         indexer = DocumentIndexer(
             storage_backend=self.storage_backend,
             embed_model=embed_model,
-            splitter_config=(
-                normalize_splitter_config(splitter_config).model_dump(exclude_none=True)
-                if splitter_config is not None
-                else None
+            splitter_config=ingestion_preparation.normalized_splitter_config.model_dump(
+                exclude_none=True
             ),
             file_extension=file_extension,
         )
@@ -178,6 +182,17 @@ class DocumentService:
 
     def _generate_doc_ref(self) -> str:
         return f"doc_{uuid.uuid4().hex[:12]}"
+
+    def _prepare_ingestion(
+        self,
+        splitter_config: dict | None,
+        *,
+        file_extension: str | None = None,
+    ) -> IngestionPreparation:
+        return prepare_ingestion(
+            splitter_config,
+            file_extension=file_extension,
+        )
 
     def _finalize_index_result(
         self,

@@ -98,6 +98,22 @@ from .responses_api_factory import (
     TransportFactory,
     TransportType,
 )
+from .splitter_config import (
+    FlatChunkConfig,
+    HierarchicalChunkConfig,
+    LegacySplitterConfig,
+    MarkdownEnhancementConfig,
+    NormalizedSplitterConfig,
+    SemanticSplitterConfig,
+    SentenceSplitterConfig,
+    SmartSplitterConfig,
+    SplitterConfig,
+    SplitterConfigModel,
+    build_runtime_default_splitter_config,
+    normalize_runtime_splitter_config,
+    normalize_splitter_config,
+    serialize_splitter_config,
+)
 
 __all__ = [
     "db",
@@ -154,4 +170,19 @@ __all__ = [
     "blocks_to_list",
     "create_tool_block",
     "create_text_block",
+    # Splitter config
+    "SplitterConfigModel",
+    "SemanticSplitterConfig",
+    "SentenceSplitterConfig",
+    "SmartSplitterConfig",
+    "FlatChunkConfig",
+    "HierarchicalChunkConfig",
+    "MarkdownEnhancementConfig",
+    "NormalizedSplitterConfig",
+    "LegacySplitterConfig",
+    "SplitterConfig",
+    "normalize_splitter_config",
+    "normalize_runtime_splitter_config",
+    "build_runtime_default_splitter_config",
+    "serialize_splitter_config",
 ]

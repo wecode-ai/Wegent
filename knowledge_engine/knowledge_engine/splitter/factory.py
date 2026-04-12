@@ -14,6 +14,10 @@ from knowledge_engine.splitter.smart import SmartSplitter
 from knowledge_engine.splitter.splitter import SemanticSplitter, SentenceSplitter
 
 
+def _resolve_file_aware_extension(file_extension: str | None) -> str:
+    return file_extension or ".txt"
+
+
 def create_splitter(
     config: SplitterConfig | None,
     embed_model: BaseEmbedding,
@@ -43,9 +47,8 @@ def create_splitter(
 
         flat_config = config.flat_config or FlatChunkConfig()
         if config.format_enhancement == "file_aware":
-            ext = file_extension or ".txt"
             return SmartSplitter(
-                file_extension=ext,
+                file_extension=_resolve_file_aware_extension(file_extension),
                 chunk_size=flat_config.chunk_size,
                 chunk_overlap=flat_config.chunk_overlap,
                 markdown_enhancement_enabled=config.markdown_enhancement.enabled,

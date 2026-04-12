@@ -46,6 +46,8 @@ def test_index_runtime_spec_keeps_control_plane_free_fields():
     assert spec.source.attachment_id == 123
     assert spec.index_families == ["chunk_vector"]
     assert spec.retriever_config.storage_config["type"] == "qdrant"
+    assert spec.splitter_config.chunk_strategy == "flat"
+    assert spec.splitter_config.format_enhancement == "file_aware"
 
 
 def test_index_runtime_spec_keeps_normalized_splitter_config_shape():
@@ -63,7 +65,7 @@ def test_index_runtime_spec_keeps_normalized_splitter_config_shape():
         splitter_config=normalized.model_dump(exclude_none=True),
     )
 
-    assert spec.splitter_config == {
+    assert spec.splitter_config.model_dump(exclude_none=True) == {
         "chunk_strategy": "flat",
         "format_enhancement": "file_aware",
         "flat_config": {
@@ -73,6 +75,30 @@ def test_index_runtime_spec_keeps_normalized_splitter_config_shape():
         },
         "markdown_enhancement": {"enabled": True},
         "legacy_type": "smart",
+    }
+
+
+def test_index_runtime_spec_defaults_missing_splitter_config_to_runtime_default():
+    spec = IndexRuntimeSpec(
+        knowledge_base_id=7,
+        document_id=8,
+        index_owner_user_id=9,
+        retriever_name="retriever-a",
+        retriever_namespace="default",
+        embedding_model_name="embed-a",
+        embedding_model_namespace="default",
+        source=IndexSource(attachment_id=123, source_type="attachment"),
+    )
+
+    assert spec.splitter_config.model_dump(exclude_none=True) == {
+        "chunk_strategy": "flat",
+        "format_enhancement": "file_aware",
+        "flat_config": {
+            "chunk_size": 1024,
+            "chunk_overlap": 50,
+            "separator": "\n\n",
+        },
+        "markdown_enhancement": {"enabled": True},
     }
 
 

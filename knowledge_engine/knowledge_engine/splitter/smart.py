@@ -13,12 +13,17 @@ from llama_index.core.node_parser import (
 )
 from llama_index.core.schema import BaseNode
 
+from knowledge_engine.splitter.file_aware import (
+    FILE_AWARE_EXTENSIONS,
+    resolve_file_aware_parser_subtype,
+    supports_file_aware_split,
+)
 from knowledge_engine.splitter.markdown_enhancement import enhance_markdown_nodes
 from shared.telemetry.decorators import set_span_attribute, trace_sync
 
 
 class SmartSplitter:
-    SMART_EXTENSIONS = {".pdf", ".txt", ".doc", ".docx", ".md"}
+    SMART_EXTENSIONS = FILE_AWARE_EXTENSIONS
     DEFAULT_CHUNK_SIZE = 1024
     DEFAULT_CHUNK_OVERLAP = 50
 
@@ -36,7 +41,7 @@ class SmartSplitter:
 
     @classmethod
     def supports_smart_split(cls, file_extension: str) -> bool:
-        return file_extension.lower() in cls.SMART_EXTENSIONS
+        return supports_file_aware_split(file_extension)
 
     @trace_sync("rag.splitter.split_documents")
     def split_documents(self, documents: List[Document]) -> List[BaseNode]:
@@ -44,9 +49,10 @@ class SmartSplitter:
         set_span_attribute("chunk_size", self.chunk_size)
         set_span_attribute("chunk_overlap", self.chunk_overlap)
 
-        if self.file_extension == ".md":
+        parser_subtype = resolve_file_aware_parser_subtype(self.file_extension)
+        if parser_subtype == "markdown_sentence":
             return self._split_markdown(documents)
-        if self.file_extension == ".txt":
+        if parser_subtype == "sentence":
             return self._split_text(documents)
         return self._split_recursive(documents)
 
@@ -81,8 +87,4 @@ class SmartSplitter:
         return parser.get_nodes_from_documents(documents)
 
     def _get_subtype(self) -> str:
-        if self.file_extension == ".md":
-            return "markdown_sentence"
-        if self.file_extension == ".txt":
-            return "sentence"
-        return "recursive_character"
+        return resolve_file_aware_parser_subtype(self.file_extension)

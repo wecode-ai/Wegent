@@ -134,9 +134,67 @@ async def test_index_document_local_delegates_to_engine_document_service() -> No
         file_extension=".pdf",
         embed_model=embed_model,
         user_id=3,
-        splitter_config={"type": "sentence", "chunk_size": 256, "chunk_overlap": 32},
+        splitter_config={
+            "chunk_strategy": "flat",
+            "format_enhancement": "none",
+            "flat_config": {
+                "chunk_size": 256,
+                "chunk_overlap": 32,
+                "separator": "\n\n",
+            },
+            "markdown_enhancement": {"enabled": False},
+            "legacy_type": "sentence",
+        },
         document_id=2,
     )
+
+
+@pytest.mark.asyncio
+async def test_index_document_local_applies_runtime_default_when_splitter_config_missing() -> (
+    None
+):
+    spec = IndexRuntimeSpec(
+        knowledge_base_id=1,
+        document_id=2,
+        index_owner_user_id=3,
+        retriever_name="retriever-a",
+        retriever_namespace="default",
+        embedding_model_name="embed-a",
+        embedding_model_namespace="default",
+        source=IndexSource(source_type="attachment", attachment_id=9),
+    )
+
+    with (
+        patch(
+            "app.services.rag.local_data_plane.indexing._build_index_storage_backend",
+            return_value=MagicMock(),
+        ),
+        patch(
+            "app.services.rag.local_data_plane.indexing._build_index_embed_model",
+            return_value=object(),
+        ),
+        patch(
+            "app.services.rag.local_data_plane.indexing._get_attachment_binary_source",
+            return_value=(b"hello world", "notes.md", ".md"),
+        ),
+        patch(
+            "app.services.rag.local_data_plane.indexing.EngineDocumentService.index_document_from_binary",
+            new_callable=AsyncMock,
+            return_value={"status": "success"},
+        ) as mock_index_document,
+    ):
+        await index_document_local(spec, db=MagicMock())
+
+    assert mock_index_document.await_args.kwargs["splitter_config"] == {
+        "chunk_strategy": "flat",
+        "format_enhancement": "file_aware",
+        "flat_config": {
+            "chunk_size": 1024,
+            "chunk_overlap": 50,
+            "separator": "\n\n",
+        },
+        "markdown_enhancement": {"enabled": True},
+    }
 
 
 @pytest.mark.asyncio

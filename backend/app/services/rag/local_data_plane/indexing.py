@@ -124,7 +124,7 @@ async def index_document_local(
             file_extension=file_extension,
             embed_model=embed_model,
             user_id=spec.index_owner_user_id,
-            splitter_config=spec.splitter_config,
+            splitter_config=spec.splitter_config.model_dump(exclude_none=True),
             document_id=spec.document_id,
         )
 

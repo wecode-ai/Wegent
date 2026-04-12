@@ -6,6 +6,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from knowledge_engine.ingestion.pipeline import IngestionPreparation
+from knowledge_engine.splitter.config import normalize_splitter_config
+
 
 @pytest.mark.asyncio
 async def test_index_document_from_binary_delegates_to_indexer() -> None:
@@ -22,10 +25,23 @@ async def test_index_document_from_binary_delegates_to_indexer() -> None:
     }
 
     service = DocumentService(storage_backend=storage_backend)
+    ingestion_preparation = IngestionPreparation(
+        normalized_splitter_config=normalize_splitter_config({"type": "smart"}),
+        ingestion_metadata={
+            "chunk_strategy": "flat",
+            "format_enhancement": "file_aware",
+        },
+    )
 
-    with patch(
-        "knowledge_engine.services.document_service.DocumentIndexer",
-        return_value=indexer,
+    with (
+        patch(
+            "knowledge_engine.services.document_service.prepare_ingestion",
+            return_value=ingestion_preparation,
+        ) as prepare_ingestion,
+        patch(
+            "knowledge_engine.services.document_service.DocumentIndexer",
+            return_value=indexer,
+        ),
     ):
         result = await service.index_document_from_binary(
             knowledge_id="1",
@@ -42,6 +58,14 @@ async def test_index_document_from_binary_delegates_to_indexer() -> None:
             document_id=9,
         )
 
+    prepare_ingestion.assert_called_once_with(
+        {
+            "type": "sentence",
+            "chunk_size": 256,
+            "chunk_overlap": 32,
+        },
+        file_extension=".pdf",
+    )
     assert result == {
         "doc_ref": "9",
         "knowledge_id": "1",
@@ -65,7 +89,7 @@ async def test_index_document_from_binary_delegates_to_indexer() -> None:
 
 
 @pytest.mark.asyncio
-async def test_index_document_from_binary_normalizes_legacy_splitter_config() -> None:
+async def test_index_document_from_binary_uses_normalized_splitter_contract() -> None:
     from knowledge_engine.services.document_service import DocumentService
 
     storage_backend = MagicMock()
@@ -80,10 +104,22 @@ async def test_index_document_from_binary_normalizes_legacy_splitter_config() ->
 
     service = DocumentService(storage_backend=storage_backend)
 
-    with patch(
-        "knowledge_engine.services.document_service.DocumentIndexer",
-        return_value=indexer,
-    ) as document_indexer_cls:
+    with (
+        patch(
+            "knowledge_engine.services.document_service.prepare_ingestion",
+            return_value=IngestionPreparation(
+                normalized_splitter_config=normalize_splitter_config({"type": "smart"}),
+                ingestion_metadata={
+                    "chunk_strategy": "flat",
+                    "format_enhancement": "file_aware",
+                },
+            ),
+        ) as prepare_ingestion,
+        patch(
+            "knowledge_engine.services.document_service.DocumentIndexer",
+            return_value=indexer,
+        ) as document_indexer_cls,
+    ):
         await service.index_document_from_binary(
             knowledge_id="1",
             binary_data=b"hello world",
@@ -95,6 +131,10 @@ async def test_index_document_from_binary_normalizes_legacy_splitter_config() ->
             document_id=9,
         )
 
+    prepare_ingestion.assert_called_once_with(
+        {"type": "smart"},
+        file_extension=".md",
+    )
     assert document_indexer_cls.call_args.kwargs["splitter_config"] == {
         "chunk_strategy": "flat",
         "format_enhancement": "file_aware",
