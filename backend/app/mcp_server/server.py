@@ -207,6 +207,7 @@ def _register_knowledge_tools() -> None:
     # The decorators will add tools to the global registry
     from app.mcp_server.tool_registry import register_tools_to_server
     from app.mcp_server.tools import (  # noqa: F401 side-effect: triggers @mcp_tool registration
+        dingtalk_docs,
         knowledge,
     )
 
