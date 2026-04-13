@@ -36,49 +36,49 @@ llm-wiki 的三层架构与 Wegent 的对应关系：
 
 ### 重要约束
 
-Wegent 知识库文档是**扁平结构**（无路径/目录层级），每个文档有：
-- `name`：文档名称（String，最长 255 字符）
+Wegent 知识库文档支持**目录结构**（路径层级），每个文档有：
+- `name`：文档名称（String，最长 255 字符，支持 `/` 路径分隔符）
 - `file_extension`：文件后缀（单独字段，如 `md`）
 
-因此用**双连字符前缀命名约定**代替路径层级。
+因此用**目录路径**代替扁平命名约定。
 
 ### 两层知识库架构
 
 ```
 元知识库（meta-wiki）                    子知识库（如 ai-research-wiki）
-├── ai-research--index.md               ├── src--rag-optimization-2024.md
-├── ai-research--log.md                 ├── src--karpathy-llm-wiki.md
-├── product--index.md                   ├── ent--anthropic.md
-├── product--log.md                     ├── ent--claude-3-5.md
-└── personal--index.md                  ├── con--rag.md
-    personal--log.md                    ├── con--prompt-caching.md
-                                        └── syn--rag-vs-wiki.md
+├── ai-research/index.md               ├── src/rag-optimization-2024.md
+├── ai-research/log.md                 ├── src/karpathy-llm-wiki.md
+├── product/index.md                   ├── ent/anthropic.md
+├── product/log.md                     ├── ent/claude-3-5.md
+└── personal/index.md                  ├── con/rag.md
+    personal/log.md                    ├── con/prompt-caching.md
+                                        └── syn/rag-vs-wiki.md
 ```
 
 **元知识库（meta-wiki）**：
-- 每个子知识库对应两个文档：`{kb-name}--index.md` 和 `{kb-name}--log.md`
+- 每个子知识库对应两个文档：`{kb-name}/index.md` 和 `{kb-name}/log.md`
 - LLM 通过读取元库的 index 文档，可以跨库导航和查询
 - 不存储实际内容，只存目录和日志
 
 **子知识库**：
-- 存储实际内容文档，用前缀区分文档类型
-- `src--`：来源摘要（每个原始来源对应一个文档）
-- `ent--`：实体页（人物、项目、产品、公司等）
-- `con--`：概念页（技术方法、理论框架等）
-- `syn--`：综合分析页（比较、趋势、结论等）
+- 存储实际内容文档，用目录区分文档类型
+- `src/`：来源摘要（每个原始来源对应一个文档）
+- `ent/`：实体页（人物、项目、产品、公司等）
+- `con/`：概念页（技术方法、理论框架等）
+- `syn/`：综合分析页（比较、趋势、结论等）
 
 ### 文档命名规则
 
 | 类型 | 命名格式 | 示例 |
 |------|---------|------|
-| 元库索引 | `{kb-name}--index.md` | `ai-research--index.md` |
-| 元库日志 | `{kb-name}--log.md` | `ai-research--log.md` |
-| 来源摘要 | `src--{kebab-title}.md` | `src--rag-optimization-2024.md` |
-| 实体页 | `ent--{entity-name}.md` | `ent--anthropic.md` |
-| 概念页 | `con--{concept-name}.md` | `con--rag.md` |
-| 综合分析 | `syn--{topic}.md` | `syn--rag-vs-wiki.md` |
+| 元库索引 | `{kb-name}/index.md` | `ai-research/index.md` |
+| 元库日志 | `{kb-name}/log.md` | `ai-research/log.md` |
+| 来源摘要 | `src/{kebab-title}.md` | `src/rag-optimization-2024.md` |
+| 实体页 | `ent/{entity-name}.md` | `ent/anthropic.md` |
+| 概念页 | `con/{concept-name}.md` | `con/rag.md` |
+| 综合分析 | `syn/{topic}.md` | `syn/rag-vs-wiki.md` |
 
-### `{kb-name}--index.md` 格式
+### `{kb-name}/index.md` 格式
 
 ```markdown
 # {KB Display Name} Index
@@ -87,36 +87,36 @@ Last updated: YYYY-MM-DD
 Total pages: N
 
 ## Sources（来源摘要）
-- src--rag-optimization-2024 | RAG 架构优化方法综述，来源：arXiv 论文，2024-04-01
-- src--karpathy-llm-wiki | LLM Wiki 模式介绍，来源：GitHub Gist，2026-04-10
+- src/rag-optimization-2024 | RAG 架构优化方法综述，来源：arXiv 论文，2024-04-01
+- src/karpathy-llm-wiki | LLM Wiki 模式介绍，来源：GitHub Gist，2026-04-10
 
 ## Entities（实体）
-- ent--anthropic | Anthropic 公司，Claude 系列模型开发商
-- ent--claude-3-5 | Claude 3.5 Sonnet 模型，Anthropic 2024 年发布
+- ent/anthropic | Anthropic 公司，Claude 系列模型开发商
+- ent/claude-3-5 | Claude 3.5 Sonnet 模型，Anthropic 2024 年发布
 
 ## Concepts（概念）
-- con--rag | Retrieval-Augmented Generation，检索增强生成
-- con--prompt-caching | 提示词缓存，减少重复 token 计算
+- con/rag | Retrieval-Augmented Generation，检索增强生成
+- con/prompt-caching | 提示词缓存，减少重复 token 计算
 
 ## Synthesis（综合分析）
-- syn--rag-vs-wiki | RAG 与 Wiki 模式对比分析
+- syn/rag-vs-wiki | RAG 与 Wiki 模式对比分析
 ```
 
-### `{kb-name}--log.md` 格式
+### `{kb-name}/log.md` 格式
 
 ```markdown
 # {KB Display Name} Log
 
 ## [2026-04-10] ingest | Karpathy LLM Wiki 模式介绍
 - 来源：GitHub Gist（文本内容）
-- 新建：src--karpathy-llm-wiki, con--llm-wiki-pattern
-- 更新：ai-research--index.md
+- 新建：src/karpathy-llm-wiki, con/llm-wiki-pattern
+- 更新：ai-research/index.md
 - 摘要：介绍了基于 LLM 的增量 wiki 维护模式，与 RAG 的核心区别
 
 ## [2026-04-10] ingest | RAG 架构优化论文
 - 来源：PDF 附件（attachment_id: 42）
-- 新建：src--rag-optimization-2024, ent--dense-retrieval
-- 更新：con--rag, ai-research--index.md
+- 新建：src/rag-optimization-2024, ent/dense-retrieval
+- 更新：con/rag, ai-research/index.md
 - 摘要：提出了 dense retrieval 优化方案，与现有 BM25 方法对比
 ```
 
@@ -134,14 +134,14 @@ Total pages: N
 系统使用两层知识库架构：
 
 **元知识库（meta-wiki）**：存储所有子知识库的索引和日志。
-- 每个子知识库对应两个文档：`{kb-name}--index.md` 和 `{kb-name}--log.md`
+- 每个子知识库对应两个文档：`{kb-name}/index.md` 和 `{kb-name}/log.md`
 - 通过 `list_knowledge_bases` 找到名为 `meta-wiki` 的知识库
 
-**子知识库**：存储实际内容，文档用前缀区分类型：
-- `src--{title}.md`：来源摘要（每个原始来源一个文档）
-- `ent--{name}.md`：实体页（人物、项目、产品、公司等）
-- `con--{name}.md`：概念页（技术方法、理论框架等）
-- `syn--{topic}.md`：综合分析页（比较、趋势、结论等）
+**子知识库**：存储实际内容，文档用目录区分类型：
+- `src/{title}.md`：来源摘要（每个原始来源一个文档）
+- `ent/{name}.md`：实体页（人物、项目、产品、公司等）
+- `con/{name}.md`：概念页（技术方法、理论框架等）
+- `syn/{topic}.md`：综合分析页（比较、趋势、结论等）
 
 ## 子知识库路由规则
 
@@ -163,21 +163,21 @@ Total pages: N
 理解新内容的主题、涉及的实体和概念。
 
 **第四步：保存来源摘要**
-在目标子知识库中创建 `src--{kebab-title}.md`：
+在目标子知识库中创建 `src/{kebab-title}.md`：
 - 如果有 `contentAttachmentIds`，使用 `source_type="attachment"` 和 `attachment_id={id}`
 - 否则使用 `source_type="text"` 和 `content={摘要内容}`
 
 **第五步：更新实体页和概念页**
 对内容中涉及的每个重要实体/概念：
-- 检查 index 中是否已有对应文档（名称以 `ent--` 或 `con--` 开头）
+- 检查 index 中是否已有对应文档（名称以 `ent/` 或 `con/` 开头）
 - 已有：调用 `read_document_content` 读取，然后 `update_document_content` 追加新信息
 - 未有：调用 `create_document` 新建，`source_type="text"`，`content` 为页面内容
 
 **第六步：更新元库索引**
-调用 `update_document_content` 更新元库中的 `{kb-name}--index.md`，在对应分类下追加新文档条目。
+调用 `update_document_content` 更新元库中的 `{kb-name}/index.md`，在对应分类下追加新文档条目。
 
 **第七步：追加操作日志**
-调用 `update_document_content` 在元库的 `{kb-name}--log.md` 末尾追加本次操作记录：
+调用 `update_document_content` 在元库的 `{kb-name}/log.md` 末尾追加本次操作记录：
 ```
 ## [YYYY-MM-DD] ingest | {内容标题}
 - 来源：{来源描述}
@@ -192,10 +192,10 @@ Total pages: N
 ## 查询工作流（Query）
 
 回答问题时：
-1. 读取元库中相关子库的 `{kb-name}--index.md` 找到相关文档
+1. 读取元库中相关子库的 `{kb-name}/index.md` 找到相关文档
 2. 调用 `read_document_content` 读取相关文档内容
 3. 综合回答，附上文档名称作为引用
-4. 如果答案有价值，将其保存为目标子库中的 `syn--{topic}.md`，并更新 index 和 log
+4. 如果答案有价值，将其保存为目标子库中的 `syn/{topic}.md`，并更新 index 和 log
 
 ## Lint 工作流（健康检查）
 
@@ -223,7 +223,7 @@ Total pages: N
 ---
 type: entity|concept|synthesis|source
 updated: YYYY-MM-DD
-related: ent--xxx, con--yyy
+related: ent/xxx, con/yyy
 ---
 
 # 页面标题
@@ -276,8 +276,8 @@ related: ent--xxx, con--yyy
   "actions": ["create_source_page", "update_entity_page", "update_index", "append_log"],
   "knowledgeBaseIds": [2],
   "documentIds": [201, 202, 203],
-  "newDocuments": ["src--article-title.md", "ent--some-entity.md"],
-  "updatedDocuments": ["con--some-concept.md", "ai-research--index.md", "ai-research--log.md"],
+  "newDocuments": ["src/article-title.md", "ent/some-entity.md"],
+  "updatedDocuments": ["con/some-concept.md", "ai-research/index.md", "ai-research/log.md"],
   "extractedUrls": [],
   "skippedReason": null,
   "error": null
@@ -327,7 +327,7 @@ related: ent--xxx, con--yyy
 ```bash
 curl -X POST "http://localhost:8000/api/work-queues/by-name/wiki-inbox/messages/ingest" \
   -H "Authorization: Bearer <token>" \
-  -F "content=请初始化 Wiki 系统。在元知识库（meta-wiki）中为以下子知识库创建 index 和 log 文档：ai-research-wiki、product-wiki、general-wiki。每个子库创建空的 {kb-name}--index.md 和 {kb-name}--log.md，并在 log 中记录初始化操作。" \
+  -F "content=请初始化 Wiki 系统。在元知识库（meta-wiki）中为以下子知识库创建 index 和 log 文档：ai-research-wiki、product-wiki、general-wiki。每个子库创建空的 {kb-name}/index.md 和 {kb-name}/log.md，并在 log 中记录初始化操作。" \
   -F "note=系统初始化"
 ```
 
@@ -412,7 +412,7 @@ curl -X POST "http://localhost:8000/api/work-queues/by-name/wiki-inbox/messages/
 
 ### 为什么用元知识库存 index 和 log
 
-子知识库里全是内容文档（`src--`、`ent--`、`con--`、`syn--`），结构清晰，RAG 检索不会被 index/log 文档干扰。元知识库专门存导航文档，LLM 可以先读元库找到目标，再去子库读内容。
+子知识库里全是内容文档（`src/`、`ent/`、`con/`、`syn/` 目录），结构清晰，RAG 检索不会被 index/log 文档干扰。元知识库专门存导航文档，LLM 可以先读元库找到目标，再去子库读内容。
 
 ### 为什么 index 文档比 RAG 检索更适合导航
 
@@ -442,14 +442,14 @@ curl -X POST "http://localhost:8000/api/work-queues/by-name/wiki-inbox/messages/
 系统使用两层知识库架构：
 
 **元知识库（meta-wiki）**：存储所有子知识库的索引和日志。
-- 每个子知识库对应 `{kb-name}--index.md`（目录）和 `{kb-name}--log.md`（操作日志）
+- 每个子知识库对应 `{kb-name}/index.md`（目录）和 `{kb-name}/log.md`（操作日志）
 - 通过 `list_knowledge_bases` 找到名为 `meta-wiki` 的知识库
 
-**子知识库**：存储实际内容，文档用前缀区分类型：
-- `src--{title}.md`：来源摘要
-- `ent--{name}.md`：实体页（人物、项目、产品、公司等）
-- `con--{name}.md`：概念页（技术方法、理论框架等）
-- `syn--{topic}.md`：综合分析页（比较、趋势、结论等）
+**子知识库**：存储实际内容，文档用目录区分类型：
+- `src/{title}.md`：来源摘要
+- `ent/{name}.md`：实体页（人物、项目、产品、公司等）
+- `con/{name}.md`：概念页（技术方法、理论框架等）
+- `syn/{topic}.md`：综合分析页（比较、趋势、结论等）
 
 ## 查询工作流
 
@@ -462,38 +462,38 @@ curl -X POST "http://localhost:8000/api/work-queues/by-name/wiki-inbox/messages/
 - 所有子知识库（其他知识库）
 
 **第三步：读取元库，定位相关子库和文档**
-调用 `list_documents(knowledge_base_id={meta-wiki-id})` 获取元库中所有 index 文档列表（格式为 `{kb-name}--index.md`）。
+调用 `list_documents(knowledge_base_id={meta-wiki-id})` 获取元库中所有 index 文档列表（格式为 `{kb-name}/index.md`）。
 
 根据问题主题，判断需要查询哪些子库：
-- 问题涉及 AI/机器学习 → 读取 `ai-research--index.md`
-- 问题涉及产品设计 → 读取 `product--index.md`
+- 问题涉及 AI/机器学习 → 读取 `ai-research/index.md`
+- 问题涉及产品设计 → 读取 `product/index.md`
 - 问题跨多个主题 → 读取多个 index 文档
 
 对每个相关子库，调用 `read_document_content` 读取其 index 文档，从中找到相关文档名称。
 
 **第四步：跨库读取相关文档**
 根据各子库 index 中找到的文档名称，在对应子知识库中调用 `read_document_content` 读取内容。
-- 优先读取 `ent--` 和 `con--` 页面（综合知识）
-- 如需原始来源细节，再读取 `src--` 页面
+- 优先读取 `ent/` 和 `con/` 页面（综合知识）
+- 如需原始来源细节，再读取 `src/` 页面
 - 如果多个子库都有相关内容，合并后综合回答
 
 **第五步：综合回答**
 基于读取到的内容综合回答，在回答中注明引用来源（文档名称）。
 
 **第六步：归档有价值的答案（可选）**
-如果本次回答产生了新的综合分析（比较、趋势、结论），且用户认为有价值，将其保存为目标子库中的 `syn--{topic}.md`，并更新对应的 index 和 log。
+如果本次回答产生了新的综合分析（比较、趋势、结论），且用户认为有价值，将其保存为目标子库中的 `syn/{topic}.md`，并更新对应的 index 和 log。
 
 ## 关键规则
 
 1. **先读 index，再读内容**：不要盲目读取所有文档，先通过 index 定位相关文档，再精准读取。
 
-2. **引用来源**：回答中注明信息来自哪些文档（如"根据 `ent--anthropic.md`..."），让用户可以追溯。
+2. **引用来源**：回答中注明信息来自哪些文档（如"根据 `ent/anthropic.md`..."），让用户可以追溯。
 
 3. **诚实说明局限**：如果 wiki 中没有相关内容，直接告知用户，不要编造。可以建议用户通过 Inbox 摄取相关资料。
 
-4. **归档前确认**：将答案归档为 `syn--` 文档前，先询问用户是否需要保存，不要自动写入。
+4. **归档前确认**：将答案归档为 `syn/` 文档前，先询问用户是否需要保存，不要自动写入。
 
-5. **不修改已有内容**：查询模式下，除非用户明确要求，不更新 `ent--` 和 `con--` 页面。
+5. **不修改已有内容**：查询模式下，除非用户明确要求，不更新 `ent/` 和 `con/` 页面。
 
 ## 回答格式
 
@@ -516,11 +516,11 @@ curl -X POST "http://localhost:8000/api/work-queues/by-name/wiki-inbox/messages/
 （展开内容，引用 wiki 文档中的具体信息）
 
 ## 来源
-- `ent--anthropic.md`
-- `con--rag.md`
+- `ent/anthropic.md`
+- `con/rag.md`
 
 ## 相关页面
-- `syn--rag-vs-wiki.md` — RAG 与 Wiki 模式对比分析
+- `syn/rag-vs-wiki.md` — RAG 与 Wiki 模式对比分析
 
 ---
 ```
