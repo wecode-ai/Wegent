@@ -779,6 +779,13 @@ class ChatContext:
                 search_engine,
                 default_max_results,
             )
+        # Add WebFetchTool for HTTP requests (enables two-step download flows
+        # like DingTalk download_file where MCP returns URL + headers)
+        from chat_shell.tools.builtin import WebFetchTool
+
+        extra_tools.append(WebFetchTool())
+        logger.debug("[CHAT_CONTEXT] Added WebFetchTool")
+
         # Add DataTableTool if table_contexts provided
         logger.debug(
             "[CHAT_CONTEXT] Checking table_contexts: has_table_contexts=%s, count=%d",
