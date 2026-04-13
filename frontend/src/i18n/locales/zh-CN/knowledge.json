@@ -164,6 +164,9 @@
       "targetGroup": "归属分组",
       "selectGroup": "选择分组"
     },
+    "folder": {
+      "docCount": "{{count}} 个文档"
+    },
     "document": {
       "title": "文档",
       "upload": "添加来源",

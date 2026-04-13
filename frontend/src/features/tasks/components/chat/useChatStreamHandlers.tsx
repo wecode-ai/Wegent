@@ -544,6 +544,12 @@ export function useChatStreamHandlers({
           messageWithQueueContent = `${queueContents}\n\n---\n\n${finalMessage}`
         }
 
+        // Collect attachment context IDs from queue_message contexts so the AI
+        // can access uploaded file content via context injection.
+        const queueAttachmentIds = queueMessageContexts.flatMap(
+          ctx => (ctx as import('@/types/context').QueueMessageContext).attachmentContextIds ?? []
+        )
+
         // Add selected document IDs as a context for notebook mode
         // This allows direct content injection of selected documents
         if (
@@ -621,7 +627,7 @@ export function useChatStreamHandlers({
             model_id: modelId,
             force_override_bot_model: forceOverride,
             force_override_bot_model_type: selectedModel?.type,
-            attachment_ids: attachments.map(a => a.id),
+            attachment_ids: [...attachments.map(a => a.id), ...queueAttachmentIds],
             enable_deep_thinking: enableDeepThinking,
             enable_clarification: enableClarification,
             is_group_chat: selectedTaskDetail?.is_group_chat || false,

@@ -89,6 +89,7 @@ class QueueMessageStatus(str, PyEnum):
     PROCESSING = "processing"
     PROCESSED = "processed"
     ARCHIVED = "archived"
+    FAILED = "failed"
 
 
 class QueueMessagePriority(str, PyEnum):

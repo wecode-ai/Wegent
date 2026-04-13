@@ -218,17 +218,34 @@ def create_knowledge_base(
 
 @mcp_tool(
     name="create_document",
-    description="Create a document in a knowledge base. Supports text content, base64-encoded files, URL scraping, or existing attachment reference.",
+    description=(
+        "Create a document in a knowledge base. Supports text content, base64-encoded "
+        "files, URL scraping, or existing attachment reference.\n\n"
+        "IMPORTANT for inbox message processing: When the inbox context contains "
+        "'contentAttachmentIds', ALWAYS use source_type='attachment' with one of those "
+        "IDs instead of source_type='text'. This avoids re-outputting the full content "
+        "through the model output window, which is critical for large documents.\n\n"
+        "Example for inbox: create_document(knowledge_base_id=1, name='Article', "
+        "source_type='attachment', attachment_id=<contentAttachmentIds[0]>)"
+    ),
     server="knowledge",
     param_descriptions={
         "knowledge_base_id": "Target knowledge base ID",
         "name": "Document name",
-        "source_type": "Source type: 'text', 'file', 'web', or 'attachment'",
-        "content": "Text content (for source_type='text')",
+        "source_type": (
+            "Source type: 'text', 'file', 'web', or 'attachment'. "
+            "Use 'attachment' for inbox messages (see contentAttachmentIds in inbox context)."
+        ),
+        "content": "Text content (for source_type='text'). Avoid for large content - use 'attachment' instead.",
         "file_base64": "Base64-encoded file content (for source_type='file')",
         "file_extension": "File extension like 'txt', 'md', 'pdf' (for source_type='file')",
         "url": "URL to scrape (for source_type='web')",
-        "attachment_id": "Existing attachment ID to copy into knowledge base (for source_type='attachment'). Recommended for large files to avoid base64 overhead.",
+        "attachment_id": (
+            "Existing attachment context ID (for source_type='attachment'). "
+            "For inbox messages: use a value from contentAttachmentIds in the inbox context. "
+            "This is the PREFERRED method - content is read directly from storage without "
+            "passing through the model output window."
+        ),
         "trigger_indexing": "Whether to trigger RAG indexing (default: True)",
         "trigger_summary": "Whether to trigger summary generation (default: True)",
     },

@@ -6,7 +6,13 @@ import { apiClient } from './client'
 
 // Enums
 export type QueueVisibility = 'private' | 'public' | 'group_visible' | 'invite_only'
-export type QueueMessageStatus = 'unread' | 'read' | 'processing' | 'processed' | 'archived'
+export type QueueMessageStatus =
+  | 'unread'
+  | 'read'
+  | 'processing'
+  | 'processed'
+  | 'failed'
+  | 'archived'
 export type QueueMessagePriority = 'low' | 'normal' | 'high'
 export type TriggerMode = 'immediate' | 'manual' | 'scheduled' | 'condition_based'
 export type ConditionType = 'priority_high' | 'specific_sender'
@@ -18,6 +24,12 @@ export interface TeamRef {
   name: string
 }
 
+export interface SubscriptionRef {
+  namespace: string
+  name: string
+  userId: number
+}
+
 export interface ProcessCondition {
   type: ConditionType
   value?: string
@@ -27,6 +39,7 @@ export interface ProcessCondition {
 export interface AutoProcessConfig {
   enabled: boolean
   teamRef?: TeamRef
+  subscriptionRef?: SubscriptionRef
   triggerMode: TriggerMode
   scheduleInterval?: number
   conditions?: ProcessCondition[]
@@ -99,6 +112,9 @@ export interface MessageContentSnapshot {
     file_extension?: string
     file_size?: number
   }>
+  // IDs of subtask_contexts records pre-written from uploaded files/content.
+  // Stored on the USER message that owns the attachments.
+  attachmentContextIds?: number[]
 }
 
 export interface QueueMessage {
@@ -113,6 +129,8 @@ export interface QueueMessage {
   status: QueueMessageStatus
   processResult?: Record<string, unknown>
   processTaskId?: number
+  processSubscriptionId?: number | null
+  retryCount?: number
   createdAt: string
   updatedAt: string
   processedAt?: string
@@ -311,4 +329,27 @@ export async function getUserPublicQueues(userId: number): Promise<UserPublicQue
 export async function getRecentContacts(limit?: number): Promise<RecentContactsListResponse> {
   const query = limit ? `?limit=${limit}` : ''
   return apiClient.get<RecentContactsListResponse>(`/users/recent-contacts${query}`)
+}
+
+// Ingest Message Types
+export interface IngestMessageRequest {
+  content: string
+  title?: string
+  note?: string
+  sender?: { externalId?: string; displayName?: string }
+  attachments?: unknown[]
+  source?: { type: string; name?: string }
+  priority?: QueueMessagePriority
+}
+
+// Ingest & Retry
+export async function ingestMessage(
+  queueId: number,
+  data: IngestMessageRequest
+): Promise<QueueMessage> {
+  return apiClient.post<QueueMessage>(`/work-queues/${queueId}/messages/ingest`, data)
+}
+
+export async function retryMessage(messageId: number): Promise<QueueMessage> {
+  return apiClient.post<QueueMessage>(`/queue-messages/${messageId}/retry`)
 }

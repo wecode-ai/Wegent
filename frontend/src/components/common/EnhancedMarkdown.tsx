@@ -9,6 +9,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfmSafe from '@/lib/remark-gfm-safe'
 import { autolinkUrls } from '@/lib/autolink-urls'
 import remarkMath from 'remark-math'
+import remarkFrontmatter from 'remark-frontmatter'
 import rehypeKatex from 'rehype-katex'
 import rehypeRaw from 'rehype-raw'
 import dynamic from 'next/dynamic'
@@ -41,6 +42,127 @@ interface EnhancedMarkdownProps {
   /** Custom components to override default rendering */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   components?: Record<string, React.ComponentType<any>>
+}
+
+/**
+ * Parse YAML frontmatter string into key-value pairs
+ * Handles simple scalar values, quoted strings, and list items
+ */
+function parseFrontmatter(yaml: string): Record<string, string | string[]> {
+  const result: Record<string, string | string[]> = {}
+  const lines = yaml.split('\n')
+  let currentKey: string | null = null
+  let currentList: string[] | null = null
+
+  for (const line of lines) {
+    // List item: "  - value"
+    const listItemMatch = line.match(/^\s+-\s+(.*)$/)
+    if (listItemMatch && currentKey && currentList) {
+      const value = listItemMatch[1].trim().replace(/^["']|["']$/g, '')
+      currentList.push(value)
+      continue
+    }
+
+    // Key-value pair: "key: value"
+    const kvMatch = line.match(/^([^:]+):\s*(.*)$/)
+    if (kvMatch) {
+      // Save previous list if any
+      if (currentKey && currentList) {
+        result[currentKey] = currentList
+      }
+      currentKey = kvMatch[1].trim()
+      const rawValue = kvMatch[2].trim()
+
+      if (rawValue === '' || rawValue === null) {
+        // Empty value - may be followed by list items
+        currentList = []
+        result[currentKey] = ''
+      } else {
+        currentList = null
+        // Remove surrounding quotes
+        result[currentKey] = rawValue.replace(/^["']|["']$/g, '')
+      }
+    }
+  }
+
+  // Save last list if any
+  if (currentKey && currentList && currentList.length > 0) {
+    result[currentKey] = currentList
+  }
+
+  return result
+}
+
+/**
+ * Renders YAML frontmatter as a styled metadata card
+ */
+function FrontmatterBlock({ yaml }: { yaml: string }) {
+  const [collapsed, setCollapsed] = useState(false)
+  const data = useMemo(() => parseFrontmatter(yaml), [yaml])
+  const entries = Object.entries(data).filter(([, v]) => {
+    if (Array.isArray(v)) return v.length > 0
+    return v !== ''
+  })
+
+  if (entries.length === 0) return null
+
+  return (
+    <div className="my-4 rounded-lg border border-border bg-surface overflow-hidden">
+      {/* Header */}
+      <button
+        onClick={() => setCollapsed(prev => !prev)}
+        className="w-full flex items-center justify-between px-3 py-2 bg-surface-hover/50 border-b border-border hover:bg-surface-hover transition-colors"
+      >
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-medium text-text-secondary uppercase tracking-wide">
+            Metadata
+          </span>
+        </div>
+        {collapsed ? (
+          <ChevronDown className="w-3.5 h-3.5 text-text-muted" />
+        ) : (
+          <ChevronUp className="w-3.5 h-3.5 text-text-muted" />
+        )}
+      </button>
+
+      {/* Content */}
+      {!collapsed && (
+        <div className="px-4 py-3 space-y-2">
+          {entries.map(([key, value]) => (
+            <div key={key} className="flex flex-wrap gap-x-3 gap-y-1 text-sm">
+              <span className="font-medium text-text-secondary min-w-[80px] shrink-0">{key}</span>
+              {Array.isArray(value) ? (
+                <div className="flex flex-wrap gap-1">
+                  {value.map((item, i) => (
+                    <span
+                      key={i}
+                      className="inline-flex items-center px-2 py-0.5 rounded-full bg-primary/10 text-primary text-xs font-medium"
+                    >
+                      {item}
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                <span className="text-text-primary break-all">{value}</span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * Extract YAML frontmatter from markdown source and return both the frontmatter
+ * content and the remaining markdown body
+ */
+function extractFrontmatter(source: string): { frontmatter: string | null; body: string } {
+  const match = source.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/)
+  if (match) {
+    return { frontmatter: match[1], body: match[2] }
+  }
+  return { frontmatter: null, body: source }
 }
 
 /**
@@ -405,13 +527,16 @@ export const EnhancedMarkdown = memo(function EnhancedMarkdown({
   theme,
   components,
 }: EnhancedMarkdownProps) {
+  // Extract frontmatter before processing
+  const { frontmatter, body } = useMemo(() => extractFrontmatter(source), [source])
+
   // Pre-process source:
   // 1. Convert \[...\] and \(...\) to dollar syntax for LaTeX
   // 2. Fix CJK punctuation + ** edge cases (CommonMark right-flanking delimiter rule)
   // 3. Convert bare URLs to markdown link format (iOS 16 Safari compatibility)
   const processedSource = useMemo(
-    () => autolinkUrls(preprocessCjkBoldEdgeCases(preprocessLatexSyntax(source))),
-    [source]
+    () => autolinkUrls(preprocessCjkBoldEdgeCases(preprocessLatexSyntax(body))),
+    [body]
   )
 
   // Check if source contains math formulas
@@ -527,7 +652,7 @@ export const EnhancedMarkdown = memo(function EnhancedMarkdown({
   // Configure remark/rehype plugins based on content
   const remarkPlugins = useMemo(() => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const plugins: any[] = [remarkGfmSafe]
+    const plugins: any[] = [remarkGfmSafe, remarkFrontmatter]
     if (hasMath) {
       // Enable singleDollarTextMath to support $...$ inline math
       plugins.push([remarkMath, { singleDollarTextMath: true }])
@@ -572,6 +697,7 @@ export const EnhancedMarkdown = memo(function EnhancedMarkdown({
   if (contentParts.length === 1 && contentParts[0].type === 'markdown') {
     return (
       <div className="wmde-markdown markdown-content" data-color-mode={theme}>
+        {frontmatter && <FrontmatterBlock yaml={frontmatter} />}
         {renderMarkdown(processedSource)}
       </div>
     )
@@ -580,6 +706,7 @@ export const EnhancedMarkdown = memo(function EnhancedMarkdown({
   // Render mixed content with mermaid diagrams and latex blocks
   return (
     <div className="wmde-markdown enhanced-markdown" data-color-mode={theme}>
+      {frontmatter && <FrontmatterBlock yaml={frontmatter} />}
       {contentParts.map((part, index) => {
         if (part.type === 'mermaid') {
           return <MermaidDiagram key={`mermaid-${index}`} code={part.content} />

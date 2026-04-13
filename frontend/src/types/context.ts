@@ -61,6 +61,10 @@ export interface QueueMessageContext extends BaseContextItem {
   messageCount: number
   /** Source task ID */
   sourceTaskId: number
+  /** IDs of subtask_contexts records pre-written from uploaded files.
+   * These are passed as attachment_ids when sending to AI so the LLM
+   * can access the file content via context injection. */
+  attachmentContextIds?: number[]
 }
 
 /**

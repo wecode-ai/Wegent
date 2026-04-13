@@ -4,7 +4,7 @@
 
 'use client'
 
-import { User, Clock, MessageSquare, FileText } from 'lucide-react'
+import { User, Clock, MessageSquare, FileText, Paperclip } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -26,6 +26,7 @@ const statusLabels: Record<QueueMessageStatus, string> = {
   read: 'messages.status.read',
   processing: 'messages.status.processing',
   processed: 'messages.status.processed',
+  failed: 'messages.status.failed',
   archived: 'messages.status.archived',
 }
 
@@ -40,6 +41,7 @@ const statusColors: Record<QueueMessageStatus, string> = {
   read: 'bg-surface text-text-secondary',
   processing: 'bg-amber-100 text-amber-700',
   processed: 'bg-green-100 text-green-700',
+  failed: 'bg-red-100 text-red-700',
   archived: 'bg-surface text-text-muted',
 }
 
@@ -139,16 +141,23 @@ export function MessageDetailDialog({
                         </span>
                         {item.createdAt && <span>· {formatUTCDate(item.createdAt)}</span>}
                       </div>
-                      <p className="text-sm whitespace-pre-wrap">{item.content}</p>
+                      {item.content && (
+                        <p className="text-sm whitespace-pre-wrap">{item.content}</p>
+                      )}
 
                       {/* Attachments */}
                       {item.attachments && item.attachments.length > 0 && (
                         <div className="mt-2 flex flex-wrap gap-2">
                           {item.attachments.map((attachment, attIndex) => (
-                            <Badge key={attIndex} variant="info" className="text-xs">
-                              {attachment.name}
+                            <Badge
+                              key={attIndex}
+                              variant="info"
+                              className="text-xs flex items-center gap-1"
+                            >
+                              <Paperclip className="h-3 w-3 flex-shrink-0" />
+                              <span className="truncate max-w-[200px]">{attachment.name}</span>
                               {attachment.file_size && (
-                                <span className="ml-1 text-text-muted">
+                                <span className="ml-1 text-text-muted flex-shrink-0">
                                   ({Math.round(attachment.file_size / 1024)}KB)
                                 </span>
                               )}

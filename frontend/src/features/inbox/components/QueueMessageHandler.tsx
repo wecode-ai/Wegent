@@ -34,7 +34,6 @@ function buildQueueMessageContext(message: QueueMessage): QueueMessageContext {
   }
 
   // Add message content from snapshot
-  // Add message content from snapshot
   if (message.contentSnapshot && message.contentSnapshot.length > 0) {
     fullContent += '--- 原始消息 ---\n\n'
     for (const snapshot of message.contentSnapshot) {
@@ -45,6 +44,7 @@ function buildQueueMessageContext(message: QueueMessage): QueueMessageContext {
       fullContent += `[${role}${sender}]:\n${snapshot.content}\n\n`
     }
   }
+
   // Build content preview (truncated)
   let contentPreview = ''
   if (message.contentSnapshot && message.contentSnapshot.length > 0) {
@@ -52,6 +52,15 @@ function buildQueueMessageContext(message: QueueMessage): QueueMessageContext {
     contentPreview = firstMessage.content.slice(0, 100)
     if (firstMessage.content.length > 100) {
       contentPreview += '...'
+    }
+  }
+
+  // Collect attachment context IDs from all snapshot messages so the AI
+  // can access uploaded file content when the user processes this message.
+  const attachmentContextIds: number[] = []
+  for (const snapshot of message.contentSnapshot ?? []) {
+    if (snapshot.attachmentContextIds) {
+      attachmentContextIds.push(...snapshot.attachmentContextIds)
     }
   }
 
@@ -65,6 +74,7 @@ function buildQueueMessageContext(message: QueueMessage): QueueMessageContext {
     fullContent: fullContent.trim(),
     messageCount: message.contentSnapshot?.length || 0,
     sourceTaskId: message.sourceTaskId,
+    attachmentContextIds: attachmentContextIds.length > 0 ? attachmentContextIds : undefined,
   }
 }
 

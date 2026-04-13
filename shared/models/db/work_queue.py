@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import JSON, Column, DateTime
 from sqlalchemy import Enum as SQLEnum
-from sqlalchemy import Index, Integer, Text
+from sqlalchemy import Index, Integer, String, Text
 
 from .base import Base
 from .enums import QueueMessagePriority, QueueMessageStatus
@@ -73,6 +73,12 @@ class QueueMessage(Base):
         default=0,
         comment="Task ID created for processing (0 = not processed)",
     )
+    process_subscription_id = Column(
+        Integer,
+        nullable=False,
+        default=0,
+        comment="Subscription Kind.id used for processing (0 = none)",
+    )
     created_at = Column(DateTime, nullable=False, default=utc_now, index=True)
     updated_at = Column(DateTime, nullable=False, default=utc_now, onupdate=utc_now)
     processed_at = Column(
@@ -101,7 +107,9 @@ class RecentContact(Base):
     contact_user_id = Column(
         Integer, nullable=False, index=True, comment="Contact user ID"
     )
-    last_contact_at = Column(DateTime, default=utc_now, comment="Last contact time")
+    last_contact_at = Column(
+        DateTime, nullable=False, default=utc_now, comment="Last contact time"
+    )
     contact_count = Column(Integer, nullable=False, default=1, comment="Contact count")
 
     __table_args__ = (

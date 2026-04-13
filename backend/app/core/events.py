@@ -80,6 +80,27 @@ class TaskCompletedEvent:
     error: Optional[str] = None
 
 
+@dataclass
+class QueueMessageCreatedEvent:
+    """Event emitted when a queue message is created.
+
+    Used to trigger auto-processing of inbox messages.
+
+    Attributes:
+        message_id: QueueMessage ID
+        queue_id: Work queue ID (kinds.id)
+        recipient_user_id: Queue owner user ID
+        sender_user_id: Message sender user ID
+        priority: Message priority value
+    """
+
+    message_id: int
+    queue_id: int
+    recipient_user_id: int
+    sender_user_id: int
+    priority: str
+
+
 class EventBus:
     """Simple async event bus for internal application events.
 
@@ -229,6 +250,24 @@ class EventBus:
 
         # Execute handlers in current loop
         await self._execute_handlers(handlers, event)
+
+    def publish_sync(self, event: T) -> None:
+        """Publish an event from synchronous context.
+
+        This method bridges sync code to the async event bus by scheduling
+        the event publication in the main event loop.
+
+        Args:
+            event: The event instance to publish
+        """
+        if self._main_loop and self._main_loop.is_running():
+            asyncio.run_coroutine_threadsafe(self.publish(event), self._main_loop)
+        else:
+            logger.warning(
+                "[EVENT_BUS] Cannot publish event %s from sync context: "
+                "no running main loop",
+                type(event).__name__,
+            )
 
     async def _schedule_in_main_loop(self, handlers: List[Callable], event: T) -> None:
         """Schedule handler execution in the main event loop and wait for completion.

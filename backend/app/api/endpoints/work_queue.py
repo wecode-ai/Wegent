@@ -4,9 +4,19 @@
 
 """Work Queue API endpoints."""
 
-from typing import Optional
+import logging
+from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    UploadFile,
+    status,
+)
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
@@ -17,8 +27,11 @@ from app.schemas.work_queue import (
     BatchMessageIds,
     BatchOperationResult,
     BatchStatusUpdate,
+    ExternalSender,
     ForwardMessageRequest,
     ForwardMessageResponse,
+    IngestMessageRequest,
+    IngestSource,
     PublicQueueResponse,
     QueueMessageListResponse,
     QueueMessagePriority,
@@ -41,6 +54,11 @@ from app.services.work_queue_service import (
     work_queue_service,
 )
 
+logger = logging.getLogger(__name__)
+
+# get_current_user_flexible_for_executor supports both JWT and API Key (wg- prefix)
+_ingest_auth = security.get_current_user_flexible_for_executor
+
 router = APIRouter()
 
 
@@ -61,7 +79,7 @@ async def create_work_queue(
 
 @router.get("", response_model=WorkQueueListResponse)
 async def list_work_queues(
-    current_user: User = Depends(security.get_current_user),
+    current_user: User = Depends(_ingest_auth),
 ):
     """List all work queues for the current user."""
     queues = work_queue_service.list_queues(current_user.id)
@@ -180,6 +198,149 @@ async def list_queue_messages(
     return QueueMessageListResponse(items=items, total=total, unreadCount=unread)
 
 
+async def _build_ingest_request_with_files(
+    content: Optional[str],
+    title: Optional[str],
+    note: Optional[str],
+    priority: str,
+    sender_external_id: Optional[str],
+    sender_display_name: Optional[str],
+    source_type: Optional[str],
+    source_name: Optional[str],
+    files: List[UploadFile],
+    user_id: int,
+    db: Session,
+) -> IngestMessageRequest:
+    """Upload files to subtask_contexts and build IngestMessageRequest.
+
+    Files are pre-written as attachments so the LLM can reference them
+    by attachment_id without re-outputting content through the output window.
+    """
+    from app.services.context.context_service import context_service
+
+    attachment_context_ids: List[int] = []
+
+    for upload_file in files:
+        if not upload_file.filename:
+            continue
+        try:
+            binary_data = await upload_file.read()
+            if not binary_data:
+                continue
+            ctx, _ = context_service.upload_attachment(
+                db=db,
+                user_id=user_id,
+                filename=upload_file.filename,
+                binary_data=binary_data,
+                subtask_id=0,
+            )
+            attachment_context_ids.append(ctx.id)
+            logger.info(
+                f"[ingest] Uploaded file '{upload_file.filename}' "
+                f"as attachment context {ctx.id}"
+            )
+        except Exception as e:
+            logger.warning(
+                f"[ingest] Failed to upload file '{upload_file.filename}': {e}"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Failed to process file '{upload_file.filename}': {e}",
+            )
+
+    sender = None
+    if sender_external_id or sender_display_name:
+        sender = ExternalSender(
+            externalId=sender_external_id,
+            displayName=sender_display_name,
+        )
+
+    source = None
+    if source_type or source_name:
+        source = IngestSource(
+            type=source_type or "api",
+            name=source_name,
+        )
+
+    try:
+        priority_enum = QueueMessagePriority(priority)
+    except ValueError:
+        priority_enum = QueueMessagePriority.NORMAL
+
+    return IngestMessageRequest(
+        content=content or None,
+        title=title,
+        note=note,
+        sender=sender,
+        source=source,
+        priority=priority_enum,
+        attachmentContextIds=attachment_context_ids if attachment_context_ids else None,
+    )
+
+
+@router.post(
+    "/by-name/{queue_name}/messages/ingest",
+    response_model=QueueMessageResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def ingest_message_by_name(
+    queue_name: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(_ingest_auth),
+    # Text fields via Form (multipart/form-data)
+    content: Optional[str] = Form(None, description="Message text content"),
+    title: Optional[str] = Form(None, description="Optional title"),
+    note: Optional[str] = Form(None, description="Optional note"),
+    priority: str = Form("normal", description="Priority: low, normal, high"),
+    sender_external_id: Optional[str] = Form(None, alias="senderExternalId"),
+    sender_display_name: Optional[str] = Form(None, alias="senderDisplayName"),
+    source_type: Optional[str] = Form(None, alias="sourceType"),
+    source_name: Optional[str] = Form(None, alias="sourceName"),
+    # File uploads (optional)
+    files: List[UploadFile] = File(default=[], description="Files to attach"),
+):
+    """Ingest a message into a work queue identified by name.
+
+    Convenience endpoint that resolves the queue by name instead of ID.
+    Useful for scripting and external integrations where the queue name
+    (e.g. "inbox") is known but the numeric ID is not.
+
+    Accepts multipart/form-data with optional file attachments.
+    Files are pre-stored as attachments so the LLM can reference them
+    by ID without re-outputting content through the model output window.
+
+    Example (text only):
+        curl -X POST .../by-name/inbox/messages/ingest -F "content=Hello world"
+
+    Example (with files):
+        curl -X POST .../by-name/inbox/messages/ingest \\
+            -F "content=See attached" -F "files=@doc.pdf" -F "files=@notes.md"
+    """
+    request = await _build_ingest_request_with_files(
+        content=content,
+        title=title,
+        note=note,
+        priority=priority,
+        sender_external_id=sender_external_id,
+        sender_display_name=sender_display_name,
+        source_type=source_type,
+        source_name=source_name,
+        files=files,
+        user_id=current_user.id,
+        db=db,
+    )
+    try:
+        return queue_message_service.ingest_message_by_name(
+            user_id=current_user.id,
+            queue_name=queue_name,
+            request=request,
+        )
+    except NotFoundException as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except ConflictException as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+
+
 # ==================== Message Operations ====================
 
 messages_router = APIRouter()
@@ -239,6 +400,29 @@ async def delete_queue_message(
         queue_message_service.delete_message(current_user.id, message_id)
     except NotFoundException as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+
+@messages_router.post("/{message_id}/retry", response_model=QueueMessageResponse)
+async def retry_message(
+    message_id: int,
+    current_user: User = Depends(security.get_current_user),
+):
+    """Retry processing a failed inbox message.
+
+    Only messages with status 'failed' can be retried.
+    Resets the message to 'unread' and re-triggers auto-processing.
+    """
+    try:
+        return queue_message_service.retry_message(
+            user_id=current_user.id,
+            message_id=message_id,
+        )
+    except NotFoundException as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except ForbiddenException as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except ConflictException as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
 
 
 # ==================== Batch Operations ====================

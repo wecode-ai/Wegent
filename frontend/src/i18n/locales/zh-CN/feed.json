@@ -55,6 +55,7 @@
   "variable_time_desc": "当前时间（如：14:30:00）",
   "variable_datetime_desc": "当前日期时间（如：2024-01-15 14:30:00）",
   "variable_subscription_name_desc": "订阅器名称",
+  "variable_inbox_message_desc": "收件箱消息内容（JSON 格式）",
   "variable_webhook_data_desc": "Webhook 请求数据（JSON 格式）",
   "retry_count": "失败重试次数",
   "no_retry": "不重试",

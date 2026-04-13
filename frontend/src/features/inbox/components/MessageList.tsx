@@ -20,6 +20,8 @@ import {
   Play,
   CheckSquare,
   X,
+  AlertCircle,
+  RefreshCw,
 } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Button } from '@/components/ui/button'
@@ -63,6 +65,7 @@ import {
   deleteQueueMessage,
   batchUpdateMessageStatus,
   batchDeleteMessages,
+  retryMessage,
   type QueueMessage,
   type QueueMessageStatus,
   type QueueMessagePriority,
@@ -79,6 +82,7 @@ const statusConfig: Record<QueueMessageStatus, { icon: React.ReactNode; color: s
   read: { icon: <Circle className="h-3 w-3" />, color: 'text-text-muted' },
   processing: { icon: <Loader2 className="h-3 w-3 animate-spin" />, color: 'text-amber-500' },
   processed: { icon: <CheckCircle2 className="h-3 w-3" />, color: 'text-green-600' },
+  failed: { icon: <AlertCircle className="h-3 w-3" />, color: 'text-red-500' },
   archived: { icon: <Archive className="h-3 w-3" />, color: 'text-text-muted' },
 }
 
@@ -291,6 +295,20 @@ export function MessageList({
     } finally {
       setActionLoading(null)
       setDeleteConfirmMessage(null)
+    }
+  }
+
+  const handleRetry = async (message: QueueMessage) => {
+    setActionLoading(message.id)
+    try {
+      await retryMessage(message.id)
+      await refreshMessages()
+      toast.success(t('messages.retry_success'))
+    } catch (error) {
+      console.error('Failed to retry message:', error)
+      toast.error(t('common:errors.generic'))
+    } finally {
+      setActionLoading(null)
     }
   }
 
@@ -528,6 +546,14 @@ export function MessageList({
                       </div>
                     )}
                     <p className="text-sm text-text-secondary mt-1 line-clamp-2">{preview}</p>
+                    {/* Failed message error display */}
+                    {message.status === 'failed' && message.processResult?.error != null && (
+                      <div className="flex items-center gap-1 mt-1">
+                        <Badge variant="error" className="text-xs">
+                          {t('messages.process_error')}: {String(message.processResult.error)}
+                        </Badge>
+                      </div>
+                    )}
                     <div className="flex items-center gap-2 mt-2 text-xs text-text-muted">
                       <span>
                         {message.contentSnapshot?.length || 0} {t('chat:message_count')}
@@ -562,10 +588,23 @@ export function MessageList({
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
                         {/* Process action */}
-                        {message.status !== 'processed' && message.status !== 'processing' && (
-                          <DropdownMenuItem onClick={() => onProcessMessage(message)}>
-                            <Play className="mr-2 h-4 w-4" />
-                            {t('messages.process')}
+                        {message.status !== 'processed' &&
+                          message.status !== 'processing' &&
+                          message.status !== 'failed' && (
+                            <DropdownMenuItem onClick={() => onProcessMessage(message)}>
+                              <Play className="mr-2 h-4 w-4" />
+                              {t('messages.process')}
+                            </DropdownMenuItem>
+                          )}
+
+                        {/* Retry action for failed messages */}
+                        {message.status === 'failed' && (
+                          <DropdownMenuItem
+                            onClick={() => handleRetry(message)}
+                            data-testid="retry-message-button"
+                          >
+                            <RefreshCw className="mr-2 h-4 w-4" />
+                            {t('messages.retry')}
                           </DropdownMenuItem>
                         )}
 
