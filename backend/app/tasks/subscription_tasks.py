@@ -645,8 +645,9 @@ async def _create_subscription_task(
     # Link inbox message attachments to user_subtask for context injection.
     # When triggered by an inbox message, pre-written attachments (content_attachment_ids)
     # must be linked so prepare_contexts_for_chat() can inject file content into LLM context.
-    inbox_message_id = getattr(ctx.execution, "inbox_message_id", None)
-    if inbox_message_id and result.user_subtask:
+    # inbox_message_id is NOT NULL DEFAULT 0; 0 means no inbox message
+    inbox_message_id = getattr(ctx.execution, "inbox_message_id", 0)
+    if inbox_message_id > 0 and result.user_subtask:
         _link_inbox_attachments_to_subtask(
             db=db,
             user_subtask_id=result.user_subtask.id,

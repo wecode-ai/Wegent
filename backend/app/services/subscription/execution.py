@@ -131,11 +131,10 @@ class BackgroundExecutionManager:
             status=BackgroundExecutionStatus.PENDING.value,
             result_summary="",
             error_message="",
+            # inbox_message_id: 0 means no inbox message, >0 means inbox-triggered
+            inbox_message_id=inbox_message_id if inbox_message_id is not None else 0,
             # started_at and completed_at use model defaults (datetime.utcnow)
         )
-
-        if inbox_message_id is not None:
-            execution.inbox_message_id = inbox_message_id
 
         db.add(execution)
         db.commit()

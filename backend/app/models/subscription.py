@@ -51,11 +51,12 @@ class BackgroundExecution(Base):
         Integer, nullable=False, default=0, index=True
     )  # 0 means no task yet
 
-    # Inbox auto-processing link
+    # Inbox auto-processing link (0 = none, >0 = QueueMessage ID)
     inbox_message_id = Column(
         Integer,
-        nullable=True,
-        default=None,
+        nullable=False,
+        default=0,
+        server_default="0",
         index=True,
         comment="Originating QueueMessage ID for inbox auto-processing",
     )

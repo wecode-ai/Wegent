@@ -119,7 +119,8 @@ class SubscriptionTaskCompletionHandler:
                 )
 
                 # Write back result to inbox message if this is an inbox-triggered execution
-                if getattr(execution, "inbox_message_id", None):
+                # inbox_message_id is NOT NULL DEFAULT 0; 0 means no inbox message
+                if getattr(execution, "inbox_message_id", 0) > 0:
                     try:
                         from app.services.inbox.result_writeback import (
                             write_execution_result_to_message,

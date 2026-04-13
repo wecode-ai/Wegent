@@ -82,12 +82,13 @@ def upgrade() -> None:
             sa.Column(
                 "inbox_message_id",
                 sa.Integer(),
-                nullable=True,
+                nullable=False,
+                server_default="0",
                 comment="Originating QueueMessage ID for inbox auto-processing",
             ),
         )
         op.create_index(
-            "ix_bg_exec_inbox_message_id",
+            "idx_bg_exec_inbox_message_id",
             "background_executions",
             ["inbox_message_id"],
         )
@@ -104,7 +105,9 @@ def downgrade() -> None:
         column["name"] for column in inspector.get_columns("background_executions")
     }
     if "inbox_message_id" in be_columns:
-        op.drop_index("ix_bg_exec_inbox_message_id", table_name="background_executions")
+        op.drop_index(
+            "idx_bg_exec_inbox_message_id", table_name="background_executions"
+        )
         op.drop_column("background_executions", "inbox_message_id")
 
     # --- queue_messages ---
