@@ -222,6 +222,7 @@ class Sandbox:
     user_id: int = 0
     user_name: str = ""
     base_url: Optional[str] = None  # Container base URL (e.g., http://localhost:8080)
+    executor_namespace: Optional[str] = None
     created_at: float = field(default_factory=time.time)
     started_at: Optional[float] = None
     last_activity_at: float = field(default_factory=time.time)
@@ -398,6 +399,7 @@ class Sandbox:
             "user_id": self.user_id,
             "user_name": self.user_name,
             "base_url": self.base_url,
+            "executor_namespace": self.executor_namespace,
             "created_at": self.created_at,
             "started_at": self.started_at,
             "last_activity_at": self.last_activity_at,

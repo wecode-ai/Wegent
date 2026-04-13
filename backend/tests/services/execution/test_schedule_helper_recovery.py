@@ -11,6 +11,7 @@ import pytest
 from app.models.subtask import SubtaskStatus
 from app.services.execution.recovery_service import recovery_service
 from app.services.execution.schedule_helper import _recover_executor
+from shared.models import ExecutionRequest
 
 
 @pytest.mark.asyncio
@@ -20,10 +21,14 @@ async def test_recover_executor_propagates_expired_archive_error():
     subtask = MagicMock()
     subtask.id = 123
     task = MagicMock()
-    user = MagicMock()
-    user.id = 7
-    user.name = "yunpeng7"
-    user.email = "yunpeng7@example.com"
+    request = ExecutionRequest(
+        task_id=1,
+        subtask_id=123,
+        user={"id": 7, "name": "user7"},
+        user_id=7,
+        user_name="user7",
+        bot=[{"shell_type": "ClaudeCode"}],
+    )
 
     with patch.object(
         recovery_service,
@@ -31,7 +36,12 @@ async def test_recover_executor_propagates_expired_archive_error():
         AsyncMock(side_effect=RuntimeError("archive expired")),
     ):
         with pytest.raises(RuntimeError, match="archive expired"):
-            await _recover_executor(db=db, subtask=subtask, task=task, user=user)
+            await _recover_executor(
+                db=db,
+                subtask=subtask,
+                task=task,
+                request=request,
+            )
 
 
 @pytest.mark.asyncio

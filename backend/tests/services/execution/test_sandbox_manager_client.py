@@ -2,14 +2,15 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Tests for the sandbox manager HTTP client."""
+"""Tests for the executor runtime HTTP client."""
 
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.services.execution import get_sandbox_manager
+from app.services.execution import get_executor_runtime_client
+from shared.models.execution import ExecutionRequest
 
 
 @pytest.mark.asyncio
@@ -35,10 +36,10 @@ async def test_create_sandbox_uses_plural_sandboxes_endpoint():
         ),
         patch("httpx.AsyncClient", return_value=client),
     ):
-        sandbox, error = await get_sandbox_manager().create_sandbox(
+        sandbox, error = await get_executor_runtime_client().create_sandbox(
             shell_type="ClaudeCode",
             user_id=2,
-            user_name="yunpeng7",
+            user_name="user7",
         )
 
     assert error is None
@@ -47,4 +48,47 @@ async def test_create_sandbox_uses_plural_sandboxes_endpoint():
     assert (
         client.post.await_args.args[0]
         == "http://localhost:8001/executor-manager/sandboxes"
+    )
+
+
+@pytest.mark.asyncio
+async def test_prepare_executor_uses_prepare_endpoint():
+    """Executor preparation should call the dedicated prepare endpoint."""
+    response = MagicMock()
+    response.raise_for_status.return_value = None
+    response.json.return_value = {
+        "executor_name": "wegent-task-test",
+        "executor_namespace": "wegent-pod",
+    }
+
+    client = AsyncMock()
+    client.__aenter__.return_value = client
+    client.__aexit__.return_value = None
+    client.post.return_value = response
+
+    request = ExecutionRequest(
+        task_id=22,
+        subtask_id=11,
+        user={"id": 2, "name": "user7"},
+        user_id=2,
+        user_name="user7",
+        bot=[{"shell_type": "ClaudeCode"}],
+    )
+
+    with (
+        patch(
+            "app.core.config.settings",
+            SimpleNamespace(EXECUTOR_MANAGER_URL="http://localhost:8001"),
+        ),
+        patch("httpx.AsyncClient", return_value=client),
+    ):
+        executor, error = await get_executor_runtime_client().prepare_executor(request)
+
+    assert error is None
+    assert executor.container_name == "wegent-task-test"
+    assert executor.executor_namespace == "wegent-pod"
+    client.post.assert_awaited_once()
+    assert (
+        client.post.await_args.args[0]
+        == "http://localhost:8001/executor-manager/executors/prepare"
     )
