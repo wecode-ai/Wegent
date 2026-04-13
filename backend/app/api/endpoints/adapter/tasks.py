@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import io
+import json
 import logging
 import re
 from datetime import datetime
@@ -16,6 +17,10 @@ from app.api.dependencies import get_db, with_task_telemetry
 from app.core import security
 from app.core.config import settings
 from app.models.user import User
+from app.schemas.remote_workspace import (
+    RemoteWorkspaceStatusResponse,
+    RemoteWorkspaceTreeResponse,
+)
 from app.schemas.service import (
     ServiceDeleteRequest,
     ServiceResponse,
@@ -30,6 +35,8 @@ from app.schemas.shared_task import (
 )
 from app.schemas.task import (
     PipelineStageInfo,
+    PromptDraftGenerateRequest,
+    PromptDraftGenerateResponse,
     TaskCreate,
     TaskDetail,
     TaskInDB,
@@ -38,8 +45,10 @@ from app.schemas.task import (
     TaskSkillsResponse,
     TaskUpdate,
 )
+from app.services import prompt_draft_service
+from app.services.adapters.executor_job import job_service
 from app.services.adapters.task_kinds import task_kinds_service
-from app.services.export.docx_generator import generate_task_docx
+from app.services.remote_workspace_service import remote_workspace_service
 from app.services.shared_task import shared_task_service
 
 router = APIRouter()
@@ -168,22 +177,6 @@ def get_personal_tasks_lite(
     return {"total": total, "items": items}
 
 
-@router.get("/lite/new", response_model=TaskLiteListResponse)
-def get_new_tasks_lite(
-    since_id: int = Query(..., ge=1, description="Get tasks with ID greater than this"),
-    limit: int = Query(
-        50, ge=1, le=100, description="Maximum number of new tasks to return"
-    ),
-    current_user: User = Depends(security.get_current_user),
-    db: Session = Depends(get_db),
-):
-    """Get new tasks created after the specified task ID, excluding DELETE status tasks"""
-    items = task_kinds_service.get_new_tasks_since_id(
-        db=db, user_id=current_user.id, since_id=since_id, limit=limit
-    )
-    return {"total": len(items), "items": items}
-
-
 @router.get("/search", response_model=TaskListResponse)
 def search_tasks_by_title(
     title: str = Query(..., min_length=1, description="Search by task title keywords"),
@@ -212,6 +205,62 @@ def get_task(
     )
 
 
+@router.get(
+    "/{task_id}/remote-workspace/status",
+    response_model=RemoteWorkspaceStatusResponse,
+)
+def get_remote_workspace_status(
+    task_id: int = Depends(with_task_telemetry),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Get remote workspace connection and availability status for a task."""
+    return remote_workspace_service.get_status(
+        db=db,
+        task_id=task_id,
+        user_id=current_user.id,
+    )
+
+
+@router.get(
+    "/{task_id}/remote-workspace/tree",
+    response_model=RemoteWorkspaceTreeResponse,
+)
+def get_remote_workspace_tree(
+    path: str = Query("/workspace", description="Workspace path to list"),
+    task_id: int = Depends(with_task_telemetry),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """List remote workspace tree under /workspace."""
+    return remote_workspace_service.list_tree(
+        db=db,
+        task_id=task_id,
+        user_id=current_user.id,
+        path=path,
+    )
+
+
+@router.get("/{task_id}/remote-workspace/file")
+def get_remote_workspace_file(
+    path: str = Query(..., description="Workspace file path"),
+    disposition: str = Query(
+        "inline", pattern="^(inline|attachment)$", description="File disposition"
+    ),
+    task_id: int = Depends(with_task_telemetry),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Stream remote workspace file for inline preview or attachment download."""
+    return remote_workspace_service.stream_file(
+        db=db,
+        task_id=task_id,
+        user_id=current_user.id,
+        path=path,
+        disposition=disposition,
+    )
+
+
 @router.get("/{task_id}/skills", response_model=TaskSkillsResponse)
 def get_task_skills(
     task_id: int = Depends(with_task_telemetry),
@@ -234,6 +283,100 @@ def get_task_skills(
     return task_kinds_service.get_task_skills(
         db=db, task_id=task_id, user_id=current_user.id
     )
+
+
+@router.post(
+    "/{task_id}/prompt-drafts/generate", response_model=PromptDraftGenerateResponse
+)
+def generate_task_prompt_draft(
+    request: PromptDraftGenerateRequest,
+    task_id: int = Depends(with_task_telemetry),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Generate a prompt draft from current task conversation."""
+    try:
+        return prompt_draft_service.generate_prompt_draft(
+            db=db,
+            task_id=task_id,
+            current_user=current_user,
+            model=request.model,
+            source=request.source,
+            current_prompt=request.current_prompt,
+            regenerate=request.regenerate,
+        )
+    except prompt_draft_service.PromptDraftTaskNotFoundError:
+        raise HTTPException(status_code=404, detail="Task not found")
+    except prompt_draft_service.PromptDraftConversationTooShortError:
+        raise HTTPException(
+            status_code=400, detail="Conversation is too short to generate prompt"
+        )
+    except prompt_draft_service.PromptDraftModelUnavailableError:
+        raise HTTPException(
+            status_code=400,
+            detail="No available model for prompt draft generation",
+        )
+    except prompt_draft_service.PromptDraftGenerationFailedError:
+        raise HTTPException(status_code=502, detail="Prompt draft generation failed")
+    except ValueError as exc:
+        if str(exc) == "task_not_found":
+            raise HTTPException(status_code=404, detail="Task not found")
+        if str(exc) == "model_not_found":
+            raise HTTPException(status_code=400, detail="Model not found")
+        raise
+    except RuntimeError as exc:
+        if str(exc) == "conversation_too_short":
+            raise HTTPException(
+                status_code=400, detail="Conversation is too short to generate prompt"
+            )
+        raise
+
+
+@router.post("/{task_id}/prompt-drafts/generate/stream")
+async def generate_task_prompt_draft_stream(
+    request: PromptDraftGenerateRequest,
+    task_id: int = Depends(with_task_telemetry),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Generate prompt draft as SSE stream events."""
+
+    try:
+        # Pre-check to return 4xx before streaming starts.
+        prompt_draft_service.validate_prompt_draft_context(
+            db=db, task_id=task_id, current_user=current_user, model=request.model
+        )
+    except prompt_draft_service.PromptDraftTaskNotFoundError:
+        raise HTTPException(status_code=404, detail="Task not found")
+    except prompt_draft_service.PromptDraftConversationTooShortError:
+        raise HTTPException(
+            status_code=400, detail="Conversation is too short to generate prompt"
+        )
+    except prompt_draft_service.PromptDraftModelUnavailableError:
+        raise HTTPException(
+            status_code=400,
+            detail="No available model for prompt draft generation",
+        )
+    except ValueError as exc:
+        if str(exc) == "task_not_found":
+            raise HTTPException(status_code=404, detail="Task not found")
+        if str(exc) == "model_not_found":
+            raise HTTPException(status_code=400, detail="Model not found")
+        raise
+
+    async def event_stream():
+        async for event in prompt_draft_service.generate_prompt_draft_stream(
+            db=db,
+            task_id=task_id,
+            current_user=current_user,
+            model=request.model,
+            source=request.source,
+            current_prompt=request.current_prompt,
+            regenerate=request.regenerate,
+        ):
+            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 @router.put("/{task_id}", response_model=TaskInDB)
@@ -457,7 +600,7 @@ async def export_task_docx(
         .filter(
             TaskResource.id == task_id,
             TaskResource.kind == "Task",
-            TaskResource.is_active == True,
+            TaskResource.is_active.in_(TaskResource.is_active_query()),
         )
         .first()
     )
@@ -479,6 +622,9 @@ async def export_task_docx(
             ) from e
 
     try:
+        # Lazy import docx_generator to avoid loading python-docx at startup
+        from app.services.export.docx_generator import generate_task_docx
+
         # Generate DOCX document with optional message filter
         docx_buffer = generate_task_docx(task, db, message_ids=filter_message_ids)
 
@@ -529,7 +675,7 @@ def get_task_services(
         .filter(
             TaskResource.id == task_id,
             TaskResource.kind == "Task",
-            TaskResource.is_active.is_(True),
+            TaskResource.is_active.in_(TaskResource.is_active_query()),
         )
         .first()
     )
@@ -570,7 +716,7 @@ def update_task_services(
         .filter(
             TaskResource.id == task_id,
             TaskResource.kind == "Task",
-            TaskResource.is_active.is_(True),
+            TaskResource.is_active.in_(TaskResource.is_active_query()),
         )
         .first()
     )
@@ -627,7 +773,7 @@ def delete_task_services(
         .filter(
             TaskResource.id == task_id,
             TaskResource.kind == "Task",
-            TaskResource.is_active.is_(True),
+            TaskResource.is_active.in_(TaskResource.is_active_query()),
         )
         .first()
     )
@@ -694,4 +840,23 @@ def cancel_preserve_executor(
     """
     return task_kinds_service.set_preserve_executor(
         db=db, task_id=task_id, user_id=current_user.id, preserve=False
+    )
+
+
+@router.post("/{task_id}/cleanup-executor", response_model=dict)
+def cleanup_task_executor(
+    task_id: int = Depends(with_task_telemetry),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Clean up the executor for a finished task.
+
+    This endpoint reuses the same cleanup rules as the scheduled executor cleanup
+    job and only affects the specified task.
+    """
+    return job_service.cleanup_task_executor(
+        db=db,
+        task_id=task_id,
+        user_id=current_user.id,
     )

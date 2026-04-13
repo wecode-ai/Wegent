@@ -34,6 +34,7 @@ from app.services.git_skill.providers import (
     get_provider_by_type,
 )
 from shared.utils.crypto import decrypt_git_token
+from shared.utils.url_util import domains_match
 
 logger = logging.getLogger(__name__)
 
@@ -147,15 +148,15 @@ def get_user_git_info(
     Returns:
         Git info dict with decrypted token, or None if not found
     """
-    from shared.models.db.user import User
+    from app.services.user import user_service
 
-    user = db.query(User).filter(User.id == user_id).first()
+    user = user_service.get_user_by_id(db, user_id)
     if not user or not user.git_info:
         return None
 
     # git_info is a list of GitInfo objects
     for git_info in user.git_info:
-        if git_info.get("git_domain") == domain:
+        if domains_match(git_info.get("git_domain", ""), domain):
             encrypted_token = git_info.get("git_token")
             if encrypted_token:
                 return {

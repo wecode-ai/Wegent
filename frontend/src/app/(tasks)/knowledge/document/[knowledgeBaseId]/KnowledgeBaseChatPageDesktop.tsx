@@ -24,20 +24,19 @@ import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContex
 import { useSearchShortcut } from '@/features/tasks/hooks/useSearchShortcut'
 import { useTranslation } from '@/hooks/useTranslation'
 import { ChatArea } from '@/features/tasks/components/chat'
-import { teamService } from '@/features/tasks/service/teamService'
+import { useTeamContext } from '@/contexts/TeamContext'
 import { useKnowledgeBaseDetail } from '@/features/knowledge/document/hooks'
+import { useNamespaceRoleMap } from '@/features/knowledge/document/hooks/useNamespaceRoleMap'
 import { useKnowledgePermissions } from '@/features/knowledge/permission/hooks/useKnowledgePermissions'
 import { DocumentPanel, KnowledgeBaseSummaryCard } from '@/features/knowledge/document/components'
 import { BoundKnowledgeBaseSummary } from '@/features/tasks/components/group-chat'
 import { taskKnowledgeBaseApi } from '@/apis/task-knowledge-base'
-import { listGroups } from '@/apis/groups'
+import {
+  canManageKnowledgeBase,
+  canManageKnowledgeBaseDocuments,
+  canManageKnowledgeBasePermissions,
+} from '@/utils/namespace-permissions'
 import type { Team } from '@/types/api'
-import type { GroupRole } from '@/types/group'
-
-interface KnowledgeBaseChatPageDesktopProps {
-  /** Callback when knowledge base type is changed (notebook <-> classic) */
-  onKbTypeChanged?: () => void
-}
 
 /**
  * Desktop-specific implementation of Knowledge Base Chat Page
@@ -47,9 +46,7 @@ interface KnowledgeBaseChatPageDesktopProps {
  * - Center: Chat area with KB summary
  * - Right: Document management panel (resizable, collapsible)
  */
-export function KnowledgeBaseChatPageDesktop({
-  onKbTypeChanged,
-}: KnowledgeBaseChatPageDesktopProps) {
+export function KnowledgeBaseChatPageDesktop() {
   const { t } = useTranslation('knowledge')
   const router = useRouter()
   const params = useParams()
@@ -85,8 +82,8 @@ export function KnowledgeBaseChatPageDesktop({
     }
   }, [knowledgeBase, knowledgeBaseId, fetchMyPermission])
 
-  // Team state from service
-  const { teams, isTeamsLoading, refreshTeams } = teamService.useTeams()
+  // Team state from context (centralized to avoid duplicate API calls)
+  const { teams, isTeamsLoading, refreshTeams } = useTeamContext()
 
   // User state
   const { user, isLoading: isUserLoading } = useUser()
@@ -111,7 +108,7 @@ export function KnowledgeBaseChatPageDesktop({
   }
 
   // Chat stream context
-  const { clearAllStreams } = useChatStreamContext()
+  const { clearAllStreams, stopStream, getStreamingTaskIds } = useChatStreamContext()
 
   // Check if a task is currently open
   const taskId =
@@ -121,31 +118,16 @@ export function KnowledgeBaseChatPageDesktop({
   // Collapsed sidebar state
   const [isCollapsed, setIsCollapsed] = useState(false)
 
+  // Document panel collapsed state
+  const [isDocumentPanelCollapsed, setIsDocumentPanelCollapsed] = useState(false)
+
   // Share button state
   const [shareButton, setShareButton] = useState<React.ReactNode>(null)
 
   // Search dialog state
   const [isSearchDialogOpen, setIsSearchDialogOpen] = useState(false)
 
-  // Group role map for permission checking
-  const [groupRoleMap, setGroupRoleMap] = useState<Map<string, GroupRole>>(new Map())
-
-  // Fetch all groups and build role map for permission checking
-  useEffect(() => {
-    listGroups()
-      .then(response => {
-        const roleMap = new Map<string, GroupRole>()
-        response.items.forEach(group => {
-          if (group.my_role) {
-            roleMap.set(group.name, group.my_role)
-          }
-        })
-        setGroupRoleMap(roleMap)
-      })
-      .catch(error => {
-        console.error('Failed to load groups for role map:', error)
-      })
-  }, [])
+  const namespaceRoleMap = useNamespaceRoleMap()
 
   // Toggle search dialog callback
   const toggleSearchDialog = useCallback(() => {
@@ -197,10 +179,16 @@ export function KnowledgeBaseChatPageDesktop({
 
   // Handle new task from collapsed sidebar
   const handleNewTask = () => {
+    // Clear state and navigate immediately for responsive UI
     setSelectedTask(null)
     clearAllStreams()
-    // Stay on current page but clear task selection
-    router.replace(`/knowledge/document/${knowledgeBaseId}`)
+    window.location.href = `/knowledge/document/${knowledgeBaseId}`
+
+    // Stop streams in the background without blocking navigation
+    const streamingIds = getStreamingTaskIds()
+    Promise.all(streamingIds.map(id => stopStream(id))).catch(error => {
+      console.error('Failed to stop streams:', error)
+    })
   }
 
   // Handle back to knowledge list
@@ -211,29 +199,34 @@ export function KnowledgeBaseChatPageDesktop({
   // Check if user can manage this knowledge base
   const canManageKb = useMemo(() => {
     if (!knowledgeBase || !user) return false
-    // Personal knowledge base - check user ownership
-    if (knowledgeBase.namespace === 'default') {
-      return knowledgeBase.user_id === user.id
-    }
-    // Organization knowledge base - only admin can manage
-    if (knowledgeBase.namespace === 'organization') {
-      return user.role === 'admin'
-    }
-    // Group knowledge base - check group role
-    // Developer or higher can edit, Maintainer or higher can delete
-    const groupRole = groupRoleMap.get(knowledgeBase.namespace)
-    return groupRole === 'Owner' || groupRole === 'Maintainer' || groupRole === 'Developer'
-  }, [knowledgeBase, user, groupRoleMap])
+    return canManageKnowledgeBase({
+      currentUserId: user.id,
+      knowledgeBase,
+      knowledgeRole: myPermission?.role,
+      namespaceRole: namespaceRoleMap.get(knowledgeBase.namespace),
+    })
+  }, [knowledgeBase, user, myPermission?.role, namespaceRoleMap])
 
-  // Check if user can manage permissions (is creator or has manage permission)
+  const canUploadDocuments = useMemo(() => {
+    if (!knowledgeBase || !user) return false
+    return canManageKnowledgeBaseDocuments({
+      currentUserId: user.id,
+      knowledgeBase,
+      knowledgeRole: myPermission?.role,
+      namespaceRole: namespaceRoleMap.get(knowledgeBase.namespace),
+    })
+  }, [knowledgeBase, user, myPermission?.role, namespaceRoleMap])
+
+  // Check if user can manage permissions (creator, namespace manager, or KB manager)
   const canManagePermissions = useMemo(() => {
     if (!knowledgeBase || !user) return false
-    // Creator can always manage permissions
-    if (knowledgeBase.user_id === user.id) return true
-    // User with manage permission can manage
-    if (myPermission?.permission_level === 'manage') return true
-    return false
-  }, [knowledgeBase, user, myPermission])
+    return canManageKnowledgeBasePermissions({
+      currentUserId: user.id,
+      knowledgeBase,
+      knowledgeRole: myPermission?.role,
+      namespaceRole: namespaceRoleMap.get(knowledgeBase.namespace),
+    })
+  }, [knowledgeBase, user, myPermission?.role, namespaceRoleMap])
 
   // Loading state - wait for both knowledge base and user data
   if (kbLoading || isUserLoading) {
@@ -296,6 +289,7 @@ export function KnowledgeBaseChatPageDesktop({
           onMembersChanged={handleMembersChanged}
           isSidebarCollapsed={isCollapsed}
           hideGroupChatOptions={true}
+          isRightPanelCollapsed={isDocumentPanelCollapsed}
         >
           {shareButton}
           <GithubStarButton />
@@ -305,12 +299,6 @@ export function KnowledgeBaseChatPageDesktop({
         <div className="flex-1 flex min-h-0">
           {/* Chat area */}
           <div className="flex-1 flex flex-col min-w-0">
-            {/* KB Summary Card - shown when no task is selected */}
-            {!hasOpenTask && (
-              <div className="px-4 sm:px-6 pt-6">
-                <KnowledgeBaseSummaryCard knowledgeBase={knowledgeBase} />
-              </div>
-            )}
             <ChatArea
               teams={filteredTeams}
               isTeamsLoading={isTeamsLoading}
@@ -326,6 +314,9 @@ export function KnowledgeBaseChatPageDesktop({
                 document_count: knowledgeBase.document_count,
               }}
               selectedDocumentIds={selectedDocumentIds}
+              guidedQuestions={knowledgeBase.guided_questions}
+              inputAlwaysAtBottom={true}
+              emptyStateContent={<KnowledgeBaseSummaryCard knowledgeBase={knowledgeBase} />}
               onTaskCreated={async (taskId: number) => {
                 // Bind the knowledge base to the newly created task
                 try {
@@ -344,14 +335,12 @@ export function KnowledgeBaseChatPageDesktop({
           {/* Right panel - Document management */}
           <DocumentPanel
             knowledgeBase={knowledgeBase}
-            canManage={canManageKb}
+            canUpload={canUploadDocuments}
+            canManageAllDocuments={canManageKb}
             canManagePermissions={canManagePermissions}
             onDocumentSelectionChange={setSelectedDocumentIds}
-            onNewChat={handleNewTask}
-            onTypeConverted={() => {
-              // Notify parent page.tsx to refresh and re-route based on new kb_type
-              onKbTypeChanged?.()
-            }}
+            onNewChat={hasOpenTask ? handleNewTask : undefined}
+            onCollapsedChange={setIsDocumentPanelCollapsed}
           />
         </div>
       </div>

@@ -13,7 +13,8 @@
     "api_keys": "密钥管理",
     "system_config": "系统配置",
     "im_channels": "IM 渠道",
-    "monitor": "监控"
+    "monitor": "订阅监控",
+    "device_monitor": "设备监控"
   },
   "stats": {
     "total_users": "总用户数",
@@ -129,7 +130,9 @@
     "namespace_label": "命名空间",
     "status": {
       "active": "启用",
-      "inactive": "禁用"
+      "inactive": "禁用",
+      "advanced": "高级",
+      "standard": "普通"
     },
     "columns": {
       "id": "ID",
@@ -145,7 +148,8 @@
       "namespace": "命名空间",
       "namespace_placeholder": "default",
       "config": "模型配置",
-      "config_placeholder": "请输入 JSON 格式的模型配置"
+      "config_placeholder": "请输入 JSON 格式的模型配置",
+      "is_advanced": "高级模型"
     },
     "confirm": {
       "delete_title": "删除模型",
@@ -739,6 +743,9 @@
       "client_secret": "Client Secret",
       "client_secret_placeholder": "请输入平台 Client Secret",
       "client_secret_edit_placeholder": "请输入新的 Client Secret（留空保持不变）",
+      "card_template_id": "AI 卡片模板 ID",
+      "card_template_id_placeholder": "请输入钉钉 AI 卡片模板 ID（可选）",
+      "card_template_id_help": "配置后，订阅通知将使用 AI 卡片格式发送",
       "bot_token": "Bot Token",
       "bot_token_placeholder": "请输入 Telegram Bot Token",
       "bot_token_edit_placeholder": "请输入新的 Bot Token（留空保持不变）",
@@ -787,6 +794,77 @@
       "team_required": "必须选择一个默认智能体",
       "model_required_for_team": "所选智能体没有配置模型，必须选择一个默认模型",
       "target_user_required": "使用指定用户模式时必须选择一个目标用户"
+    }
+  },
+  "device_monitor": {
+    "title": "设备监控",
+    "description": "查看所有用户注册的设备在线状态和运行情况",
+    "loading": "加载设备中...",
+    "no_devices": "暂无设备",
+    "search_placeholder": "搜索设备名称、ID 或用户名...",
+    "filters": {
+      "all_status": "全部状态",
+      "all_device_type": "全部类型",
+      "all_bind_shell": "全部 Shell"
+    },
+    "version_filter": {
+      "placeholder": "按版本筛选，如 1.6.5",
+      "operators": {
+        "gt": ">",
+        "gte": ">=",
+        "eq": "=",
+        "lt": "<",
+        "lte": "<="
+      }
+    },
+    "status": {
+      "online": "在线",
+      "offline": "离线",
+      "busy": "忙碌"
+    },
+    "device_type": {
+      "local": "本地设备",
+      "cloud": "云设备"
+    },
+    "bind_shell": {
+      "claudecode": "Claude Code",
+      "openclaw": "OpenClaw"
+    },
+    "stats": {
+      "total": "总设备数",
+      "user_count": "用户数量",
+      "online": "在线",
+      "offline": "离线云设备",
+      "busy": "忙碌",
+      "local": "本地设备",
+      "cloud": "云设备"
+    },
+    "columns": {
+      "name": "设备名称",
+      "device_id": "设备 ID",
+      "device_type": "设备类型",
+      "bind_shell": "Shell",
+      "status": "状态",
+      "user": "所属用户",
+      "version": "版本",
+      "ip": "IP 地址",
+      "created_at": "创建时间"
+    },
+    "errors": {
+      "load_failed": "加载设备列表失败",
+      "load_stats_failed": "加载统计数据失败",
+      "upgrade_failed": "发送升级命令失败",
+      "restart_failed": "发送重启命令失败",
+      "migrate_failed": "发送迁移命令失败"
+    },
+    "actions": {
+      "upgrade": "升级",
+      "upgrade_unsupported": "版本低于 {{version}}，不支持在线升级",
+      "restart": "重启",
+      "migrate": "迁移",
+      "upgrade_sent": "升级命令已发送",
+      "restart_sent": "重启命令已发送",
+      "migrate_sent": "迁移命令已发送"
     }
   }
 }

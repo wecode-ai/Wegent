@@ -17,6 +17,8 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from app.utils.prompt_utils import extract_display_prompt
+
 logger = logging.getLogger(__name__)
 
 
@@ -181,12 +183,9 @@ async def _dispatch_task_async(task_id: int) -> None:
 
         for subtask in subtasks:
             try:
-                # Update subtask status to RUNNING
-                subtask.status = SubtaskStatus.RUNNING
-                db.commit()
-
-                # Get message from subtask
-                message = subtask.prompt or ""
+                # Extract original user text from stored prompt to prevent
+                # double-wrapping of already-formatted content arrays.
+                message = extract_display_prompt(subtask.prompt) or ""
 
                 # Build ExecutionRequest
                 request = builder.build(
@@ -196,6 +195,33 @@ async def _dispatch_task_async(task_id: int) -> None:
                     team=team,
                     message=message,
                 )
+
+                # Check if executor needs recovery (deleted after previous completion)
+                if subtask.executor_deleted_at:
+                    logger.info(
+                        f"[schedule_dispatch] Executor deleted for subtask {subtask.id}, "
+                        f"attempting recovery"
+                    )
+                    recovery_success = await _recover_executor(
+                        db=db,
+                        subtask=subtask,
+                        task=task,
+                        request=request,
+                    )
+                    if not recovery_success:
+                        logger.error(
+                            f"[schedule_dispatch] Failed to recover executor for subtask {subtask.id}"
+                        )
+                        subtask.status = SubtaskStatus.FAILED
+                        subtask.error_message = (
+                            "Failed to recover executor after Pod deletion"
+                        )
+                        db.commit()
+                        continue
+
+                # Update subtask status to RUNNING
+                subtask.status = SubtaskStatus.RUNNING
+                db.commit()
 
                 # Dispatch using HTTP+Callback mode
                 await execution_dispatcher.dispatch(request)
@@ -222,6 +248,47 @@ async def _dispatch_task_async(task_id: int) -> None:
         )
     finally:
         db.close()
+
+
+async def _recover_executor(
+    db: Session,
+    subtask: "Subtask",
+    task: "TaskResource",
+    request,
+) -> bool:
+    """Recover executor Pod for a subtask after it was deleted.
+
+    Called when executor_deleted_at=True, indicating the Pod was cleaned up
+    after task completion. This function recreates the Pod and optionally
+    restores the workspace from archive.
+
+    Args:
+        db: Database session
+        subtask: Subtask with deleted executor
+        task: Parent task
+        request: ExecutionRequest with the normal executor config
+
+    Returns:
+        True if recovery successful, False otherwise
+    """
+    from .recovery_service import recovery_service
+
+    try:
+        success = await recovery_service.recover(
+            db=db,
+            subtask=subtask,
+            task=task,
+            request=request,
+        )
+        return success
+    except RuntimeError:
+        raise
+    except Exception as e:
+        logger.error(
+            f"[schedule_dispatch] Error recovering executor for subtask {subtask.id}: {e}",
+            exc_info=True,
+        )
+        return False
 
 
 # Dispatch strategy pattern for handling different event loop contexts

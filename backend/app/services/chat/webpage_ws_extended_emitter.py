@@ -61,6 +61,30 @@ class ExtendedEventEmitter:
 
         return _get_ws_emitter()
 
+    async def emit_chat_error(
+        self,
+        task_id: int,
+        subtask_id: int,
+        error: str,
+        error_type: Optional[str] = None,
+        message_id: Optional[int] = None,
+    ) -> None:
+        """Proxy chat:error emission for non-dispatch error paths such as disconnects."""
+        ws_emitter = self._get_ws_emitter()
+        if not ws_emitter:
+            logger.warning(
+                "[ExtendedEmitter] Cannot emit chat:error - emitter not initialized"
+            )
+            return
+
+        await ws_emitter.emit_chat_error(
+            task_id=task_id,
+            subtask_id=subtask_id,
+            error=error,
+            error_type=error_type,
+            message_id=message_id,
+        )
+
     # ============================================================
     # Task Lifecycle Events
     # ============================================================

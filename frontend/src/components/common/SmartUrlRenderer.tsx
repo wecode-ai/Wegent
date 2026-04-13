@@ -136,7 +136,51 @@ export function createSmartMarkdownComponents(options?: {
     if (node.type === AttachmentEmbed) return true
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const props = (node.props as any) || {}
-    return Boolean(props['data-attachment-embed'] || props['data-id'] || props.id)
+    if (props['data-attachment-embed']) return true
+
+    // Recursively check children for nested attachment embeds
+    const children = props.children
+    if (children) {
+      const childArray = React.Children.toArray(children)
+      if (childArray.some(child => isAttachmentEmbedElement(child))) {
+        return true
+      }
+    }
+    return false
+  }
+
+  // Helper to check if children contain attachment:// URLs
+  const containsAttachmentUrl = (nodes: React.ReactNode): boolean => {
+    const nodeArray = React.Children.toArray(nodes)
+    return nodeArray.some(node => {
+      if (typeof node === 'string') {
+        return node.includes('attachment://')
+      }
+      if (React.isValidElement(node)) {
+        // Check props.src for img elements
+        const props = node.props as Record<string, unknown>
+        if (typeof props?.src === 'string' && props.src.includes('attachment://')) {
+          return true
+        }
+        // Check props.href for link elements
+        if (typeof props?.href === 'string' && props.href.includes('attachment://')) {
+          return true
+        }
+        // Recursively check children
+        if (props?.children) {
+          const children = props.children as React.ReactNode
+          // Only recurse if children is a valid React node (array, element, or string)
+          if (
+            Array.isArray(children) ||
+            typeof children === 'string' ||
+            React.isValidElement(children)
+          ) {
+            return containsAttachmentUrl(children)
+          }
+        }
+      }
+      return false
+    })
   }
 
   const renderParagraph = (children?: React.ReactNode) => {
@@ -145,6 +189,10 @@ export function createSmartMarkdownComponents(options?: {
     // we must use <div> instead of <p> to avoid invalid HTML nesting (<div> inside <p>)
     // which causes hydration errors.
     if (childArray.some(child => isAttachmentEmbedElement(child))) {
+      return <div>{children}</div>
+    }
+    // Also check for attachment:// URLs that will be rendered as AttachmentEmbed
+    if (containsAttachmentUrl(children)) {
       return <div>{children}</div>
     }
     return <p>{children}</p>
@@ -215,6 +263,8 @@ export function createSmartMarkdownComponents(options?: {
     img: ({ src, alt, ...props }: React.ImgHTMLAttributes<HTMLImageElement>) => {
       const attachmentSchemeId = parseAttachmentSchemeUrl(src as string | undefined)
       if (attachmentSchemeId) {
+        // Render AttachmentEmbed which has data-attachment-embed attribute
+        // The renderParagraph function will detect this and use <div> instead of <p>
         return <AttachmentEmbed attachmentId={attachmentSchemeId} theme={theme} />
       }
 
@@ -269,7 +319,11 @@ export function SmartTextLine({
 }: SmartTextLineProps) {
   // If empty line, return non-breaking space to preserve line height
   if (!text) {
-    return <div className={`text-sm break-all min-h-[1.25em] ${className}`}>{'\u00A0'}</div>
+    return (
+      <div className={`smart-text-line text-sm break-all min-h-[1.25em] ${className}`}>
+        {'\u00A0'}
+      </div>
+    )
   }
 
   // Detect URLs in the text
@@ -277,7 +331,9 @@ export function SmartTextLine({
 
   // If no URLs found, render as plain text
   if (detectedUrls.length === 0) {
-    return <div className={`text-sm break-all min-h-[1.25em] ${className}`}>{text}</div>
+    return (
+      <div className={`smart-text-line text-sm break-all min-h-[1.25em] ${className}`}>{text}</div>
+    )
   }
 
   // Build segments: alternating between plain text and URL components
@@ -330,5 +386,9 @@ export function SmartTextLine({
     }
   }
 
-  return <div className={`text-sm break-all min-h-[1.25em] ${className}`}>{segments}</div>
+  return (
+    <div className={`smart-text-line text-sm break-all min-h-[1.25em] ${className}`}>
+      {segments}
+    </div>
+  )
 }

@@ -1,0 +1,33 @@
+{
+  "preview": {
+    "title": "Subscription Preview",
+    "task_name": "Task Name",
+    "trigger": "Trigger",
+    "trigger_settings": "Trigger Settings",
+    "trigger_type": "Type",
+    "cron_expression": "Expression",
+    "timezone": "Timezone",
+    "execution_settings": "Execution Settings",
+    "prompt": "Execution Content",
+    "preserve_history": "Preserve History",
+    "retry": "Retry Count",
+    "timeout": "Timeout",
+    "cancel": "Cancel",
+    "confirm": "Confirm",
+    "create_success": "Subscription \"{{name}}\" created successfully!",
+    "create_error": "Failed to create subscription",
+    "cancelled": "Creation cancelled",
+    "confirmed_title": "Subscription Created",
+    "confirmed_desc": "The task will execute automatically at the scheduled time",
+    "cancelled_title": "Cancelled",
+    "cancelled_desc": "Subscription creation has been cancelled",
+    "expired_title": "Preview Expired",
+    "expired_desc": "This preview has expired after 24 hours, please generate a new preview"
+  },
+  "common": {
+    "yes": "Yes",
+    "no": "No",
+    "creating": "Creating...",
+    "times": "times"
+  }
+}

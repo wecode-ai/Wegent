@@ -6,9 +6,17 @@
  * Knowledge base and document related types
  */
 
+// Import BaseRole and related utilities from base-role module
+import type { BaseRole } from './base-role'
+
+// Re-export MemberRole as backward compatible alias
+export type MemberRole = BaseRole
+
 export type DocumentStatus = 'enabled' | 'disabled'
 
 export type DocumentSourceType = 'file' | 'text' | 'table' | 'web'
+
+export type DocumentIndexStatus = 'not_indexed' | 'queued' | 'indexing' | 'success' | 'failed'
 
 export type KnowledgeResourceScope = 'personal' | 'organization' | 'group' | 'all'
 
@@ -91,6 +99,8 @@ export interface KnowledgeBase {
   summary?: KnowledgeBaseSummary | null
   /** Knowledge base display type: 'notebook' (three-column with chat) or 'classic' (document list only) */
   kb_type?: KnowledgeBaseType
+  /** Guided questions list (max 3) for notebook mode quick user interaction */
+  guided_questions?: string[]
   /** Maximum number of knowledge base tool calls allowed per conversation */
   max_calls_per_conversation: number
   /** Number of calls exempt from token checking (must be < max_calls_per_conversation) */
@@ -108,6 +118,8 @@ export interface KnowledgeBaseCreate {
   summary_model_ref?: SummaryModelRef | null
   /** Knowledge base display type: 'notebook' (three-column with chat) or 'classic' (document list only) */
   kb_type?: KnowledgeBaseType
+  /** Guided questions list (max 3) for notebook mode quick user interaction */
+  guided_questions?: string[]
   /** Maximum number of knowledge base tool calls allowed per conversation */
   max_calls_per_conversation?: number
   /** Number of calls exempt from token checking (must be < max_calls_per_conversation) */
@@ -130,6 +142,8 @@ export interface KnowledgeBaseUpdate {
   retrieval_config?: RetrievalConfigUpdate
   summary_enabled?: boolean
   summary_model_ref?: SummaryModelRef | null
+  /** Guided questions list (max 3) for notebook mode quick user interaction */
+  guided_questions?: string[]
   /** Maximum number of knowledge base tool calls allowed per conversation */
   max_calls_per_conversation?: number
   /** Number of calls exempt from token checking (must be < max_calls_per_conversation) */
@@ -152,6 +166,8 @@ export interface KnowledgeDocument {
   status: DocumentStatus
   user_id: number
   is_active: boolean
+  index_status: DocumentIndexStatus
+  index_generation: number
   splitter_config?: SplitterConfig
   source_type: DocumentSourceType
   source_config: Record<string, unknown>
@@ -321,19 +337,21 @@ export interface ChunkListResponse {
 
 // ============== Permission Types ==============
 
-export type PermissionLevel = 'view' | 'edit' | 'manage'
 export type PermissionStatus = 'pending' | 'approved' | 'rejected'
 export type ReviewAction = 'approve' | 'reject'
 
+// Note: ROLE_DISPLAY_NAMES, ROLE_DISPLAY_NAMES_EN, and ROLE_HIERARCHY
+// are now defined in ./base-role.ts and should be imported from there
+
 // Permission Apply types
 export interface PermissionApplyRequest {
-  permission_level: PermissionLevel
+  role: MemberRole
 }
 
 export interface PermissionApplyResponse {
   id: number
   knowledge_base_id: number
-  permission_level: PermissionLevel
+  role: MemberRole
   status: PermissionStatus
   requested_at: string
   message: string
@@ -342,13 +360,13 @@ export interface PermissionApplyResponse {
 // Permission Review types
 export interface PermissionReviewRequest {
   action: ReviewAction
-  permission_level?: PermissionLevel
+  role?: MemberRole
 }
 
 export interface PermissionReviewResponse {
   id: number
   user_id: number
-  permission_level: PermissionLevel
+  role: MemberRole | null
   status: PermissionStatus
   reviewed_at: string
   message: string
@@ -357,11 +375,21 @@ export interface PermissionReviewResponse {
 // Permission Add/Update types
 export interface PermissionAddRequest {
   user_name: string
-  permission_level: PermissionLevel
+  role: MemberRole
 }
 
 export interface PermissionUpdateRequest {
-  permission_level: PermissionLevel
+  role: MemberRole
+}
+
+// Batch permission add types
+export interface BatchPermissionAddRequest {
+  members: { user_id: number; role: MemberRole }[]
+}
+
+export interface BatchPermissionAddResponse {
+  succeeded: PermissionResponse[]
+  failed: { user_id: number; error: string }[]
 }
 
 // Permission User Info types
@@ -370,7 +398,7 @@ export interface PermissionUserInfo {
   user_id: number
   username: string
   email?: string
-  permission_level: PermissionLevel
+  role: MemberRole
   requested_at: string
   reviewed_at?: string
   reviewed_by?: number
@@ -381,31 +409,34 @@ export interface PendingPermissionInfo {
   user_id: number
   username: string
   email?: string
-  permission_level: PermissionLevel
+  role: MemberRole
   requested_at: string
 }
 
-export interface ApprovedPermissionsByLevel {
-  view: PermissionUserInfo[]
-  edit: PermissionUserInfo[]
-  manage: PermissionUserInfo[]
+// Approved permissions grouped by role
+export interface ApprovedPermissionsByRole {
+  Owner: PermissionUserInfo[]
+  Maintainer: PermissionUserInfo[]
+  Developer: PermissionUserInfo[]
+  Reporter: PermissionUserInfo[]
+  RestrictedAnalyst: PermissionUserInfo[]
 }
 
 export interface PermissionListResponse {
   pending: PendingPermissionInfo[]
-  approved: ApprovedPermissionsByLevel
+  approved: ApprovedPermissionsByRole
 }
 
 // Current User Permission types
 export interface PendingRequestInfo {
   id: number
-  permission_level: PermissionLevel
+  role: MemberRole
   requested_at: string
 }
 
 export interface MyPermissionResponse {
   has_access: boolean
-  permission_level: PermissionLevel | null
+  role: MemberRole | null
   is_creator: boolean
   pending_request: PendingRequestInfo | null
 }
@@ -415,7 +446,7 @@ export interface PermissionResponse {
   id: number
   knowledge_base_id: number
   user_id: number
-  permission_level: PermissionLevel
+  role: MemberRole
   status: PermissionStatus
   requested_at: string
   reviewed_at?: string
@@ -444,14 +475,14 @@ export interface PublicKnowledgeBaseResponse {
   creator_id: number
   creator_name: string
   require_approval: boolean
-  default_permission_level: string
+  default_role: MemberRole
   is_expired: boolean
 }
 
 // Share Link types
 export interface ShareLinkConfig {
   require_approval?: boolean
-  default_permission_level?: PermissionLevel
+  default_role?: MemberRole
   expires_in_hours?: number
 }
 
@@ -462,7 +493,7 @@ export interface ShareLinkResponse {
   share_url: string
   share_token: string
   require_approval: boolean
-  default_permission_level: string
+  default_role: MemberRole
   expires_at?: string
   is_active: boolean
   created_by_user_id: number
@@ -473,7 +504,7 @@ export interface ShareLinkResponse {
 // Join by link types
 export interface JoinByLinkRequest {
   share_token: string
-  requested_permission_level?: PermissionLevel
+  requested_role?: MemberRole
 }
 
 export interface JoinByLinkResponse {
@@ -483,4 +514,78 @@ export interface JoinByLinkResponse {
   resource_type: string
   resource_id: number
   copied_resource_id?: number
+}
+
+// Personal Knowledge Base Group (for grouped display)
+export interface PersonalKnowledgeBaseGroup {
+  created_by_me: KnowledgeBase[]
+  shared_with_me: KnowledgeBase[]
+}
+
+// ============== All Grouped Knowledge Types ==============
+
+/** Group type for knowledge base categorization */
+export type KnowledgeGroupType = 'personal' | 'personal-shared' | 'group' | 'organization'
+
+/** Knowledge base with group info for all-grouped response */
+export interface KnowledgeBaseWithGroupInfo {
+  id: number
+  name: string
+  description: string | null
+  kb_type: KnowledgeBaseType
+  namespace: string
+  document_count: number
+  updated_at: string
+  created_at: string
+  user_id: number
+  /** Group identifier (namespace or 'default') */
+  group_id: string
+  /** Display name for the group */
+  group_name: string
+  /** Type of group */
+  group_type: KnowledgeGroupType
+  /** Current user's role for this KB: 'Owner' | 'Maintainer' | 'Developer' | 'Reporter' | 'RestrictedAnalyst' | null */
+  my_role?: MemberRole | null
+}
+
+/** Personal knowledge bases in all-grouped response */
+export interface AllGroupedPersonal {
+  created_by_me: KnowledgeBaseWithGroupInfo[]
+  shared_with_me: KnowledgeBaseWithGroupInfo[]
+}
+
+/** Team group in all-grouped response */
+export interface AllGroupedTeamGroup {
+  group_name: string
+  group_display_name: string
+  kb_count: number
+  knowledge_bases: KnowledgeBaseWithGroupInfo[]
+}
+
+/** Organization knowledge bases in all-grouped response */
+export interface AllGroupedOrganization {
+  namespace: string | null
+  display_name: string | null
+  kb_count: number
+  knowledge_bases: KnowledgeBaseWithGroupInfo[]
+}
+
+/** Summary counts in all-grouped response */
+export interface AllGroupedSummary {
+  total_count: number
+  personal_count: number
+  group_count: number
+  organization_count: number
+}
+
+/**
+ * Response for GET /api/v1/knowledge-bases/all-grouped
+ * Returns all knowledge bases accessible to the user in a single request,
+ * solving the N+1 query problem.
+ */
+export interface AllGroupedKnowledgeResponse {
+  personal: AllGroupedPersonal
+  groups: AllGroupedTeamGroup[]
+  organization: AllGroupedOrganization
+  summary: AllGroupedSummary
 }

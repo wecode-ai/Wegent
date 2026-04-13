@@ -20,7 +20,7 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Loader2 } from 'lucide-react'
 
-import { Bot, Team } from '@/types/api'
+import { Bot, Team, TaskType } from '@/types/api'
 import {
   TeamMode,
   getFilteredBotsForMode,
@@ -59,7 +59,7 @@ interface PublicTeamEditDialogProps {
 function buildTeamJson(data: {
   name: string
   description: string
-  bindMode: ('chat' | 'code' | 'knowledge' | 'task')[]
+  bindMode: TaskType[]
   icon: string | null
   requiresWorkspace: boolean | null
   mode: TeamMode
@@ -110,7 +110,7 @@ function extractBotName(botRef: unknown): string {
 function parseTeamJson(json: Record<string, unknown>): {
   name: string
   description: string
-  bindMode: ('chat' | 'code' | 'knowledge')[]
+  bindMode: TaskType[]
   icon: string | null
   requiresWorkspace: boolean | null
   mode: TeamMode
@@ -122,7 +122,7 @@ function parseTeamJson(json: Record<string, unknown>): {
 
     const name = (metadata?.name as string) || ''
     const description = (spec?.description as string) || ''
-    const bindMode = (spec?.bind_mode as ('chat' | 'code' | 'knowledge')[]) || ['chat', 'code']
+    const bindMode = (spec?.bind_mode as TaskType[]) || ['chat', 'code']
     const icon = (spec?.icon as string) || null
     const requiresWorkspace = (spec?.requiresWorkspace as boolean) ?? true
     const mode = (spec?.collaborationModel as TeamMode) || 'solo'
@@ -160,7 +160,7 @@ export default function PublicTeamEditDialog({
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [mode, setMode] = useState<TeamMode>('solo')
-  const [bindMode, setBindMode] = useState<('chat' | 'code' | 'knowledge' | 'task')[]>(['chat'])
+  const [bindMode, setBindMode] = useState<TaskType[]>(['chat'])
   const [icon, setIcon] = useState<string | null>(null)
   const [requiresWorkspace, setRequiresWorkspace] = useState<boolean | null>(true)
 

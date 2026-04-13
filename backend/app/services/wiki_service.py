@@ -30,6 +30,7 @@ from app.schemas.wiki import (
 from app.services.adapters.task_kinds import task_kinds_service
 from app.services.adapters.team_kinds import team_kinds_service
 from app.services.user import user_service
+from shared.utils.url_util import domains_match
 
 logger = logging.getLogger(__name__)
 
@@ -399,7 +400,9 @@ class WikiService:
         git_token = None
         for git_info in task_user.git_info:
             if git_info.get("type") == source_type:
-                if source_domain and git_info.get("git_domain") == source_domain:
+                if source_domain and domains_match(
+                    git_info.get("git_domain", ""), source_domain
+                ):
                     git_token = git_info.get("git_token")
                     break
                 elif not git_token:

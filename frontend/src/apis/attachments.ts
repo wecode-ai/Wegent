@@ -51,6 +51,14 @@ export interface AttachmentPreviewResponse extends AttachmentDetailResponse {
 }
 
 /**
+ * Public share link response
+ */
+export interface PublicShareLinkResponse {
+  share_url: string
+  expires_at: string
+}
+
+/**
  * Error code to i18n key mapping
  */
 const ERROR_CODE_MAPPING: Record<
@@ -130,6 +138,7 @@ export const SUPPORTED_EXTENSIONS = [
   '.md',
   '.html',
   '.htm',
+  '.html5',
   '.jpg',
   '.jpeg',
   '.png',
@@ -286,6 +295,7 @@ export function getFileIcon(extension: string): string {
       return '🖼️'
     case '.html':
     case '.htm':
+    case '.html5':
       return '🌐'
     default:
       // Check for code files
@@ -309,7 +319,7 @@ export const IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp
 /**
  * HTML file extensions
  */
-export const HTML_EXTENSIONS = ['.html', '.htm']
+export const HTML_EXTENSIONS = ['.html', '.htm', '.html5']
 
 /**
  * Check if a file extension is an image type
@@ -630,6 +640,38 @@ export async function getAttachmentBySubtask(
 }
 
 /**
+ * Create public share link for attachment
+ *
+ * @param attachmentId - Attachment ID
+ * @param expiresInDays - Link expiration time in days (1-30, default: 7)
+ * @returns Share URL and expiration time
+ */
+export async function createAttachmentShareLink(
+  attachmentId: number,
+  expiresInDays: number = 7
+): Promise<PublicShareLinkResponse> {
+  const token = getToken()
+
+  const response = await fetch(
+    `${API_BASE_URL}/api/attachments/${attachmentId}/public-share?expires_in_days=${expiresInDays}`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token && { Authorization: `Bearer ${token}` }),
+      },
+    }
+  )
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}))
+    throw new Error(error.detail || 'Failed to create share link')
+  }
+
+  return response.json()
+}
+
+/**
  * Attachment API exports
  */
 export const attachmentApis = {
@@ -640,4 +682,5 @@ export const attachmentApis = {
   downloadAttachment,
   deleteAttachment,
   getAttachmentBySubtask,
+  createAttachmentShareLink,
 }

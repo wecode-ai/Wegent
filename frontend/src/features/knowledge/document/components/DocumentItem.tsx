@@ -14,6 +14,7 @@ import {
   Globe,
   CloudDownload,
   RotateCcw,
+  Download,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -24,8 +25,10 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { downloadAttachment } from '@/apis/attachments'
 import type { KnowledgeDocument } from '@/types/knowledge'
 import { useTranslation } from '@/hooks/useTranslation'
+import { toast } from '@/hooks/use-toast'
 
 interface DocumentItemProps {
   document: KnowledgeDocument
@@ -35,6 +38,7 @@ interface DocumentItemProps {
   onReindex?: (doc: KnowledgeDocument) => void
   onViewDetail?: (doc: KnowledgeDocument) => void
   canManage?: boolean
+  canSelect?: boolean
   showBorder?: boolean
   selected?: boolean
   onSelect?: (doc: KnowledgeDocument, selected: boolean) => void
@@ -46,6 +50,8 @@ interface DocumentItemProps {
   isReindexing?: boolean
   /** Whether the knowledge base has RAG configured (retriever + embedding model) */
   ragConfigured?: boolean
+  /** Width of the name column in pixels (for table mode column resize) */
+  nameColumnWidth?: number
 }
 
 export function DocumentItem({
@@ -56,6 +62,7 @@ export function DocumentItem({
   onReindex,
   onViewDetail,
   canManage = true,
+  canSelect = canManage,
   showBorder = true,
   selected = false,
   onSelect,
@@ -63,6 +70,7 @@ export function DocumentItem({
   isRefreshing = false,
   isReindexing = false,
   ragConfigured = true,
+  nameColumnWidth,
 }: DocumentItemProps) {
   const { t } = useTranslation()
 
@@ -119,9 +127,42 @@ export function DocumentItem({
       window.open(url, '_blank', 'noopener,noreferrer')
     }
   }
+
+  const handleDownload = async (e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (document.source_type === 'file' && document.attachment_id) {
+      try {
+        await downloadAttachment(document.attachment_id, document.name)
+      } catch {
+        toast({
+          title: t('knowledge:document.document.downloadFailed'),
+          variant: 'destructive',
+        })
+      }
+    }
+  }
+
+  // Whether to show download button
+  const showDownload = document.source_type === 'file' && !!document.attachment_id
   // Check document source type
   const isTable = document.source_type === 'table'
   const isWeb = document.source_type === 'web'
+  const isNotIndexed = document.index_status === 'not_indexed'
+  const isIndexFailed = document.index_status === 'failed'
+  const isBackendIndexing =
+    document.index_status === 'queued' || document.index_status === 'indexing'
+  const showIndexingState = isReindexing || isBackendIndexing
+  const canReindex =
+    ragConfigured &&
+    !isTable &&
+    !!onReindex &&
+    (isIndexFailed || isNotIndexed) &&
+    !showIndexingState
+
+  // Check if Excel file exceeds size limit (2MB)
+  const EXCEL_FILE_SIZE_LIMIT = 2 * 1024 * 1024 // 2MB
+  const isExcel = ['xls', 'xlsx'].includes(document.file_extension?.toLowerCase() || '')
+  const isExcelExceedingSizeLimit = isExcel && document.file_size > EXCEL_FILE_SIZE_LIMIT
   // URL for table or web documents
   const sourceUrl =
     (isTable || isWeb) &&
@@ -138,6 +179,23 @@ export function DocumentItem({
     onViewDetail?.(document)
   }
 
+  let unavailableHint = t('knowledge:document.document.indexStatus.unavailableHint')
+  if (isExcelExceedingSizeLimit) {
+    unavailableHint = t('knowledge:document.document.excelFileSizeExceeded', {
+      extension: document.file_extension,
+      limit: 2,
+      size: (document.file_size / (1024 * 1024)).toFixed(2),
+    })
+  } else if (isNotIndexed) {
+    unavailableHint = t('knowledge:document.document.indexStatus.notIndexedHint')
+  }
+
+  const unavailableLabel = isNotIndexed
+    ? t('knowledge:document.document.indexStatus.notIndexed')
+    : t('knowledge:document.document.indexStatus.unavailable')
+
+  const unavailableDotColor = isNotIndexed ? 'bg-slate-400' : 'bg-yellow-500'
+
   // Compact mode: Card layout for sidebar (notebook mode)
   if (compact) {
     return (
@@ -146,7 +204,7 @@ export function DocumentItem({
         onClick={handleRowClick}
       >
         {/* Checkbox for batch selection */}
-        {canManage && (
+        {canSelect && (
           <div className="flex-shrink-0" onClick={handleCheckboxClick}>
             <Checkbox
               checked={selected}
@@ -159,7 +217,18 @@ export function DocumentItem({
         {/* File name and info */}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1">
-            <span className="text-xs font-medium text-text-primary truncate">{displayName}</span>
+            <TooltipProvider>
+              <Tooltip delayDuration={300}>
+                <TooltipTrigger asChild>
+                  <span className="text-xs font-medium text-text-primary truncate">
+                    {displayName}
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent side="top" className="max-w-xs">
+                  <p className="text-xs break-all">{displayName}</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
             {sourceUrl && (
               <button
                 className="p-0.5 rounded text-primary hover:bg-primary/10 transition-colors flex-shrink-0"
@@ -205,15 +274,15 @@ export function DocumentItem({
                 className="w-1 h-1 rounded-full flex-shrink-0 bg-green-500"
                 title={t('knowledge:document.document.indexStatus.available')}
               />
-            ) : !ragConfigured ? (
+            ) : showIndexingState ? (
               <TooltipProvider>
                 <Tooltip delayDuration={200}>
                   <TooltipTrigger asChild>
-                    <span className="w-1 h-1 rounded-full flex-shrink-0 bg-yellow-500 cursor-help" />
+                    <span className="w-1 h-1 rounded-full flex-shrink-0 bg-blue-500 cursor-help animate-pulse" />
                   </TooltipTrigger>
                   <TooltipContent side="top" className="max-w-xs">
                     <p className="text-xs">
-                      {t('knowledge:document.document.indexStatus.unavailableHint')}
+                      {t('knowledge:document.document.indexStatus.indexingHint')}
                     </p>
                   </TooltipContent>
                 </Tooltip>
@@ -222,12 +291,12 @@ export function DocumentItem({
               <TooltipProvider>
                 <Tooltip delayDuration={200}>
                   <TooltipTrigger asChild>
-                    <span className="w-1 h-1 rounded-full flex-shrink-0 bg-yellow-500 cursor-help" />
+                    <span
+                      className={`w-1 h-1 rounded-full flex-shrink-0 cursor-help ${unavailableDotColor}`}
+                    />
                   </TooltipTrigger>
                   <TooltipContent side="top" className="max-w-xs">
-                    <p className="text-xs">
-                      {t('knowledge:document.document.indexStatus.indexingHint')}
-                    </p>
+                    <p className="text-xs">{unavailableHint}</p>
                   </TooltipContent>
                 </Tooltip>
               </TooltipProvider>
@@ -276,14 +345,22 @@ export function DocumentItem({
                         : t('knowledge:document.upload.web.refetch')}
                     </DropdownMenuItem>
                   )}
-                  {ragConfigured && !document.is_active && !isTable && onReindex && (
-                    <DropdownMenuItem onClick={handleReindex} disabled={isReindexing}>
+                  {canReindex && (
+                    <DropdownMenuItem onClick={handleReindex} disabled={showIndexingState}>
                       <RotateCcw
-                        className={`w-3.5 h-3.5 mr-2 ${isReindexing ? 'animate-spin' : ''}`}
+                        className={`w-3.5 h-3.5 mr-2 ${showIndexingState ? 'animate-spin' : ''}`}
                       />
-                      {isReindexing
+                      {showIndexingState
                         ? t('knowledge:document.document.reindexing')
-                        : t('knowledge:document.document.reindex')}
+                        : isNotIndexed
+                          ? t('knowledge:document.document.index')
+                          : t('knowledge:document.document.reindex')}
+                    </DropdownMenuItem>
+                  )}
+                  {showDownload && (
+                    <DropdownMenuItem onClick={handleDownload}>
+                      <Download className="w-3.5 h-3.5 mr-2" />
+                      {t('knowledge:document.document.download')}
                     </DropdownMenuItem>
                   )}
                   <DropdownMenuItem danger onClick={handleDelete}>
@@ -306,7 +383,7 @@ export function DocumentItem({
       onClick={handleRowClick}
     >
       {/* Checkbox for batch selection */}
-      {canManage && (
+      {canSelect && (
         <div className="flex-shrink-0" onClick={handleCheckboxClick}>
           <Checkbox
             checked={selected}
@@ -328,8 +405,20 @@ export function DocumentItem({
       </div>
 
       {/* File name */}
-      <div className="flex-1 min-w-[120px] flex items-center gap-2">
-        <span className="text-sm font-medium text-text-primary truncate">{displayName}</span>
+      <div
+        className={`flex items-center gap-2 ${nameColumnWidth ? 'flex-shrink-0' : 'flex-1 min-w-[120px]'}`}
+        style={nameColumnWidth ? { width: `${nameColumnWidth}px` } : undefined}
+      >
+        <TooltipProvider>
+          <Tooltip delayDuration={300}>
+            <TooltipTrigger asChild>
+              <span className="text-sm font-medium text-text-primary truncate">{displayName}</span>
+            </TooltipTrigger>
+            <TooltipContent side="top" className="max-w-xs">
+              <p className="text-xs break-all">{displayName}</p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
         {sourceUrl && (
           <button
             className="p-1 rounded-md text-primary hover:bg-primary/10 transition-colors flex-shrink-0"
@@ -393,19 +482,23 @@ export function DocumentItem({
           <Badge variant="success" size="sm" className="whitespace-nowrap">
             {t('knowledge:document.document.indexStatus.available')}
           </Badge>
-        ) : !ragConfigured ? (
+        ) : showIndexingState ? (
           <TooltipProvider>
             <Tooltip delayDuration={200}>
               <TooltipTrigger asChild>
                 <span>
-                  <Badge variant="warning" size="sm" className="whitespace-nowrap cursor-help">
-                    {t('knowledge:document.document.indexStatus.unavailable')}
+                  <Badge
+                    variant="default"
+                    size="sm"
+                    className="whitespace-nowrap cursor-help bg-blue-500/10 text-blue-600 border-blue-500/20"
+                  >
+                    {t('knowledge:document.document.indexStatus.indexing')}
                   </Badge>
                 </span>
               </TooltipTrigger>
               <TooltipContent side="top" className="max-w-xs">
                 <p className="text-xs">
-                  {t('knowledge:document.document.indexStatus.unavailableHint')}
+                  {t('knowledge:document.document.indexStatus.indexingHint')}
                 </p>
               </TooltipContent>
             </Tooltip>
@@ -416,14 +509,12 @@ export function DocumentItem({
               <TooltipTrigger asChild>
                 <span>
                   <Badge variant="warning" size="sm" className="whitespace-nowrap cursor-help">
-                    {t('knowledge:document.document.indexStatus.unavailable')}
+                    {unavailableLabel}
                   </Badge>
                 </span>
               </TooltipTrigger>
               <TooltipContent side="top" className="max-w-xs">
-                <p className="text-xs">
-                  {t('knowledge:document.document.indexStatus.indexingHint')}
-                </p>
+                <p className="text-xs">{unavailableHint}</p>
               </TooltipContent>
             </Tooltip>
           </TooltipProvider>
@@ -453,22 +544,32 @@ export function DocumentItem({
             </button>
           )}
           {/* Reindex button - only when RAG configured and document not indexed */}
-          {ragConfigured && !document.is_active && !isTable && onReindex && (
+          {canReindex && (
             <button
               className={`p-1.5 rounded-md transition-colors ${
-                isReindexing
+                showIndexingState
                   ? 'text-primary cursor-not-allowed'
                   : 'text-text-muted hover:text-primary hover:bg-primary/10'
               }`}
               onClick={handleReindex}
-              disabled={isReindexing}
+              disabled={showIndexingState}
               title={
-                isReindexing
+                showIndexingState
                   ? t('knowledge:document.document.reindexing')
                   : t('knowledge:document.document.reindex')
               }
             >
-              <RotateCcw className={`w-4 h-4 ${isReindexing ? 'animate-spin' : ''}`} />
+              <RotateCcw className={`w-4 h-4 ${showIndexingState ? 'animate-spin' : ''}`} />
+            </button>
+          )}
+          {/* Download button - only for file documents with attachment */}
+          {showDownload && (
+            <button
+              className="p-1.5 rounded-md text-text-muted hover:text-primary hover:bg-primary/10 transition-colors"
+              onClick={handleDownload}
+              title={t('knowledge:document.document.download')}
+            >
+              <Download className="w-4 h-4" />
             </button>
           )}
           {/* Delete button */}

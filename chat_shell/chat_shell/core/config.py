@@ -69,7 +69,6 @@ class Settings(BaseSettings):
 
     # ========== Default Model Configuration ==========
     DEFAULT_MODEL: str = "claude-3-5-sonnet-20241022"
-    DEFAULT_TEMPERATURE: float = 0.7
     DEFAULT_MAX_TOKENS: int = 4096
 
     # ========== Chat Configuration ==========
@@ -91,6 +90,12 @@ class Settings(BaseSettings):
     MESSAGE_COMPRESSION_FIRST_MESSAGES: int = 2
     MESSAGE_COMPRESSION_LAST_MESSAGES: int = 10
     MESSAGE_COMPRESSION_ATTACHMENT_LENGTH: int = 50000
+
+    # Maximum length (in characters) for a single tool result stored in
+    # messages_chain.  Results exceeding this limit are truncated at
+    # serialization time (beginning + end kept, middle removed).
+    # Set to 0 to disable.
+    MAX_TOOL_RESULT_LENGTH: int = 50000
 
     # MCP configuration for Chat Shell
     CHAT_MCP_ENABLED: bool = False

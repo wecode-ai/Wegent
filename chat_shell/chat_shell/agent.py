@@ -331,6 +331,27 @@ class ChatAgent:
 
         return title, sources
 
+    @staticmethod
+    def _needs_explicit_cache_breakpoints(config: "AgentConfig | None") -> bool:
+        """Check if explicit Anthropic cache breakpoints should be added.
+
+        Returns True when the model is an Anthropic model AND the provider does
+        not support automatic caching (``is_support_claude_automatic_caching``
+        is absent or False in model_config).
+        """
+        if config is None:
+            return False
+        mc = config.model_config
+        model_id = mc.get("model_id", "")
+        model_type = mc.get("model", "")
+        is_anthropic = model_id.startswith("claude-") or model_type.lower() in (
+            "anthropic",
+            "claude",
+        )
+        if not is_anthropic:
+            return False
+        return not mc.get("is_support_claude_automatic_caching", False)
+
     def build_messages(
         self,
         history: list[dict[str, Any]],
@@ -340,6 +361,7 @@ class ChatAgent:
         config: AgentConfig | None = None,
         model_id: str | None = None,
         inject_datetime: bool | None = None,
+        dynamic_context: str | None = None,
     ) -> list[dict[str, Any]]:
         """Build messages for agent execution.
 
@@ -353,6 +375,7 @@ class ChatAgent:
             inject_datetime: Whether to inject current datetime into user message.
                             If None, uses config.enable_deep_thinking value.
                             If config is also None, defaults to True for backward compatibility.
+            dynamic_context: Optional dynamic context to inject before current user message.
 
         Returns:
             List of message dictionaries ready for agent
@@ -385,9 +408,12 @@ class ChatAgent:
             final_prompt,
             username=username,
             inject_datetime=inject_datetime,
+            dynamic_context=dynamic_context,
         )
 
-        # Apply message compression if enabled and model_id is provided
+        # Apply message compression if enabled and model_id is provided.
+        # Compression runs BEFORE cache breakpoints so that strategies
+        # don't need to be aware of Anthropic cache_control metadata.
         compression_enabled = getattr(settings, "MESSAGE_COMPRESSION_ENABLED", True)
         if model_id and compression_enabled:
             # Pass model_config to compressor for context window configuration
@@ -408,6 +434,16 @@ class ChatAgent:
                     ", ".join(result.strategies_applied),
                 )
                 messages = result.messages
+
+        # Apply Anthropic explicit cache breakpoints AFTER compression.
+        # This ensures breakpoints are placed on the final message layout
+        # and compression strategies don't strip or corrupt them.
+        if self._needs_explicit_cache_breakpoints(config):
+            MessageConverter.apply_cache_breakpoints(
+                messages,
+                has_history=bool(history),
+                has_dynamic_context=bool(dynamic_context),
+            )
 
         return messages
 

@@ -33,7 +33,7 @@ export default function DeviceTaskSync() {
       return
     }
 
-    // Task has no device_id — clear device selection
+    // Task has no device_id — clear device selection to match cloud mode
     if (!selectedTaskDetail.device_id) {
       if (selectedDeviceId) {
         setSelectedDeviceId(null)

@@ -109,6 +109,38 @@ class TestWebSocketResultEmitter:
             await emitter.emit_start(task_id=1, subtask_id=1)
 
 
+    @pytest.mark.asyncio
+    async def test_emit_thinking_event(self):
+        """Test emitting THINKING event sends reasoning_chunk via chat:chunk."""
+        from app.services.execution.emitters import WebSocketResultEmitter
+
+        with patch(
+            "app.services.chat.webpage_ws_chat_emitter.get_webpage_ws_emitter"
+        ) as mock_get:
+            mock_ws = AsyncMock()
+            mock_get.return_value = mock_ws
+
+            emitter = WebSocketResultEmitter(task_id=1, subtask_id=1)
+
+            # Create a THINKING event directly and emit it
+            event = ExecutionEvent.create(
+                EventType.THINKING,
+                task_id=1,
+                subtask_id=1,
+                content="Let me reason about this...",
+                offset=0,
+            )
+            await emitter.emit(event)
+
+            mock_ws.emit_chat_chunk.assert_called_once()
+            call_kwargs = mock_ws.emit_chat_chunk.call_args[1]
+            assert call_kwargs["task_id"] == 1
+            assert call_kwargs["subtask_id"] == 1
+            assert call_kwargs["content"] == ""
+            assert call_kwargs["offset"] == 0
+            assert call_kwargs["result"] == {"reasoning_chunk": "Let me reason about this..."}
+
+
 class TestSSEResultEmitter:
     """Tests for SSEResultEmitter."""
 

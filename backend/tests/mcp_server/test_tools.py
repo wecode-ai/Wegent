@@ -5,6 +5,7 @@
 """Tests for MCP Server tools."""
 
 import importlib
+import inspect
 import json
 import sys
 from unittest.mock import MagicMock, patch
@@ -18,6 +19,14 @@ def get_silent_exit_module():
     """Get the silent_exit module, handling import caching issues."""
     module_name = "app.mcp_server.tools.silent_exit"
     # Force import the module directly
+    if module_name not in sys.modules:
+        importlib.import_module(module_name)
+    return sys.modules[module_name]
+
+
+def get_knowledge_module():
+    """Get the knowledge module, handling import caching issues."""
+    module_name = "app.mcp_server.tools.knowledge"
     if module_name not in sys.modules:
         importlib.import_module(module_name)
     return sys.modules[module_name]
@@ -105,3 +114,156 @@ class TestSilentExitMarkerDetection:
             is_silent = False
 
         assert is_silent is False
+
+
+class TestKnowledgeTool:
+    """Tests for knowledge MCP tools."""
+
+    def test_knowledge_mcp_tools_registry_contains_registered_tools(self):
+        """Test that the backward-compatible tool registry is built for the knowledge server."""
+        module = get_knowledge_module()
+
+        assert "list_knowledge_bases" in module.KNOWLEDGE_MCP_TOOLS
+        assert "list_documents" in module.KNOWLEDGE_MCP_TOOLS
+        assert "read_document_content" in module.KNOWLEDGE_MCP_TOOLS
+
+    def test_read_document_content_returns_orchestrator_payload(self):
+        """Test that read_document_content returns the orchestrator payload."""
+        module = get_knowledge_module()
+        token_info = TaskTokenInfo(
+            task_id=1,
+            subtask_id=2,
+            user_id=3,
+            user_name="alice",
+        )
+        mock_user = object()
+        mock_session = MagicMock()
+        mock_result = MagicMock(
+            document_id=9,
+            name="roadmap",
+            content="abcd",
+            total_length=10,
+            offset=0,
+            returned_length=4,
+            has_more=True,
+            kb_id=77,
+        )
+        expected_payload = {
+            "document_id": 9,
+            "name": "roadmap",
+            "content": "abcd",
+            "total_length": 10,
+            "offset": 0,
+            "returned_length": 4,
+            "has_more": True,
+            "kb_id": 77,
+        }
+        mock_result.model_dump.return_value = expected_payload
+
+        with (
+            patch.object(module, "SessionLocal", return_value=mock_session),
+            patch.object(module, "_get_user_from_token", return_value=mock_user),
+            patch.object(
+                module.knowledge_orchestrator,
+                "read_document_content",
+                return_value=mock_result,
+            ) as mock_read,
+        ):
+            result = module.read_document_content(
+                token_info=token_info,
+                document_id=9,
+                offset=0,
+                limit=4,
+            )
+
+        assert result == expected_payload
+        mock_read.assert_called_once_with(
+            db=mock_session,
+            user=mock_user,
+            document_id=9,
+            offset=0,
+            limit=4,
+        )
+        mock_session.close.assert_called_once()
+
+    def test_read_document_content_returns_error_dict_for_validation_failure(self):
+        """Test that read_document_content converts validation failures to error dicts."""
+        module = get_knowledge_module()
+        token_info = TaskTokenInfo(
+            task_id=1,
+            subtask_id=2,
+            user_id=3,
+            user_name="alice",
+        )
+        mock_user = object()
+        mock_session = MagicMock()
+
+        with (
+            patch.object(module, "SessionLocal", return_value=mock_session),
+            patch.object(module, "_get_user_from_token", return_value=mock_user),
+            patch.object(
+                module.knowledge_orchestrator,
+                "read_document_content",
+                side_effect=ValueError("limit must be greater than 0"),
+            ),
+        ):
+            result = module.read_document_content(
+                token_info=token_info,
+                document_id=9,
+                offset=0,
+                limit=0,
+            )
+
+        assert result == {"error": "limit must be greater than 0"}
+        mock_session.close.assert_called_once()
+
+    def test_read_document_content_returns_error_dict_for_unexpected_failure(self):
+        """Test that read_document_content converts unexpected failures to error dicts."""
+        module = get_knowledge_module()
+        token_info = TaskTokenInfo(
+            task_id=1,
+            subtask_id=2,
+            user_id=3,
+            user_name="alice",
+        )
+        mock_user = object()
+        mock_session = MagicMock()
+
+        with (
+            patch.object(module, "SessionLocal", return_value=mock_session),
+            patch.object(module, "_get_user_from_token", return_value=mock_user),
+            patch.object(
+                module.knowledge_orchestrator,
+                "read_document_content",
+                side_effect=RuntimeError("boom"),
+            ),
+        ):
+            result = module.read_document_content(
+                token_info=token_info,
+                document_id=9,
+            )
+
+        assert result == {"error": "boom"}
+        mock_session.close.assert_called_once()
+
+    def test_read_document_content_uses_shared_default_limit_constant(self):
+        """Test that read_document_content reuses the shared default limit constant."""
+        module = get_knowledge_module()
+        target = getattr(
+            module.read_document_content,
+            "__wrapped__",
+            module.read_document_content,
+        )
+        default_limit = inspect.signature(target).parameters["limit"].default
+
+        assert default_limit == module.MAX_DOCUMENT_READ_LIMIT
+
+    def test_update_document_content_description_mentions_editable_text_files(self):
+        """Tool description should reflect support for editable text file documents."""
+        module = get_knowledge_module()
+
+        tool_info = module.update_document_content._mcp_tool_info
+
+        assert "TEXT type documents" not in tool_info["description"]
+        assert "txt" in tool_info["description"]
+        assert "md" in tool_info["description"]

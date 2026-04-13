@@ -40,6 +40,10 @@ import { taskApis } from '@/apis/tasks'
 import { subtaskApis } from '@/apis/subtasks'
 import { TaskMembersPanel } from '../group-chat'
 import { useUser } from '@/features/common/UserContext'
+import {
+  ForwardMessageDialog,
+  type ForwardableMessage,
+} from '@/features/inbox/components/ForwardMessageDialog'
 import { useUnifiedMessages, type DisplayMessage } from '../../hooks/useUnifiedMessages'
 import { useChatStreamContext } from '../../contexts/chatStreamContext'
 import { useTraceAction } from '@/hooks/useTraceAction'
@@ -75,6 +79,7 @@ interface StreamingMessageBubbleProps {
   isGroupChat?: boolean
   isPendingConfirmation?: boolean
   onContextReselect?: (context: import('@/types/api').SubtaskContextBrief) => void
+  onUseAsReference?: (item: import('./ImageGallery').ImageItem) => void
 }
 
 function StreamingMessageBubble({
@@ -90,6 +95,7 @@ function StreamingMessageBubble({
   isGroupChat,
   isPendingConfirmation,
   onContextReselect,
+  onUseAsReference,
 }: StreamingMessageBubbleProps) {
   // Use typewriter effect for streaming content
   const displayContent = useTypewriter(message.content || '')
@@ -130,6 +136,9 @@ function StreamingMessageBubble({
     result: message.result,
     // Pass sources for RAG knowledge base citations
     sources: message.sources,
+    // Pass reasoning content and streaming state
+    reasoningContent: message.reasoningContent,
+    isReasoningStreaming: message.isReasoningStreaming,
   }
 
   return (
@@ -148,6 +157,8 @@ function StreamingMessageBubble({
       isGroupChat={isGroupChat}
       isPendingConfirmation={isPendingConfirmation}
       onContextReselect={onContextReselect}
+      onUseAsReference={onUseAsReference}
+      taskType={selectedTaskDetail?.task_type}
     />
   )
 }
@@ -188,9 +199,13 @@ interface MessagesAreaProps {
   onContextReselect?: (context: import('@/types/api').SubtaskContextBrief) => void
   /** Hide group chat management button (e.g., in notebook mode) */
   hideGroupChatOptions?: boolean
+  /** Callback when user wants to use a generated image as reference for follow-up generation */
+  onUseAsReference?: (item: import('./ImageGallery').ImageItem) => void
+  /** Callback when user clicks re-edit button on an AI message */
+  onReEdit?: (msg: Message) => void
 }
 
-export default function MessagesArea({
+function MessagesArea({
   selectedTeam,
   selectedRepo,
   selectedBranch,
@@ -208,6 +223,8 @@ export default function MessagesArea({
   isPendingConfirmation,
   onContextReselect,
   hideGroupChatOptions = false,
+  onUseAsReference,
+  onReEdit,
 }: MessagesAreaProps) {
   const { t } = useTranslation()
   const { toast } = useToast()
@@ -246,6 +263,12 @@ export default function MessagesArea({
 
   // Regenerate state
   const [isRegenerating, setIsRegenerating] = useState(false)
+
+  // Forward message dialog state
+  const [isForwardDialogOpen, setIsForwardDialogOpen] = useState(false)
+  const [forwardInitialSubtaskId, setForwardInitialSubtaskId] = useState<number | undefined>(
+    undefined
+  )
 
   // Correction mode state
   const [correctionResults, setCorrectionResults] = useState<Map<number, CorrectionResponse>>(
@@ -576,7 +599,7 @@ export default function MessagesArea({
         .filter(msg => msg.status === 'completed') // Only export completed messages
         .map(msg => {
           // Remove markdown prefix from AI messages if present
-          let content = msg.content
+          let content = msg.content || ''
           if (msg.type === 'ai' && content.startsWith('${$$}$')) {
             content = content.substring(6)
           }
@@ -1013,7 +1036,6 @@ export default function MessagesArea({
     selectedTaskDetail?.id,
     selectedTaskDetail?.is_group_chat,
     selectedTaskDetail?.team?.agent_type,
-    selectedTaskDetail?.status,
     selectedTaskDetail?.preserve_executor,
     selectedTaskDetail?.task_type,
     messages.length,
@@ -1069,9 +1091,48 @@ export default function MessagesArea({
         status: msg.status,
         error: msg.error,
         reasoningContent: msg.reasoningContent, // DeepSeek R1 reasoning content
+        isReasoningStreaming: msg.isReasoningStreaming,
       }
     },
     [appliedCorrections]
+  )
+
+  // Convert messages to ForwardableMessage format for the forward dialog
+  const forwardableMessages = useMemo((): ForwardableMessage[] => {
+    return messages
+      .filter(msg => msg.subtaskId && msg.status === 'completed')
+      .map(msg => {
+        // Remove markdown prefix from AI messages if present
+        let content = msg.content || ''
+        if (msg.type === 'ai' && content.startsWith('${$$}$')) {
+          content = content.substring(6)
+        }
+
+        return {
+          subtaskId: msg.subtaskId!,
+          type: msg.type,
+          content,
+          timestamp: msg.timestamp,
+          botName: msg.botName,
+          senderUserName: msg.senderUserName,
+        }
+      })
+  }, [messages])
+
+  // Handle forward button click from MessageBubble
+  const handleForwardClick = useCallback((subtaskId: number) => {
+    setForwardInitialSubtaskId(subtaskId)
+    setIsForwardDialogOpen(true)
+  }, [])
+
+  // Handle ask_user_question form submission - send the pre-formatted message as a new conversation
+  // AskUserForm already formats the message with question text and option labels
+  const handleAskUserSubmit = useCallback(
+    (_askId: string, formattedMessage: string) => {
+      if (!onSendMessage) return
+      onSendMessage(formattedMessage)
+    },
+    [onSendMessage]
   )
 
   // Pre-compute the last AI message subtaskId to avoid O(n²) complexity in render loop
@@ -1095,11 +1156,17 @@ export default function MessagesArea({
         streamingSubtaskIds.length > 0 ||
         selectedTaskDetail?.id ||
         hasMessagesFromParent) && (
-        <div className="flex-1 space-y-8 messages-container">
+        <div className="flex-1 space-y-8 messages-container" data-testid="messages-container">
           {messages.map((msg, index) => {
             const messageKey = msg.subtaskId
               ? `${msg.type}-${msg.subtaskId}`
               : `msg-${index}-${msg.timestamp}`
+
+            // Data attribute for scrollbar markers to identify user messages
+            const messageDataAttrs = {
+              'data-message-type': msg.type,
+              'data-message-index': index,
+            }
 
             // Determine if this is the current user's message (for group chat alignment)
             const isCurrentUserMessage =
@@ -1124,21 +1191,23 @@ export default function MessagesArea({
             // Use StreamingMessageBubble for streaming AI messages
             if (msg.type === 'ai' && msg.status === 'streaming') {
               return (
-                <StreamingMessageBubble
-                  key={messageKey}
-                  message={msg}
-                  selectedTaskDetail={selectedTaskDetail}
-                  selectedTeam={selectedTeam}
-                  selectedRepo={selectedRepo}
-                  selectedBranch={selectedBranch}
-                  theme={theme as 'light' | 'dark'}
-                  t={t}
-                  onSendMessage={onSendMessage}
-                  index={index}
-                  isGroupChat={isGroupChat}
-                  isPendingConfirmation={isPendingConfirmation}
-                  onContextReselect={onContextReselect}
-                />
+                <div key={messageKey} {...messageDataAttrs}>
+                  <StreamingMessageBubble
+                    message={msg}
+                    selectedTaskDetail={selectedTaskDetail}
+                    selectedTeam={selectedTeam}
+                    selectedRepo={selectedRepo}
+                    selectedBranch={selectedBranch}
+                    theme={theme as 'light' | 'dark'}
+                    t={t}
+                    onSendMessage={onSendMessage}
+                    index={index}
+                    isGroupChat={isGroupChat}
+                    isPendingConfirmation={isPendingConfirmation}
+                    onContextReselect={onContextReselect}
+                    onUseAsReference={onUseAsReference}
+                  />
+                </div>
               )
             }
 
@@ -1153,7 +1222,11 @@ export default function MessagesArea({
               const originalQuestion = userMsg?.content || ''
 
               return (
-                <div key={messageKey} className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <div
+                  key={messageKey}
+                  {...messageDataAttrs}
+                  className="grid grid-cols-1 lg:grid-cols-2 gap-4"
+                >
                   <MessageBubble
                     msg={convertToMessage(msg)}
                     index={index}
@@ -1164,10 +1237,14 @@ export default function MessagesArea({
                     theme={theme as 'light' | 'dark'}
                     t={t}
                     onSendMessage={onSendMessage}
+                    onAskUserSubmit={handleAskUserSubmit}
                     isCurrentUserMessage={isCurrentUserMessage}
                     isGroupChat={isGroupChat}
                     isPendingConfirmation={isPendingConfirmation}
                     onContextReselect={onContextReselect}
+                    onUseAsReference={onUseAsReference}
+                    onReEdit={onReEdit}
+                    taskType={selectedTaskDetail?.task_type}
                   />
                   <div className="flex flex-col gap-2">
                     {/* Show progress indicator when correction is in progress */}
@@ -1213,30 +1290,36 @@ export default function MessagesArea({
 
             // Use regular MessageBubble for other messages
             return (
-              <MessageBubble
-                key={messageKey}
-                msg={convertToMessage(msg)}
-                index={index}
-                selectedTaskDetail={selectedTaskDetail}
-                selectedTeam={selectedTeam}
-                selectedRepo={selectedRepo}
-                selectedBranch={selectedBranch}
-                theme={theme as 'light' | 'dark'}
-                t={t}
-                onSendMessage={onSendMessage}
-                isCurrentUserMessage={isCurrentUserMessage}
-                onRetry={onRetry}
-                isGroupChat={isGroupChat}
-                isPendingConfirmation={isPendingConfirmation}
-                onContextReselect={onContextReselect}
-                isEditing={msg.subtaskId ? editingMessageId === String(msg.subtaskId) : false}
-                onEdit={handleEditMessage}
-                onEditSave={handleEditSave}
-                onEditCancel={handleEditCancel}
-                isLastAiMessage={isLastAiMessage}
-                onRegenerate={!isGroupChat ? handleRegenerate : undefined}
-                isRegenerating={isRegenerating}
-              />
+              <div key={messageKey} {...messageDataAttrs}>
+                <MessageBubble
+                  msg={convertToMessage(msg)}
+                  index={index}
+                  selectedTaskDetail={selectedTaskDetail}
+                  selectedTeam={selectedTeam}
+                  selectedRepo={selectedRepo}
+                  selectedBranch={selectedBranch}
+                  theme={theme as 'light' | 'dark'}
+                  t={t}
+                  onSendMessage={onSendMessage}
+                  onAskUserSubmit={handleAskUserSubmit}
+                  isCurrentUserMessage={isCurrentUserMessage}
+                  onRetry={onRetry}
+                  isGroupChat={isGroupChat}
+                  isPendingConfirmation={isPendingConfirmation}
+                  onContextReselect={onContextReselect}
+                  isEditing={msg.subtaskId ? editingMessageId === String(msg.subtaskId) : false}
+                  onEdit={handleEditMessage}
+                  onEditSave={handleEditSave}
+                  onEditCancel={handleEditCancel}
+                  isLastAiMessage={isLastAiMessage}
+                  onRegenerate={!isGroupChat ? handleRegenerate : undefined}
+                  isRegenerating={isRegenerating}
+                  onUseAsReference={onUseAsReference}
+                  onReEdit={onReEdit}
+                  taskType={selectedTaskDetail?.task_type}
+                  onForwardClick={handleForwardClick}
+                />
+              </div>
             )
           })}
         </div>
@@ -1276,6 +1359,19 @@ export default function MessagesArea({
           onMembersChanged={handleMembersChanged}
         />
       )}
+
+      {/* Forward Message Dialog */}
+      {selectedTaskDetail?.id && (
+        <ForwardMessageDialog
+          taskId={selectedTaskDetail.id}
+          subtaskIds={forwardInitialSubtaskId ? [forwardInitialSubtaskId] : undefined}
+          open={isForwardDialogOpen}
+          onOpenChange={setIsForwardDialogOpen}
+          allMessages={forwardableMessages}
+        />
+      )}
     </div>
   )
 }
+
+export default React.memo(MessagesArea)

@@ -4,10 +4,10 @@
 
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
-import { useSearchParams, useRouter } from 'next/navigation'
+import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { UserGroupIcon } from '@heroicons/react/24/outline'
-import { teamService } from '@/features/tasks/service/teamService'
+import { useTeamContext } from '@/contexts/TeamContext'
 import TopNavigation from '@/features/layout/TopNavigation'
 import {
   TaskSidebar,
@@ -21,12 +21,22 @@ import { saveLastTab } from '@/utils/userPreferences'
 import { useUser } from '@/features/common/UserContext'
 import { useTaskContext } from '@/features/tasks/contexts/taskContext'
 import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
+import { useDevices } from '@/contexts/DeviceContext'
 import { paths } from '@/config/paths'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useSearchShortcut } from '@/features/tasks/hooks/useSearchShortcut'
 import { ChatArea } from '@/features/tasks/components/chat'
+import { useTeamEditExtension } from '@/features/tasks/hooks/useTeamEditExtension'
+import { useToast } from '@/hooks/use-toast'
+import { canEditTeam } from '@/utils/team-permissions'
+import { listGroups } from '@/apis/groups'
+import { fetchBotsList } from '@/features/settings/services/bots'
+import TeamEditDialog from '@/features/settings/components/TeamEditDialog'
+import type { BaseRole } from '@/types/base-role'
 import { CreateGroupChatDialog } from '@/features/tasks/components/group-chat'
+import { RemoteWorkspaceEntry } from '@/features/tasks/components/remote-workspace'
+import { useIsDesktop } from '@/features/layout/hooks/useMediaQuery'
 
 /**
  * Desktop-specific implementation of Chat Page
@@ -41,12 +51,32 @@ import { CreateGroupChatDialog } from '@/features/tasks/components/group-chat'
 export function ChatPageDesktop() {
   const { t } = useTranslation()
 
-  // Team state from service
-  const { teams, isTeamsLoading, refreshTeams } = teamService.useTeams()
+  // Team state from context (centralized to avoid duplicate API calls)
+  const { teams, isTeamsLoading, refreshTeams } = useTeamContext()
 
   // Task context for refreshing task list
-  const { refreshTasks, selectedTaskDetail, setSelectedTask, refreshSelectedTaskDetail } =
-    useTaskContext()
+  const {
+    refreshTasks,
+    selectedTask,
+    selectedTaskDetail,
+    setSelectedTask,
+    refreshSelectedTaskDetail,
+  } = useTaskContext()
+
+  // Device context - when a device is selected, switch to 'task' mode
+  const { selectedDeviceId, devices } = useDevices()
+  const selectedDevice = devices.find(d => d.device_id === selectedDeviceId)
+
+  // Determine taskType based on device selection
+  // When a device is selected, use 'task' mode (same as /devices/chat)
+  // Otherwise, use 'chat' mode
+  const taskType = selectedDeviceId ? 'task' : 'chat'
+
+  // Compute disabled reason for device mode
+  const disabledReason =
+    selectedDeviceId && (!selectedDevice || selectedDevice.status === 'offline')
+      ? t('devices:device_offline_cannot_send')
+      : undefined
 
   // Get current task title for top navigation
   const currentTaskTitle = selectedTaskDetail?.title
@@ -69,9 +99,6 @@ export function ChatPageDesktop() {
   // User state for git token check
   const { user } = useUser()
 
-  // Router for navigation
-  const router = useRouter()
-
   // Check for share_id in URL
   const searchParams = useSearchParams()
   const _hasShareId = !!searchParams.get('share_id')
@@ -84,6 +111,13 @@ export function ChatPageDesktop() {
   // Collapsed sidebar state
   const [isCollapsed, setIsCollapsed] = useState(false)
 
+  // Mobile sidebar state (for tablet screens 768px-1023px)
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
+
+  // Check if we're on a true desktop screen (≥1024px)
+  // On tablet screens (768px-1023px), we use mobile sidebar instead of ResizableSidebar
+  const isDesktop = useIsDesktop()
+
   // Selected team state for sharing
   const [_selectedTeamForNewTask, _setSelectedTeamForNewTask] = useState<Team | null>(null)
 
@@ -95,6 +129,84 @@ export function ChatPageDesktop() {
 
   // Search dialog state (controlled from page level for global shortcut support)
   const [isSearchDialogOpen, setIsSearchDialogOpen] = useState(false)
+
+  // Toast for notifications
+  const { toast } = useToast()
+
+  // Group role map for permission checks
+  const [groupRoleMap, setGroupRoleMap] = useState<Map<string, BaseRole>>(new Map())
+
+  // Fetch group role map once on mount
+  useEffect(() => {
+    listGroups()
+      .then(response => {
+        const roleMap = new Map<string, BaseRole>()
+        response.items.forEach(group => {
+          if (group.my_role) {
+            roleMap.set(group.name, group.my_role)
+          }
+        })
+        setGroupRoleMap(roleMap)
+      })
+      .catch(() => {
+        // Ignore errors - permissions will default to non-editable
+      })
+  }, [])
+
+  // Memoize deps to prevent infinite re-renders
+  const teamEditDeps = useMemo(
+    () => ({
+      getGroupRoleMap: () => groupRoleMap,
+      checkCanEdit: (_teamId: number, userId: number, roleMap: Map<string, BaseRole>) => {
+        if (!selectedTaskDetail?.team) return false
+        return canEditTeam(selectedTaskDetail.team, userId, roleMap)
+      },
+      fetchBots: fetchBotsList,
+      createDialogComponent: ({
+        open,
+        onClose,
+        bots,
+      }: {
+        open: boolean
+        onClose: () => void
+        bots: import('@/types/api').Bot[]
+      }) => {
+        if (!selectedTaskDetail?.team) return null
+        const team = selectedTaskDetail.team
+        return (
+          <TeamEditDialog
+            open={open}
+            onClose={onClose}
+            teams={teams}
+            setTeams={() => {
+              // Teams are managed by TeamContext; refresh on dialog close instead
+            }}
+            editingTeamId={team.id}
+            bots={bots}
+            setBots={() => {
+              // Bots are managed locally in the hook
+            }}
+            toast={toast}
+            scope={team.namespace && team.namespace !== 'default' ? 'group' : 'personal'}
+            groupName={team.namespace && team.namespace !== 'default' ? team.namespace : undefined}
+          />
+        )
+      },
+    }),
+    [groupRoleMap, selectedTaskDetail?.team, teams, toast]
+  )
+
+  // Team edit extension with dependency injection
+  const teamEditExtension = useTeamEditExtension({
+    currentTeamId: selectedTaskDetail?.team?.id ?? null,
+    currentTeamNamespace: selectedTaskDetail?.team?.namespace ?? null,
+    userId: user?.id,
+    deps: teamEditDeps,
+    onTeamUpdated: useCallback(() => {
+      refreshTeams()
+      refreshSelectedTaskDetail(false)
+    }, [refreshTeams, refreshSelectedTaskDetail]),
+  })
 
   // Toggle search dialog callback
   const toggleSearchDialog = useCallback(() => {
@@ -144,20 +256,34 @@ export function ChatPageDesktop() {
     // This prevents the UI from being stuck showing the previous task's messages
     setSelectedTask(null)
     clearAllStreams()
-    router.replace(paths.chat.getHref())
+    // Force a hard reload to ensure a fresh start when already on /chat
+    window.location.href = paths.chat.getHref()
+  }
+
+  // Handle expand for collapsed sidebar buttons
+  // On tablet screens, open mobile sidebar; on desktop, toggle collapsed state
+  const handleExpandFromCollapsedButtons = () => {
+    if (isDesktop) {
+      handleToggleCollapsed()
+    } else {
+      setIsMobileSidebarOpen(true)
+    }
   }
 
   return (
     <div className="flex smart-h-screen bg-base text-text-primary box-border">
-      {/* Collapsed sidebar floating buttons */}
-      {isCollapsed && (
-        <CollapsedSidebarButtons onExpand={handleToggleCollapsed} onNewTask={handleNewTask} />
+      {/* Collapsed sidebar floating buttons - show on desktop when collapsed, or on tablet screens */}
+      {(isCollapsed || !isDesktop) && (
+        <CollapsedSidebarButtons
+          onExpand={handleExpandFromCollapsedButtons}
+          onNewTask={handleNewTask}
+        />
       )}
-      {/* Responsive resizable sidebar */}
+      {/* Responsive resizable sidebar - only on true desktop screens (≥1024px) */}
       <ResizableSidebar isCollapsed={isCollapsed} onToggleCollapsed={handleToggleCollapsed}>
         <TaskSidebar
-          isMobileSidebarOpen={false}
-          setIsMobileSidebarOpen={() => {}}
+          isMobileSidebarOpen={isMobileSidebarOpen}
+          setIsMobileSidebarOpen={setIsMobileSidebarOpen}
           pageType="chat"
           isCollapsed={isCollapsed}
           onToggleCollapsed={handleToggleCollapsed}
@@ -174,7 +300,7 @@ export function ChatPageDesktop() {
           variant="with-sidebar"
           title={currentTaskTitle}
           taskDetail={selectedTaskDetail}
-          onMobileSidebarToggle={() => {}}
+          onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
           onTaskDeleted={handleTaskDeleted}
           onMembersChanged={handleMembersChanged}
           isSidebarCollapsed={isCollapsed}
@@ -191,18 +317,26 @@ export function ChatPageDesktop() {
               <span className="hidden sm:inline">{t('groupChat.create.button')}</span>
             </Button>
           )}
+          {(selectedTask?.id || selectedTaskDetail?.id) && (
+            <RemoteWorkspaceEntry
+              taskId={selectedTask?.id || selectedTaskDetail?.id}
+              taskStatus={selectedTaskDetail?.status}
+            />
+          )}
           {shareButton}
           <GithubStarButton />
         </TopNavigation>
-        {/* Chat area without repository selector */}
+        {/* Chat area - taskType switches based on device selection */}
         <ChatArea
           teams={teams}
           isTeamsLoading={isTeamsLoading}
           selectedTeamForNewTask={_selectedTeamForNewTask}
           showRepositorySelector={false}
-          taskType="chat"
+          taskType={taskType}
           onShareButtonRender={handleShareButtonRender}
           onRefreshTeams={handleRefreshTeams}
+          disabledReason={disabledReason}
+          extension={{ teamEdit: teamEditExtension }}
         />
       </div>
       {/* Create Group Chat Dialog */}

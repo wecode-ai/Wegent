@@ -613,7 +613,6 @@ class ContextService:
             context: SubtaskContext record with extracted_text
             task_id: Optional task ID for building sandbox path
             subtask_id: Optional subtask ID for building sandbox path
-
         Returns:
             Formatted text prefix without XML tags, or None if no extracted text
         """
@@ -658,40 +657,6 @@ class ContextService:
 
         # Wrap in <attachment> XML tags
         return prefix
-
-    def build_message_with_attachment(
-        self,
-        message: str,
-        context: SubtaskContext,
-    ) -> Union[str, Dict[str, Any]]:
-        """
-        Build a message with attachment content.
-
-        For image attachments, returns a vision-compatible message structure.
-        For text documents, returns combined text message.
-
-        Args:
-            message: User's original message
-            context: SubtaskContext with extracted text or image data
-
-        Returns:
-            For images: Dict with vision content structure
-            For documents: String with combined text
-        """
-        if self.is_image_context(context) and context.image_base64:
-            return {
-                "type": "vision",
-                "text": message,
-                "image_base64": context.image_base64,
-                "mime_type": context.mime_type,
-                "filename": context.original_filename,
-            }
-
-        doc_prefix = self.build_document_text_prefix(context)
-        if doc_prefix:
-            return f"{doc_prefix}[User Question]:\n{message}"
-
-        return message
 
     # ==================== Knowledge Base Operations ====================
 
@@ -753,6 +718,7 @@ class ContextService:
         injection_mode: str,
         query: str,
         chunks_count: int,
+        restricted_mode: bool = False,
     ) -> Optional[SubtaskContext]:
         """
         Update knowledge base context with RAG retrieval results.
@@ -769,6 +735,7 @@ class ContextService:
             injection_mode: "direct_injection" or "rag_retrieval"
             query: Original search query
             chunks_count: Number of chunks retrieved/injected
+            restricted_mode: Whether this result came from Restricted Analyst mode
 
         Returns:
             Updated SubtaskContext or None if not found
@@ -813,6 +780,7 @@ class ContextService:
             "query": query,
             "chunks_count": chunks_count,
             "retrieval_count": retrieval_count,
+            "restricted_mode": restricted_mode,
         }
 
         # Preserve existing fields (like kb_head_result) and update rag_result
@@ -1011,6 +979,7 @@ class ContextService:
                 "query": result_data.get("query", ""),
                 "chunks_count": result_data.get("chunks_count", 0),
                 "retrieval_count": 1,
+                "restricted_mode": result_data.get("restricted_mode", False),
             }
             type_data["rag_result"] = rag_result
             # Note: Flat fields removed to avoid duplication - use rag_result sub-object
@@ -1147,21 +1116,54 @@ class ContextService:
         Returns:
             SubtaskContext record or None if not found
         """
+        contexts_by_kb_id = self.get_knowledge_base_context_map_by_subtask(
+            db=db,
+            subtask_id=subtask_id,
+            knowledge_ids=[knowledge_id],
+        )
+        return contexts_by_kb_id.get(knowledge_id)
+
+    def get_knowledge_base_context_map_by_subtask(
+        self,
+        db: Session,
+        subtask_id: int,
+        knowledge_ids: Optional[List[int]] = None,
+    ) -> Dict[int, SubtaskContext]:
+        """
+        Get knowledge base contexts for a subtask indexed by knowledge_id.
+
+        This avoids repeated subtask-wide scans when multiple KB contexts
+        need to be updated in a single operation.
+
+        Args:
+            db: Database session
+            subtask_id: Subtask ID
+            knowledge_ids: Optional knowledge base IDs to keep in the result
+
+        Returns:
+            Mapping of knowledge_id -> SubtaskContext
+        """
         contexts = (
             db.query(SubtaskContext)
             .filter(
                 SubtaskContext.subtask_id == subtask_id,
                 SubtaskContext.context_type == ContextType.KNOWLEDGE_BASE.value,
             )
+            .order_by(SubtaskContext.created_at)
             .all()
         )
 
-        # Filter by knowledge_id in type_data
+        requested_ids = set(knowledge_ids or [])
+        contexts_by_kb_id: Dict[int, SubtaskContext] = {}
         for ctx in contexts:
-            if ctx.type_data and ctx.type_data.get("knowledge_id") == knowledge_id:
-                return ctx
+            kb_id = (ctx.type_data or {}).get("knowledge_id")
+            if kb_id is None:
+                continue
+            if requested_ids and kb_id not in requested_ids:
+                continue
+            contexts_by_kb_id.setdefault(kb_id, ctx)
 
-        return None
+        return contexts_by_kb_id
 
     def get_knowledge_base_meta_for_task(
         self,

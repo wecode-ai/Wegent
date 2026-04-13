@@ -25,6 +25,8 @@ from app.schemas.subscription import (
     BackgroundExecutionInDB,
     Subscription,
     SubscriptionCreate,
+    SubscriptionExecutionTarget,
+    SubscriptionExecutionTargetType,
     SubscriptionInDB,
     SubscriptionStatus,
     SubscriptionTriggerType,
@@ -43,9 +45,59 @@ from app.services.subscription.helpers import (
     create_or_get_workspace,
     extract_trigger_config,
     resolve_workspace_repo_fields,
+    validate_subscription_for_read,
+)
+from app.services.subscription.market_access import (
+    filter_existing_market_whitelist_user_ids,
+    get_market_whitelist_user_ids_from_internal,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _validate_execution_target(
+    db: Session,
+    *,
+    user_id: int,
+    execution_target: SubscriptionExecutionTarget,
+) -> None:
+    """Validate subscription execution target configuration."""
+    from app.services.device_service import device_service
+
+    if execution_target.type == SubscriptionExecutionTargetType.MANAGED:
+        if execution_target.device_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Managed execution target cannot specify a device",
+            )
+        return
+
+    if not execution_target.device_id:
+        raise HTTPException(
+            status_code=400,
+            detail="execution_target.device_id is required for device execution targets",
+        )
+
+    device = device_service.get_device_by_device_id(
+        db, user_id=user_id, device_id=execution_target.device_id
+    )
+    if not device:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Device '{execution_target.device_id}' not found",
+        )
+
+    actual_type = device.json.get("spec", {}).get(
+        "deviceType", SubscriptionExecutionTargetType.LOCAL.value
+    )
+    if actual_type != execution_target.type.value:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Device '{execution_target.device_id}' is type '{actual_type}', "
+                f"expected '{execution_target.type.value}'"
+            ),
+        )
 
 
 class SubscriptionService:
@@ -53,6 +105,56 @@ class SubscriptionService:
 
     def __init__(self):
         self.execution_manager = background_execution_manager
+
+    def _validate_trigger_config(
+        self,
+        trigger_type: SubscriptionTriggerType,
+        trigger_config: Dict[str, Any],
+    ) -> None:
+        """Validate trigger configuration, raises HTTPException if invalid."""
+        from app.core.config import settings
+
+        min_interval = settings.SUBSCRIPTION_MIN_INTERVAL_MINUTES
+
+        if trigger_type == SubscriptionTriggerType.INTERVAL:
+            value = trigger_config.get("value", 1)
+            unit = trigger_config.get("unit", "hours")
+            if unit == "minutes" and value < min_interval:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Interval must be at least {min_interval} minutes",
+                )
+        elif trigger_type == SubscriptionTriggerType.CRON:
+            # Validate cron expression minimum interval
+            try:
+                from croniter import croniter
+
+                expr = trigger_config.get("expression", "")
+                if expr:
+                    # Parse cron expression to check if it's too frequent
+                    # e.g., */5 * * * * means every 5 minutes
+                    parts = expr.strip().split()
+                    if len(parts) == 5:
+                        minute_part = parts[0]
+                        # Check for patterns like */N where N < min_interval
+                        if minute_part.startswith("*/"):
+                            try:
+                                interval = int(minute_part[2:])
+                                if interval < min_interval:
+                                    raise HTTPException(
+                                        status_code=400,
+                                        detail=f"Cron interval must be at least {min_interval} minutes",
+                                    )
+                            except ValueError:
+                                pass
+                        # Check for single digit minutes (0 to min_interval-1) which means every hour at that minute
+                        # This is acceptable, not too frequent
+            except ImportError:
+                pass
+            except HTTPException:
+                raise
+            except Exception:
+                pass
 
     def create_subscription(
         self,
@@ -62,6 +164,12 @@ class SubscriptionService:
         user_id: int,
     ) -> SubscriptionInDB:
         """Create a new Subscription configuration."""
+        # Validate trigger configuration
+        self._validate_trigger_config(
+            subscription_in.trigger_type,
+            subscription_in.trigger_config,
+        )
+
         # Validate subscription name uniqueness
         existing = (
             db.query(Kind)
@@ -107,7 +215,7 @@ class SubscriptionService:
                 .filter(
                     TaskResource.id == subscription_in.workspace_id,
                     TaskResource.kind == "Workspace",
-                    TaskResource.is_active == True,
+                    TaskResource.is_active == TaskResource.STATE_ACTIVE,
                 )
                 .first()
             )
@@ -134,6 +242,15 @@ class SubscriptionService:
         if subscription_in.trigger_type == SubscriptionTriggerType.EVENT:
             webhook_token = secrets.token_urlsafe(32)
             webhook_secret = secrets.token_urlsafe(32)  # HMAC signing secret
+
+        market_whitelist_user_ids = filter_existing_market_whitelist_user_ids(
+            db, subscription_in.market_whitelist_user_ids
+        )
+        _validate_execution_target(
+            db,
+            user_id=user_id,
+            execution_target=subscription_in.execution_target,
+        )
 
         # Build CRD JSON
         subscription_crd = build_subscription_crd(
@@ -166,6 +283,12 @@ class SubscriptionService:
             "success_count": 0,
             "failure_count": 0,
             "bound_task_id": 0,
+            "market_whitelist_user_ids": market_whitelist_user_ids,
+            "expires_at": (
+                subscription_in.expires_at.isoformat()
+                if subscription_in.expires_at
+                else None
+            ),
         }
 
         # Create Subscription as a Kind resource
@@ -216,8 +339,10 @@ class SubscriptionService:
         limit: int = 100,
         enabled: Optional[bool] = None,
         trigger_type: Optional[SubscriptionTriggerType] = None,
-    ) -> Tuple[List[SubscriptionInDB], int]:
+    ) -> Tuple[List[SubscriptionInDB], int, int]:
         """List user's Subscriptions with pagination.
+
+        Returns: (items, total_count, invalid_schedule_count)
 
         Note: This method excludes rental subscriptions (is_rental=True).
         Rental subscriptions should be accessed via the market API.
@@ -254,6 +379,32 @@ class SubscriptionService:
                 if s.json.get("_internal", {}).get("trigger_type") == trigger_type.value
             ]
 
+        # Check and update expired subscriptions
+        from sqlalchemy.orm.attributes import flag_modified
+
+        from app.services.subscription.helpers import is_subscription_expired
+
+        current_time = datetime.now(timezone.utc).replace(tzinfo=None)
+        expired_updated = False
+
+        for sub in subscriptions:
+            internal = sub.json.get("_internal", {})
+            expires_at_str = internal.get("expires_at")
+            if expires_at_str:
+                try:
+                    expires_at = datetime.fromisoformat(expires_at_str)
+                    if is_subscription_expired(expires_at, current_time):
+                        if internal.get("enabled", True):
+                            internal["enabled"] = False
+                            sub.json["_internal"] = internal
+                            flag_modified(sub, "json")
+                            expired_updated = True
+                except (ValueError, TypeError):
+                    pass
+
+        if expired_updated:
+            db.commit()
+
         total = len(subscriptions)
         subscriptions = subscriptions[skip : skip + limit]
 
@@ -262,12 +413,19 @@ class SubscriptionService:
         ]
         workspace_repo_cache = build_workspace_repo_cache(db, workspace_ids)
 
-        return [
+        converted_items = [
             self._convert_to_subscription_in_db(
                 s, db=db, workspace_repo_cache=workspace_repo_cache
             )
             for s in subscriptions
-        ], total
+        ]
+
+        # Count subscriptions with invalid trigger config
+        invalid_count = sum(
+            1 for item in converted_items if not item.trigger_config_valid
+        )
+
+        return converted_items, total, invalid_count
 
     def update_subscription(
         self,
@@ -292,7 +450,9 @@ class SubscriptionService:
         if not subscription:
             raise HTTPException(status_code=404, detail="Subscription not found")
 
-        subscription_crd = Subscription.model_validate(subscription.json)
+        # Validate subscription with legacy trigger compatibility
+        subscription_crd = validate_subscription_for_read(subscription.json)
+
         internal = subscription.json.get("_internal", {})
         update_data = subscription_in.model_dump(exclude_unset=True)
 
@@ -324,7 +484,7 @@ class SubscriptionService:
                     .filter(
                         TaskResource.id == update_data["workspace_id"],
                         TaskResource.kind == "Workspace",
-                        TaskResource.is_active == True,
+                        TaskResource.is_active == TaskResource.STATE_ACTIVE,
                     )
                     .first()
                 )
@@ -359,7 +519,7 @@ class SubscriptionService:
                     .filter(
                         TaskResource.id == workspace_id,
                         TaskResource.kind == "Workspace",
-                        TaskResource.is_active == True,
+                        TaskResource.is_active == TaskResource.STATE_ACTIVE,
                     )
                     .first()
                 )
@@ -417,6 +577,17 @@ class SubscriptionService:
             subscription_crd.spec.enabled = update_data["enabled"]
             internal["enabled"] = update_data["enabled"]
 
+        if "execution_target" in update_data:
+            execution_target = SubscriptionExecutionTarget.model_validate(
+                update_data["execution_target"]
+            )
+            _validate_execution_target(
+                db,
+                user_id=user_id,
+                execution_target=execution_target,
+            )
+            subscription_crd.spec.executionTarget = execution_target
+
         # Update model reference if changed
         if "model_ref" in update_data:
             from app.schemas.kind import ModelRef
@@ -450,6 +621,50 @@ class SubscriptionService:
         if "knowledge_base_refs" in update_data:
             subscription_crd.spec.knowledgeBaseRefs = update_data["knowledge_base_refs"]
 
+        # Update skill references
+        if "skill_refs" in update_data:
+            subscription_crd.spec.skillRefs = update_data["skill_refs"]
+
+        # Update notification webhooks
+        if "notification_webhooks" in update_data:
+            from app.schemas.subscription import NotificationWebhook
+            from shared.utils.crypto import encrypt_sensitive_data
+
+            if update_data["notification_webhooks"]:
+                # Encrypt secret for each webhook before saving
+                encrypted_webhooks = []
+                for w in update_data["notification_webhooks"]:
+                    webhook = (
+                        NotificationWebhook.model_validate(w)
+                        if isinstance(w, dict)
+                        else w
+                    )
+                    # Encrypt secret if provided and not already encrypted
+                    if webhook.secret and not webhook.secret.startswith("ENC:"):
+                        webhook.secret = f"ENC:{encrypt_sensitive_data(webhook.secret)}"
+                    encrypted_webhooks.append(webhook)
+                subscription_crd.spec.notificationWebhooks = encrypted_webhooks
+            else:
+                subscription_crd.spec.notificationWebhooks = None
+
+        if "market_whitelist_user_ids" in update_data:
+            internal["market_whitelist_user_ids"] = (
+                filter_existing_market_whitelist_user_ids(
+                    db, update_data["market_whitelist_user_ids"]
+                )
+            )
+
+        # Update expiration time
+        if "expires_at" in update_data:
+            if update_data["expires_at"]:
+                internal["expires_at"] = (
+                    update_data["expires_at"].isoformat()
+                    if isinstance(update_data["expires_at"], datetime)
+                    else update_data["expires_at"]
+                )
+            else:
+                internal["expires_at"] = None
+
         # Update trigger configuration
         if "trigger_type" in update_data or "trigger_config" in update_data:
             trigger_type = update_data.get("trigger_type", internal.get("trigger_type"))
@@ -457,6 +672,14 @@ class SubscriptionService:
                 "trigger_config",
                 extract_trigger_config(subscription_crd.spec.trigger),
             )
+
+            # Validate trigger configuration
+            trigger_type_enum = (
+                trigger_type
+                if isinstance(trigger_type, SubscriptionTriggerType)
+                else SubscriptionTriggerType(trigger_type)
+            )
+            self._validate_trigger_config(trigger_type_enum, trigger_config)
 
             # Generate new webhook token if switching to event trigger
             if (
@@ -559,7 +782,9 @@ class SubscriptionService:
         if not subscription:
             raise HTTPException(status_code=404, detail="Subscription not found")
 
-        subscription_crd = Subscription.model_validate(subscription.json)
+        # Validate subscription with legacy trigger compatibility
+        subscription_crd = validate_subscription_for_read(subscription.json)
+
         internal = subscription.json.get("_internal", {})
 
         internal["enabled"] = enabled
@@ -703,7 +928,7 @@ class SubscriptionService:
         """
         from app.core.config import settings
 
-        subscription_crd = Subscription.model_validate(subscription.json)
+        subscription_crd = validate_subscription_for_read(subscription.json)
         timeout_seconds = getattr(
             subscription_crd.spec,
             "timeoutSeconds",
@@ -779,6 +1004,97 @@ class SubscriptionService:
         """Calculate next execution time."""
         return calculate_next_execution_time(trigger_type, trigger_config)
 
+    def _decrypt_webhook_secrets(
+        self,
+        webhooks: Optional[List[Any]],
+    ) -> Optional[List[Any]]:
+        """Decrypt webhook secrets for display in frontend.
+
+        Args:
+            webhooks: List of NotificationWebhook objects or None
+
+        Returns:
+            List of webhooks with decrypted secrets, or None if input is None
+        """
+        if not webhooks:
+            return webhooks
+
+        from app.schemas.subscription import NotificationWebhook
+        from shared.utils.crypto import decrypt_sensitive_data
+
+        decrypted_webhooks = []
+        for webhook in webhooks:
+            # Convert to NotificationWebhook if it's a dict
+            if isinstance(webhook, dict):
+                webhook_obj = NotificationWebhook.model_validate(webhook)
+            else:
+                webhook_obj = webhook
+
+            # Decrypt secret if it's encrypted
+            if webhook_obj.secret and webhook_obj.secret.startswith("ENC:"):
+                try:
+                    encrypted_value = webhook_obj.secret[4:]  # Remove "ENC:" prefix
+                    webhook_obj.secret = decrypt_sensitive_data(encrypted_value)
+                except Exception as e:
+                    logger.warning(f"Failed to decrypt webhook secret: {e}")
+                    # Keep the encrypted value if decryption fails
+                    pass
+
+            decrypted_webhooks.append(webhook_obj)
+
+        return decrypted_webhooks
+
+    def _fix_invalid_trigger_config_for_read(
+        self, json_data: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Fix invalid trigger config in subscription JSON for reading.
+
+        This is used when loading existing data that may have invalid intervals.
+        We fix the interval to minimum SUBSCRIPTION_MIN_INTERVAL_MINUTES (default 15) for display purposes.
+        """
+        import copy
+
+        from app.core.config import settings
+
+        min_interval = settings.SUBSCRIPTION_MIN_INTERVAL_MINUTES
+
+        fixed = copy.deepcopy(json_data)
+        spec = fixed.get("spec", {})
+        trigger = spec.get("trigger", {})
+
+        if trigger.get("type") == "interval":
+            interval = trigger.get("interval", {})
+            if (
+                interval.get("unit") == "minutes"
+                and interval.get("value", 0) < min_interval
+            ):
+                # Fix to minimum valid interval
+                interval["value"] = min_interval
+                trigger["interval"] = interval
+                spec["trigger"] = trigger
+                fixed["spec"] = spec
+        elif trigger.get("type") == "cron":
+            cron_config = trigger.get("cron", {})
+            expression = cron_config.get("expression", "")
+            if expression:
+                parts = expression.strip().split()
+                if len(parts) == 5:
+                    minute_part = parts[0]
+                    if minute_part.startswith("*/"):
+                        try:
+                            interval = int(minute_part[2:])
+                            if interval < min_interval:
+                                # Fix to minimum valid interval
+                                parts[0] = f"*/{min_interval}"
+                                cron_config["expression"] = " ".join(parts)
+                                trigger["cron"] = cron_config
+                                spec["trigger"] = trigger
+                                fixed["spec"] = spec
+                        except ValueError:
+                            pass
+
+        return fixed
+
     def _convert_to_subscription_in_db(
         self,
         subscription: Kind,
@@ -790,7 +1106,29 @@ class SubscriptionService:
         """Convert Kind to SubscriptionInDB."""
         from app.schemas.subscription import SubscriptionVisibility
 
-        subscription_crd = Subscription.model_validate(subscription.json)
+        # Try to validate, if fails due to invalid trigger config, mark as invalid
+        trigger_config_valid = True
+        trigger_config_error = None
+        try:
+            subscription_crd = validate_subscription_for_read(subscription.json)
+        except Exception as e:
+            # Check if it's a trigger config validation error
+            error_str = str(e)
+            if (
+                "Interval must be at least" in error_str
+                or "Cron interval must be at least" in error_str
+            ):
+                trigger_config_valid = False
+                trigger_config_error = "执行间隔太短，不满足最小间隔要求"
+                # Try to load without strict validation by fixing the config
+                fixed_json = self._fix_invalid_trigger_config_for_read(
+                    subscription.json
+                )
+                subscription_crd = Subscription.model_validate(fixed_json)
+            else:
+                # Re-raise if it's not a trigger config issue
+                raise
+
         internal = subscription.json.get("_internal", {})
 
         # Build webhook URL
@@ -798,6 +1136,12 @@ class SubscriptionService:
         webhook_token = internal.get("webhook_token")
         if webhook_token:
             webhook_url = f"/api/subscriptions/webhook/{webhook_token}"
+
+        execution_target = getattr(
+            subscription_crd.spec,
+            "executionTarget",
+            SubscriptionExecutionTarget(),
+        )
 
         # Extract model_ref from CRD
         model_ref = None
@@ -841,6 +1185,9 @@ class SubscriptionService:
         )
         source_owner_username = internal.get("source_owner_username")
         rental_count = internal.get("rental_count", 0)
+        market_whitelist_user_ids = get_market_whitelist_user_ids_from_internal(
+            internal
+        )
         workspace_repo_fields = (
             resolve_workspace_repo_fields(
                 db,
@@ -857,6 +1204,29 @@ class SubscriptionService:
                 "branch_name": None,
             }
         )
+
+        # Parse expiration information from _internal
+        expires_at = None
+        if internal.get("expires_at"):
+            try:
+                expires_at = datetime.fromisoformat(internal["expires_at"])
+            except (ValueError, TypeError):
+                pass
+
+        # Check if expired and auto-disable
+        from app.services.subscription.helpers import is_subscription_expired
+
+        is_expired = is_subscription_expired(expires_at)
+
+        if is_expired and internal.get("enabled", True):
+            internal["enabled"] = False
+            crd_json = subscription_crd.model_dump(mode="json")
+            crd_json["_internal"] = internal
+            subscription.json = crd_json
+            from sqlalchemy.orm.attributes import flag_modified
+
+            flag_modified(subscription, "json")
+            db.commit()
 
         return SubscriptionInDB(
             id=subscription.id,
@@ -881,12 +1251,19 @@ class SubscriptionService:
             retry_count=subscription_crd.spec.retryCount,
             timeout_seconds=subscription_crd.spec.timeoutSeconds,
             enabled=internal.get("enabled", True),
+            execution_target=execution_target,
             # History preservation settings
             preserve_history=subscription_crd.spec.preserveHistory,
             history_message_count=subscription_crd.spec.historyMessageCount,
             bound_task_id=internal.get("bound_task_id", 0),
             # Knowledge base references
             knowledge_base_refs=subscription_crd.spec.knowledgeBaseRefs,
+            # Skill references
+            skill_refs=subscription_crd.spec.skillRefs,
+            # Notification webhooks - decrypt secret for display
+            notification_webhooks=self._decrypt_webhook_secrets(
+                subscription_crd.spec.notificationWebhooks
+            ),
             webhook_url=webhook_url,
             webhook_secret=internal.get("webhook_secret"),
             last_execution_time=last_execution_time,
@@ -906,6 +1283,13 @@ class SubscriptionService:
             source_subscription_display_name=source_subscription_display_name,
             source_owner_username=source_owner_username,
             rental_count=rental_count,
+            market_whitelist_user_ids=market_whitelist_user_ids,
+            # Trigger config validation status
+            trigger_config_valid=trigger_config_valid,
+            trigger_config_error=trigger_config_error,
+            # Expiration fields
+            expires_at=expires_at,
+            is_expired=is_expired,
             created_at=subscription.created_at,
             updated_at=subscription.updated_at,
         )

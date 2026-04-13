@@ -22,8 +22,8 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.kind import Kind
-from app.models.resource_member import MemberStatus, ResourceMember
-from app.models.share_link import PermissionLevel, ResourceType
+from app.models.resource_member import MemberStatus, ResourceMember, ResourceRole
+from app.models.share_link import ResourceType
 from app.models.subtask import Subtask
 from app.models.subtask_context import ContextType, SubtaskContext
 from app.models.task import TaskResource
@@ -37,6 +37,7 @@ from app.schemas.shared_task import (
     TaskShareInfo,
     TaskShareResponse,
 )
+from shared.prompts.constants import parse_prompt_blocks
 
 logger = logging.getLogger(__name__)
 
@@ -146,7 +147,7 @@ class SharedTaskService:
                     .filter(
                         TaskResource.id == task_id,
                         TaskResource.kind == "Task",
-                        TaskResource.is_active == True,
+                        TaskResource.is_active == TaskResource.STATE_ACTIVE,
                     )
                     .first()
                 )
@@ -261,7 +262,7 @@ class SharedTaskService:
             .filter(
                 TaskResource.id == task_id,
                 TaskResource.kind == "Task",
-                TaskResource.is_active == True,
+                TaskResource.is_active == TaskResource.STATE_ACTIVE,
             )
             .first()
         )
@@ -295,7 +296,7 @@ class SharedTaskService:
                 TaskResource.id == share_info.task_id,
                 TaskResource.user_id == share_info.user_id,
                 TaskResource.kind == "Task",
-                TaskResource.is_active == True,
+                TaskResource.is_active == TaskResource.STATE_ACTIVE,
             )
             .first()
         )
@@ -655,7 +656,7 @@ class SharedTaskService:
                 TaskResource.id == share_info.task_id,
                 TaskResource.user_id == share_info.user_id,
                 TaskResource.kind == "Task",
-                TaskResource.is_active == True,
+                TaskResource.is_active == TaskResource.STATE_ACTIVE,
             )
             .first()
         )
@@ -686,7 +687,7 @@ class SharedTaskService:
                         TaskResource.id == existing_share.copied_resource_id,
                         TaskResource.user_id == user_id,
                         TaskResource.kind == "Task",
-                        TaskResource.is_active == True,
+                        TaskResource.is_active == TaskResource.STATE_ACTIVE,
                     )
                     .first()
                 )
@@ -727,7 +728,7 @@ class SharedTaskService:
                 resource_type=ResourceType.TASK,
                 resource_id=share_info.task_id,
                 user_id=user_id,
-                permission_level=PermissionLevel.MANAGE,
+                role=ResourceRole.Maintainer.value,
                 status=MemberStatus.APPROVED,
                 invited_by_user_id=share_info.user_id,
                 share_link_id=0,
@@ -831,7 +832,7 @@ class SharedTaskService:
                 TaskResource.id == task_id,
                 TaskResource.user_id == user_id,
                 TaskResource.kind == "Task",
-                TaskResource.is_active == True,
+                TaskResource.is_active == TaskResource.STATE_ACTIVE,
             )
             .first()
         )
@@ -918,11 +919,16 @@ class SharedTaskService:
             if sub.sender_user_id and sub.sender_user_id > 0:
                 sender_user_name = user_name_map.get(sub.sender_user_id)
 
+            # Strip system-injected metadata (<system-reminder>, attachment
+            # blocks, etc.) from the stored prompt so the public share view
+            # only shows the user's actual message text.
+            clean_prompt, _ = parse_prompt_blocks(sub.prompt or "")
+
             public_subtasks.append(
                 PublicSubtaskData(
                     id=sub.id,
                     role=sub.role,
-                    prompt=sub.prompt or "",
+                    prompt=clean_prompt,
                     result=sub.result,
                     status=sub.status,
                     created_at=sub.created_at,

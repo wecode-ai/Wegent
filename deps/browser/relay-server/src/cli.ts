@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { ensureRelayServer } from "./relay-server.js";
-import { writeFileSync, mkdirSync, existsSync, readFileSync, unlinkSync, openSync, lstatSync } from "node:fs";
+import { writeFileSync, mkdirSync, existsSync, readFileSync, unlinkSync, readlinkSync, openSync, lstatSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { homedir, platform } from "node:os";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -147,8 +147,44 @@ function getChromePath(): string | null {
   return null;
 }
 
+function isChromeRunning(): boolean {
+  const userDataDir = getChromeUserDataDir();
+  const lockFile = join(userDataDir, "SingletonLock");
+  try {
+    const stats = lstatSync(lockFile);
+    if (!stats.isSymbolicLink() && !stats.isFile()) {
+      return false;
+    }
+
+    // Verify the process is actually alive via SingletonLock symlink target: <hostname>-<pid>
+    if (stats.isSymbolicLink()) {
+      const target = readlinkSync(lockFile);
+      const match = target.match(/-(\d+)$/);
+      if (match) {
+        try {
+          process.kill(Number(match[1]), 0);
+        } catch {
+          try { unlinkSync(lockFile); } catch { /* ignore */ }
+          return false;
+        }
+      }
+    }
+
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function getChromeUserDataDir(): string {
+  const defaultDir = join(homedir(), ".config", "google-chrome");
+  if (existsSync(defaultDir)) {
+    return defaultDir;
+  }
+  return join(homedir(), ".wegent-executor", "browser", "chrome-profile");
+}
+
 function isExtensionInstalled(userDataDir: string): boolean {
-  // Check if extension was previously installed by looking for our marker file
   const markerFile = join(userDataDir, ".extension-installed");
   return existsSync(markerFile);
 }
@@ -159,21 +195,10 @@ function markExtensionInstalled(userDataDir: string): void {
   writeFileSync(markerFile, new Date().toISOString());
 }
 
-function isChromeRunningWithProfile(): boolean {
-  const userDataDir = join(getBrowserPrefix(), "chrome-profile");
-  const lockFile = join(userDataDir, "SingletonLock");
-  try {
-    const stats = lstatSync(lockFile);
-    return stats.isSymbolicLink() || stats.isFile();
-  } catch {
-    return false;
-  }
-}
-
 function launchChrome(extensionPath: string): ChildProcess | null {
-  // Don't launch if Chrome is already running with our profile
-  if (isChromeRunningWithProfile()) {
-    console.log("Chrome is already running with this profile.");
+  // Don't launch if Chrome is already running
+  if (isChromeRunning()) {
+    console.log("Chrome is already running.");
     return null;
   }
 
@@ -183,8 +208,7 @@ function launchChrome(extensionPath: string): ChildProcess | null {
     return null;
   }
 
-  const userDataDir = join(getBrowserPrefix(), "chrome-profile");
-  const firstRun = !isExtensionInstalled(userDataDir);
+  const userDataDir = getChromeUserDataDir();
 
   const args = [
     `--user-data-dir=${userDataDir}`,
@@ -197,6 +221,7 @@ function launchChrome(extensionPath: string): ChildProcess | null {
   console.log(`  Chrome: ${chromePath}`);
   console.log(`  Profile: ${userDataDir}`);
 
+  const firstRun = !isExtensionInstalled(userDataDir);
   if (firstRun) {
     console.log(`\n*** FIRST RUN: Please install the extension manually ***`);
     console.log(`  1. Enable "Developer mode" (top right)`);
@@ -213,7 +238,7 @@ function launchChrome(extensionPath: string): ChildProcess | null {
 
   child.unref();
 
-  // On macOS, use osascript to open chrome://extensions after Chrome starts
+  // On macOS first run, open chrome://extensions to guide extension install
   if (firstRun && platform() === "darwin") {
     spawn("osascript", ["-e", `
       delay 2

@@ -92,9 +92,15 @@ class StatusUpdatingEmitter(ResultEmitter):
                 f"[StatusUpdatingEmitter] Set task streaming status: "
                 f"task_id={self._task_id}, subtask_id={self._subtask_id}"
             )
+        elif event.type in (
+            EventType.CHUNK.value,
+            EventType.TOOL_START.value,
+            EventType.TOOL_RESULT.value,
+        ):
+            await session_manager.touch_task_streaming_activity(self._task_id)
 
         # Collect blocks for mixed content rendering using session_manager
-        elif event.type == EventType.TOOL_START.value:
+        if event.type == EventType.TOOL_START.value:
             # When a tool starts, finalize any current text block and add tool block
             display_name = event.data.get("display_name") if event.data else None
             await session_manager.add_tool_block(
@@ -112,6 +118,7 @@ class StatusUpdatingEmitter(ResultEmitter):
                     tool_use_id=event.tool_use_id,
                     status="done",
                     tool_output=event.tool_output,
+                    tool_input=event.tool_input,
                 )
         elif event.type == EventType.CHUNK.value:
             # Accumulate content and track text blocks
@@ -242,9 +249,15 @@ class StatusUpdatingEmitter(ResultEmitter):
         The actual task status (COMPLETED or PENDING_CONFIRMATION for pipeline mode)
         is determined by the collaboration strategy in db_handler.
 
+        Also publishes TaskCompletedEvent for unified handling by subscription
+        task completion handler and other event subscribers.
+
         Args:
             result: Optional result data from the event
         """
+        from app.core.events import TaskCompletedEvent, get_event_bus
+        from app.db.session import SessionLocal
+        from app.models.subtask import Subtask
         from app.services.chat.storage import session_manager
         from app.services.chat.storage.db import db_handler
 
@@ -255,13 +268,36 @@ class StatusUpdatingEmitter(ResultEmitter):
             )
             blocks = await session_manager.finalize_and_get_blocks(self._subtask_id)
 
-            # Build result dict
+            # Get existing subtask.result from database to preserve silent_exit flag
+            # set by MCP tools (e.g., silent_exit tool)
+            existing_result = {}
+            db = SessionLocal()
+            try:
+                subtask = (
+                    db.query(Subtask).filter(Subtask.id == self._subtask_id).first()
+                )
+                if subtask and subtask.result:
+                    existing_result = subtask.result
+            finally:
+                db.close()
+
+            # Build result dict, merging existing result (preserves silent_exit flag)
             final_result = result
             if final_result is None:
                 final_result = {"value": accumulated_content}
             elif isinstance(final_result, dict) and "value" not in final_result:
                 # If result exists but has no value, add accumulated content
                 final_result = {**final_result, "value": accumulated_content}
+
+            # Merge existing result fields (like silent_exit) into final_result
+            if existing_result and isinstance(final_result, dict):
+                for key, value in existing_result.items():
+                    if key not in final_result:
+                        final_result[key] = value
+                        logger.debug(
+                            f"[StatusUpdatingEmitter] Preserved existing result field "
+                            f"'{key}' for subtask {self._subtask_id}"
+                        )
 
             # Add collected blocks to result if we have any and result doesn't have blocks
             # This ensures mixed content (tool-text-tool-text) is preserved for database reload
@@ -294,6 +330,11 @@ class StatusUpdatingEmitter(ResultEmitter):
             await session_manager.cleanup_streaming_state(
                 self._subtask_id, task_id=self._task_id
             )
+
+            # Publish TaskCompletedEvent for unified handling
+            # This ensures subscription execution status is updated regardless of execution mode
+            await self._publish_task_completed_event("COMPLETED", final_result, None)
+
         except Exception as e:
             logger.error(
                 f"[StatusUpdatingEmitter] Failed to update status to COMPLETED: {e}",
@@ -303,6 +344,9 @@ class StatusUpdatingEmitter(ResultEmitter):
     async def _update_status_failed(self, error_message: str) -> None:
         """Update subtask and task status to FAILED.
 
+        Also publishes TaskCompletedEvent for unified handling by subscription
+        task completion handler and other event subscribers.
+
         Args:
             error_message: Error message
         """
@@ -310,10 +354,30 @@ class StatusUpdatingEmitter(ResultEmitter):
         from app.services.chat.storage.db import db_handler
 
         try:
+            # Keep partial streaming output even when execution fails.
+            accumulated_content = await session_manager.get_accumulated_content(
+                self._subtask_id
+            )
+            blocks = await session_manager.finalize_and_get_blocks(self._subtask_id)
+
+            result: Optional[Dict[str, Any]] = None
+            if accumulated_content:
+                result = {"value": accumulated_content}
+
+            if blocks:
+                if result is None:
+                    result = {}
+                result["blocks"] = blocks
+                logger.info(
+                    f"[StatusUpdatingEmitter] Added {len(blocks)} blocks to failed result "
+                    f"for subtask {self._subtask_id}"
+                )
+
             # Update subtask status to FAILED with executor info for container reuse
             await db_handler.update_subtask_status(
                 self._subtask_id,
                 "FAILED",
+                result=result,
                 error=error_message,
                 executor_name=self._executor_name,
                 executor_namespace=self._executor_namespace,
@@ -329,6 +393,10 @@ class StatusUpdatingEmitter(ResultEmitter):
             await session_manager.cleanup_streaming_state(
                 self._subtask_id, task_id=self._task_id
             )
+
+            # Publish TaskCompletedEvent for unified handling
+            await self._publish_task_completed_event("FAILED", result, error_message)
+
         except Exception as e:
             logger.error(
                 f"[StatusUpdatingEmitter] Failed to update status to FAILED: {e}",
@@ -336,7 +404,11 @@ class StatusUpdatingEmitter(ResultEmitter):
             )
 
     async def _update_status_cancelled(self) -> None:
-        """Update subtask and task status to CANCELLED."""
+        """Update subtask and task status to CANCELLED.
+
+        Also publishes TaskCompletedEvent for unified handling by subscription
+        task completion handler and other event subscribers.
+        """
         from app.services.chat.storage import session_manager
         from app.services.chat.storage.db import db_handler
 
@@ -382,8 +454,82 @@ class StatusUpdatingEmitter(ResultEmitter):
             await session_manager.cleanup_streaming_state(
                 self._subtask_id, task_id=self._task_id
             )
+
+            # Publish TaskCompletedEvent for unified handling
+            await self._publish_task_completed_event("CANCELLED", result, None)
+
         except Exception as e:
             logger.error(
                 f"[StatusUpdatingEmitter] Failed to update status for cancelled: {e}",
+                exc_info=True,
+            )
+
+    async def _publish_task_completed_event(
+        self,
+        status: str,
+        result: Optional[Dict[str, Any]],
+        error: Optional[str],
+    ) -> None:
+        """Publish TaskCompletedEvent for unified handling.
+
+        This ensures subscription execution status is updated regardless of
+        execution mode (SSE, WebSocket, HTTP+Callback, INPROCESS).
+
+        Args:
+            status: Task status (COMPLETED, FAILED, CANCELLED)
+            result: Optional result data
+            error: Optional error message
+        """
+        from app.core.events import TaskCompletedEvent, get_event_bus
+        from app.db.session import SessionLocal
+        from app.models.task import TaskResource
+
+        try:
+            # Get user_id from task
+            db = SessionLocal()
+            try:
+                task = (
+                    db.query(TaskResource)
+                    .filter(
+                        TaskResource.id == self._task_id,
+                        TaskResource.kind == "Task",
+                        TaskResource.is_active.in_(TaskResource.is_active_query()),
+                    )
+                    .first()
+                )
+                user_id = task.user_id if task else None
+            finally:
+                db.close()
+
+            if user_id is None:
+                logger.warning(
+                    f"[StatusUpdatingEmitter] Cannot publish TaskCompletedEvent: "
+                    f"task {self._task_id} not found or no user_id"
+                )
+                return
+
+            # Publish TaskCompletedEvent
+            event_bus = get_event_bus()
+            await event_bus.publish(
+                TaskCompletedEvent(
+                    task_id=self._task_id,
+                    subtask_id=self._subtask_id,
+                    user_id=user_id,
+                    status=status,
+                    result=result,
+                    error=error,
+                )
+            )
+
+            logger.info(
+                f"[StatusUpdatingEmitter] Published TaskCompletedEvent: "
+                f"task_id={self._task_id}, subtask_id={self._subtask_id}, "
+                f"status={status}"
+            )
+
+        except Exception as e:
+            # Don't fail the status update if event publishing fails
+            logger.error(
+                f"[StatusUpdatingEmitter] Failed to publish TaskCompletedEvent: {e}",
                 exc_info=True,
             )

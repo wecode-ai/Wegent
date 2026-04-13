@@ -26,6 +26,8 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
+from chat_shell.messages.utils import group_tool_call_messages
+
 from .config import (
     CompressionConfig,
     get_model_context_config,
@@ -119,7 +121,12 @@ class MessageCompressor:
         self.model_id = model_id
         self.config = config or CompressionConfig.from_settings()
         self.model_context = get_model_context_config(model_id, model_config)
-        self.token_counter = TokenCounter(model_id)
+
+        # Extract model_type from model_config for accurate provider detection.
+        # model_type (e.g. "claude", "openai") is the authoritative source
+        # because the same model_id can be served by multiple protocols.
+        model_type = model_config.get("model") if model_config else None
+        self.token_counter = TokenCounter(model_id, model_type=model_type)
 
         # Default strategies in order of application (from least to most disruptive)
         self.strategies = strategies or [
@@ -596,21 +603,25 @@ class MessageCompressor:
             details["final_tokens"] = current_tokens
             return result, details
 
-        # Step 2: Remove middle messages progressively
+        # Step 2: Remove middle message groups progressively
         # Keep first 2 and last 3 conversation messages minimum
         min_first = 2
         min_last = 3
 
-        while current_tokens > target_tokens and len(truncated_messages) > (
+        groups = group_tool_call_messages(truncated_messages)
+        total_msg_count = sum(len(g) for g in groups)
+        while current_tokens > target_tokens and total_msg_count > (
             min_first + min_last
         ):
-            # Remove from middle
-            middle_idx = len(truncated_messages) // 2
-            removed_msg = truncated_messages.pop(middle_idx)
+            # Remove a complete group from the middle
+            middle_idx = len(groups) // 2
+            removed_group = groups.pop(middle_idx)
+            total_msg_count -= len(removed_group)
             details["actions"].append(
-                f"removed_middle_message: role={removed_msg.get('role')}"
+                f"removed_middle_group: roles={[m.get('role') for m in removed_group]}"
             )
 
+            truncated_messages = [msg for g in groups for msg in g]
             result = system_messages + truncated_messages
             current_tokens = self.token_counter.count_messages(result)
 
@@ -656,10 +667,14 @@ class MessageCompressor:
             current_tokens = self.token_counter.count_messages(result)
             details["actions"].append(f"system_truncation: {current_tokens} tokens")
 
-        # Step 5: Last resort - keep only essential messages
+        # Step 5: Last resort - keep only essential message groups
         if current_tokens > target_tokens and len(final_messages) > 2:
-            # Keep only first and last conversation message
-            essential_messages = [final_messages[0], final_messages[-1]]
+            # Keep only first and last conversation groups
+            groups = group_tool_call_messages(final_messages)
+            if len(groups) > 2:
+                essential_messages = groups[0] + groups[-1]
+            else:
+                essential_messages = final_messages
             result = system_messages + essential_messages
             current_tokens = self.token_counter.count_messages(result)
             details["actions"].append(f"essential_only: {current_tokens} tokens")

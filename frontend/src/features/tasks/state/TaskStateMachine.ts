@@ -66,6 +66,8 @@ export interface UnifiedMessage {
   shouldShowSender?: boolean
   subtaskStatus?: string
   reasoningContent?: string
+  /** Whether reasoning content is actively streaming (reasoning chunks arriving, no content yet) */
+  isReasoningStreaming?: boolean
   result?: {
     value?: string
     thinking?: unknown[]
@@ -79,6 +81,13 @@ export interface UnifiedMessage {
     reasoning_content?: string
     reasoning_chunk?: string
     blocks?: MessageBlock[]
+    /** Video generation config (stored in user message subtask for display) */
+    video_config?: {
+      model?: string
+      resolution?: string
+      ratio?: string
+      duration?: number
+    }
   }
   sources?: Array<{
     index: number
@@ -88,14 +97,18 @@ export interface UnifiedMessage {
 }
 
 /**
- * Streaming info from joinTask response
- */
+ /**
+  * Streaming info from joinTask response
+  */
 export interface StreamingInfo {
   subtask_id: number
   offset: number
   cached_content: string
+  started_at?: string
+  last_activity_at?: string
+  /** Blocks from Redis for page refresh recovery (tool blocks and text blocks) */
+  blocks?: MessageBlock[]
 }
-
 /**
  * Pending chunk event to be applied after sync completes
  */
@@ -592,23 +605,39 @@ export class TaskStateMachine {
             content: streamingInfo.cached_content || '',
             timestamp: Date.now(),
             subtaskId: streamingInfo.subtask_id,
+            // Include blocks from Redis for page refresh recovery
+            // This preserves tool-text-tool-text order during streaming
+            result: streamingInfo.blocks?.length ? { blocks: streamingInfo.blocks } : undefined,
           })
           this.state = { ...this.state, messages: newMessages }
-        } else if (
-          existingMessage.status === 'streaming' &&
-          streamingInfo.cached_content &&
-          streamingInfo.cached_content.length > existingMessage.content.length
-        ) {
-          // Update existing message with longer cached_content from Redis
-          // This handles the case where the message was created from subtasks
-          // but Redis has more recent content
+        } else if (existingMessage.status === 'streaming') {
+          // Update existing message with Redis data if it has more recent content or blocks
+          const shouldUpdateContent =
+            streamingInfo.cached_content &&
+            streamingInfo.cached_content.length > existingMessage.content.length
+          const shouldUpdateBlocks =
+            streamingInfo.blocks?.length &&
+            (!existingMessage.result?.blocks ||
+              streamingInfo.blocks.length > existingMessage.result.blocks.length)
 
-          const newMessages = new Map(this.state.messages)
-          newMessages.set(aiMessageId, {
-            ...existingMessage,
-            content: streamingInfo.cached_content,
-          })
-          this.state = { ...this.state, messages: newMessages }
+          if (shouldUpdateContent || shouldUpdateBlocks) {
+            const newMessages = new Map(this.state.messages)
+            const updatedMessage: UnifiedMessage = { ...existingMessage }
+
+            if (shouldUpdateContent) {
+              updatedMessage.content = streamingInfo.cached_content!
+            }
+
+            if (shouldUpdateBlocks) {
+              updatedMessage.result = {
+                ...existingMessage.result,
+                blocks: streamingInfo.blocks,
+              }
+            }
+
+            newMessages.set(aiMessageId, updatedMessage)
+            this.state = { ...this.state, messages: newMessages }
+          }
         }
       }
 
@@ -670,11 +699,16 @@ export class TaskStateMachine {
       if (chunk.result?.reasoning_chunk) {
         updatedMessage.reasoningContent =
           (existingMessage.reasoningContent || '') + chunk.result.reasoning_chunk
+        updatedMessage.isReasoningStreaming = true
       } else if (chunk.result?.reasoning_content) {
         updatedMessage.reasoningContent = chunk.result.reasoning_content
       }
 
-      // Handle blocks
+      // When normal content arrives, reasoning phase is over
+      if (chunk.content) {
+        updatedMessage.isReasoningStreaming = false
+      }
+
       // Handle blocks
       // CRITICAL: Always call mergeBlocksFromPendingChunk and update result.blocks
       // This ensures text blocks are created for ClaudeCode executor
@@ -1079,8 +1113,14 @@ export class TaskStateMachine {
     if (event.result?.reasoning_chunk) {
       updatedMessage.reasoningContent =
         (existingMessage.reasoningContent || '') + event.result.reasoning_chunk
+      updatedMessage.isReasoningStreaming = true
     } else if (event.result?.reasoning_content) {
       updatedMessage.reasoningContent = event.result.reasoning_content
+    }
+
+    // When normal content arrives, reasoning phase is over
+    if (event.content) {
+      updatedMessage.isReasoningStreaming = false
     }
 
     // Handle blocks
@@ -1271,6 +1311,7 @@ export class TaskStateMachine {
       status: finalStatus,
       subtaskStatus: finalSubtaskStatus,
       content: finalContent,
+      isReasoningStreaming: false,
       error: event.hasError ? event.errorMessage : existingMessage.error,
       // CRITICAL FIX: Only update messageId if event.messageId is defined
       // Otherwise preserve the existing messageId from chat:start

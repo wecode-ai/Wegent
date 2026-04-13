@@ -1,0 +1,13 @@
+# Dependencies
+node_modules/
+package-lock.json
+
+# Authentication files (user-specific)
+.auth/
+
+# Test results
+playwright-report/
+test-results/
+
+# Playwright
+playwright/.cache/

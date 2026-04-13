@@ -83,11 +83,17 @@ class ServerEvents:
 
     # Background execution events (to user room)
     BACKGROUND_EXECUTION_UPDATE = "background:execution_update"
+    SUBSCRIPTION_GROUP_BINDING_UPDATED = "subscription:group_binding_updated"
 
     # Pet events (to user room)
     PET_EXPERIENCE_GAINED = "pet:experience_gained"
     PET_STAGE_EVOLVED = "pet:stage_evolved"
     PET_TRAITS_UPDATED = "pet:traits_updated"
+
+    # Work queue events (to user room)
+    QUEUE_MESSAGE_RECEIVED = "queue:message_received"  # New message in queue
+    QUEUE_MESSAGE_PROCESSED = "queue:message_processed"  # Message processed
+    QUEUE_REPLY_RECEIVED = "queue:reply_received"  # Received reply from processing
 
 
 # ============================================================
@@ -111,6 +117,16 @@ class SkillRef(BaseModel):
     name: str = Field(..., description="Skill name")
     namespace: str = Field(..., description="Skill namespace")
     is_public: bool = Field(..., description="Whether the skill is public")
+
+
+class GenerateParams(BaseModel):
+    """Generation parameters for video/image tasks (user-selected at generation time)."""
+
+    resolution: Optional[str] = Field(
+        None, description="Video resolution (e.g., '720p')"
+    )
+    ratio: Optional[str] = Field(None, description="Aspect ratio (e.g., '16:9')")
+    duration: Optional[int] = Field(None, description="Duration in seconds")
 
 
 class ChatSendPayload(BaseModel):
@@ -156,8 +172,10 @@ class ChatSendPayload(BaseModel):
     git_repo_id: Optional[int] = Field(None, description="Git repository ID")
     git_domain: Optional[str] = Field(None, description="Git domain")
     branch_name: Optional[str] = Field(None, description="Git branch name")
-    task_type: Optional[Literal["chat", "code", "knowledge", "task"]] = Field(
-        None, description="Task type: chat, code, knowledge, or task"
+    task_type: Optional[
+        Literal["chat", "code", "knowledge", "task", "video", "image"]
+    ] = Field(
+        None, description="Task type: chat, code, knowledge, task, video, or image"
     )
     knowledge_base_id: Optional[int] = Field(
         None, description="Knowledge base ID for knowledge type tasks"
@@ -170,6 +188,10 @@ class ChatSendPayload(BaseModel):
     device_id: Optional[str] = Field(
         None,
         description="Local device ID for task execution (if None, use cloud executor)",
+    )
+    # Video generation parameters (user-selected at generation time)
+    generate_params: Optional[GenerateParams] = Field(
+        None, description="Video generation params from user selection"
     )
 
 
@@ -266,6 +288,9 @@ class ChatChunkPayload(BaseModel):
     task_id: Optional[int] = None  # Add task_id for page refresh recovery
     sources: Optional[List[SourceReference]] = Field(
         None, description="Knowledge base source references (for RAG citations)"
+    )
+    progress: Optional[int] = Field(
+        None, description="Progress percentage (0-100) for long-running operations"
     )
 
 
@@ -534,6 +559,44 @@ class BackgroundExecutionUpdatePayload(BaseModel):
     trigger_reason: Optional[str] = Field(None, description="Trigger reason")
     created_at: str = Field(..., description="Creation timestamp")
     updated_at: str = Field(..., description="Last update timestamp")
+
+
+# ============================================================
+# Work Queue Event Payloads
+# ============================================================
+
+
+class QueueMessageReceivedPayload(BaseModel):
+    """Payload for queue:message_received event."""
+
+    message_id: int = Field(..., description="Queue message ID")
+    queue_id: int = Field(..., description="Work queue ID")
+    queue_name: str = Field(..., description="Work queue name")
+    sender_id: int = Field(..., description="Sender user ID")
+    sender_name: str = Field(..., description="Sender username")
+    preview: str = Field(..., description="Message content preview")
+    priority: str = Field(..., description="Message priority")
+    created_at: str = Field(..., description="Creation timestamp")
+
+
+class QueueMessageProcessedPayload(BaseModel):
+    """Payload for queue:message_processed event."""
+
+    message_id: int = Field(..., description="Queue message ID")
+    queue_id: int = Field(..., description="Work queue ID")
+    status: str = Field(..., description="New message status")
+    process_task_id: Optional[int] = Field(None, description="Processing task ID")
+    result_preview: Optional[str] = Field(None, description="Processing result preview")
+
+
+class QueueReplyReceivedPayload(BaseModel):
+    """Payload for queue:reply_received event."""
+
+    original_message_id: int = Field(..., description="Original forwarded message ID")
+    reply_from_user_id: int = Field(..., description="User who processed the message")
+    reply_from_user_name: str = Field(..., description="Username of processor")
+    reply_content: str = Field(..., description="Reply content")
+    created_at: str = Field(..., description="Reply timestamp")
 
 
 # ============================================================

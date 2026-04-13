@@ -7,7 +7,8 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core.security import get_current_user
-from app.models.namespace_member import NamespaceMember
+from app.models.namespace import Namespace
+from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.user import User
 from app.schemas.namespace import (
     GroupCreate,
@@ -18,12 +19,15 @@ from app.schemas.namespace import (
 )
 from app.schemas.namespace_member import (
     AddMemberResult,
+    GroupMemberBatchUpdateRequest,
+    GroupMemberBatchUpdateResponse,
     GroupMemberCreate,
     GroupMemberResponse,
     GroupMemberUpdate,
 )
 from app.services import group_service
-from app.services.group_permission import get_effective_role_in_group
+from app.services.group_permission import get_view_role_in_group
+from shared.telemetry.decorators import trace_sync
 
 router = APIRouter()
 
@@ -31,7 +35,7 @@ router = APIRouter()
 @router.get("", response_model=GroupListResponse)
 def list_groups(
     page: int = Query(1, ge=1, description="Page number"),
-    limit: int = Query(10, ge=1, le=100, description="Items per page"),
+    limit: int = Query(100, ge=1, le=100, description="Items per page"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -40,15 +44,12 @@ def list_groups(
     Returns paginated results.
     """
     skip = (page - 1) * limit
-    # Check if user is admin to include organization groups
-    is_admin = current_user.role == "admin"
-
     groups = group_service.list_user_groups(
         db=db,
         user_id=current_user.id,
         skip=skip,
         limit=limit,
-        include_organization=is_admin,
+        user_role=current_user.role,
     )
 
     # Calculate total count
@@ -61,7 +62,7 @@ def list_groups(
             user_id=current_user.id,
             skip=0,
             limit=1000,
-            include_organization=is_admin,
+            user_role=current_user.role,
         )
         total = len(all_groups)
 
@@ -111,22 +112,36 @@ def list_members(
     Get list of all members in the group.
     User must be a member of the group to view the member list.
     """
-    # Check if user has access (direct or inherited)
-    user_role = get_effective_role_in_group(db, current_user.id, group_name)
+    group = group_service.get_group(db=db, group_name=group_name)
+    if not group:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Group not found",
+        )
 
+    user_role = get_view_role_in_group(
+        db,
+        current_user.id,
+        group_name,
+        user_role=current_user.role,
+        group_level=group.level,
+    )
     if user_role is None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You are not a member of this group",
         )
 
-    # Get all active members with user information
+    # Get all approved members with user information using ResourceMember
     members = (
-        db.query(NamespaceMember)
+        db.query(ResourceMember)
+        .join(Namespace, Namespace.id == ResourceMember.resource_id)
         .filter(
-            NamespaceMember.group_name == group_name,
-            NamespaceMember.is_active == True,
+            ResourceMember.resource_type == "Namespace",
+            Namespace.name == group_name,
+            ResourceMember.status == MemberStatus.APPROVED.value,
         )
+        .order_by(ResourceMember.id.asc())
         .all()
     )
 
@@ -135,11 +150,11 @@ def list_members(
     for m in members:
         member_dict = {
             "id": m.id,
-            "group_name": m.group_name,
+            "group_name": group_name,
             "user_id": m.user_id,
             "role": m.role,
             "invited_by_user_id": m.invited_by_user_id,
-            "is_active": m.is_active,
+            "is_active": True,  # ResourceMember uses status instead
             "created_at": m.created_at,
             "updated_at": m.updated_at,
         }
@@ -177,7 +192,7 @@ def add_member_endpoint(
 ):
     """
     Add a member to the group.
-    Only Maintainers and Owners can add members.
+    Only Owners and admins can add members.
     """
     try:
         return group_service.add_member(
@@ -186,10 +201,14 @@ def add_member_endpoint(
             user_id=member_create.user_id,
             role=member_create.role,
             invited_by_user_id=current_user.id,
+            inviter_role=current_user.role,
         )
     except HTTPException:
         raise
     except Exception as e:
+        import logging
+
+        logging.getLogger(__name__).exception(f"Failed to add member: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to add member: {str(e)}",
@@ -234,6 +253,7 @@ def add_member_by_username_endpoint(
             user_id=user.id,
             role=role,
             invited_by_user_id=current_user.id,
+            inviter_role=current_user.role,
         )
         return AddMemberResult(
             success=True, message="Member added successfully", data=member
@@ -247,6 +267,7 @@ def add_member_by_username_endpoint(
 
 
 @router.put("/{group_name:path}/members/{user_id}", response_model=GroupMemberResponse)
+@trace_sync("update_group_member_role", "groups.api")
 def update_member_role_endpoint(
     group_name: str = Path(
         ..., description="Group name (may contain slashes for subgroups)"
@@ -258,7 +279,7 @@ def update_member_role_endpoint(
 ):
     """
     Update a member's role.
-    Only the group Owner can update member roles.
+    Maintainers and Owners can update member roles.
     """
     try:
         return group_service.update_member_role(
@@ -267,6 +288,7 @@ def update_member_role_endpoint(
             user_id=user_id,
             new_role=member_update.role,
             updated_by_user_id=current_user.id,
+            updater_user_role=current_user.role,
         )
     except HTTPException:
         raise
@@ -274,6 +296,39 @@ def update_member_role_endpoint(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to update member role: {str(e)}",
+        )
+
+
+@router.put(
+    "/{group_name:path}/members/batch/roles",
+    response_model=GroupMemberBatchUpdateResponse,
+)
+@trace_sync("batch_update_group_member_roles", "groups.api")
+def update_member_roles_batch_endpoint(
+    group_name: str = Path(
+        ..., description="Group name (may contain slashes for subgroups)"
+    ),
+    batch_update: GroupMemberBatchUpdateRequest = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Batch update multiple member roles with a single request.
+    """
+    try:
+        return group_service.update_member_roles_batch(
+            db=db,
+            group_name=group_name,
+            updates=batch_update.updates,
+            updated_by_user_id=current_user.id,
+            updater_user_role=current_user.role,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update member roles: {str(e)}",
         )
 
 
@@ -299,6 +354,7 @@ def remove_member_endpoint(
             group_name=group_name,
             user_id=user_id,
             removed_by_user_id=current_user.id,
+            remover_user_role=current_user.role,
         )
         return None
     except HTTPException:
@@ -328,7 +384,10 @@ def invite_all_users_endpoint(
     """
     try:
         return group_service.invite_all_users(
-            db=db, group_name=group_name, invited_by_user_id=current_user.id
+            db=db,
+            group_name=group_name,
+            invited_by_user_id=current_user.id,
+            inviter_role=current_user.role,
         )
     except HTTPException:
         raise
@@ -358,6 +417,7 @@ def leave_group_endpoint(
             group_name=group_name,
             user_id=current_user.id,
             removed_by_user_id=current_user.id,  # Self-removal
+            remover_user_role=current_user.role,
         )
         return None
     except HTTPException:
@@ -390,6 +450,7 @@ def transfer_ownership_endpoint(
             group_name=group_name,
             new_owner_user_id=new_owner_user_id,
             current_owner_user_id=current_user.id,
+            current_user_role=current_user.role,
         )
     except HTTPException:
         raise
@@ -417,21 +478,25 @@ def get_group_endpoint(
     Get group details by name.
     User must be a member of the group to view it.
     """
-    # Check if user has access (direct or inherited)
-    user_role = get_effective_role_in_group(db, current_user.id, group_name)
-
-    if user_role is None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You are not a member of this group",
-        )
-
     group = group_service.get_group(db=db, group_name=group_name)
 
     if not group:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Group not found",
+        )
+
+    user_role = get_view_role_in_group(
+        db,
+        current_user.id,
+        group_name,
+        user_role=current_user.role,
+        group_level=group.level,
+    )
+    if user_role is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You are not a member of this group",
         )
 
     # Set the current user's role in the group
@@ -485,7 +550,10 @@ def delete_group_endpoint(
     """
     try:
         group_service.delete_group(
-            db=db, group_name=group_name, user_id=current_user.id
+            db=db,
+            group_name=group_name,
+            user_id=current_user.id,
+            user_role=current_user.role,
         )
         return None
     except HTTPException:

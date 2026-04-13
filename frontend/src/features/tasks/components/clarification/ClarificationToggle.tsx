@@ -40,15 +40,16 @@ export default function ClarificationToggle({
         <TooltipTrigger asChild>
           <div>
             <ActionButton
-              variant="outline"
               onClick={handleToggle}
               disabled={disabled}
               icon={<MessageCircleQuestion className="h-4 w-4" />}
+              label={t('chat:clarification_toggle.label')}
+              data-testid="clarification-toggle"
               className={cn(
                 'transition-colors',
                 enabled
-                  ? 'border-primary bg-primary/10 text-primary hover:bg-primary/20'
-                  : 'border-border bg-base text-text-primary hover:bg-hover'
+                  ? 'bg-primary/10 text-primary hover:bg-primary/20'
+                  : 'text-text-primary hover:bg-hover'
               )}
             />
           </div>

@@ -12,25 +12,29 @@ which provides a unified interface for both REST API and MCP tools.
 import asyncio
 import logging
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Union
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core import security
 from app.core.config import settings
+from app.core.security import AuthContext, get_auth_context
 from app.db.session import SessionLocal
 from app.models.user import User
 from app.schemas.knowledge import (
     AccessibleKnowledgeResponse,
+    AllGroupedKnowledgeResponse,
     BatchDocumentIds,
     BatchOperationResult,
     DocumentContentUpdate,
     DocumentDetailResponse,
     KnowledgeBaseCreate,
     KnowledgeBaseListResponse,
+    KnowledgeBaseMigrateRequest,
+    KnowledgeBaseMigrateResponse,
     KnowledgeBaseResponse,
     KnowledgeBaseTypeUpdate,
     KnowledgeBaseUpdate,
@@ -38,6 +42,7 @@ from app.schemas.knowledge import (
     KnowledgeDocumentListResponse,
     KnowledgeDocumentResponse,
     KnowledgeDocumentUpdate,
+    PersonalKnowledgeBaseGroup,
     ResourceScope,
 )
 from app.schemas.knowledge_qa_history import QAHistoryResponse
@@ -45,7 +50,10 @@ from app.services.knowledge import (
     KnowledgeService,
     knowledge_base_qa_service,
 )
-from app.services.knowledge.orchestrator import knowledge_orchestrator
+from app.services.knowledge.orchestrator import (
+    MAX_DOCUMENT_READ_LIMIT,
+    knowledge_orchestrator,
+)
 from shared.telemetry.decorators import (
     add_span_event,
     capture_trace_context,
@@ -57,6 +65,70 @@ from shared.telemetry.decorators import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _serialize_standalone_document_detail(
+    detail: DocumentDetailResponse | dict,
+    *,
+    include_content: bool,
+    include_summary: bool,
+) -> dict:
+    """Preserve the standalone endpoint's pre-refactor response shape."""
+    payload = detail.model_dump() if hasattr(detail, "model_dump") else dict(detail)
+    response = {
+        "document_id": payload["document_id"],
+    }
+    if include_content:
+        response["content"] = payload.get("content")
+        response["content_length"] = payload.get("content_length")
+        response["truncated"] = payload.get("truncated")
+    if include_summary:
+        response["summary"] = payload.get("summary")
+    return response
+
+
+def _raise_document_detail_http_error(error: ValueError) -> None:
+    """Map orchestrator detail errors to stable HTTP responses."""
+    error_msg = str(error)
+    if "not found" in error_msg.lower():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=error_msg,
+        )
+    if "access denied" in error_msg.lower():
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=error_msg,
+        )
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail=error_msg,
+    )
+
+
+def _validate_knowledge_base_access_or_raise(
+    db: Session,
+    *,
+    knowledge_base_id: int,
+    user: User,
+):
+    """Restore the KB-scoped endpoint's KB-level error semantics."""
+    knowledge_base, has_access = KnowledgeService.get_knowledge_base(
+        db=db,
+        knowledge_base_id=knowledge_base_id,
+        user_id=user.id,
+    )
+    if not knowledge_base:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Knowledge base not found",
+        )
+    if not has_access:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied to this knowledge base",
+        )
+    return knowledge_base
 
 
 # ============== Knowledge Base Endpoints ==============
@@ -120,6 +192,49 @@ def get_accessible_knowledge(
     This endpoint is designed for AI chat integration.
     """
     return KnowledgeService.get_accessible_knowledge(
+        db=db,
+        user_id=current_user.id,
+    )
+
+
+@router.get("/personal/grouped", response_model=PersonalKnowledgeBaseGroup)
+@trace_sync("get_personal_knowledge_bases_grouped", "knowledge.api")
+def get_personal_knowledge_bases_grouped(
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Get personal knowledge bases grouped by ownership.
+
+    Returns knowledge bases in two groups:
+    - **created_by_me**: Knowledge bases created by the current user
+    - **shared_with_me**: Knowledge bases shared with the current user by others
+    """
+    return KnowledgeService.get_personal_knowledge_bases_grouped(
+        db=db,
+        user_id=current_user.id,
+    )
+
+
+@router.get("/all-grouped", response_model=AllGroupedKnowledgeResponse)
+@trace_sync("get_all_knowledge_bases_grouped", "knowledge.api")
+def get_all_knowledge_bases_grouped(
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Get all knowledge bases accessible to the user, grouped by scope.
+
+    This endpoint returns all knowledge bases in a single request, solving the N+1 query problem.
+    The response is organized into:
+    - **personal**: Knowledge bases created by the user and shared with the user
+    - **groups**: Knowledge bases from team groups the user has access to
+    - **organization**: Organization-level knowledge bases (visible to all)
+    - **summary**: Counts for each category
+
+    This is the recommended endpoint for the knowledge base navigation sidebar.
+    """
+    return KnowledgeService.get_all_knowledge_bases_grouped(
         db=db,
         user_id=current_user.id,
     )
@@ -242,10 +357,22 @@ def get_knowledge_base(
             knowledge_base_id=knowledge_base_id,
         )
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(e),
-        )
+        error_msg = str(e)
+        if "access denied" in error_msg.lower():
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied",
+            )
+        elif "not found" in error_msg.lower():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Knowledge base not found",
+            )
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=error_msg,
+            )
 
 
 @router.put("/{knowledge_base_id}", response_model=KnowledgeBaseResponse)
@@ -270,6 +397,9 @@ def update_knowledge_base(
             ),
             summary_enabled=data.summary_enabled,
             summary_model_ref=data.summary_model_ref,
+            guided_questions=data.guided_questions,
+            max_calls_per_conversation=data.max_calls_per_conversation,
+            exempt_calls_before_check=data.exempt_calls_before_check,
         )
         add_span_event(
             "knowledge.base.updated",
@@ -359,6 +489,60 @@ def update_knowledge_base_type(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
+
+
+@router.post(
+    "/{knowledge_base_id}/migrate",
+    response_model=KnowledgeBaseMigrateResponse,
+)
+@trace_sync("migrate_knowledge_base_to_group", "knowledge.api")
+def migrate_knowledge_base_to_group(
+    knowledge_base_id: int,
+    data: KnowledgeBaseMigrateRequest,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Migrate a personal knowledge base to a group.
+
+    - Only personal knowledge bases (namespace='default') can be migrated
+    - Only the creator of the knowledge base can migrate it
+    - User must have Maintainer or Owner permission in the target group
+    - Target group name must be a valid group namespace
+    """
+    try:
+        result = KnowledgeService.migrate_knowledge_base_to_group(
+            db=db,
+            knowledge_base_id=knowledge_base_id,
+            user_id=current_user.id,
+            target_group_name=data.target_group_name,
+        )
+        add_span_event(
+            "knowledge.base.migrated",
+            {
+                "kb_id": str(knowledge_base_id),
+                "user_id": str(current_user.id),
+                "target_group": data.target_group_name,
+            },
+        )
+        return result
+    except IntegrityError as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A knowledge base with this name already exists in the target group",
+        ) from e
+    except SQLAlchemyError as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Database error during migration: {str(e)}",
+        ) from e
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from e
 
 
 # ============== Knowledge Document Endpoints ==============
@@ -590,10 +774,11 @@ async def update_document_content(
     db: Session = Depends(get_db),
 ) -> dict:
     """
-    Update document content (TEXT type only).
+    Update document content for text documents and editable plain-text files.
 
-    Updates the extracted_text field and triggers RAG re-indexing via Celery.
-    Only Owner or Maintainer of the knowledge base can update documents.
+    Overwrites the underlying attachment content and triggers RAG re-indexing
+    via Celery. Only Owner or Maintainer of the knowledge base can update
+    documents.
 
     Returns:
         Success message with document_id
@@ -635,8 +820,8 @@ async def update_document_content(
 
 
 @document_router.get("/{document_id}/detail")
-@trace_sync("get_document_detail_standalone", "knowledge.api")
-def get_document_detail_standalone(
+@trace_async("get_document_detail_standalone", "knowledge.api")
+async def get_document_detail_standalone(
     document_id: int,
     include_content: bool = Query(True, description="Include document content"),
     include_summary: bool = Query(True, description="Include document summary"),
@@ -649,71 +834,23 @@ def get_document_detail_standalone(
     This is a convenience endpoint for getting document content when the kb_id
     is not readily available (e.g., in citation tooltips).
     """
-    from app.models.knowledge import KnowledgeDocument
-
-    # Get document
-    document = (
-        db.query(KnowledgeDocument).filter(KnowledgeDocument.id == document_id).first()
-    )
-
-    if not document:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Document not found",
+    try:
+        detail = await knowledge_orchestrator.get_document_detail(
+            db=db,
+            user=current_user,
+            document_id=document_id,
+            include_content=include_content,
+            include_summary=include_summary,
+            offset=0,
+            limit=MAX_DOCUMENT_READ_LIMIT,
         )
-
-    # Check access permission via knowledge base
-    kb = KnowledgeService.get_knowledge_base(
-        db=db,
-        knowledge_base_id=document.kind_id,
-        user_id=current_user.id,
-    )
-    if not kb:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Access denied to this document",
+        return _serialize_standalone_document_detail(
+            detail,
+            include_content=include_content,
+            include_summary=include_summary,
         )
-
-    # Get content if requested
-    content = None
-    content_length = None
-    truncated = False
-
-    if include_content and document.attachment_id:
-        try:
-            from app.services.context import context_service
-
-            attachment = context_service.get_context_by_id(
-                db=db,
-                context_id=document.attachment_id,
-            )
-            if attachment and attachment.extracted_text:
-                full_content = attachment.extracted_text
-                content_length = len(full_content)
-                # Truncate if too large
-                max_length = 100000
-                if content_length > max_length:
-                    content = full_content[:max_length]
-                    truncated = True
-                else:
-                    content = full_content
-        except Exception as e:
-            logger.warning(f"Failed to get document content: {e}")
-
-    # Build response
-    response = {
-        "document_id": document_id,
-    }
-
-    if include_content:
-        response["content"] = content
-        response["content_length"] = content_length
-        response["truncated"] = truncated
-
-    if include_summary:
-        response["summary"] = document.summary
-
-    return response
+    except ValueError as error:
+        _raise_document_detail_http_error(error)
 
 
 @document_router.post("/batch/delete", response_model=BatchOperationResult)
@@ -951,11 +1088,16 @@ async def get_kb_summary(
     from app.services.knowledge import get_summary_service
 
     # Validate KB access permission
-    kb = KnowledgeService.get_knowledge_base(db, kb_id, current_user.id)
+    kb, has_access = KnowledgeService.get_knowledge_base(db, kb_id, current_user.id)
     if not kb:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Knowledge base not found or access denied",
+            detail="Knowledge base not found",
+        )
+    if not has_access:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied to this knowledge base",
         )
 
     summary_service = get_summary_service(db)
@@ -980,11 +1122,16 @@ async def refresh_kb_summary(
     from app.schemas.summary import SummaryRefreshResponse
 
     # Validate KB access permission
-    kb = KnowledgeService.get_knowledge_base(db, kb_id, current_user.id)
+    kb, has_access = KnowledgeService.get_knowledge_base(db, kb_id, current_user.id)
     if not kb:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Knowledge base not found or access denied",
+            detail="Knowledge base not found",
+        )
+    if not has_access:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied to this knowledge base",
         )
 
     # Run in background, return immediately
@@ -1029,18 +1176,13 @@ async def get_document_detail(
     - summary: Document summary object (if include_summary=true)
     """
     from app.models.knowledge import KnowledgeDocument
-    from app.models.subtask_context import SubtaskContext
-    from app.services.knowledge import get_summary_service
 
-    # Validate KB access permission first
-    kb = KnowledgeService.get_knowledge_base(db, kb_id, current_user.id)
-    if not kb:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Knowledge base not found or access denied",
-        )
+    _validate_knowledge_base_access_or_raise(
+        db,
+        knowledge_base_id=kb_id,
+        user=current_user,
+    )
 
-    # Validate document belongs to the specified knowledge base
     document = (
         db.query(KnowledgeDocument)
         .filter(
@@ -1055,53 +1197,18 @@ async def get_document_detail(
             detail="Document not found in the specified knowledge base",
         )
 
-    # Initialize response data
-    content = None
-    content_length = None
-    truncated = None
-    summary = None
-
-    # Get document content if requested
-    if include_content:
-        content = ""
-        truncated = False
-        max_length = 100000  # 100k characters limit for frontend display
-
-        if document.attachment_id:
-            context = (
-                db.query(SubtaskContext)
-                .filter(SubtaskContext.id == document.attachment_id)
-                .first()
-            )
-
-            if context and context.extracted_text:
-                content = context.extracted_text
-                # Truncate if too long
-                if len(content) > max_length:
-                    content = content[:max_length]
-                    truncated = True
-
-        content_length = len(content)
-
-    # Get document summary if requested
-    if include_summary:
-        summary_service = get_summary_service(db)
-        summary_obj = await summary_service.get_document_summary(doc_id)
-        # Convert DocumentSummary object to dict for response
-        if summary_obj:
-            summary = (
-                summary_obj.model_dump()
-                if hasattr(summary_obj, "model_dump")
-                else summary_obj
-            )
-
-    return DocumentDetailResponse(
-        document_id=doc_id,
-        content=content,
-        content_length=content_length,
-        truncated=truncated,
-        summary=summary,
-    )
+    try:
+        return await knowledge_orchestrator.get_document_detail(
+            db=db,
+            user=current_user,
+            document_id=doc_id,
+            include_content=include_content,
+            include_summary=include_summary,
+            offset=0,
+            limit=MAX_DOCUMENT_READ_LIMIT,
+        )
+    except ValueError as error:
+        _raise_document_detail_http_error(error)
 
 
 @summary_router.get("/{kb_id}/documents/{doc_id}/summary")
@@ -1127,11 +1234,16 @@ async def get_document_summary(
     from app.services.knowledge import get_summary_service
 
     # Validate KB access permission first
-    kb = KnowledgeService.get_knowledge_base(db, kb_id, current_user.id)
+    kb, has_access = KnowledgeService.get_knowledge_base(db, kb_id, current_user.id)
     if not kb:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Knowledge base not found or access denied",
+            detail="Knowledge base not found",
+        )
+    if not has_access:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied to this knowledge base",
         )
 
     # Validate document belongs to the specified knowledge base
@@ -1172,11 +1284,16 @@ async def refresh_document_summary(
     from app.schemas.summary import SummaryRefreshResponse
 
     # Validate KB access permission first
-    kb = KnowledgeService.get_knowledge_base(db, kb_id, current_user.id)
+    kb, has_access = KnowledgeService.get_knowledge_base(db, kb_id, current_user.id)
     if not kb:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Knowledge base not found or access denied",
+            detail="Knowledge base not found",
+        )
+    if not has_access:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied to this knowledge base",
         )
 
     # Validate document belongs to the specified knowledge base
@@ -1383,12 +1500,17 @@ def list_document_chunks(
         )
 
     # Check access permission via knowledge base
-    kb = KnowledgeService.get_knowledge_base(
+    kb, has_access = KnowledgeService.get_knowledge_base(
         db=db,
         knowledge_base_id=document.kind_id,
         user_id=current_user.id,
     )
     if not kb:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Knowledge base not found",
+        )
+    if not has_access:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access denied to this document",
@@ -1451,12 +1573,17 @@ def get_document_chunk(
         )
 
     # Check access permission via knowledge base
-    kb = KnowledgeService.get_knowledge_base(
+    kb, has_access = KnowledgeService.get_knowledge_base(
         db=db,
         knowledge_base_id=document.kind_id,
         user_id=current_user.id,
     )
     if not kb:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Knowledge base not found",
+        )
+    if not has_access:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access denied to this document",
@@ -1486,4 +1613,55 @@ def get_document_chunk(
         document_name=document.name,
         document_id=document.id,
         kb_id=document.kind_id,
+    )
+
+
+# ============== OpenAPI v1 Knowledge Base Endpoints ==============
+
+# Create a dedicated router for v1/knowledge-base endpoints
+knowledge_router = APIRouter()
+
+
+@knowledge_router.get(
+    "/list",
+    response_model=KnowledgeBaseListResponse,
+)
+@trace_sync("list_knowledge_bases_v1", "knowledge.api")
+def list_knowledge_bases_v1(
+    scope: str = Query(
+        default="all",
+        description="Scope of knowledge bases to return: 'personal' or 'all'",
+    ),
+    auth_context: AuthContext = Depends(get_auth_context),
+    db: Session = Depends(get_db),
+):
+    """
+    List knowledge bases with flexible authentication.
+
+    This endpoint is compatible with OpenAPI-style authentication,
+    supporting API keys via X-API-Key or Authorization headers,
+    and username specification via wegent-username header for service keys.
+
+    Args:
+        scope: Filter scope for knowledge bases
+            - "personal": Return only personal knowledge bases (created_by_me + shared_with_me)
+            - "all": Return all accessible knowledge bases (personal + groups + organization)
+            - Unrecognized values are treated as "all"
+
+    Authentication:
+        - Personal API key: Returns knowledge bases accessible to the key owner
+        - Service API key: Requires wegent-username header to specify the target user
+    """
+    current_user = auth_context.user
+
+    # Normalize scope: only "personal" is valid, everything else is treated as "all"
+    normalized_scope = scope.lower() if scope else "all"
+    if normalized_scope not in ("personal", "all"):
+        normalized_scope = "all"
+
+    # Use Orchestrator for unified business logic (REST API and MCP tools share the same logic)
+    return knowledge_orchestrator.list_knowledge_bases(
+        db=db,
+        user=current_user,
+        scope=normalized_scope,
     )

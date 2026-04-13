@@ -42,6 +42,32 @@ class NoInterpolationDotEnvSettingsSource(DotEnvSettingsSource):
         return parse_env_vars(file_vars, case_sensitive, ignore_empty, parse_none_str)
 
 
+VALID_RAG_RUNTIME_MODES = {"local", "remote"}
+
+
+def _normalize_rag_runtime_mode_value(value: Any, *, label: str) -> str:
+    normalized = str(value).strip().lower()
+    if normalized in VALID_RAG_RUNTIME_MODES:
+        return normalized
+    raise ValueError(
+        f"Invalid RAG runtime mode for {label}: {value!r}. "
+        f"Expected one of {sorted(VALID_RAG_RUNTIME_MODES)}"
+    )
+
+
+def _normalize_rag_runtime_mode_mapping(value: Mapping[Any, Any]) -> dict[str, str]:
+    normalized_mapping: dict[str, str] = {}
+    for key, item in value.items():
+        normalized_key = str(key).strip().lower()
+        if not normalized_key:
+            continue
+        normalized_mapping[normalized_key] = _normalize_rag_runtime_mode_value(
+            item,
+            label=f"operation {normalized_key!r}",
+        )
+    return normalized_mapping
+
+
 class Settings(BaseSettings):
     # Project configuration
     PROJECT_NAME: str = "Task Manager Backend"
@@ -58,8 +84,17 @@ class Settings(BaseSettings):
     MCP_ALLOWED_HOSTS: list[str] = []
     MCP_ALLOWED_ORIGINS: list[str] = []
 
+    # Standalone mode configuration
+    # When enabled, Backend runs in a simplified single-process mode suitable for local development
+    STANDALONE_MODE: bool = False
+    # Enable in-process executor (no Docker required) when in standalone mode
+    STANDALONE_EXECUTOR_ENABLED: bool = True
+
     # Database configuration
-    DATABASE_URL: str = "mysql+asyncmy://user:password@localhost/task_manager"
+    # Supports both MySQL and SQLite:
+    # - MySQL: "mysql+pymysql://user:pass@localhost/db"
+    # - SQLite: "sqlite:///./data/wegent.db"
+    DATABASE_URL: str = "mysql+pymysql://user:password@localhost/task_manager"
 
     # Database auto-migration configuration (only in development)
     DB_AUTO_MIGRATE: bool = True
@@ -75,10 +110,21 @@ class Settings(BaseSettings):
     # This is used to show upgrade warnings in the UI
     EXECUTOR_LATEST_VERSION: str = "1.0.0"
 
+    # Executor version checking configuration
+    # If EXECUTOR_REGISTRY_URL is set, version is fetched from registry
+    # Otherwise, version is fetched from GitHub (public repo, no auth needed)
+    # Registry URL for internal deployments (e.g., "https://registry.example.com/update.json")
+    EXECUTOR_REGISTRY_URL: str = ""
+    # Auth token for private registry (e.g., GitLab private token)
+    EXECUTOR_REGISTRY_TOKEN: str = ""
+    # Cache TTL for executor version in seconds (default: 60 seconds = 1 minute)
+    EXECUTOR_VERSION_CACHE_TTL: int = 60
+
     # JWT configuration
     SECRET_KEY: str = "secret-key"
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 7 * 24 * 60  # 7 days in minutes
+    SKILL_IDENTITY_TOKEN_EXPIRE_MINUTES: int = 10 * 24 * 60  # 10 days in minutes
 
     # OIDC state configuration
     OIDC_STATE_SECRET_KEY: str = "test"
@@ -126,6 +172,13 @@ class Settings(BaseSettings):
     # Cleanup scanning interval seconds
     TASK_EXECUTOR_CLEANUP_INTERVAL_SECONDS: int = 600
 
+    # Workspace archive configuration
+    WORKSPACE_ARCHIVE_MAX_SIZE_MB: int = 500
+    WORKSPACE_ARCHIVE_RETENTION_DAYS: int = 30
+    WORKSPACE_ARCHIVE_BUCKET: str = "wegent-archives"
+    WORKSPACE_ARCHIVE_ENABLED: bool = True
+    WORKSPACE_ARCHIVE_TIMEZONE: str = "Asia/Shanghai"
+
     # Frontend URL configuration
     FRONTEND_URL: str = "http://localhost:3000"
 
@@ -150,6 +203,9 @@ class Settings(BaseSettings):
     # Celery configuration
     CELERY_BROKER_URL: Optional[str] = None  # If None/empty, uses REDIS_URL
     CELERY_RESULT_BACKEND: Optional[str] = None  # If None/empty, uses REDIS_URL
+
+    # Celery default queue name (useful for separating preview and prod environments)
+    CELERY_TASK_DEFAULT_QUEUE: str = "wegent_online"
 
     # Celery Beat scheduler configuration
     # "default" = SQLite file (single instance only)
@@ -205,6 +261,31 @@ class Settings(BaseSettings):
             return [item.strip() for item in raw.split(",") if item.strip()]
         return v
 
+    @field_validator("RAG_RUNTIME_MODE", mode="before")
+    @classmethod
+    def parse_rag_runtime_mode(cls, v: Any) -> str | dict[str, str]:
+        """Parse RAG runtime mode from a global value or JSON operation map."""
+        if v is None:
+            return "local"
+        if isinstance(v, Mapping):
+            return _normalize_rag_runtime_mode_mapping(v)
+        if isinstance(v, str):
+            raw = v.strip()
+            if not raw:
+                return "local"
+            if raw.startswith("{"):
+                try:
+                    parsed = json.loads(raw)
+                except json.JSONDecodeError as exc:
+                    raise ValueError(
+                        "RAG_RUNTIME_MODE malformed JSON override"
+                    ) from exc
+                if isinstance(parsed, Mapping):
+                    return _normalize_rag_runtime_mode_mapping(parsed)
+                raise ValueError("RAG_RUNTIME_MODE JSON override must be an object")
+            return _normalize_rag_runtime_mode_value(raw, label="global")
+        raise ValueError(f"Unsupported RAG_RUNTIME_MODE value: {v!r}")
+
     # Scheduler backend configuration
     # Supported backends: "celery" (default), "apscheduler", "xxljob"
     SCHEDULER_BACKEND: str = "celery"
@@ -224,6 +305,8 @@ class Settings(BaseSettings):
     FLOW_DEFAULT_TIMEOUT_SECONDS: int = 600  # 10 minutes
     FLOW_DEFAULT_RETRY_COUNT: int = 1
     FLOW_EXECUTION_PAGE_LIMIT: int = 50
+    # Subscription minimum interval configuration (minutes)
+    SUBSCRIPTION_MIN_INTERVAL_MINUTES: int = 15
     # Stale execution cleanup thresholds (hours)
     FLOW_STALE_PENDING_HOURS: int = (
         2  # PENDING executions older than this will be recovered
@@ -231,6 +314,14 @@ class Settings(BaseSettings):
     FLOW_STALE_RUNNING_HOURS: int = (
         3  # RUNNING executions older than this will be marked FAILED
     )
+
+    # Knowledge indexing protection configuration
+    KNOWLEDGE_INDEX_LOCK_TIMEOUT_SECONDS: int = 120
+    KNOWLEDGE_INDEX_LOCK_EXTEND_INTERVAL_SECONDS: int = 30
+    KNOWLEDGE_INDEX_LOCK_RETRY_DELAY_SECONDS: int = 15
+    KNOWLEDGE_INDEX_LOCK_MAX_RETRIES: int = 1
+    KNOWLEDGE_INDEX_STALE_QUEUED_SECONDS: int = 600
+    KNOWLEDGE_INDEX_STALE_INDEXING_SECONDS: int = 2700
 
     # Circuit breaker configuration
     CIRCUIT_BREAKER_FAIL_MAX: int = 5  # Open circuit after 5 consecutive failures
@@ -306,6 +397,12 @@ class Settings(BaseSettings):
 
     OTEL_ENABLED: bool = False
 
+    # Logging configuration
+    # Enable/disable file logging (default: disabled, logs only to console)
+    LOG_FILE_ENABLED: bool = False
+    # Log file directory (default: ./logs in project root)
+    LOG_DIR: str = "./logs"
+
     # Web scraper proxy configuration
     # Supports HTTP, HTTPS, SOCKS5 proxy formats:
     # - Simple: "http://proxy.example.com:8080"
@@ -318,6 +415,12 @@ class Settings(BaseSettings):
     # - "fallback": Try direct connection first, use proxy only if direct fails
     # Default is "fallback" for better reliability
     WEBSCRAPER_PROXY_MODE: str = "fallback"
+    # Web scraper site-specific configuration
+    # Configuration for specific sites that require special handling
+    # due to anti-bot detection, dynamic content loading, or navigation patterns
+    # Format: JSON object with site URL patterns as keys
+    # WEB_SCRAPER_SITE_CONFIG={"Example.com":{"wait_until":"networkidle","page_timeout":30000,"delay_before_return_html":3.0}}
+    WEB_SCRAPER_SITE_CONFIG: str = "{}"
 
     # Web search configuration
     WEB_SEARCH_ENABLED: bool = False  # Enable/disable web search feature
@@ -360,6 +463,18 @@ class Settings(BaseSettings):
     # Backend internal URL (for service-to-service communication)
     # Used by chat_shell to download skill binaries
     BACKEND_INTERNAL_URL: str = "http://localhost:8000"
+    # Knowledge runtime service URL for remote RAG execution
+    KNOWLEDGE_RUNTIME_URL: str = "http://localhost:8200"
+    # RAG data-plane execution mode
+    # "local" keeps execution in Backend, "remote" forwards to knowledge_runtime
+    # Accepts either a global mode string or a JSON object with per-operation overrides:
+    # "remote"
+    # {"default":"local","query":"remote"}
+    RAG_RUNTIME_MODE: str | dict[str, str] = "local"
+    # Kill switch for auto route selection of direct injection.
+    # When enabled, route_mode="auto" will always choose rag_retrieval.
+    # Explicit route_mode="direct_injection" remains supported for manual testing.
+    RAG_AUTO_DISABLE_DIRECT_INJECTION: bool = False
 
     # Streaming architecture mode configuration
     # "legacy" - WebSocketStreamingHandler directly emits to WebSocket (current behavior)
@@ -456,6 +571,18 @@ class Settings(BaseSettings):
     # Use: from shared.telemetry.config import get_otel_config
     # All OTEL_* environment variables are read from there
 
+    def get_rag_runtime_mode(self, operation: str) -> str:
+        """Resolve the effective RAG runtime mode for an operation."""
+        config = self.RAG_RUNTIME_MODE
+        if isinstance(config, Mapping):
+            normalized_operation = operation.strip().lower()
+            mode = config.get(normalized_operation) or config.get("default", "local")
+            return _normalize_rag_runtime_mode_value(
+                mode,
+                label=f"operation {normalized_operation!r}",
+            )
+        return _normalize_rag_runtime_mode_value(config, label="global")
+
     @classmethod
     def settings_customise_sources(
         cls,
@@ -474,7 +601,38 @@ class Settings(BaseSettings):
         return (
             init_settings,
             env_settings,
-            NoInterpolationDotEnvSettingsSource(settings_cls),
+            NoInterpolationDotEnvSettingsSource(
+                settings_cls,
+                env_file=getattr(dotenv_settings, "env_file", None),
+                env_file_encoding=getattr(
+                    dotenv_settings,
+                    "env_file_encoding",
+                    None,
+                ),
+                case_sensitive=getattr(dotenv_settings, "case_sensitive", None),
+                env_prefix=getattr(dotenv_settings, "env_prefix", None),
+                env_nested_delimiter=getattr(
+                    dotenv_settings,
+                    "env_nested_delimiter",
+                    None,
+                ),
+                env_nested_max_split=getattr(
+                    dotenv_settings,
+                    "env_nested_max_split",
+                    None,
+                ),
+                env_ignore_empty=getattr(
+                    dotenv_settings,
+                    "env_ignore_empty",
+                    None,
+                ),
+                env_parse_none_str=getattr(
+                    dotenv_settings,
+                    "env_parse_none_str",
+                    None,
+                ),
+                env_parse_enums=getattr(dotenv_settings, "env_parse_enums", None),
+            ),
             file_secret_settings,
         )
 

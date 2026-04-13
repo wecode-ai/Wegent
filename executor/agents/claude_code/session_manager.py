@@ -5,13 +5,18 @@
 """
 Claude Code session management module.
 
-Handles client connection caching, session ID persistence, and cleanup operations.
-This module provides session lifecycle management for Claude Code agents.
+Handles session ID persistence to filesystem for Claude Code conversation resumption.
+Each subtask execution creates a new Agent instance and destroys it after completion,
+so there's no in-memory client caching. Session continuity is maintained via
+.claude_session_id files on disk.
 """
 
 import asyncio
+import json
 import os
-from typing import Any, Dict, Optional
+import signal
+import time
+from typing import Optional
 
 from claude_agent_sdk import ClaudeSDKClient
 
@@ -23,240 +28,294 @@ logger = setup_logger("claude_code_session_manager")
 
 class SessionManager:
     """
-    Manages Claude Code client sessions.
+    Manages Claude Code session persistence.
 
     Provides:
-    - Client connection caching and reuse
-    - Session ID persistence to filesystem
-    - Session cleanup operations
-    - Active session tracking
+    - Session ID persistence to filesystem (for conversation resumption)
+    - Process termination for cleanup
+
+    Note: No in-memory client caching since each subtask creates a new Agent
+    instance and destroys it after completion.
     """
 
-    # Class-level storage for client connections
-    # Key: session_id (task_id:bot_id format), Value: ClaudeSDKClient
-    _clients: Dict[str, ClaudeSDKClient] = {}
-
-    # Mapping internal_session_key to actual Claude session_id
-    # Key: internal_session_key (task_id:bot_id), Value: actual Claude session_id
-    _session_id_map: Dict[str, str] = {}
-
     @staticmethod
-    def get_session_id_file_path(task_id: int) -> str:
-        """Get the path to the session ID file for a task.
+    def get_session_id_file_path(task_id: int, bot_id: Optional[int] = None) -> str:
+        """Get the path to the session ID file for a task and bot.
+
+        For pipeline mode, each bot needs its own session file to maintain
+        independent conversation history. The file is named:
+        - .claude_session_id (when bot_id is None, for backward compatibility)
+        - .claude_session_id_{bot_id} (when bot_id is specified)
 
         Args:
             task_id: Task ID
+            bot_id: Bot ID (optional, for pipeline mode)
 
         Returns:
             Path to the session ID file
         """
         workspace_root = config.get_workspace_root()
         task_dir = os.path.join(workspace_root, str(task_id))
+        if bot_id:
+            return os.path.join(task_dir, f".claude_session_id_{bot_id}")
         return os.path.join(task_dir, ".claude_session_id")
 
+    @staticmethod
+    def get_process_info_file_path(task_id: int, bot_id: Optional[int] = None) -> str:
+        """Get the path to tracked resume process info file."""
+        workspace_root = config.get_workspace_root()
+        task_dir = os.path.join(workspace_root, str(task_id))
+        if bot_id:
+            return os.path.join(task_dir, f".claude_resume_process_{bot_id}.json")
+        return os.path.join(task_dir, ".claude_resume_process.json")
+
     @classmethod
-    def load_saved_session_id(cls, task_id: int) -> str | None:
-        """Load saved Claude session ID for a task.
+    def load_saved_session_id(
+        cls, task_id: int, bot_id: Optional[int] = None
+    ) -> str | None:
+        """Load saved Claude session ID for a task and bot.
 
         Args:
             task_id: Task ID
+            bot_id: Bot ID (optional, for pipeline mode)
 
         Returns:
             Saved session ID or None if not found
         """
-        session_file = cls.get_session_id_file_path(task_id)
+        session_file = cls.get_session_id_file_path(task_id, bot_id)
         try:
             if os.path.exists(session_file):
                 with open(session_file, "r", encoding="utf-8") as f:
                     session_id = f.read().strip()
                     if session_id:
                         logger.info(
-                            f"Loaded saved Claude session ID for task {task_id}: {session_id}"
+                            f"Loaded saved Claude session ID for task {task_id} "
+                            f"(bot_id={bot_id}): {session_id}"
                         )
                         return session_id
         except Exception as e:
-            logger.warning(f"Failed to load saved session ID for task {task_id}: {e}")
+            logger.warning(
+                f"Failed to load saved session ID for task {task_id} "
+                f"(bot_id={bot_id}): {e}"
+            )
         return None
 
     @classmethod
-    def save_session_id(cls, task_id: int, claude_session_id: str) -> None:
-        """Save Claude session ID for a task.
+    def save_session_id(
+        cls, task_id: int, claude_session_id: str, bot_id: Optional[int] = None
+    ) -> None:
+        """Save Claude session ID for a task and bot.
 
         Args:
             task_id: Task ID
             claude_session_id: Claude's actual session ID
+            bot_id: Bot ID (optional, for pipeline mode)
         """
-        session_file = cls.get_session_id_file_path(task_id)
+        session_file = cls.get_session_id_file_path(task_id, bot_id)
         try:
             os.makedirs(os.path.dirname(session_file), exist_ok=True)
             with open(session_file, "w", encoding="utf-8") as f:
                 f.write(claude_session_id)
             logger.info(
-                f"Saved Claude session ID for task {task_id}: {claude_session_id}"
+                f"Saved Claude session ID for task {task_id} "
+                f"(bot_id={bot_id}): {claude_session_id}"
             )
         except Exception as e:
-            logger.warning(f"Failed to save session ID for task {task_id}: {e}")
+            logger.warning(
+                f"Failed to save session ID for task {task_id} (bot_id={bot_id}): {e}"
+            )
 
     @classmethod
-    def get_client(cls, session_id: str) -> Optional[ClaudeSDKClient]:
-        """Get cached client by session_id.
+    def delete_saved_session_id(
+        cls, task_id: int, bot_id: Optional[int] = None
+    ) -> bool:
+        """Delete saved Claude session ID file for a task and bot.
+
+        This is used when a saved session ID is invalid or expired,
+        allowing a fresh session to be created on retry.
 
         Args:
-            session_id: Session ID
+            task_id: Task ID
+            bot_id: Bot ID (optional, for pipeline mode)
 
         Returns:
-            Cached client or None if not found
+            True if file was deleted, False otherwise
         """
-        return cls._clients.get(session_id)
+        session_file = cls.get_session_id_file_path(task_id, bot_id)
+        process_info_file = cls.get_process_info_file_path(task_id, bot_id)
+        try:
+            deleted = False
+            if os.path.exists(session_file):
+                os.remove(session_file)
+                logger.info(
+                    f"Deleted invalid session ID file for task {task_id} "
+                    f"(bot_id={bot_id}): {session_file}"
+                )
+                deleted = True
+
+            if os.path.exists(process_info_file):
+                os.remove(process_info_file)
+                logger.info(
+                    f"Deleted tracked resume process file for task {task_id} "
+                    f"(bot_id={bot_id}): {process_info_file}"
+                )
+                deleted = True
+
+            return deleted
+        except Exception as e:
+            logger.warning(
+                f"Failed to delete session ID file for task {task_id} "
+                f"(bot_id={bot_id}): {e}"
+            )
+            return False
+
+    @staticmethod
+    def _is_process_running(pid: int) -> bool:
+        """Check whether a PID is currently alive."""
+        try:
+            os.kill(pid, 0)
+            return True
+        except (OSError, ProcessLookupError):
+            return False
+
+    @staticmethod
+    def _read_process_cmdline(pid: int) -> str:
+        """Read process command line from /proc when available (Unix-like systems)."""
+        cmdline_path = f"/proc/{pid}/cmdline"
+        try:
+            if os.path.exists(cmdline_path):
+                with open(cmdline_path, "rb") as f:
+                    raw = f.read()
+                return raw.replace(b"\x00", b" ").decode("utf-8", errors="ignore")
+        except Exception:
+            return ""
+        return ""
 
     @classmethod
-    def set_client(cls, session_id: str, client: ClaudeSDKClient) -> None:
-        """Cache a client connection.
-
-        Args:
-            session_id: Session ID
-            client: ClaudeSDKClient instance
-        """
-        cls._clients[session_id] = client
-
-    @classmethod
-    def remove_client(cls, session_id: str) -> Optional[ClaudeSDKClient]:
-        """Remove and return a cached client.
-
-        Args:
-            session_id: Session ID
-
-        Returns:
-            Removed client or None if not found
-        """
-        return cls._clients.pop(session_id, None)
+    def _is_expected_resume_process(cls, pid: int, session_id: str) -> bool:
+        """Validate PID belongs to a Claude process resuming the target session."""
+        cmdline = cls._read_process_cmdline(pid)
+        if not cmdline:
+            # Best-effort fallback for environments without /proc.
+            return True
+        return "claude" in cmdline and "--resume" in cmdline and session_id in cmdline
 
     @classmethod
-    def get_session_id(cls, internal_key: str) -> Optional[str]:
-        """Get mapped session ID for an internal key.
+    async def _terminate_pid(cls, pid: int, session_id: str) -> bool:
+        """Terminate a process by PID with graceful shutdown then force-kill."""
+        try:
+            os.kill(pid, signal.SIGTERM)
+            deadline = time.time() + 2.0
+            while time.time() < deadline:
+                if not cls._is_process_running(pid):
+                    return True
+                await asyncio.sleep(0.1)
 
-        Args:
-            internal_key: Internal session key (task_id:bot_id format)
+            os.kill(pid, signal.SIGKILL)
+            deadline = time.time() + 1.0
+            while time.time() < deadline:
+                if not cls._is_process_running(pid):
+                    return True
+                await asyncio.sleep(0.05)
 
-        Returns:
-            Mapped session ID or None
-        """
-        return cls._session_id_map.get(internal_key)
+            logger.warning(
+                f"PID {pid} still running after SIGKILL for session_id={session_id}"
+            )
+            return False
+        except ProcessLookupError:
+            return True
+        except Exception as e:
+            logger.warning(
+                f"Failed to terminate stale PID {pid} for session_id={session_id}: {e}"
+            )
+            return False
 
     @classmethod
-    def set_session_id(cls, internal_key: str, session_id: str) -> None:
-        """Map an internal key to a session ID.
-
-        Args:
-            internal_key: Internal session key
-            session_id: Actual Claude session ID
-        """
-        cls._session_id_map[internal_key] = session_id
+    def register_client_process(
+        cls, task_id: int, bot_id: Optional[int], session_id: str, pid: int
+    ) -> None:
+        """Persist PID info for resumed session cleanup on next run."""
+        process_info_file = cls.get_process_info_file_path(task_id, bot_id)
+        payload = {
+            "session_id": session_id,
+            "pid": pid,
+            "updated_at": time.time(),
+        }
+        try:
+            os.makedirs(os.path.dirname(process_info_file), exist_ok=True)
+            with open(process_info_file, "w", encoding="utf-8") as f:
+                json.dump(payload, f)
+            if os.name != "nt":
+                os.chmod(process_info_file, 0o600)
+        except Exception as e:
+            logger.warning(
+                f"Failed to register process file for task {task_id} (bot_id={bot_id}): {e}"
+            )
 
     @classmethod
-    def remove_session_id(cls, internal_key: str) -> Optional[str]:
-        """Remove and return a session ID mapping.
+    async def terminate_stale_resumed_process(
+        cls, task_id: int, bot_id: Optional[int], session_id: str
+    ) -> bool:
+        """Terminate previously tracked process for the same resumed session."""
+        process_info_file = cls.get_process_info_file_path(task_id, bot_id)
+        try:
+            if not os.path.exists(process_info_file):
+                return False
 
-        Args:
-            internal_key: Internal session key
+            with open(process_info_file, "r", encoding="utf-8") as f:
+                payload = json.load(f)
 
-        Returns:
-            Removed session ID or None
-        """
-        return cls._session_id_map.pop(internal_key, None)
+            tracked_session_id = str(payload.get("session_id") or "")
+            tracked_pid = payload.get("pid")
+            if tracked_session_id != session_id or not isinstance(tracked_pid, int):
+                return False
+
+            if not cls._is_process_running(tracked_pid):
+                os.remove(process_info_file)
+                return False
+
+            if not cls._is_expected_resume_process(tracked_pid, session_id):
+                logger.warning(
+                    f"Tracked PID {tracked_pid} does not match expected Claude resume process "
+                    f"for session_id={session_id}, skipping termination"
+                )
+                return False
+
+            terminated = await cls._terminate_pid(tracked_pid, session_id)
+            if terminated and os.path.exists(process_info_file):
+                os.remove(process_info_file)
+            return terminated
+        except Exception as e:
+            logger.warning(
+                f"Failed to cleanup stale resumed process for task {task_id} "
+                f"(bot_id={bot_id}, session_id={session_id}): {e}"
+            )
+            return False
 
     @classmethod
     def get_active_task_ids(cls) -> list[int]:
         """Get list of active task IDs.
 
-        Session keys can be in format:
-        - "task_id:bot_id" for initial connections
-        - "subtask_id" when new_session=True
+        Note: Since we no longer use in-memory caching, this method
+        returns an empty list. Active task tracking should be done
+        at the AgentService level.
 
         Returns:
-            List of active task IDs
+            Empty list (no in-memory tracking)
         """
-        task_ids = []
-
-        # Check _session_id_map for internal_key -> session_id mappings
-        for internal_key in cls._session_id_map.keys():
-            try:
-                task_id_str = internal_key.split(":")[0]
-                task_id = int(task_id_str)
-                if task_id not in task_ids:
-                    task_ids.append(task_id)
-            except (ValueError, IndexError):
-                continue
-
-        # Also check _clients directly for session_ids in "task_id:bot_id" format
-        for session_id in cls._clients.keys():
-            try:
-                if ":" in session_id:
-                    task_id_str = session_id.split(":")[0]
-                    task_id = int(task_id_str)
-                    if task_id not in task_ids:
-                        task_ids.append(task_id)
-            except (ValueError, IndexError):
-                continue
-
-        return task_ids
+        return []
 
     @classmethod
     def get_active_session_count(cls) -> int:
         """Get the number of active Claude Code sessions.
 
-        Returns:
-            Number of active sessions
-        """
-        return len(cls.get_active_task_ids())
-
-    @classmethod
-    async def close_client(cls, session_id: str) -> bool:
-        """Close a specific client connection using SDK disconnect.
-
-        WARNING: This method should only be called from the SAME asyncio context
-        where the client was created. The SDK's disconnect() method uses anyio
-        cancel scopes that are bound to the asyncio task where the client was
-        connected. Calling this from a different asyncio context (e.g., FastAPI
-        background tasks) will result in:
-        "RuntimeError: Attempted to exit cancel scope in a different task than it was entered in"
-
-        For cross-context cleanup (e.g., task cancellation in background tasks),
-        use _terminate_client_process() instead, which uses direct process
-        termination and avoids cancel scope issues.
-
-        Args:
-            session_id: Session ID to close
+        Note: Since we no longer use in-memory caching, this returns 0.
+        Active session counting should be done at the AgentService level.
 
         Returns:
-            True if successfully closed, False otherwise
+            0 (no in-memory tracking)
         """
-        try:
-            if session_id in cls._clients:
-                client = cls._clients[session_id]
-                await client.disconnect()
-                del cls._clients[session_id]
-                logger.info(f"Closed Claude client for session_id: {session_id}")
-                return True
-            return False
-        except Exception as e:
-            logger.exception(
-                f"Error closing client for session_id {session_id}: {str(e)}"
-            )
-            return False
-
-    @classmethod
-    async def close_all_clients(cls) -> None:
-        """Close all client connections."""
-        for session_id, client in list(cls._clients.items()):
-            try:
-                await client.disconnect()
-                logger.info(f"Closed Claude client for session_id: {session_id}")
-            except Exception as e:
-                logger.exception(
-                    f"Error closing client for session_id {session_id}: {str(e)}"
-                )
-        cls._clients.clear()
+        return 0
 
     @classmethod
     async def _terminate_client_process(
@@ -314,71 +373,52 @@ class SessionManager:
             return False
 
     @classmethod
+    async def close_client(cls, session_id: str) -> bool:
+        """Close a specific client connection.
+
+        Note: This method is kept for backward compatibility but does nothing
+        since we no longer use in-memory client caching. Client cleanup should
+        be done directly on the agent instance.
+
+        Args:
+            session_id: Session ID to close
+
+        Returns:
+            False (no in-memory tracking)
+        """
+        logger.debug(
+            f"close_client called for session_id={session_id}, "
+            f"but no in-memory caching is used"
+        )
+        return False
+
+    @classmethod
+    async def close_all_clients(cls) -> None:
+        """Close all client connections.
+
+        Note: This method is kept for backward compatibility but does nothing
+        since we no longer use in-memory client caching.
+        """
+        logger.debug("close_all_clients called, but no in-memory caching is used")
+
+    @classmethod
     async def cleanup_task_clients(cls, task_id: int) -> int:
         """Close all client connections for a specific task_id.
 
-        Session keys can be in two formats:
-        1. "task_id:bot_id" - for initial connections
-        2. "subtask_id" - when new_session=True
+        Note: This method is kept for backward compatibility but does nothing
+        since we no longer use in-memory client caching.
 
         Args:
             task_id: Task ID to cleanup clients for
 
         Returns:
-            Number of clients cleaned up
+            0 (no in-memory tracking)
         """
-        cleaned_count = 0
-        task_id_str = str(task_id)
-        task_id_prefix = f"{task_id}:"
-
-        logger.info(
-            f"Starting cleanup for task_id={task_id}, "
-            f"_session_id_map keys={list(cls._session_id_map.keys())}, "
-            f"_clients keys={list(cls._clients.keys())}"
+        logger.debug(
+            f"cleanup_task_clients called for task_id={task_id}, "
+            f"but no in-memory caching is used"
         )
-
-        # Step 1: Check _session_id_map to find all session_ids for this task
-        internal_keys_to_cleanup = []
-        for internal_key, session_id in list(cls._session_id_map.items()):
-            if internal_key.startswith(task_id_prefix) or internal_key == task_id_str:
-                internal_keys_to_cleanup.append((internal_key, session_id))
-                logger.info(
-                    f"Found internal_key={internal_key} -> session_id={session_id} "
-                    f"for task {task_id}"
-                )
-
-        # Clean up clients found in _session_id_map
-        for internal_key, session_id in internal_keys_to_cleanup:
-            if session_id in cls._clients:
-                client = cls._clients[session_id]
-                await cls._terminate_client_process(client, session_id)
-                del cls._clients[session_id]
-                cleaned_count += 1
-            else:
-                logger.warning(
-                    f"session_id={session_id} not found in _clients "
-                    f"for internal_key={internal_key}"
-                )
-            # Clean up the mapping
-            cls._session_id_map.pop(internal_key, None)
-
-        # Step 2: Check _clients directly for any unmatched session_ids
-        already_cleaned = [sid for _, sid in internal_keys_to_cleanup]
-        for session_id in list(cls._clients.keys()):
-            if session_id in already_cleaned:
-                continue
-            if session_id.startswith(task_id_prefix) or session_id == task_id_str:
-                client = cls._clients[session_id]
-                await cls._terminate_client_process(client, session_id)
-                del cls._clients[session_id]
-                cleaned_count += 1
-
-        if cleaned_count > 0:
-            logger.info(f"Cleaned up {cleaned_count} client(s) for task_id={task_id}")
-        else:
-            logger.warning(f"No clients found to cleanup for task_id={task_id}")
-
-        return cleaned_count
+        return 0
 
 
 def build_internal_session_key(task_id: int, bot_id: Optional[int] = None) -> str:
@@ -402,57 +442,23 @@ def resolve_session_id(
     new_session: bool = False,
     task_state_manager=None,
 ) -> tuple[str, str]:
-    """Resolve session ID for a task with interruption support.
+    """Resolve session ID for a task.
 
-    Session is reused ONLY if:
-    1. task_id matches cached task_id
-    2. bot_id matches (if specified)
-    3. Not forcing new_session
-
-    When task is INTERRUPTED, session is preserved for resumption.
+    Since each subtask execution creates a new Agent instance and destroys it
+    after completion, we simply return the internal key as the session ID.
+    Session continuity is maintained via .claude_session_id file on disk,
+    which allows Claude Code to resume conversation history.
 
     Args:
         task_id: Task ID
         bot_id: Bot ID (optional)
-        new_session: Whether to create a new session
-        task_state_manager: TaskStateManager instance for checking interruption state
+        new_session: Whether to create a new session (unused, kept for API compatibility)
+        task_state_manager: TaskStateManager instance (unused, kept for API compatibility)
 
     Returns:
         Tuple of (internal_session_key, session_id)
     """
-    from executor.tasks.task_state_manager import TaskState
-
     internal_key = build_internal_session_key(task_id, bot_id)
-    cached_session_id = SessionManager.get_session_id(internal_key)
-
-    if not cached_session_id:
-        # No cache -> use internal_session_key as session_id
-        session_id = internal_key
-        logger.info(f"No cache, using {session_id} as session_id (bot_id={bot_id})")
-    elif new_session:
-        # Has cache + new_session=True -> will create new session in execution
-        session_id = cached_session_id
-        logger.info(
-            f"Has cache + new_session=True, will create new session for {session_id}"
-        )
-    else:
-        # Has cache + new_session=False -> use cached session_id
-        session_id = cached_session_id
-
-        # Check if resuming from interruption
-        if task_state_manager:
-            task_state = task_state_manager.get_state(task_id)
-            if task_state == TaskState.INTERRUPTED:
-                logger.info(
-                    f"Resuming interrupted session {session_id} for task {task_id}"
-                )
-            else:
-                logger.info(
-                    f"Has cache, using cached session_id {session_id} (bot_id={bot_id})"
-                )
-        else:
-            logger.info(
-                f"Has cache, using cached session_id {session_id} (bot_id={bot_id})"
-            )
-
+    session_id = internal_key
+    logger.info(f"Using {session_id} as session_id (bot_id={bot_id})")
     return internal_key, session_id

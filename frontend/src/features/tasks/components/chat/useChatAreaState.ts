@@ -11,7 +11,7 @@ import type {
   ChatSloganItem,
   ChatTipItem,
   MultiAttachmentUploadState,
-  DefaultTeamsResponse,
+  TaskType,
 } from '@/types/api'
 import type { ContextItem } from '@/types/context'
 import type { Model } from '../selector/ModelSelector'
@@ -25,9 +25,34 @@ import { teamRequiresWorkspace } from '../../service/messageService'
 
 const SHOULD_HIDE_QUOTA_NAME_LIMIT = 18
 
+type WelcomeItemWithMode = {
+  mode?: string
+}
+
+function getWelcomeItemsForMode<T extends WelcomeItemWithMode>(items: T[], taskType: TaskType): T[] {
+  const getMatchedItems = (mode: TaskType) =>
+    items.filter(item => {
+      const itemMode = item.mode || 'both'
+      return itemMode === mode || itemMode === 'both'
+    })
+
+  const matchedItems = getMatchedItems(taskType)
+  if (matchedItems.length > 0) {
+    return matchedItems
+  }
+
+  // Selecting a device on the main chat page switches taskType to "task".
+  // When task-specific welcome copy is not configured, keep using chat copy.
+  if (taskType === 'task') {
+    return getMatchedItems('chat')
+  }
+
+  return []
+}
+
 export interface UseChatAreaStateOptions {
   teams: Team[]
-  taskType: 'chat' | 'code' | 'knowledge' | 'task'
+  taskType: TaskType
   selectedTeamForNewTask?: Team | null
   /**
    * Initial knowledge base to pre-select when starting a new chat from knowledge page.
@@ -40,6 +65,12 @@ export interface UseChatAreaStateOptions {
     namespace: string
     document_count?: number
   } | null
+  /**
+   * Maximum number of attachments allowed (for image/video generation modes).
+   * This value comes from the selected model's imageConfig.max_reference_images.
+   * Falls back to 1 if not provided.
+   */
+  maxAttachments?: number
 }
 
 export interface ChatAreaState {
@@ -49,7 +80,6 @@ export interface ChatAreaState {
   handleTeamChange: (team: Team | null) => void
 
   // Default team state
-  defaultTeamsConfig: DefaultTeamsResponse | null
   defaultTeam: Team | null
   isUsingDefaultTeam: boolean
   restoreDefaultTeam: () => void
@@ -106,6 +136,8 @@ export interface ChatAreaState {
   attachmentState: MultiAttachmentUploadState
   handleFileSelect: (files: File | File[]) => Promise<void>
   handleAttachmentRemove: (attachmentId: number) => Promise<void>
+  /** Add an already-uploaded attachment as reference (e.g., from ImageGallery follow-up) */
+  addExistingAttachment: (attachment: import('@/types/api').Attachment) => void
   resetAttachment: () => void
   isAttachmentReadyToSend: boolean
   isUploading: boolean
@@ -165,6 +197,7 @@ export function useChatAreaState({
   taskType,
   selectedTeamForNewTask,
   initialKnowledgeBase,
+  maxAttachments: externalMaxAttachments,
 }: UseChatAreaStateOptions): ChatAreaState {
   // In notebook mode (taskType === 'knowledge'), don't show the current notebook's KB in selectedContexts
   // because it's automatically bound to the task on creation
@@ -179,8 +212,6 @@ export function useChatAreaState({
   const [selectedTeam, setSelectedTeam] = useState<Team | null>(null)
   const [hasRestoredPreferences, setHasRestoredPreferences] = useState(false)
 
-  // Default teams configuration (from server)
-  const [defaultTeamsConfig, setDefaultTeamsConfig] = useState<DefaultTeamsResponse | null>(null)
   // Track if user is using default team or manually selected one
   const [isUsingDefaultTeam, setIsUsingDefaultTeam] = useState(true)
 
@@ -249,15 +280,31 @@ export function useChatAreaState({
   // Media query
   const isMobile = useMediaQuery('(max-width: 640px)')
 
+  // Compute effective maxAttachments for image/video modes
+  // Priority: external value (from model config) -> default (2 for image/video, undefined otherwise)
+  const effectiveMaxAttachments = useMemo(() => {
+    if (taskType === 'image' || taskType === 'video') {
+      // Normalize and clamp external value from model config
+      if (typeof externalMaxAttachments === 'number' && Number.isFinite(externalMaxAttachments)) {
+        return Math.min(10, Math.max(1, Math.floor(externalMaxAttachments)))
+      }
+      return 2 // Default to 2 for image/video modes when not configured
+    }
+    return undefined
+  }, [taskType, externalMaxAttachments])
+
   // Attachment state (multi-attachment)
   const {
     state: attachmentState,
     handleFileSelect,
+    addExistingAttachment,
     handleRemove: handleAttachmentRemove,
     reset: resetAttachment,
     isReadyToSend: isAttachmentReadyToSend,
     isUploading,
-  } = useMultiAttachment()
+  } = useMultiAttachment({
+    maxAttachments: effectiveMaxAttachments,
+  })
 
   // Refs for random indices (stable across taskType changes)
   const sloganRandomIndexRef = useRef<number | null>(null)
@@ -277,29 +324,12 @@ export function useChatAreaState({
     fetchWelcomeConfig()
   }, [])
 
-  // Fetch default teams configuration
-  useEffect(() => {
-    const fetchDefaultTeams = async () => {
-      try {
-        const response = await userApis.getDefaultTeams()
-        setDefaultTeamsConfig(response)
-      } catch (error) {
-        console.error('Failed to fetch default teams config:', error)
-      }
-    }
-
-    fetchDefaultTeams()
-  }, [])
-
   // Get random slogan for display
   const randomSlogan = useMemo<ChatSloganItem | null>(() => {
     if (!welcomeConfig?.slogans || welcomeConfig.slogans.length === 0) {
       return null
     }
-    const filteredSlogans = welcomeConfig.slogans.filter(slogan => {
-      const sloganMode = slogan.mode || 'both'
-      return sloganMode === taskType || sloganMode === 'both'
-    })
+    const filteredSlogans = getWelcomeItemsForMode(welcomeConfig.slogans, taskType)
 
     if (filteredSlogans.length === 0) {
       return null
@@ -317,10 +347,7 @@ export function useChatAreaState({
     if (!welcomeConfig?.tips || welcomeConfig.tips.length === 0) {
       return null
     }
-    const filteredTips = welcomeConfig.tips.filter(tip => {
-      const tipMode = tip.mode || 'both'
-      return tipMode === taskType || tipMode === 'both'
-    })
+    const filteredTips = getWelcomeItemsForMode(welcomeConfig.tips, taskType)
 
     if (filteredTips.length === 0) {
       return null
@@ -375,42 +402,28 @@ export function useChatAreaState({
   }, [_teams, isTeamCompatibleWithMode])
 
   // Find default team for current mode from teams list
+  // Uses the default_for_modes field returned by the teams API
   // Returns null if no default team is configured for the mode
   const findDefaultTeamForMode = useCallback(
     (teams: Team[]): Team | null => {
       if (teams.length === 0) return null
-      if (!defaultTeamsConfig) return null
 
-      // Get the default config for current mode
-      const modeKey = taskType as keyof DefaultTeamsResponse
-      const defaultConfig = defaultTeamsConfig[modeKey]
+      // Find teams that have the current taskType in their default_for_modes array
+      const matchedTeams = teams.filter(
+        team => team.default_for_modes && team.default_for_modes.includes(taskType)
+      )
 
-      if (!defaultConfig) {
+      if (matchedTeams.length === 0) {
         // No default configured for this mode, return null
         // This allows all teams to be shown in QuickAccessCards
         return null
       }
 
-      // Normalize namespace to handle undefined case
-      const normalizedNamespace = defaultConfig.namespace || 'default'
-
-      // Find all teams matching name + namespace
-      const matchedTeams = teams.filter(
-        team =>
-          team.name === defaultConfig.name && (team.namespace || 'default') === normalizedNamespace
-      )
-
-      if (matchedTeams.length > 0) {
-        // Prioritize public team (user_id === 0) over personal team
-        const publicTeam = matchedTeams.find(team => team.user_id === 0)
-        const selectedTeam = publicTeam || matchedTeams[0]
-
-        return selectedTeam
-      }
-
-      return null
+      // Prioritize public team (user_id === 0) over personal team
+      const publicTeam = matchedTeams.find(team => team.user_id === 0)
+      return publicTeam || matchedTeams[0]
     },
-    [defaultTeamsConfig, taskType]
+    [taskType]
   )
 
   // Compute default team for current mode (only from compatible teams)
@@ -551,7 +564,6 @@ export function useChatAreaState({
     handleTeamChange,
 
     // Default team state
-    defaultTeamsConfig,
     defaultTeam,
     isUsingDefaultTeam,
     restoreDefaultTeam,
@@ -607,6 +619,7 @@ export function useChatAreaState({
     // Attachment state (multi-attachment)
     attachmentState,
     handleFileSelect,
+    addExistingAttachment,
     handleAttachmentRemove,
     resetAttachment,
     isAttachmentReadyToSend,

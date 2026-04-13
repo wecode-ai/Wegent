@@ -28,7 +28,10 @@ from app.db.session import SessionLocal
 from app.mcp_server.auth import TaskTokenInfo
 from app.mcp_server.tools.decorator import build_mcp_tools_dict, mcp_tool
 from app.models.user import User
-from app.services.knowledge.orchestrator import knowledge_orchestrator
+from app.services.knowledge.orchestrator import (
+    MAX_DOCUMENT_READ_LIMIT,
+    knowledge_orchestrator,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -215,16 +218,17 @@ def create_knowledge_base(
 
 @mcp_tool(
     name="create_document",
-    description="Create a document in a knowledge base. Supports text content, base64-encoded files, or URL scraping.",
+    description="Create a document in a knowledge base. Supports text content, base64-encoded files, URL scraping, or existing attachment reference.",
     server="knowledge",
     param_descriptions={
         "knowledge_base_id": "Target knowledge base ID",
         "name": "Document name",
-        "source_type": "Source type: 'text', 'file', or 'web'",
+        "source_type": "Source type: 'text', 'file', 'web', or 'attachment'",
         "content": "Text content (for source_type='text')",
         "file_base64": "Base64-encoded file content (for source_type='file')",
         "file_extension": "File extension like 'txt', 'md', 'pdf' (for source_type='file')",
         "url": "URL to scrape (for source_type='web')",
+        "attachment_id": "Existing attachment ID to copy into knowledge base (for source_type='attachment'). Recommended for large files to avoid base64 overhead.",
         "trigger_indexing": "Whether to trigger RAG indexing (default: True)",
         "trigger_summary": "Whether to trigger summary generation (default: True)",
     },
@@ -238,16 +242,18 @@ def create_document(
     file_base64: Optional[str] = None,
     file_extension: Optional[str] = None,
     url: Optional[str] = None,
+    attachment_id: Optional[int] = None,
     trigger_indexing: bool = True,
     trigger_summary: bool = True,
 ) -> Dict[str, Any]:
     """
     Create a document in a knowledge base.
 
-    Supports three input methods:
+    Supports four input methods:
     - source_type="text": Direct text content via `content` parameter
     - source_type="file": Base64-encoded file via `file_base64` and `file_extension`
     - source_type="web": URL content scraping via `url` parameter
+    - source_type="attachment": Copy existing attachment via `attachment_id` (recommended for large files)
 
     RAG indexing and summary generation are scheduled via Celery tasks
     and return immediately after document creation.
@@ -256,11 +262,12 @@ def create_document(
         token_info: Task token information containing user context
         knowledge_base_id: Target knowledge base ID
         name: Document name
-        source_type: Source type ("text", "file", or "web")
+        source_type: Source type ("text", "file", "web", or "attachment")
         content: Text content (for source_type="text")
         file_base64: Base64-encoded file content (for source_type="file")
         file_extension: File extension (for source_type="file", e.g., "txt", "md", "pdf")
         url: URL to scrape (for source_type="web")
+        attachment_id: Existing attachment ID (for source_type="attachment")
         trigger_indexing: Whether to trigger RAG indexing (default: True)
         trigger_summary: Whether to trigger summary generation (default: True)
 
@@ -284,6 +291,7 @@ def create_document(
             file_base64=file_base64,
             file_extension=file_extension,
             url=url,
+            attachment_id=attachment_id,
             trigger_indexing=trigger_indexing,
             trigger_summary=trigger_summary,
         )
@@ -303,8 +311,64 @@ def create_document(
 
 
 @mcp_tool(
+    name="read_document_content",
+    description="Read document content with offset/limit pagination.",
+    server="knowledge",
+    param_descriptions={
+        "document_id": "Document ID to read",
+        "offset": "Character offset to start reading from",
+        "limit": "Maximum number of characters to return",
+    },
+)
+def read_document_content(
+    token_info: TaskTokenInfo,
+    document_id: int,
+    offset: int = 0,
+    limit: int = MAX_DOCUMENT_READ_LIMIT,
+) -> Dict[str, Any]:
+    """
+    Read raw document content with offset/limit pagination.
+
+    Args:
+        token_info: Task token information containing user context
+        document_id: Document ID
+        offset: Character offset to start reading from
+        limit: Maximum number of characters to return (defaults to backend limit)
+
+    Returns:
+        Dict with document content slice and pagination metadata
+    """
+    db = SessionLocal()
+    try:
+        user = _get_user_from_token(db, token_info)
+        if not user:
+            return {"error": "User not found"}
+
+        result = knowledge_orchestrator.read_document_content(
+            db=db,
+            user=user,
+            document_id=document_id,
+            offset=offset,
+            limit=limit,
+        )
+
+        return result.model_dump()
+
+    except ValueError as e:
+        logger.warning(f"[MCP] read_document_content validation error: {e}")
+        return {"error": str(e)}
+
+    except Exception as e:
+        logger.error(f"[MCP] read_document_content error: {e}", exc_info=True)
+        return {"error": str(e)}
+
+    finally:
+        db.close()
+
+
+@mcp_tool(
     name="update_document_content",
-    description="Update document content. Only supports TEXT type documents.",
+    description="Update document content for text documents and editable plain-text files such as txt, md, and markdown.",
     server="knowledge",
     param_descriptions={
         "document_id": "Document ID to update",
@@ -321,8 +385,9 @@ def update_document_content(
     """
     Update document content.
 
-    Only supports TEXT type documents. Re-indexing is scheduled via Celery
-    if trigger_reindex=True.
+    Supports text documents and editable plain-text file documents such as
+    txt, md, and markdown. Binary file documents are not editable through
+    this tool. Re-indexing is scheduled via Celery if trigger_reindex=True.
 
     Args:
         token_info: Task token information containing user context

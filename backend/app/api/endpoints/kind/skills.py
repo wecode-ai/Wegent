@@ -7,13 +7,17 @@ Skills API endpoints for managing Claude Code Skills
 """
 
 import io
+import logging
 import zipfile
 from typing import Any, Dict, List, Optional
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlalchemy.orm import Session
+
+logger = logging.getLogger(__name__)
 
 from app.api.dependencies import get_db
 from app.core import security
@@ -35,6 +39,51 @@ from app.services.git_skill import git_skill_service
 router = APIRouter()
 
 
+def _resolve_manageable_skill(
+    db: Session, skill_id: int, current_user: User, action: str
+) -> Kind:
+    """
+    Resolve a skill for management operations with unified permission checks.
+
+    Permission rules:
+    - Skill owner can manage
+    - System admin can manage any skill
+    - Group Owner/Maintainer can manage any skill in their group namespace
+    """
+    from app.services.group_permission import get_effective_role_in_group
+
+    skill_kind = (
+        db.query(Kind)
+        .filter(
+            Kind.id == skill_id,
+            Kind.kind == "Skill",
+            Kind.is_active == True,
+        )
+        .first()
+    )
+
+    if not skill_kind:
+        raise HTTPException(status_code=404, detail="Skill not found")
+
+    if skill_kind.user_id == current_user.id:
+        return skill_kind
+
+    if current_user.role == "admin":
+        return skill_kind
+
+    if skill_kind.namespace != "default":
+        user_role = get_effective_role_in_group(
+            db, current_user.id, skill_kind.namespace
+        )
+        if user_role and user_role.value in {"Owner", "Maintainer"}:
+            return skill_kind
+
+    raise HTTPException(
+        status_code=403,
+        detail=f"You don't have permission to {action} this skill",
+    )
+
+
 # Request/Response schemas for new endpoints
 class PublicSkillCreate(BaseModel):
     """Schema for creating a public skill"""
@@ -46,6 +95,14 @@ class PublicSkillCreate(BaseModel):
     author: Optional[str] = None
     tags: Optional[List[str]] = None
 
+    @field_validator("version", mode="before")
+    @classmethod
+    def validate_version(cls, v):
+        """Convert float/int version to string to handle YAML parsing."""
+        if v is None:
+            return v
+        return str(v)
+
 
 class PublicSkillUpdate(BaseModel):
     """Schema for updating a public skill"""
@@ -55,6 +112,14 @@ class PublicSkillUpdate(BaseModel):
     version: Optional[str] = None
     author: Optional[str] = None
     tags: Optional[List[str]] = None
+
+    @field_validator("version", mode="before")
+    @classmethod
+    def validate_version(cls, v):
+        """Convert float/int version to string to handle YAML parsing."""
+        if v is None:
+            return v
+        return str(v)
 
 
 class InvokeSkillRequest(BaseModel):
@@ -86,7 +151,6 @@ class UnifiedSkillResponse(BaseModel):
     namespace: str
     description: str
     displayName: Optional[str] = None
-    prompt: Optional[str] = None
     version: Optional[str] = None
     author: Optional[str] = None
     tags: Optional[List[str]] = None
@@ -99,6 +163,30 @@ class UnifiedSkillResponse(BaseModel):
     )
     created_at: Any
     updated_at: Any
+
+    @field_validator("version", mode="before")
+    @classmethod
+    def validate_version(cls, v):
+        """Convert float/int version to string to handle YAML parsing."""
+        if v is None:
+            return v
+        return str(v)
+
+
+class ReferencedGhostResponse(BaseModel):
+    """Schema for a Ghost that references a Skill."""
+
+    id: int
+    name: str
+    namespace: str
+
+
+class SkillReferencesResponse(BaseModel):
+    """Schema for queried Skill references."""
+
+    skill_id: int
+    skill_name: str
+    referenced_ghosts: List[ReferencedGhostResponse]
 
 
 @router.post("/upload", response_model=Skill, status_code=201)
@@ -196,10 +284,16 @@ def list_skills(
     Authorization is verified by checking if current_user is a member of the task.
     """
     if name:
+        logger.info(
+            f"[list_skills] Searching for skill: name={name}, namespace={namespace}, exact_match={exact_match}, user_id={current_user.id}"
+        )
         if exact_match:
             # Exact match mode: only search in the specified namespace
             skill = skill_kinds_service.get_skill_by_name(
                 db=db, name=name, namespace=namespace, user_id=current_user.id
+            )
+            logger.info(
+                f"[list_skills] Exact match result: skill={skill.metadata.name if skill else None}"
             )
             return SkillList(items=[skill] if skill else [])
 
@@ -232,7 +326,7 @@ def list_skills(
                     .filter(
                         TaskResource.id == task_id,
                         TaskResource.kind == "Task",
-                        TaskResource.is_active == True,
+                        TaskResource.is_active.in_(TaskResource.is_active_query()),
                     )
                     .first()
                 )
@@ -880,101 +974,156 @@ def list_unified_skills(
     Returns combined list with user/group skills first, then public skills.
     User/group skills with same name take precedence over public skills.
     """
+    from sqlalchemy import or_
+
     from app.services.group_permission import get_user_groups
 
     user_skills = []
     user_skill_names = set()
 
-    # Determine which namespaces to query based on scope
+    # Build optimized query based on scope
     if scope == "personal":
         # Personal scope: only query current user's skills in default namespace
-        namespaces_to_query = [("default", True)]  # (namespace, filter_by_user)
+        skill_kinds = (
+            db.query(Kind)
+            .filter(
+                Kind.user_id == current_user.id,
+                Kind.kind == "Skill",
+                Kind.namespace == "default",
+                Kind.is_active == True,
+            )
+            .order_by(Kind.created_at.desc())
+            .all()
+        )
     elif scope == "group":
         if group_name:
             # Group scope with specific group: query ALL skills in that namespace
-            namespaces_to_query = [(group_name, False)]  # Don't filter by user
+            skill_kinds = (
+                db.query(Kind)
+                .filter(
+                    Kind.kind == "Skill",
+                    Kind.namespace == group_name,
+                    Kind.is_active == True,
+                )
+                .order_by(Kind.created_at.desc())
+                .all()
+            )
         else:
             # Query all user's groups (excluding default)
             user_groups = get_user_groups(db, current_user.id)
-            namespaces_to_query = [(g, False) for g in user_groups if g != "default"]
-    else:  # scope == "all"
-        # Query personal + all user's groups
-        user_groups = get_user_groups(db, current_user.id)
-        namespaces_to_query = [("default", True)] + [
-            (g, False) for g in user_groups if g != "default"
-        ]
-
-    # Query skills from all relevant namespaces
-    for namespace_info in namespaces_to_query:
-        namespace, filter_by_user = namespace_info
-
-        if filter_by_user:
-            # Personal namespace: filter by current user
-            user_skills_list = skill_kinds_service.list_skills(
-                db=db, user_id=current_user.id, skip=0, limit=1000, namespace=namespace
-            )
-        else:
-            # Group namespace: get ALL skills in namespace (from any user)
-            user_skills_list = skill_kinds_service.list_skills_in_namespace(
-                db=db, namespace=namespace, skip=0, limit=1000
-            )
-
-        for skill in user_skills_list.items:
-            if skill.metadata.name not in user_skill_names:
-                user_skill_names.add(skill.metadata.name)
-                # Extract source information if available
-                source_info = None
-                if hasattr(skill.spec, "source") and skill.spec.source:
-                    source_info = {
-                        "type": (
-                            skill.spec.source.type
-                            if hasattr(skill.spec.source, "type")
-                            else "upload"
-                        ),
-                        "repo_url": (
-                            skill.spec.source.repo_url
-                            if hasattr(skill.spec.source, "repo_url")
-                            else None
-                        ),
-                        "skill_path": (
-                            skill.spec.source.skill_path
-                            if hasattr(skill.spec.source, "skill_path")
-                            else None
-                        ),
-                        "imported_at": (
-                            skill.spec.source.imported_at
-                            if hasattr(skill.spec.source, "imported_at")
-                            else None
-                        ),
-                    }
-                user_skills.append(
-                    {
-                        "id": int(skill.metadata.labels.get("id", 0)),
-                        "name": skill.metadata.name,
-                        "namespace": skill.metadata.namespace,
-                        "description": skill.spec.description,
-                        "displayName": getattr(skill.spec, "displayName", None),
-                        "prompt": skill.spec.prompt,
-                        "version": skill.spec.version,
-                        "author": skill.spec.author,
-                        "tags": skill.spec.tags,
-                        "bindShells": skill.spec.bindShells,
-                        "is_active": True,
-                        "is_public": False,
-                        "user_id": int(skill.metadata.labels.get("user_id", 0)),
-                        "source": source_info,
-                        "created_at": None,
-                        "updated_at": None,
-                    }
+            group_namespaces = [g for g in user_groups if g != "default"]
+            if group_namespaces:
+                skill_kinds = (
+                    db.query(Kind)
+                    .filter(
+                        Kind.kind == "Skill",
+                        Kind.namespace.in_(group_namespaces),
+                        Kind.is_active == True,
+                    )
+                    .order_by(Kind.created_at.desc())
+                    .all()
                 )
+            else:
+                skill_kinds = []
+    else:  # scope == "all"
+        # Query personal + all user's groups in a single query
+        user_groups = get_user_groups(db, current_user.id)
+        group_namespaces = [g for g in user_groups if g != "default"]
 
-    # Get public skills
-    public_skills = public_skill_service.get_skills(db, skip=0, limit=1000)
+        # Build OR conditions for optimized single query
+        conditions = [
+            # Personal skills in default namespace
+            (Kind.user_id == current_user.id)
+            & (Kind.namespace == "default")
+        ]
+        if group_namespaces:
+            # Group skills in any of user's groups
+            conditions.append(Kind.namespace.in_(group_namespaces))
+
+        skill_kinds = (
+            db.query(Kind)
+            .filter(
+                Kind.kind == "Skill",
+                Kind.is_active == True,
+                or_(*conditions),
+            )
+            .order_by(Kind.created_at.desc())
+            .all()
+        )
+
+    # Convert Kind objects to response format
+    for kind in skill_kinds:
+        if kind.name not in user_skill_names:
+            user_skill_names.add(kind.name)
+            spec = kind.json.get("spec", {})
+
+            # Extract source information if available
+            source_data = spec.get("source")
+            source_info = None
+            if source_data:
+                source_info = {
+                    "type": source_data.get("type", "upload"),
+                    "repo_url": source_data.get("repo_url"),
+                    "skill_path": source_data.get("skill_path"),
+                    "imported_at": source_data.get("imported_at"),
+                }
+
+            user_skills.append(
+                {
+                    "id": kind.id,
+                    "name": kind.name,
+                    "namespace": kind.namespace,
+                    "description": spec.get("description", ""),
+                    "displayName": spec.get("displayName"),
+                    "version": spec.get("version"),
+                    "author": spec.get("author"),
+                    "tags": spec.get("tags"),
+                    "bindShells": spec.get("bindShells"),
+                    "is_active": True,
+                    "is_public": False,
+                    "user_id": kind.user_id,
+                    "source": source_info,
+                    "created_at": kind.created_at,
+                    "updated_at": kind.updated_at,
+                }
+            )
+
+    # Get public skills (user_id=0) - single query
+    public_skill_kinds = (
+        db.query(Kind)
+        .filter(
+            Kind.user_id == 0,
+            Kind.kind == "Skill",
+            Kind.namespace == "default",
+            Kind.is_active == True,
+        )
+        .order_by(Kind.created_at.desc())
+        .all()
+    )
 
     # Merge: public skills that don't exist in user's skills
-    for skill in public_skills:
-        if skill["name"] not in user_skill_names:
-            user_skills.append(skill)
+    for kind in public_skill_kinds:
+        if kind.name not in user_skill_names:
+            spec = kind.json.get("spec", {})
+            user_skills.append(
+                {
+                    "id": kind.id,
+                    "name": kind.name,
+                    "namespace": kind.namespace,
+                    "description": spec.get("description", ""),
+                    "displayName": spec.get("displayName"),
+                    "version": spec.get("version"),
+                    "author": spec.get("author"),
+                    "tags": spec.get("tags"),
+                    "bindShells": spec.get("bindShells"),
+                    "is_active": True,
+                    "is_public": True,
+                    "user_id": kind.user_id,
+                    "source": None,
+                    "created_at": kind.created_at,
+                    "updated_at": kind.updated_at,
+                }
+            )
 
     # Apply pagination
     return user_skills[skip : skip + limit]
@@ -1119,7 +1268,7 @@ def download_skill(
                 .filter(
                     TaskResource.id == task_id,
                     TaskResource.kind == "Task",
-                    TaskResource.is_active == True,
+                    TaskResource.is_active.in_(TaskResource.is_active_query()),
                 )
                 .first()
             )
@@ -1154,12 +1303,15 @@ def download_skill(
         raise HTTPException(status_code=404, detail="Skill binary not found")
 
     # Return as streaming response
+    # RFC 5987 encoding for non-ASCII filenames
+    filename = f"{skill.metadata.name}.zip"
+    encoded_filename = quote(filename, safe="")
+    content_disposition = f"attachment; filename*=UTF-8''{encoded_filename}"
+
     return StreamingResponse(
         io.BytesIO(binary_data),
         media_type="application/zip",
-        headers={
-            "Content-Disposition": f"attachment; filename={skill.metadata.name}.zip"
-        },
+        headers={"Content-Disposition": content_disposition},
     )
 
 
@@ -1175,8 +1327,15 @@ def remove_skill_references(
     This allows the Skill to be deleted afterwards.
     Returns the count of removed references and affected Ghost names.
     """
+    skill_kind = _resolve_manageable_skill(
+        db=db,
+        skill_id=skill_id,
+        current_user=current_user,
+        action="remove references from",
+    )
+
     result = skill_kinds_service.remove_skill_references(
-        db=db, skill_id=skill_id, user_id=current_user.id
+        db=db, skill_id=skill_id, user_id=skill_kind.user_id
     )
     return result
 
@@ -1193,10 +1352,40 @@ def remove_single_skill_reference(
 
     Returns success status and the affected Ghost name.
     """
+    skill_kind = _resolve_manageable_skill(
+        db=db,
+        skill_id=skill_id,
+        current_user=current_user,
+        action="remove references from",
+    )
+
     result = skill_kinds_service.remove_single_skill_reference(
-        db=db, skill_id=skill_id, ghost_id=ghost_id, user_id=current_user.id
+        db=db, skill_id=skill_id, ghost_id=ghost_id, user_id=skill_kind.user_id
     )
     return result
+
+
+@router.get("/{skill_id}/references", response_model=SkillReferencesResponse)
+def get_skill_references(
+    skill_id: int,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Query Ghost references for a Skill without deleting it.
+
+    Permission rules are the same as other skill management operations.
+    """
+    skill_kind = _resolve_manageable_skill(
+        db=db,
+        skill_id=skill_id,
+        current_user=current_user,
+        action="inspect references for",
+    )
+
+    return skill_kinds_service.get_skill_references(
+        db=db, skill_id=skill_id, user_id=skill_kind.user_id
+    )
 
 
 @router.post("/{skill_id}/update-from-git", response_model=Dict[str, Any])
@@ -1214,9 +1403,16 @@ def update_skill_from_git(
     Returns:
         Dict with updated skill info including id, name, version, and source
     """
+    skill_kind = _resolve_manageable_skill(
+        db=db,
+        skill_id=skill_id,
+        current_user=current_user,
+        action="update",
+    )
+
     result = git_skill_service.update_skill_from_git(
         skill_id=skill_id,
-        user_id=current_user.id,
+        user_id=skill_kind.user_id,
         db=db,
     )
     return result
@@ -1250,10 +1446,17 @@ async def update_skill(
     file_content = await file.read()
 
     # Update skill
+    skill_kind = _resolve_manageable_skill(
+        db=db,
+        skill_id=skill_id,
+        current_user=current_user,
+        action="update",
+    )
+
     skill = skill_kinds_service.update_skill(
         db=db,
         skill_id=skill_id,
-        user_id=current_user.id,
+        user_id=skill_kind.user_id,
         file_content=file_content,
         file_name=file.filename,
     )
@@ -1277,46 +1480,12 @@ def delete_skill(
 
     Returns 400 error if the Skill is referenced by any Ghost.
     """
-    from app.services.group_permission import get_effective_role_in_group
-
-    # First, get the skill to check its namespace and owner
-    skill_kind = (
-        db.query(Kind)
-        .filter(
-            Kind.id == skill_id,
-            Kind.kind == "Skill",
-            Kind.is_active == True,
-        )
-        .first()
+    skill_kind = _resolve_manageable_skill(
+        db=db,
+        skill_id=skill_id,
+        current_user=current_user,
+        action="delete",
     )
-
-    if not skill_kind:
-        raise HTTPException(status_code=404, detail="Skill not found")
-
-    # Check permissions
-    can_delete = False
-
-    # 1. User can delete their own skills
-    if skill_kind.user_id == current_user.id:
-        can_delete = True
-
-    # 2. System admin can delete any skill
-    elif current_user.role == "admin":
-        can_delete = True
-
-    # 3. Group admin (Owner/Maintainer) can delete any skill in their group
-    elif skill_kind.namespace != "default":
-        user_role = get_effective_role_in_group(
-            db, current_user.id, skill_kind.namespace
-        )
-        if user_role in ["Owner", "Maintainer"]:
-            can_delete = True
-
-    if not can_delete:
-        raise HTTPException(
-            status_code=403,
-            detail="You don't have permission to delete this skill",
-        )
 
     # Use the original user_id for deletion to bypass the service-level check
     skill_kinds_service.delete_skill(

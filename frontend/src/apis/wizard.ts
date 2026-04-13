@@ -63,11 +63,30 @@ export interface RecommendConfigResponse {
   alternative_models: ModelRecommendation[]
 }
 
+export interface AvailableSkill {
+  name: string
+  display_name?: string
+  description?: string
+  is_public: boolean
+  bind_shells?: string[]
+}
+
+export interface SkillRecommendation {
+  name: string
+  display_name?: string
+  description?: string
+  reason: string
+  confidence: number
+  is_public: boolean
+}
+
 export interface GeneratePromptResponse {
   system_prompt: string
   suggested_name: string
   suggested_description: string
   sample_test_message: string
+  recommended_skills: SkillRecommendation[]
+  available_skills: AvailableSkill[]
 }
 
 export interface TestPromptRequest {
@@ -106,6 +125,7 @@ export interface CreateAllRequest {
   bind_mode: string[]
   namespace?: string
   icon?: string
+  skills?: string[] // Skill names to add to Ghost
 }
 
 export interface CreateAllResponse {

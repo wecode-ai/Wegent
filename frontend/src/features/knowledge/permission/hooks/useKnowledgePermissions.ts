@@ -7,12 +7,13 @@
 import { useState, useCallback } from 'react'
 import { knowledgePermissionApi } from '@/apis/knowledge-permission'
 import type {
+  BatchPermissionAddResponse,
   KBShareInfo,
+  MemberRole,
   MyPermissionResponse,
   PermissionAddRequest,
   PermissionApplyRequest,
   PermissionApplyResponse,
-  PermissionLevel,
   PermissionListResponse,
   PermissionResponse,
   PermissionReviewRequest,
@@ -22,6 +23,7 @@ import type {
 
 interface UseKnowledgePermissionsOptions {
   kbId: number
+  includePendingRequests?: boolean
 }
 
 interface UseKnowledgePermissionsReturn {
@@ -36,20 +38,24 @@ interface UseKnowledgePermissionsReturn {
   fetchPermissions: () => Promise<void>
   fetchMyPermission: () => Promise<void>
   fetchShareInfo: () => Promise<void>
-  applyPermission: (level: PermissionLevel) => Promise<PermissionApplyResponse>
+  applyPermission: (role: MemberRole) => Promise<PermissionApplyResponse>
   reviewPermission: (
     permissionId: number,
     action: ReviewAction,
-    level?: PermissionLevel
+    role?: MemberRole
   ) => Promise<PermissionReviewResponse>
-  addPermission: (userName: string, level: PermissionLevel) => Promise<PermissionResponse>
-  updatePermission: (permissionId: number, level: PermissionLevel) => Promise<PermissionResponse>
+  addPermission: (userName: string, role: MemberRole) => Promise<PermissionResponse>
+  batchAddPermission: (
+    users: { user_id: number; role: MemberRole }[]
+  ) => Promise<BatchPermissionAddResponse>
+  updatePermission: (permissionId: number, role: MemberRole) => Promise<PermissionResponse>
   deletePermission: (permissionId: number) => Promise<void>
   clearError: () => void
 }
 
 export function useKnowledgePermissions({
   kbId,
+  includePendingRequests = false,
 }: UseKnowledgePermissionsOptions): UseKnowledgePermissionsReturn {
   const [permissions, setPermissions] = useState<PermissionListResponse | null>(null)
   const [myPermission, setMyPermission] = useState<MyPermissionResponse | null>(null)
@@ -62,7 +68,9 @@ export function useKnowledgePermissions({
     setLoading(true)
     setError(null)
     try {
-      const result = await knowledgePermissionApi.listPermissions(kbId)
+      const result = await knowledgePermissionApi.listPermissions(kbId, {
+        includePendingRequests,
+      })
       setPermissions(result)
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to fetch permissions'
@@ -70,7 +78,7 @@ export function useKnowledgePermissions({
     } finally {
       setLoading(false)
     }
-  }, [kbId])
+  }, [includePendingRequests, kbId])
 
   const fetchMyPermission = useCallback(async () => {
     if (!kbId) return
@@ -104,11 +112,11 @@ export function useKnowledgePermissions({
   }, [kbId])
 
   const applyPermission = useCallback(
-    async (level: PermissionLevel): Promise<PermissionApplyResponse> => {
+    async (role: MemberRole): Promise<PermissionApplyResponse> => {
       setLoading(true)
       setError(null)
       try {
-        const request: PermissionApplyRequest = { permission_level: level }
+        const request: PermissionApplyRequest = { role }
         const result = await knowledgePermissionApi.applyPermission(kbId, request)
         // Refresh my permission after applying
         await fetchMyPermission()
@@ -128,14 +136,14 @@ export function useKnowledgePermissions({
     async (
       permissionId: number,
       action: ReviewAction,
-      level?: PermissionLevel
+      role?: MemberRole
     ): Promise<PermissionReviewResponse> => {
       setLoading(true)
       setError(null)
       try {
         const request: PermissionReviewRequest = {
           action,
-          permission_level: level,
+          role,
         }
         const result = await knowledgePermissionApi.reviewPermission(kbId, permissionId, request)
         // Refresh permissions after review
@@ -153,13 +161,13 @@ export function useKnowledgePermissions({
   )
 
   const addPermission = useCallback(
-    async (userName: string, level: PermissionLevel): Promise<PermissionResponse> => {
+    async (userName: string, role: MemberRole): Promise<PermissionResponse> => {
       setLoading(true)
       setError(null)
       try {
         const request: PermissionAddRequest = {
           user_name: userName,
-          permission_level: level,
+          role,
         }
         const result = await knowledgePermissionApi.addPermission(kbId, request)
         // Refresh permissions after adding
@@ -176,13 +184,35 @@ export function useKnowledgePermissions({
     [kbId, fetchPermissions]
   )
 
+  const batchAddPermission = useCallback(
+    async (users: { user_id: number; role: MemberRole }[]): Promise<BatchPermissionAddResponse> => {
+      setLoading(true)
+      setError(null)
+      try {
+        const result = await knowledgePermissionApi.batchAddPermission(kbId, {
+          members: users,
+        })
+        // Refresh permissions after batch adding
+        await fetchPermissions()
+        return result
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Failed to batch add permissions'
+        setError(message)
+        throw err
+      } finally {
+        setLoading(false)
+      }
+    },
+    [kbId, fetchPermissions]
+  )
+
   const updatePermission = useCallback(
-    async (permissionId: number, level: PermissionLevel): Promise<PermissionResponse> => {
+    async (permissionId: number, role: MemberRole): Promise<PermissionResponse> => {
       setLoading(true)
       setError(null)
       try {
         const result = await knowledgePermissionApi.updatePermission(kbId, permissionId, {
-          permission_level: level,
+          role,
         })
         // Refresh permissions after update
         await fetchPermissions()
@@ -233,6 +263,7 @@ export function useKnowledgePermissions({
     applyPermission,
     reviewPermission,
     addPermission,
+    batchAddPermission,
     updatePermission,
     deletePermission,
     clearError,

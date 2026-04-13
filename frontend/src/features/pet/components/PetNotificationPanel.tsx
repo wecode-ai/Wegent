@@ -15,6 +15,7 @@ import React, { useMemo } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useTaskContext } from '@/features/tasks/contexts/taskContext'
 import { CheckCircle2, Clock, MessageSquare, Sparkles } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import type { Pet } from '@/features/pet/types/pet'
 import { STAGE_THRESHOLDS, STAGE_NAMES } from '@/features/pet/types/pet'
@@ -22,9 +23,16 @@ import { STAGE_THRESHOLDS, STAGE_NAMES } from '@/features/pet/types/pet'
 interface PetNotificationPanelProps {
   pet: Pet
   className?: string
+  onOpenPromptDraft?: () => void
+  canGeneratePromptDraft?: boolean
 }
 
-export function PetNotificationPanel({ pet, className }: PetNotificationPanelProps) {
+export function PetNotificationPanel({
+  pet,
+  className,
+  onOpenPromptDraft,
+  canGeneratePromptDraft = true,
+}: PetNotificationPanelProps) {
   const { t } = useTranslation('pet')
   const { tasks, getUnreadCount, viewStatusVersion } = useTaskContext()
 
@@ -156,6 +164,20 @@ export function PetNotificationPanel({ pet, className }: PetNotificationPanelPro
           <span className="text-text-secondary">{t('panel.allClear')}</span>
         </div>
       )}
+
+      <div className="mt-3 pt-2 border-t border-border">
+        <Button
+          data-testid="pet-prompt-draft-button"
+          variant="outline"
+          size="sm"
+          className="w-full justify-start h-9"
+          disabled={!canGeneratePromptDraft}
+          onClick={onOpenPromptDraft}
+        >
+          {t('panel.promptDraft.cta')}
+        </Button>
+        <p className="text-xs text-text-muted mt-1.5">{t('panel.promptDraft.subtext')}</p>
+      </div>
     </div>
   )
 }

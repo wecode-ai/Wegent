@@ -11,6 +11,7 @@ import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
 import { githubApis } from '@/apis/github'
 import { getLastRepo } from '@/utils/userPreferences'
+import { getRepositoryIdentity } from '@/features/tasks/components/selector/repositoryIdentity'
 
 export interface UseRepositorySearchOptions {
   selectedRepo: GitRepoInfo | null
@@ -33,6 +34,7 @@ export interface UseRepositorySearchReturn {
   handleSearchChange: (query: string) => void
   handleRefreshCache: () => Promise<void>
   handleChange: (value: string) => void
+  resetSearch: () => void
 
   // Helpers
   hasGitInfo: () => boolean
@@ -140,17 +142,8 @@ export function useRepositorySearch({
           return
         }
 
-        // Merge local and remote results, remove duplicates
-        const localResults = searchLocalRepos(query)
-        const mergedResults = [...localResults]
-
-        results.forEach(remoteRepo => {
-          if (!mergedResults.find(r => r.git_repo_id === remoteRepo.git_repo_id)) {
-            mergedResults.push(remoteRepo)
-          }
-        })
-
-        setRepos(mergedResults)
+        // Use remote search results directly (replace, not merge)
+        setRepos(results)
         setError(null)
       } catch {
         if (requestId === searchRequestIdRef.current) {
@@ -162,7 +155,7 @@ export function useRepositorySearch({
         }
       }
     },
-    [cachedRepos, searchLocalRepos]
+    [cachedRepos]
   )
 
   /**
@@ -241,7 +234,16 @@ export function useRepositorySearch({
    */
   const handleChange = useCallback(
     (value: string) => {
-      let repo = repos.find(r => r.git_repo_id === Number(value))
+      let repo = repos.find(r => getRepositoryIdentity(r) === value)
+
+      if (!repo) {
+        repo = cachedRepos.find(r => getRepositoryIdentity(r) === value)
+      }
+
+      // Backward-compatibility for legacy values that only pass git_repo_id
+      if (!repo) {
+        repo = repos.find(r => r.git_repo_id === Number(value))
+      }
 
       if (!repo) {
         repo = cachedRepos.find(r => r.git_repo_id === Number(value))
@@ -253,6 +255,21 @@ export function useRepositorySearch({
     },
     [repos, cachedRepos, handleRepoChange]
   )
+
+  /**
+   * Reset search state - clear query and restore cached repos
+   */
+  const resetSearch = useCallback(() => {
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current)
+      searchTimeoutRef.current = null
+    }
+    searchRequestIdRef.current++
+    setCurrentSearchQuery('')
+    setRepos(cachedRepos)
+    setIsSearching(false)
+    setError(null)
+  }, [cachedRepos])
 
   // Cleanup timer on unmount
   useEffect(() => {
@@ -335,7 +352,10 @@ export function useRepositorySearch({
         const lastRepo = getLastRepo()
 
         if (lastRepo) {
-          const repoToRestore = repoList.find(r => r.git_repo_id === lastRepo.repoId)
+          const repoToRestore =
+            repoList.find(
+              r => r.git_repo_id === lastRepo.repoId && r.git_repo === lastRepo.repoName
+            ) ?? repoList.find(r => r.git_repo_id === lastRepo.repoId)
           if (repoToRestore) {
             handleRepoChange(repoToRestore)
           }
@@ -362,6 +382,7 @@ export function useRepositorySearch({
     handleSearchChange,
     handleRefreshCache,
     handleChange,
+    resetSearch,
     hasGitInfo,
   }
 }

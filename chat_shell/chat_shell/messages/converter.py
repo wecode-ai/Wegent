@@ -33,12 +33,14 @@ class MessageConverter:
         system_prompt: str = "",
         username: str | None = None,
         inject_datetime: bool = True,
+        dynamic_context: str | None = None,
     ) -> list[dict[str, Any]]:
         """Build a complete message list from history, current message, and system prompt.
 
         Combines:
         - System prompt (if provided)
         - Chat history
+        - Dynamic context (if provided, injected as a human message)
         - Current user message (with optional datetime context at the END)
 
         The datetime is injected at the END of the user message (not system prompt) to enable
@@ -46,6 +48,12 @@ class MessageConverter:
         1. System prompts to remain static and be cached
         2. User message prefix to be cached (prefix matching)
         3. Only the datetime suffix changes between requests
+
+        The dynamic_context is injected as a human message before the current user message to
+        keep system prompts static and improve cache hit rate.
+
+        Note: Anthropic explicit cache breakpoints should be applied AFTER
+        message compression via ``apply_cache_breakpoints()``, not here.
 
         Args:
             history: Previous messages in the conversation
@@ -56,6 +64,7 @@ class MessageConverter:
             system_prompt: Optional system prompt to prepend
             username: Optional username to prefix the current message (for group chat)
             inject_datetime: Whether to inject current datetime into user message (default: True)
+            dynamic_context: Optional dynamic context to inject before current message
 
         Returns:
             List of message dicts ready for LLM API (LangChain/OpenAI Chat Completions format)
@@ -67,78 +76,182 @@ class MessageConverter:
 
         messages.extend(history)
 
-        # Build datetime context suffix for user message (at the END for better caching)
-        # Placing at the end allows the message prefix to be cached via prefix matching
-        time_suffix = ""
+        if dynamic_context:
+            messages.append({"role": "user", "content": dynamic_context})
+
+        # Build raw datetime text (without wrapper).  The wrapper is applied
+        # later by _build_system_reminder_block.
+        time_text: str | None = None
         if inject_datetime:
             now = datetime.now()
-            time_suffix = f"\n[Current time: {now.strftime('%Y-%m-%d %H:%M')}]"
+            time_text = f"<CurrentTime>{now.strftime('%Y-%m-%d %H:%M')}</CurrentTime>"
 
         if isinstance(current_message, list):
             # OpenAI Responses API format: list of content blocks
-            # [{"type": "input_text", "text": "..."}, {"type": "input_image", "image_url": "data:..."}]
-            # Convert to LangChain/OpenAI Chat Completions format
+            # [{"type": "input_text", "text": "..."}, {"type": "input_image", ...}]
+            # Convert to LangChain/OpenAI Chat Completions format.
+            # Context text blocks (attachment metadata, etc.) are kept as
+            # independent blocks; only time_text goes into <system-reminder>.
             messages.append(
                 MessageConverter._convert_responses_api_to_langchain(
-                    current_message, username, time_suffix
+                    current_message, username, time_text
                 )
             )
         else:
             # Plain text message
-            content = (
+            user_text = (
                 f"User[{username}]: {current_message}" if username else current_message
             )
-            content = content + time_suffix
-            messages.append({"role": "user", "content": content})
+            reminder = MessageConverter._build_system_reminder_block(time_text)
+            if reminder:
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": [{"type": "text", "text": user_text}, reminder],
+                    }
+                )
+            else:
+                messages.append({"role": "user", "content": user_text})
 
         return messages
+
+    # ------------------------------------------------------------------
+    # Anthropic explicit cache breakpoints
+    # ------------------------------------------------------------------
+
+    # Anthropic's explicit cache_control marker.
+    _CACHE_CONTROL = {"type": "ephemeral"}
+
+    @staticmethod
+    def apply_cache_breakpoints(
+        messages: list[dict[str, Any]],
+        *,
+        has_history: bool,
+        has_dynamic_context: bool,
+    ) -> None:
+        """Add Anthropic cache_control breakpoints to stable message blocks.
+
+        Breakpoints are placed on the *last* content block of each stable
+        message so that Anthropic caches the entire prefix up to that point.
+
+        Placement strategy (up to 4 breakpoints allowed by the API):
+        1. **System prompt** — rarely changes; always worth caching.
+        2. **Last history message** — the conversation prefix is stable;
+           new turns only append, so the cached prefix keeps hitting.
+        3. **Dynamic context** — KB / RAG content is stable within a session.
+
+        The current user message is *not* marked because it changes every turn.
+        """
+        cc = MessageConverter._CACHE_CONTROL
+
+        # Helper: index of the *last* message with a given role before `before_idx`
+        def _last_index(role: str, before_idx: int) -> int | None:
+            for i in range(before_idx - 1, -1, -1):
+                if messages[i].get("role") == role:
+                    return i
+            return None
+
+        # The current user message is always the last element.
+        current_idx = len(messages)
+
+        # 1. System prompt (first message if role==system)
+        if messages and messages[0].get("role") == "system":
+            MessageConverter._set_cache_control_on_message(messages, 0, cc)
+
+        # 2. Last history message (the message just before dynamic_context or
+        #    current user message — whichever comes first)
+        if has_history:
+            # Dynamic context is inserted as a user message right before the
+            # current user message, so last history msg is at current_idx - 2
+            # when dynamic context is present, or current_idx - 1 otherwise,
+            # but we must skip back past the dynamic-context entry.
+            search_end = current_idx - 1 if has_dynamic_context else current_idx
+            hist_idx = _last_index("assistant", search_end)
+            if hist_idx is None:
+                hist_idx = _last_index("user", search_end)
+            if hist_idx is not None:
+                MessageConverter._set_cache_control_on_message(messages, hist_idx, cc)
+
+        # 3. Dynamic context message (right before the current user message)
+        if has_dynamic_context and len(messages) >= 2:
+            dc_idx = len(messages) - 2
+            MessageConverter._set_cache_control_on_message(messages, dc_idx, cc)
+
+    @staticmethod
+    def _set_cache_control_on_message(
+        messages: list[dict[str, Any]],
+        idx: int,
+        cache_control: dict[str, str],
+    ) -> None:
+        """Set cache_control on the last content block of ``messages[idx]``."""
+        msg = messages[idx]
+        content = msg.get("content")
+        if content is None:
+            return
+        if isinstance(content, str):
+            # Convert to block format so we can attach metadata.
+            msg["content"] = [
+                {"type": "text", "text": content, "cache_control": cache_control}
+            ]
+        elif isinstance(content, list) and content:
+            last_block = content[-1]
+            if isinstance(last_block, dict):
+                last_block["cache_control"] = cache_control
+
+    @staticmethod
+    def _build_system_reminder_block(
+        time_text: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Build a ``<system-reminder>`` content block for ephemeral metadata.
+
+        Only contains small, non-persisted metadata like ``<CurrentTime>``.
+        Context content (attachments, knowledge base, selected documents)
+        is kept as independent text blocks — not merged here.
+
+        Args:
+            time_text: Optional raw time string (e.g. ``<CurrentTime>...</CurrentTime>``).
+
+        Returns:
+            A ``{"type": "text", "text": "<system-reminder>...</system-reminder>"}``
+            dict, or ``None`` if there is nothing to include.
+        """
+        if not time_text:
+            return None
+        return {
+            "type": "text",
+            "text": f"<system-reminder>{time_text}</system-reminder>",
+        }
 
     @staticmethod
     def _convert_responses_api_to_langchain(
         content_blocks: list[dict[str, Any]],
         username: str | None = None,
-        time_suffix: str = "",
+        time_text: str | None = None,
     ) -> dict[str, Any]:
         """Convert OpenAI Responses API format to LangChain/Chat Completions format.
 
-        OpenAI Responses API format:
-        [
-            {"type": "input_text", "text": "..."},
-            {"type": "input_image", "image_url": "data:image/png;base64,..."},
-        ]
-
-        LangChain/Chat Completions format:
-        {
-            "role": "user",
-            "content": [
-                {"type": "text", "text": "..."},
-                {"type": "image_url", "image_url": {"url": "data:..."}},
-            ]
-        }
+        Context text blocks (attachment metadata, selected-documents, etc.) are
+        kept as **independent** text blocks.  Only ``time_text`` is wrapped in
+        a ``<system-reminder>`` block appended at the end.  The last
+        ``input_text`` block is always treated as the user's own message.
 
         Args:
             content_blocks: List of content blocks in Responses API format
             username: Optional username to prefix text content
-            time_suffix: Optional time suffix to append to text content
+            time_text: Optional raw time string for ``<system-reminder>``
 
         Returns:
             Message dict in LangChain/Chat Completions format
         """
-        langchain_content: list[dict[str, Any]] = []
-        first_text_processed = False
+        # Phase 1 — convert blocks, separating text vs image
+        text_entries: list[dict[str, Any]] = []  # (converted text blocks)
+        image_entries: list[dict[str, Any]] = []  # (converted image blocks)
 
         for block in content_blocks:
             block_type = block.get("type", "")
 
             if block_type == "input_text":
-                # Convert input_text to text
-                text = block.get("text", "")
-                if not first_text_processed:
-                    if username:
-                        text = f"User[{username}]: {text}"
-                    text = text + time_suffix
-                    first_text_processed = True
-                langchain_content.append({"type": "text", "text": text})
+                text_entries.append({"type": "text", "text": block.get("text", "")})
 
             elif block_type == "input_image":
                 # Convert input_image to image_url
@@ -166,9 +279,31 @@ class MessageConverter:
                     except Exception as e:
                         logger.warning(f"Failed to process image: {e}")
 
-                    langchain_content.append(
+                    image_entries.append(
                         {"type": "image_url", "image_url": {"url": image_url}}
                     )
+
+        # Phase 2 — separate user message (last text) from context blocks
+        if text_entries:
+            user_msg_block = text_entries[-1]
+            context_blocks = text_entries[:-1]  # independent text blocks
+        else:
+            # Image-only message: create an empty text block for username
+            user_msg_block = {"type": "text", "text": ""}
+            context_blocks = []
+
+        # Apply username prefix to the user message block
+        if username:
+            user_msg_block["text"] = f"User[{username}]: {user_msg_block['text']}"
+
+        # Phase 3 — assemble: [user_msg, images, context_blocks..., system-reminder]
+        langchain_content: list[dict[str, Any]] = [user_msg_block]
+        langchain_content.extend(image_entries)
+        langchain_content.extend(context_blocks)
+
+        reminder = MessageConverter._build_system_reminder_block(time_text)
+        if reminder:
+            langchain_content.append(reminder)
 
         return {"role": "user", "content": langchain_content}
 

@@ -35,6 +35,9 @@ import {
   KnowledgeDocumentPage,
 } from '@/features/knowledge'
 
+// Storage key for knowledge sidebar collapsed state
+const KNOWLEDGE_SIDEBAR_COLLAPSED_KEY = 'knowledge-sidebar-collapsed'
+
 // Main knowledge page content with URL parameter support
 function KnowledgePageContent() {
   const { t } = useTranslation()
@@ -88,8 +91,46 @@ function KnowledgePageContent() {
   // Mobile sidebar state
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
 
-  // Collapsed sidebar state
+  // Collapsed sidebar state (task sidebar)
   const [isCollapsed, setIsCollapsed] = useState(false)
+
+  // Knowledge sidebar collapsed state (for document tab)
+  // This is synced with KnowledgeDocumentPageDesktop via localStorage and custom events
+  const [isKnowledgeSidebarCollapsed, setIsKnowledgeSidebarCollapsed] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem(KNOWLEDGE_SIDEBAR_COLLAPSED_KEY) === 'true'
+    }
+    return false
+  })
+
+  // Listen for knowledge sidebar collapse changes from KnowledgeDocumentPageDesktop
+  useEffect(() => {
+    const handleCollapseChange = (event: CustomEvent<{ collapsed: boolean }>) => {
+      setIsKnowledgeSidebarCollapsed(event.detail.collapsed)
+    }
+
+    window.addEventListener(
+      'knowledge-sidebar-collapse-change',
+      handleCollapseChange as EventListener
+    )
+
+    return () => {
+      window.removeEventListener(
+        'knowledge-sidebar-collapse-change',
+        handleCollapseChange as EventListener
+      )
+    }
+  }, [])
+
+  // Handle expanding the knowledge sidebar from TopNavigation
+  const handleExpandKnowledgeSidebar = useCallback(() => {
+    setIsKnowledgeSidebarCollapsed(false)
+    localStorage.setItem(KNOWLEDGE_SIDEBAR_COLLAPSED_KEY, 'false')
+    // Dispatch event to notify KnowledgeDocumentPageDesktop
+    window.dispatchEvent(
+      new CustomEvent('knowledge-sidebar-collapse-change', { detail: { collapsed: false } })
+    )
+  }, [])
 
   // Handle knowledge type tab change with URL update
   const handleTabChange = useCallback(
@@ -183,53 +224,60 @@ function KnowledgePageContent() {
 
       {/* Main content area */}
       <div className="flex-1 flex flex-col min-w-0">
-        {/* Top navigation */}
+        {/* Top navigation with integrated knowledge tabs */}
         <TopNavigation
           activePage="wiki"
           variant="with-sidebar"
-          title={t('knowledge:title')}
+          centerContent={
+            <KnowledgeTabs
+              activeTab={activeTab}
+              onTabChange={handleTabChange}
+              isKnowledgeSidebarCollapsed={isKnowledgeSidebarCollapsed}
+              onExpandClick={handleExpandKnowledgeSidebar}
+            />
+          }
           onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
           isSidebarCollapsed={isCollapsed}
         >
           {isMobile ? <ThemeToggle /> : <GithubStarButton />}
         </TopNavigation>
 
-        {/* Knowledge type tabs */}
-        <KnowledgeTabs activeTab={activeTab} onTabChange={handleTabChange} />
-
         {/* Content area based on active tab */}
-        <div className="flex-1 overflow-auto p-6">
-          {activeTab === 'code' && (
-            <>
-              {/* Center search box - using shared component */}
-              <SearchBox
-                value={mainSearchTerm}
-                onChange={setMainSearchTerm}
-                placeholder={t('knowledge:search_repositories')}
-                size="md"
-                className="mb-6 max-w-2xl mx-auto"
-              />
-              {/* Project list */}
-              <WikiProjectList
-                projects={userProjects}
-                loading={loading}
-                loadingMore={loadingMore}
-                error={error}
-                onAddRepo={handleAddRepo}
-                onProjectClick={navigateToKnowledgeDetail}
-                onTaskClick={navigateToTask}
-                onCancelClick={handleCancelClick}
-                cancellingIds={cancellingIds}
-                searchTerm={mainSearchTerm}
-                hasMore={hasMore}
-                onLoadMore={loadMoreProjects}
-                currentUserId={user?.id}
-              />
-            </>
-          )}
+        {activeTab === 'code' && (
+          <div className="flex-1 overflow-auto p-6">
+            {/* Center search box - using shared component */}
+            <SearchBox
+              value={mainSearchTerm}
+              onChange={setMainSearchTerm}
+              placeholder={t('knowledge:search_repositories')}
+              size="md"
+              className="mb-6 max-w-2xl mx-auto"
+            />
+            {/* Project list */}
+            <WikiProjectList
+              projects={userProjects}
+              loading={loading}
+              loadingMore={loadingMore}
+              error={error}
+              onAddRepo={handleAddRepo}
+              onProjectClick={navigateToKnowledgeDetail}
+              onTaskClick={navigateToTask}
+              onCancelClick={handleCancelClick}
+              cancellingIds={cancellingIds}
+              searchTerm={mainSearchTerm}
+              hasMore={hasMore}
+              onLoadMore={loadMoreProjects}
+              currentUserId={user?.id}
+            />
+          </div>
+        )}
 
-          {activeTab === 'document' && <KnowledgeDocumentPage />}
-        </div>
+        {/* Document knowledge - no padding, full height */}
+        {activeTab === 'document' && (
+          <div className="flex-1 flex flex-col min-h-0">
+            <KnowledgeDocumentPage />
+          </div>
+        )}
       </div>
 
       {/* Add repository modal */}

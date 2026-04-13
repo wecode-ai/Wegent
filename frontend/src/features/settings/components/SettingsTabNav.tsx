@@ -49,7 +49,7 @@ type ResourceScope = 'personal' | 'group'
 
 interface SettingsTabNavProps {
   activeTab: SettingsTabId
-  onTabChange: (tab: SettingsTabId) => void
+  onTabChange: (tab: SettingsTabId, groupName?: string | null) => void
   selectedGroup?: string | null
   onGroupChange?: (groupName: string | null) => void
   refreshTrigger?: number
@@ -160,9 +160,24 @@ export function SettingsTabNav({
 
   // Handle group selection
   const handleGroupSelect = (groupName: string | null) => {
+    // Update scope first
+    setCurrentScope('group')
+    // Then notify parent about group change
     onGroupChange?.(groupName)
-    // Switch to group scope when selecting a group
-    handleScopeChange('group')
+    // Switch to group tab for current resource
+    const currentKey = getCurrentResourceKey()
+    if (currentKey) {
+      const tab = resourceTabs.find(t => t.key === currentKey)
+      if (tab) {
+        // Pass groupName to onTabChange to ensure URL is updated with correct group
+        onTabChange(tab.groupId, groupName)
+      }
+    } else {
+      // If not on a resource tab, switch to the first resource tab of group scope
+      const firstTab = resourceTabs[0]
+      // Pass groupName to onTabChange to ensure URL is updated with correct group
+      onTabChange(firstTab.groupId, groupName)
+    }
   }
   // Determine current scope based on active tab
   const getCurrentScope = (): ResourceScope => {
@@ -195,6 +210,12 @@ export function SettingsTabNav({
   // Handle scope change
   const handleScopeChange = (newScope: ResourceScope) => {
     setCurrentScope(newScope)
+
+    // If switching to group scope and no group is selected, auto-select the first group
+    if (newScope === 'group' && !selectedGroup && groups.length > 0) {
+      onGroupChange?.(groups[0].name)
+    }
+
     const currentKey = getCurrentResourceKey()
     if (currentKey) {
       const tab = resourceTabs.find(t => t.key === currentKey)

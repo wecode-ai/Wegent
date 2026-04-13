@@ -26,6 +26,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from executor.config.config import WEGENT_EXECUTOR_HOME
+
 logger = logging.getLogger(__name__)
 
 
@@ -41,6 +43,13 @@ class DeviceType(str, Enum):
 
     LOCAL = "local"
     CLOUD = "cloud"
+
+
+class BindShell(str, Enum):
+    """Bind shell type enumeration."""
+
+    CLAUDECODE = "claudecode"
+    OPENCLAW = "openclaw"
 
 
 @dataclass
@@ -93,6 +102,62 @@ class LoggingConfig:
 
 
 @dataclass
+class UpdateConfig:
+    """Update source configuration.
+
+    Simple configuration:
+    - No registry: Use GitHub Releases (default, public)
+    - Has registry: Use Registry API (for private deployments)
+    """
+
+    registry: str = ""  # Registry URL (e.g., "https://example.com/ai-tool-box")
+    registry_token: str = ""  # Optional auth token for registry
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary."""
+        return {
+            "registry": self.registry,
+            "registry_token": self.registry_token,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "UpdateConfig":
+        """Create from dictionary.
+
+        Backward compatible: reads old field names 'url'/'token' if new fields not present.
+        """
+        # Check for new field names first, fall back to old names for backward compatibility
+        registry = data.get("registry", "")
+        if not registry and "url" in data:
+            registry = data.get("url", "")
+
+        registry_token = data.get("registry_token", "")
+        if not registry_token and "token" in data:
+            registry_token = data.get("token", "")
+
+        return cls(
+            registry=registry,
+            registry_token=registry_token,
+        )
+
+    def is_registry(self) -> bool:
+        """Check if registry update source is configured."""
+        # Check config field first
+        if self.registry:
+            return True
+        # Check environment variables
+        return bool(os.environ.get("REGISTRY"))
+
+    def get_registry_url(self) -> Optional[str]:
+        """Get registry URL from config or environment."""
+        return self.registry or os.environ.get("REGISTRY") or None
+
+    def get_token(self) -> Optional[str]:
+        """Get auth token from config or environment."""
+        return self.registry_token or os.environ.get("REGISTRY_TOKEN") or None
+
+
+@dataclass
 class DeviceConfig:
     """Device configuration for executor.
 
@@ -105,6 +170,9 @@ class DeviceConfig:
 
     # Device type: 'local' or 'cloud'
     device_type: str = "local"
+
+    # Shell binding: 'claudecode' or 'openclaw'
+    bind_shell: str = "claudecode"
 
     # Unique device identifier (auto-generated UUID if not specified)
     device_id: str = ""
@@ -124,17 +192,22 @@ class DeviceConfig:
     # Logging settings
     logging: LoggingConfig = field(default_factory=LoggingConfig)
 
+    # Update settings
+    update: UpdateConfig = field(default_factory=UpdateConfig)
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return {
             "mode": self.mode,
             "device_type": self.device_type,
+            "bind_shell": self.bind_shell,
             "device_id": self.device_id,
             "device_name": self.device_name,
             "capabilities": self.capabilities,
             "max_concurrent_tasks": self.max_concurrent_tasks,
             "connection": self.connection.to_dict(),
             "logging": self.logging.to_dict(),
+            "update": self.update.to_dict(),
         }
 
     @classmethod
@@ -142,16 +215,19 @@ class DeviceConfig:
         """Create from dictionary."""
         connection_data = data.get("connection", {})
         logging_data = data.get("logging", {})
+        update_data = data.get("update", {})
 
         return cls(
             mode=data.get("mode", "local"),
             device_type=data.get("device_type", "local"),
+            bind_shell=data.get("bind_shell", "claudecode"),
             device_id=data.get("device_id", ""),
             device_name=data.get("device_name", ""),
             capabilities=data.get("capabilities", []),
             max_concurrent_tasks=data.get("max_concurrent_tasks", 5),
             connection=ConnectionConfig.from_dict(connection_data),
             logging=LoggingConfig.from_dict(logging_data),
+            update=UpdateConfig.from_dict(update_data),
         )
 
 
@@ -180,10 +256,9 @@ def _get_default_config_path() -> Path:
     """Get the default config file path.
 
     Returns:
-        Path to ~/.wegent-executor/device-config.json
+        Path to ${WEGENT_EXECUTOR_HOME}/device-config.json
     """
-    home = Path.home()
-    return home / ".wegent-executor" / "device-config.json"
+    return Path(WEGENT_EXECUTOR_HOME).expanduser() / "device-config.json"
 
 
 def _create_default_config() -> DeviceConfig:
@@ -247,19 +322,65 @@ def _apply_env_overrides(config: DeviceConfig) -> tuple[DeviceConfig, bool]:
     # Device overrides
     if os.environ.get("DEVICE_ID"):
         env_value = os.environ["DEVICE_ID"]
-        if not config.device_id:
+        if config.device_id != env_value:
+            log_msg = (
+                f"DEVICE_ID override: '{config.device_id}' -> '{env_value}' "
+                f"(will be saved to config)"
+            )
+            logger.info(log_msg)
             should_save = True
         config.device_id = env_value
 
     if os.environ.get("DEVICE_NAME"):
         env_value = os.environ["DEVICE_NAME"]
-        if not config.device_name:
+        if config.device_name != env_value:
+            log_msg = (
+                f"DEVICE_NAME override: '{config.device_name}' -> '{env_value}' "
+                f"(will be saved to config)"
+            )
+            logger.info(log_msg)
             should_save = True
         config.device_name = env_value
+
+    if os.environ.get("DEVICE_TYPE"):
+        env_value = os.environ["DEVICE_TYPE"].lower()
+        valid_types = {t.value for t in DeviceType}
+        if env_value in valid_types:
+            config.device_type = env_value
+        else:
+            logger.warning(
+                f"Invalid DEVICE_TYPE '{env_value}', must be one of {valid_types}. "
+                "Keeping current value."
+            )
+
+    if os.environ.get("BIND_SHELL"):
+        env_value = os.environ["BIND_SHELL"].lower()
+        valid_shells = {s.value for s in BindShell}
+        if env_value in valid_shells:
+            config.bind_shell = env_value
+        else:
+            logger.warning(
+                f"Invalid BIND_SHELL '{env_value}', must be one of {valid_shells}. "
+                "Keeping current value."
+            )
 
     # Logging overrides (don't save, just override)
     if os.environ.get("LOG_LEVEL"):
         config.logging.level = os.environ["LOG_LEVEL"].lower()
+
+    # Update source overrides (REGISTRY and REGISTRY_TOKEN)
+    if os.environ.get("REGISTRY"):
+        env_value = os.environ["REGISTRY"]
+        if not config.update.registry:
+            should_save = True
+        config.update.registry = env_value
+        logger.info(f"REGISTRY override: using registry at '{env_value}'")
+
+    if os.environ.get("REGISTRY_TOKEN"):
+        env_value = os.environ["REGISTRY_TOKEN"]
+        if not config.update.registry_token:
+            should_save = True
+        config.update.registry_token = env_value
 
     return config, should_save
 

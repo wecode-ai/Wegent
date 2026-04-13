@@ -246,6 +246,8 @@ test.describe('Settings and Chat Integration', () => {
     const modelsTab = page.locator('button:has-text("Models"), button:has-text("模型")').first()
     if (await modelsTab.isVisible({ timeout: 3000 }).catch(() => false)) {
       await modelsTab.click()
+      // Wait for URL to update (Next.js router.replace is async)
+      await page.waitForURL(/models/, { timeout: 5000 }).catch(() => {})
       await page.waitForTimeout(500)
 
       expect(page.url()).toContain('models')
@@ -256,6 +258,8 @@ test.describe('Settings and Chat Integration', () => {
     const teamTab = page.locator('button:has-text("Team"), button:has-text("智能体")').first()
     if (await teamTab.isVisible({ timeout: 3000 }).catch(() => false)) {
       await teamTab.click()
+      // Wait for URL to update
+      await page.waitForURL(/team/, { timeout: 5000 }).catch(() => {})
       await page.waitForTimeout(500)
 
       expect(page.url()).toContain('team')

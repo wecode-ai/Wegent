@@ -3,6 +3,7 @@
     "title": "Groups",
     "create": "Create Group",
     "name": "Name",
+    "groupId": "Group ID",
     "displayName": "Display Name",
     "visibility": "Visibility",
     "description": "Description",
@@ -24,7 +25,8 @@
       "Owner": "Owner",
       "Maintainer": "Maintainer",
       "Developer": "Developer",
-      "Reporter": "Reporter"
+      "Reporter": "Reporter",
+      "RestrictedAnalyst": "Restricted Analyst"
     },
     "actions": {
       "addMember": "Add Member",
@@ -68,7 +70,9 @@
     "noGroups": "No groups yet",
     "editGroup": "Edit group",
     "manageMembers": "Manage members",
-    "deleteGroup": "Delete group"
+    "viewMembers": "View members",
+    "deleteGroup": "Delete group",
+    "enterGroup": "Enter group"
   },
   "groupCreate": {
     "nameImmutable": "Immutable after creation. Use letters, numbers, dashes, and underscores only.",
@@ -118,21 +122,30 @@
     "userAlreadyMember": "This user is already a member of the group",
     "addByUsernameNotSupported": "Adding members by username is not yet supported. Please contact admin to use 'Invite All Users' feature",
     "searchPlaceholder": "Search username or email...",
+    "searchMembersPlaceholder": "Search member name, inviter, or role...",
     "selectedUsers": "{{count}} user(s) selected",
     "addMembersSuccess": "Successfully added {{count}} member(s)",
     "alreadyMembers": "{{count}} user(s) already members",
     "adding": "Adding...",
     "addCount": "Add ({{count}})",
+    "pendingChange": "Unsaved",
+    "pendingChangesCount": "{{count}} change(s) pending",
+    "visibleMembersCount": "Showing {{count}} member(s)",
+    "confirmDiscardRoleChanges": "You have unsaved role changes. Discard them?",
+    "saveRoleChangesSuccess": "Saved {{count}} role change(s)",
+    "noMembersFound": "No matching members found",
     "rolePermissions": "Role Permissions",
+    "errors": {
+      "currentOwnerRoleChangeRequiresTransfer": "Cannot change the current group owner's role. Transfer ownership first."
+    },
     "roleDescriptions": {
       "Reporter": "Can only view group resources, cannot make any modifications, can leave group",
       "Developer": "Can view, create, and edit group resources, can leave group, but cannot delete resources or manage members",
-      "Maintainer": "Has all permissions except deleting group and transferring ownership",
+      "Maintainer": "Can manage all knowledge resources in the namespace, but cannot manage namespace settings or members",
       "MaintainerDetails": {
         "title": "Including:",
         "manageResources": "Manage all resources (view, create, edit, delete)",
-        "manageMembers": "Invite and remove members",
-        "updateRoles": "Modify member roles (except Owner)",
+        "cannotManageNamespace": "Cannot edit namespace settings, membership, or ownership",
         "canLeave": "Can leave group"
       },
       "Owner": "Has full control of the group",
@@ -142,7 +155,8 @@
         "deleteGroup": "Delete group",
         "transferOwnership": "Transfer ownership",
         "cannotLeave": "Cannot leave group directly (must transfer ownership first)"
-      }
+      },
+      "RestrictedAnalyst": "Can only view conversation and cannot access knowledge base content to protect sensitive information"
     }
   }
 }

@@ -50,6 +50,7 @@ from shared.models.openai_converter import get_metadata_field
 from shared.status import TaskStatus
 from shared.telemetry.config import get_otel_config
 from shared.utils.http_client import traced_session, traced_sync_client
+from shared.utils.task_identity import build_task_identity_env
 
 logger = setup_logger(__name__)
 
@@ -168,6 +169,7 @@ class DockerExecutor(Executor):
         is_validation_task = get_metadata_field(task_dict, "type") == "validation"
         # Check if this is a Sandbox task (internal tasks with callback routing)
         is_sandbox_task = get_metadata_field(task_dict, "type") == "sandbox"
+        prepare_only = bool(get_metadata_field(task_dict, "prepare_only", False))
 
         # Initialize execution status
         execution_status = {
@@ -181,7 +183,14 @@ class DockerExecutor(Executor):
         try:
             # Determine execution path based on whether container name exists
             if executor_name:
-                self._execute_in_existing_container(task_dict, execution_status)
+                # Check if container needs to be recreated (not running or doesn't exist)
+                if self._should_recreate_container(executor_name, task_id):
+                    execution_status["executor_name"] = executor_name
+                    self._create_new_container(task_dict, task_info, execution_status)
+                elif prepare_only:
+                    self.wait_instance_ready(executor_name)
+                else:
+                    self._execute_in_existing_container(task_dict, execution_status)
             else:
                 # Generate new container name
                 execution_status["executor_name"] = generate_executor_name(
@@ -232,6 +241,51 @@ class DockerExecutor(Executor):
             "executor_name": executor_name,
         }
 
+    def _should_recreate_container(self, executor_name: str, task_id: int) -> bool:
+        """Check if container should be recreated due to stale or non-running state.
+
+        Quick liveness check: if the named container no longer exists or has
+        already exited (e.g. after a subscription task completes), clean it up
+        and restart with the same name rather than blocking wait_instance_ready
+        for up to 180 s on a dead container.
+
+        Args:
+            executor_name: Name of the container to check
+            task_id: Task ID for logging purposes
+
+        Returns:
+            True if container should be recreated, False if it can be reused
+        """
+        container_status = self.get_container_status(executor_name)
+
+        # Container is running and healthy, can be reused
+        if (
+            container_status.get("exists", False)
+            and container_status.get("status") == "running"
+        ):
+            return False
+
+        # Container is stale or not running, needs recreation
+        logger.info(
+            f"Container '{executor_name}' is not running "
+            f"(exists={container_status.get('exists')}, "
+            f"status={container_status.get('status')}). "
+            f"Removing stale container and restarting for task {task_id}."
+        )
+
+        # Remove the exited container so Docker won't complain about
+        # name collision when we recreate it with the same executor_name.
+        if container_status.get("exists", False):
+            try:
+                delete_container(executor_name)
+                logger.info(f"Deleted stale container '{executor_name}'")
+            except Exception as del_err:
+                logger.warning(
+                    f"Failed to delete stale container '{executor_name}': {del_err}"
+                )
+
+        return True
+
     def _execute_in_existing_container(
         self, task: Dict[str, Any], status: Dict[str, Any]
     ) -> None:
@@ -259,6 +313,15 @@ class DockerExecutor(Executor):
             task_type=task_type,
             context=f"existing container: {executor_name}",
         )
+
+    def _should_keep_failed_validation_container(self, task: Dict[str, Any]) -> bool:
+        """Whether to keep failed validation containers for debugging."""
+        is_validation_task = get_metadata_field(task, "type") == "validation"
+        if not is_validation_task:
+            return False
+
+        keep_flag = os.getenv("VALIDATION_KEEP_FAILED_CONTAINER", "false").lower()
+        return keep_flag in ("1", "true", "yes", "on")
 
     def _get_container_port(
         self, executor_name: str
@@ -314,24 +377,31 @@ class DockerExecutor(Executor):
     ) -> None:
         """Create new Docker container"""
         is_sandbox_task = get_metadata_field(task, "type") == "sandbox"
+        prepare_only = bool(get_metadata_field(task, "prepare_only", False))
         executor_name = status["executor_name"]
         self.create_instance(task, task_info, executor_name)
 
-        # For non-sandbox tasks, dispatch the first HTTP request after startup.
-        # Sandbox containers are intentionally started idle and wait for /execute requests.
         if not is_sandbox_task:
             try:
                 ready_info = self.wait_instance_ready(executor_name)
-                self.dispatch_task_to_instance(task, executor_name, ready_info)
+                if not prepare_only:
+                    self.dispatch_task_to_instance(task, executor_name, ready_info)
             except Exception:
                 # Avoid leaking an idle container when initial dispatch fails.
-                try:
-                    delete_container(executor_name)
-                except Exception as cleanup_error:
-                    logger.warning(
-                        f"Failed to cleanup container {executor_name} after "
-                        f"initial dispatch failure: {cleanup_error}"
+                if self._should_keep_failed_validation_container(task):
+                    logger.info(
+                        "Keeping failed validation container %s for debugging "
+                        "(VALIDATION_KEEP_FAILED_CONTAINER=true)",
+                        executor_name,
                     )
+                else:
+                    try:
+                        delete_container(executor_name)
+                    except Exception as cleanup_error:
+                        logger.warning(
+                            f"Failed to cleanup container {executor_name} after "
+                            f"initial dispatch failure: {cleanup_error}"
+                        )
                 raise
 
     def create_instance(
@@ -538,18 +608,35 @@ class DockerExecutor(Executor):
         Raises:
             RuntimeError: If request dispatch fails after retries
         """
-        max_retries = max(
-            int(os.getenv("EXECUTOR_INITIAL_DISPATCH_MAX_RETRIES", "3")),
-            1,
-        )
-        retry_interval = max(
-            float(os.getenv("EXECUTOR_INITIAL_DISPATCH_RETRY_INTERVAL", "1")),
-            0,
-        )
-        request_timeout = max(
-            float(os.getenv("EXECUTOR_INITIAL_DISPATCH_TIMEOUT", "10")),
-            0.1,
-        )
+        is_validation_task = get_metadata_field(task, "type") == "validation"
+        if is_validation_task:
+            # Validation tasks may spend longer in start callback path.
+            # Use dedicated limits to avoid false timeout and duplicate dispatches.
+            max_retries = max(
+                int(os.getenv("VALIDATION_INITIAL_DISPATCH_MAX_RETRIES", "1")),
+                1,
+            )
+            retry_interval = max(
+                float(os.getenv("VALIDATION_INITIAL_DISPATCH_RETRY_INTERVAL", "1")),
+                0,
+            )
+            request_timeout = max(
+                float(os.getenv("VALIDATION_INITIAL_DISPATCH_TIMEOUT", "60")),
+                0.1,
+            )
+        else:
+            max_retries = max(
+                int(os.getenv("EXECUTOR_INITIAL_DISPATCH_MAX_RETRIES", "3")),
+                1,
+            )
+            retry_interval = max(
+                float(os.getenv("EXECUTOR_INITIAL_DISPATCH_RETRY_INTERVAL", "1")),
+                0,
+            )
+            request_timeout = max(
+                float(os.getenv("EXECUTOR_INITIAL_DISPATCH_TIMEOUT", "10")),
+                0.1,
+            )
         last_error = "unknown error"
 
         for attempt in range(1, max_retries + 1):
@@ -677,14 +764,21 @@ class DockerExecutor(Executor):
                     )
 
                     # Clean up the failed container
-                    try:
-                        self.subprocess.run(
-                            ["docker", "rm", "-f", executor_name],
-                            capture_output=True,
-                            timeout=10,
+                    if self._should_keep_failed_validation_container(task):
+                        logger.info(
+                            "Keeping exited validation container %s for debugging "
+                            "(VALIDATION_KEEP_FAILED_CONTAINER=true)",
+                            executor_name,
                         )
-                    except Exception:
-                        pass
+                    else:
+                        try:
+                            self.subprocess.run(
+                                ["docker", "rm", "-f", executor_name],
+                                capture_output=True,
+                                timeout=10,
+                            )
+                        except Exception:
+                            pass
 
                     # Raise exception to mark task as failed
                     raise RuntimeError(f"Container exited immediately: {error_msg}")
@@ -866,6 +960,13 @@ class DockerExecutor(Executor):
             ]
         )
 
+        identity_env = build_task_identity_env(
+            skill_identity_token=get_metadata_field(task, "skill_identity_token"),
+            user_name=user_name,
+        )
+        for key, value in identity_env.items():
+            cmd.extend(["-e", f"{key}={value}"])
+
         # If using custom base_image, mount executor binary from Named Volume
         if base_image:
             cmd.extend(
@@ -955,9 +1056,16 @@ class DockerExecutor(Executor):
             cmd: Docker command list to extend
             task: Task dictionary containing task info and sandbox_metadata
         """
-        # Skip validation tasks - they are short-lived and don't need heartbeat
         task_type = get_metadata_field(task, "type", "online")
-        if task_type == "validation":
+        is_validation = task_type == "validation"
+
+        # For validation tasks, only set EXECUTOR_MANAGER_HEARTBEAT_BASE_URL for callback
+        # Skip other heartbeat settings as validation tasks are short-lived
+        if is_validation:
+            callback_url = build_callback_url(task)
+            if callback_url and "/callback" in callback_url:
+                base_url = callback_url.replace("/callback", "")
+                cmd.extend(["-e", f"EXECUTOR_MANAGER_HEARTBEAT_BASE_URL={base_url}"])
             return
 
         is_sandbox = task_type == "sandbox"
@@ -1244,7 +1352,11 @@ class DockerExecutor(Executor):
                 "error_msg": f"Error getting current task IDs: {str(e)}",
             }
 
-    def get_container_address(self, executor_name: str) -> Dict[str, Any]:
+    def get_container_address(
+        self,
+        executor_name: str,
+        executor_namespace: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """Get container base URL for sandbox proxy.
 
         This method is called by SandboxManager to get the address for proxying
@@ -1252,6 +1364,7 @@ class DockerExecutor(Executor):
 
         Args:
             executor_name: Container name
+            executor_namespace: Executor namespace if applicable
 
         Returns:
             Dict with status and base_url (e.g., http://localhost:8080)

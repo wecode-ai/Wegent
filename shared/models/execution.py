@@ -21,6 +21,8 @@ from typing import Any, Optional, Union
 
 from dacite import Config, from_dict
 
+from .knowledge import KnowledgeBaseToolAccessMode
+
 
 class EventType(str, Enum):
     """Unified execution event types.
@@ -84,6 +86,9 @@ class ExecutionRequest:
     # When vision content is present, this will be a list of content blocks:
     # [{"type": "input_text", "text": "..."}, {"type": "input_image", "image_url": "data:..."}]
     prompt: Union[str, list[dict[str, Any]]] = ""
+    kb_meta_prompt: str = (
+        ""  # Knowledge base meta prompt (injected via dynamic_context mechanism)
+    )
 
     # === Feature Toggles ===
     enable_tools: bool = True
@@ -100,6 +105,13 @@ class ExecutionRequest:
     skills: list = field(
         default_factory=list
     )  # From ChatRequest: Skill metadata for prompt injection
+    skill_refs: dict = field(
+        default_factory=dict
+    )  # Mapping from skill name to skill metadata for precise identification
+    # Format: {"skill_name": {"skill_id": 101, "namespace": "default", "is_public": false}}
+    preload_skill_refs: dict = field(
+        default_factory=dict
+    )  # Mapping for preload skills, can override same-name skill_refs during download
 
     # === MCP Configuration ===
     # Format: [{"name": "server_name", "url": "...", "type": "...", "auth": {...}}]
@@ -110,6 +122,7 @@ class ExecutionRequest:
     document_ids: Optional[list] = None
     table_contexts: list = field(default_factory=list)
     is_user_selected_kb: bool = True
+    kb_tool_access_mode: str = KnowledgeBaseToolAccessMode.FULL
 
     # === Workspace Configuration ===
     workspace: dict = field(default_factory=dict)
@@ -129,6 +142,7 @@ class ExecutionRequest:
     )
     is_group_chat: bool = False
     history_limit: Optional[int] = None
+    stateless: bool = False
     new_session: bool = False
     collaboration_model: str = "single"
     mode: Optional[str] = (
@@ -142,6 +156,7 @@ class ExecutionRequest:
 
     # === Authentication ===
     auth_token: str = ""
+    skill_identity_token: str = ""
     backend_url: str = ""
 
     # === Attachments ===
@@ -150,6 +165,9 @@ class ExecutionRequest:
     # === Subscription Task ===
     is_subscription: bool = False
     system_mcp_config: Optional[dict] = None
+
+    # === Task Data (from ChatRequest) ===
+    task_data: Optional[dict] = None  # Task data for MCP tools
 
     extra_tools: list = field(default_factory=list)  # Extra tools to add
     timezone: str = "Asia/Shanghai"  # User timezone for CreateSubscriptionTool
@@ -171,6 +189,9 @@ class ExecutionRequest:
     # === Validation / Sandbox Configuration ===
     validation_params: Optional[dict] = None  # Validation task parameters
     sandbox_metadata: Optional[dict] = None  # Sandbox task metadata
+
+    # === Workspace Recovery ===
+    skip_git_clone: bool = False  # Skip git clone for workspace recovery from archive
 
     # === Timestamps (from Task) ===
     created_at: Optional[str] = None  # ISO format datetime

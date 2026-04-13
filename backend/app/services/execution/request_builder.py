@@ -11,7 +11,7 @@ providing complete Bot, Model, Ghost, Shell, and Skill resolution.
 """
 
 import logging
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Union
 
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -19,11 +19,23 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.models.subtask import Subtask
 from app.models.task import TaskResource
-from app.schemas.kind import Bot, Ghost, Shell, Team
+from app.schemas.kind import Bot, Ghost, Shell
+from app.schemas.kind import Skill as SkillCRD
+from app.schemas.kind import Team
+from app.services.auth import create_skill_identity_token
+from app.services.mcp_provider_registry import (
+    get_mcp_service_by_skill_name,
+    list_mcp_providers,
+)
+from app.services.readers import KindType, kindReader
+from app.services.skill_resolution import find_skill_by_name, find_skill_by_ref
+from app.services.user_mcp_service import user_mcp_service
 from shared.models import ExecutionRequest
 from shared.models.db import Kind, User
+from shared.utils.url_util import domains_match
 
 logger = logging.getLogger(__name__)
+SELECTED_KB_PRELOAD_SKILL = "wegent-knowledge"
 
 
 class TaskRequestBuilder:
@@ -53,8 +65,9 @@ class TaskRequestBuilder:
             db: Database session
         """
         self.db = db
-        # Cache shell_type to avoid repeated database queries
-        self._cached_shell_type: str | None = None
+        # Cache shell info by (user_id, namespace, shell_name)
+        # to avoid repeated database queries while keeping per-shell isolation.
+        self._cached_shell_info: dict[tuple[int, str, str], dict] = {}
 
     def build(
         self,
@@ -62,7 +75,7 @@ class TaskRequestBuilder:
         task: TaskResource,
         user: User,
         team: Kind,
-        message: str,
+        message: Union[str, list],
         *,
         # Feature toggles
         enable_tools: bool = True,
@@ -80,6 +93,7 @@ class TaskRequestBuilder:
         # Session
         history_limit: Optional[int] = None,
         new_session: bool = False,
+        previous_bot_id: Optional[int] = None,
         attachments: Optional[List[dict]] = None,
         # Subscription
         is_subscription: bool = False,
@@ -174,20 +188,50 @@ class TaskRequestBuilder:
 
         # Get skills for the bot (full resolution from Ghost)
         # Convert preload_skills to the format expected by _get_bot_skills
+        effective_preload_skills = list(preload_skills or [])
+
+        # When clarification mode is enabled, auto-inject the interactive-form-question skill.
+        # This replaces the old prompt-injection approach with the MCP skill approach,
+        # allowing the AI to use the interactive_form_question tool for interactive clarification forms.
+        if enable_clarification:
+            effective_preload_skills = self._inject_clarification_skill(
+                effective_preload_skills
+            )
+
+        effective_preload_skills = self._inject_conditional_provider_skills(
+            user=user,
+            message=message,
+            preload_skills=effective_preload_skills,
+        )
+
+        # Inject subscription-manager skill for scheduled task creation
+        # This provides preview_subscription and create_subscription MCP tools
+        effective_preload_skills = self._inject_subscription_manager_skill(
+            effective_preload_skills,
+            is_subscription=is_subscription,
+        )
+
         user_preload_skills = None
-        if preload_skills:
+        if effective_preload_skills:
             user_preload_skills = [
-                {"name": s} if isinstance(s, str) else s for s in preload_skills
+                {"name": s} if isinstance(s, str) else s
+                for s in effective_preload_skills
             ]
 
-        resolved_skills, resolved_preload_skills, resolved_user_selected = (
+        resolved_skills, resolved_preload_skills, resolved_user_selected, skill_refs = (
             self._get_bot_skills(
                 bot=bot,
                 team=team,
+                user=user,
                 user_id=user.id,
                 user_preload_skills=user_preload_skills,
             )
         )
+        preload_skill_refs = {
+            name: skill_refs[name]
+            for name in resolved_preload_skills
+            if name in skill_refs
+        }
 
         # Build bot configuration
         bot_config = self._build_bot_config(
@@ -199,14 +243,53 @@ class TaskRequestBuilder:
             force_override=force_override,
         )
 
-        # Build MCP servers configuration
-        mcp_servers = self._build_mcp_servers(bot, team)
+        # Merge user-selected skills into bot_config so Executor downloads them
+        if bot_config and resolved_skills:
+            all_skill_names = [s["name"] for s in resolved_skills]
+            existing_skills = set(bot_config[0].get("skills", []))
+            for name in all_skill_names:
+                if name not in existing_skills:
+                    bot_config[0].setdefault("skills", []).append(name)
+                    existing_skills.add(name)
+
+        # For ClaudeCode executor: merge skill MCP, normalize types, filter unreachable
+        if bot_config:
+            shell_type = bot_config[0].get("shell_type", "")
+            if shell_type == "ClaudeCode":
+                self._prepare_mcp_for_claude_code(bot_config[0], resolved_skills)
+
+        # Generate auth token first (needed for MCP server authentication)
+        auth_token = self._generate_auth_token(task, subtask, user)
+        skill_identity_token = self._generate_skill_identity_token(task, subtask, user)
+
+        # Build MCP servers configuration (with auto-injection for subscription tasks)
+        mcp_servers = self._build_mcp_servers(
+            bot,
+            team,
+            user=user,
+            is_subscription=is_subscription,
+            auth_token=auth_token,
+        )
 
         # Get collaboration model
         collaboration_model = team_crd.spec.collaborationModel or "solo"
 
         # Determine if group chat
         is_group_chat = self._is_group_chat(task)
+
+        # Auto-determine new_session for pipeline mode
+        # In pipeline mode, new_session should be True when stage changes (different bot)
+        # This ensures each pipeline stage has independent context
+        if collaboration_model == "pipeline" and previous_bot_id is not None:
+            current_bot_id = bot.id if bot else None
+            if previous_bot_id != current_bot_id:
+                new_session = True
+                logger.info(
+                    "[TaskRequestBuilder] Pipeline: stage changed "
+                    "(previous_bot_id=%s, current_bot_id=%s), using new session",
+                    previous_bot_id,
+                    current_bot_id,
+                )
 
         return ExecutionRequest(
             task_id=task.id,
@@ -229,6 +312,8 @@ class TaskRequestBuilder:
             skill_configs=resolved_skills,
             preload_skills=resolved_preload_skills,
             user_selected_skills=user_selected_skills or resolved_user_selected,
+            skill_refs=skill_refs,
+            preload_skill_refs=preload_skill_refs,
             mcp_servers=mcp_servers,
             knowledge_base_ids=knowledge_base_ids,
             document_ids=document_ids,
@@ -247,14 +332,130 @@ class TaskRequestBuilder:
             history_limit=history_limit,
             new_session=new_session,
             collaboration_model=collaboration_model,
-            auth_token=self._generate_auth_token(task, subtask, user),
+            mode=collaboration_model,
+            auth_token=auth_token,
+            skill_identity_token=skill_identity_token,
             backend_url=settings.BACKEND_INTERNAL_URL,
             attachments=attachments or [],
             is_subscription=is_subscription,
             system_mcp_config=system_mcp_config,
+            task_data=self._build_request_task_data(user),
             trace_context=trace_context,
             executor_name=subtask.executor_name,
         )
+
+    def resolve_request_preload_skills(
+        self,
+        *,
+        request: ExecutionRequest,
+        bot: Kind,
+        team: Kind,
+        user: User,
+    ) -> ExecutionRequest:
+        """Resolve request-level preload skills into full skill and MCP config.
+
+        This is used when downstream context processing adds preload skills after the
+        initial build phase, such as selected knowledge bases that must turn into a
+        concrete public skill with ClaudeCode MCP wiring.
+        """
+        requested_skill_names = []
+        for skill_name in [
+            *(request.preload_skills or []),
+            *(request.user_selected_skills or []),
+        ]:
+            if isinstance(skill_name, str) and skill_name not in requested_skill_names:
+                requested_skill_names.append(skill_name)
+
+        if not requested_skill_names:
+            return request
+
+        existing_skill_names = {
+            skill_name
+            for skill_name in (request.skill_names or [])
+            if isinstance(skill_name, str)
+        }
+        missing_skill_names = [
+            skill_name
+            for skill_name in requested_skill_names
+            if skill_name not in existing_skill_names
+        ]
+        if not missing_skill_names:
+            return request
+
+        if not request.task_data:
+            request.task_data = self._build_request_task_data(user)
+
+        user_preload_skills = []
+        for skill_name in requested_skill_names:
+            skill_ref = (request.skill_refs or {}).get(skill_name, {})
+            explicit_ref = {
+                "name": skill_name,
+                "namespace": skill_ref.get("namespace", "default"),
+                "is_public": skill_ref.get("is_public", False),
+            }
+
+            if (
+                skill_name == SELECTED_KB_PRELOAD_SKILL
+                and request.knowledge_base_ids
+                and request.is_user_selected_kb
+            ):
+                explicit_ref["namespace"] = "default"
+                explicit_ref["is_public"] = True
+
+            user_preload_skills.append(explicit_ref)
+
+        (
+            resolved_skills,
+            resolved_preload_skills,
+            resolved_user_selected,
+            skill_refs,
+        ) = self._get_bot_skills(
+            bot=bot,
+            team=team,
+            user=user,
+            user_id=user.id,
+            user_preload_skills=user_preload_skills,
+        )
+
+        preload_skill_refs = {
+            name: skill_refs[name]
+            for name in resolved_preload_skills
+            if name in skill_refs
+        }
+
+        request.skill_configs = resolved_skills
+        request.skill_names = [skill["name"] for skill in resolved_skills]
+        request.preload_skills = resolved_preload_skills
+        request.user_selected_skills = resolved_user_selected
+        request.skill_refs = skill_refs
+        request.preload_skill_refs = preload_skill_refs
+
+        if not request.bot:
+            return request
+
+        bot_config = request.bot[0]
+        existing_bot_skills = set(bot_config.get("skills", []))
+        for skill_name in missing_skill_names:
+            if skill_name not in existing_bot_skills:
+                bot_config.setdefault("skills", []).append(skill_name)
+                existing_bot_skills.add(skill_name)
+
+        if bot_config.get("shell_type") == "ClaudeCode":
+            new_skill_configs = [
+                skill_config
+                for skill_config in resolved_skills
+                if skill_config.get("name") in missing_skill_names
+            ]
+            if new_skill_configs:
+                self._prepare_mcp_for_claude_code(bot_config, new_skill_configs)
+
+        logger.info(
+            "[TaskRequestBuilder] Resolved request preload skills: added=%s, total_skills=%s",
+            missing_skill_names,
+            request.skill_names,
+        )
+
+        return request
 
     # =========================================================================
     # Bot Resolution (from ChatConfigBuilder)
@@ -323,16 +524,12 @@ class TaskRequestBuilder:
 
         first_member = team_crd.spec.members[0]
 
-        bot = (
-            self.db.query(Kind)
-            .filter(
-                Kind.user_id == team.user_id,
-                Kind.kind == "Bot",
-                Kind.name == first_member.botRef.name,
-                Kind.namespace == first_member.botRef.namespace,
-                Kind.is_active,
-            )
-            .first()
+        bot = kindReader.get_by_name_and_namespace(
+            self.db,
+            team.user_id,
+            KindType.BOT,
+            first_member.botRef.namespace,
+            first_member.botRef.name,
         )
 
         if not bot:
@@ -365,6 +562,7 @@ class TaskRequestBuilder:
         - Environment variable placeholder replacement
         - API key decryption
         - Custom placeholder replacement (user_id, task_id, etc.)
+        - Secondary model config for video models
 
         Args:
             bot: Bot Kind object
@@ -414,7 +612,102 @@ class TaskRequestBuilder:
             task_data=task_data,
         )
 
+        # Handle secondaryModelRef for generation models (video and image).
+        # When modelType is 'video' or 'image', resolve secondary model for intent analysis
+        # used in multi-turn follow-up generation.
+        if model_config.get("modelType") in ("video", "image"):
+            secondary_model_config = self._get_secondary_model_config(
+                bot=bot,
+                user_id=user_id,
+                user_name=user_name,
+                task_id=task_id,
+                team_id=team_id,
+            )
+            if secondary_model_config:
+                model_config["secondary_model_config"] = secondary_model_config
+
         return model_config
+
+    def _get_secondary_model_config(
+        self,
+        bot: Kind,
+        user_id: int,
+        user_name: str,
+        task_id: int,
+        team_id: int,
+    ) -> dict[str, Any] | None:
+        """Get secondary model configuration from bot's secondaryModelRef.
+
+        Used for auxiliary tasks like intent analysis in video/image generation
+        follow-up conversations.
+
+        Args:
+            bot: Bot Kind object
+            user_id: User ID
+            user_name: User name for placeholder replacement
+            task_id: Task ID for placeholder replacement
+            team_id: Team ID for placeholder replacement
+
+        Returns:
+            Secondary model configuration dictionary or None if not configured
+        """
+        from app.services.chat.config.model_resolver import (
+            _extract_model_config,
+            _find_model_with_namespace,
+            _process_model_config_placeholders,
+        )
+
+        bot_crd = Bot.model_validate(bot.json)
+
+        if not bot_crd.spec or not bot_crd.spec.secondaryModelRef:
+            logger.debug(
+                "[TaskRequestBuilder] No secondaryModelRef configured for bot=%s",
+                bot.name,
+            )
+            return None
+
+        secondary_model_ref = bot_crd.spec.secondaryModelRef
+        model_name = secondary_model_ref.name
+
+        # Find the secondary model
+        model_kind, model_spec = _find_model_with_namespace(
+            self.db, model_name, user_id
+        )
+
+        if not model_spec:
+            logger.warning(
+                "[TaskRequestBuilder] Secondary model not found: name=%s",
+                model_name,
+            )
+            return None
+
+        # Extract and process model config
+        secondary_config = _extract_model_config(model_spec)
+
+        # Process placeholders
+        bot_spec = bot.json.get("spec", {}) if bot.json else {}
+        agent_config = bot_spec.get("agent_config", {})
+        user_info = {"id": user_id, "name": user_name}
+        task_data = ExecutionRequest(
+            task_id=task_id,
+            team_id=team_id,
+            user=user_info,
+        )
+
+        secondary_config = _process_model_config_placeholders(
+            model_config=secondary_config,
+            user_id=user_id,
+            user_name=user_name,
+            agent_config=agent_config,
+            task_data=task_data,
+        )
+
+        logger.info(
+            "[TaskRequestBuilder] Resolved secondaryModelRef: model=%s",
+            model_name,
+        )
+
+        return secondary_config
 
     # =========================================================================
     # System Prompt (from ChatConfigBuilder)
@@ -444,9 +737,30 @@ class TaskRequestBuilder:
         """
         from app.services.chat.config.model_resolver import get_bot_system_prompt
 
-        # Get team member prompt from first member if not provided
+        # Get team member prompt from matching member if not provided
+        # In pipeline mode, each bot has its own member with a specific prompt
         if team_member_prompt is None and team_crd.spec.members:
-            team_member_prompt = team_crd.spec.members[0].prompt
+            # Find the member that matches the current bot
+            for member in team_crd.spec.members:
+                if (
+                    member.botRef.name == bot.name
+                    and member.botRef.namespace == bot.namespace
+                ):
+                    team_member_prompt = member.prompt
+                    logger.debug(
+                        "[TaskRequestBuilder] Found matching member prompt for bot=%s: %s",
+                        bot.name,
+                        team_member_prompt[:50] if team_member_prompt else None,
+                    )
+                    break
+            # Fallback to first member if no match found (for backward compatibility)
+            if team_member_prompt is None:
+                team_member_prompt = team_crd.spec.members[0].prompt
+                logger.debug(
+                    "[TaskRequestBuilder] No matching member found for bot=%s, "
+                    "using first member prompt",
+                    bot.name,
+                )
 
         # Get base system prompt (no enhancements applied here)
         return get_bot_system_prompt(
@@ -466,6 +780,22 @@ class TaskRequestBuilder:
         This method queries the Shell CRD to get the shell_type.
         It's called once per builder instance and the result is cached.
 
+        Args:
+            bot: Bot Kind object
+            user_id: User ID for shell lookup
+
+        Returns:
+            Shell type string (e.g., "Chat", "ClaudeCode", "Agno")
+        """
+        shell_info = self._resolve_shell_info(bot, user_id)
+        return shell_info["shell_type"]
+
+    def _resolve_shell_info(self, bot: Kind, user_id: int) -> dict:
+        """Resolve shell info from bot's shellRef.
+
+        This method queries the Shell CRD to get shell_type and base_image.
+        It's called once per builder instance and the result is cached.
+
         Search order:
         1. User's private shell (user_id == user_id, namespace == shell_ref.namespace)
         2. Group shell (any user_id, namespace == shell_ref.namespace) - for group scenarios
@@ -476,22 +806,29 @@ class TaskRequestBuilder:
             user_id: User ID for shell lookup
 
         Returns:
-            Shell type string (e.g., "Chat", "ClaudeCode", "Agno")
+            dict: {"shell_type": str, "base_image": Optional[str]}
         """
-        # Return cached value if available
-        if self._cached_shell_type is not None:
-            return self._cached_shell_type
-
-        # Default value
-        shell_type = "Chat"
-
         bot_crd = Bot.model_validate(bot.json)
 
+        # Default values
+        shell_type = "Chat"
+        base_image = None
+
         if not (bot_crd.spec and bot_crd.spec.shellRef):
-            self._cached_shell_type = shell_type
-            return shell_type
+            return {
+                "shell_type": shell_type,
+                "base_image": base_image,
+            }
 
         shell_ref = bot_crd.spec.shellRef
+        cache_key = (user_id, shell_ref.namespace, shell_ref.name)
+
+        # Return cached value if available
+        cached = self._cached_shell_info.get(cache_key)
+        if cached is not None:
+            return cached
+
+        shell = None
 
         # 1. Query user's private shell first
         shell = (
@@ -533,22 +870,29 @@ class TaskRequestBuilder:
                 .first()
             )
 
-        # Extract shell_type from Shell CRD
+        # Extract shell_type and base_image from Shell CRD
         if shell and shell.json:
             shell_crd = Shell.model_validate(shell.json)
-            if shell_crd.spec and shell_crd.spec.shellType:
-                shell_type = shell_crd.spec.shellType
+            if shell_crd.spec:
+                if shell_crd.spec.shellType:
+                    shell_type = shell_crd.spec.shellType
+                base_image = shell_crd.spec.baseImage
 
         logger.debug(
-            "[TaskRequestBuilder] Resolved shell_type=%s for bot=%s (shell_ref=%s/%s)",
-            shell_type,
+            "[TaskRequestBuilder] Resolved shell_info for bot=%s (shell_ref=%s/%s): shell_type=%s, base_image=%s",
             bot_crd.metadata.name if bot_crd.metadata else "unknown",
             shell_ref.namespace,
             shell_ref.name,
+            shell_type,
+            base_image,
         )
 
-        self._cached_shell_type = shell_type
-        return shell_type
+        resolved_shell_info = {
+            "shell_type": shell_type,
+            "base_image": base_image,
+        }
+        self._cached_shell_info[cache_key] = resolved_shell_info
+        return resolved_shell_info
 
     # =========================================================================
     # Skill Resolution (from ChatConfigBuilder)
@@ -558,15 +902,17 @@ class TaskRequestBuilder:
         self,
         bot: Kind,
         team: Kind,
+        user: User,
         user_id: int,
         user_preload_skills: list | None = None,
-    ) -> tuple[list[dict], list[str], list[str]]:
+    ) -> tuple[list[dict], list[str], list[str], dict[str, dict]]:
         """Get skills for the bot from Ghost, plus any additional skills from frontend.
 
         Returns tuple of:
         - List of skill metadata including tools configuration
         - List of resolved preload skill names (from Ghost CRD + user selected skills)
         - List of user-selected skill names (skills explicitly chosen by user for this message)
+        - Dict mapping skill name to skill reference metadata (skill_id, namespace, is_public)
 
         The tools field contains tool declarations from SKILL.md frontmatter,
         which are used by SkillToolRegistry to dynamically create tool instances.
@@ -579,7 +925,7 @@ class TaskRequestBuilder:
                 Each item can be a dict with {name, namespace, is_public} or a SkillRef object.
 
         Returns:
-            Tuple of (skills, preload_skills, user_selected_skills)
+            Tuple of (skills, preload_skills, user_selected_skills, skill_refs)
         """
         from app.schemas.kind import Skill as SkillCRD
 
@@ -594,19 +940,15 @@ class TaskRequestBuilder:
             logger.warning(
                 "[_get_bot_skills] Bot has no ghostRef, returning empty skills"
             )
-            return [], [], []
+            return [], [], [], {}
 
         # Query Ghost
-        ghost = (
-            self.db.query(Kind)
-            .filter(
-                Kind.user_id == team.user_id,
-                Kind.kind == "Ghost",
-                Kind.name == bot_crd.spec.ghostRef.name,
-                Kind.namespace == bot_crd.spec.ghostRef.namespace,
-                Kind.is_active == True,  # noqa: E712
-            )
-            .first()
+        ghost = kindReader.get_by_name_and_namespace(
+            self.db,
+            team.user_id,
+            KindType.GHOST,
+            bot_crd.spec.ghostRef.namespace,
+            bot_crd.spec.ghostRef.name,
         )
 
         if not ghost or not ghost.json:
@@ -615,7 +957,7 @@ class TaskRequestBuilder:
                 bot_crd.spec.ghostRef.name,
                 bot_crd.spec.ghostRef.namespace,
             )
-            return [], [], []
+            return [], [], [], {}
 
         ghost_crd = Ghost.model_validate(ghost.json)
         logger.info(
@@ -630,22 +972,40 @@ class TaskRequestBuilder:
         preload_skills: list[str] = []
         user_selected_skills: list[str] = []
         existing_skill_names: set[str] = set()
+        skill_refs: dict[str, dict] = {}
 
         # Build preload set from Ghost CRD
         ghost_preload_set = set(ghost_crd.spec.preload_skills or [])
 
         # Process Ghost skills
+        ghost_skill_refs = ghost_crd.spec.skill_refs or {}
+        ghost_preload_skill_refs = ghost_crd.spec.preload_skill_refs or {}
         if ghost_crd.spec.skills:
             for skill_name in ghost_crd.spec.skills:
                 skill = self._find_skill(skill_name, team)
                 if skill:
-                    skill_data = self._build_skill_data(skill)
+                    skill_data = self._build_skill_data(skill, user=user)
                     skills.append(skill_data)
                     existing_skill_names.add(skill_name)
+
+                    # Build skill_refs entry (prefer Ghost stored refs for precision)
+                    ghost_skill_ref = ghost_skill_refs.get(skill_name)
+                    if ghost_skill_ref:
+                        skill_refs[skill_name] = ghost_skill_ref.model_dump()
+                    else:
+                        skill_refs[skill_name] = {
+                            "skill_id": getattr(skill, "id", None),
+                            "namespace": getattr(skill, "namespace", "default"),
+                            "is_public": getattr(skill, "user_id", 1) == 0,
+                        }
 
                     # Add to preload if configured in Ghost
                     if skill_name in ghost_preload_set:
                         preload_skills.append(skill_name)
+                        ghost_preload_ref = ghost_preload_skill_refs.get(skill_name)
+                        if ghost_preload_ref:
+                            # Preload explicit reference overrides same-name skill ref
+                            skill_refs[skill_name] = ghost_preload_ref.model_dump()
                         logger.info(
                             "[_get_bot_skills] Skill '%s' added to preload (from Ghost)",
                             skill_name,
@@ -658,6 +1018,9 @@ class TaskRequestBuilder:
                 len(user_preload_skills),
                 user_preload_skills,
             )
+
+            # Get team namespace for fallback skill lookup
+            team_namespace = team.namespace if team.namespace else "default"
 
             for add_skill in user_preload_skills:
                 # Handle both dict and Pydantic model (SkillRef)
@@ -680,41 +1043,74 @@ class TaskRequestBuilder:
                     # Always mark as user-selected since user explicitly chose it
                     if skill_name not in user_selected_skills:
                         user_selected_skills.append(skill_name)
+                    # Explicit user selection should override same-name skill reference
+                    resolved_selected_skill = self._find_skill_by_ref(
+                        skill_name,
+                        skill_namespace,
+                        is_public,
+                        user_id,
+                        team_namespace=team_namespace,
+                    )
+                    if resolved_selected_skill:
+                        skill_refs[skill_name] = {
+                            "skill_id": getattr(resolved_selected_skill, "id", None),
+                            "namespace": getattr(
+                                resolved_selected_skill,
+                                "namespace",
+                                skill_namespace,
+                            ),
+                            "is_public": getattr(resolved_selected_skill, "user_id", 1)
+                            == 0,
+                        }
                     logger.info(
                         "[_get_bot_skills] Skill '%s' added to preload and user_selected (user selected, already in Ghost)",
                         skill_name,
                     )
                     continue
 
-                # Find and add new skill
+                # Find and add new skill (with team_namespace fallback)
                 skill = self._find_skill_by_ref(
-                    skill_name, skill_namespace, is_public, user_id
+                    skill_name,
+                    skill_namespace,
+                    is_public,
+                    user_id,
+                    team_namespace=team_namespace,
                 )
                 if skill:
-                    skill_data = self._build_skill_data(skill)
+                    skill_data = self._build_skill_data(skill, user=user)
                     skills.append(skill_data)
                     existing_skill_names.add(skill_name)
                     preload_skills.append(skill_name)
                     user_selected_skills.append(skill_name)
+
+                    # Build skill_refs entry for user-selected skill
+                    skill_refs[skill_name] = {
+                        "skill_id": getattr(skill, "id", None),
+                        "namespace": getattr(skill, "namespace", skill_namespace),
+                        "is_public": getattr(skill, "user_id", 1) == 0,
+                    }
+
                     logger.info(
                         "[_get_bot_skills] Added user-selected skill '%s' to skills, preload, and user_selected",
                         skill_name,
                     )
                 else:
                     logger.warning(
-                        "[_get_bot_skills] User-selected skill not found: name=%s, namespace=%s, is_public=%s",
+                        "[_get_bot_skills] User-selected skill not found: name=%s, namespace=%s, is_public=%s, team_namespace=%s",
                         skill_name,
                         skill_namespace,
                         is_public,
+                        team_namespace,
                     )
 
         logger.info(
-            "[_get_bot_skills] Final result: preload_skills=%s, user_selected_skills=%s, total skills=%d",
+            "[_get_bot_skills] Final result: preload_skills=%s, user_selected_skills=%s, total skills=%d, skill_refs=%s",
             preload_skills,
             user_selected_skills,
             len(skills),
+            list(skill_refs.keys()),
         )
-        return skills, preload_skills, user_selected_skills
+        return skills, preload_skills, user_selected_skills, skill_refs
 
     def _find_skill(self, skill_name: str, team: Kind) -> Kind | None:
         """Find skill by name.
@@ -731,56 +1127,20 @@ class TaskRequestBuilder:
         Returns:
             Skill Kind object or None if not found
         """
-        # Get team namespace for group-level skill lookup
-        team_namespace = team.namespace if team.namespace else "default"
-
-        # 1. User's personal skill (default namespace)
-        skill = (
-            self.db.query(Kind)
-            .filter(
-                Kind.user_id == team.user_id,
-                Kind.kind == "Skill",
-                Kind.name == skill_name,
-                Kind.namespace == "default",
-                Kind.is_active == True,  # noqa: E712
-            )
-            .first()
-        )
-
-        if skill:
-            return skill
-
-        # 2. Group-level skill (team's namespace) - search ALL skills in namespace
-        # This allows any team member's skill to be used by other members
-        if team_namespace != "default":
-            skill = (
-                self.db.query(Kind)
-                .filter(
-                    Kind.kind == "Skill",
-                    Kind.name == skill_name,
-                    Kind.namespace == team_namespace,
-                    Kind.is_active == True,  # noqa: E712
-                )
-                .first()
-            )
-
-            if skill:
-                return skill
-
-        # 3. Public skill (user_id=0)
-        return (
-            self.db.query(Kind)
-            .filter(
-                Kind.user_id == 0,
-                Kind.kind == "Skill",
-                Kind.name == skill_name,
-                Kind.is_active == True,  # noqa: E712
-            )
-            .first()
+        return find_skill_by_name(
+            self.db,
+            skill_name=skill_name,
+            owner_user_id=team.user_id,
+            team_namespace=team.namespace or "default",
         )
 
     def _find_skill_by_ref(
-        self, skill_name: str, namespace: str, is_public: bool, user_id: int
+        self,
+        skill_name: str,
+        namespace: str,
+        is_public: bool,
+        user_id: int,
+        team_namespace: str | None = None,
     ) -> Kind | None:
         """Find skill by name, namespace, and public flag.
 
@@ -790,87 +1150,51 @@ class TaskRequestBuilder:
         Search order for non-public skills:
         1. Current user's skill in specified namespace (personal)
         2. ANY user's skill in specified namespace (group-level, for group namespaces)
-        3. Current user's skill in default namespace (fallback)
+        3. ANY user's skill in team namespace (if different from specified namespace)
+        4. Current user's skill in default namespace (fallback)
 
         Args:
             skill_name: Skill name
             namespace: Skill namespace
             is_public: Whether the skill is public (user_id=0)
             user_id: User ID for skill lookup
+            team_namespace: Optional team namespace to search (for group-level skills)
 
         Returns:
             Skill Kind object or None if not found
         """
-        if is_public:
-            # Public skill (user_id=0)
-            return (
-                self.db.query(Kind)
-                .filter(
-                    Kind.user_id == 0,
-                    Kind.kind == "Skill",
-                    Kind.name == skill_name,
-                    Kind.is_active == True,  # noqa: E712
-                )
-                .first()
-            )
-        else:
-            # 1. Current user's skill in specified namespace
-            skill = (
-                self.db.query(Kind)
-                .filter(
-                    Kind.user_id == user_id,
-                    Kind.kind == "Skill",
-                    Kind.name == skill_name,
-                    Kind.namespace == namespace,
-                    Kind.is_active == True,  # noqa: E712
-                )
-                .first()
-            )
-            if skill:
-                return skill
+        return find_skill_by_ref(
+            self.db,
+            skill_name=skill_name,
+            namespace=namespace,
+            is_public=is_public,
+            user_id=user_id,
+            team_namespace=team_namespace,
+        )
 
-            # 2. Group-level skill (any user's skill in the namespace)
-            # This allows team members to use skills uploaded by other members
-            if namespace != "default":
-                skill = (
-                    self.db.query(Kind)
-                    .filter(
-                        Kind.kind == "Skill",
-                        Kind.name == skill_name,
-                        Kind.namespace == namespace,
-                        Kind.is_active == True,  # noqa: E712
-                    )
-                    .first()
-                )
-                if skill:
-                    return skill
-
-            # 3. Fallback to current user's skill in default namespace
-            if namespace != "default":
-                return (
-                    self.db.query(Kind)
-                    .filter(
-                        Kind.user_id == user_id,
-                        Kind.kind == "Skill",
-                        Kind.name == skill_name,
-                        Kind.namespace == "default",
-                        Kind.is_active == True,  # noqa: E712
-                    )
-                    .first()
-                )
+    @staticmethod
+    def _build_request_task_data(user: User | None) -> dict[str, Any] | None:
+        """Build runtime task data exposed to MCP placeholder substitution."""
+        if not user:
             return None
 
-    def _build_skill_data(self, skill: Kind) -> dict:
+        preferences = getattr(user, "preferences", None)
+        user_mcps = user_mcp_service.get_enabled_decrypted_mcp_preferences(preferences)
+        if not user_mcps:
+            return None
+
+        return {"user_mcps": user_mcps}
+
+    def _build_skill_data(self, skill: Kind, *, user: User | None = None) -> dict:
         """Build skill data dictionary from a Skill Kind object.
 
         Args:
             skill: Skill Kind object from database
+            user: Optional user, reserved for future skill runtime expansion
 
         Returns:
             Dictionary containing skill metadata for chat configuration
         """
-        from app.schemas.kind import Skill as SkillCRD
-
         skill_crd = SkillCRD.model_validate(skill.json)
 
         skill_data = {
@@ -888,6 +1212,32 @@ class TaskRequestBuilder:
 
         if skill_crd.spec.mcpServers:
             skill_data["mcpServers"] = skill_crd.spec.mcpServers
+
+        is_public_default_runtime_skill = (
+            skill.user_id == 0 and skill_crd.metadata.namespace == "default"
+        )
+        runtime_service = (
+            get_mcp_service_by_skill_name(skill_crd.metadata.name)
+            if is_public_default_runtime_skill
+            else None
+        )
+        if runtime_service:
+            provider, service = runtime_service
+            configured_server = None
+            if user:
+                configured_server = user_mcp_service.get_enabled_mcp_server(
+                    getattr(user, "preferences", None),
+                    provider["provider_id"],
+                    service["service_id"],
+                )
+
+            if not configured_server:
+                skill_data.pop("mcpServers", None)
+                skill_data["prompt"] = self._build_unconfigured_provider_skill_prompt(
+                    skill_data.get("prompt"),
+                    provider_id=provider["provider_id"],
+                    service=service,
+                )
 
         if skill_crd.spec.tools:
             skill_data["tools"] = [
@@ -908,6 +1258,43 @@ class TaskRequestBuilder:
                 )
 
         return skill_data
+
+    @staticmethod
+    def _build_unconfigured_provider_skill_prompt(
+        existing_prompt: str | None,
+        *,
+        provider_id: str,
+        service: dict[str, Any],
+    ) -> str:
+        """Build a guidance-only prompt when a provider skill is not configured."""
+        display_name = service.get("display_name") or service["service_id"]
+        modal_link = (
+            f"wegent://modal/mcp-provider-config?provider={provider_id}"
+            f"&service={service['service_id']}"
+        )
+
+        guidance_prompt = f"""
+## Configuration Required
+
+The current session does not have a usable {display_name} MCP configured.
+
+Required behavior:
+- Do not pretend to access DingTalk data or local files for this request.
+- Tell the user that {display_name} MCP is not available in the current session.
+- Ask the user to click [打开{display_name} MCP 配置弹窗]({modal_link}) to finish configuration.
+- Keep the guidance brief. If the user asks how to get the URL, tell them to get it from the DingTalk MCP page for this service.
+
+Response template:
+当前会话还没有可用的{display_name} MCP，所以我现在不能直接访问这个钉钉能力。
+
+请先点击 [打开{display_name} MCP 配置弹窗]({modal_link}) 完成配置。
+
+配置完成后，再让我继续处理你的钉钉请求。
+""".strip()
+
+        if existing_prompt:
+            return f"{existing_prompt.rstrip()}\n\n{guidance_prompt}"
+        return guidance_prompt
 
     # =========================================================================
     # Bot Configuration Building
@@ -948,16 +1335,12 @@ class TaskRequestBuilder:
                 bot = first_bot
             else:
                 # Query additional bots
-                bot = (
-                    self.db.query(Kind)
-                    .filter(
-                        Kind.user_id == team.user_id,
-                        Kind.kind == "Bot",
-                        Kind.name == member.botRef.name,
-                        Kind.namespace == member.botRef.namespace,
-                        Kind.is_active,
-                    )
-                    .first()
+                bot = kindReader.get_by_name_and_namespace(
+                    self.db,
+                    team.user_id,
+                    KindType.BOT,
+                    member.botRef.namespace,
+                    member.botRef.name,
                 )
 
             if not bot:
@@ -970,8 +1353,10 @@ class TaskRequestBuilder:
             bot_json = bot.json or {}
             bot_spec_json = bot_json.get("spec", {})
 
-            # Get shell_type
-            shell_type = self._resolve_shell_type(bot, team.user_id)
+            # Get shell_type and base_image from Shell CRD
+            shell_info = self._resolve_shell_info(bot, team.user_id)
+            shell_type = shell_info["shell_type"]
+            base_image = shell_info["base_image"]
 
             # Get ghost info for system_prompt and skills
             ghost_system_prompt = ""
@@ -979,16 +1364,12 @@ class TaskRequestBuilder:
             ghost_skills = []
 
             if bot_spec and bot_spec.ghostRef:
-                ghost = (
-                    self.db.query(Kind)
-                    .filter(
-                        Kind.user_id == team.user_id,
-                        Kind.kind == "Ghost",
-                        Kind.name == bot_spec.ghostRef.name,
-                        Kind.namespace == bot_spec.ghostRef.namespace,
-                        Kind.is_active,
-                    )
-                    .first()
+                ghost = kindReader.get_by_name_and_namespace(
+                    self.db,
+                    team.user_id,
+                    KindType.GHOST,
+                    bot_spec.ghostRef.namespace,
+                    bot_spec.ghostRef.name,
                 )
                 if ghost and ghost.json:
                     ghost_crd = Ghost.model_validate(ghost.json)
@@ -1019,7 +1400,7 @@ class TaskRequestBuilder:
                 "mcp_servers": ghost_mcp_servers,
                 "skills": ghost_skills,
                 "role": member.role or "worker",
-                "base_image": bot_spec_json.get("baseImage"),
+                "base_image": base_image,
             }
             bot_configs.append(bot_config)
 
@@ -1094,12 +1475,21 @@ class TaskRequestBuilder:
             )
             return []
 
-    def _build_mcp_servers(self, bot: Kind, team: Kind) -> list[dict]:
+    def _build_mcp_servers(
+        self,
+        bot: Kind,
+        team: Kind,
+        *,
+        user: User,
+        is_subscription: bool = False,
+        auth_token: str = "",
+    ) -> list[dict]:
         """Build MCP servers configuration.
 
-        Merges MCP servers from two sources:
+        Merges MCP servers from multiple sources:
         1. System-level MCP servers (from CHAT_MCP_SERVERS setting)
         2. Bot-level MCP servers (from Ghost CRD mcpServers config)
+        3. Auto-injected System MCP (for subscription tasks)
 
         Bot-level servers take precedence over system-level servers
         when there are name conflicts.
@@ -1113,6 +1503,8 @@ class TaskRequestBuilder:
         Args:
             bot: Bot Kind object
             team: Team Kind object
+            is_subscription: Whether this is a subscription task
+            auth_token: Authentication token for MCP server
 
         Returns:
             List of MCP server configuration dictionaries
@@ -1120,22 +1512,26 @@ class TaskRequestBuilder:
         # Load system-level MCP servers first
         system_mcp_servers = self._load_system_mcp_servers()
 
+        # Auto-inject System MCP for subscription tasks (provides silent_exit tool)
+        if is_subscription and auth_token:
+            system_mcp_config = self._get_auto_injected_system_mcp(auth_token)
+            if system_mcp_config:
+                system_mcp_servers.extend(system_mcp_config)
+                logger.info(
+                    "[TaskRequestBuilder] Auto-injected System MCP for subscription task"
+                )
+
         # Load bot-level MCP servers from Ghost CRD
         bot_mcp_servers = []
         bot_crd = Bot.model_validate(bot.json)
 
         if bot_crd.spec and bot_crd.spec.ghostRef:
-            # Query Ghost
-            ghost = (
-                self.db.query(Kind)
-                .filter(
-                    Kind.user_id == team.user_id,
-                    Kind.kind == "Ghost",
-                    Kind.name == bot_crd.spec.ghostRef.name,
-                    Kind.namespace == bot_crd.spec.ghostRef.namespace,
-                    Kind.is_active,
-                )
-                .first()
+            ghost = kindReader.get_by_name_and_namespace(
+                self.db,
+                team.user_id,
+                KindType.GHOST,
+                bot_crd.spec.ghostRef.namespace,
+                bot_crd.spec.ghostRef.name,
             )
 
             if ghost and ghost.json:
@@ -1154,6 +1550,13 @@ class TaskRequestBuilder:
                             # Convert "headers" to "auth" for chat_shell compatibility
                             if "headers" in server_config:
                                 server_entry["auth"] = server_config["headers"]
+                            # Include stdio-specific fields (command, args, env)
+                            if "command" in server_config:
+                                server_entry["command"] = server_config["command"]
+                            if "args" in server_config:
+                                server_entry["args"] = server_config["args"]
+                            if "env" in server_config:
+                                server_entry["env"] = server_config["env"]
                             bot_mcp_servers.append(server_entry)
 
         # Merge system and bot MCP servers (bot takes precedence)
@@ -1178,6 +1581,394 @@ class TaskRequestBuilder:
             )
 
         return merged_servers
+
+    @staticmethod
+    def _extract_prompt_text(message: Union[str, list]) -> str:
+        """Extract plain text from a prompt payload."""
+        if isinstance(message, str):
+            return message
+
+        if not isinstance(message, list):
+            return ""
+
+        text_parts: list[str] = []
+        for item in message:
+            if not isinstance(item, dict):
+                continue
+            if item.get("type") in {"input_text", "text"}:
+                text = item.get("text")
+                if isinstance(text, str) and text:
+                    text_parts.append(text)
+
+        return "\n".join(text_parts)
+
+    @staticmethod
+    def _inject_clarification_skill(preload_skills: list) -> list:
+        """Inject the interactive-form-question skill when clarification mode is enabled.
+
+        When enable_clarification=True, the interactive-form-question skill is automatically added
+        to preload_skills. This replaces the old prompt-injection approach
+        (CLARIFICATION_PROMPT appended to system prompt) with the MCP skill approach,
+        allowing the AI to use the interactive_form_question tool for interactive clarification forms.
+
+        The interactive-form-question skill provides the interactive_form_question MCP tool which:
+        1. Displays an interactive form card in the frontend
+        2. Returns __silent_exit__ immediately (non-blocking)
+        3. Waits for user response as a new conversation message
+
+        Args:
+            preload_skills: Current list of preload skills
+
+        Returns:
+            Updated preload_skills list with interactive-form-question skill injected (if not already present)
+        """
+        # Clarification skill name (matches backend/init_data/skills/interactive-form-question/SKILL.md)
+        clarification_skill_name = "interactive-form-question"
+
+        # Check if already present (avoid duplicates)
+        existing_names = {
+            skill if isinstance(skill, str) else skill.get("name", "")
+            for skill in preload_skills
+            if isinstance(skill, (str, dict))
+        }
+
+        if clarification_skill_name not in existing_names:
+            preload_skills = list(preload_skills)
+            preload_skills.append(
+                {
+                    "name": clarification_skill_name,
+                    "namespace": "default",
+                    "is_public": True,
+                }
+            )
+            logger.info(
+                "[TaskRequestBuilder] Injected clarification skill '%s' into preload_skills",
+                clarification_skill_name,
+            )
+
+        return preload_skills
+
+    @staticmethod
+    def _inject_subscription_manager_skill(
+        preload_skills: list, is_subscription: bool = False
+    ) -> list:
+        """Inject the subscription-manager skill for scheduled task creation.
+
+        The subscription-manager skill provides MCP tools (preview_subscription,
+        create_subscription) for creating scheduled/recurring tasks. It is
+        auto-injected into all non-subscription tasks to prevent nested subscriptions.
+
+        Args:
+            preload_skills: Current list of preload skills
+            is_subscription: Whether this is a subscription task (if True, skip injection)
+
+        Returns:
+            Updated preload_skills list with subscription-manager skill injected
+        """
+        # Skip injection in subscription tasks to prevent nested subscriptions
+        if is_subscription:
+            logger.debug(
+                "[TaskRequestBuilder] Skipping subscription-manager injection in subscription task"
+            )
+            return preload_skills
+
+        subscription_skill_name = "subscription-manager"
+
+        # Check if already present (avoid duplicates)
+        existing_names = {
+            skill if isinstance(skill, str) else skill.get("name", "")
+            for skill in preload_skills
+            if isinstance(skill, (str, dict))
+        }
+
+        if subscription_skill_name not in existing_names:
+            preload_skills = list(preload_skills)
+            preload_skills.append(
+                {
+                    "name": subscription_skill_name,
+                    "namespace": "default",
+                    "is_public": True,
+                }
+            )
+            logger.info(
+                "[TaskRequestBuilder] Injected subscription-manager skill into preload_skills"
+            )
+
+        return preload_skills
+
+    def _inject_conditional_provider_skills(
+        self,
+        *,
+        user: User,
+        message: Union[str, list],
+        preload_skills: list,
+    ) -> list:
+        """Preload provider runtime skills or config guidance skills when relevant."""
+        merged_preload_skills = list(preload_skills)
+        prompt_text = self._extract_prompt_text(message).strip().lower()
+        if not prompt_text:
+            return merged_preload_skills
+
+        existing_names = {
+            skill if isinstance(skill, str) else skill.get("name")
+            for skill in merged_preload_skills
+            if isinstance(skill, (str, dict))
+        }
+
+        for provider in list_mcp_providers():
+            keywords = provider.get("message_keywords") or ()
+            if not keywords or not any(keyword in prompt_text for keyword in keywords):
+                continue
+
+            matched_services = [
+                service
+                for service in provider.get("services", {}).values()
+                if any(
+                    keyword in prompt_text
+                    for keyword in (service.get("message_keywords") or ())
+                )
+            ]
+            if not matched_services:
+                matched_services = list(provider.get("services", {}).values())
+
+            for service in matched_services:
+                runtime_skill = service.get("skill_name")
+                if runtime_skill and runtime_skill not in existing_names:
+                    merged_preload_skills.append(
+                        {
+                            "name": runtime_skill,
+                            "namespace": "default",
+                            "is_public": True,
+                        }
+                    )
+                    existing_names.add(runtime_skill)
+
+        return merged_preload_skills
+
+    # =========================================================================
+    # Claude Code MCP Processing
+    # =========================================================================
+
+    def _prepare_mcp_for_claude_code(
+        self, bot_config: dict, skill_configs: list
+    ) -> None:
+        """Prepare MCP servers for Claude Code executor.
+
+        For ClaudeCode shell type, this method:
+        1. Extracts skill MCP servers and merges into bot mcp_servers
+        2. Normalizes types (streamable-http -> http) for Claude Code SDK
+        3. Filters out unreachable servers to prevent SDK initialization timeout
+
+        Modifies bot_config in-place.
+
+        Args:
+            bot_config: Single bot configuration dict (modified in-place)
+            skill_configs: List of resolved skill config dicts
+        """
+        # Step 1: Extract skill MCP servers and merge
+        skill_mcp = self._extract_skill_mcp_to_list(skill_configs)
+        if skill_mcp:
+            bot_config.setdefault("mcp_servers", []).extend(skill_mcp)
+            logger.info(
+                "[MCP-CLAUDE] Merged %d skill MCP server(s): %s",
+                len(skill_mcp),
+                [s.get("name", "?") for s in skill_mcp],
+            )
+
+        mcp_list = bot_config.get("mcp_servers", [])
+        if not mcp_list:
+            return
+
+        # Step 2: Normalize types (streamable-http -> http)
+        self._normalize_mcp_types_for_claude_code(mcp_list)
+
+        # Step 3: Filter out unreachable servers
+        bot_config["mcp_servers"] = self._filter_reachable_mcp_servers(mcp_list)
+        if not bot_config["mcp_servers"]:
+            logger.warning("[MCP-CLAUDE] All MCP servers unreachable, removed")
+
+    @staticmethod
+    def _extract_skill_mcp_to_list(skill_configs: list) -> list:
+        """Extract MCP servers from skill configs in list format.
+
+        Each skill may declare mcpServers in dict format. This converts them
+        to list format. When the skill name already matches the server name,
+        keep the bare server name so tool calls can reference the natural MCP
+        server identifier without an extra prefix.
+
+        Args:
+            skill_configs: List of resolved skill config dicts
+
+        Returns:
+            List of MCP server dicts in list format:
+            [{"name": "skillName_serverName", "type": "...", "url": "...", ...}]
+        """
+        if not skill_configs:
+            return []
+
+        result: list[dict] = []
+        for skill_config in skill_configs:
+            skill_name = skill_config.get("name", "unknown")
+            mcp_servers = skill_config.get("mcpServers")
+            if not mcp_servers or not isinstance(mcp_servers, dict):
+                continue
+
+            for server_name, server_config in mcp_servers.items():
+                if not isinstance(server_config, dict):
+                    continue
+                resolved_name = (
+                    server_name
+                    if skill_name == server_name
+                    else f"{skill_name}_{server_name}"
+                )
+                entry = {
+                    "name": resolved_name,
+                    **server_config,
+                }
+                result.append(entry)
+                logger.info(
+                    "[SKILL-MCP] Extracted: %s -> type=%s, url=%s",
+                    entry["name"],
+                    server_config.get("type", "?"),
+                    server_config.get("url", "?"),
+                )
+
+        return result
+
+    @staticmethod
+    def _normalize_mcp_types_for_claude_code(mcp_servers: list) -> None:
+        """Normalize MCP server types for Claude Code SDK compatibility.
+
+        Claude Code SDK supports "http" but skill/ghost configs use
+        "streamable-http". Converts in-place.
+
+        Args:
+            mcp_servers: List of MCP server config dicts (modified in-place)
+        """
+        TYPE_MAPPING = {"streamable-http": "http"}
+
+        for server in mcp_servers:
+            if not isinstance(server, dict):
+                continue
+            original_type = server.get("type", "")
+            mapped = TYPE_MAPPING.get(original_type)
+            if mapped:
+                server["type"] = mapped
+                logger.info(
+                    "[MCP-NORMALIZE] '%s': type '%s' -> '%s'",
+                    server.get("name", "?"),
+                    original_type,
+                    mapped,
+                )
+
+    @staticmethod
+    def _check_mcp_server_reachable(server: dict) -> bool:
+        """Check if an MCP server config is valid without probing the network.
+
+        Args:
+            server: Server config dict with 'url' and optional 'headers'
+
+        Returns:
+            True if the config should be kept, False for obviously invalid configs
+        """
+        server_type = server.get("type", "").lower()
+
+        # Skip reachability check for stdio servers (they run locally via command)
+        if server_type == "stdio":
+            return True
+
+        url = server.get("url", "")
+        if not url:
+            return False
+
+        # Runtime placeholders are resolved after request build.
+        if "${{" in url and "}}" in url:
+            return True
+
+        # URLs pointing to our own backend are always reachable.
+        # Checking them with a synchronous HTTP request would deadlock
+        # (single-worker uvicorn can't serve the request while blocked).
+        if "${{backend_url}}" in url:
+            return True
+
+        return True
+
+    def _filter_reachable_mcp_servers(self, mcp_servers: list) -> list:
+        """Filter out unreachable MCP servers.
+
+        Args:
+            mcp_servers: List of MCP server config dicts
+
+        Returns:
+            List containing only reachable MCP servers
+        """
+        if not mcp_servers:
+            return mcp_servers
+
+        reachable = []
+        unreachable_names: list[str] = []
+
+        for server in mcp_servers:
+            name = server.get("name", "?")
+            if self._check_mcp_server_reachable(server):
+                reachable.append(server)
+                logger.info("[MCP-CHECK] '%s' is reachable", name)
+            else:
+                unreachable_names.append(name)
+                logger.warning(
+                    "[MCP-CHECK] '%s' is NOT reachable: %s",
+                    name,
+                    server.get("url", "?"),
+                )
+
+        if unreachable_names:
+            logger.warning(
+                "[MCP-FILTER] Removed %d unreachable server(s): %s",
+                len(unreachable_names),
+                unreachable_names,
+            )
+
+        return reachable
+
+    def _get_auto_injected_system_mcp(self, auth_token: str) -> list[dict]:
+        """Get auto-injected System MCP configuration for subscription tasks.
+
+        The System MCP provides the silent_exit tool which allows AI to silently
+        terminate execution when results don't require user attention.
+
+        Args:
+            auth_token: Authentication token for MCP server
+
+        Returns:
+            List of MCP server configurations in list format:
+            [{"name": "wegent-system", "url": "...", "type": "...", "auth": {...}}]
+        """
+        from app.mcp_server.server import get_mcp_system_config
+
+        backend_url = settings.BACKEND_INTERNAL_URL.rstrip("/")
+
+        # get_mcp_system_config returns dict format: {"wegent-system": {...}}
+        # Convert to list format for _build_mcp_servers compatibility
+        system_config = get_mcp_system_config(backend_url, auth_token)
+
+        result = []
+        for server_name, server_config in system_config.items():
+            server_entry = {
+                "name": server_name,
+                "url": server_config.get("url", ""),
+                "type": server_config.get("type", "streamable-http"),
+            }
+            # Convert "headers" to "auth" for chat_shell compatibility
+            if "headers" in server_config:
+                server_entry["auth"] = server_config["headers"]
+            result.append(server_entry)
+
+        logger.debug(
+            "[TaskRequestBuilder] Generated System MCP config: %s",
+            [s["name"] for s in result],
+        )
+
+        return result
 
     # =========================================================================
     # Helper Methods
@@ -1219,7 +2010,7 @@ class TaskRequestBuilder:
         matched_git_info = None
         if git_domain:
             for git_info in git_info_list:
-                if git_info.get("git_domain") == git_domain:
+                if domains_match(git_info.get("git_domain", ""), git_domain):
                     matched_git_info = git_info
                     break
 
@@ -1275,7 +2066,7 @@ class TaskRequestBuilder:
                     TaskResource.kind == "Workspace",
                     TaskResource.name == workspace_ref.name,
                     TaskResource.namespace == workspace_ref.namespace,
-                    TaskResource.is_active.is_(True),
+                    TaskResource.is_active == TaskResource.STATE_ACTIVE,
                 )
                 .first()
             )
@@ -1346,4 +2137,19 @@ class TaskRequestBuilder:
             subtask_id=subtask.id,
             user_id=user.id,
             user_name=user.user_name,
+        )
+
+    def _generate_skill_identity_token(
+        self, task: TaskResource, subtask: Subtask, user: User
+    ) -> str:
+        """Generate a dedicated skill identity token for business HTTP calls."""
+        task_json = task.json if isinstance(task.json, dict) else {}
+        task_labels = (task_json.get("metadata", {}) or {}).get("labels", {}) or {}
+        runtime_type = "sandbox" if task_labels.get("type") == "sandbox" else "executor"
+        runtime_name = subtask.executor_name or f"task-{task.id}-subtask-{subtask.id}"
+        return create_skill_identity_token(
+            user_id=user.id,
+            user_name=user.user_name,
+            runtime_type=runtime_type,
+            runtime_name=runtime_name,
         )

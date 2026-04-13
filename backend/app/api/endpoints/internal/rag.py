@@ -2,8 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""
-Internal RAG API endpoints for chat_shell service.
+"""Internal RAG API endpoints for chat_shell service.
 
 Provides a simplified RAG retrieval endpoint for chat_shell HTTP mode.
 These endpoints are intended for service-to-service communication.
@@ -14,11 +13,31 @@ from datetime import datetime
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
-from shared.telemetry.decorators import trace_async
+from app.services.knowledge.protected_mediation import (
+    ProtectedKnowledgeMediationResponse,
+    protected_knowledge_mediator,
+)
+from app.services.knowledge.retrieval_persistence import (
+    retrieval_persistence_service,
+)
+from app.services.rag.gateway_factory import get_query_gateway
+from app.services.rag.local_gateway import LocalRagGateway
+from app.services.rag.remote_gateway import (
+    RemoteRagGateway,
+    RemoteRagGatewayError,
+    should_fallback_to_local,
+)
+from app.services.rag.retrieval_service import RetrievalService
+from app.services.rag.runtime_resolver import RagRuntimeResolver
+from shared.models import (
+    RemoteListChunkRecord,
+    RemoteListChunksRequest,
+    RemoteListChunksResponse,
+)
 
 # Constants for document reading pagination
 DEFAULT_READ_DOC_LIMIT = 50_000  # Default characters to return
@@ -27,41 +46,231 @@ MAX_READ_DOC_LIMIT = 500_000  # Maximum characters allowed per request
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/rag", tags=["internal-rag"])
+runtime_resolver = RagRuntimeResolver()
+
+
+class DirectInjectionRuntimeContext(BaseModel):
+    """Runtime context budget for Backend-side direct injection routing."""
+
+    context_window: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="Model context window used for routing decisions",
+    )
+    used_context_tokens: int = Field(
+        default=0,
+        ge=0,
+        description="Approximate tokens already consumed by current conversation messages",
+    )
+    reserved_output_tokens: int = Field(
+        default=4096,
+        ge=0,
+        description="Tokens reserved for the model output",
+    )
+    context_buffer_ratio: float = Field(
+        default=0.1,
+        ge=0.0,
+        le=1.0,
+        description="Extra context ratio reserved as safety buffer",
+    )
+    max_direct_chunks: int = Field(
+        default=500,
+        ge=1,
+        description="Maximum chunks allowed for direct injection",
+    )
+
+
+class RetrievePersistenceContext(BaseModel):
+    """Persistence context for Backend-side SubtaskContext updates."""
+
+    user_subtask_id: int = Field(
+        ...,
+        ge=1,
+        description="User subtask ID whose knowledge base context should be updated",
+    )
+    user_id: int = Field(
+        ...,
+        ge=0,
+        description="User ID used when auto-creating the knowledge base context",
+    )
+    restricted_mode: bool = Field(
+        default=False,
+        description="Whether the retrieval ran in restricted search-only mode",
+    )
+
+
+class RetrieveMediationContext(BaseModel):
+    """Model identity used by Backend-side protected mediation."""
+
+    current_model_name: Optional[str] = Field(
+        default=None,
+        description="Current answering model name preferred for protected mediation",
+    )
+    current_model_namespace: Optional[str] = Field(
+        default="default",
+        description="Namespace of the current answering model",
+    )
 
 
 class InternalRetrieveRequest(BaseModel):
     """Simplified retrieve request for internal use."""
 
     query: str = Field(..., description="Search query")
-    knowledge_base_id: int = Field(..., description="Knowledge base ID")
+    knowledge_base_id: Optional[int] = Field(
+        default=None, description="Single knowledge base ID"
+    )
+    knowledge_base_ids: Optional[list[int]] = Field(
+        default=None,
+        description="Optional list of knowledge base IDs for all-or-nothing routing",
+    )
     max_results: int = Field(default=5, description="Maximum results to return")
     document_ids: Optional[list[int]] = Field(
         default=None,
         description="Optional list of document IDs to filter. Only chunks from these documents will be returned.",
     )
+    document_names: Optional[list[str]] = Field(
+        default=None,
+        description="Optional exact document names to resolve into document IDs before retrieval.",
+    )
+    route_mode: Literal["auto", "direct_injection", "rag_retrieval"] = Field(
+        default="auto",
+        description="Routing mode: auto decides in Backend, direct_injection forces all-chunks, rag_retrieval forces standard retrieval",
+    )
     user_name: Optional[str] = Field(
         default=None,
         description="User name for placeholder replacement in embedding headers",
     )
+    runtime_context: Optional[DirectInjectionRuntimeContext] = Field(
+        default=None,
+        description="Runtime context budget used by Backend to decide whether direct injection still fits after accounting for the current conversation state",
+    )
+    persistence_context: Optional[RetrievePersistenceContext] = Field(
+        default=None,
+        description="Optional SubtaskContext persistence metadata handled entirely in Backend",
+    )
+    mediation_context: Optional[RetrieveMediationContext] = Field(
+        default=None,
+        description="Optional model identity used by Backend restricted mediation",
+    )
+
+    @model_validator(mode="after")
+    def validate_knowledge_base_targets(self):
+        """Require at least one KB target and normalize single-id requests."""
+        if self.knowledge_base_id is None and not self.knowledge_base_ids:
+            raise ValueError("knowledge_base_id or knowledge_base_ids is required")
+        return self
 
 
 class RetrieveRecord(BaseModel):
     """Single retrieval result record."""
 
     content: str
-    score: float
+    score: Optional[float] = None
     title: str
     metadata: Optional[dict] = None
+    knowledge_base_id: Optional[int] = None
 
 
 class InternalRetrieveResponse(BaseModel):
     """Response from internal retrieve endpoint."""
 
+    mode: Literal["direct_injection", "rag_retrieval"]
     records: list[RetrieveRecord]
     total: int
+    total_estimated_tokens: int = 0
+    message: Optional[str] = None
 
 
-@router.post("/retrieve", response_model=InternalRetrieveResponse)
+def _resolve_document_names(
+    db: Session,
+    knowledge_base_ids: list[int],
+    document_names: list[str],
+) -> list[int]:
+    """Resolve exact document names into document IDs within KB scope."""
+    from app.services.knowledge import KnowledgeService
+
+    return KnowledgeService.resolve_document_ids_by_names(
+        db=db,
+        knowledge_base_ids=knowledge_base_ids,
+        document_names=document_names,
+    )
+
+
+def _resolve_query_gateway(runtime_spec):
+    route_mode = getattr(runtime_spec, "route_mode", "auto")
+    if route_mode == "rag_retrieval":
+        return get_query_gateway()
+    return LocalRagGateway()
+
+
+def _finalize_query_runtime_spec(
+    runtime_spec,
+    db: Session,
+    runtime_context: DirectInjectionRuntimeContext | None = None,
+):
+    if getattr(runtime_spec, "route_mode", "auto") != "auto":
+        return runtime_spec
+    required_attributes = (
+        "query",
+        "knowledge_base_ids",
+        "document_ids",
+        "direct_injection_budget",
+        "model_copy",
+    )
+    if not all(hasattr(runtime_spec, attr) for attr in required_attributes):
+        return runtime_spec
+
+    retrieval_service = RetrievalService()
+    budget = runtime_context or getattr(runtime_spec, "direct_injection_budget", None)
+    resolved_route_mode = retrieval_service.decide_route_mode_for_chat_shell(
+        query=runtime_spec.query,
+        knowledge_base_ids=runtime_spec.knowledge_base_ids,
+        db=db,
+        route_mode=runtime_spec.route_mode,
+        document_ids=runtime_spec.document_ids,
+        metadata_condition=runtime_spec.metadata_condition,
+        context_window=budget.context_window if budget else None,
+        used_context_tokens=budget.used_context_tokens if budget else 0,
+        reserved_output_tokens=budget.reserved_output_tokens if budget else 4096,
+        context_buffer_ratio=budget.context_buffer_ratio if budget else 0.1,
+        max_direct_chunks=budget.max_direct_chunks if budget else 500,
+    )
+    return runtime_spec.model_copy(update={"route_mode": resolved_route_mode})
+
+
+async def _execute_query_with_remote_fallback(runtime_spec, db: Session):
+    rag_gateway = _resolve_query_gateway(runtime_spec)
+    if (
+        isinstance(rag_gateway, RemoteRagGateway)
+        and getattr(runtime_spec, "route_mode", None) == "rag_retrieval"
+        and not getattr(runtime_spec, "knowledge_base_configs", None)
+    ):
+        runtime_spec = runtime_spec.model_copy(
+            update={
+                "knowledge_base_configs": runtime_resolver.build_query_knowledge_base_configs(
+                    db=db,
+                    knowledge_base_ids=runtime_spec.knowledge_base_ids,
+                    user_name=runtime_spec.user_name,
+                )
+            }
+        )
+    try:
+        return await rag_gateway.query(runtime_spec, db=db)
+    except RemoteRagGatewayError as exc:
+        if not should_fallback_to_local(exc):
+            raise
+        logger.warning(
+            "[internal_rag] Remote query failed for KBs %s, falling back to local gateway: %s",
+            getattr(runtime_spec, "knowledge_base_ids", []),
+            exc,
+        )
+        return await LocalRagGateway().query(runtime_spec, db=db)
+
+
+@router.post(
+    "/retrieve",
+    response_model=InternalRetrieveResponse | ProtectedKnowledgeMediationResponse,
+)
 async def internal_retrieve(
     request: InternalRetrieveRequest,
     db: Session = Depends(get_db),
@@ -81,82 +290,169 @@ async def internal_retrieve(
         Retrieval results with records
     """
     try:
-        from app.services.rag.retrieval_service import RetrievalService
+        knowledge_base_ids = request.knowledge_base_ids or []
+        if request.knowledge_base_id is not None:
+            knowledge_base_ids = [request.knowledge_base_id]
 
-        retrieval_service = RetrievalService()
+        resolved_document_ids = request.document_ids or []
+        if not resolved_document_ids and request.document_names:
+            resolved_document_ids = _resolve_document_names(
+                db=db,
+                knowledge_base_ids=knowledge_base_ids,
+                document_names=request.document_names,
+            )
+            if not resolved_document_ids:
+                return InternalRetrieveResponse(
+                    mode="rag_retrieval",
+                    records=[],
+                    total=0,
+                    total_estimated_tokens=0,
+                    message="Document names not found in the selected knowledge bases. Use kb_ls to inspect available documents first.",
+                )
 
-        # Build metadata_condition for document filtering
-        metadata_condition = None
-        if request.document_ids:
-            # Convert document IDs to doc_ref format (stored as strings in vector DB)
-            doc_refs = [str(doc_id) for doc_id in request.document_ids]
-            metadata_condition = {
-                "operator": "and",
-                "conditions": [
-                    {
-                        "key": "doc_ref",
-                        "operator": "in",
-                        "value": doc_refs,
-                    }
-                ],
-            }
+        if resolved_document_ids:
             logger.info(
                 "[internal_rag] Filtering by %d documents: %s",
-                len(request.document_ids),
-                request.document_ids,
+                len(resolved_document_ids),
+                resolved_document_ids,
             )
 
-        # Use internal method that bypasses user permission check
-        # Permission is validated at task level before reaching chat_shell
-        result = await retrieval_service.retrieve_from_knowledge_base_internal(
-            query=request.query,
-            knowledge_base_id=request.knowledge_base_id,
-            db=db,
-            metadata_condition=metadata_condition,
-            user_name=request.user_name,
+        runtime_context = request.runtime_context
+        persistence_context = request.persistence_context
+        restricted_mode = bool(
+            persistence_context and persistence_context.restricted_mode
         )
 
+        runtime_spec = runtime_resolver.build_query_runtime_spec(
+            db=db,
+            knowledge_base_ids=knowledge_base_ids,
+            query=request.query,
+            max_results=request.max_results,
+            document_ids=resolved_document_ids or None,
+            route_mode=request.route_mode,
+            user_id=persistence_context.user_id if persistence_context else None,
+            user_name=request.user_name,
+            context_window=runtime_context.context_window if runtime_context else None,
+            used_context_tokens=(
+                runtime_context.used_context_tokens if runtime_context else 0
+            ),
+            reserved_output_tokens=(
+                runtime_context.reserved_output_tokens if runtime_context else 4096
+            ),
+            context_buffer_ratio=(
+                runtime_context.context_buffer_ratio if runtime_context else 0.1
+            ),
+            max_direct_chunks=(
+                runtime_context.max_direct_chunks if runtime_context else 500
+            ),
+            restricted_mode=restricted_mode,
+        )
+        runtime_spec = _finalize_query_runtime_spec(runtime_spec, db, runtime_context)
+        result = await _execute_query_with_remote_fallback(runtime_spec, db)
+
         records = result.get("records", [])
-        total_records_before_limit = len(records)
 
         # Calculate total content size for logging
         total_content_chars = sum(len(r.get("content", "")) for r in records)
         total_content_kb = total_content_chars / 1024
-
-        # Limit results
-        records = records[: request.max_results]
+        available_for_kb = (
+            RetrievalService._calculate_ratio_based_direct_injection_budget(
+                runtime_context.context_window if runtime_context else None
+            )
+        )
+        available_injection_tokens = (
+            RetrievalService._calculate_available_injection_tokens(
+                context_window=(
+                    runtime_context.context_window if runtime_context else None
+                ),
+                used_context_tokens=(
+                    runtime_context.used_context_tokens if runtime_context else 0
+                ),
+                reserved_output_tokens=(
+                    runtime_context.reserved_output_tokens if runtime_context else 4096
+                ),
+                context_buffer_ratio=(
+                    runtime_context.context_buffer_ratio if runtime_context else 0.1
+                ),
+            )
+        )
 
         logger.info(
-            "[internal_rag] Retrieved %d records (limited to %d) for KB %d, "
-            "total_size=%.2fKB , query: %s%s",
-            total_records_before_limit,
+            "[internal_rag] Retrieved %d records in mode=%s for KBs %s, "
+            "total_size=%.2fKB, estimated_tokens=%d, context_window=%s, "
+            "used_context_tokens=%s, available_for_kb=%s, "
+            "available_injection_tokens=%s, query: %s%s",
             len(records),
-            request.knowledge_base_id,
+            result.get("mode", "rag_retrieval"),
+            knowledge_base_ids,
             total_content_kb,
+            result.get("total_estimated_tokens", 0),
+            runtime_context.context_window if runtime_context else None,
+            runtime_context.used_context_tokens if runtime_context else None,
+            available_for_kb,
+            available_injection_tokens,
             request.query[:50],
             (
-                f", filtered by {len(request.document_ids)} docs"
-                if request.document_ids
+                f", filtered by {len(resolved_document_ids)} docs"
+                if resolved_document_ids
                 else ""
             ),
         )
 
+        mode = result.get("mode", "rag_retrieval")
+        total_estimated_tokens = result.get("total_estimated_tokens", 0)
+
+        if persistence_context is not None:
+            retrieval_persistence_service.persist_retrieval_result(
+                db=db,
+                user_subtask_id=persistence_context.user_subtask_id,
+                user_id=persistence_context.user_id,
+                query=request.query,
+                mode=mode,
+                records=records,
+                restricted_mode=restricted_mode,
+            )
+
+        if restricted_mode:
+            return await protected_knowledge_mediator.transform(
+                db=db,
+                query=request.query,
+                retrieval_mode=mode,
+                records=records,
+                mediation_context=(
+                    request.mediation_context.model_dump(exclude_none=True)
+                    if request.mediation_context
+                    else None
+                ),
+                knowledge_base_ids=knowledge_base_ids,
+                total_estimated_tokens=total_estimated_tokens,
+                user_id=persistence_context.user_id if persistence_context else None,
+                user_name=request.user_name or "system",
+            )
+
         return InternalRetrieveResponse(
+            mode=mode,
             records=[
                 RetrieveRecord(
                     content=r.get("content", ""),
-                    score=r.get("score", 0.0),
+                    score=r.get("score"),
                     title=r.get("title", "Unknown"),
                     metadata=r.get("metadata"),
+                    knowledge_base_id=r.get("knowledge_base_id"),
                 )
                 for r in records
             ],
             total=len(records),
+            total_estimated_tokens=total_estimated_tokens,
+            message=result.get("message"),
         )
 
     except ValueError as e:
         logger.warning("[internal_rag] Retrieval error: %s", e)
         raise HTTPException(status_code=400, detail=str(e))
+    except RemoteRagGatewayError as e:
+        logger.warning("[internal_rag] Remote retrieval failed: %s", e)
+        raise HTTPException(status_code=e.status_code or 502, detail=str(e)) from e
     except Exception as e:
         logger.error("[internal_rag] Retrieval failed: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
@@ -329,315 +625,13 @@ async def get_knowledge_base_info(
     )
 
 
-# ============== Unified KB Tool Result Persistence API ==============
-
-
-class SaveKbToolResultRequest(BaseModel):
-    """Unified request for saving KB tool results to context database.
-
-    Supports both RAG retrieval and kb_head tool results.
-    The tool_type field determines which service method to use.
-    """
-
-    user_subtask_id: int = Field(..., description="User subtask ID")
-    knowledge_base_id: int = Field(
-        ..., description="Knowledge base ID that was accessed"
-    )
-    user_id: int = Field(..., description="User ID for context creation if needed")
-    tool_type: Literal["rag", "kb_head"] = Field(
-        ...,
-        description="Tool type: 'rag' for knowledge_base_search, 'kb_head' for kb_head",
-    )
-
-    # RAG-specific fields (required when tool_type='rag')
-    extracted_text: Optional[str] = Field(
-        default=None, description="Concatenated retrieval text (for RAG only)"
-    )
-    sources: Optional[list[dict]] = Field(
-        default=None, description="List of source info dicts (for RAG only)"
-    )
-    injection_mode: Optional[Literal["direct_injection", "rag_retrieval"]] = Field(
-        default=None, description="Injection mode (for RAG only)"
-    )
-    query: Optional[str] = Field(
-        default=None, description="Search query (for RAG only)"
-    )
-    chunks_count: Optional[int] = Field(
-        default=None, ge=0, description="Number of chunks (for RAG only)"
-    )
-
-    # kb_head-specific fields (used when tool_type='kb_head')
-    # These match KbHeadInput schema for cross-turn content injection
-    document_ids: list[int] = Field(
-        default_factory=list, description="Document IDs that were read (for kb_head)"
-    )
-    offset: int = Field(
-        default=0, ge=0, description="Start position in characters (for kb_head)"
-    )
-    limit: int = Field(
-        default=50000, ge=1, description="Max characters to return (for kb_head)"
-    )
-
-
-class SaveKbToolResultResponse(BaseModel):
-    """Unified response for KB tool result persistence."""
-
-    success: bool
-    context_id: Optional[int] = None
-    message: str = ""
-    # kb_head specific response field
-    kb_head_count: Optional[int] = None
-
-
-@router.post("/save-tool-result", response_model=SaveKbToolResultResponse)
-@trace_async(span_name="rag_save_kb_tool_result", tracer_name="internal.rag")
-async def save_kb_tool_result(
-    request: SaveKbToolResultRequest,
-    db: Session = Depends(get_db),
-):
-    """
-    Unified endpoint for saving KB tool results to context database.
-
-    This endpoint handles both RAG retrieval results (knowledge_base_search tool)
-    and kb_head tool usage tracking in a single API call.
-
-    If context doesn't exist for the subtask+KB combination, it will be
-    created with result data in one operation. This supports the case where
-    task-level bound KBs are used in a subtask that didn't explicitly select them.
-
-    The tool_type field determines which service method to use:
-    - 'rag': Stores retrieval results (extracted_text, sources, injection_mode, etc.)
-    - 'kb_head': Tracks usage statistics (count, chars read, document IDs)
-
-    Args:
-        request: Unified request with tool_type and relevant fields
-        db: Database session
-
-    Returns:
-        Success status and context ID
-    """
-    try:
-        from app.services.context.context_service import context_service
-
-        # First try to find existing context
-        context = context_service.get_knowledge_base_context_by_subtask_and_kb_id(
-            db=db,
-            subtask_id=request.user_subtask_id,
-            knowledge_id=request.knowledge_base_id,
-        )
-
-        if context is None:
-            # Context doesn't exist - create with result data in one operation
-            logger.info(
-                "[internal_rag] Context not found, creating new for %s: subtask_id=%d, kb_id=%d",
-                request.tool_type,
-                request.user_subtask_id,
-                request.knowledge_base_id,
-            )
-
-            # Validate required fields based on tool_type before creating
-            if request.tool_type == "rag":
-                if (
-                    request.injection_mode is None
-                    or request.query is None
-                    or request.chunks_count is None
-                ):
-                    return SaveKbToolResultResponse(
-                        success=False,
-                        message="Missing required fields for RAG: injection_mode, query, chunks_count",
-                    )
-                # For rag_retrieval mode, extracted_text is required (it contains the actual content)
-                if (
-                    request.injection_mode == "rag_retrieval"
-                    and not request.extracted_text
-                ):
-                    return SaveKbToolResultResponse(
-                        success=False,
-                        message="extracted_text is required for rag_retrieval mode",
-                    )
-                result_data = {
-                    "extracted_text": request.extracted_text or "",
-                    "sources": request.sources or [],
-                    "injection_mode": request.injection_mode,
-                    "query": request.query,
-                    "chunks_count": request.chunks_count,
-                }
-            else:  # kb_head
-                # Validate that document_ids is not empty for kb_head
-                if not request.document_ids:
-                    return SaveKbToolResultResponse(
-                        success=False,
-                        message="document_ids is required for kb_head (at least one document ID)",
-                    )
-                result_data = {
-                    "document_ids": request.document_ids,
-                    "offset": request.offset,
-                    "limit": request.limit,
-                }
-
-            # Create context with result in one operation
-            context = context_service.create_knowledge_base_context_with_result(
-                db=db,
-                subtask_id=request.user_subtask_id,
-                knowledge_id=request.knowledge_base_id,
-                user_id=request.user_id,
-                tool_type=request.tool_type,
-                result_data=result_data,
-            )
-
-            logger.info(
-                "[internal_rag] Created new context with %s result: context_id=%d, subtask_id=%d, kb_id=%d",
-                request.tool_type,
-                context.id,
-                request.user_subtask_id,
-                request.knowledge_base_id,
-            )
-
-            return SaveKbToolResultResponse(
-                success=True,
-                context_id=context.id,
-                message=f"{request.tool_type} result saved (new context created)",
-                kb_head_count=1 if request.tool_type == "kb_head" else None,
-            )
-
-        # Context exists - use existing update logic
-        if request.tool_type == "rag":
-            # Validate RAG-specific required fields
-            if (
-                request.injection_mode is None
-                or request.query is None
-                or request.chunks_count is None
-            ):
-                return SaveKbToolResultResponse(
-                    success=False,
-                    message="Missing required fields for RAG: injection_mode, query, chunks_count",
-                )
-            # For rag_retrieval mode, extracted_text is required
-            if request.injection_mode == "rag_retrieval" and not request.extracted_text:
-                return SaveKbToolResultResponse(
-                    success=False,
-                    message="extracted_text is required for rag_retrieval mode",
-                )
-
-            # Update the context with RAG results
-            updated_context = context_service.update_knowledge_base_retrieval_result(
-                db=db,
-                context_id=context.id,
-                extracted_text=request.extracted_text or "",
-                sources=request.sources or [],
-                injection_mode=request.injection_mode,
-                query=request.query,
-                chunks_count=request.chunks_count,
-            )
-
-            if updated_context:
-                logger.info(
-                    "[internal_rag] Saved RAG result via unified API: context_id=%d, subtask_id=%d, kb_id=%d, "
-                    "injection_mode=%s, chunks_count=%d",
-                    updated_context.id,
-                    request.user_subtask_id,
-                    request.knowledge_base_id,
-                    request.injection_mode,
-                    request.chunks_count,
-                )
-                return SaveKbToolResultResponse(
-                    success=True,
-                    context_id=updated_context.id,
-                    message="RAG result saved successfully",
-                )
-
-        elif request.tool_type == "kb_head":
-            # Validate that document_ids is not empty for kb_head
-            if not request.document_ids:
-                return SaveKbToolResultResponse(
-                    success=False,
-                    message="document_ids is required for kb_head (at least one document ID)",
-                )
-            # Update the context with kb_head usage (append mode - preserve existing data)
-            updated_context = context_service.update_knowledge_base_kb_head_result(
-                db=db,
-                context_id=context.id,
-                document_ids=request.document_ids,
-                offset=request.offset,
-                limit=request.limit,
-            )
-
-            if updated_context:
-                kb_head_result = (updated_context.type_data or {}).get(
-                    "kb_head_result"
-                ) or {}
-                usage_count = kb_head_result.get("usage_count", 0)
-                logger.info(
-                    "[internal_rag] Saved kb_head result via unified API: context_id=%d, subtask_id=%d, kb_id=%d, "
-                    "usage_count=%d, docs_read=%d",
-                    updated_context.id,
-                    request.user_subtask_id,
-                    request.knowledge_base_id,
-                    usage_count,
-                    len(request.document_ids),
-                )
-                return SaveKbToolResultResponse(
-                    success=True,
-                    context_id=updated_context.id,
-                    kb_head_count=usage_count,
-                    message="kb_head result saved successfully",
-                )
-
-        return SaveKbToolResultResponse(
-            success=False,
-            message="Failed to update context record",
-        )
-
-    except Exception as e:
-        logger.error(
-            "[internal_rag] Save %s result failed: subtask_id=%d, kb_id=%d, error=%s",
-            request.tool_type,
-            request.user_subtask_id,
-            request.knowledge_base_id,
-            e,
-            exc_info=True,
-        )
-        raise HTTPException(status_code=500, detail=str(e)) from e
-
-
-class AllChunksRequest(BaseModel):
-    """Request for getting all chunks from a knowledge base."""
-
-    knowledge_base_id: int = Field(..., description="Knowledge base ID")
-    max_chunks: int = Field(
-        default=10000,
-        description="Maximum number of chunks to retrieve (safety limit)",
-    )
-    query: Optional[str] = Field(
-        default=None,
-        description="Optional query string for logging purposes",
-    )
-
-
-class ChunkInfo(BaseModel):
-    """Information for a single chunk."""
-
-    content: str
-    title: str
-    chunk_id: Optional[int] = None
-    doc_ref: Optional[str] = None
-    metadata: Optional[dict] = None
-
-
-class AllChunksResponse(BaseModel):
-    """Response for all chunks query."""
-
-    chunks: list[ChunkInfo]
-    total: int
-
-
-@router.post("/all-chunks", response_model=AllChunksResponse)
+@router.post("/all-chunks", response_model=RemoteListChunksResponse)
 async def get_all_chunks(
-    request: AllChunksRequest,
+    request: RemoteListChunksRequest,
     db: Session = Depends(get_db),
 ):
     """
-    Get all chunks from a knowledge base for direct injection.
+    Legacy internal endpoint for fetching all chunks for direct injection.
 
     This endpoint retrieves all chunks stored in a knowledge base,
     used when the total content fits within the model's context window.
@@ -650,16 +644,18 @@ async def get_all_chunks(
         All chunks from the knowledge base
     """
     try:
-        from app.services.rag.retrieval_service import RetrievalService
-
-        retrieval_service = RetrievalService()
-
-        chunks = await retrieval_service.get_all_chunks_from_knowledge_base(
-            knowledge_base_id=request.knowledge_base_id,
+        runtime_spec = runtime_resolver.build_internal_list_chunks_runtime_spec(
             db=db,
+            knowledge_base_id=request.knowledge_base_id,
             max_chunks=request.max_chunks,
             query=request.query,
+            metadata_condition=request.metadata_condition,
         )
+        result = await LocalRagGateway().list_chunks(
+            runtime_spec,
+            db=db,
+        )
+        chunks = result.get("chunks", [])
 
         # Calculate total content size for logging
         total_content_chars = sum(len(c.get("content", "")) for c in chunks)
@@ -672,9 +668,9 @@ async def get_all_chunks(
             total_content_kb,
         )
 
-        return AllChunksResponse(
+        return RemoteListChunksResponse(
             chunks=[
-                ChunkInfo(
+                RemoteListChunkRecord(
                     content=c.get("content", ""),
                     title=c.get("title", "Unknown"),
                     chunk_id=c.get("chunk_id"),
@@ -683,7 +679,7 @@ async def get_all_chunks(
                 )
                 for c in chunks
             ],
-            total=len(chunks),
+            total=result.get("total", len(chunks)),
         )
 
     except ValueError as e:
@@ -813,6 +809,27 @@ class ReadDocRequest(BaseModel):
     )
 
 
+class ReadDocsRequest(BaseModel):
+    """Batch request for reading document content."""
+
+    document_ids: list[int] = Field(..., description="Document IDs")
+    offset: int = Field(default=0, ge=0, description="Start position in characters")
+    limit: int = Field(
+        default=DEFAULT_READ_DOC_LIMIT,
+        ge=1,
+        le=MAX_READ_DOC_LIMIT,
+        description="Max characters to return per document",
+    )
+    knowledge_base_ids: Optional[list[int]] = Field(
+        default=None,
+        description="Optional list of allowed KB IDs for security validation",
+    )
+    persistence_context: Optional[RetrievePersistenceContext] = Field(
+        default=None,
+        description="Optional kb_head persistence metadata handled in Backend",
+    )
+
+
 class ReadDocResponse(BaseModel):
     """Response for document reading."""
 
@@ -826,6 +843,31 @@ class ReadDocResponse(BaseModel):
     kb_id: Optional[int] = Field(
         default=None, description="Knowledge base ID this document belongs to"
     )
+
+
+class ReadDocItemResponse(BaseModel):
+    """Single item in batch document reading response."""
+
+    id: int = Field(..., description="Document ID")
+    name: Optional[str] = Field(default=None, description="Document name")
+    content: Optional[str] = Field(
+        default=None, description="Document content (partial)"
+    )
+    total_length: int = Field(default=0, description="Total document length")
+    offset: int = Field(default=0, description="Actual start position")
+    returned_length: int = Field(default=0, description="Returned content length")
+    has_more: bool = Field(default=False, description="Whether more content exists")
+    kb_id: Optional[int] = Field(
+        default=None, description="Knowledge base ID this document belongs to"
+    )
+    error: Optional[str] = Field(default=None, description="Per-document error")
+
+
+class ReadDocsResponse(BaseModel):
+    """Response for batch document reading."""
+
+    documents: list[ReadDocItemResponse]
+    total: int
 
 
 @router.post("/read-doc", response_model=ReadDocResponse)
@@ -847,75 +889,47 @@ async def read_document(
         Document content with pagination info
     """
     try:
-        from app.models.knowledge import KnowledgeDocument
-        from app.services.context import context_service
-
-        # Get document
-        document = (
-            db.query(KnowledgeDocument)
-            .filter(KnowledgeDocument.id == request.document_id)
-            .first()
+        from app.services.knowledge.document_read_service import (
+            DOCUMENT_READ_ERROR_ACCESS_DENIED,
+            DOCUMENT_READ_ERROR_NOT_FOUND,
+            document_read_service,
         )
 
-        if not document:
+        results = document_read_service.read_documents(
+            db=db,
+            document_ids=[request.document_id],
+            offset=request.offset,
+            limit=request.limit,
+            knowledge_base_ids=request.knowledge_base_ids,
+        )
+        result = results[0] if results else None
+
+        if not result or result.get("error_code") == DOCUMENT_READ_ERROR_NOT_FOUND:
             raise HTTPException(status_code=404, detail="Document not found")
-
-        # Security check: verify document belongs to allowed knowledge bases
-        if request.knowledge_base_ids:
-            if document.kind_id not in request.knowledge_base_ids:
-                logger.warning(
-                    "[internal_rag] Access denied: doc %d belongs to KB %d, "
-                    "allowed KBs: %s",
-                    request.document_id,
-                    document.kind_id,
-                    request.knowledge_base_ids,
-                )
-                raise HTTPException(
-                    status_code=403,
-                    detail="Access denied: document not in allowed knowledge bases",
-                )
-
-        # Get content from attachment
-        content = ""
-        total_length = 0
-        actual_start = 0
-
-        if document.attachment_id:
-            attachment = context_service.get_context_optional(
-                db=db,
-                context_id=document.attachment_id,
+        if result.get("error_code") == DOCUMENT_READ_ERROR_ACCESS_DENIED:
+            raise HTTPException(
+                status_code=403,
+                detail="Access denied: document not in allowed knowledge bases",
             )
-            if attachment and attachment.extracted_text:
-                full_content = attachment.extracted_text
-                total_length = len(full_content)
-
-                # Apply offset and limit, clamp start to total_length
-                actual_start = min(request.offset, total_length)
-                end = min(actual_start + request.limit, total_length)
-                content = full_content[actual_start:end]
-
-        returned_length = len(content)
-        # Use actual_start instead of request.offset for consistent pagination
-        has_more = (actual_start + returned_length) < total_length
 
         logger.info(
             "[internal_rag] Read document %d: offset=%d, returned=%d/%d, has_more=%s",
             request.document_id,
-            actual_start,
-            returned_length,
-            total_length,
-            has_more,
+            result.get("offset", 0),
+            result.get("returned_length", 0),
+            result.get("total_length", 0),
+            result.get("has_more", False),
         )
 
         return ReadDocResponse(
-            document_id=document.id,
-            name=document.name,
-            content=content,
-            total_length=total_length,
-            offset=actual_start,  # Return actual clamped offset
-            returned_length=returned_length,
-            has_more=has_more,
-            kb_id=document.kind_id,  # Include KB ID for persistence routing
+            document_id=result["id"],
+            name=result.get("name", ""),
+            content=result.get("content", ""),
+            total_length=result.get("total_length", 0),
+            offset=result.get("offset", 0),
+            returned_length=result.get("returned_length", 0),
+            has_more=result.get("has_more", False),
+            kb_id=result.get("kb_id"),
         )
 
     except HTTPException:
@@ -927,4 +941,55 @@ async def read_document(
             e,
             exc_info=True,
         )
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.post("/read-docs", response_model=ReadDocsResponse)
+async def read_documents(
+    request: ReadDocsRequest,
+    db: Session = Depends(get_db),
+) -> ReadDocsResponse:
+    """Read multiple documents and optionally persist kb_head usage."""
+    try:
+        from app.services.knowledge.document_read_service import document_read_service
+
+        persistence_context = request.persistence_context
+        results = document_read_service.read_documents(
+            db=db,
+            document_ids=request.document_ids,
+            offset=request.offset,
+            limit=request.limit,
+            knowledge_base_ids=request.knowledge_base_ids,
+            user_subtask_id=(
+                persistence_context.user_subtask_id if persistence_context else None
+            ),
+            user_id=persistence_context.user_id if persistence_context else None,
+        )
+
+        logger.info(
+            "[internal_rag] Read %d documents in batch: requested=%d, subtask_id=%s",
+            len(results),
+            len(request.document_ids),
+            persistence_context.user_subtask_id if persistence_context else None,
+        )
+
+        return ReadDocsResponse(
+            documents=[
+                ReadDocItemResponse(
+                    id=result["id"],
+                    name=result.get("name"),
+                    content=result.get("content"),
+                    total_length=result.get("total_length", 0),
+                    offset=result.get("offset", 0),
+                    returned_length=result.get("returned_length", 0),
+                    has_more=result.get("has_more", False),
+                    kb_id=result.get("kb_id"),
+                    error=result.get("error"),
+                )
+                for result in results
+            ],
+            total=len(results),
+        )
+    except Exception as e:
+        logger.error("[internal_rag] Read documents failed: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=str(e)) from e

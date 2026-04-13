@@ -6,9 +6,9 @@
 Resource member model for unified resource sharing.
 
 Stores user access permissions to shared resources.
-Supports Team, Task, and KnowledgeBase resource types.
+Supports Team, Task, KnowledgeBase, and Namespace resource types.
 
-This model replaces the legacy SharedTeam, SharedTask, and TaskMember models
+This model replaces the legacy SharedTeam, SharedTask, TaskMember, and NamespaceMember models
 to provide a unified access control system for all shareable resources.
 """
 
@@ -29,7 +29,8 @@ from sqlalchemy.orm import Mapped, relationship
 from sqlalchemy.sql import func
 
 from app.db.base import Base
-from app.models.share_link import PermissionLevel, ResourceType
+from app.models.share_link import ResourceType
+from app.schemas.base_role import BaseRole
 
 if TYPE_CHECKING:
     from app.models.user import User
@@ -47,6 +48,11 @@ class MemberStatus(str, PyEnum):
     REJECTED = "rejected"  # Access denied
 
 
+# ResourceRole is an alias to BaseRole for backward compatibility
+# All role-related code should use BaseRole as the single source of truth
+ResourceRole = BaseRole
+
+
 class ResourceMember(Base):
     """
     Resource member model for access control.
@@ -54,7 +60,7 @@ class ResourceMember(Base):
     Stores user permissions for shared resources including:
     - Target resource (type + id)
     - Member user ID
-    - Permission level (view/edit/manage)
+    - Role (Owner/Maintainer/Developer/Reporter)
     - Approval status (pending/approved/rejected)
     - Invitation/review information
     - Task-specific copied resource ID
@@ -71,7 +77,7 @@ class ResourceMember(Base):
     resource_type = Column(
         String(50),
         nullable=False,
-        comment="Resource type: Team, Task, KnowledgeBase",
+        comment="Resource type: Team, Task, KnowledgeBase, Namespace",
     )
     resource_id = Column(
         Integer,
@@ -93,13 +99,13 @@ class ResourceMember(Base):
         "User", foreign_keys=[user_id], back_populates="resource_members"
     )
 
-    # Permission level
-    permission_level = Column(
+    # Role-based permission
+    role = Column(
         String(20),
         nullable=False,
-        default=PermissionLevel.VIEW.value,
-        server_default="view",
-        comment="Permission level: view, edit, manage",
+        default=ResourceRole.Reporter.value,
+        server_default="Reporter",
+        comment="Member role: Owner, Maintainer, Developer, Reporter",
     )
 
     # Status
@@ -207,3 +213,19 @@ class ResourceMember(Base):
     def joined_at(self) -> datetime:
         """Alias for created_at for backward compatibility with TaskMember."""
         return self.created_at
+
+    def get_effective_role(self) -> str:
+        """Get effective role for this member.
+
+        Returns:
+            Role string: Owner, Maintainer, Developer, or Reporter
+        """
+        return self.role if self.role else ResourceRole.Reporter.value
+
+    def set_role(self, role: str) -> None:
+        """Set role for this member.
+
+        Args:
+            role: The role to set (Owner, Maintainer, Developer, Reporter)
+        """
+        self.role = role

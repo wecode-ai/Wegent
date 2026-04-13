@@ -430,7 +430,13 @@ class CallbackTransport(EventTransport):
         if executor_namespace is not None:
             event["executor_namespace"] = executor_namespace
 
-        return self.client.send_event_dict(event)
+        import asyncio
+
+        try:
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(None, self.client.send_event_dict, event)
+        except RuntimeError:
+            return self.client.send_event_dict(event)
 
 
 class WebSocketTransport(EventTransport):

@@ -6,7 +6,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
-import { teamService } from '@/features/tasks/service/teamService'
+import { useTeamContext } from '@/contexts/TeamContext'
 import TopNavigation from '@/features/layout/TopNavigation'
 import { TaskSidebar, SearchDialog } from '@/features/tasks/components/sidebar'
 import { ThemeToggle } from '@/features/theme/ThemeToggle'
@@ -36,8 +36,8 @@ export function CodePageMobile() {
   const searchParams = useSearchParams()
   const _hasTaskId = !!searchParams.get('taskId')
 
-  // Team state from service
-  const { teams, isTeamsLoading, refreshTeams } = teamService.useTeams()
+  // Team state from context (centralized to avoid duplicate API calls)
+  const { teams, isTeamsLoading, refreshTeams } = useTeamContext()
 
   // Task context for workbench data
   const { selectedTaskDetail, setSelectedTask, refreshTasks, refreshSelectedTaskDetail } =

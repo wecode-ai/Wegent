@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
-import { useRouter, useSearchParams } from 'next/navigation'
+import { useRouter, useSearchParams, usePathname } from 'next/navigation'
 import { useTaskContext } from '../../contexts/taskContext'
 import { useChatStreamContext } from '../../contexts/chatStreamContext'
 import { useSocket } from '@/contexts/SocketContext'
@@ -18,8 +18,16 @@ import { isChatShell, teamRequiresWorkspace } from '../../service/messageService
 import { Button } from '@/components/ui/button'
 import { DEFAULT_MODEL_NAME } from '../selector/ModelSelector'
 import { useTaskStateMachine } from '../../hooks/useTaskStateMachine'
+import { getStreamingJoinWarningKey } from './streamingJoinWarning'
 import type { Model } from '../selector/ModelSelector'
-import type { Team, GitRepoInfo, GitBranch, Attachment, SubtaskContextBrief } from '@/types/api'
+import type {
+  Team,
+  GitRepoInfo,
+  GitBranch,
+  Attachment,
+  SubtaskContextBrief,
+  TaskType,
+} from '@/types/api'
 import type { ContextItem } from '@/types/context'
 import type { SkillRef } from '../../hooks/useSkillSelector'
 
@@ -56,7 +64,7 @@ export interface UseChatStreamHandlersOptions {
   isAttachmentReadyToSend: boolean
 
   // Task type
-  taskType: 'chat' | 'code' | 'knowledge' | 'task'
+  taskType: TaskType
 
   // Knowledge base ID (for knowledge type tasks)
   knowledgeBaseId?: number
@@ -80,6 +88,27 @@ export interface UseChatStreamHandlersOptions {
   // Skill selection
   /** Additional skills selected by user (backend determines preload vs download based on executor type) */
   additionalSkills?: SkillRef[]
+
+  // Generation mode props (used when taskType === 'video' or 'image')
+  /** Generation-specific parameters (resolution, ratio, etc.) */
+  generateParams?: GenerateParams
+}
+
+/**
+ * Parameters for content generation (video, image, etc.)
+ * Used when taskType is 'video' or 'image' to provide generation-specific settings.
+ */
+export interface GenerateParams {
+  /** Resolution for generation (e.g., '1080p', '720p', '480p') */
+  resolution?: string
+  /** Aspect ratio for generation (e.g., '16:9', '9:16', '1:1') */
+  ratio?: string
+  /** Duration in seconds for video generation */
+  duration?: number
+  /** Model name for video/image generation (for display in user message) */
+  model?: string
+  /** Image size for image generation (e.g., '2048x2048') */
+  size?: string
 }
 
 export interface ChatStreamHandlers {
@@ -163,6 +192,7 @@ export function useChatStreamHandlers({
   onTaskCreated,
   selectedDocumentIds,
   additionalSkills,
+  generateParams,
 }: UseChatStreamHandlersOptions): ChatStreamHandlers {
   const { toast } = useToast()
   const { t } = useTranslation()
@@ -170,6 +200,7 @@ export function useChatStreamHandlers({
   const { traceAction } = useTraceAction()
   const router = useRouter()
   const searchParams = useSearchParams()
+  const pathname = usePathname()
 
   const { selectedTaskDetail, refreshTasks, refreshSelectedTaskDetail, markTaskAsViewed } =
     useTaskContext()
@@ -185,6 +216,17 @@ export function useChatStreamHandlers({
   // Get selected device ID for executor-based tasks
   const { selectedDeviceId } = useDevices()
 
+  // Determine if we're in device mode - devices page or chat page with device selected
+  // This prevents coding tasks from accidentally inheriting a device_id
+  const isDevicesPage = pathname?.startsWith('/devices')
+  const isDeviceMode = isDevicesPage || taskType === 'task'
+
+  // Determine effective device_id to send:
+  // - Send device_id when in device mode (devices page or chat page with device selected) AND team is not Chat Shell
+  // - This ensures coding tasks don't get routed to devices
+  const effectiveDeviceId =
+    isDeviceMode && !isChatShell(selectedTeam) ? selectedDeviceId || undefined : undefined
+
   // Local state
   const [pendingTaskId, setPendingTaskId] = useState<number | null>(null)
   const [localPendingMessage, setLocalPendingMessage] = useState<string | null>(null)
@@ -196,6 +238,7 @@ export function useChatStreamHandlers({
   const previousTaskIdRef = useRef<number | null | undefined>(undefined)
   const prevTaskIdForModelRef = useRef<number | null | undefined>(undefined)
   const prevClearVersionRef = useRef(clearVersion)
+  const lastJoinWarningRef = useRef<string | null>(null)
 
   // Unified function to reset streaming-related state
   const resetStreamingState = useCallback(() => {
@@ -215,7 +258,13 @@ export function useChatStreamHandlers({
   // Use useTaskStateMachine to properly subscribe to state changes
   // This ensures isStreaming updates when chat:done is received
   // IMPORTANT: All streaming state comes from the state machine - no local state variables
-  const { state: taskState, isStreaming } = useTaskStateMachine(effectiveTaskIdForState)
+  const { state: taskState, isStreaming: isMachineStreaming } =
+    useTaskStateMachine(effectiveTaskIdForState)
+
+  // Keep "stop" state aligned with backend task lifecycle:
+  // a task can stay RUNNING even when no stream chunk is currently arriving.
+  // In that window, UI should still block sending and show stop action.
+  const isStreaming = isMachineStreaming || selectedTaskDetail?.status === 'RUNNING'
 
   // Alias for backward compatibility - both refer to the same state machine value
   const isSubtaskStreaming = isStreaming
@@ -239,7 +288,6 @@ export function useChatStreamHandlers({
     if (taskIdToStop && taskIdToStop > 0) {
       const team =
         typeof selectedTaskDetail?.team === 'object' ? selectedTaskDetail.team : undefined
-      // Pass undefined for subtasks - contextStopStream will get streaming info from state machine
       await contextStopStream(taskIdToStop, undefined, team)
     }
   }, [currentDisplayTaskId, pendingTaskId, contextStopStream, selectedTaskDetail?.team])
@@ -305,6 +353,48 @@ export function useChatStreamHandlers({
 
     previousTaskIdRef.current = currentTaskId
   }, [selectedTaskDetail?.id, resetStreamingState])
+
+  // Show join-time warning for long-running streaming tasks recovered from WebSocket join
+  useEffect(() => {
+    const streamingInfo = taskState?.streamingInfo
+    if (!streamingInfo || taskState?.status !== 'streaming') {
+      lastJoinWarningRef.current = null
+      return
+    }
+
+    const warningKey = getStreamingJoinWarningKey({
+      started_at: streamingInfo.started_at,
+      last_activity_at: streamingInfo.last_activity_at,
+    })
+
+    const nowMs = Date.now()
+    const startedAtMs = streamingInfo.started_at ? Date.parse(streamingInfo.started_at) : NaN
+    const lastActivityAtMs = streamingInfo.last_activity_at
+      ? Date.parse(streamingInfo.last_activity_at)
+      : NaN
+    console.info('[StreamingJoinDebug] warning evaluation', {
+      taskId: selectedTaskDetail?.id || pendingTaskId || 0,
+      status: taskState?.status,
+      subtaskId: streamingInfo.subtask_id,
+      startedAt: streamingInfo.started_at,
+      lastActivityAt: streamingInfo.last_activity_at,
+      startedAgeMs: Number.isNaN(startedAtMs) ? null : nowMs - startedAtMs,
+      lastActivityAgeMs: Number.isNaN(lastActivityAtMs) ? null : nowMs - lastActivityAtMs,
+      warningKey,
+    })
+
+    if (!warningKey) return
+
+    const taskId = selectedTaskDetail?.id || pendingTaskId || 0
+    const dedupeKey = `${taskId}:${warningKey}`
+    if (lastJoinWarningRef.current === dedupeKey) return
+
+    lastJoinWarningRef.current = dedupeKey
+    toast({
+      title: t(warningKey),
+      variant: 'destructive',
+    })
+  }, [pendingTaskId, selectedTaskDetail?.id, t, taskState?.status, taskState?.streamingInfo, toast])
 
   // Note: Stream recovery is now handled by TaskStateMachine via useUnifiedMessages
   // The state machine automatically recovers streaming state when:
@@ -415,30 +505,44 @@ export function useChatStreamHandlers({
       try {
         // Convert selected contexts to backend format
         // Each context item contains type and data fields
+        // Note: queue_message contexts are handled separately - their content is prepended to the message
         const contextItems: Array<{
           type: 'knowledge_base' | 'table' | 'selected_documents'
           data: Record<string, unknown>
-        }> = selectedContexts.map(ctx => {
-          if (ctx.type === 'knowledge_base') {
+        }> = selectedContexts
+          .filter(ctx => ctx.type !== 'queue_message')
+          .map(ctx => {
+            if (ctx.type === 'knowledge_base') {
+              return {
+                type: 'knowledge_base' as const,
+                data: {
+                  knowledge_id: ctx.id,
+                  name: ctx.name,
+                  document_count: ctx.document_count,
+                },
+              }
+            }
+            // ctx.type === 'table'
             return {
-              type: 'knowledge_base' as const,
+              type: 'table' as const,
               data: {
-                knowledge_id: ctx.id,
+                document_id: (ctx as { document_id: number }).document_id,
                 name: ctx.name,
-                document_count: ctx.document_count,
+                source_config: (ctx as { source_config?: { url?: string } }).source_config,
               },
             }
-          }
-          // ctx.type === 'table'
-          return {
-            type: 'table' as const,
-            data: {
-              document_id: ctx.document_id,
-              name: ctx.name,
-              source_config: ctx.source_config,
-            },
-          }
-        })
+          })
+
+        // Handle queue_message contexts - prepend their content to the message
+        // This allows the AI to see the forwarded message content
+        let messageWithQueueContent = finalMessage
+        const queueMessageContexts = selectedContexts.filter(ctx => ctx.type === 'queue_message')
+        if (queueMessageContexts.length > 0) {
+          const queueContents = queueMessageContexts
+            .map(ctx => (ctx as import('@/types/context').QueueMessageContext).fullContent)
+            .join('\n\n---\n\n')
+          messageWithQueueContent = `${queueContents}\n\n---\n\n${finalMessage}`
+        }
 
         // Add selected document IDs as a context for notebook mode
         // This allows direct content injection of selected documents
@@ -511,7 +615,7 @@ export function useChatStreamHandlers({
 
         const tempTaskId = await contextSendMessage(
           {
-            message: finalMessage,
+            message: messageWithQueueContent,
             team_id: selectedTeam?.id ?? 0,
             task_id: selectedTaskDetail?.id,
             model_id: modelId,
@@ -531,14 +635,17 @@ export function useChatStreamHandlers({
             task_type: taskType,
             knowledge_base_id: taskType === 'knowledge' ? knowledgeBaseId : undefined,
             contexts: contextItems.length > 0 ? contextItems : undefined,
-            // Device ID for local device execution (only for executor-based teams, not Chat Shell)
-            device_id: !isChatShell(selectedTeam) ? selectedDeviceId || undefined : undefined,
+            // Device ID for local device execution
+            // Only send device_id when on devices page to prevent coding tasks from being routed to devices
+            device_id: effectiveDeviceId,
             // Skill selection - backend determines preload vs download based on executor type
             additional_skills:
               additionalSkills && additionalSkills.length > 0 ? additionalSkills : undefined,
+            // Generation parameters for video/image generation tasks
+            generate_params: generateParams,
           },
           {
-            pendingUserMessage: message,
+            pendingUserMessage: messageWithQueueContent,
             pendingAttachments: attachments,
             pendingContexts: pendingContexts.length > 0 ? pendingContexts : undefined,
             immediateTaskId: immediateTaskId,
@@ -559,9 +666,15 @@ export function useChatStreamHandlers({
               }
 
               if (completedTaskId && !selectedTaskDetail?.id) {
-                const params = new URLSearchParams(Array.from(searchParams.entries()))
-                params.set('taskId', String(completedTaskId))
-                router.push(`?${params.toString()}`)
+                // For knowledge type tasks on /knowledge page, navigate to the dedicated KB chat page
+                // This ensures full task functionality (follow-up questions, link sharing, etc.)
+                if (taskType === 'knowledge' && knowledgeBaseId && pathname === '/knowledge') {
+                  router.push(`/knowledge/document/${knowledgeBaseId}?taskId=${completedTaskId}`)
+                } else {
+                  const params = new URLSearchParams(Array.from(searchParams.entries()))
+                  params.set('taskId', String(completedTaskId))
+                  router.push(`?${params.toString()}`)
+                }
                 refreshTasks()
               }
 
@@ -610,6 +723,7 @@ export function useChatStreamHandlers({
       refreshTasks,
       searchParams,
       router,
+      pathname,
       showRepositorySelector,
       selectedRepo,
       selectedBranch,
@@ -624,12 +738,12 @@ export function useChatStreamHandlers({
       externalApiParams,
       onTaskCreated,
       selectedDocumentIds,
-      selectedDeviceId,
+      effectiveDeviceId,
       effectiveRequiresWorkspace,
       additionalSkills,
+      generateParams,
     ]
   )
-
   /**
    * Send a message with a temporary model override.
    * This is used for regeneration where user selects a specific model for that single regeneration.

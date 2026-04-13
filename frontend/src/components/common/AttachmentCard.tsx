@@ -5,11 +5,13 @@
 'use client'
 
 import React, { useEffect, useState } from 'react'
-import { Download, Loader2 } from 'lucide-react'
+import { Download, Loader2, Eye } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { downloadAttachment, getAttachment, getFileIcon } from '@/apis/attachments'
 import type { AttachmentDetailResponse } from '@/apis/attachments'
 import { useShareToken } from '@/contexts/ShareTokenContext'
+import { FilePreviewDialog, isFilePreviewable } from '@/components/common/FilePreview'
+import { useTranslation } from '@/hooks/useTranslation'
 
 // Global cache for attachment details to avoid redundant API calls
 const attachmentCache = new Map<number, AttachmentDetailResponse>()
@@ -26,14 +28,18 @@ interface AttachmentCardProps {
  * - Fetches attachment details from API (with caching)
  * - File icon based on extension
  * - Filename and type label
- * - Preview button (opens in new tab)
+ * - Preview button (opens dialog)
  * - Download button (downloads with authentication)
+ *
+ * Note: Uses <span> instead of <div> to avoid hydration errors when rendered inside <p> tags by Markdown
  */
 export function AttachmentCard({ attachmentId }: AttachmentCardProps) {
   const { shareToken } = useShareToken()
+  const { t } = useTranslation('common')
   const [attachment, setAttachment] = useState<AttachmentDetailResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [previewOpen, setPreviewOpen] = useState(false)
 
   // Fetch attachment details on mount (with caching)
   useEffect(() => {
@@ -66,6 +72,7 @@ export function AttachmentCard({ attachmentId }: AttachmentCardProps) {
 
   const handleDownload = async (e: React.MouseEvent) => {
     e.preventDefault()
+    e.stopPropagation()
     try {
       await downloadAttachment(attachmentId, attachment?.filename, shareToken)
     } catch (error) {
@@ -73,35 +80,45 @@ export function AttachmentCard({ attachmentId }: AttachmentCardProps) {
     }
   }
 
-  // Loading state
+  const handlePreview = () => {
+    setPreviewOpen(true)
+  }
+
+  const handleClosePreview = () => {
+    setPreviewOpen(false)
+  }
+
+  // Loading state - use span with display:block to avoid hydration error in <p>
   if (loading) {
     return (
-      <div className="flex items-center gap-4 p-4 rounded-xl border border-border bg-surface">
-        <div className="flex-shrink-0 w-16 h-16 flex items-center justify-center bg-base rounded-lg border border-border">
+      <span className="flex items-center gap-4 p-4 rounded-xl border border-border bg-surface w-full">
+        <span className="flex-shrink-0 w-16 h-16 flex items-center justify-center bg-base rounded-lg border border-border">
           <Loader2 className="h-6 w-6 animate-spin text-text-muted" />
-        </div>
-        <div className="flex-1 min-w-0">
-          <div className="h-5 bg-border rounded animate-pulse mb-2 w-3/4" />
-          <div className="h-4 bg-border rounded animate-pulse w-1/2" />
-        </div>
-      </div>
+        </span>
+        <span className="flex-1 min-w-0 block">
+          <span className="block h-5 bg-border rounded animate-pulse mb-2 w-3/4" />
+          <span className="block h-4 bg-border rounded animate-pulse w-1/2" />
+        </span>
+      </span>
     )
   }
 
-  // Error state
+  // Error state - use span with display:block
   if (error || !attachment) {
     return (
-      <div className="flex items-center gap-4 p-4 rounded-xl border border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-950/20">
-        <div className="flex-shrink-0 w-16 h-16 flex items-center justify-center bg-base rounded-lg border border-border">
+      <span className="flex items-center gap-4 p-4 rounded-xl border border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-950/20 w-full">
+        <span className="flex-shrink-0 w-16 h-16 flex items-center justify-center bg-base rounded-lg border border-border">
           <span className="text-3xl">⚠️</span>
-        </div>
-        <div className="flex-1 min-w-0">
-          <h3 className="text-base font-medium text-red-800 dark:text-red-200">
+        </span>
+        <span className="flex-1 min-w-0 block">
+          <span className="block text-base font-medium text-red-800 dark:text-red-200">
             Failed to load attachment
-          </h3>
-          <p className="text-sm text-red-600 dark:text-red-400">{error || 'Unknown error'}</p>
-        </div>
-      </div>
+          </span>
+          <span className="block text-sm text-red-600 dark:text-red-400">
+            {error || 'Unknown error'}
+          </span>
+        </span>
+      </span>
     )
   }
 
@@ -111,50 +128,77 @@ export function AttachmentCard({ attachmentId }: AttachmentCardProps) {
   // Get file type label
   const fileTypeLabel = getFileTypeLabel(attachment.file_extension)
 
+  // Check if file is previewable
+  const isPreviewable = isFilePreviewable(attachment.mime_type, attachment.file_extension)
+
   return (
-    <div className="flex items-center gap-4 p-4 rounded-xl border border-border bg-surface hover:bg-surface-hover transition-colors">
-      {/* File Icon */}
-      <div className="flex-shrink-0 w-16 h-16 flex items-center justify-center bg-base rounded-lg border border-border">
-        <span className="text-3xl">{fileIcon}</span>
-      </div>
+    <>
+      <span
+        className={`flex items-center gap-4 p-4 rounded-xl border border-border bg-surface hover:bg-surface-hover transition-colors w-full ${isPreviewable ? 'cursor-pointer' : ''}`}
+        onClick={isPreviewable ? handlePreview : undefined}
+      >
+        {/* File Icon */}
+        <span className="flex-shrink-0 w-16 h-16 flex items-center justify-center bg-base rounded-lg border border-border">
+          <span className="text-3xl">{fileIcon}</span>
+        </span>
 
-      {/* File Info */}
-      <div className="flex-1 min-w-0">
-        <h3
-          className="text-base font-medium text-text-primary truncate"
-          title={attachment.filename}
-        >
-          {attachment.filename}
-        </h3>
-        <p className="text-sm text-text-secondary">
-          {fileTypeLabel} · {attachment.file_extension.replace('.', '').toUpperCase()}
-        </p>
-      </div>
+        {/* File Info */}
+        <span className="flex-1 min-w-0 block">
+          <span
+            className="block text-base font-medium text-text-primary truncate"
+            title={attachment.filename}
+          >
+            {attachment.filename}
+          </span>
+          <span className="block text-sm text-text-secondary">
+            {fileTypeLabel} · {attachment.file_extension.replace('.', '').toUpperCase()}
+          </span>
+        </span>
 
-      {/* Action Buttons */}
-      <div className="flex items-center gap-2 flex-shrink-0">
-        {/* Preview Button */}
-        {/* <Button
-          variant="ghost"
-          size="icon"
-          onClick={handlePreview}
-          className="h-10 w-10 rounded-lg hover:bg-primary/10"
-          title="Preview"
-        >
-          <ExternalLink className="h-5 w-5 text-text-secondary" />
-        </Button> */}
+        {/* Action Buttons */}
+        <span className="flex items-center gap-2 flex-shrink-0">
+          {/* Preview Button */}
+          {isPreviewable && (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={e => {
+                e.stopPropagation()
+                handlePreview()
+              }}
+              className="h-10 w-10 rounded-lg hover:bg-primary/10"
+              title={t('actions.preview')}
+            >
+              <Eye className="h-5 w-5 text-text-secondary" />
+            </Button>
+          )}
 
-        {/* Download Button */}
-        <Button
-          variant="outline"
-          onClick={handleDownload}
-          className="h-10 px-4 rounded-lg hover:bg-primary/10"
-        >
-          <Download className="h-4 w-4 mr-2" />
-          Download
-        </Button>
-      </div>
-    </div>
+          {/* Download Button */}
+          <Button
+            variant="outline"
+            onClick={handleDownload}
+            className="h-10 px-4 rounded-lg hover:bg-primary/10"
+          >
+            <Download className="h-4 w-4 mr-2" />
+            Download
+          </Button>
+        </span>
+      </span>
+
+      {/* Preview Dialog */}
+      {isPreviewable && (
+        <FilePreviewDialog
+          open={previewOpen}
+          onClose={handleClosePreview}
+          attachmentId={attachmentId}
+          filename={attachment.filename}
+          mimeType={attachment.mime_type}
+          fileSize={attachment.file_size}
+          shareToken={shareToken}
+          canShare={!shareToken}
+        />
+      )}
+    </>
   )
 }
 
@@ -171,11 +215,14 @@ function getFileTypeLabel(extension: string): string {
   if (['ppt', 'pptx'].includes(ext)) return 'Presentation'
   if (['txt', 'md'].includes(ext)) return 'Text'
 
+  // Web types
+  if (['html', 'htm', 'html5'].includes(ext)) return 'Web Page'
+
   // Image types
   if (['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp'].includes(ext)) return 'Image'
 
   // Code types
-  if (['js', 'ts', 'jsx', 'tsx', 'py', 'java', 'c', 'cpp'].includes(ext)) return 'Code'
+  if (['js', 'ts', 'jsx', 'tsx', 'py', 'java', 'go', 'rs', 'cpp', 'c'].includes(ext)) return 'Code'
 
   // Config types
   if (['json', 'yaml', 'yml', 'xml', 'toml'].includes(ext)) return 'Configuration'

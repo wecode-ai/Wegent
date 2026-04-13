@@ -19,6 +19,7 @@ import { subscriptionApis } from '@/apis/subscription'
 import type { MarketSubscriptionDetail } from '@/types/subscription'
 import { RentSubscriptionDialog } from './RentSubscriptionDialog'
 import { useToast } from '@/hooks/use-toast'
+import { useUser } from '@/features/common/UserContext'
 
 interface MarketPageInlineProps {
   onRentalSuccess?: () => void
@@ -27,6 +28,7 @@ interface MarketPageInlineProps {
 export function MarketPageInline({ onRentalSuccess }: MarketPageInlineProps) {
   const { t } = useTranslation('feed')
   const { toast } = useToast()
+  const { user } = useUser()
   const [subscriptions, setSubscriptions] = useState<MarketSubscriptionDetail[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
@@ -146,6 +148,7 @@ export function MarketPageInline({ onRentalSuccess }: MarketPageInlineProps) {
               <MarketSubscriptionCard
                 key={subscription.id}
                 subscription={subscription}
+                currentUserId={user?.id}
                 onRent={handleRent}
               />
             ))}
@@ -168,11 +171,17 @@ export function MarketPageInline({ onRentalSuccess }: MarketPageInlineProps) {
 
 interface MarketSubscriptionCardProps {
   subscription: MarketSubscriptionDetail
+  currentUserId?: number
   onRent: (subscription: MarketSubscriptionDetail) => void
 }
 
-function MarketSubscriptionCard({ subscription, onRent }: MarketSubscriptionCardProps) {
+function MarketSubscriptionCard({
+  subscription,
+  currentUserId,
+  onRent,
+}: MarketSubscriptionCardProps) {
   const { t } = useTranslation('feed')
+  const isOwnSubscription = currentUserId === subscription.owner_user_id
 
   return (
     <Card className="hover:bg-surface/50 transition-colors">
@@ -207,7 +216,11 @@ function MarketSubscriptionCard({ subscription, onRent }: MarketSubscriptionCard
             </div>
           </div>
           <div className="shrink-0">
-            {subscription.is_rented ? (
+            {isOwnSubscription ? (
+              <Button variant="outline" size="sm" disabled>
+                {t('source_own')}
+              </Button>
+            ) : subscription.is_rented ? (
               <Button variant="outline" size="sm" disabled className="gap-1.5">
                 <Check className="h-4 w-4" />
                 {t('market.rented')}

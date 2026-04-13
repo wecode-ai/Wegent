@@ -22,6 +22,11 @@ from app.models.subtask import SenderType, Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.kind import Bot, Task, Team
+from app.services.chat.task_default_knowledge_bases import (
+    build_initial_task_knowledge_base_refs,
+)
+from app.services.readers import KindType, kindReader
+from app.services.task_skill_selection import build_task_skill_labels
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +68,15 @@ class TaskCreationParams:
     # Pipeline mode: specific bot_ids for the next stage
     # When set, only create subtask for these bots instead of all team members
     pipeline_bot_ids: Optional[List[int]] = None
+    # Pipeline mode: previous stage's bot_id for session management
+    # When set and different from current bot_id, a new session will be created
+    # This ensures each pipeline stage has independent context
+    previous_bot_id: Optional[int] = None
+    # Device ID for local device execution (saved at task creation to avoid race condition)
+    device_id: Optional[str] = None
+    # Video generation parameters (user-selected at generation time)
+    # Used to save video_config to user subtask.result for display
+    generate_params: Optional[Dict[str, Any]] = None
 
 
 def get_bot_ids_from_team(db: Session, team: Kind) -> List[int]:
@@ -83,16 +97,12 @@ def get_bot_ids_from_team(db: Session, team: Kind) -> List[int]:
     bot_ids = []
 
     for member in team_crd.spec.members:
-        bot = (
-            db.query(Kind)
-            .filter(
-                Kind.user_id == team.user_id,
-                Kind.kind == "Bot",
-                Kind.name == member.botRef.name,
-                Kind.namespace == member.botRef.namespace,
-                Kind.is_active,
-            )
-            .first()
+        bot = kindReader.get_by_name_and_namespace(
+            db,
+            team.user_id,
+            KindType.BOT,
+            member.botRef.namespace,
+            member.botRef.name,
         )
         if bot:
             bot_ids.append(bot.id)
@@ -262,32 +272,12 @@ def create_new_task(
         f"[create_new_task] Creating task_json with is_group_chat={params.is_group_chat}"
     )
 
-    # Build knowledgeBaseRefs if knowledge_base_id is provided
-    knowledge_base_refs = None
-    if params.knowledge_base_id and task_type == "knowledge":
-        # Query the knowledge base to get its name and namespace
-        kb = (
-            db.query(Kind)
-            .filter(
-                Kind.id == params.knowledge_base_id,
-                Kind.kind == "KnowledgeBase",
-                Kind.is_active == True,
-            )
-            .first()
-        )
-        if kb:
-            knowledge_base_refs = [
-                {
-                    "id": kb.id,
-                    "name": kb.name,
-                    "namespace": kb.namespace,
-                    "boundBy": user.user_name,
-                    "boundAt": datetime.now().isoformat(),
-                }
-            ]
-            logger.info(
-                f"[create_new_task] Added knowledgeBaseRefs for kb_id={kb.id}, name={kb.name}"
-            )
+    knowledge_base_refs = build_initial_task_knowledge_base_refs(
+        db=db,
+        user=user,
+        team=team,
+        knowledge_base_id=params.knowledge_base_id,
+    )
 
     task_json = {
         "kind": "Task",
@@ -301,6 +291,7 @@ def create_new_task(
             },
             "workspaceRef": {"name": workspace_name, "namespace": "default"},
             "is_group_chat": params.is_group_chat,
+            **({"device_id": params.device_id} if params.device_id else {}),
             **(
                 {"knowledgeBaseRefs": knowledge_base_refs}
                 if knowledge_base_refs
@@ -336,34 +327,49 @@ def create_new_task(
                     if params.force_override_bot_model_type
                     else {}
                 ),
-                **(
-                    {
-                        "additionalSkills": json_lib.dumps(
-                            [
-                                s.get("name")
-                                for s in params.additional_skills
-                                if s.get("name")
-                            ]
-                        )
-                    }
-                    if params.additional_skills
-                    else {}
-                ),
+                **build_task_skill_labels(params.additional_skills),
             },
         },
         "apiVersion": "agent.wecode.io/v1",
     }
 
-    task = TaskResource(
-        id=new_task_id,
-        user_id=user.id,
-        kind="Task",
-        name=f"task-{new_task_id}",
-        namespace="default",
-        json=task_json,
-        is_active=True,
+    # Check if a Placeholder record exists for this task_id
+    # If so, update it instead of inserting to avoid SQLite UNIQUE constraint issues
+    existing_placeholder = (
+        db.query(TaskResource)
+        .filter(
+            TaskResource.id == new_task_id,
+            TaskResource.kind == "Placeholder",
+        )
+        .first()
     )
-    db.add(task)
+
+    if existing_placeholder:
+        # Update the existing Placeholder record to become a Task
+        existing_placeholder.user_id = user.id
+        existing_placeholder.kind = "Task"
+        existing_placeholder.name = f"task-{new_task_id}"
+        existing_placeholder.namespace = "default"
+        existing_placeholder.json = task_json
+        existing_placeholder.is_active = True
+        existing_placeholder.updated_at = datetime.now()
+        existing_placeholder.is_group_chat = (
+            params.is_group_chat
+        )  # Sync to physical column
+        task = existing_placeholder
+    else:
+        # No placeholder exists, create a new Task record
+        task = TaskResource(
+            id=new_task_id,
+            user_id=user.id,
+            kind="Task",
+            name=f"task-{new_task_id}",
+            namespace="default",
+            json=task_json,
+            is_active=True,
+            is_group_chat=params.is_group_chat,  # Sync to physical column
+        )
+        db.add(task)
 
     logger.info(
         f"[create_new_task] Created task {new_task_id} with task_json.spec.is_group_chat="
@@ -383,6 +389,7 @@ def create_user_subtask(
     message: str,
     next_message_id: int,
     parent_id: int,
+    video_config: Optional[Dict[str, Any]] = None,
 ) -> Subtask:
     """
     Create a USER subtask for the chat message.
@@ -397,10 +404,16 @@ def create_user_subtask(
         message: User message content
         next_message_id: Message ID for this subtask
         parent_id: Parent message ID
+        video_config: Optional video generation config (model, resolution, ratio, duration)
 
     Returns:
         Created Subtask
     """
+    # Build result with video_config if provided
+    result = None
+    if video_config:
+        result = {"video_config": video_config}
+
     user_subtask = Subtask(
         user_id=subtask_user_id,
         task_id=task_id,
@@ -417,7 +430,7 @@ def create_user_subtask(
         parent_id=parent_id,
         error_message="",
         completed_at=datetime.now(),
-        result=None,
+        result=result,
         sender_type=SenderType.USER,
         sender_user_id=sender_user_id,
     )
@@ -452,8 +465,13 @@ def create_assistant_subtask(
     # Resolve executor_name from previous subtasks for container reuse
     executor_name = ""
     executor_namespace = ""
+    executor_deleted_at = False
     previous = (
-        db.query(Subtask.executor_name, Subtask.executor_namespace)
+        db.query(
+            Subtask.executor_name,
+            Subtask.executor_namespace,
+            Subtask.executor_deleted_at,
+        )
         .filter(
             Subtask.task_id == task_id,
             Subtask.role == SubtaskRole.ASSISTANT,
@@ -466,6 +484,7 @@ def create_assistant_subtask(
     if previous:
         executor_name = previous.executor_name or ""
         executor_namespace = previous.executor_namespace or ""
+        executor_deleted_at = bool(previous.executor_deleted_at)
 
     # Note: completed_at is set to a placeholder value because the DB column doesn't allow NULL
     # It will be updated when the stream completes
@@ -478,6 +497,7 @@ def create_assistant_subtask(
         role=SubtaskRole.ASSISTANT,
         executor_namespace=executor_namespace,
         executor_name=executor_name,
+        executor_deleted_at=executor_deleted_at,
         prompt="",
         status=SubtaskStatus.PENDING,
         progress=0,
@@ -702,6 +722,20 @@ async def create_task_and_subtasks(
 
     next_message_id, parent_id = get_next_message_id(db, task_id, subtask_user_id)
 
+    # Build video_config for video generation tasks
+    # This stores the user-selected generation params in the user subtask for display
+    video_config = None
+    if params.task_type == "video" and params.generate_params:
+        video_config = {
+            "model": params.model_id,
+            "resolution": params.generate_params.get("resolution"),
+            "ratio": params.generate_params.get("ratio"),
+            "duration": params.generate_params.get("duration"),
+        }
+        logger.info(
+            f"[create_task_and_subtasks] Building video_config for task {task_id}: {video_config}"
+        )
+
     # Create USER subtask (always created)
     user_subtask = create_user_subtask(
         db=db,
@@ -713,6 +747,7 @@ async def create_task_and_subtasks(
         message=message,
         next_message_id=next_message_id,
         parent_id=parent_id,
+        video_config=video_config,
     )
 
     # Create ASSISTANT subtask only if AI should be triggered

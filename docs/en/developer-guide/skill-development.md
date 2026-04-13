@@ -118,6 +118,8 @@ The Skill system has different implementations for different Shell types:
 | `clear_cache` | `true` | `false` |
 | `skip_existing` | `false` | `true` |
 
+ClaudeCode also injects a `SKILLS_DIR` environment variable at runtime. It points to the skills root directory for the current task. When a skill instruction needs to execute `scripts/xxx.sh`, resolve it to an absolute path such as `bash "$SKILLS_DIR/<skill-name>/scripts/xxx.sh"` instead of relying on the repository working directory.
+
 ### Key Components
 
 1. **SkillDownloader** (`executor/services/api_client.py`)

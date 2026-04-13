@@ -19,6 +19,13 @@ export type SubscriptionTriggerType = 'cron' | 'interval' | 'one_time' | 'event'
 // Event trigger sub-type enumeration
 export type SubscriptionEventType = 'webhook' | 'git_push'
 
+export type SubscriptionExecutionTargetType = 'managed' | 'local' | 'cloud'
+
+export interface SubscriptionExecutionTarget {
+  type: SubscriptionExecutionTargetType
+  device_id?: string
+}
+
 // Background execution status enumeration
 export type BackgroundExecutionStatus =
   | 'PENDING'
@@ -66,10 +73,27 @@ export interface SubscriptionModelRef {
   namespace: string
 }
 
+// Notification webhook type enumeration
+export type NotificationWebhookType = 'dingtalk' | 'feishu' | 'custom'
+
+// Notification webhook configuration
+export interface NotificationWebhook {
+  type: NotificationWebhookType
+  url: string
+  secret?: string // Optional signing secret for webhook verification
+  enabled: boolean
+}
 // Knowledge base reference for Subscription
 export interface SubscriptionKnowledgeBaseRef {
   name: string
   namespace: string
+}
+
+// Skill reference for Subscription
+export interface SubscriptionSkillRef {
+  name: string
+  namespace: string
+  is_public?: boolean // Whether this is a public skill (user_id=0)
 }
 
 // Subscription configuration
@@ -98,8 +122,10 @@ export interface Subscription {
   retry_count: number
   timeout_seconds: number // Execution timeout (60-3600s, default 600)
   enabled: boolean
+  execution_target?: SubscriptionExecutionTarget
   // History preservation settings
   preserve_history?: boolean // Whether to preserve conversation history across executions
+  history_message_count?: number // Number of history messages to preserve (1-50, default 10)
   bound_task_id?: number // Task ID bound to this subscription for history preservation
   webhook_url?: string
   webhook_secret?: string // HMAC signing secret for webhook verification
@@ -107,6 +133,12 @@ export interface Subscription {
   last_execution_status?: string
   // Knowledge base references
   knowledge_base_refs?: SubscriptionKnowledgeBaseRef[]
+  // Skill references
+  skill_refs?: SubscriptionSkillRef[]
+  // Notification webhooks (dingtalk, feishu, custom)
+  notification_webhooks?: NotificationWebhook[]
+  // Market whitelist (empty means visible to all market users)
+  market_whitelist_user_ids?: number[]
   next_execution_time?: string
   execution_count: number
   success_count: number
@@ -122,6 +154,12 @@ export interface Subscription {
   source_subscription_display_name?: string
   source_owner_username?: string
   rental_count?: number
+  // Trigger config validation status
+  trigger_config_valid?: boolean
+  trigger_config_error?: string
+  // Expiration settings
+  expires_at?: string // ISO format datetime
+  is_expired?: boolean // Whether the subscription has expired
   created_at: string
   updated_at: string
 }
@@ -150,10 +188,20 @@ export interface SubscriptionCreateRequest {
   retry_count?: number
   timeout_seconds?: number // Execution timeout (60-3600s)
   enabled?: boolean
+  execution_target?: SubscriptionExecutionTarget
   // History preservation settings
   preserve_history?: boolean // Whether to preserve conversation history across executions
+  history_message_count?: number // Number of history messages to preserve (1-50, default 10)
   // Knowledge base references
   knowledge_base_refs?: SubscriptionKnowledgeBaseRef[]
+  // Skill references
+  skill_refs?: SubscriptionSkillRef[]
+  // Notification webhooks (dingtalk, feishu, custom)
+  notification_webhooks?: NotificationWebhook[]
+  // Market whitelist (empty means visible to all market users)
+  market_whitelist_user_ids?: number[]
+  // Expiration settings
+  expires_at?: string // ISO format datetime, e.g., '2025-12-31T23:59:59'
 }
 
 // Subscription update request
@@ -178,16 +226,27 @@ export interface SubscriptionUpdateRequest {
   retry_count?: number
   timeout_seconds?: number // Execution timeout (60-3600s)
   enabled?: boolean
+  execution_target?: SubscriptionExecutionTarget
   // History preservation settings
   preserve_history?: boolean // Whether to preserve conversation history across executions
+  history_message_count?: number // Number of history messages to preserve (1-50, default 10)
   // Knowledge base references
   knowledge_base_refs?: SubscriptionKnowledgeBaseRef[]
+  // Skill references
+  skill_refs?: SubscriptionSkillRef[]
+  // Notification webhooks (dingtalk, feishu, custom)
+  notification_webhooks?: NotificationWebhook[]
+  // Market whitelist (empty means visible to all market users)
+  market_whitelist_user_ids?: number[]
+  // Expiration settings
+  expires_at?: string // ISO format datetime, e.g., '2025-12-31T23:59:59'
 }
 
 // Subscription list response
 export interface SubscriptionListResponse {
   total: number
   items: Subscription[]
+  invalid_schedule_count?: number
 }
 
 // Background execution record
@@ -434,10 +493,60 @@ export interface DeveloperNotificationSettingsResponse {
   notification_level: NotificationLevel
   notification_channel_ids: number[]
   available_channels: NotificationChannelInfo[]
+  channel_binding_configs: NotificationChannelBindingConfig[]
 }
 
 // Update developer notification settings request
 export interface DeveloperNotificationSettingsUpdateRequest {
   notification_level: NotificationLevel
   notification_channel_ids?: number[]
+  channel_binding_configs?: NotificationChannelBindingConfig[]
+}
+
+export interface NotificationChannelBindingConfig {
+  channel_id: number
+  bind_private: boolean
+  bind_group: boolean
+  group_conversation_id?: string
+  group_name?: string
+}
+
+export interface DeveloperBindingSessionStartRequest {
+  channel_id: number
+  bind_private: boolean
+  bind_group: boolean
+}
+
+export interface DeveloperBindingSessionCancelRequest {
+  channel_id: number
+}
+
+export interface DeveloperBindingSessionResponse {
+  status: 'waiting' | 'cancelled'
+  subscription_id?: number
+  channel_id: number
+  bind_private?: boolean
+  bind_group?: boolean
+}
+
+/**
+ * WebSocket payload for subscription group info notification
+ */
+export interface SubscriptionGroupInfoPayload {
+  channel_id: number
+  group_name: string
+  group_conversation_id: string
+}
+
+/**
+ * WebSocket payload for subscription binding status updates
+ */
+export interface SubscriptionBindingUpdatePayload {
+  channel_id: number
+  conversation_id?: string | null
+  private_bound: boolean
+  group_bound: boolean
+  completed: boolean
+  status: 'partial' | 'success'
+  subscription_id?: number
 }

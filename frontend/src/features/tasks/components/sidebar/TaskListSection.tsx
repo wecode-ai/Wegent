@@ -174,13 +174,17 @@ export default function TaskListSection({
       let targetPath = paths.chat.getHref() // default to chat
 
       if (task.task_type === 'knowledge' && task.knowledge_base_id) {
-        // Knowledge type tasks navigate to the knowledge base page
+        // Knowledge type tasks navigate to the dedicated KB chat page
+        // This ensures full task functionality (follow-up questions, link sharing, etc.)
         targetPath = `/knowledge/document/${task.knowledge_base_id}`
       } else if (task.task_type === 'task') {
         // Task type tasks navigate to device chat page
         targetPath = '/devices/chat'
       } else if (task.task_type === 'code') {
         targetPath = paths.code.getHref()
+      } else if (task.task_type === 'video' || task.task_type === 'image') {
+        // Video and image generation tasks navigate to generate page
+        targetPath = paths.generate.getHref()
       } else if (task.task_type === 'chat') {
         targetPath = paths.chat.getHref()
       } else {
@@ -643,7 +647,7 @@ export default function TaskListSection({
                           }}
                         />
                       ) : (
-                        <span className="flex-1 min-w-0 text-sm text-text-primary leading-tight truncate">
+                        <span className="flex-1 min-w-0 text-sm font-medium text-[#444746] leading-5 truncate">
                           {localTitles[task.id] ?? task.title}
                         </span>
                       )}

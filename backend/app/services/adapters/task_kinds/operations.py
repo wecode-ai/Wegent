@@ -30,6 +30,7 @@ from app.schemas.task import TaskCreate, TaskUpdate
 from app.services.adapters.executor_kinds import executor_kinds_service
 from app.services.adapters.pipeline_stage import pipeline_stage_service
 from app.services.readers.kinds import KindType, kindReader
+from app.services.task_skill_selection import build_task_skill_labels
 
 from .converters import convert_to_task_dict
 from .helpers import create_subtasks
@@ -74,7 +75,7 @@ class TaskOperationsMixin:
             .filter(
                 TaskResource.id == task_id,
                 TaskResource.kind == "Task",
-                TaskResource.is_active.is_(True),
+                TaskResource.is_active == TaskResource.STATE_ACTIVE,
             )
             .first()
         )
@@ -255,15 +256,6 @@ class TaskOperationsMixin:
         )
         db.add(workspace)
 
-        # Create Task JSON
-        # Build additional_skills label if provided
-        # Store as JSON string for skill names that user explicitly selected
-        additional_skills_label = None
-        if obj_in.additional_skills:
-            # Extract skill names from SkillRef objects
-            skill_names = [s.name for s in obj_in.additional_skills]
-            additional_skills_label = json_lib.dumps(skill_names)
-
         task_json = {
             "kind": "Task",
             "spec": {
@@ -313,26 +305,45 @@ class TaskOperationsMixin:
                         if obj_in.api_key_name
                         else {}
                     ),
-                    **(
-                        {"additionalSkills": additional_skills_label}
-                        if additional_skills_label
-                        else {}
-                    ),
+                    **(build_task_skill_labels(obj_in.additional_skills)),
                 },
             },
             "apiVersion": "agent.wecode.io/v1",
         }
 
-        task = TaskResource(
-            id=task_id,
-            user_id=user.id,
-            kind="Task",
-            name=f"task-{task_id}",
-            namespace="default",
-            json=task_json,
-            is_active=True,
+        # Check if a Placeholder record exists for this task_id
+        # If so, update it instead of inserting to avoid SQLite UNIQUE constraint issues
+        existing_placeholder = (
+            db.query(TaskResource)
+            .filter(
+                TaskResource.id == task_id,
+                TaskResource.kind == "Placeholder",
+            )
+            .first()
         )
-        db.add(task)
+
+        if existing_placeholder:
+            # Update the existing Placeholder record to become a Task
+            existing_placeholder.user_id = user.id
+            existing_placeholder.kind = "Task"
+            existing_placeholder.name = f"task-{task_id}"
+            existing_placeholder.namespace = "default"
+            existing_placeholder.json = task_json
+            existing_placeholder.is_active = True
+            existing_placeholder.updated_at = datetime.now()
+            task = existing_placeholder
+        else:
+            # No placeholder exists, create a new Task record
+            task = TaskResource(
+                id=task_id,
+                user_id=user.id,
+                kind="Task",
+                name=f"task-{task_id}",
+                namespace="default",
+                json=task_json,
+                is_active=True,
+            )
+            db.add(task)
 
         return task, team
 
@@ -370,7 +381,7 @@ class TaskOperationsMixin:
             .filter(
                 TaskResource.id == task_id,
                 TaskResource.kind == "Task",
-                TaskResource.is_active.is_(True),
+                TaskResource.is_active == TaskResource.STATE_ACTIVE,
             )
             .first()
         )
@@ -478,7 +489,7 @@ class TaskOperationsMixin:
                 TaskResource.kind == "Workspace",
                 TaskResource.name == task_crd.spec.workspaceRef.name,
                 TaskResource.namespace == task_crd.spec.workspaceRef.namespace,
-                TaskResource.is_active.is_(True),
+                TaskResource.is_active == TaskResource.STATE_ACTIVE,
             )
             .first()
         )
@@ -512,7 +523,7 @@ class TaskOperationsMixin:
             .filter(
                 TaskResource.id == task_id,
                 TaskResource.kind == "Task",
-                TaskResource.is_active.is_(True),
+                TaskResource.is_active == TaskResource.STATE_ACTIVE,
             )
             .first()
         )
@@ -585,7 +596,7 @@ class TaskOperationsMixin:
             task_crd.status.updatedAt = datetime.now()
         task.json = task_crd.model_dump(mode="json", exclude_none=True)
         task.updated_at = datetime.now()
-        task.is_active = False
+        task.is_active = TaskResource.STATE_DELETED
         flag_modified(task, "json")
 
         # Clean up long-term memories associated with this task (fire-and-forget)
@@ -606,7 +617,7 @@ class TaskOperationsMixin:
             .filter(
                 TaskResource.id == task_id,
                 TaskResource.kind == "Task",
-                TaskResource.is_active.is_(True),
+                TaskResource.is_active == TaskResource.STATE_ACTIVE,
             )
             .first()
         )
@@ -691,7 +702,7 @@ class TaskOperationsMixin:
             .filter(
                 TaskResource.id == task_id,
                 TaskResource.kind == "Task",
-                TaskResource.is_active.is_(True),
+                TaskResource.is_active == TaskResource.STATE_ACTIVE,
             )
             .first()
         )
@@ -773,15 +784,13 @@ class TaskOperationsMixin:
             self.update_task(
                 db=db,
                 task_id=task_id,
-                obj_in=TaskUpdate(status="CANCELLING"),
+                obj_in=TaskUpdate(status="CANCELLED"),
                 user_id=user_id,
             )
-            logger.info(
-                f"Task {task_id} status updated to CANCELLING by user {user_id}"
-            )
+            logger.info(f"Task {task_id} status updated to CANCELLED by user {user_id}")
         except Exception as e:
             logger.error(
-                f"Failed to update task {task_id} status to CANCELLING: {str(e)}"
+                f"Failed to update task {task_id} status to CANCELLED: {str(e)}"
             )
             raise HTTPException(
                 status_code=500, detail=f"Failed to update task status: {str(e)}"
@@ -790,7 +799,7 @@ class TaskOperationsMixin:
         if background_task_runner:
             background_task_runner(self._call_executor_cancel, task_id)
 
-        return {"message": "Cancel request accepted", "status": "CANCELLING"}
+        return {"message": "Cancel request accepted", "status": "CANCELLED"}
 
     async def _call_executor_cancel(self, task_id: int):
         """Background task to call executor_manager cancel API."""
@@ -844,7 +853,7 @@ class TaskOperationsMixin:
             .filter(
                 TaskResource.id == task_id,
                 TaskResource.kind == "Task",
-                TaskResource.is_active.is_(True),
+                TaskResource.is_active == TaskResource.STATE_ACTIVE,
             )
             .first()
         )
@@ -902,14 +911,21 @@ class TaskOperationsMixin:
                 "status": {"state": "Reserved"},
             }
 
+            now = datetime.now()
             result = db.execute(
                 text(
                     """
-                INSERT INTO tasks (user_id, kind, name, namespace, json, is_active, created_at, updated_at)
-                VALUES (:user_id, 'Placeholder', 'temp-placeholder', 'default', :json, false, NOW(), NOW())
+                INSERT INTO tasks (user_id, kind, name, namespace, json, is_active, created_at, updated_at, project_id, is_group_chat)
+                VALUES (:user_id, 'Placeholder', 'temp-placeholder', 'default', :json, false, :created_at, :updated_at, :project_id, false)
             """
                 ),
-                {"user_id": user_id, "json": json_lib.dumps(placeholder_json)},
+                {
+                    "user_id": user_id,
+                    "json": json_lib.dumps(placeholder_json),
+                    "created_at": now,
+                    "updated_at": now,
+                    "project_id": 0,
+                },
             )
 
             allocated_id = result.lastrowid
@@ -928,20 +944,17 @@ class TaskOperationsMixin:
 
     def validate_task_id(self, db: Session, task_id: int) -> bool:
         """
-        Validate that task_id is valid and clean up placeholder if exists.
+        Validate that task_id is valid.
+
+        Note: We no longer delete Placeholder records here. Instead, _create_new_task
+        will update the existing Placeholder record to avoid SQLite UNIQUE constraint
+        issues when re-inserting with the same ID.
         """
         existing_record = db.execute(
             text("SELECT kind FROM tasks WHERE id = :task_id"), {"task_id": task_id}
         ).fetchone()
 
         if existing_record:
-            kind = existing_record[0]
-
-            if kind == "Placeholder":
-                db.execute(text("DELETE FROM tasks WHERE id = :id"), {"id": task_id})
-                db.commit()
-                return True
-
             return True
 
         return False
@@ -1170,7 +1183,7 @@ class TaskOperationsMixin:
             .filter(
                 TaskResource.id == task_id,
                 TaskResource.kind == "Task",
-                TaskResource.is_active.is_(True),
+                TaskResource.is_active == TaskResource.STATE_ACTIVE,
             )
             .first()
         )

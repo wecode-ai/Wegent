@@ -6,13 +6,15 @@
 
 # -*- coding: utf-8 -*-
 
+import asyncio
 import os
+import threading
 from collections import OrderedDict
 from typing import Any, Dict, Optional, Tuple
 
 from executor.config import config
 from shared.logger import setup_logger
-from shared.models import ResponsesAPIEmitter
+from shared.models import EmitterBuilder, ResponsesAPIEmitter, TransportFactory
 from shared.models.execution import ExecutionRequest
 from shared.status import TaskStatus
 from shared.utils import git_util
@@ -26,6 +28,8 @@ class Agent:
     """
     Base Agent class that all specific agents should inherit from
     """
+
+    PROGRESS_CALLBACK_TIMEOUT_SECONDS = 10.0
 
     def get_name(self) -> str:
         """
@@ -57,12 +61,16 @@ class Agent:
         self.subtask_id = task_data.subtask_id
         self.task_title = task_data.task_title or ""
         self.subtask_title = task_data.subtask_title or ""
-        self.task_type = task_data.type  # Task type (e.g., "validation" for validation tasks)
+        self.task_type = (
+            task_data.type
+        )  # Task type (e.g., "validation" for validation tasks)
         self.execution_status = TaskStatus.INITIALIZED
         self.project_path = None
 
         # Emitter is required and must be provided by caller
         self.emitter: ResponsesAPIEmitter = emitter
+        self._progress_task_lock = threading.Lock()
+        self._inflight_progress_task: Optional[asyncio.Task] = None
 
     def get_emitter(self) -> ResponsesAPIEmitter:
         """
@@ -73,7 +81,40 @@ class Agent:
         """
         return self.emitter
 
-    def handle(
+    def update_emitter(self, new_subtask_id: int) -> None:
+        """
+        Update the agent's emitter to use a new subtask_id.
+
+        Called when an existing agent is reused for a new subtask (e.g., append chat).
+        Rebuilds the emitter with the new subtask_id so that all subsequent
+        callback events carry the correct subtask_id.
+
+        Args:
+            new_subtask_id: The new subtask ID to use for emitter events
+        """
+        old_subtask_id = self.subtask_id
+        self.subtask_id = new_subtask_id
+        self.task_data.subtask_id = new_subtask_id
+        self.emitter = (
+            EmitterBuilder()
+            .with_task(self.task_id, new_subtask_id)
+            .with_transport(
+                TransportFactory.create_callback_throttled(
+                    callback_url=config.CALLBACK_URL
+                )
+            )
+            .with_executor_info(
+                name=os.getenv("EXECUTOR_NAME"),
+                namespace=os.getenv("EXECUTOR_NAMESPACE"),
+            )
+            .build()
+        )
+        logger.info(
+            f"Agent[{self.get_name()}][{self.task_id}] updated emitter subtask_id: "
+            f"{old_subtask_id} -> {new_subtask_id}"
+        )
+
+    async def handle(
         self, pre_executed: Optional[TaskStatus] = None
     ) -> Tuple[TaskStatus, Optional[str]]:
         """
@@ -97,12 +138,12 @@ class Agent:
                 logger.info(
                     f"Agent[{self.get_name()}][{self.task_id}] handle: Starting pre_execute."
                 )
-                pre_execute_status = self.pre_execute()
+                pre_execute_status, pre_execute_error = await self.pre_execute()
                 if pre_execute_status != TaskStatus.SUCCESS:
                     error_msg = f"Agent[{self.get_name()}][{self.task_id}] handle: pre_execute failed."
+                    if pre_execute_error:
+                        error_msg = f"{error_msg}\n{pre_execute_error}"
                     logger.error(error_msg)
-                    # Try to record error thinking
-                    # self._record_error_thinking("Pre-execution failed", error_msg)
                     return TaskStatus.FAILED, error_msg
                 logger.info(
                     f"Agent[{self.get_name()}][{self.task_id}] handle: pre_execute succeeded, starting execute."
@@ -122,8 +163,6 @@ class Agent:
         except Exception as e:
             error_msg = f"Agent[{self.get_name()}][{self.task_id}] handle: Exception during execute: {str(e)}"
             logger.exception(error_msg)
-            # Record error thinking
-            # self._record_error_thinking("Execution Exception", error_msg)
             return TaskStatus.FAILED, error_msg
 
     def report_progress(
@@ -166,37 +205,85 @@ class Agent:
                 else:
                     await self.get_emitter().in_progress()
 
-            # Run async in sync context
+            async def _send_progress_with_timeout():
+                await asyncio.wait_for(
+                    _send_progress(),
+                    timeout=self.PROGRESS_CALLBACK_TIMEOUT_SECONDS,
+                )
+
+            # In async context, schedule callback without blocking the event loop.
             try:
                 loop = asyncio.get_running_loop()
             except RuntimeError:
-                loop = asyncio.get_event_loop()
-                loop.run_until_complete(_send_progress())
+                asyncio.run(_send_progress_with_timeout())
                 return
 
-            import concurrent.futures
+            with self._progress_task_lock:
+                inflight_task = self._inflight_progress_task
+                if (
+                    not is_failed
+                    and inflight_task is not None
+                    and not inflight_task.done()
+                ):
+                    logger.info(
+                        f"Cancelling previous in-progress callback before sending newer progress: "
+                        f"task_id={self.task_id}, progress={progress}, status={status}"
+                    )
+                    inflight_task.cancel()
 
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                future = executor.submit(asyncio.run, _send_progress())
-                future.result()
+            task = loop.create_task(_send_progress_with_timeout())
+            with self._progress_task_lock:
+                self._inflight_progress_task = task
+
+            def _log_task_error(done_task: asyncio.Task) -> None:
+                with self._progress_task_lock:
+                    if self._inflight_progress_task is done_task:
+                        self._inflight_progress_task = None
+
+                try:
+                    done_task.result()
+                except asyncio.CancelledError:
+                    logger.warning(
+                        f"[CALLBACK_CANCELLED] task_id={self.task_id}, progress={progress}, "
+                        f"status={status}"
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        f"[CALLBACK_TIMEOUT] task_id={self.task_id}, progress={progress}, "
+                        f"status={status}, timeout={self.PROGRESS_CALLBACK_TIMEOUT_SECONDS}s"
+                    )
+                except Exception as task_error:
+                    logger.critical(
+                        f"[CALLBACK_FAIL] task_id={self.task_id}, progress={progress}, "
+                        f"status={status}, error={type(task_error).__name__}: {str(task_error)}"
+                    )
+
+            task.add_done_callback(_log_task_error)
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"[CALLBACK_TIMEOUT] task_id={self.task_id}, progress={progress}, "
+                f"status={status}, timeout={self.PROGRESS_CALLBACK_TIMEOUT_SECONDS}s"
+            )
         except Exception as e:
             logger.critical(
                 f"[CALLBACK_FAIL] task_id={self.task_id}, progress={progress}, "
                 f"status={status}, error={type(e).__name__}: {str(e)}"
             )
 
-    def pre_execute(self) -> TaskStatus:
+    async def pre_execute(self) -> Tuple[TaskStatus, Optional[str]]:
         """
         Pre-execution hook for tasks such as code download, environment setup, etc.
         Subclasses can override this method to implement custom pre-execution logic.
 
         Returns:
-            TaskStatus: Execution status (COMPLETED, FAILED, etc.)
+            Tuple[TaskStatus, Optional[str]]: A tuple containing:
+                - TaskStatus: Execution status (SUCCESS, FAILED, etc.)
+                - Optional[str]: Error message if failed, None if successful
         """
         logger.info(
             f"Agent[{self.get_name()}][{self.task_id}] pre_execute: No pre-execution steps by default, passing through."
         )
-        return TaskStatus.SUCCESS
+        return TaskStatus.SUCCESS, None
 
     def execute(self) -> TaskStatus:
         """
@@ -207,7 +294,25 @@ class Agent:
         """
         raise NotImplementedError("Subclasses must implement execute()")
 
-    def download_code(self):
+    async def download_code(self):
+        # Check if git clone should be skipped (e.g., for workspace recovery from archive)
+        skip_git_clone = getattr(self.task_data, "skip_git_clone", False)
+        if skip_git_clone:
+            logger.info(
+                f"Agent[{self.get_name()}][{self.task_id}] skip_git_clone=True, "
+                "workspace will be restored from archive"
+            )
+            # Still set project_path for later use
+            git_url = self.task_data.git_url or ""
+            if git_url:
+                repo_name = git_util.get_repo_name_from_url(git_url)
+                project_path = os.path.join(
+                    config.get_workspace_root(), str(self.task_id), repo_name
+                )
+                if self.project_path is None:
+                    self.project_path = project_path
+            return
+
         git_url = self.task_data.git_url or ""
         if git_url == "":
             logger.info("git url is empty, skip download code")
@@ -217,18 +322,18 @@ class Agent:
         git_token = user_config.get("git_token")
         # Handle encrypted tokens
         if git_token and is_token_encrypted(git_token):
-            logger.debug(
+            logger.info(
                 f"Agent[{self.get_name()}][{self.task_id}] Decrypting git token"
             )
             git_token = decrypt_git_token(git_token)
 
-        username = user_config.get("user_name") if user_config else None
+        username = user_config.get("git_login") if user_config else None
         branch_name = self.task_data.branch_name
         repo_name = git_util.get_repo_name_from_url(git_url)
         logger.info(
             f"Agent[{self.get_name()}][{self.task_id}] start download code for git url: {git_url}, branch name: {branch_name}"
         )
-        logger.info("username: {username} git token: {git_token}")
+
         logger.info(user_config)
 
         project_path = os.path.join(
@@ -238,13 +343,19 @@ class Agent:
             self.project_path = project_path
 
         if not os.path.exists(project_path):
-            success, error_msg = git_util.clone_repo(
-                git_url, branch_name, project_path, username, git_token
+            # Offload blocking git clone to a thread so the event loop is not blocked
+            success, error_msg = await asyncio.to_thread(
+                git_util.clone_repo,
+                git_url,
+                branch_name,
+                project_path,
+                username,
+                git_token,
             )
 
             if success:
                 # Setup git config with user information
-                self.setup_git_config(user_config, project_path)
+                await self.setup_git_config(user_config, project_path)
                 logger.info(
                     f"Agent[{self.get_name()}][{self.task_id}] Project cloned to {project_path}"
                 )
@@ -272,7 +383,7 @@ class Agent:
         )
         return TaskStatus.SUCCESS
 
-    def setup_git_config(self, user_config, project_path):
+    async def setup_git_config(self, user_config, project_path):
         """
         Setup git config with user information
 
@@ -292,8 +403,9 @@ class Agent:
                 f"Agent[{self.get_name()}][{self.task_id}] "
                 f"Setting git config user.name='{git_login}', user.email='{git_email}'"
             )
-            success, error_msg = git_util.set_git_config(
-                project_path, git_login, git_email
+            # Offload subprocess to thread
+            success, error_msg = await asyncio.to_thread(
+                git_util.set_git_config, project_path, git_login, git_email
             )
             if not success:
                 logger.error(

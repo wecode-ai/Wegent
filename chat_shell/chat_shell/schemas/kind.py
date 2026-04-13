@@ -63,6 +63,15 @@ class Status(BaseModel):
     message: Optional[str] = None
 
 
+# Skill reference metadata for precise skill identification
+class SkillRefMeta(BaseModel):
+    """Skill reference metadata for precise skill identification."""
+
+    skill_id: int
+    namespace: str = "default"
+    is_public: bool = False
+
+
 # Ghost CRD schemas
 class GhostSpec(BaseModel):
     """Ghost specification"""
@@ -70,6 +79,9 @@ class GhostSpec(BaseModel):
     systemPrompt: str
     mcpServers: Optional[Dict[str, Any]] = None
     skills: Optional[List[str]] = None
+    skill_refs: Optional[Dict[str, SkillRefMeta]] = None
+    preload_skills: Optional[List[str]] = None
+    preload_skill_refs: Optional[Dict[str, SkillRefMeta]] = None
 
 
 class GhostStatus(Status):

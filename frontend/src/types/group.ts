@@ -6,7 +6,11 @@
  * Group (Namespace) related types
  */
 
-export type GroupRole = 'Owner' | 'Maintainer' | 'Developer' | 'Reporter'
+// Import BaseRole from base-role module
+import type { BaseRole } from './base-role'
+
+// Re-export GroupRole as backward compatible alias
+export type GroupRole = BaseRole
 
 export type GroupVisibility = 'private' | 'internal' | 'public'
 
@@ -64,6 +68,29 @@ export interface GroupMemberCreate {
 
 export interface GroupMemberUpdate {
   role: GroupRole
+}
+
+export interface GroupMemberBatchUpdateItem {
+  user_id: number
+  role: GroupRole
+}
+
+export interface GroupMemberBatchUpdateRequest {
+  updates: GroupMemberBatchUpdateItem[]
+}
+
+export interface GroupMemberBatchUpdateFailedItem {
+  user_id: number
+  role: GroupRole
+  error: string
+  error_code?: string | null
+}
+
+export interface GroupMemberBatchUpdateResponse {
+  updated_members: GroupMember[]
+  failed_updates: GroupMemberBatchUpdateFailedItem[]
+  total_updated: number
+  total_failed: number
 }
 
 export interface GroupListResponse {

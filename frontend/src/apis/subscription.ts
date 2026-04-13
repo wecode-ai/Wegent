@@ -33,6 +33,9 @@ import type {
   UpdateFollowSettingsRequest,
   DeveloperNotificationSettingsResponse,
   DeveloperNotificationSettingsUpdateRequest,
+  DeveloperBindingSessionStartRequest,
+  DeveloperBindingSessionCancelRequest,
+  DeveloperBindingSessionResponse,
 } from '@/types/subscription'
 import type { PaginationParams } from '@/types/api'
 
@@ -210,6 +213,34 @@ export const subscriptionApis = {
       `/subscriptions/${subscriptionId}/developer/notification-settings`,
       request
     )
+  },
+
+  /**
+   * Start developer binding session for DingTalk private/group binding.
+   * Supports both new subscriptions (no ID) and existing subscriptions (with ID).
+   */
+  async startDeveloperBindingSession(
+    subscriptionId: number | null,
+    request: DeveloperBindingSessionStartRequest
+  ): Promise<DeveloperBindingSessionResponse> {
+    if (subscriptionId) {
+      return apiClient.post(`/subscriptions/${subscriptionId}/developer/binding/start`, request)
+    }
+    return apiClient.post('/subscriptions/developer/binding/start', request)
+  },
+
+  /**
+   * Cancel developer binding session.
+   * Supports both new subscriptions (no ID) and existing subscriptions (with ID).
+   */
+  async cancelDeveloperBindingSession(
+    subscriptionId: number | null,
+    request: DeveloperBindingSessionCancelRequest
+  ): Promise<DeveloperBindingSessionResponse> {
+    if (subscriptionId) {
+      return apiClient.post(`/subscriptions/${subscriptionId}/developer/binding/cancel`, request)
+    }
+    return apiClient.post('/subscriptions/developer/binding/cancel', request)
   },
 
   /**
@@ -395,5 +426,12 @@ export const subscriptionApis = {
    */
   async getRentalCount(subscriptionId: number): Promise<RentalCountResponse> {
     return apiClient.get(`/subscriptions/${subscriptionId}/rental-count`)
+  },
+
+  /**
+   * Confirm a preview subscription to create the actual subscription
+   */
+  async confirmPreviewSubscription(previewId: string): Promise<{ display_name: string }> {
+    return apiClient.post(`/subscriptions/preview/${previewId}/confirm`)
   },
 }

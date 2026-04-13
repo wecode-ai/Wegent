@@ -111,6 +111,10 @@ See [Chunking Strategies](./chunking-strategies.md) for detailed guide.
 
 ## 🔍 Retrieval Test
 
+For smaller knowledge bases, the system may also use an `all-chunks` direct injection path to load the full chunk set into the model. This exists mainly to compensate for cases where vector retrieval recall is not stable enough.
+
+See [Retrieval And Direct Injection](./retrieval-and-direct-injection.md) for the design rationale and permission model.
+
 Before saving retrieval configuration, you can test the retrieval effectiveness.
 
 ### How to Use

@@ -45,20 +45,28 @@ CLI_SESSION_KEY_PREFIX = "cli_login_session:"
 
 
 @router.get("/login")
-async def oidc_login():
+async def oidc_login(
+    redirect: str = Query(None, description="Optional redirect URL after login"),
+):
     """
     OpenID Connect login endpoint
 
-    Generate authorization URL and redirect to OIDC provider
+    Generate authorization URL and redirect to OIDC provider.
+    Optional redirect parameter will be stored in state and used after successful login.
     """
     try:
         nonce = secrets.token_urlsafe(32)
         now = int(time.time())
-        payload = {"nonce": nonce, "iat": now, "exp": now + STATE_EXPIRE_TIME}
+        payload = {
+            "nonce": nonce,
+            "iat": now,
+            "exp": now + STATE_EXPIRE_TIME,
+            "redirect": redirect,  # Store redirect URL in state
+        }
         state = jwt.encode(payload, STATE_JWT_SECRET, algorithm="HS256")
         auth_url = await oidc_service.get_authorization_url(state, nonce)
 
-        logger.info(f"OIDC login redirect: {auth_url}")
+        logger.info(f"OIDC login redirect: {auth_url}, redirect_after_login={redirect}")
         return RedirectResponse(url=auth_url)
 
     except Exception as e:
@@ -84,9 +92,11 @@ async def oidc_callback(
         return RedirectResponse(url=error_url, status_code=302)
 
     # Verify state parameter (JWT)
+    redirect_after_login = None
     try:
         payload = jwt.decode(state, STATE_JWT_SECRET, algorithms=["HS256"])
         nonce = payload["nonce"]
+        redirect_after_login = payload.get("redirect")
         now = int(time.time())
         if now > payload["exp"]:
             logger.error(f"State parameter expired: {state}")
@@ -178,7 +188,12 @@ async def oidc_callback(
             f"OIDC login success: user_id={user.id}, user_name={user.user_name}"
         )
 
+        # Build redirect URL with optional redirect parameter
+        from urllib.parse import quote
+
         redirect_url = f"{settings.FRONTEND_URL}/login/oidc?access_token={jwt_token}&token_type=bearer&login_success=true"
+        if redirect_after_login:
+            redirect_url += f"&redirect={quote(redirect_after_login)}"
 
         return RedirectResponse(url=redirect_url, status_code=302)
 

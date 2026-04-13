@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+import type { TaskType } from './api'
+
 /**
  * Socket.IO event types and payload definitions
  */
@@ -62,6 +64,7 @@ export const ServerEvents = {
 
   // Background execution events (to user room)
   BACKGROUND_EXECUTION_UPDATE: 'background:execution_update',
+  SUBSCRIPTION_GROUP_BINDING_UPDATED: 'subscription:group_binding_updated',
 
   // Generic Skill Events
   SKILL_REQUEST: 'skill:request', // Server -> Client: generic skill request
@@ -74,6 +77,7 @@ export const ServerEvents = {
   DEVICE_OFFLINE: 'device:offline',
   DEVICE_STATUS: 'device:status',
   DEVICE_SLOT_UPDATE: 'device:slot_update',
+  DEVICE_UPGRADE_STATUS: 'device:upgrade_status',
 } as const
 
 // Client -> Server Skill events
@@ -114,7 +118,7 @@ export interface ChatSendPayload {
   git_repo_id?: number
   git_domain?: string
   branch_name?: string
-  task_type?: 'chat' | 'code' | 'knowledge' | 'task'
+  task_type?: TaskType
   // Knowledge base ID for knowledge type tasks
   knowledge_base_id?: number
   // Local device execution
@@ -132,6 +136,15 @@ export interface ChatSendPayload {
   }>
   /** Action type. 'pipeline:confirm' for pipeline stage confirmation */
   action?: 'pipeline:confirm' | string
+  /** Generation parameters for video/image generation tasks */
+  generate_params?: {
+    /** Resolution for generation (e.g., '1080p', '720p', '480p') */
+    resolution?: string
+    /** Aspect ratio for generation (e.g., '16:9', '9:16', '1:1') */
+    ratio?: string
+    /** Duration in seconds for video generation */
+    duration?: number
+  }
 }
 
 export interface ChatCancelPayload {
@@ -315,7 +328,8 @@ export interface ChatBlockUpdatedPayload {
   block_id: string
   content?: string
   tool_output?: unknown
-  status?: 'pending' | 'streaming' | 'done' | 'error'
+  tool_input?: Record<string, unknown>
+  status?: 'pending' | 'streaming' | 'running' | 'done' | 'error'
 }
 export interface ChatMessageAttachment {
   id: number
@@ -463,6 +477,16 @@ export interface BackgroundExecutionUpdatePayload {
   updated_at: string
 }
 
+export interface SubscriptionGroupBindingUpdatedPayload {
+  subscription_id: number
+  channel_id: number
+  conversation_id?: string
+  private_bound: boolean
+  group_bound: boolean
+  completed: boolean
+  status: 'success' | 'partial'
+}
+
 // ============================================================
 // Correction Event Payloads
 // ============================================================
@@ -543,6 +567,8 @@ export interface TaskJoinAck {
     subtask_id: number
     offset: number
     cached_content: string
+    started_at?: string
+    last_activity_at?: string
   }
   /** Subtasks data for immediate message sync (same format as task detail API) */
   subtasks?: Array<Record<string, unknown>>
@@ -713,4 +739,30 @@ export interface DeviceInfoWs {
   name: string
   status: DeviceStatus
   last_heartbeat?: string
+}
+
+// ============================================================
+// Device Upgrade Event Payloads
+// ============================================================
+
+/** Device upgrade status types */
+export type DeviceUpgradeStatus =
+  | 'checking'
+  | 'downloading'
+  | 'installing'
+  | 'restarting'
+  | 'success'
+  | 'error'
+  | 'skipped'
+  | 'busy'
+
+/** Payload for device:upgrade_status event */
+export interface DeviceUpgradeStatusPayload {
+  device_id: string
+  status: DeviceUpgradeStatus
+  message: string
+  old_version?: string
+  new_version?: string
+  progress?: number
+  error?: string
 }

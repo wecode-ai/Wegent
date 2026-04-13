@@ -7,6 +7,7 @@
 import { useEffect, useState } from 'react'
 import { EyeIcon, EyeSlashIcon } from '@heroicons/react/24/outline'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useUser } from '@/features/common/UserContext'
 import { paths } from '@/config/paths'
@@ -77,9 +78,25 @@ export default function LoginForm() {
       if (typeof window !== 'undefined') {
         sessionStorage.removeItem(POST_LOGIN_REDIRECT_KEY)
       }
-      router.replace(redirectPath)
+      // For API endpoints, use full page navigation
+      // For internal routes, use Next.js router for client-side navigation
+      if (redirectPath.startsWith('/api/')) {
+        window.location.href = redirectPath
+      } else {
+        router.replace(redirectPath)
+      }
     }
   }, [userLoading, user, router, redirectPath])
+
+  const handleRedirect = (path: string) => {
+    // For API endpoints (like /api/attachments/*), use full page navigation
+    // For internal routes, use Next.js router for client-side navigation
+    if (path.startsWith('/api/')) {
+      window.location.href = path
+    } else {
+      router.replace(path)
+    }
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -87,7 +104,7 @@ export default function LoginForm() {
       if (typeof window !== 'undefined') {
         sessionStorage.removeItem(POST_LOGIN_REDIRECT_KEY)
       }
-      router.replace(redirectPath)
+      handleRedirect(redirectPath)
       return
     }
     setIsLoading(true)
@@ -104,7 +121,7 @@ export default function LoginForm() {
       }
       // Force an immediate redirect after successful login
       // This ensures redirect happens even if useEffect timing is delayed
-      router.replace(redirectPath)
+      handleRedirect(redirectPath)
     } catch {
       // Error handling is already done in UserContext.login, no need to show error message here
     } finally {
@@ -127,7 +144,7 @@ export default function LoginForm() {
               {t('common:login.username')}
             </label>
             <div className="mt-1">
-              <input
+              <Input
                 id="user_name"
                 name="user_name"
                 type="text"
@@ -135,7 +152,7 @@ export default function LoginForm() {
                 required
                 value={formData.user_name}
                 onChange={handleInputChange}
-                className="appearance-none block w-full px-3 py-2 border border-border rounded-md shadow-sm bg-base text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent sm:text-sm"
+                className="shadow-sm"
                 placeholder={t('common:login.enter_username')}
               />
             </div>
@@ -146,7 +163,7 @@ export default function LoginForm() {
               {t('common:login.password')}
             </label>
             <div className="mt-1 relative">
-              <input
+              <Input
                 id="password"
                 name="password"
                 type={showPassword ? 'text' : 'password'}
@@ -154,7 +171,7 @@ export default function LoginForm() {
                 required
                 value={formData.password}
                 onChange={handleInputChange}
-                className="appearance-none block w-full px-3 py-2 pr-10 border border-border rounded-md shadow-sm bg-base text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent sm:text-sm"
+                className="pr-10 shadow-sm"
                 placeholder={t('common:login.enter_password')}
               />
               <button
@@ -234,7 +251,14 @@ export default function LoginForm() {
           <div className="grid grid-cols-1 gap-3">
             <Button
               variant="outline"
-              onClick={() => (window.location.href = '/api/auth/oidc/login')}
+              onClick={() => {
+                // Include redirect parameter for OIDC login if exists
+                const redirectUrl = sessionStorage.getItem(POST_LOGIN_REDIRECT_KEY)
+                const oidcUrl = redirectUrl
+                  ? `/api/auth/oidc/login?redirect=${encodeURIComponent(redirectUrl)}`
+                  : '/api/auth/oidc/login'
+                window.location.href = oidcUrl
+              }}
               style={{
                 width: '100%',
                 justifyContent: 'center',

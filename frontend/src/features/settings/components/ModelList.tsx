@@ -40,6 +40,7 @@ import {
 } from '@/components/ui/select'
 import { modelApis, ModelCRD, UnifiedModel, ModelCategoryType } from '@/apis/models'
 import UnifiedAddButton from '@/components/common/UnifiedAddButton'
+import type { BaseRole } from '@/types/base-role'
 
 // Model category type filter options
 const MODEL_CATEGORY_FILTER_OPTIONS: { value: ModelCategoryType | 'all'; labelKey: string }[] = [
@@ -80,7 +81,7 @@ interface DisplayModel {
 interface ModelListProps {
   scope?: 'personal' | 'group' | 'all'
   groupName?: string
-  groupRoleMap?: Map<string, 'Owner' | 'Maintainer' | 'Developer' | 'Reporter'>
+  groupRoleMap?: Map<string, BaseRole>
   onEditResource?: (namespace: string) => void
 }
 
@@ -352,7 +353,10 @@ const ModelList: React.FC<ModelListProps> = ({
       {/* Header */}
       <div className="flex items-start justify-between">
         <div>
-          <h2 className="text-xl font-semibold text-text-primary mb-1">
+          <h2
+            className="text-xl font-semibold text-text-primary mb-1"
+            data-testid="model-management-title"
+          >
             {t('common:models.title')}
           </h2>
           <p className="text-sm text-text-muted mb-1">{t('common:models.description')}</p>

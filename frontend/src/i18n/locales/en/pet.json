@@ -38,6 +38,57 @@
       "running": "{{count}} task(s) running",
       "unread": "{{count}} unread message(s)"
     },
-    "allClear": "All tasks completed!"
+    "allClear": "All tasks completed!",
+    "promptDraft": {
+      "cta": "Remember this collaboration style",
+      "subtext": "Extract this conversation into a prompt draft"
+    }
+  },
+  "promptDraft": {
+    "hint": "Want me to summarize this for you?",
+    "dialogTitle": "Extract Current Conversation",
+    "dialogDescription": "Extract reusable rules from this conversation and generate a prompt draft you can fine-tune.",
+    "modelLabel": "Model",
+    "modelPlaceholder": "Use default model",
+    "modelSearch": "Search model...",
+    "noModelFound": "No model found",
+    "useDefaultModel": "Use default model",
+    "loading": "Extracting collaboration preferences and methods from this conversation...",
+    "resultTitle": "Title",
+    "resultPrompt": "Prompt",
+    "versions": "Versions",
+    "currentVersion": "Current",
+    "currentVersionLabel": "The current version is used as the baseline for regenerate and fine-tune actions.",
+    "keepOld": "Keep old",
+    "useNew": "Use new",
+    "rollback": "Rollback to this version",
+    "compareToCurrent": "Compare to current",
+    "generate": "Generate",
+    "regenerate": "Regenerate",
+    "copyPrompt": "Copy prompt",
+    "copied": "Copied",
+    "clear": "Clear draft",
+    "close": "Close",
+    "generateFailed": "Failed to generate prompt draft",
+    "copySuccess": "Prompt copied",
+    "copyFailed": "Failed to copy prompt",
+    "source": {
+      "initial": "Initial",
+      "regenerate": "Regenerated",
+      "rollback": "Rollback"
+    },
+    "compare": {
+      "title": "Regeneration Comparison",
+      "historyTitle": "Version Comparison",
+      "summary": "Change summary",
+      "previous": "Previous version",
+      "next": "New version",
+      "current": "Current version",
+      "selected": "Selected historical version",
+      "diff": "Diff view",
+      "empty": "Nothing to compare yet",
+      "cancel": "Cancel comparison",
+      "rollbackToSelected": "Rollback to selected"
+    }
   }
 }

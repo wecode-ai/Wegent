@@ -66,6 +66,7 @@ class UnifiedModel:
         model_category_type: Optional[
             str
         ] = None,  # New: llm, tts, stt, embedding, rerank
+        is_advanced: bool = False,
     ):
         self.name = name
         self.type = (
@@ -80,20 +81,17 @@ class UnifiedModel:
         self.model_category_type = (
             model_category_type or "llm"
         )  # Default to 'llm' for backward compatibility
+        self.is_advanced = is_advanced
 
     def to_dict(self) -> Dict[str, Any]:
         """
         Convert to dictionary for API response.
-
-        Returns dict with:
-        - name: Model name
-        - type: 'public', 'user', or 'group' - IMPORTANT for identifying model source
-        - displayName: Human-readable name
-        - provider: Model provider (e.g., 'openai', 'claude')
-        - modelId: Model ID
-        - namespace: Resource namespace (group name or 'default')
-        - modelCategoryType: Model category type (llm, tts, stt, embedding, rerank)
+        Includes config with sensitive env stripped.
         """
+        # Strip sensitive env data from config
+        safe_config = (
+            {k: v for k, v in self.config.items() if k != "env"} if self.config else {}
+        )
         return {
             "name": self.name,
             "type": self.type.value,  # 'public', 'user', or 'group'
@@ -101,11 +99,13 @@ class UnifiedModel:
             "provider": self.provider,
             "modelId": self.model_id,
             "namespace": self.namespace,
-            "modelCategoryType": self.model_category_type,  # New field
+            "modelCategoryType": self.model_category_type,
+            "isAdvanced": self.is_advanced,
+            "config": safe_config,
         }
 
     def to_full_dict(self) -> Dict[str, Any]:
-        """Convert to full dictionary including config"""
+        """Convert to full dictionary including config with env"""
         result = self.to_dict()
         result["config"] = self.config
         result["isActive"] = self.is_active
@@ -141,6 +141,7 @@ class ModelAggregationService:
                 "display_name": None,
                 "config": {},
                 "model_category_type": "llm",
+                "is_advanced": False,
             }
 
         try:
@@ -154,12 +155,42 @@ class ModelAggregationService:
             if model_crd.spec.modelType:
                 model_category_type = model_crd.spec.modelType.value
 
+            config = model_crd.spec.modelConfig
+
+            # Include type-specific config for non-LLM models
+            if model_category_type == "video":
+                if model_crd.spec.videoConfig:
+                    config = {
+                        **config,
+                        "videoConfig": model_crd.spec.videoConfig.model_dump(
+                            exclude_none=True
+                        ),
+                    }
+                if model_crd.spec.protocol:
+                    config = {**config, "protocol": model_crd.spec.protocol}
+
+            elif model_category_type == "image":
+                if model_crd.spec.imageConfig:
+                    config = {
+                        **config,
+                        "imageConfig": model_crd.spec.imageConfig.model_dump(
+                            exclude_none=True
+                        ),
+                    }
+                if model_crd.spec.protocol:
+                    config = {**config, "protocol": model_crd.spec.protocol}
+
             return {
                 "provider": env.get("model"),
                 "model_id": env.get("model_id"),
                 "display_name": model_crd.metadata.displayName,
-                "config": model_crd.spec.modelConfig,
+                "config": config,
                 "model_category_type": model_category_type,
+                "is_advanced": (
+                    bool(model_crd.spec.isAdvanced)
+                    if model_crd.spec.isAdvanced
+                    else False
+                ),
             }
         except (ValueError, KeyError, AttributeError) as e:
             logger.warning("Failed to extract model info: %s", e)
@@ -169,6 +200,7 @@ class ModelAggregationService:
                 "display_name": None,
                 "config": {},
                 "model_category_type": "llm",
+                "is_advanced": False,
             }
 
     def _is_model_compatible_with_shell(
@@ -392,10 +424,11 @@ class ModelAggregationService:
                     display_name=info["display_name"],
                     provider=info["provider"],
                     model_id=info["model_id"],
-                    config=info["config"] if include_config else {},
+                    config=info["config"],
                     is_active=resource.is_active,
                     namespace=resource.namespace,
                     model_category_type=info.get("model_category_type", "llm"),
+                    is_advanced=info.get("is_advanced", False),
                 )
                 result.append(unified)
                 seen_names[resource.name] = resource_type
@@ -409,17 +442,12 @@ class ModelAggregationService:
         )
 
         for model_dict in public_models:
-            # public_model_service.get_models returns dict with 'config' and 'displayName' keys
             config = model_dict.get("config", {})
-            env = config.get("env", {}) if isinstance(config, dict) else {}
-
-            provider = env.get("model") if isinstance(env, dict) else None
-            model_id = env.get("model_id") if isinstance(env, dict) else None
+            provider = model_dict.get("provider")
+            model_id = model_dict.get("model_id")
 
             # Extract model category type from public model data
-            public_model_category_type = "llm"  # Default for backward compatibility
-            if isinstance(config, dict):
-                public_model_category_type = config.get("modelType", "llm")
+            public_model_category_type = model_dict.get("model_category_type", "llm")
 
             if shell_type and not self._is_model_compatible_with_shell(
                 provider, actual_shell_type, support_model
@@ -441,9 +469,11 @@ class ModelAggregationService:
                 ),  # Get displayName from model dict
                 provider=provider,
                 model_id=model_id,
+                config=config,  # Public model env is already stripped
                 is_active=model_dict.get("is_active", True),
                 namespace="default",
                 model_category_type=public_model_category_type,
+                is_advanced=model_dict.get("is_advanced", False),
             )
 
             # If name already exists as user model, we still add public model
@@ -511,16 +541,18 @@ class ModelAggregationService:
 
             for model_dict in public_models:
                 if model_dict.get("name") == name:
-                    config = model_dict.get("config", {})
-                    env = config.get("env", {}) if isinstance(config, dict) else {}
-
                     return UnifiedModel(
                         name=model_dict.get("name", ""),
                         model_type=ModelType.PUBLIC,
-                        display_name=None,
-                        provider=env.get("model") if isinstance(env, dict) else None,
-                        model_id=env.get("model_id") if isinstance(env, dict) else None,
+                        display_name=model_dict.get("displayName"),
+                        provider=model_dict.get("provider"),
+                        model_id=model_dict.get("model_id"),
+                        config=model_dict.get("config", {}),
                         is_active=model_dict.get("is_active", True),
+                        model_category_type=model_dict.get(
+                            "model_category_type", "llm"
+                        ),
+                        is_advanced=model_dict.get("is_advanced", False),
                     ).to_full_dict()
 
         return None

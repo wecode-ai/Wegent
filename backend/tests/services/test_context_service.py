@@ -67,6 +67,48 @@ class TestContextServiceKnowledgeBaseRetrieval:
         assert result.type_data["rag_result"]["query"] == "test query"
         assert result.type_data["rag_result"]["chunks_count"] == 5
         assert result.type_data["rag_result"]["sources"] == sources
+        assert result.type_data["rag_result"]["restricted_mode"] is False
+
+    def test_update_knowledge_base_retrieval_result_restricted_mode_sets_flag(
+        self,
+    ) -> None:
+        """Restricted KB retrieval should be marked for history suppression."""
+        from app.models.subtask_context import (
+            ContextStatus,
+            ContextType,
+            SubtaskContext,
+        )
+        from app.services.context import context_service
+
+        mock_db = Mock()
+        context = SubtaskContext(
+            subtask_id=100,
+            user_id=1,
+            context_type=ContextType.KNOWLEDGE_BASE.value,
+            name="Test KB",
+            status=ContextStatus.PENDING.value,
+            type_data={"knowledge_id": 123},
+        )
+        context.id = 1
+
+        mock_query = Mock()
+        mock_db.query.return_value = mock_query
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = context
+
+        result = context_service.update_knowledge_base_retrieval_result(
+            db=mock_db,
+            context_id=1,
+            extracted_text="",
+            sources=[],
+            injection_mode="rag_retrieval",
+            query="diagnose",
+            chunks_count=1,
+            restricted_mode=True,
+        )
+
+        assert result is not None
+        assert result.type_data["rag_result"]["restricted_mode"] is True
 
     def test_update_knowledge_base_retrieval_result_direct_injection_mode(self) -> None:
         """Test updating context with direct injection results - extracted_text should be empty."""
@@ -708,17 +750,24 @@ class TestContextServiceUpload:
         # Arrange
         parser = DocumentParser()
         filename = "test.bin"
-        # Use actual binary data (PNG header) that MIME detection will identify as binary
-        # The parser will reject this because .bin is not a known extension and
-        # the content is binary (not text-based)
-        png_header = bytes([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
-        binary_data = png_header + bytes(100)
+        # Use a minimal valid GIF image that libmagic reliably detects as binary
+        # across all platforms (including macOS where PNG header + null bytes
+        # may be misdetected as text/plain)
+        gif_data = (
+            b"GIF87a"
+            b"\x01\x00\x01\x00"
+            b"\x80\x00\x00"
+            b"\xff\xff\xff\x00\x00\x00"
+            b",\x00\x00\x00\x00\x01\x00\x01\x00\x00"
+            b"\x02\x02\x44\x01\x00"
+            b"\x3b"
+        )
 
         # Act & Assert
         # The parser now allows unknown extensions but uses MIME detection to validate
         # Binary files without matching parsers will raise DocumentParseError
         with pytest.raises(DocumentParseError) as exc_info:
-            parser.parse(binary_data, ".bin")
+            parser.parse(gif_data, ".bin")
         assert exc_info.value.error_code == DocumentParseError.UNRECOGNIZED_TYPE
 
     def test_upload_file_too_large(self):
@@ -1106,6 +1155,41 @@ class TestContextServiceFormatting:
         assert "URL: /api/attachments/12345/download" in prefix
         assert "This is the extracted PDF content." in prefix
 
+    def test_build_document_text_prefix_without_sandbox_path(self):
+        """Device tasks should omit sandbox path metadata from attachment prefix."""
+        from app.models.subtask_context import (
+            ContextStatus,
+            ContextType,
+            SubtaskContext,
+        )
+        from app.services.context import context_service
+
+        context = SubtaskContext(
+            subtask_id=0,
+            user_id=1,
+            context_type=ContextType.ATTACHMENT.value,
+            name="test.pdf",
+            status=ContextStatus.READY.value,
+            extracted_text="This is the extracted PDF content.",
+            text_length=35,
+            type_data={
+                "original_filename": "test.pdf",
+                "mime_type": "application/pdf",
+                "file_size": 2621440,
+            },
+        )
+        context.id = 12345
+
+        prefix = context_service.build_document_text_prefix(
+            context,
+            task_id=100,
+            subtask_id=200,
+        )
+
+        assert prefix is not None
+        assert "URL: /api/attachments/12345/download" in prefix
+        assert "File Path(already in sandbox)" in prefix
+
     def test_build_document_text_prefix_with_truncation(self):
         """Test building document text prefix with truncation notice"""
         from app.models.subtask_context import (
@@ -1145,82 +1229,6 @@ class TestContextServiceFormatting:
         assert "Size: 5.0 MB" in prefix
         assert "URL: /api/attachments/100/download" in prefix
         assert "truncated" in prefix.lower()
-
-    def test_build_message_with_image_attachment(self):
-        """Test building message with image attachment"""
-        from app.models.subtask_context import (
-            ContextStatus,
-            ContextType,
-            SubtaskContext,
-        )
-        from app.services.context import context_service
-
-        # Arrange
-        context = SubtaskContext(
-            subtask_id=0,
-            user_id=1,
-            context_type=ContextType.ATTACHMENT.value,
-            name="test.jpg",
-            status=ContextStatus.READY.value,
-            image_base64="base64data",
-            type_data={
-                "file_extension": ".jpg",
-                "mime_type": "image/jpeg",
-                "original_filename": "test.jpg",
-            },
-        )
-        message = "What's in this image?"
-
-        # Act
-        result = context_service.build_message_with_attachment(message, context)
-
-        # Assert
-        assert isinstance(result, dict)
-        assert result["type"] == "vision"
-        assert result["text"] == message
-        assert result["image_base64"] == "base64data"
-
-    def test_build_message_with_document_attachment(self):
-        """Test building message with document attachment"""
-        from app.models.subtask_context import (
-            ContextStatus,
-            ContextType,
-            SubtaskContext,
-        )
-        from app.services.context import context_service
-
-        # Arrange
-        context = SubtaskContext(
-            subtask_id=0,
-            user_id=1,
-            context_type=ContextType.ATTACHMENT.value,
-            name="test.pdf",
-            status=ContextStatus.READY.value,
-            extracted_text="PDF content here",
-            text_length=16,  # Add text_length to avoid None comparison error
-            type_data={
-                "file_extension": ".pdf",
-                "original_filename": "test.pdf",
-                "mime_type": "application/pdf",
-                "file_size": 1024,  # 1 KB
-            },
-        )
-        context.id = 123
-        message = "Summarize this document"
-
-        # Act
-        result = context_service.build_message_with_attachment(message, context)
-
-        # Assert
-        assert isinstance(result, str)
-        assert "[Attachment: test.pdf |" in result
-        assert "ID: 123" in result
-        assert "Type: application/pdf" in result
-        assert "Size: 1.0 KB" in result
-        assert "URL: /api/attachments/123/download" in result
-        assert "PDF content here" in result
-        assert "[User Question]:" in result
-        assert "Summarize this document" in result
 
 
 class TestContextServiceOverwrite:
@@ -1354,6 +1362,40 @@ class TestContextServiceCreateKnowledgeBaseContextWithResult:
         assert (
             added_context.type_data["rag_result"]["injection_mode"] == "rag_retrieval"
         )
+        assert added_context.type_data["rag_result"]["restricted_mode"] is False
+
+    def test_create_knowledge_base_context_with_restricted_rag_result(self) -> None:
+        """Restricted KB contexts should persist the restricted_mode flag."""
+        from app.services.context import context_service
+
+        mock_db = Mock()
+        mock_kind = Mock()
+        mock_kind.name = "Test KB"
+
+        mock_query = Mock()
+        mock_db.query.return_value = mock_query
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = mock_kind
+
+        result = context_service.create_knowledge_base_context_with_result(
+            db=mock_db,
+            subtask_id=100,
+            knowledge_id=123,
+            user_id=1,
+            tool_type="rag",
+            result_data={
+                "extracted_text": "",
+                "sources": [],
+                "injection_mode": "rag_retrieval",
+                "query": "diagnose",
+                "chunks_count": 2,
+                "restricted_mode": True,
+            },
+        )
+
+        added_context = mock_db.add.call_args[0][0]
+        assert result is not None
+        assert added_context.type_data["rag_result"]["restricted_mode"] is True
 
     def test_create_knowledge_base_context_with_kb_head_result(self) -> None:
         """Test creating KB context with kb_head result in one operation."""

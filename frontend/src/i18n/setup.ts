@@ -31,6 +31,9 @@ async function loadTranslations() {
     'projects',
     'pet',
     'devices',
+    'inbox',
+    'promptOptimization',
+    'subscription',
   ]
 
   for (const lng of supportedLanguages) {
@@ -85,6 +88,9 @@ export async function initI18n() {
       'projects',
       'pet',
       'devices',
+      'inbox',
+      'promptOptimization',
+      'subscription',
     ],
   })
 

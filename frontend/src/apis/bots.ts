@@ -6,6 +6,17 @@ import { apiClient } from './client'
 import { Bot, PaginationParams, SuccessMessage } from '../types/api'
 import type { CheckRunningTasksResponse } from './common'
 
+export interface SkillRefMeta {
+  skill_id: number
+  namespace: string
+  is_public: boolean
+}
+
+export interface KnowledgeBaseDefaultRef {
+  id: number
+  name: string
+}
+
 // Bot Request/Response Types
 export interface CreateBotRequest {
   name: string
@@ -13,8 +24,11 @@ export interface CreateBotRequest {
   agent_config: Record<string, unknown>
   system_prompt: string
   mcp_servers: Record<string, unknown>
+  default_knowledge_base_refs?: KnowledgeBaseDefaultRef[]
   skills?: string[]
+  skill_refs?: Record<string, SkillRefMeta>
   preload_skills?: string[] // Skills to preload into system prompt
+  preload_skill_refs?: Record<string, SkillRefMeta>
   namespace?: string // Group namespace, defaults to 'default' for personal bots
 }
 
@@ -24,8 +38,11 @@ export interface UpdateBotRequest {
   agent_config?: Record<string, unknown>
   system_prompt?: string
   mcp_servers?: Record<string, unknown>
+  default_knowledge_base_refs?: KnowledgeBaseDefaultRef[]
   skills?: string[]
+  skill_refs?: Record<string, SkillRefMeta>
   preload_skills?: string[] // Skills to preload into system prompt
+  preload_skill_refs?: Record<string, SkillRefMeta>
   is_active?: boolean
   namespace?: string // Group namespace
 }

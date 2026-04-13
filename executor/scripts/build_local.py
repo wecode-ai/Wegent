@@ -125,13 +125,63 @@ def restore_version_source(original_content: str) -> None:
     print("Restored version.py to original content")
 
 
+def embed_github_repo_in_source(repo: str) -> str | None:
+    """Embed GitHub repo into github_version_checker.py for PyInstaller builds.
+
+    Args:
+        repo: GitHub repo in format "owner/repo"
+
+    Returns:
+        Original content of github_version_checker.py for restoration, or None if failed
+    """
+    github_checker_py = (
+        get_executor_root() / "services" / "updater" / "github_version_checker.py"
+    )
+
+    # Read original content
+    original_content = github_checker_py.read_text()
+
+    # Replace _EMBEDDED_GITHUB_REPO: Optional[str] = None with the actual repo
+    modified_content = re.sub(
+        r"_EMBEDDED_GITHUB_REPO:\s*Optional\[str\]\s*=\s*None",
+        f'_EMBEDDED_GITHUB_REPO: Optional[str] = "{repo}"',
+        original_content,
+    )
+
+    if modified_content == original_content:
+        print(
+            "Warning: Could not find _EMBEDDED_GITHUB_REPO placeholder in github_version_checker.py"
+        )
+        return None
+
+    # Write modified content
+    github_checker_py.write_text(modified_content)
+    print(f"Embedded GitHub repo {repo} into github_version_checker.py")
+
+    return original_content
+
+
+def restore_github_repo_source(original_content: str) -> None:
+    """Restore github_version_checker.py to its original content.
+
+    Args:
+        original_content: Original content to restore
+    """
+    github_checker_py = (
+        get_executor_root() / "services" / "updater" / "github_version_checker.py"
+    )
+    github_checker_py.write_text(original_content)
+    print("Restored github_version_checker.py to original content")
+
+
 def find_claude_agent_sdk_binary(
     target_platform: str | None = None,
 ) -> tuple[str, str] | None:
     """Find the bundled Claude CLI binary from claude-agent-sdk.
 
-    Only Windows platform includes the Claude CLI binary in the build.
-    Mac and Linux platforms rely on system-installed Claude Code.
+    Bundles the Claude CLI binary for Linux and Windows to create standalone executables.
+    macOS uses system-installed Claude Code (not bundled).
+    For cross-platform builds, downloads the appropriate wheel from PyPI.
 
     Args:
         target_platform: Target platform ('Windows', 'Darwin', 'Linux').
@@ -143,16 +193,16 @@ def find_claude_agent_sdk_binary(
     """
     target = target_platform or platform.system()
 
-    # Only Windows requires bundled Claude CLI binary
-    # Mac and Linux use system-installed Claude Code
-    if target != "Windows":
+    # macOS uses system-installed Claude Code (no binary bundled)
+    # Linux and Windows bundle the binary
+    if target == "Darwin":
         print(
             f"Platform {target}: Using system-installed Claude Code (no binary bundled)"
         )
         return None
 
-    # For Windows, try to find local binary first
-    binary_name = "claude.exe"
+    # Determine binary name based on platform
+    binary_name = "claude.exe" if target == "Windows" else "claude"
 
     try:
         import claude_agent_sdk
@@ -171,14 +221,17 @@ def find_claude_agent_sdk_binary(
     except ImportError:
         pass
 
-    # For cross-platform Windows builds, download from PyPI
-    return _download_windows_claude_binary()
+    # For cross-platform builds, download from PyPI
+    return _download_claude_binary_from_pypi(target)
 
 
-def _download_windows_claude_binary() -> tuple[str, str] | None:
-    """Download Windows claude.exe from PyPI wheel.
+def _download_claude_binary_from_pypi(target_platform: str) -> tuple[str, str] | None:
+    """Download Claude CLI binary from PyPI wheel for the target platform.
 
     Uses PyPI JSON API to find the correct wheel URL dynamically.
+
+    Args:
+        target_platform: Target platform ('Windows', 'Darwin', 'Linux').
 
     Returns:
         Tuple of (source_path, dest_dir) for PyInstaller --add-binary,
@@ -189,6 +242,16 @@ def _download_windows_claude_binary() -> tuple[str, str] | None:
     import urllib.request
     import zipfile
 
+    # Map platform to wheel platform tag
+    platform_tags = {
+        "Windows": "win_amd64",
+        "Darwin": "macosx",
+        "Linux": "linux",
+    }
+
+    # Determine binary name
+    binary_name = "claude.exe" if target_platform == "Windows" else "claude"
+
     # Get SDK version from installed package
     try:
         import claude_agent_sdk
@@ -198,8 +261,13 @@ def _download_windows_claude_binary() -> tuple[str, str] | None:
         sdk_version = None
 
     print(
-        f"Looking for Windows Claude CLI binary (sdk version: {sdk_version or 'latest'})..."
+        f"Looking for {target_platform} Claude CLI binary (sdk version: {sdk_version or 'latest'})..."
     )
+
+    platform_tag = platform_tags.get(target_platform)
+    if not platform_tag:
+        print(f"Error: Unknown target platform: {target_platform}")
+        return None
 
     try:
         # Query PyPI API for package info
@@ -207,19 +275,19 @@ def _download_windows_claude_binary() -> tuple[str, str] | None:
         with urllib.request.urlopen(pypi_url, timeout=30) as response:
             pypi_data = json_module.loads(response.read().decode())
 
-        # Find Windows wheel URL
+        # Find wheel URL for target platform
         version = sdk_version or pypi_data["info"]["version"]
         releases = pypi_data["releases"].get(version, [])
 
         wheel_url = None
         for release in releases:
             filename = release.get("filename", "")
-            if "win_amd64" in filename and filename.endswith(".whl"):
+            if platform_tag in filename and filename.endswith(".whl"):
                 wheel_url = release["url"]
                 break
 
         if not wheel_url:
-            print(f"Error: No Windows wheel found for version {version}")
+            print(f"Error: No {target_platform} wheel found for version {version}")
             return None
 
         print(f"Downloading from: {wheel_url}")
@@ -231,9 +299,9 @@ def _download_windows_claude_binary() -> tuple[str, str] | None:
         # Download wheel
         urllib.request.urlretrieve(wheel_url, wheel_path)
 
-        # Extract claude.exe from wheel
+        # Extract binary from wheel
+        binary_zip_path = f"claude_agent_sdk/_bundled/{binary_name}"
         with zipfile.ZipFile(wheel_path, "r") as zf:
-            binary_zip_path = "claude_agent_sdk/_bundled/claude.exe"
             if binary_zip_path in zf.namelist():
                 zf.extract(binary_zip_path, temp_dir)
                 binary_path = temp_dir / binary_zip_path
@@ -247,12 +315,14 @@ def _download_windows_claude_binary() -> tuple[str, str] | None:
                 return None
 
     except Exception as e:
-        print(f"Error downloading Windows Claude binary: {e}")
+        print(f"Error downloading {target_platform} Claude binary: {e}")
         return None
 
 
 def build_executable(
-    target_arch: str | None = None, target_platform: str | None = None
+    target_arch: str | None = None,
+    target_platform: str | None = None,
+    version: str | None = None,
 ):
     """Build the executable using PyInstaller.
 
@@ -261,6 +331,7 @@ def build_executable(
                      If None, builds for the native architecture.
         target_platform: Target platform for cross-compilation (e.g., 'Windows', 'Darwin', 'Linux').
                         If None, builds for the current platform.
+        version: Version string to embed in the binary. If None, reads from pyproject.toml.
     """
     project_root = get_project_root()
     executor_root = get_executor_root()
@@ -269,11 +340,16 @@ def build_executable(
     effective_platform = target_platform or platform.system()
 
     # Get version and embed it into source
-    version = get_version_from_pyproject()
+    if version is None:
+        version = get_version_from_pyproject()
     print(f"Building version: {version}")
     if target_platform:
         print(f"Target platform: {target_platform}")
     original_version_content = embed_version_in_source(version)
+
+    # Get GitHub repo from environment and embed it
+    github_repo = os.environ.get("GITHUB_REPO", "wecode-ai/Wegent")
+    original_repo_content = embed_github_repo_in_source(github_repo)
 
     try:
         # Change to project root for correct imports
@@ -417,24 +493,24 @@ def build_executable(
             "--hidden-import=starlette.types",
             "--hidden-import=sse_starlette",
             "--hidden-import=sse_starlette.sse",
-            # Tokenizer plugin used by litellm/tiktoken at runtime
+            # Tokenizer plugin used by tiktoken at runtime
             "--hidden-import=tiktoken_ext.openai_public",
             # SSL certificates (needed for HTTPS connections)
             "--collect-data=certifi",
-            "--collect-data=litellm",
             "--collect-data=tiktoken",
             "--collect-data=tiktoken_ext",
         ]
 
-        # Add Claude CLI binary only for Windows (avoids asyncio + .cmd issue)
-        # Mac and Linux use system-installed Claude Code
+        # Add Claude CLI binary for Linux and Windows (macOS uses system-installed)
         claude_binary = find_claude_agent_sdk_binary(target_platform=effective_platform)
         if claude_binary:
             src_path, dest_dir = claude_binary
             cmd.append(f"--add-binary={src_path}{os.pathsep}{dest_dir}")
             print(f"Adding Claude CLI binary to build: {src_path} -> {dest_dir}")
-        elif effective_platform == "Windows":
-            print("Warning: Claude CLI binary not found, executor may fail on Windows")
+        elif effective_platform in ["Windows", "Linux"]:
+            print(
+                f"Warning: Claude CLI binary not found for {effective_platform}, executor may fail"
+            )
 
         # Continue with remaining options
         cmd += [
@@ -502,9 +578,11 @@ def build_executable(
             print(f"Error: Output file not found at {output_path}")
             sys.exit(1)
     finally:
-        # Always restore version.py to its original content
+        # Always restore source files to their original content
         if original_version_content:
             restore_version_source(original_version_content)
+        if original_repo_content:
+            restore_github_repo_source(original_repo_content)
 
 
 def main():
@@ -521,6 +599,10 @@ def main():
         choices=["Windows", "Darwin", "Linux"],
         help="Target platform for bundling platform-specific binaries. "
         "Use 'Windows' when building for Windows from macOS/Linux to include claude.exe.",
+    )
+    parser.add_argument(
+        "--version",
+        help="Override version number (defaults to pyproject.toml version)",
     )
     args = parser.parse_args()
 
@@ -539,7 +621,11 @@ def main():
     clean_build_artifacts()
 
     # Build executable
-    build_executable(target_arch=args.target_arch, target_platform=args.target_platform)
+    build_executable(
+        target_arch=args.target_arch,
+        target_platform=args.target_platform,
+        version=args.version,
+    )
 
     print()
     print("=" * 60)

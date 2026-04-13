@@ -27,6 +27,7 @@
     "documents": "documents",
     "noTeamHint": "You haven't joined any teams yet. Create or join a team to view team knowledge bases here.",
     "noGroupHint": "You haven't joined any groups yet. Create or join a group to view group knowledge bases here.",
+    "manageGroups": "Manage Groups",
     "searchGroups": "Search groups...",
     "noGroupResults": "No matching groups",
     "tabs": {
@@ -34,6 +35,93 @@
       "group": "Group",
       "organization": "Organization",
       "external": "External"
+    },
+    "personalGroups": {
+      "createdByMe": "Created by Me",
+      "sharedWithMe": "Shared with Me",
+      "noCreated": "You haven't created any knowledge bases yet",
+      "noShared": "No knowledge bases have been shared with you",
+      "createdDesc": "Click the button above to create your first knowledge base",
+      "sharedDesc": "Knowledge bases shared by other users will appear here"
+    },
+    "tree": {
+      "title": "Knowledge Base",
+      "myKnowledge": "My Knowledge",
+      "groupKnowledge": "Group Knowledge",
+      "orgKnowledge": "Organization Knowledge",
+      "searchPlaceholder": "Search knowledge bases...",
+      "emptyState": "Select a knowledge base from the left panel",
+      "emptyStateHint": "Browse and select a knowledge base to view its details",
+      "noResults": "No matching knowledge bases found",
+      "collapse": "Collapse",
+      "collapseTree": "Collapse list",
+      "expandTree": "List",
+      "docCount": "{{count}} docs",
+      "loadingKbs": "Loading knowledge bases..."
+    },
+    "sidebar": {
+      "searchPlaceholder": "Search knowledge bases...",
+      "typeToSearch": "Type to search knowledge bases",
+      "favorites": "Favorites",
+      "recent": "Recent",
+      "groups": "Groups",
+      "navigation": "Navigation",
+      "all": "All",
+      "noGroups": "No groups",
+      "noFavorites": "No favorite knowledge bases",
+      "noRecent": "No recent access history",
+      "clearRecent": "Clear history",
+      "personal": "Personal",
+      "organization": "Organization",
+      "groupSettings": "Group Settings",
+      "justNow": "Just now",
+      "minutesAgo": "{{count}} min ago",
+      "hoursAgo": "{{count}} hr ago",
+      "yesterday": "Yesterday",
+      "daysAgo": "{{count}} days ago"
+    },
+    "allKnowledgeBases": "All Knowledge Bases",
+    "groupFilter": {
+      "all": "All Groups"
+    },
+    "table": {
+      "name": "Name",
+      "group": "Group",
+      "permission": "Permission",
+      "lastAccess": "Last Access",
+      "actions": "Actions",
+      "edit": "Edit",
+      "delete": "Delete",
+      "minutesAgo": "min ago",
+      "daysAgo": "days ago"
+    },
+    "groupList": {
+      "back": "Back",
+      "create": "New Knowledge Base",
+      "searchPlaceholder": "Search knowledge bases...",
+      "sortUpdated": "Recently Updated",
+      "sortCreated": "Date Created",
+      "sortName": "Name",
+      "empty": "No knowledge bases",
+      "emptyHint": "Click the button above to create your first knowledge base",
+      "loadMore": "Load More",
+      "documentCount": "{{count}} documents",
+      "updatedAt": "Updated {{time}}"
+    },
+    "search": {
+      "placeholder": "Search knowledge bases...",
+      "recentSearches": "Recent Searches",
+      "allResults": "All Results",
+      "knowledgeBases": "Knowledge Bases",
+      "groupsLabel": "Groups",
+      "noResults": "No matching knowledge bases found",
+      "searching": "Searching...",
+      "kbCount": "{{count}} knowledge bases"
+    },
+    "accessDenied": {
+      "title": "Access Denied",
+      "description": "You don't have permission to access this knowledge base. Please contact the knowledge base creator or administrator if you have questions.",
+      "backButton": "Back to Knowledge Base List"
     },
     "noOrgKnowledgeBase": "No organization knowledge base",
     "noOrgKnowledgeBaseHint": "Organization knowledge bases are managed by administrators. All members can view.",
@@ -65,13 +153,16 @@
       "search": "Search knowledge bases...",
       "noResults": "No matching knowledge bases",
       "convertType": "Convert Type",
+      "currentType": "Current Type",
       "convertToNotebook": "Convert to Notebook",
       "convertToClassic": "Convert to Knowledge Base",
       "convertToNotebookDisabled": "Document count exceeds 50 file limit, cannot convert to notebook mode",
       "convertToClassicConfirm": "After conversion, you will no longer be able to chat directly in the knowledge base, but there will be no document limit. Are you sure you want to convert?",
       "convertToNotebookConfirm": "After conversion to notebook, you can upload files and chat directly in the knowledge base, but the document limit will be 50 files. Are you sure you want to convert?",
       "convertSuccess": "Knowledge base type converted successfully",
-      "convertFailed": "Failed to convert knowledge base type"
+      "convertFailed": "Failed to convert knowledge base type",
+      "targetGroup": "Target Group",
+      "selectGroup": "Select Group"
     },
     "document": {
       "title": "Documents",
@@ -86,16 +177,21 @@
       },
       "indexStatus": {
         "available": "Indexed",
+        "notIndexed": "Not Indexed",
+        "notIndexedHint": "This document has not been indexed yet, so AI currently falls back to other tools to browse its content.",
         "unavailable": "Index Unavailable",
         "unavailableHint": "AI will use other tools to browse documents (slightly less efficient than quick retrieval)",
         "indexing": "Indexing",
         "indexingHint": "Index is being generated. Refresh the page later to check the latest status."
       },
       "reindex": "Reindex",
+      "index": "Start Indexing",
       "reindexing": "Reindexing...",
       "reindexSuccess": "Reindex started",
       "reindexFailed": "Failed to start reindex",
+      "excelFileSizeExceeded": "File size exceeds the limit: Excel files ({{extension}}) must be {{limit}}MB or smaller for indexing. Current file size: {{size}}MB. Please reduce the file size or split into smaller files.",
       "openLink": "Open Link",
+      "download": "Download",
       "columns": {
         "name": "Name",
         "type": "Type",
@@ -178,7 +274,8 @@
         "viewChunks": "View Chunks",
         "splitterType": "Splitter Type",
         "splitterSubtype": "Splitter Subtype"
-      }
+      },
+      "downloadFailed": "Failed to download file"
     },
     "upload": {
       "dropzoneHint": "Select up to {{max}} files at once",
@@ -291,7 +388,20 @@
       "noPermission": "You don't have access to this knowledge base",
       "pendingApproval": "Pending Approval",
       "pendingApprovalDescription": "Your request to access \"{{name}}\" is awaiting approval",
-      "selectPermission": "Select Permission Level",
+      "selectPermission": "Select Role",
+      "role": {
+        "label": "Role",
+        "Owner": "Owner",
+        "Maintainer": "Maintainer",
+        "Developer": "Developer",
+        "Reporter": "Reporter",
+        "RestrictedAnalyst": "Restricted Analyst",
+        "OwnerDescription": "Creator with full permissions (only the creator can have this role)",
+        "MaintainerDescription": "Maintainer who can manage members and edit content",
+        "DeveloperDescription": "Developer who can edit content",
+        "ReporterDescription": "User who can only view content",
+        "RestrictedAnalystDescription": "Restricted analyst with limited content access"
+      },
       "viewDescription": "Can browse knowledge base content only",
       "editDescription": "Can add, modify, and delete documents",
       "manageDescription": "Can manage other users' access permissions",
@@ -305,6 +415,8 @@
       "searchUserPlaceholder": "Search username or email...",
       "selectUser": "Please select a user",
       "invalidUserName": "Please enter a valid username",
+      "maxUsersExceeded": "Maximum {{max}} users can be added at once",
+      "batchAddFailed": "failed to add",
       "invalidShareLink": "Share link is invalid or expired",
       "noLinkToCopy": "No link to copy",
       "copyFailedManual": "Link selected. Press Ctrl+C to copy."
@@ -384,6 +496,13 @@
       "exemptCallsHint": "Number of calls exempt from token checking (must be less than maximum calls)",
       "validationError": "Exempt calls must be less than maximum calls"
     },
+    "guidedQuestions": {
+      "label": "Guided Questions (Optional)",
+      "placeholder": "Enter a guided question",
+      "addButton": "Add Question",
+      "helpText": "Will be displayed above the input when starting a new conversation",
+      "maxReached": "Maximum 3 guided questions allowed"
+    },
     "retrievalTest": {
       "button": "Retrieval Test",
       "title": "Retrieval Test",
@@ -400,7 +519,37 @@
       "configHint": "These settings are for testing only and will not be saved to the database.",
       "modified": "Modified"
     },
-    "goToSettings": "Go to Settings"
+    "goToSettings": "Go to Settings",
+    "groupSettings": "Group Settings",
+    "groupChat": {
+      "create": "Create Group Chat",
+      "createForGroup": "Create group chat for group",
+      "createForKb": "Create group chat for knowledge base",
+      "defaultTitle": "{{groupName}} Group Chat",
+      "defaultTitleWithKb": "{{groupName}} - {{kbName}} Group Chat",
+      "addingMembers": "Adding group members...",
+      "addMembersSuccess": "Successfully added {{count}} group members",
+      "addMembersPartialFail": "Some members failed to add ({{failed}}/{{total}}). You can add them manually in the group chat.",
+      "addMembersFailed": "Failed to add group members. You can add them manually in the group chat.",
+      "bindKbPartialFail": "Some knowledge bases failed to bind ({{failed}}/{{total}})",
+      "bindKbFailed": "Failed to bind knowledge bases"
+    },
+    "migrate": {
+      "title": "Migrate to Group",
+      "description": "Migrate this personal knowledge base to a target group. After migration, the knowledge base will belong to the target group.",
+      "targetGroup": "Target Group",
+      "selectGroupPlaceholder": "Select a group to migrate to",
+      "noAvailableGroups": "No available groups. Please join or create a group first.",
+      "permissionNote": "You need to be a maintainer of the target group to perform migration",
+      "migrationNote": "After migration, the knowledge base will move from personal to group space. Original sharing permissions will be preserved.",
+      "selectGroupRequired": "Please select a target group",
+      "invalidGroup": "Invalid target group",
+      "migrating": "Migrating...",
+      "confirm": "Confirm Migration",
+      "sourceKnowledgeBase": "Source Knowledge Base",
+      "success": "Knowledge base migrated successfully",
+      "failed": "Failed to migrate knowledge base"
+    }
   },
   "add_repository": "Add Repository",
   "add_repository_desc": "Under maintenance, temporarily unavailable",
@@ -474,6 +623,14 @@
     "summaryFailed": "Summary generation failed",
     "summaryFailedHint": "Click retry to regenerate summary",
     "summaryRetry": "Retry",
-    "summaryRetrying": "Retrying..."
+    "summaryRetrying": "Retrying...",
+    "guidedQuestions": {
+      "hint": "Try these questions:"
+    },
+    "accessDenied": {
+      "title": "Cannot Access Knowledge Base",
+      "description": "You do not have permission to access this knowledge base. If you have any questions, please contact the knowledge base creator or administrator.",
+      "backButton": "Back to Knowledge Base List"
+    }
   }
 }

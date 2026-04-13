@@ -8,7 +8,7 @@ Pydantic schemas for knowledge base and document management.
 
 from datetime import datetime
 from enum import Enum
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -39,6 +39,16 @@ class DocumentSourceType(str, Enum):
     TEXT = "text"
     TABLE = "table"
     WEB = "web"
+
+
+class DocumentIndexStatus(str, Enum):
+    """Business status enumeration for document indexing."""
+
+    NOT_INDEXED = "not_indexed"
+    QUEUED = "queued"
+    INDEXING = "indexing"
+    SUCCESS = "success"
+    FAILED = "failed"
 
 
 class ResourceScope(str, Enum):
@@ -76,6 +86,27 @@ class KnowledgeBaseCreate(BaseModel):
         None,
         description="Model reference for summary generation. Format: {'name': 'model-name', 'namespace': 'default', 'type': 'public|user|group'}",
     )
+    guided_questions: Optional[List[str]] = Field(
+        None,
+        max_length=3,
+        description="Guided questions list (max 3) to show in notebook mode for quick user interaction",
+    )
+
+    @field_validator("guided_questions")
+    @classmethod
+    def validate_guided_questions(cls, v):
+        """Validate guided questions list."""
+        if v is not None:
+            if len(v) > 3:
+                raise ValueError("Maximum 3 guided questions allowed")
+            for i, q in enumerate(v):
+                if not q or len(q.strip()) == 0:
+                    raise ValueError(f"Guided question at index {i} cannot be empty")
+                if len(q) > 200:
+                    raise ValueError(
+                        f"Guided question at index {i} exceeds 200 characters"
+                    )
+        return v
 
 
 class RetrievalConfigUpdate(BaseModel):
@@ -112,6 +143,11 @@ class KnowledgeBaseUpdate(BaseModel):
         None,
         description="Model reference for summary generation. Format: {'name': 'model-name', 'namespace': 'default', 'type': 'public|user|group'}",
     )
+    guided_questions: Optional[List[str]] = Field(
+        None,
+        max_length=3,
+        description="Guided questions list (max 3) to show in notebook mode for quick user interaction",
+    )
 
     # Knowledge base tool call limit configuration
     max_calls_per_conversation: Optional[int] = Field(
@@ -138,6 +174,22 @@ class KnowledgeBaseUpdate(BaseModel):
                     "exempt_calls_before_check must be less than max_calls_per_conversation"
                 )
         return self
+
+    @field_validator("guided_questions")
+    @classmethod
+    def validate_guided_questions(cls, v):
+        """Validate guided questions list."""
+        if v is not None:
+            if len(v) > 3:
+                raise ValueError("Maximum 3 guided questions allowed")
+            for i, q in enumerate(v):
+                if not q or len(q.strip()) == 0:
+                    raise ValueError(f"Guided question at index {i} cannot be empty")
+                if len(q) > 200:
+                    raise ValueError(
+                        f"Guided question at index {i} exceeds 200 characters"
+                    )
+        return v
 
 
 class KnowledgeBaseTypeUpdate(BaseModel):
@@ -179,6 +231,10 @@ class KnowledgeBaseResponse(BaseModel):
         None,
         description="Knowledge base summary (short_summary, long_summary, topics, etc.)",
     )
+    guided_questions: Optional[List[str]] = Field(
+        None,
+        description="Guided questions list (max 3) to show in notebook mode for quick user interaction",
+    )
 
     # Knowledge base tool call limit configuration
     max_calls_per_conversation: int = Field(default=10)
@@ -202,6 +258,9 @@ class KnowledgeBaseResponse(BaseModel):
         summary_model_ref = spec.get("summaryModelRef")
         # Extract kb_type from spec, default to 'notebook' for backward compatibility
         kb_type = spec.get("kbType", "notebook")
+
+        # Extract guided questions from spec
+        guided_questions = spec.get("guidedQuestions")
 
         # Extract call limit configuration with defaults for backward compatibility
         max_calls = spec.get("maxCallsPerConversation", 10)
@@ -230,6 +289,7 @@ class KnowledgeBaseResponse(BaseModel):
             summary_enabled=spec.get("summaryEnabled", False),
             summary_model_ref=summary_model_ref,
             summary=summary,
+            guided_questions=guided_questions,
             max_calls_per_conversation=max_calls,
             exempt_calls_before_check=exempt_calls,
             is_active=kind.is_active,
@@ -292,6 +352,8 @@ class KnowledgeDocumentResponse(BaseModel):
     status: DocumentStatus
     user_id: int
     is_active: bool
+    index_status: DocumentIndexStatus
+    index_generation: int
     splitter_config: Optional[SplitterConfig] = None
     source_type: DocumentSourceType = DocumentSourceType.FILE
     source_config: Optional[dict] = None
@@ -383,6 +445,87 @@ class AccessibleKnowledgeResponse(BaseModel):
     team: list[TeamKnowledgeGroup]
 
 
+# ============== All Grouped Knowledge Schemas ==============
+
+
+class KnowledgeBaseWithGroupInfo(BaseModel):
+    """Schema for knowledge base with group info for all-grouped response."""
+
+    id: int
+    name: str
+    description: Optional[str] = None
+    kb_type: Optional[str] = "notebook"
+    namespace: str
+    document_count: int = 0
+    updated_at: datetime
+    created_at: datetime
+    user_id: int
+    # Group info for display
+    group_id: str  # namespace or 'default'
+    group_name: str  # Display name
+    group_type: str  # 'personal' | 'personal-shared' | 'group' | 'organization'
+    # User's role/permission for this knowledge base
+    my_role: Optional[str] = Field(
+        None,
+        description="Current user's role for this KB: 'Owner' | 'Maintainer' | 'Developer' | 'Reporter' | 'RestrictedAnalyst' | None",
+    )
+
+
+class AllGroupedPersonal(BaseModel):
+    """Schema for personal knowledge bases in all-grouped response."""
+
+    created_by_me: list[KnowledgeBaseWithGroupInfo]
+    shared_with_me: list[KnowledgeBaseWithGroupInfo]
+
+
+class AllGroupedTeamGroup(BaseModel):
+    """Schema for a team group in all-grouped response."""
+
+    group_name: str
+    group_display_name: str
+    kb_count: int
+    knowledge_bases: list[KnowledgeBaseWithGroupInfo]
+
+
+class AllGroupedOrganization(BaseModel):
+    """Schema for organization knowledge bases in all-grouped response."""
+
+    namespace: Optional[str] = None
+    display_name: Optional[str] = None
+    kb_count: int = 0
+    knowledge_bases: list[KnowledgeBaseWithGroupInfo]
+
+
+class AllGroupedSummary(BaseModel):
+    """Schema for summary in all-grouped response."""
+
+    total_count: int
+    personal_count: int
+    group_count: int
+    organization_count: int
+
+
+class AllGroupedKnowledgeResponse(BaseModel):
+    """Schema for all knowledge bases grouped response.
+
+    This is the response for GET /api/v1/knowledge-bases/all-grouped
+    which returns all knowledge bases accessible to the user in a single request,
+    solving the N+1 query problem.
+    """
+
+    personal: AllGroupedPersonal
+    groups: list[AllGroupedTeamGroup]
+    organization: AllGroupedOrganization
+    summary: AllGroupedSummary
+
+
+class PersonalKnowledgeBaseGroup(BaseModel):
+    """Schema for personal knowledge base group (created by me vs shared with me)."""
+
+    created_by_me: list[KnowledgeBaseResponse]
+    shared_with_me: list[KnowledgeBaseResponse]
+
+
 # ============== Table URL Validation Schemas ==============
 
 
@@ -424,6 +567,21 @@ class DocumentDetailResponse(BaseModel):
     )
     truncated: Optional[bool] = Field(None, description="Whether content was truncated")
     summary: Optional[dict] = Field(None, description="Document summary object")
+
+
+class DocumentContentReadResponse(BaseModel):
+    """Schema for raw document content reads with pagination metadata."""
+
+    document_id: int = Field(..., description="Document ID")
+    name: str = Field(..., description="Document name")
+    content: str = Field(..., description="Document content (partial)")
+    total_length: int = Field(
+        ..., ge=0, description="Total document length in characters"
+    )
+    offset: int = Field(..., ge=0, description="Actual start position")
+    returned_length: int = Field(..., ge=0, description="Number of characters returned")
+    has_more: bool = Field(..., description="Whether more content is available")
+    kb_id: int = Field(..., description="Knowledge base ID")
 
 
 class DocumentContentUpdate(BaseModel):
@@ -540,3 +698,26 @@ class CitationSource(BaseModel):
     chunk_index: int = Field(
         ..., ge=0, description="Chunk index in document (0-based), for precise location"
     )
+
+
+# ============== Knowledge Base Migration Schemas ==============
+
+
+class KnowledgeBaseMigrateRequest(BaseModel):
+    """Schema for migrating knowledge base to group request."""
+
+    target_group_name: str = Field(
+        ...,
+        min_length=1,
+        description="Target group name (namespace) to migrate the knowledge base to",
+    )
+
+
+class KnowledgeBaseMigrateResponse(BaseModel):
+    """Schema for knowledge base migration response."""
+
+    success: bool = Field(..., description="Whether migration succeeded")
+    message: str = Field(..., description="Migration result message")
+    knowledge_base_id: int = Field(..., description="Knowledge base ID")
+    old_namespace: str = Field(..., description="Original namespace")
+    new_namespace: str = Field(..., description="New namespace after migration")

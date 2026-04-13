@@ -20,19 +20,20 @@ import { Spinner } from '@/components/ui/spinner'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { saveLastTab } from '@/utils/userPreferences'
 import { useUser } from '@/features/common/UserContext'
+import { useTaskContext } from '@/features/tasks/contexts/taskContext'
+import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
 import { useSearchShortcut } from '@/features/tasks/hooks/useSearchShortcut'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useKnowledgeBaseDetail } from '@/features/knowledge/document/hooks'
+import { useNamespaceRoleMap } from '@/features/knowledge/document/hooks/useNamespaceRoleMap'
 import { useKnowledgePermissions } from '@/features/knowledge/permission/hooks/useKnowledgePermissions'
 import { DocumentList } from '@/features/knowledge/document/components'
 import { PermissionManagementTab } from '@/features/knowledge/permission/components/PermissionManagementTab'
-import { listGroups } from '@/apis/groups'
-import type { GroupRole } from '@/types/group'
-interface KnowledgeBaseClassicPageDesktopProps {
-  /** Callback when knowledge base type is changed (notebook <-> classic) */
-  onKbTypeChanged?: () => void
-}
-
+import {
+  canManageKnowledgeBase,
+  canManageKnowledgeBaseDocuments,
+  canManageKnowledgeBasePermissions,
+} from '@/utils/namespace-permissions'
 /**
  * Desktop-specific implementation of Knowledge Base Classic Page
  *
@@ -40,9 +41,7 @@ interface KnowledgeBaseClassicPageDesktopProps {
  * - Left: TaskSidebar (resizable)
  * - Center: Document list with full management capabilities
  */
-export function KnowledgeBaseClassicPageDesktop({
-  onKbTypeChanged,
-}: KnowledgeBaseClassicPageDesktopProps) {
+export function KnowledgeBaseClassicPageDesktop() {
   const { t } = useTranslation('knowledge')
   const router = useRouter()
   const params = useParams()
@@ -77,6 +76,12 @@ export function KnowledgeBaseClassicPageDesktop({
   // User state
   const { user, isLoading: isUserLoading } = useUser()
 
+  // Task context
+  const { setSelectedTask } = useTaskContext()
+
+  // Chat stream context
+  const { clearAllStreams, stopStream, getStreamingTaskIds } = useChatStreamContext()
+
   // Tab state for documents/permissions
   const [activeTab, setActiveTab] = useState<'documents' | 'permissions'>('documents')
 
@@ -86,25 +91,7 @@ export function KnowledgeBaseClassicPageDesktop({
   // Search dialog state
   const [isSearchDialogOpen, setIsSearchDialogOpen] = useState(false)
 
-  // Group role map for permission checking
-  const [groupRoleMap, setGroupRoleMap] = useState<Map<string, GroupRole>>(new Map())
-
-  // Fetch all groups and build role map for permission checking
-  useEffect(() => {
-    listGroups()
-      .then(response => {
-        const roleMap = new Map<string, GroupRole>()
-        response.items.forEach(group => {
-          if (group.my_role) {
-            roleMap.set(group.name, group.my_role)
-          }
-        })
-        setGroupRoleMap(roleMap)
-      })
-      .catch(error => {
-        console.error('Failed to load groups for role map:', error)
-      })
-  }, [])
+  const namespaceRoleMap = useNamespaceRoleMap()
 
   // Toggle search dialog callback
   const toggleSearchDialog = useCallback(() => {
@@ -142,32 +129,51 @@ export function KnowledgeBaseClassicPageDesktop({
     router.back()
   }
 
+  // Handle new task from collapsed sidebar button
+  const handleNewTask = () => {
+    // Clear state and navigate immediately for responsive UI
+    setSelectedTask(null)
+    clearAllStreams()
+    router.push('/chat')
+
+    // Stop streams in the background without blocking navigation
+    const streamingIds = getStreamingTaskIds()
+    Promise.all(streamingIds.map(id => stopStream(id))).catch(error => {
+      console.error('Failed to stop streams:', error)
+    })
+  }
+
   // Check if user can manage this knowledge base
   const canManageKb = useMemo(() => {
     if (!knowledgeBase || !user) return false
-    // Personal knowledge base - check user ownership
-    if (knowledgeBase.namespace === 'default') {
-      return knowledgeBase.user_id === user.id
-    }
-    // Organization knowledge base - only admin can manage
-    if (knowledgeBase.namespace === 'organization') {
-      return user.role === 'admin'
-    }
-    // Group knowledge base - check group role
-    // Developer or higher can edit, Maintainer or higher can delete
-    const groupRole = groupRoleMap.get(knowledgeBase.namespace)
-    return groupRole === 'Owner' || groupRole === 'Maintainer' || groupRole === 'Developer'
-  }, [knowledgeBase, user, groupRoleMap])
+    return canManageKnowledgeBase({
+      currentUserId: user.id,
+      knowledgeBase,
+      knowledgeRole: myPermission?.role,
+      namespaceRole: namespaceRoleMap.get(knowledgeBase.namespace),
+    })
+  }, [knowledgeBase, user, myPermission?.role, namespaceRoleMap])
 
-  // Check if user can manage permissions (is creator or has manage permission)
+  const canUploadDocuments = useMemo(() => {
+    if (!knowledgeBase || !user) return false
+    return canManageKnowledgeBaseDocuments({
+      currentUserId: user.id,
+      knowledgeBase,
+      knowledgeRole: myPermission?.role,
+      namespaceRole: namespaceRoleMap.get(knowledgeBase.namespace),
+    })
+  }, [knowledgeBase, user, myPermission?.role, namespaceRoleMap])
+
+  // Check if user can manage permissions (creator, namespace manager, or KB manager)
   const canManagePermissions = useMemo(() => {
     if (!knowledgeBase || !user) return false
-    // Creator can always manage permissions
-    if (knowledgeBase.user_id === user.id) return true
-    // User with manage permission can manage
-    if (myPermission?.permission_level === 'manage') return true
-    return false
-  }, [knowledgeBase, user, myPermission])
+    return canManageKnowledgeBasePermissions({
+      currentUserId: user.id,
+      knowledgeBase,
+      knowledgeRole: myPermission?.role,
+      namespaceRole: namespaceRoleMap.get(knowledgeBase.namespace),
+    })
+  }, [knowledgeBase, user, myPermission?.role, namespaceRoleMap])
 
   // Loading state - wait for both knowledge base and user data
   if (kbLoading || isUserLoading) {
@@ -197,7 +203,7 @@ export function KnowledgeBaseClassicPageDesktop({
     <div className="flex smart-h-screen bg-base text-text-primary box-border">
       {/* Collapsed sidebar floating buttons */}
       {isCollapsed && (
-        <CollapsedSidebarButtons onExpand={handleToggleCollapsed} onNewTask={() => {}} />
+        <CollapsedSidebarButtons onExpand={handleToggleCollapsed} onNewTask={handleNewTask} />
       )}
 
       {/* Resizable left sidebar */}
@@ -249,11 +255,8 @@ export function KnowledgeBaseClassicPageDesktop({
                 <DocumentList
                   knowledgeBase={knowledgeBase}
                   onBack={handleBack}
-                  canManage={canManageKb}
-                  onTypeConverted={() => {
-                    // Notify parent page.tsx to refresh and re-route based on new kb_type
-                    onKbTypeChanged?.()
-                  }}
+                  canUpload={canUploadDocuments}
+                  canManageAllDocuments={canManageKb}
                 />
               </TabsContent>
               <TabsContent value="permissions" className="flex-1 mt-0">
@@ -264,11 +267,8 @@ export function KnowledgeBaseClassicPageDesktop({
             <DocumentList
               knowledgeBase={knowledgeBase}
               onBack={handleBack}
-              canManage={canManageKb}
-              onTypeConverted={() => {
-                // Notify parent page.tsx to refresh and re-route based on new kb_type
-                onKbTypeChanged?.()
-              }}
+              canUpload={canUploadDocuments}
+              canManageAllDocuments={canManageKb}
             />
           )}
         </div>

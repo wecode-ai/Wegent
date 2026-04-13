@@ -14,11 +14,11 @@ Supports two modes:
 from .loader import (
     close_remote_history_store,
     get_chat_history,
-    get_knowledge_base_meta_prompt,
+    update_user_message_content,
 )
 
 __all__ = [
     "get_chat_history",
-    "get_knowledge_base_meta_prompt",
     "close_remote_history_store",
+    "update_user_message_content",
 ]

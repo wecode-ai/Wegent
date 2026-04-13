@@ -117,6 +117,7 @@ class TestDockerExecutor:
         """Test preparing Docker run command"""
         mock_find_port.return_value = 8080
         mock_callback.return_value = "http://callback.url"
+        sample_task["skill_identity_token"] = "skill-jwt"
 
         task_info = executor._extract_task_info(sample_task)
         executor_name = "test-executor"
@@ -134,6 +135,8 @@ class TestDockerExecutor:
         assert executor_image in cmd
         assert any("task_id=123" in str(item) for item in cmd)
         assert any("subtask_id=456" in str(item) for item in cmd)
+        assert "WEGENT_SKILL_USER_NAME=test_user" in cmd
+        assert "WEGENT_SKILL_IDENTITY_TOKEN=skill-jwt" in cmd
         assert not any(
             isinstance(item, str) and item.startswith("TASK_INFO=") for item in cmd
         )
@@ -153,6 +156,7 @@ class TestDockerExecutor:
             "executor_image": "test/executor:latest",
             "type": "sandbox",
             "auth_token": "token-123",
+            "skill_identity_token": "skill-jwt",
         }
 
         task_info = executor._extract_task_info(sandbox_task)
@@ -162,6 +166,8 @@ class TestDockerExecutor:
 
         assert "AUTH_TOKEN=token-123" in cmd
         assert "TASK_ID=123" in cmd
+        assert "WEGENT_SKILL_USER_NAME=test_user" in cmd
+        assert "WEGENT_SKILL_IDENTITY_TOKEN=skill-jwt" in cmd
         assert not any(
             isinstance(item, str) and item.startswith("TASK_INFO=") for item in cmd
         )
@@ -176,6 +182,11 @@ class TestDockerExecutor:
         }
 
         with (
+            patch.object(
+                executor,
+                "get_container_status",
+                return_value={"exists": True, "status": "running"},
+            ),
             patch.object(
                 executor, "wait_instance_ready", return_value={"port": 8080}
             ) as mock_wait_ready,
@@ -203,11 +214,18 @@ class TestDockerExecutor:
             "executor_name": "existing-executor",
         }
 
-        with patch.object(
-            executor,
-            "wait_instance_ready",
-            side_effect=RuntimeError(
-                "Container existing-executor exists but has no ports mapped"
+        with (
+            patch.object(
+                executor,
+                "get_container_status",
+                return_value={"exists": True, "status": "running"},
+            ),
+            patch.object(
+                executor,
+                "wait_instance_ready",
+                side_effect=RuntimeError(
+                    "Container existing-executor exists but has no ports mapped"
+                ),
             ),
         ):
             result = executor.submit_executor(task)
@@ -310,6 +328,111 @@ class TestDockerExecutor:
             mock_wait_ready.assert_not_called()
             mock_dispatch.assert_not_called()
 
+    def test_create_new_container_prepare_only_skips_initial_dispatch(self, executor):
+        """Prepare-only regular tasks should create the container without dispatching."""
+        prepare_task = {
+            "task_id": 123,
+            "subtask_id": 456,
+            "user": {"name": "test_user"},
+            "executor_image": "test/executor:latest",
+            "type": "online",
+            "prepare_only": True,
+        }
+        status = {"executor_name": "prepare-executor"}
+        task_info = executor._extract_task_info(prepare_task)
+
+        with (
+            patch.object(executor, "create_instance") as mock_create,
+            patch.object(executor, "wait_instance_ready") as mock_wait_ready,
+            patch.object(
+                executor, "dispatch_task_to_instance"
+            ) as mock_dispatch_task_to_instance,
+        ):
+            executor._create_new_container(prepare_task, task_info, status)
+
+        mock_create.assert_called_once_with(prepare_task, task_info, "prepare-executor")
+        mock_wait_ready.assert_called_once_with("prepare-executor")
+        mock_dispatch_task_to_instance.assert_not_called()
+
+    @patch.dict(
+        os.environ,
+        {
+            "VALIDATION_KEEP_FAILED_CONTAINER": "true",
+        },
+        clear=False,
+    )
+    @patch("executor_manager.executors.docker.executor.delete_container")
+    def test_create_new_container_keeps_validation_container_on_dispatch_failure(
+        self, mock_delete_container, executor
+    ):
+        """Validation containers should be kept on startup failure when debug flag is enabled."""
+        validation_task = {
+            "task_id": 123,
+            "subtask_id": 1,
+            "user": {"name": "validator"},
+            "executor_image": "test/executor:latest",
+            "type": "validation",
+            "bot": [{"base_image": "test/base:latest"}],
+        }
+        status = {"executor_name": "validation-executor"}
+        task_info = executor._extract_task_info(validation_task)
+
+        with (
+            patch.object(executor, "create_instance"),
+            patch.object(
+                executor,
+                "wait_instance_ready",
+                side_effect=RuntimeError("container not ready"),
+            ),
+        ):
+            with pytest.raises(RuntimeError, match="container not ready"):
+                executor._create_new_container(validation_task, task_info, status)
+
+        mock_delete_container.assert_not_called()
+
+    @patch.dict(
+        os.environ,
+        {
+            "VALIDATION_KEEP_FAILED_CONTAINER": "true",
+        },
+        clear=False,
+    )
+    def test_check_container_health_keeps_failed_validation_container_when_enabled(
+        self, executor, mock_subprocess
+    ):
+        """Validation health check should not remove exited container when debug flag is enabled."""
+        task = {
+            "task_id": 123,
+            "subtask_id": 1,
+            "type": "validation",
+            "validation_params": {"validation_id": "vid-1"},
+        }
+
+        mock_subprocess.run.side_effect = [
+            MagicMock(returncode=0, stdout="exited\n"),  # container status
+            MagicMock(returncode=0, stdout="executor crashed\n"),  # logs
+            MagicMock(returncode=0, stdout="1\n"),  # exit code
+        ]
+
+        with (
+            patch("executor_manager.executors.docker.executor.time.sleep"),
+            patch.object(
+                executor,
+                "_report_validation_stage",
+            ),
+        ):
+            with pytest.raises(RuntimeError, match="Container exited immediately"):
+                executor._check_container_health(
+                    task, "validation-executor", is_validation_task=True
+                )
+
+        rm_calls = [
+            call_args
+            for call_args in mock_subprocess.run.call_args_list
+            if call_args[0][0][:3] == ["docker", "rm", "-f"]
+        ]
+        assert len(rm_calls) == 0
+
     @patch.dict(
         os.environ,
         {
@@ -384,6 +507,36 @@ class TestDockerExecutor:
             )
 
         assert mock_send.call_count == 2
+
+    @patch.dict(
+        os.environ,
+        {
+            "VALIDATION_INITIAL_DISPATCH_TIMEOUT": "60",
+            "VALIDATION_INITIAL_DISPATCH_MAX_RETRIES": "1",
+            "VALIDATION_INITIAL_DISPATCH_RETRY_INTERVAL": "0",
+        },
+        clear=False,
+    )
+    def test_dispatch_initial_task_uses_validation_specific_limits(self, executor):
+        """Validation initial dispatch should use dedicated timeout/retry settings."""
+        validation_task = {
+            "task_id": 123,
+            "subtask_id": 1,
+            "type": "validation",
+        }
+        success_response = MagicMock()
+        success_response.status_code = 200
+
+        with patch.object(
+            executor, "_send_task_to_container", return_value=success_response
+        ) as mock_send:
+            executor._dispatch_initial_task_to_new_container(
+                validation_task, "validation-executor", 8080
+            )
+
+        mock_send.assert_called_once_with(
+            validation_task, "host.docker.internal", 8080, timeout=60.0
+        )
 
     @patch("executor_manager.executors.docker.utils.subprocess.run")
     def test_delete_executor_success(self, mock_run, executor):

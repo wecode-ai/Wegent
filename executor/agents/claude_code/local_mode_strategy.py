@@ -28,7 +28,7 @@ from typing import Any, Dict, Tuple
 
 from executor.agents.claude_code.mode_strategy import ExecutionModeStrategy
 from executor.config import config
-from executor.platform_compat import get_permissions_manager
+from executor.platform_compat import get_permissions_manager, sanitize_ld_library_path
 from shared.logger import setup_logger
 
 logger = setup_logger("local_mode_strategy")
@@ -104,6 +104,7 @@ class LocalModeStrategy(ExecutionModeStrategy):
         options: Dict[str, Any],
         config_dir: str,
         env_config: Dict[str, Any],
+        task_identity_env: Dict[str, Any],
     ) -> Dict[str, Any]:
         """Configure SDK client with environment variables for sensitive data.
 
@@ -116,23 +117,26 @@ class LocalModeStrategy(ExecutionModeStrategy):
             options: Existing client options
             config_dir: Task-specific config directory
             env_config: Sensitive configuration (ANTHROPIC_AUTH_TOKEN, etc.)
+            task_identity_env: Task-scoped identity env variables
 
         Returns:
             Updated options with env configuration
         """
         updated_options = options.copy()
+        existing_env = dict(updated_options.get("env", {}))
+        merged_env = {**existing_env, **env_config, **task_identity_env}
+        # Ensure all values are strings (required by SDK)
+        updated_options["env"] = {k: str(v) for k, v in merged_env.items()}
 
-        # Merge env config (contains ANTHROPIC_AUTH_TOKEN, ANTHROPIC_MODEL, etc.)
-        if env_config:
-            existing_env = updated_options.get("env", {})
-            merged_env = {**existing_env, **env_config}
-            # Ensure all values are strings (required by SDK)
-            updated_options["env"] = {k: str(v) for k, v in merged_env.items()}
+        # Fix PyInstaller LD_LIBRARY_PATH issue for child processes.
+        # See: https://pyinstaller.org/en/stable/common-issues-and-pitfalls.html
+        env = dict(updated_options.get("env", {}))
+        sanitize_ld_library_path(env)
 
         # Set CLAUDE_CONFIG_DIR to redirect all config reads/writes
         # This affects settings.json, claude.json, and skills locations
-        env = updated_options.get("env", {})
         env["CLAUDE_CONFIG_DIR"] = config_dir
+        env["SKILLS_DIR"] = self.get_skills_directory(config_dir)
 
         # Add ANTHROPIC_CUSTOM_HEADERS if configured via environment variable
         if config.ANTHROPIC_CUSTOM_HEADERS:

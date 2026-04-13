@@ -20,9 +20,18 @@ from app.schemas.admin import (
     QuickAccessTeam,
     WelcomeConfigResponse,
 )
+from app.schemas.subscription import NotificationChannelInfo
 from app.schemas.user import UserCreate, UserInDB, UserUpdate
 from app.services.kind import kind_service
+from app.services.mcp_provider_registry import (
+    get_mcp_provider,
+    get_mcp_provider_service,
+)
+from app.services.subscription.notification_service import (
+    subscription_notification_service,
+)
 from app.services.user import user_service
+from app.services.user_mcp_service import user_mcp_service
 
 router = APIRouter()
 
@@ -34,6 +43,24 @@ class FeatureFlags(BaseModel):
     """System-level feature flags for the frontend"""
 
     memory_enabled: bool = False  # Whether long-term memory service is available
+
+
+class MCPProviderServiceConfigRequest(BaseModel):
+    """User-scoped MCP provider service configuration."""
+
+    enabled: bool = False
+    url: str = ""
+
+
+class MCPProviderServiceConfigResponse(BaseModel):
+    """Response model for an MCP provider service configuration."""
+
+    provider_id: str
+    service_id: str
+    server_name: str
+    detail_url: str
+    enabled: bool = False
+    url: str = ""
 
 
 @router.get("/features", response_model=FeatureFlags)
@@ -57,9 +84,42 @@ async def get_feature_flags(
 
 
 @router.get("/me", response_model=UserInDB)
-async def read_current_user(current_user: User = Depends(security.get_current_user)):
-    """Get current user information"""
-    return current_user
+async def read_current_user(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """Get current user information.
+
+    For the initial 'admin' user, also returns admin_setup_completed status.
+    """
+    # Check admin setup status only for the initial 'admin' user
+    # This is used by GlobalAdminSetupWizard to show setup wizard on first login
+    admin_setup_completed = None
+    if current_user.user_name == "admin":
+        setup_config = (
+            db.query(SystemConfig)
+            .filter(SystemConfig.config_key == ADMIN_SETUP_CONFIG_KEY)
+            .first()
+        )
+        if setup_config and setup_config.config_value:
+            admin_setup_completed = setup_config.config_value.get("completed", False)
+        else:
+            admin_setup_completed = False
+
+    # Create response with admin_setup_completed field
+    return UserInDB(
+        id=current_user.id,
+        user_name=current_user.user_name,
+        email=current_user.email,
+        is_active=current_user.is_active,
+        git_info=current_user.git_info,
+        preferences=current_user.preferences,
+        role=current_user.role,
+        auth_source=current_user.auth_source,
+        created_at=current_user.created_at,
+        updated_at=current_user.updated_at,
+        admin_setup_completed=admin_setup_completed,
+    )
 
 
 @router.put("/me", response_model=UserInDB)
@@ -75,9 +135,121 @@ async def update_current_user_endpoint(
             user=current_user,
             obj_in=user_update,
         )
-        return user
+        # Explicitly convert ORM object to Pydantic model to avoid
+        # session access during response serialization
+        return UserInDB(
+            id=user.id,
+            user_name=user.user_name,
+            email=user.email,
+            is_active=user.is_active,
+            git_info=user.git_info,
+            preferences=user.preferences,
+            role=user.role,
+            auth_source=user.auth_source,
+            created_at=user.created_at,
+            updated_at=user.updated_at,
+        )
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@router.get(
+    "/me/mcps/providers/{provider_id}/services",
+    response_model=list[MCPProviderServiceConfigResponse],
+)
+async def list_mcp_provider_services(
+    provider_id: str,
+    current_user: User = Depends(security.get_current_user),
+):
+    """List MCP provider services merged with the current user's configuration."""
+    provider = get_mcp_provider(provider_id)
+    if not provider:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Unsupported MCP provider: {provider_id}",
+        )
+
+    return [
+        MCPProviderServiceConfigResponse(**service)
+        for service in user_mcp_service.list_provider_service_configs(
+            current_user.preferences, provider_id
+        )
+    ]
+
+
+@router.get(
+    "/me/mcps/providers/{provider_id}/services/{service_id}",
+    response_model=MCPProviderServiceConfigResponse,
+)
+async def get_mcp_provider_service_config(
+    provider_id: str,
+    service_id: str,
+    current_user: User = Depends(security.get_current_user),
+):
+    """Get the current user's MCP provider service configuration."""
+    service = get_mcp_provider_service(provider_id, service_id)
+    if not service:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Unsupported MCP provider service: {provider_id}/{service_id}",
+        )
+
+    config = user_mcp_service.get_provider_service_config(
+        current_user.preferences, provider_id, service_id
+    )
+    return MCPProviderServiceConfigResponse(
+        provider_id=provider_id, **service, **config
+    )
+
+
+@router.put(
+    "/me/mcps/providers/{provider_id}/services/{service_id}",
+    response_model=MCPProviderServiceConfigResponse,
+)
+async def update_mcp_provider_service_config(
+    provider_id: str,
+    service_id: str,
+    config: MCPProviderServiceConfigRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """Update the current user's MCP provider service configuration."""
+    service = get_mcp_provider_service(provider_id, service_id)
+    if not service:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Unsupported MCP provider service: {provider_id}/{service_id}",
+        )
+
+    url = config.url.strip()
+    if config.enabled and not url:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "url is required when MCP provider service "
+                f"'{provider_id}/{service_id}' is enabled"
+            ),
+        )
+
+    updated_preferences = user_mcp_service.set_provider_service_config(
+        current_user.preferences,
+        provider_id=provider_id,
+        service_id=service_id,
+        enabled=config.enabled,
+        url=url,
+    )
+    current_user.preferences = user_mcp_service.dump_preferences(updated_preferences)
+
+    db.add(current_user)
+    db.commit()
+    db.refresh(current_user)
+
+    updated_config = user_mcp_service.get_provider_service_config(
+        current_user.preferences, provider_id, service_id
+    )
+    return MCPProviderServiceConfigResponse(
+        provider_id=provider_id, **service, **updated_config
+    )
 
 
 @router.delete("/me/git-token/{git_domain:path}", response_model=UserInDB)
@@ -102,7 +274,20 @@ async def delete_git_token(
         user = user_service.delete_git_token(
             db=db, user=current_user, git_info_id=git_info_id, git_domain=git_domain
         )
-        return user
+        # Explicitly convert ORM object to Pydantic model to avoid
+        # session access during response serialization
+        return UserInDB(
+            id=user.id,
+            user_name=user.user_name,
+            email=user.email,
+            is_active=user.is_active,
+            git_info=user.git_info,
+            preferences=user.preferences,
+            role=user.role,
+            auth_source=user.auth_source,
+            created_at=user.created_at,
+            updated_at=user.updated_at,
+        )
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
@@ -114,7 +299,21 @@ def create_user(
     current_user: User = Depends(security.get_admin_user),
 ):
     """Create new user (admin only)"""
-    return user_service.create_user(db=db, obj_in=user_create)
+    user = user_service.create_user(db=db, obj_in=user_create)
+    # Explicitly convert ORM object to Pydantic model to avoid
+    # session access during response serialization
+    return UserInDB(
+        id=user.id,
+        user_name=user.user_name,
+        email=user.email,
+        is_active=user.is_active,
+        git_info=user.git_info,
+        preferences=user.preferences,
+        role=user.role,
+        auth_source=user.auth_source,
+        created_at=user.created_at,
+        updated_at=user.updated_at,
+    )
 
 
 QUICK_ACCESS_CONFIG_KEY = "quick_access_recommended"
@@ -452,3 +651,21 @@ async def search_users(
         ],
         total=len(users),
     )
+
+
+# ==================== Available Notification Channels ====================
+
+
+@router.get("/me/available-channels", response_model=list[NotificationChannelInfo])
+async def get_user_available_channels(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Get available Messager channels for the current user.
+
+    Returns a list of all enabled Messager channels with their binding status.
+    This endpoint does not require an existing subscription, making it suitable
+    for new subscription creation scenarios.
+    """
+    return subscription_notification_service.get_available_channels(db, current_user.id)

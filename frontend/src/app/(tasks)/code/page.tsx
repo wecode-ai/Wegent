@@ -7,7 +7,7 @@
 import { Suspense } from 'react'
 import dynamic from 'next/dynamic'
 import { useSearchParams } from 'next/navigation'
-import { teamService } from '@/features/tasks/service/teamService'
+import { useTeamContext } from '@/contexts/TeamContext'
 import OnboardingTour from '@/features/onboarding/OnboardingTour'
 import { TaskParamSync, DeviceTaskSync } from '@/features/tasks/components/params'
 import { TeamShareHandler } from '@/features/tasks/components/share'
@@ -46,8 +46,8 @@ export default function CodePage() {
   const searchParams = useSearchParams()
   const hasShareId = !!searchParams.get('share_id')
 
-  // Team state from service
-  const { teams, isTeamsLoading, refreshTeams } = teamService.useTeams()
+  // Team state from context (centralized to avoid duplicate API calls)
+  const { teams, isTeamsLoading, refreshTeams } = useTeamContext()
 
   // User state for git token check
   const { user } = useUser()

@@ -112,6 +112,7 @@ async def create_sandbox(request: CreateSandboxRequest, http_request: Request):
         status=sandbox.status.value,
         container_name=sandbox.container_name,
         shell_type=sandbox.shell_type,
+        executor_namespace=sandbox.executor_namespace,
         created_at=sandbox.created_at,
         expires_at=sandbox.expires_at,
         message="Sandbox created successfully",

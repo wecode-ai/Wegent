@@ -17,7 +17,6 @@ import {
   CodeBracketIcon,
   LinkSlashIcon,
   SparklesIcon,
-  ClipboardDocumentIcon,
 } from '@heroicons/react/24/outline'
 import { Bot, Team } from '@/types/api'
 import { fetchTeamsList, deleteTeam, shareTeam, checkTeamRunningTasks } from '../services/teams'
@@ -25,12 +24,15 @@ import { CheckRunningTasksResponse } from '@/apis/common'
 import { fetchBotsList } from '../services/bots'
 import TeamEditDialog from './TeamEditDialog'
 import BotList from './BotList'
+import { ForceDeleteTaskSummary } from './ForceDeleteTaskSummary'
 import UnifiedAddButton from '@/components/common/UnifiedAddButton'
 import TeamShareModal from './TeamShareModal'
 import TeamCreationWizard from './wizard/TeamCreationWizard'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useToast } from '@/hooks/use-toast'
 import { sortTeamsByUpdatedAt } from '@/utils/team'
+import { isGroupTeam, isPublicTeam, isSharedTeam } from '@/utils/team-permissions'
+import type { BaseRole } from '@/types/base-role'
 import { sortBotsByUpdatedAt } from '@/utils/bot'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
@@ -50,7 +52,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 interface TeamListProps {
   scope?: 'personal' | 'group' | 'all'
   groupName?: string
-  groupRoleMap?: Map<string, 'Owner' | 'Maintainer' | 'Developer' | 'Reporter'>
+  groupRoleMap?: Map<string, BaseRole>
   onEditResource?: (namespace: string) => void
 }
 
@@ -173,22 +175,6 @@ export default function TeamList({
     setEditDialogOpen(true)
   }
 
-  const handleCopyTeamName = async (team: Team) => {
-    const teamNameString = `${team.namespace || 'default'}#${team.name}`
-    try {
-      await navigator.clipboard.writeText(teamNameString)
-      toast({
-        title: t('teams.copy_name_success'),
-        description: teamNameString,
-      })
-    } catch {
-      toast({
-        variant: 'destructive',
-        title: t('teams.copy_name_failed'),
-      })
-    }
-  }
-
   const handleCloseEditDialog = () => {
     setEditDialogOpen(false)
     setEditingTeamId(null)
@@ -220,11 +206,11 @@ export default function TeamList({
   }
 
   // Get target page based on team's bind_mode and current filter
-  const getTargetPage = (team: Team): 'chat' | 'code' | 'knowledge' | 'task' => {
+  const getTargetPage = (team: Team): 'chat' | 'code' | 'knowledge' | 'task' | 'video' => {
     const bindMode = team.bind_mode || ['chat', 'code']
     // If team only supports one mode, use that
     if (bindMode.length === 1) {
-      return bindMode[0]
+      return bindMode[0] as 'chat' | 'code' | 'knowledge' | 'task' | 'video'
     }
     // If team supports both, use current filter (default to 'chat' if filter is 'all')
     if (modeFilter !== 'all') {
@@ -251,16 +237,6 @@ export default function TeamList({
       return bindMode.includes(modeFilter)
     })
   }, [teams, modeFilter])
-
-  // Helper function to check if a team is a group resource
-  const isGroupTeam = (team: Team) => {
-    return team.namespace && team.namespace !== 'default'
-  }
-
-  // Helper function to check if a team is a public/system team (user_id = 0)
-  const isPublicTeam = (team: Team) => {
-    return team.user_id === 0
-  }
 
   // Helper function to check permissions for a specific group resource
   const canEditGroupResource = (namespace: string) => {
@@ -394,17 +370,15 @@ export default function TeamList({
     setShareData(null)
   }
 
-  // Check if edit button should be shown
+  // Check if edit button should be shown (uses shared permission utility)
+  // Note: shouldShowEdit doesn't need userId because it checks structural properties
+  // For personal teams, TeamList always shows edit (the team owner is always viewing their own teams)
   const shouldShowEdit = (team: Team) => {
-    // Public teams are read-only for all users (managed by admin)
     if (isPublicTeam(team)) return false
-    // Shared teams don't show edit button
-    if (team.share_status === 2) return false
-    // For group teams, check group permissions
+    if (isSharedTeam(team)) return false
     if (isGroupTeam(team)) {
       return canEditGroupResource(team.namespace!)
     }
-    // For personal teams, always show
     return true
   }
 
@@ -418,11 +392,6 @@ export default function TeamList({
     }
     // For personal teams, always show
     return true
-  }
-
-  // Check if this is a shared team (need to show "unbind" instead of "delete")
-  const isSharedTeam = (team: Team) => {
-    return team.share_status === 2
   }
 
   // Check if share button should be shown
@@ -621,21 +590,12 @@ export default function TeamList({
                               <DocumentDuplicateIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                             </Button>
                           )}
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => handleCopyTeamName(team)}
-                            title={t('teams.copy_name')}
-                            className="h-7 w-7 sm:h-8 sm:w-8"
-                          >
-                            <ClipboardDocumentIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                          </Button>
                           {shouldShowShare(team) && (
                             <Button
                               variant="ghost"
                               size="icon"
                               onClick={() => handleShareTeam(team)}
-                              title={t('teams.share')}
+                              title={t('teams.share.title')}
                               className="h-7 w-7 sm:h-8 sm:w-8"
                               disabled={sharingId === team.id}
                             >
@@ -788,36 +748,23 @@ export default function TeamList({
           <DialogHeader>
             <DialogTitle>{t('teams.force_delete_confirm_title')}</DialogTitle>
             <DialogDescription>
-              <div className="space-y-3">
-                <p>
-                  {t('teams.force_delete_confirm_message', {
-                    count: runningTasksInfo?.running_tasks_count || 0,
-                  })}
-                </p>
-                {runningTasksInfo && runningTasksInfo.running_tasks.length > 0 && (
-                  <div className="bg-muted p-3 rounded-md">
-                    <p className="font-medium text-sm mb-2">{t('teams.running_tasks_list')}</p>
-                    <ul className="text-sm space-y-1">
-                      {runningTasksInfo.running_tasks.slice(0, 5).map(task => (
-                        <li key={task.task_id} className="text-text-muted">
-                          • {task.task_title || task.task_name} ({task.status})
-                        </li>
-                      ))}
-                      {runningTasksInfo.running_tasks.length > 5 && (
-                        <li className="text-text-muted">
-                          ...{' '}
-                          {t('teams.and_more_tasks', {
-                            count: runningTasksInfo.running_tasks.length - 5,
-                          })}
-                        </li>
-                      )}
-                    </ul>
-                  </div>
-                )}
-                <p className="text-error text-sm">{t('teams.force_delete_warning')}</p>
-              </div>
+              {t('teams.force_delete_confirm_message', {
+                count: runningTasksInfo?.running_tasks_count || 0,
+              })}
             </DialogDescription>
           </DialogHeader>
+          <ForceDeleteTaskSummary
+            runningTasks={runningTasksInfo?.running_tasks || []}
+            runningTasksTitle={t('teams.running_tasks_list')}
+            warning={t('teams.force_delete_warning')}
+            andMoreLabel={
+              runningTasksInfo && runningTasksInfo.running_tasks.length > 5
+                ? `... ${t('teams.and_more_tasks', {
+                    count: runningTasksInfo.running_tasks.length - 5,
+                  })}`
+                : undefined
+            }
+          />
           <DialogFooter>
             <Button variant="secondary" onClick={handleCancelDelete} disabled={isDeleting}>
               {t('common.cancel')}

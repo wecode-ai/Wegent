@@ -66,7 +66,7 @@ graph TB
 
 ## ✨ Core Features
 
-### 💬 Cha Agent
+### 💬 Chat Agent
 <img src="https://github.com/user-attachments/assets/677abce3-bd3f-4064-bdab-e247b142c22f" width="100%" alt="Chat Mode Demo"/>
 A fully open-source chat agent with powerful capabilities:
 
@@ -153,13 +153,54 @@ All features above are fully customizable:
 
 ## 🚀 Quick Start
 
+**One command to start:**
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash
 ```
 
 Then open http://localhost:3000 in your browser.
 
-> Optional: Enable RAG features with `docker compose --profile rag up -d`
+### Other Deployment Options
+
+| Mode | Description |
+|------|-------------|
+| **Standalone** (default) | Single container, SQLite, recommended for most users |
+| **Standard** | Multi-container, MySQL, for production |
+| **Development** | Hot reload, for developers |
+
+```bash
+# Standard mode (multi-container with MySQL)
+curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash -s -- --standard
+
+# Development mode (from source, with hot reload)
+git clone https://github.com/wecode-ai/Wegent.git && cd Wegent && ./start.sh
+```
+
+<details>
+<summary><b>🔧 Common Commands</b></summary>
+
+```bash
+# Standalone mode (single container)
+docker logs -f wegent-standalone      # View logs
+docker stop wegent-standalone         # Stop
+docker start wegent-standalone        # Start
+docker restart wegent-standalone      # Restart
+
+# Standard mode (multi-container)
+docker compose logs -f   # View logs
+docker compose down      # Stop
+docker compose up -d     # Start
+
+# Development mode
+./start.sh --status      # Check status
+./start.sh --stop        # Stop
+./start.sh --restart     # Restart
+```
+
+</details>
+
+> 📖 See [Standalone Mode Documentation](docs/en/deployment/standalone-mode.md) for details.
 
 ---
 
@@ -212,13 +253,6 @@ Thanks to the following developers for their contributions and efforts to make t
         </a>
     </td>
     <td align="center">
-        <a href="https://github.com/cc-yafei">
-            <img src="https://avatars.githubusercontent.com/u/78540184?v=4" width="80;" alt="cc-yafei"/>
-            <br />
-            <sub><b>YaFei Liu</b></sub>
-        </a>
-    </td>
-    <td align="center">
         <a href="https://github.com/FicoHu">
             <img src="https://avatars.githubusercontent.com/u/19767574?v=4" width="80;" alt="FicoHu"/>
             <br />
@@ -226,10 +260,10 @@ Thanks to the following developers for their contributions and efforts to make t
         </a>
     </td>
     <td align="center">
-        <a href="https://github.com/johnny0120">
-            <img src="https://avatars.githubusercontent.com/u/15564476?v=4" width="80;" alt="johnny0120"/>
+        <a href="https://github.com/cc-yafei">
+            <img src="https://avatars.githubusercontent.com/u/78540184?v=4" width="80;" alt="cc-yafei"/>
             <br />
-            <sub><b>Johnny0120</b></sub>
+            <sub><b>YaFei Liu</b></sub>
         </a>
     </td>
     <td align="center">
@@ -240,18 +274,39 @@ Thanks to the following developers for their contributions and efforts to make t
         </a>
     </td>
     <td align="center">
+        <a href="https://github.com/johnny0120">
+            <img src="https://avatars.githubusercontent.com/u/15564476?v=4" width="80;" alt="johnny0120"/>
+            <br />
+            <sub><b>Johnny0120</b></sub>
+        </a>
+    </td>
+    <td align="center">
+        <a href="https://github.com/parabala">
+            <img src="https://avatars.githubusercontent.com/u/115564000?v=4" width="80;" alt="parabala"/>
+            <br />
+            <sub><b>Parabala</b></sub>
+        </a>
+    </td></tr>
+<tr>
+    <td align="center">
         <a href="https://github.com/yixiangxx">
             <img src="https://avatars.githubusercontent.com/u/3120662?v=4" width="80;" alt="yixiangxx"/>
             <br />
             <sub><b>Yi Xiang</b></sub>
         </a>
-    </td></tr>
-<tr>
+    </td>
     <td align="center">
         <a href="https://github.com/joyway1978">
             <img src="https://avatars.githubusercontent.com/u/184585080?v=4" width="80;" alt="joyway1978"/>
             <br />
             <sub><b>Joyway78</b></sub>
+        </a>
+    </td>
+    <td align="center">
+        <a href="https://github.com/icycrystal4">
+            <img src="https://avatars.githubusercontent.com/u/946207?v=4" width="80;" alt="icycrystal4"/>
+            <br />
+            <sub><b>Icycrystal4</b></sub>
         </a>
     </td>
     <td align="center">
@@ -269,17 +324,17 @@ Thanks to the following developers for their contributions and efforts to make t
         </a>
     </td>
     <td align="center">
-        <a href="https://github.com/parabala">
-            <img src="https://avatars.githubusercontent.com/u/115564000?v=4" width="80;" alt="parabala"/>
+        <a href="https://github.com/fengkuizhi">
+            <img src="https://avatars.githubusercontent.com/u/3616484?v=4" width="80;" alt="fengkuizhi"/>
             <br />
-            <sub><b>Parabala</b></sub>
+            <sub><b>Fengkuizhi</b></sub>
         </a>
     </td>
     <td align="center">
-        <a href="https://github.com/icycrystal4">
-            <img src="https://avatars.githubusercontent.com/u/946207?v=4" width="80;" alt="icycrystal4"/>
+        <a href="https://github.com/kerwin612">
+            <img src="https://avatars.githubusercontent.com/u/3371163?v=4" width="80;" alt="kerwin612"/>
             <br />
-            <sub><b>Icycrystal4</b></sub>
+            <sub><b>Kerwin Bryant</b></sub>
         </a>
     </td>
     <td align="center">
@@ -288,7 +343,8 @@ Thanks to the following developers for their contributions and efforts to make t
             <br />
             <sub><b>Just Quan</b></sub>
         </a>
-    </td>
+    </td></tr>
+<tr>
     <td align="center">
         <a href="https://github.com/junbaor">
             <img src="https://avatars.githubusercontent.com/u/10198622?v=4" width="80;" alt="junbaor"/>
@@ -302,13 +358,12 @@ Thanks to the following developers for their contributions and efforts to make t
             <br />
             <sub><b>Fingki</b></sub>
         </a>
-    </td></tr>
-<tr>
+    </td>
     <td align="center">
-        <a href="https://github.com/fengkuizhi">
-            <img src="https://avatars.githubusercontent.com/u/3616484?v=4" width="80;" alt="fengkuizhi"/>
+        <a href="https://github.com/flyhope">
+            <img src="https://avatars.githubusercontent.com/u/5442948?v=4" width="80;" alt="flyhope"/>
             <br />
-            <sub><b>Fengkuizhi</b></sub>
+            <sub><b>李枨煊</b></sub>
         </a>
     </td>
     <td align="center">
@@ -319,12 +374,34 @@ Thanks to the following developers for their contributions and efforts to make t
         </a>
     </td>
     <td align="center">
+        <a href="https://github.com/code-wangdi">
+            <img src="https://avatars.githubusercontent.com/u/11024395?v=4" width="80;" alt="code-wangdi"/>
+            <br />
+            <sub><b>Code-wangdi</b></sub>
+        </a>
+    </td>
+    <td align="center">
+        <a href="https://github.com/haosenwang1018">
+            <img src="https://avatars.githubusercontent.com/u/167664334?v=4" width="80;" alt="haosenwang1018"/>
+            <br />
+            <sub><b>Sense_wang</b></sub>
+        </a>
+    </td>
+    <td align="center">
+        <a href="https://github.com/LiDaiyan">
+            <img src="https://avatars.githubusercontent.com/u/36092701?v=4" width="80;" alt="LiDaiyan"/>
+            <br />
+            <sub><b>Li Daiyan</b></sub>
+        </a>
+    </td>
+    <td align="center">
         <a href="https://github.com/qwertyerge">
             <img src="https://avatars.githubusercontent.com/u/13088125?v=4" width="80;" alt="qwertyerge"/>
             <br />
             <sub><b>Erdawang</b></sub>
         </a>
-    </td>
+    </td></tr>
+<tr>
     <td align="center">
         <a href="https://github.com/sunnights">
             <img src="https://avatars.githubusercontent.com/u/1886887?v=4" width="80;" alt="sunnights"/>
@@ -337,6 +414,27 @@ Thanks to the following developers for their contributions and efforts to make t
             <img src="https://avatars.githubusercontent.com/u/2594907?v=4" width="80;" alt="DeadLion"/>
             <br />
             <sub><b>Jasper Zhong</b></sub>
+        </a>
+    </td>
+    <td align="center">
+        <a href="https://github.com/rayzhang0603">
+            <img src="https://avatars.githubusercontent.com/u/2917437?v=4" width="80;" alt="rayzhang0603"/>
+            <br />
+            <sub><b>Ray</b></sub>
+        </a>
+    </td>
+    <td align="center">
+        <a href="https://github.com/RichardoMrMu">
+            <img src="https://avatars.githubusercontent.com/u/44485717?v=4" width="80;" alt="RichardoMrMu"/>
+            <br />
+            <sub><b>RichardoMu</b></sub>
+        </a>
+    </td>
+    <td align="center">
+        <a href="https://github.com/Ged0">
+            <img src="https://avatars.githubusercontent.com/u/4569451?v=4" width="80;" alt="Ged0"/>
+            <br />
+            <sub><b>_</b></sub>
         </a>
     </td>
     <td align="center">
@@ -354,10 +452,25 @@ Thanks to the following developers for their contributions and efforts to make t
         </a>
     </td>
     <td align="center">
+        <a href="https://github.com/qingchengliu">
+            <img src="https://avatars.githubusercontent.com/u/20255838?v=4" width="80;" alt="qingchengliu"/>
+            <br />
+            <sub><b>Qingcheng</b></sub>
+        </a>
+    </td></tr>
+<tr>
+    <td align="center">
         <a href="https://github.com/salt-hai">
             <img src="https://avatars.githubusercontent.com/u/43851000?v=4" width="80;" alt="salt-hai"/>
             <br />
             <sub><b>Salt-hai</b></sub>
+        </a>
+    </td>
+    <td align="center">
+        <a href="https://github.com/wxcfox">
+            <img src="https://avatars.githubusercontent.com/u/33141411?v=4" width="80;" alt="wxcfox"/>
+            <br />
+            <sub><b>Wxcfox</b></sub>
         </a>
     </td></tr>
 </table>

@@ -26,6 +26,8 @@ from sqlalchemy.orm import Session
 
 from app.core.celery_app import celery_app
 from app.core.config import settings
+from app.services.subscription.helpers import validate_subscription_for_read
+from shared.telemetry.context import get_request_id, set_request_context
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +66,7 @@ class SubscriptionExecutionContext:
     preserve_history: bool = False
     history_message_count: int = 10
     bound_task_id: int = 0
+    resolved_device_id: Optional[str] = None
 
 
 @dataclass
@@ -123,7 +126,7 @@ def _load_subscription_execution_context(
         logger.error(f"[subscription_tasks] Subscription {subscription_id} not found")
         return None
 
-    subscription_crd = Subscription.model_validate(subscription.json)
+    subscription_crd = validate_subscription_for_read(subscription.json)
     internal = subscription.json.get("_internal", {})
     trigger_type = internal.get("trigger_type", "unknown")
 
@@ -159,7 +162,7 @@ def _load_subscription_execution_context(
             )
             return None
 
-        source_crd = Subscription.model_validate(source_subscription.json)
+        source_crd = validate_subscription_for_read(source_subscription.json)
         source_internal = source_subscription.json.get("_internal", {})
 
         # Verify source is still market visibility
@@ -267,6 +270,27 @@ def _load_subscription_execution_context(
     )
 
 
+def _init_subscription_request_context(
+    subscription_id: int,
+    execution_id: int,
+    explicit_request_id: Optional[str] = None,
+    source: str = "subscription",
+) -> str:
+    """Initialize request context for subscription execution logging."""
+    if explicit_request_id:
+        request_id = explicit_request_id
+    else:
+        current_request_id = get_request_id()
+        request_id = (
+            current_request_id
+            if current_request_id
+            else f"sub-{source}-{subscription_id}-{execution_id}"
+        )
+
+    set_request_context(request_id)
+    return request_id
+
+
 def _load_workspace_info(db: Session, workspace_id: Optional[int]) -> WorkspaceInfo:
     """Load workspace information if workspace_id is specified."""
     from app.core.constants import KIND_WORKSPACE
@@ -280,7 +304,7 @@ def _load_workspace_info(db: Session, workspace_id: Optional[int]) -> WorkspaceI
         .filter(
             TaskResource.id == workspace_id,
             TaskResource.kind == KIND_WORKSPACE,
-            TaskResource.is_active == True,
+            TaskResource.is_active == TaskResource.STATE_ACTIVE,
         )
         .first()
     )
@@ -444,6 +468,10 @@ async def _create_subscription_task(
     - The system will automatically load history via initialize_redis_chat_history
     """
     from app.models.task import TaskResource
+    from app.schemas.subscription import (
+        SubscriptionExecutionTarget,
+        SubscriptionExecutionTargetType,
+    )
     from app.services.chat.storage import TaskCreationParams, create_chat_task
 
     ws = ctx.workspace_info
@@ -464,16 +492,32 @@ async def _create_subscription_task(
             ctx.subscription_crd.spec.forceOverrideBotModel or False
         )
 
+    execution_target = getattr(
+        ctx.subscription_crd.spec,
+        "executionTarget",
+        SubscriptionExecutionTarget(),
+    )
+    resolved_device_id = None
+    if execution_target.type != SubscriptionExecutionTargetType.MANAGED:
+        if not execution_target.device_id:
+            raise ValueError(
+                f"Subscription {ctx.subscription.id} is missing execution target device_id"
+            )
+        resolved_device_id = execution_target.device_id
+    ctx.resolved_device_id = resolved_device_id
+
     # Determine if we should reuse an existing task for history preservation
     reuse_task_id = None
     if ctx.preserve_history and ctx.bound_task_id > 0:
         # Check if the bound task still exists and is valid
+        # Note: Subscription tasks have is_active=STATE_SUBSCRIPTION (2), not STATE_ACTIVE (1)
+        # We need to check for both states to properly reuse the bound task
         bound_task = (
             db.query(TaskResource)
             .filter(
                 TaskResource.id == ctx.bound_task_id,
                 TaskResource.kind == "Task",
-                TaskResource.is_active == True,
+                TaskResource.is_active.in_(TaskResource.is_active_query()),
             )
             .first()
         )
@@ -501,6 +545,7 @@ async def _create_subscription_task(
         git_repo_id=ws.git_repo_id,
         git_domain=ws.git_domain,
         branch_name=ws.branch_name,
+        device_id=resolved_device_id,
     )
 
     result = await create_chat_task(
@@ -565,6 +610,7 @@ def _add_subscription_labels_to_task(
         LABEL_EXECUTION_ID,
         LABEL_SUBSCRIPTION_ID,
     )
+    from app.models.task import TaskResource
     from app.schemas.kind import Task
 
     task_crd = Task.model_validate(task.json)
@@ -587,10 +633,14 @@ def _add_subscription_labels_to_task(
     task_crd.metadata.labels[LABEL_EXECUTION_ID] = str(execution_id)
     task_crd.metadata.labels[LABEL_BACKGROUND_EXECUTION_ID] = str(execution_id)
     task.json = task_crd.model_dump(mode="json")
+
+    # Set is_active = STATE_SUBSCRIPTION for subscription tasks
+    task.is_active = TaskResource.STATE_SUBSCRIPTION
+
     db.commit()
     logger.info(
         f"[_add_subscription_labels_to_task] After: task_id={task.id}, "
-        f"labels={task_crd.metadata.labels}"
+        f"labels={task_crd.metadata.labels}, is_active={task.is_active}"
     )
 
 
@@ -650,6 +700,8 @@ def check_due_subscriptions(self):
 
     Runs every FLOW_SCHEDULER_INTERVAL_SECONDS (default: 60 seconds).
     """
+    from sqlalchemy.orm.attributes import flag_modified
+
     from app.core.distributed_lock import distributed_lock
     from app.db.session import get_db_session
     from app.models.kind import Kind
@@ -691,10 +743,33 @@ def check_due_subscriptions(self):
 
                 # Filter due subscriptions based on _internal fields
                 due_subscriptions = []
+                skipped_invalid = 0
                 for sub in all_subscriptions:
                     internal = sub.json.get("_internal", {})
                     if not internal.get("enabled", True):
                         continue
+
+                    # Skip expired subscriptions
+                    expires_at_str = internal.get("expires_at")
+                    if expires_at_str:
+                        try:
+                            from app.services.subscription.helpers import (
+                                is_subscription_expired,
+                            )
+
+                            expires_at = datetime.fromisoformat(expires_at_str)
+                            if is_subscription_expired(expires_at, now_utc):
+                                # Auto-disable expired subscription
+                                internal["enabled"] = False
+                                sub.json["_internal"] = internal
+                                flag_modified(sub, "json")
+                                db.commit()
+                                logger.info(
+                                    f"[subscription_tasks] Subscription {sub.id} has expired and been disabled"
+                                )
+                                continue
+                        except (ValueError, TypeError):
+                            pass
 
                     trigger_type = internal.get("trigger_type")
                     if trigger_type not in [
@@ -702,6 +777,11 @@ def check_due_subscriptions(self):
                         SubscriptionTriggerType.INTERVAL.value,
                         SubscriptionTriggerType.ONE_TIME.value,
                     ]:
+                        continue
+
+                    # Skip subscriptions with invalid trigger configurations
+                    if not _is_trigger_config_valid(sub.json):
+                        skipped_invalid += 1
                         continue
 
                     next_exec_time_str = internal.get("next_execution_time")
@@ -714,6 +794,11 @@ def check_due_subscriptions(self):
                             due_subscriptions.append(sub)
                     except (ValueError, TypeError):
                         continue
+
+                if skipped_invalid > 0:
+                    logger.warning(
+                        f"[subscription_tasks] Skipped {skipped_invalid} subscription(s) with invalid trigger config"
+                    )
 
                 total_due = len(due_subscriptions)
 
@@ -762,7 +847,7 @@ def check_due_subscriptions(self):
                                 f"(processed {offset + idx}/{total_due})"
                             )
                         try:
-                            subscription_crd = Subscription.model_validate(
+                            subscription_crd = validate_subscription_for_read(
                                 subscription.json
                             )
                             internal = subscription.json.get("_internal", {})
@@ -832,6 +917,49 @@ def check_due_subscriptions(self):
                     exc_info=True,
                 )
                 raise
+
+
+def _is_trigger_config_valid(json_data: Dict[str, Any]) -> bool:
+    """Check if subscription trigger configuration is valid.
+
+    Validates minimum interval requirements (default 15 minutes).
+
+    Args:
+        json_data: The subscription JSON data
+
+    Returns:
+        True if trigger config is valid, False otherwise
+    """
+    from app.core.config import settings
+
+    min_interval = settings.SUBSCRIPTION_MIN_INTERVAL_MINUTES
+
+    spec = json_data.get("spec", {})
+    trigger = spec.get("trigger", {})
+    trigger_type = trigger.get("type")
+
+    if trigger_type == "interval":
+        interval = trigger.get("interval", {})
+        if interval.get("unit") == "minutes":
+            value = interval.get("value", 1)
+            if value < min_interval:
+                return False
+    elif trigger_type == "cron":
+        cron_config = trigger.get("cron", {})
+        expression = cron_config.get("expression", "")
+        if expression:
+            parts = expression.strip().split()
+            if len(parts) == 5:
+                minute_part = parts[0]
+                if minute_part.startswith("*/"):
+                    try:
+                        interval = int(minute_part[2:])
+                        if interval < min_interval:
+                            return False
+                    except ValueError:
+                        pass
+
+    return True
 
 
 def _recover_stale_pending_executions(db: Session) -> int:
@@ -1157,6 +1285,19 @@ def execute_subscription_task(
 
     with get_db_session() as db:
         try:
+            request_id = _init_subscription_request_context(
+                subscription_id=subscription_id,
+                execution_id=execution_id,
+                source="celery",
+            )
+            logger.info(
+                "[subscription_tasks] request context initialized: "
+                "subscription_id=%d, execution_id=%d, request_id=%s",
+                subscription_id,
+                execution_id,
+                request_id,
+            )
+
             # Load all required entities
             ctx = _load_subscription_execution_context(
                 db, subscription_id, execution_id
@@ -1247,6 +1388,12 @@ def execute_subscription_task(
                     from app.models.task import TaskResource
                     from app.models.user import User
 
+                    _init_subscription_request_context(
+                        subscription_id=subscription_id,
+                        execution_id=execution_id,
+                        explicit_request_id=request_id,
+                        source="celery-thread",
+                    )
                     thread_loop = asyncio.new_event_loop()
                     asyncio.set_event_loop(thread_loop)
                     try:
@@ -1487,6 +1634,30 @@ def check_due_subscriptions_sync():
                 if not internal.get("enabled", True):
                     continue
 
+                # Skip expired subscriptions
+                expires_at_str = internal.get("expires_at")
+                if expires_at_str:
+                    try:
+                        from sqlalchemy.orm.attributes import flag_modified
+
+                        from app.services.subscription.helpers import (
+                            is_subscription_expired,
+                        )
+
+                        expires_at = datetime.fromisoformat(expires_at_str)
+                        if is_subscription_expired(expires_at, now_utc):
+                            # Auto-disable expired subscription
+                            internal["enabled"] = False
+                            sub.json["_internal"] = internal
+                            flag_modified(sub, "json")
+                            db.commit()
+                            logger.info(
+                                f"[subscription_tasks] Subscription {sub.id} has expired and been disabled (sync)"
+                            )
+                            continue
+                    except (ValueError, TypeError):
+                        pass
+
                 trigger_type = internal.get("trigger_type")
                 if trigger_type not in [
                     SubscriptionTriggerType.CRON.value,
@@ -1524,7 +1695,7 @@ def check_due_subscriptions_sync():
             dispatched = 0
             for subscription in due_subscriptions:
                 try:
-                    subscription_crd = Subscription.model_validate(subscription.json)
+                    subscription_crd = validate_subscription_for_read(subscription.json)
                     internal = subscription.json.get("_internal", {})
                     trigger_type = internal.get("trigger_type")
 
@@ -1609,6 +1780,19 @@ def execute_subscription_task_sync(
 
     with get_db_session() as db:
         try:
+            request_id = _init_subscription_request_context(
+                subscription_id=subscription_id,
+                execution_id=execution_id,
+                source="sync",
+            )
+            logger.info(
+                "[subscription_tasks] request context initialized (sync): "
+                "subscription_id=%d, execution_id=%d, request_id=%s",
+                subscription_id,
+                execution_id,
+                request_id,
+            )
+
             # Load all required entities
             ctx = _load_subscription_execution_context(
                 db, subscription_id, execution_id
@@ -1698,6 +1882,12 @@ def execute_subscription_task_sync(
                     from app.models.task import TaskResource
                     from app.models.user import User
 
+                    _init_subscription_request_context(
+                        subscription_id=subscription_id,
+                        execution_id=execution_id,
+                        explicit_request_id=request_id,
+                        source="sync-thread",
+                    )
                     thread_loop = asyncio.new_event_loop()
                     asyncio.set_event_loop(thread_loop)
                     try:

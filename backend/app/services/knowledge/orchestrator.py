@@ -26,9 +26,12 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
+from app.models.knowledge import KnowledgeDocument
 from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.knowledge import (
+    DocumentContentReadResponse,
+    DocumentDetailResponse,
     KnowledgeBaseCreate,
     KnowledgeBaseListResponse,
     KnowledgeBaseResponse,
@@ -37,11 +40,26 @@ from app.schemas.knowledge import (
     KnowledgeDocumentResponse,
     ResourceScope,
 )
+from app.services.knowledge.document_read_service import (
+    DOCUMENT_READ_ERROR_NOT_FOUND,
+    document_read_service,
+)
 from app.services.knowledge.knowledge_service import KnowledgeService
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_TEXT_FILE_EXTENSION = "txt"
+MAX_DOCUMENT_READ_LIMIT = 100000
+REQUIRED_DOCUMENT_READ_KEYS = (
+    "id",
+    "name",
+    "content",
+    "total_length",
+    "offset",
+    "returned_length",
+    "has_more",
+    "kb_id",
+)
 
 
 def _normalize_file_extension(file_extension: Optional[str]) -> str:
@@ -67,6 +85,27 @@ def _build_filename(name: str, file_extension: str) -> str:
     """Build a safe filename for attachment upload."""
     ext = _normalize_file_extension(file_extension)
     return f"{name}.{ext}"
+
+
+def _validate_document_read_paging(offset: int, limit: int) -> None:
+    """Validate raw document read paging arguments."""
+    if offset < 0:
+        raise ValueError("offset must be greater than or equal to 0")
+    if limit <= 0:
+        raise ValueError("limit must be greater than 0")
+    if limit > MAX_DOCUMENT_READ_LIMIT:
+        raise ValueError(
+            f"limit must be less than or equal to {MAX_DOCUMENT_READ_LIMIT}"
+        )
+
+
+def _validate_document_read_result_payload(result: Dict[str, Any]) -> None:
+    """Validate the reader payload contains all required paginator fields."""
+    missing_keys = [key for key in REQUIRED_DOCUMENT_READ_KEYS if key not in result]
+    if missing_keys:
+        raise ValueError(
+            "Incomplete document read payload: missing " + ", ".join(missing_keys)
+        )
 
 
 class KnowledgeOrchestrator:
@@ -571,11 +610,12 @@ class KnowledgeOrchestrator:
             group_name=group_name,
         )
 
+        # Use cached document_count from spec to avoid N+1 query problem
         return KnowledgeBaseListResponse(
             total=len(knowledge_bases),
             items=[
                 KnowledgeBaseResponse.from_kind(
-                    kb, KnowledgeService.get_document_count(db, kb.id)
+                    kb, kb.json.get("spec", {}).get("document_count", 0)
                 )
                 for kb in knowledge_bases
             ],
@@ -602,12 +642,12 @@ class KnowledgeOrchestrator:
             ValueError: If knowledge base not found or access denied
         """
         # Verify access
-        kb = KnowledgeService.get_knowledge_base(
+        kb, has_access = KnowledgeService.get_knowledge_base(
             db=db,
             knowledge_base_id=knowledge_base_id,
             user_id=user.id,
         )
-        if not kb:
+        if not kb or not has_access:
             raise ValueError("Knowledge base not found or access denied")
 
         documents = KnowledgeService.list_documents(
@@ -619,6 +659,144 @@ class KnowledgeOrchestrator:
         return KnowledgeDocumentListResponse(
             total=len(documents),
             items=[KnowledgeDocumentResponse.model_validate(doc) for doc in documents],
+        )
+
+    def _get_document_with_access_or_raise(
+        self,
+        db: Session,
+        user: User,
+        document_id: int,
+    ) -> KnowledgeDocument:
+        """Fetch a document and validate its knowledge-base level access."""
+        document = (
+            db.query(KnowledgeDocument)
+            .filter(KnowledgeDocument.id == document_id)
+            .first()
+        )
+        if not document:
+            raise ValueError("Document not found")
+
+        knowledge_base, has_access = KnowledgeService.get_knowledge_base(
+            db=db,
+            knowledge_base_id=document.kind_id,
+            user_id=user.id,
+        )
+        if not knowledge_base:
+            raise ValueError("Knowledge base not found")
+        if not has_access:
+            raise ValueError("Access denied to this document")
+
+        return document
+
+    def read_document_content(
+        self,
+        db: Session,
+        user: User,
+        document_id: int,
+        offset: int = 0,
+        limit: int = MAX_DOCUMENT_READ_LIMIT,
+    ) -> DocumentContentReadResponse:
+        """
+        Read raw document content with offset/limit pagination.
+
+        Args:
+            db: Database session
+            user: Current user
+            document_id: Document ID
+            offset: Read start offset
+            limit: Maximum number of characters to return
+
+        Returns:
+            DocumentContentReadResponse
+
+        Raises:
+            ValueError: If paging is invalid, the document is missing, or access fails
+        """
+        _validate_document_read_paging(offset=offset, limit=limit)
+
+        document = self._get_document_with_access_or_raise(
+            db=db,
+            user=user,
+            document_id=document_id,
+        )
+
+        results = document_read_service.read_documents(
+            db=db,
+            document_ids=[document_id],
+            offset=offset,
+            limit=limit,
+            knowledge_base_ids=[document.kind_id],
+        )
+        result = results[0] if results else None
+
+        if not result or result.get("error_code") == DOCUMENT_READ_ERROR_NOT_FOUND:
+            raise ValueError("Document not found")
+        if result.get("error"):
+            raise ValueError(result["error"])
+        _validate_document_read_result_payload(result)
+
+        return DocumentContentReadResponse(
+            document_id=result["id"],
+            name=result["name"],
+            content=result["content"],
+            total_length=result["total_length"],
+            offset=result["offset"],
+            returned_length=result["returned_length"],
+            has_more=result["has_more"],
+            kb_id=result["kb_id"],
+        )
+
+    async def get_document_detail(
+        self,
+        db: Session,
+        user: User,
+        document_id: int,
+        include_content: bool = True,
+        include_summary: bool = True,
+        offset: int = 0,
+        limit: int = MAX_DOCUMENT_READ_LIMIT,
+    ) -> DocumentDetailResponse:
+        """Aggregate optional document content and summary into a detail response."""
+        self._get_document_with_access_or_raise(
+            db=db,
+            user=user,
+            document_id=document_id,
+        )
+
+        content = None
+        content_length = None
+        truncated = None
+        summary = None
+
+        if include_content:
+            paged = self.read_document_content(
+                db=db,
+                user=user,
+                document_id=document_id,
+                offset=offset,
+                limit=limit,
+            )
+            content = paged.content
+            content_length = paged.total_length
+            truncated = (paged.offset > 0) or paged.has_more
+
+        if include_summary:
+            from app.services.knowledge.summary_service import get_summary_service
+
+            summary_service = get_summary_service(db)
+            summary_result = await summary_service.get_document_summary(document_id)
+            summary = (
+                summary_result.model_dump()
+                if hasattr(summary_result, "model_dump")
+                else summary_result
+            )
+
+        return DocumentDetailResponse(
+            document_id=document_id,
+            content=content,
+            content_length=content_length,
+            truncated=truncated,
+            summary=summary,
         )
 
     def get_knowledge_base(
@@ -641,14 +819,16 @@ class KnowledgeOrchestrator:
         Raises:
             ValueError: If knowledge base not found or access denied
         """
-        knowledge_base = KnowledgeService.get_knowledge_base(
+        knowledge_base, has_access = KnowledgeService.get_knowledge_base(
             db=db,
             knowledge_base_id=knowledge_base_id,
             user_id=user.id,
         )
 
         if not knowledge_base:
-            raise ValueError("Knowledge base not found or access denied")
+            raise ValueError("Knowledge base not found")
+        if not has_access:
+            raise ValueError("Access denied to knowledge base")
 
         return KnowledgeBaseResponse.from_kind(
             knowledge_base, KnowledgeService.get_document_count(db, knowledge_base.id)
@@ -664,6 +844,9 @@ class KnowledgeOrchestrator:
         retrieval_config: Optional[Dict[str, Any]] = None,
         summary_enabled: Optional[bool] = None,
         summary_model_ref: Optional[Dict[str, str]] = None,
+        guided_questions: Optional[List[str]] = None,
+        max_calls_per_conversation: Optional[int] = None,
+        exempt_calls_before_check: Optional[int] = None,
     ) -> KnowledgeBaseResponse:
         """
         Update a knowledge base.
@@ -677,6 +860,9 @@ class KnowledgeOrchestrator:
             retrieval_config: New retrieval config (optional)
             summary_enabled: New summary enabled flag (optional)
             summary_model_ref: New summary model reference (optional)
+            guided_questions: New guided questions list (optional)
+            max_calls_per_conversation: Max calls per conversation (optional)
+            exempt_calls_before_check: Exempt calls before check (optional)
 
         Returns:
             KnowledgeBaseResponse
@@ -686,14 +872,27 @@ class KnowledgeOrchestrator:
         """
         from app.schemas.knowledge import KnowledgeBaseUpdate
 
-        # Build update data with only provided fields
-        update_data = KnowledgeBaseUpdate(
-            name=name,
-            description=description,
-            retrieval_config=retrieval_config,
-            summary_enabled=summary_enabled,
-            summary_model_ref=summary_model_ref,
-        )
+        # Build update data with only provided fields to preserve unset-vs-clear semantics
+        # Only include fields that were explicitly provided (not None)
+        update_fields = {}
+        if name is not None:
+            update_fields["name"] = name
+        if description is not None:
+            update_fields["description"] = description
+        if retrieval_config is not None:
+            update_fields["retrieval_config"] = retrieval_config
+        if summary_enabled is not None:
+            update_fields["summary_enabled"] = summary_enabled
+        if summary_model_ref is not None:
+            update_fields["summary_model_ref"] = summary_model_ref
+        if guided_questions is not None:
+            update_fields["guided_questions"] = guided_questions
+        if max_calls_per_conversation is not None:
+            update_fields["max_calls_per_conversation"] = max_calls_per_conversation
+        if exempt_calls_before_check is not None:
+            update_fields["exempt_calls_before_check"] = exempt_calls_before_check
+
+        update_data = KnowledgeBaseUpdate(**update_fields)
 
         knowledge_base = KnowledgeService.update_knowledge_base(
             db=db,
@@ -877,13 +1076,15 @@ class KnowledgeOrchestrator:
         db.commit()
 
         # Fetch and return created knowledge base
-        knowledge_base = KnowledgeService.get_knowledge_base(
+        knowledge_base, has_access = KnowledgeService.get_knowledge_base(
             db=db,
             knowledge_base_id=kb_id,
             user_id=user.id,
         )
         if not knowledge_base:
-            raise ValueError("Failed to retrieve created knowledge base")
+            raise ValueError("Knowledge base not found")
+        if not has_access:
+            raise ValueError("Access denied to knowledge base")
 
         return KnowledgeBaseResponse.from_kind(
             knowledge_base, KnowledgeService.get_document_count(db, knowledge_base.id)
@@ -900,6 +1101,7 @@ class KnowledgeOrchestrator:
         file_base64: Optional[str] = None,
         file_extension: Optional[str] = None,
         url: Optional[str] = None,
+        attachment_id: Optional[int] = None,
         trigger_indexing: bool = True,
         trigger_summary: bool = True,
         splitter_config: Optional[Dict[str, Any]] = None,
@@ -914,11 +1116,12 @@ class KnowledgeOrchestrator:
             user: Current user
             knowledge_base_id: Target knowledge base ID
             name: Document name
-            source_type: Source type (text, file, web)
+            source_type: Source type (text, file, web, attachment)
             content: Text content for source_type="text"
             file_base64: Base64 encoded file for source_type="file"
             file_extension: File extension for source_type="file"
             url: URL for source_type="web"
+            attachment_id: Existing attachment ID for source_type="attachment"
             trigger_indexing: Whether to trigger RAG indexing
             trigger_summary: Whether to trigger summary generation
             splitter_config: Optional splitter configuration dict
@@ -932,13 +1135,15 @@ class KnowledgeOrchestrator:
         from app.services.context import context_service
 
         # Verify access
-        kb = KnowledgeService.get_knowledge_base(
+        kb, has_access = KnowledgeService.get_knowledge_base(
             db=db,
             knowledge_base_id=knowledge_base_id,
             user_id=user.id,
         )
         if not kb:
-            raise ValueError("Knowledge base not found or access denied")
+            raise ValueError("Knowledge base not found")
+        if not has_access:
+            raise ValueError("Access denied to knowledge base")
 
         # Validate input based on source_type
         normalized_ext: str = DEFAULT_TEXT_FILE_EXTENSION
@@ -967,10 +1172,79 @@ class KnowledgeOrchestrator:
             # Scrape URL content
             binary_data, normalized_ext = self._scrape_url_content(url)
 
+        elif source_type == "attachment":
+            if not attachment_id:
+                raise ValueError(
+                    "attachment_id is required for source_type='attachment'"
+                )
+
+            # Import context type enum (context_service already imported at function start)
+            from app.models.subtask_context import ContextType
+
+            # 1. Verify attachment exists and user has access (ownership check)
+            source_context = context_service.get_context_optional(
+                db=db,
+                context_id=attachment_id,
+                user_id=user.id,
+            )
+            if not source_context:
+                raise ValueError(
+                    f"Attachment {attachment_id} not found or access denied"
+                )
+
+            if source_context.context_type != ContextType.ATTACHMENT.value:
+                raise ValueError(f"Context {attachment_id} is not an attachment")
+
+            # 2. Get binary data from source attachment (auto-decrypts if needed)
+            binary_data = context_service.get_attachment_binary_data(
+                db=db,
+                context=source_context,
+            )
+            if binary_data is None:
+                raise ValueError(
+                    f"Failed to retrieve content from attachment {attachment_id}"
+                )
+
+            # 3. Extract file info from source attachment
+            filename = source_context.name or f"document_{attachment_id}"
+            normalized_ext = (
+                source_context.file_extension or DEFAULT_TEXT_FILE_EXTENSION
+            )
+
+            # 4. Create a copy as a new attachment for the document
+            # This ensures the knowledge base document is independent of the original
+            attachment, _ = context_service.upload_attachment(
+                db=db,
+                user_id=user.id,
+                filename=filename,
+                binary_data=binary_data,
+                subtask_id=0,  # Unlinked attachment for knowledge base
+            )
+
+            # Create document using shared helper
+            doc_data = KnowledgeDocumentCreate(
+                name=name or filename,
+                source_type="file",  # Store as file type in the document
+                attachment_id=attachment.id,
+                file_extension=normalized_ext,
+                file_size=len(binary_data),
+            )
+
+            return self._create_and_index_document(
+                db=db,
+                user=user,
+                knowledge_base=kb,
+                knowledge_base_id=knowledge_base_id,
+                data=doc_data,
+                trigger_indexing=trigger_indexing,
+                trigger_summary=trigger_summary,
+                splitter_config=splitter_config,
+            )
+
         else:
             raise ValueError(f"Invalid source_type: {source_type}")
 
-        # Upload attachment
+        # Upload attachment (for text, file, web source types)
         filename = _build_filename(name, normalized_ext)
         attachment, _ = context_service.upload_attachment(
             db=db,
@@ -1032,13 +1306,15 @@ class KnowledgeOrchestrator:
             ValueError: If validation fails or access denied
         """
         # Verify access
-        kb = KnowledgeService.get_knowledge_base(
+        kb, has_access = KnowledgeService.get_knowledge_base(
             db=db,
             knowledge_base_id=knowledge_base_id,
             user_id=user.id,
         )
         if not kb:
-            raise ValueError("Knowledge base not found or access denied")
+            raise ValueError("Knowledge base not found")
+        if not has_access:
+            raise ValueError("Access denied to knowledge base")
 
         # Get splitter config from data if provided
         splitter_config_dict = None
@@ -1088,6 +1364,7 @@ class KnowledgeOrchestrator:
             KnowledgeDocumentResponse
         """
         from app.schemas.knowledge import DocumentSourceType
+        from app.services.knowledge.indexing import get_rag_indexing_skip_reason
 
         # Create document
         document = KnowledgeService.create_document(
@@ -1101,9 +1378,17 @@ class KnowledgeOrchestrator:
             f"[Orchestrator] Created document {document.id} in KB {knowledge_base_id}"
         )
 
-        # Schedule indexing via Celery if enabled
-        # Skip RAG indexing for TABLE source type as table data should be queried in real-time
-        if trigger_indexing and data.source_type != DocumentSourceType.TABLE:
+        skip_reason = get_rag_indexing_skip_reason(
+            (
+                data.source_type.value
+                if data.source_type
+                else DocumentSourceType.FILE.value
+            ),
+            data.file_extension,
+            data.file_size,
+        )
+
+        if trigger_indexing and not skip_reason:
             self._schedule_indexing_celery(
                 db=db,
                 knowledge_base=knowledge_base,
@@ -1111,6 +1396,11 @@ class KnowledgeOrchestrator:
                 user=user,
                 trigger_summary=trigger_summary,
                 splitter_config=splitter_config,
+            )
+        elif trigger_indexing and skip_reason:
+            logger.info(
+                f"[Orchestrator] Skipping indexing for document {document.id}: "
+                f"{skip_reason}"
             )
 
         return KnowledgeDocumentResponse.model_validate(document)
@@ -1153,20 +1443,22 @@ class KnowledgeOrchestrator:
         logger.info(f"[Orchestrator] Updated document {document_id} content")
 
         # Get knowledge base for indexing config
-        kb = KnowledgeService.get_knowledge_base(
+        kb, has_access = KnowledgeService.get_knowledge_base(
             db=db,
             knowledge_base_id=document.kind_id,
             user_id=user.id,
         )
 
         # Schedule re-indexing via Celery if enabled
-        if trigger_reindex and kb:
+        if trigger_reindex and kb and has_access:
             self._schedule_indexing_celery(
                 db=db,
                 knowledge_base=kb,
                 document=document,
                 user=user,
                 trigger_summary=False,  # Don't re-generate summary on update
+                allow_if_success=True,
+                replace_active=True,
             )
 
         return {
@@ -1218,7 +1510,9 @@ class KnowledgeOrchestrator:
         user: User,
         trigger_summary: bool = True,
         splitter_config: Optional[Dict[str, Any]] = None,
-    ) -> None:
+        allow_if_success: bool = False,
+        replace_active: bool = False,
+    ) -> Dict[str, Any]:
         """
         Schedule RAG indexing for a document via Celery.
 
@@ -1232,8 +1526,14 @@ class KnowledgeOrchestrator:
             user: Current user
             trigger_summary: Whether to trigger summary after indexing
             splitter_config: Optional splitter configuration dict
+            allow_if_success: Whether to re-queue a document that already succeeded
+            replace_active: Whether to supersede an in-flight indexing generation
         """
-        from app.services.knowledge.indexing import is_organization_namespace
+        from app.services.knowledge.index_state_machine import (
+            mark_document_index_enqueue_failed,
+            prepare_document_index_enqueue,
+        )
+        from app.services.knowledge.namespace_utils import is_organization_namespace
         from app.tasks.knowledge_tasks import index_document_task
 
         spec = (knowledge_base.json or {}).get("spec", {})
@@ -1243,7 +1543,10 @@ class KnowledgeOrchestrator:
             logger.info(
                 f"[Orchestrator] Skipping indexing for document {document.id}: no retrieval_config"
             )
-            return
+            return {
+                "scheduled": False,
+                "reason": "missing_retrieval_config",
+            }
 
         retriever_name = retrieval_config.get("retriever_name")
         retriever_namespace = retrieval_config.get("retriever_namespace", "default")
@@ -1254,7 +1557,10 @@ class KnowledgeOrchestrator:
                 f"[Orchestrator] Incomplete retrieval_config for KB {knowledge_base.id}: "
                 f"retriever_name={retriever_name}, embedding_config={embedding_config}"
             )
-            return
+            return {
+                "scheduled": False,
+                "reason": "incomplete_retrieval_config",
+            }
 
         embedding_model_name = embedding_config.get("model_name")
         embedding_model_namespace = embedding_config.get("model_namespace", "default")
@@ -1263,7 +1569,10 @@ class KnowledgeOrchestrator:
             logger.warning(
                 f"[Orchestrator] Missing embedding model_name in KB {knowledge_base.id}"
             )
-            return
+            return {
+                "scheduled": False,
+                "reason": "missing_embedding_model",
+            }
 
         # Determine index owner user_id
         if knowledge_base.namespace == "default":
@@ -1280,20 +1589,71 @@ class KnowledgeOrchestrator:
             f"index_owner_user_id={index_owner_user_id}"
         )
 
-        # Schedule indexing via Celery
-        index_document_task.delay(
-            knowledge_base_id=str(knowledge_base.id),
-            attachment_id=document.attachment_id,
-            retriever_name=retriever_name,
-            retriever_namespace=retriever_namespace,
-            embedding_model_name=embedding_model_name,
-            embedding_model_namespace=embedding_model_namespace,
-            user_id=index_owner_user_id,
-            user_name=user.user_name,
+        enqueue_decision = prepare_document_index_enqueue(
+            db=db,
             document_id=document.id,
-            splitter_config_dict=splitter_config,
-            trigger_summary=trigger_summary,
+            allow_if_success=allow_if_success,
+            replace_active=replace_active,
         )
+        if not enqueue_decision.should_enqueue:
+            logger.info(
+                f"[Orchestrator] Skipping Celery enqueue for document {document.id}: "
+                f"reason={enqueue_decision.reason}, previous_status={enqueue_decision.previous_status}"
+            )
+            return {
+                "scheduled": False,
+                "reason": enqueue_decision.reason,
+                "index_generation": enqueue_decision.generation,
+            }
+
+        generation = enqueue_decision.generation
+        if generation is None:
+            message = (
+                "[Orchestrator] prepare_document_index_enqueue returned "
+                f"should_enqueue=True but generation is None for document {document.id}"
+            )
+            logger.error(message)
+            raise RuntimeError(message)
+
+        try:
+            async_result = index_document_task.delay(
+                knowledge_base_id=str(knowledge_base.id),
+                attachment_id=document.attachment_id,
+                retriever_name=retriever_name,
+                retriever_namespace=retriever_namespace,
+                embedding_model_name=embedding_model_name,
+                embedding_model_namespace=embedding_model_namespace,
+                user_id=index_owner_user_id,
+                user_name=user.user_name,
+                document_id=document.id,
+                index_generation=generation,
+                splitter_config_dict=splitter_config,
+                trigger_summary=trigger_summary,
+            )
+        except Exception as exc:
+            mark_document_index_enqueue_failed(
+                db=db,
+                document_id=document.id,
+                generation=generation,
+            )
+            logger.error(
+                f"[Orchestrator] Failed to enqueue RAG indexing task for document {document.id}: {exc}",
+                exc_info=True,
+            )
+            raise
+
+        logger.info(
+            f"[Orchestrator] RAG indexing task enqueued: "
+            f"document_id={document.id}, attachment_id={document.attachment_id}, "
+            f"kb_id={knowledge_base.id}, index_generation={generation}, "
+            f"celery_task_id={async_result.id}"
+        )
+        return {
+            "scheduled": True,
+            "reason": "scheduled",
+            "index_generation": generation,
+            "task_id": async_result.id,
+        }
 
     def reindex_document(
         self,
@@ -1322,11 +1682,10 @@ class KnowledgeOrchestrator:
             ValueError: If document not found, access denied, or RAG not configured
         """
         from app.models.knowledge import KnowledgeDocument
-        from app.schemas.knowledge import DocumentSourceType
         from app.services.knowledge.indexing import (
             extract_rag_config_from_knowledge_base,
+            get_rag_indexing_skip_reason,
         )
-        from app.tasks.knowledge_tasks import index_document_task
 
         # Get document with access check
         document = (
@@ -1338,19 +1697,29 @@ class KnowledgeOrchestrator:
         if not document:
             raise ValueError("Document not found")
 
-        # TABLE documents do not support RAG indexing (real-time query instead)
-        if document.source_type == DocumentSourceType.TABLE.value:
-            raise ValueError("Table documents do not support indexing")
+        skip_reason = get_rag_indexing_skip_reason(
+            document.source_type, document.file_extension, document.file_size
+        )
+        if skip_reason:
+            raise ValueError(skip_reason)
 
         # Check access permission via knowledge base
-        knowledge_base = KnowledgeService.get_knowledge_base(
+        knowledge_base, has_access = KnowledgeService.get_knowledge_base(
             db=db,
             knowledge_base_id=document.kind_id,
             user_id=user.id,
         )
 
         if not knowledge_base:
-            raise ValueError("Access denied to this document")
+            raise ValueError("Knowledge base not found")
+        if not has_access:
+            raise ValueError("Access denied to knowledge base")
+        if not KnowledgeService.can_manage_knowledge_document(
+            db, knowledge_base.id, user.id, document.user_id
+        ):
+            raise ValueError(
+                "You do not have permission to manage this document in this knowledge base"
+            )
 
         # Extract RAG config using shared helper
         rag_params = extract_rag_config_from_knowledge_base(db, knowledge_base, user.id)
@@ -1360,29 +1729,47 @@ class KnowledgeOrchestrator:
                 "Knowledge base has no or incomplete retrieval configuration"
             )
 
-        # Schedule re-indexing via Celery
-        index_document_task.delay(
-            knowledge_base_id=str(document.kind_id),
-            attachment_id=document.attachment_id,
-            retriever_name=rag_params.retriever_name,
-            retriever_namespace=rag_params.retriever_namespace,
-            embedding_model_name=rag_params.embedding_model_name,
-            embedding_model_namespace=rag_params.embedding_model_namespace,
-            user_id=rag_params.kb_index_info.index_owner_user_id,
-            user_name=user.user_name,
-            document_id=document.id,
-            splitter_config_dict=document.splitter_config,
+        schedule_result = self._schedule_indexing_celery(
+            db=db,
+            knowledge_base=knowledge_base,
+            document=document,
+            user=user,
             trigger_summary=trigger_summary,
+            splitter_config=document.splitter_config,
+            allow_if_success=True,
         )
+        if not schedule_result["scheduled"]:
+            reason = schedule_result["reason"]
+            reason_messages = {
+                "already_in_progress": "Reindex already in progress",
+                "already_indexed": "Document is already indexed",
+                "document_not_found": "Document not found",
+            }
+            message = reason_messages.get(reason, f"Reindex skipped: {reason}")
+            logger.info(
+                f"[Orchestrator] Reindex skipped for document {document.id}: "
+                f"reason={reason}, message={message}"
+            )
+            return {
+                "success": True,
+                "document_id": document.id,
+                "message": message,
+                "skipped": True,
+                "reason": reason,
+            }
 
         logger.info(
-            f"[Orchestrator] Scheduled reindex via Celery for document {document.id}"
+            f"[Orchestrator] Scheduled reindex via Celery for document {document.id}: "
+            f"celery_task_id={schedule_result['task_id']}, attachment_id={document.attachment_id}, "
+            f"kb_id={document.kind_id}, index_generation={schedule_result['index_generation']}"
         )
 
         return {
             "success": True,
             "document_id": document.id,
             "message": "Reindex started",
+            "skipped": False,
+            "index_generation": schedule_result["index_generation"],
         }
 
     async def create_web_document(
@@ -1431,13 +1818,15 @@ class KnowledgeOrchestrator:
         )
 
         # Verify knowledge base access
-        knowledge_base = KnowledgeService.get_knowledge_base(
+        knowledge_base, has_access = KnowledgeService.get_knowledge_base(
             db=db,
             knowledge_base_id=knowledge_base_id,
             user_id=user.id,
         )
         if not knowledge_base:
-            raise ValueError("Knowledge base not found or access denied")
+            raise ValueError("Knowledge base not found")
+        if not has_access:
+            raise ValueError("Access denied to knowledge base")
 
         # Scrape the web page (async)
         service = get_web_scraper_service()
@@ -1513,6 +1902,8 @@ class KnowledgeOrchestrator:
                     document=document,
                     user=user,
                     trigger_summary=trigger_summary,
+                    allow_if_success=True,
+                    replace_active=True,
                 )
 
             return {
@@ -1688,18 +2079,20 @@ class KnowledgeOrchestrator:
 
             # Trigger RAG re-indexing via Celery if enabled
             if trigger_indexing:
-                knowledge_base = KnowledgeService.get_knowledge_base(
+                knowledge_base, has_access = KnowledgeService.get_knowledge_base(
                     db=db,
                     knowledge_base_id=document.kind_id,
                     user_id=user.id,
                 )
-                if knowledge_base:
+                if knowledge_base and has_access:
                     self._schedule_indexing_celery(
                         db=db,
                         knowledge_base=knowledge_base,
                         document=document,
                         user=user,
                         trigger_summary=trigger_summary,
+                        allow_if_success=True,
+                        replace_active=True,
                     )
 
             return {

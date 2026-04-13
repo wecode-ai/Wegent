@@ -12,13 +12,20 @@ This module provides a simplified LangGraph agent implementation using:
 """
 
 import asyncio
+import json
 import logging
 import time
 from collections.abc import AsyncGenerator
 from typing import Any, Callable, Optional
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import (
+    AIMessage,
+    BaseMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
 from langchain_core.messages.utils import convert_to_messages
 from langchain_core.tools.base import BaseTool
 from langgraph.checkpoint.memory import MemorySaver
@@ -29,6 +36,11 @@ from opentelemetry import trace as otel_trace
 from shared.telemetry.decorators import add_span_event, trace_sync
 
 from ..core.config import settings
+from ..llm_logging import env_bool as _env_bool
+from ..llm_logging import log_direct_llm_request as _log_direct_llm_request
+from ..llm_logging import log_direct_llm_response as _log_direct_llm_response
+from ..llm_logging import log_llm_request_event as _log_llm_request_event
+from ..llm_logging import log_llm_response_event as _log_llm_response_event
 from ..tools.base import ToolRegistry
 from ..tools.builtin.silent_exit import SilentExitException
 
@@ -78,6 +90,327 @@ class ToolCallTruncatedError(Exception):
         super().__init__(f"Tool call truncated: {reason}")
 
 
+class InvalidToolMessageSequenceError(ValueError):
+    """Raised when tool-call linkage is invalid for any LLM protocol.
+
+    The chat_shell internally uses OpenAI-style message dicts as the canonical
+    representation before they are adapted to OpenAI Chat Completions,
+    OpenAI Responses API, Anthropic Messages API, or Gemini API.
+    """
+
+
+def _require_non_empty_tool_id(tool_id: Any, context: str) -> str:
+    """Return a validated tool ID or raise if it is missing/blank."""
+    if tool_id is None:
+        value = ""
+    elif isinstance(tool_id, str):
+        value = tool_id
+    else:
+        value = str(tool_id)
+
+    if not value.strip():
+        raise InvalidToolMessageSequenceError(f"{context} must be a non-empty string")
+
+    return value
+
+
+def _validate_tool_message_sequence(
+    messages: list[dict[str, Any]], *, context: str
+) -> None:
+    """Validate tool-call / tool-result linkage before provider adaptation.
+
+    This fail-fast check applies to all protocols because the canonical message
+    sequence is shared before it is adapted for OpenAI Chat Completions,
+    OpenAI Responses API, Anthropic Messages API, or Gemini API.
+    """
+    pending_tool_calls: dict[str, int] = {}
+
+    for index, message in enumerate(messages):
+        role = message.get("role")
+
+        if role == "assistant":
+            tool_calls = message.get("tool_calls") or []
+            for tool_index, tool_call in enumerate(tool_calls):
+                if not isinstance(tool_call, dict):
+                    raise InvalidToolMessageSequenceError(
+                        f"{context}: assistant message at index {index} has invalid "
+                        f"tool_calls[{tool_index}] payload"
+                    )
+
+                tool_id = _require_non_empty_tool_id(
+                    tool_call.get("id"),
+                    f"{context}: assistant message at index {index} tool_calls[{tool_index}].id",
+                )
+
+                if tool_id in pending_tool_calls:
+                    raise InvalidToolMessageSequenceError(
+                        f"{context}: duplicate unresolved tool_call id {tool_id!r} "
+                        f"at assistant message index {index}"
+                    )
+
+                pending_tool_calls[tool_id] = index
+
+        elif role == "tool":
+            tool_call_id = _require_non_empty_tool_id(
+                message.get("tool_call_id"),
+                f"{context}: tool message at index {index} tool_call_id",
+            )
+
+            if tool_call_id not in pending_tool_calls:
+                raise InvalidToolMessageSequenceError(
+                    f"{context}: tool message at index {index} references unknown "
+                    f"tool_call_id {tool_call_id!r}"
+                )
+
+            del pending_tool_calls[tool_call_id]
+
+    if pending_tool_calls:
+        unresolved = ", ".join(repr(tool_id) for tool_id in pending_tool_calls)
+        raise InvalidToolMessageSequenceError(
+            f"{context}: assistant tool_calls without matching tool results: {unresolved}"
+        )
+
+
+def _convert_validated_messages(
+    messages: list[dict[str, Any]],
+    *,
+    context: str,
+    target_provider: str = "",
+    target_model_id: str = "",
+    target_api_format: str = "",
+) -> list[BaseMessage]:
+    """Validate canonical message linkage, then convert to LangChain messages.
+
+    When ``target_provider`` is set, foreign reasoning blocks are stripped
+    before conversion to prevent cross-model API errors.
+    """
+    if target_provider:
+        from chat_shell.messages.think_block_filter import (  # noqa: PLC0415
+            strip_foreign_reasoning_blocks,
+        )
+
+        messages = strip_foreign_reasoning_blocks(
+            messages,
+            target_provider,
+            target_model_id=target_model_id,
+            target_api_format=target_api_format,
+        )
+    _validate_tool_message_sequence(messages, context=context)
+    return convert_to_messages(messages)
+
+
+def _normalize_content_block(block: dict[str, Any]) -> dict[str, Any] | None:
+    """Convert a single provider-specific content block to canonical format.
+
+    Returns the normalized block, or None if the block should be dropped.
+
+    Canonical reasoning format (LangChain ``ReasoningContentBlock``)::
+
+        {"type": "reasoning", "reasoning": "<text>", "extras": {...}}
+    """
+    block_type = block.get("type")
+
+    if block_type == "thinking":
+        # Claude: {"type": "thinking", "thinking": "...", "signature": "...", ...}
+        reasoning_text = block.get("thinking", "")
+        extras = {k: v for k, v in block.items() if k not in ("type", "thinking")}
+        result: dict[str, Any] = {"type": "reasoning", "reasoning": reasoning_text}
+        if extras:
+            result["extras"] = extras
+        return result
+
+    # "text", "reasoning" (already canonical), or other block types: keep as-is
+    return block
+
+
+def _normalize_content_blocks(blocks: list) -> list:
+    """Normalize a list of content blocks to canonical format.
+
+    Handles:
+    - Claude ``thinking`` blocks → ``reasoning`` blocks
+    - OpenAI Responses API ``reasoning`` with ``summary`` → exploded ``reasoning`` blocks
+    - All other block types passed through unchanged
+    """
+    result: list = []
+    for block in blocks:
+        if not isinstance(block, dict):
+            result.append(block)
+            continue
+
+        block_type = block.get("type")
+        if block_type == "reasoning" and "summary" in block:
+            # Explode OpenAI Responses API reasoning summary items
+            for item in block.get("summary") or []:
+                if isinstance(item, dict) and item.get("type") == "summary_text":
+                    text = item.get("text", "")
+                    reasoning_block: dict[str, Any] = {
+                        "type": "reasoning",
+                        "reasoning": text,
+                    }
+                    # Preserve non-summary fields as extras
+                    extras = {
+                        k: v
+                        for k, v in block.items()
+                        if k not in ("type", "summary", "reasoning")
+                    }
+                    if extras:
+                        reasoning_block["extras"] = extras
+                    result.append(reasoning_block)
+            if not block.get("summary"):
+                # Empty summary: keep a reasoning block without text but
+                # preserve non-summary fields (id, encrypted_content, etc.)
+                # so the block can round-trip correctly.
+                empty_block: dict[str, Any] = {
+                    "type": "reasoning",
+                    "reasoning": "",
+                }
+                extras = {
+                    k: v
+                    for k, v in block.items()
+                    if k not in ("type", "summary", "reasoning")
+                }
+                if extras:
+                    empty_block["extras"] = extras
+                result.append(empty_block)
+        else:
+            normalized = _normalize_content_block(block)
+            if normalized is not None:
+                result.append(normalized)
+    return result
+
+
+def _normalize_content_for_storage(msg: AIMessage) -> str | list:
+    """Normalize an AIMessage's content for cross-model compatible storage.
+
+    Converts provider-specific think blocks to canonical ``ReasoningContentBlock``
+    format. Also bridges ``reasoning_content`` from ``additional_kwargs``
+    (DeepSeek/Kimi/QwQ) into the content block list.
+
+    Returns:
+        Normalized content: either a string (no think blocks) or a list of blocks.
+    """
+    # Bridge reasoning_content from additional_kwargs into content blocks
+    reasoning_content = msg.additional_kwargs.get("reasoning_content")
+
+    if isinstance(msg.content, list):
+        normalized = _normalize_content_blocks(msg.content)
+        if reasoning_content:
+            normalized.insert(0, {"type": "reasoning", "reasoning": reasoning_content})
+        return normalized
+
+    # String content
+    if reasoning_content:
+        blocks: list[dict[str, Any]] = [
+            {"type": "reasoning", "reasoning": reasoning_content},
+        ]
+        if msg.content:
+            blocks.append({"type": "text", "text": msg.content})
+        return blocks
+
+    return msg.content
+
+
+def _truncate_tool_result_for_storage(content: str) -> str:
+    """Truncate a tool result string if it exceeds the configured maximum length.
+
+    Keeps the beginning (60%) and end (40%) of the content with a truncation
+    notice in between, following the same pattern as
+    ``ToolResultTruncationStrategy._truncate_content``.
+    """
+    from chat_shell.core.config import settings  # noqa: PLC0415
+
+    max_len = settings.MAX_TOOL_RESULT_LENGTH
+    if max_len <= 0 or len(content) <= max_len:
+        return content
+
+    begin_length = int(max_len * 0.6)
+    end_length = max_len - begin_length
+    removed = len(content) - max_len
+
+    return (
+        content[:begin_length] + f"\n\n[... Tool output truncated at serialization. "
+        f"Original: {len(content)} chars, "
+        f"removed {removed} chars from middle, "
+        f"keeping first {begin_length} and last {end_length} chars ...]\n\n"
+        + content[-end_length:]
+    )
+
+
+def _serialize_messages_chain(
+    messages: list[BaseMessage],
+    provider: str = "",
+    model_id: str = "",
+) -> list[dict[str, Any]]:
+    """Serialize LangChain messages to OpenAI-compatible dicts for history persistence.
+
+    Converts AIMessage and ToolMessage objects produced during a single agent turn
+    into a list of dicts that can be:
+    1. Stored in ``subtask.result.messages_chain``
+    2. Loaded back via ``langchain_core.messages.utils.convert_to_messages``
+
+    Preserves tool_calls, tool results, and reasoning_content.
+    When ``provider`` is given, each assistant entry includes a ``model_info``
+    dict so downstream consumers can identify the originating model.
+    """
+    chain: list[dict[str, Any]] = []
+    for msg in messages:
+        if isinstance(msg, AIMessage):
+            # Normalize content: convert provider-specific think blocks to
+            # canonical ReasoningContentBlock format for cross-model compat.
+            content = _normalize_content_for_storage(msg)
+            entry: dict[str, Any] = {"role": "assistant", "content": content}
+            if provider:
+                entry["model_info"] = {"provider": provider, "model": model_id}
+            if msg.tool_calls:
+                entry["tool_calls"] = [
+                    {
+                        "id": _require_non_empty_tool_id(
+                            tc.get("id"),
+                            "serialized messages_chain: assistant tool_calls[].id",
+                        ),
+                        "type": "function",
+                        "function": {
+                            "name": tc.get("name", ""),
+                            "arguments": (
+                                json.dumps(tc.get("args", {}))
+                                if isinstance(tc.get("args"), dict)
+                                else str(tc.get("args", ""))
+                            ),
+                        },
+                    }
+                    for tc in msg.tool_calls
+                ]
+            chain.append(entry)
+        elif isinstance(msg, ToolMessage):
+            content_str = (
+                msg.content if isinstance(msg.content, str) else json.dumps(msg.content)
+            )
+            content_str = _truncate_tool_result_for_storage(content_str)
+            entry = {
+                "role": "tool",
+                "content": content_str,
+                "tool_call_id": _require_non_empty_tool_id(
+                    msg.tool_call_id,
+                    "serialized messages_chain: tool message tool_call_id",
+                ),
+            }
+            if msg.name:
+                entry["name"] = msg.name
+            chain.append(entry)
+    return chain
+
+
+def _serialize_validated_messages_chain(
+    messages: list[BaseMessage],
+    provider: str = "",
+    model_id: str = "",
+) -> list[dict[str, Any]]:
+    """Serialize a generated turn and fail fast on broken tool-call linkage."""
+    chain = _serialize_messages_chain(messages, provider=provider, model_id=model_id)
+    _validate_tool_message_sequence(chain, context="serialized messages_chain")
+    return chain
+
+
 class LangGraphAgentBuilder:
     """Builder for LangGraph-based agent workflows using prebuilt ReAct agent."""
 
@@ -110,6 +443,11 @@ class LangGraphAgentBuilder:
         )
         self._agent = None
 
+        # Provider metadata set by LangChainModelFactory for think-block handling
+        self._provider: str = getattr(llm, "_wegent_provider", "unknown")
+        self._model_id: str = getattr(llm, "_wegent_model_id", "")
+        self._api_format: str = getattr(llm, "_wegent_api_format", "")
+
         # Get all LangChain tools from registry
         self.tools: list[BaseTool] = []
         if self.tool_registry:
@@ -118,8 +456,158 @@ class LangGraphAgentBuilder:
         # Initialize all_tools (will be updated during agent build to include skill tools)
         self.all_tools: list[BaseTool] = self.tools
 
+        # Messages chain produced by the last stream_tokens() call
+        self._last_messages_chain: list[dict[str, Any]] = []
+
         # Automatically detect PromptModifierTool instances from registered tools
         self._prompt_modifier_tools = self._find_prompt_modifier_tools()
+
+    async def _collect_final_state_from_events(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        config: dict[str, Any] | None = None,
+        cancel_event: asyncio.Event | None = None,
+        on_tool_event: Callable[[str, dict], None] | None = None,
+        collect_all_events: bool = True,
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        """Execute via astream_events and capture final state plus optional events."""
+
+        agent = self._build_agent()
+        lc_messages = _convert_validated_messages(
+            messages,
+            context="agent execution input messages",
+            target_provider=self._provider,
+            target_model_id=self._model_id,
+            target_api_format=self._api_format,
+        )
+        exec_config = {"configurable": config} if config else None
+
+        all_events: list[dict[str, Any]] = []
+        final_state: dict[str, Any] = {}
+
+        try:
+            async for event in agent.astream_events(
+                {"messages": lc_messages},
+                config={
+                    **(exec_config or {}),
+                    "recursion_limit": self.max_iterations * 2 + 1,
+                },
+                version="v2",
+            ):
+                if cancel_event and cancel_event.is_set():
+                    logger.info("Streaming cancelled by user")
+                    break
+
+                if collect_all_events:
+                    all_events.append(event)
+
+                kind = event.get("event", "")
+
+                if kind == "on_chat_model_start":
+                    _log_llm_request_event(
+                        event,
+                        tool_names=[
+                            t.name for t in getattr(self, "all_tools", []) or []
+                        ],
+                    )
+                elif kind == "on_chat_model_end":
+                    _log_llm_response_event(
+                        event,
+                        tool_names=[
+                            t.name for t in getattr(self, "all_tools", []) or []
+                        ],
+                    )
+
+                if kind == "on_tool_start":
+                    tool_name = event.get("name", "unknown")
+                    run_id = event.get("run_id", "")
+                    if on_tool_event:
+                        on_tool_event(
+                            "tool_start",
+                            {
+                                "name": tool_name,
+                                "run_id": run_id,
+                                "data": event.get("data", {}),
+                            },
+                        )
+
+                elif kind == "on_tool_end":
+                    tool_name = event.get("name", "unknown")
+                    run_id = event.get("run_id", "")
+                    if on_tool_event:
+                        on_tool_event(
+                            "tool_end",
+                            {
+                                "name": tool_name,
+                                "run_id": run_id,
+                                "data": event.get("data", {}),
+                            },
+                        )
+
+                elif kind == "on_chain_end" and event.get("name") == "LangGraph":
+                    data = event.get("data", {})
+                    output = data.get("output", {})
+                    if output:
+                        final_state = output
+
+            return final_state, all_events
+
+        except SilentExitException:
+            logger.info(
+                "[collect_final_state_from_events] SilentExitException caught, re-raising for caller to handle"
+            )
+            raise
+
+        except GraphRecursionError:
+            logger.warning(
+                "[collect_final_state_from_events] GraphRecursionError: Tool call limit reached (max_iterations=%d). "
+                "Asking model to provide final response.",
+                self.max_iterations,
+            )
+
+            limit_messages = list(lc_messages) + [
+                HumanMessage(content=TOOL_LIMIT_REACHED_MESSAGE)
+            ]
+
+            try:
+                _log_direct_llm_request(
+                    messages=limit_messages,
+                    tool_names=[t.name for t in getattr(self, "all_tools", []) or []],
+                    request_name="tool_limit_recovery",
+                )
+                response = await self.llm.ainvoke(limit_messages)
+                _log_direct_llm_response(
+                    response=response,
+                    request_name="tool_limit_recovery",
+                    tool_names=[t.name for t in getattr(self, "all_tools", []) or []],
+                )
+                final_content = ""
+                if hasattr(response, "content"):
+                    if isinstance(response.content, str):
+                        final_content = response.content
+                    elif isinstance(response.content, list):
+                        text_parts = []
+                        for part in response.content:
+                            if isinstance(part, str):
+                                text_parts.append(part)
+                            elif isinstance(part, dict) and part.get("type") == "text":
+                                text_parts.append(part.get("text", ""))
+                        final_content = "".join(text_parts)
+
+                final_state = {
+                    "messages": list(lc_messages) + [AIMessage(content=final_content)]
+                }
+                return final_state, all_events
+            except Exception:
+                logger.exception(
+                    "Error generating final response after tool limit reached"
+                )
+                raise
+
+        except Exception:
+            logger.exception("Error while collecting final state from events")
+            raise
 
     def _find_prompt_modifier_tools(self) -> list[Any]:
         """Find all tools that implement the PromptModifierTool protocol.
@@ -181,21 +669,35 @@ class LangGraphAgentBuilder:
 
             for msg in messages:
                 if isinstance(msg, SystemMessage) and not system_updated:
-                    # Append modifications to existing system message
-                    original_content = (
-                        msg.content
-                        if isinstance(msg.content, str)
-                        else str(msg.content)
-                    )
-                    updated_content = original_content + combined_modification
+                    # Append modifications to existing system message.
+                    # Content may be a string or a list of content blocks
+                    # (e.g., when Anthropic cache_control breakpoints are set).
+                    # Preserve the original format to keep cache markers intact.
+                    if isinstance(msg.content, list):
+                        # List of content blocks — append modification as a new
+                        # text block so existing cache_control markers stay valid.
+                        updated_content = msg.content + [
+                            {"type": "text", "text": combined_modification}
+                        ]
+                    else:
+                        updated_content = msg.content + combined_modification
                     new_messages.append(SystemMessage(content=updated_content))
                     system_updated = True
 
                     # Log the final system prompt metadata at INFO level
                     # Full content is only logged at DEBUG level to avoid leaking sensitive data
+                    content_len = (
+                        sum(
+                            len(b.get("text", ""))
+                            for b in updated_content
+                            if isinstance(b, dict)
+                        )
+                        if isinstance(updated_content, list)
+                        else len(updated_content)
+                    )
                     logger.info(
                         "[prompt_modifier] Final system prompt (len=%d)",
-                        len(updated_content),
+                        content_len,
                     )
                     # logger.debug(
                     #     "[prompt_modifier] Final system prompt content:\n%s",
@@ -387,7 +889,8 @@ class LangGraphAgentBuilder:
         # Store all_tools for external access (e.g., for display_name lookup)
         self.all_tools = all_tools
 
-        # Build agent with optional prompt modifier for dynamic system prompt updates
+        # Add llm built-in tools if supported (currently none)
+        model_with_tools: BaseChatModel | Callable = self.llm
         # If we have a model configurator, use it for dynamic tool selection
         # Note: all_tools includes ALL possible tools (base + all skill tools) for execution
         # while model_configurator controls which tools the model sees at each step
@@ -400,7 +903,7 @@ class LangGraphAgentBuilder:
             )
         else:
             self._agent = create_react_agent(
-                model=self.llm,
+                model=model_with_tools,
                 tools=all_tools,
                 checkpointer=checkpointer,
                 prompt=prompt_modifier,
@@ -425,22 +928,12 @@ class LangGraphAgentBuilder:
         Returns:
             Final agent state with response
         """
-        agent = self._build_agent()
-
-        # Use LangChain's built-in convert_to_messages
-        lc_messages = convert_to_messages(messages)
-
-        exec_config = {"configurable": config} if config else None
-
-        # Execute with recursion limit for max iterations
-        result = await agent.ainvoke(
-            {"messages": lc_messages},
-            config={
-                **(exec_config or {}),
-                "recursion_limit": self.max_iterations * 2 + 1,
-            },
+        result, _events = await self._collect_final_state_from_events(
+            messages=messages,
+            config=config,
+            cancel_event=cancel_event,
+            collect_all_events=False,
         )
-
         return result
 
     async def stream_execute(
@@ -460,9 +953,21 @@ class LangGraphAgentBuilder:
             State updates as they occur
         """
         agent = self._build_agent()
-        lc_messages = convert_to_messages(messages)
+        lc_messages = _convert_validated_messages(
+            messages,
+            context="stream_execute input messages",
+            target_provider=self._provider,
+            target_model_id=self._model_id,
+            target_api_format=self._api_format,
+        )
 
         exec_config = {"configurable": config} if config else None
+
+        _log_direct_llm_request(
+            messages=lc_messages,
+            tool_names=[t.name for t in getattr(self, "all_tools", []) or []],
+            request_name="stream_execute",
+        )
 
         async for event in agent.astream(
             {"messages": lc_messages},
@@ -507,7 +1012,13 @@ class LangGraphAgentBuilder:
         add_span_event("building_agent_completed")
 
         add_span_event("convert_to_messages_started", {"message_count": len(messages)})
-        lc_messages = convert_to_messages(messages)
+        lc_messages = _convert_validated_messages(
+            messages,
+            context="stream_tokens input messages",
+            target_provider=self._provider,
+            target_model_id=self._model_id,
+            target_api_format=self._api_format,
+        )
         add_span_event(
             "convert_to_messages_completed", {"lc_message_count": len(lc_messages)}
         )
@@ -521,6 +1032,9 @@ class LangGraphAgentBuilder:
         # Truncation detection state
         truncation_detected = False
         truncation_reason = ""
+
+        # Collect the complete LangGraph state messages for history persistence
+        _collected_state_messages: list[BaseMessage] = []
 
         # TTFT tracking variables
         first_token_received = False
@@ -557,6 +1071,55 @@ class LangGraphAgentBuilder:
                         "llm_request_started",
                         {"model_name": event.get("name", "unknown")},
                     )
+
+                    # Log the full JSON-like request structure sent to the model.
+                    # This is best-effort and may include large payloads (e.g., base64 images).
+                    _log_llm_request_event(
+                        event,
+                        tool_names=[
+                            t.name for t in getattr(self, "all_tools", []) or []
+                        ],
+                    )
+                    try:
+                        event_meta = event.get("metadata") or {}
+                        data = event.get("data") or {}
+                        payload_input = data.get("input") or {}
+                        payload_messages = payload_input.get("messages") or []
+                        if not isinstance(payload_messages, list):
+                            payload_messages = []
+
+                        role_counts: dict[str, int] = {}
+                        last_user_content = ""
+                        for msg in payload_messages:
+                            if not isinstance(msg, dict):
+                                continue
+                            role = str(msg.get("role", "unknown"))
+                            role_counts[role] = role_counts.get(role, 0) + 1
+                            if role == "user":
+                                content = msg.get("content", "")
+                                if isinstance(content, str) and content.strip():
+                                    last_user_content = content.strip()
+
+                        task_id = event_meta.get("task_id")
+                        subtask_id = event_meta.get("subtask_id")
+                        logger.info(
+                            "[MODEL_REQUEST_SUMMARY] model=%s task_id=%s subtask_id=%s "
+                            "message_count=%d roles=%s last_user=%s",
+                            event.get("name", "unknown"),
+                            task_id,
+                            subtask_id,
+                            len(payload_messages),
+                            json.dumps(role_counts, ensure_ascii=False),
+                            (
+                                last_user_content[:500]
+                                if len(last_user_content) > 500
+                                else last_user_content
+                            ),
+                        )
+                    except Exception:
+                        logger.exception(
+                            "[MODEL_REQUEST_SUMMARY] Failed to summarize model request event"
+                        )
 
                 # Log streaming completion event (much less verbose)
                 if kind == "on_chat_model_stream":
@@ -628,7 +1191,8 @@ class LangGraphAgentBuilder:
                             streamed_content = True
                             yield content
                         elif isinstance(content, list):
-                            # Handle list content (e.g., multimodal or tool calls)
+                            # Handle list content (e.g., multimodal, tool calls,
+                            # or Claude thinking blocks)
                             for part in content:
                                 if isinstance(part, str) and part:
                                     logger.debug(
@@ -638,15 +1202,50 @@ class LangGraphAgentBuilder:
                                     streamed_content = True
                                     yield part
                                 elif isinstance(part, dict):
-                                    # Extract text from dict format
-                                    text = part.get("text", "")
-                                    if text:
-                                        logger.debug(
-                                            "[stream_tokens] Yielding dict text: %s...",
-                                            text[:50] if len(text) > 50 else text,
-                                        )
-                                        streamed_content = True
-                                        yield text
+                                    part_type = part.get("type", "")
+                                    # Claude thinking blocks: route through
+                                    # reasoning markers for frontend display
+                                    if part_type == "thinking":
+                                        thinking_text = part.get("thinking", "")
+                                        if thinking_text:
+                                            logger.debug(
+                                                "[stream_tokens] Yielding Claude thinking: %s...",
+                                                (
+                                                    thinking_text[:50]
+                                                    if len(thinking_text) > 50
+                                                    else thinking_text
+                                                ),
+                                            )
+                                            yield f"__REASONING__{thinking_text}__END_REASONING__"
+                                    elif part_type == "reasoning":
+                                        # OpenAI Responses API reasoning blocks:
+                                        # {"type": "reasoning", "summary": [{"type": "summary_text", "text": "..."}]}
+                                        for item in part.get("summary") or []:
+                                            if (
+                                                isinstance(item, dict)
+                                                and item.get("type") == "summary_text"
+                                            ):
+                                                summary_text = item.get("text", "")
+                                                if summary_text:
+                                                    logger.debug(
+                                                        "[stream_tokens] Yielding Responses API reasoning: %s...",
+                                                        (
+                                                            summary_text[:50]
+                                                            if len(summary_text) > 50
+                                                            else summary_text
+                                                        ),
+                                                    )
+                                                    yield f"__REASONING__{summary_text}__END_REASONING__"
+                                    else:
+                                        # Extract text from dict format
+                                        text = part.get("text", "")
+                                        if text:
+                                            logger.debug(
+                                                "[stream_tokens] Yielding dict text: %s...",
+                                                text[:50] if len(text) > 50 else text,
+                                            )
+                                            streamed_content = True
+                                            yield text
                         # Log when content is empty or unexpected type
                         elif content:
                             logger.debug(
@@ -686,6 +1285,12 @@ class LangGraphAgentBuilder:
                             truncation_reason = finish_reason
 
                 elif kind == "on_chat_model_end":
+                    _log_llm_response_event(
+                        event,
+                        tool_names=[
+                            t.name for t in getattr(self, "all_tools", []) or []
+                        ],
+                    )
                     # Track LLM request completion
                     if llm_request_start_time is not None:
                         total_llm_time_ms = (
@@ -798,6 +1403,10 @@ class LangGraphAgentBuilder:
                     messages_output = output.get("messages", [])
 
                     if messages_output:
+                        # Capture the most complete messages list for history
+                        if len(messages_output) >= len(_collected_state_messages):
+                            _collected_state_messages = list(messages_output)
+
                         # Get the last AI message
                         for msg in reversed(messages_output):
                             if isinstance(msg, AIMessage):
@@ -821,6 +1430,8 @@ class LangGraphAgentBuilder:
                     tool_name = event.get("name", "unknown")
                     # Get run_id to track tool execution pairs
                     run_id = event.get("run_id", "")
+                    # Get tool input data from event
+                    tool_input_data = event.get("data", {})
                     # Notify callback if provided
                     if on_tool_event:
                         on_tool_event(
@@ -828,7 +1439,7 @@ class LangGraphAgentBuilder:
                             {
                                 "name": tool_name,
                                 "run_id": run_id,
-                                "data": event.get("data", {}),
+                                "data": tool_input_data,
                             },
                         )
                         # Yield empty string to trigger _emit_pending_events() in chat_service
@@ -864,10 +1475,23 @@ class LangGraphAgentBuilder:
                 )
                 yield final_content
 
+            # Serialize collected messages chain for history persistence
+            # Only keep new messages generated in this turn (skip input messages)
+            if _collected_state_messages:
+                new_msgs = _collected_state_messages[len(lc_messages) :]
+                self._last_messages_chain = _serialize_validated_messages_chain(
+                    new_msgs,
+                    provider=self._provider,
+                    model_id=self._model_id,
+                )
+            else:
+                self._last_messages_chain = []
+
             logger.debug(
-                "[stream_tokens] Streaming completed: total_events=%d, streamed=%s",
+                "[stream_tokens] Streaming completed: total_events=%d, streamed=%s, messages_chain_len=%d",
                 event_count,
                 streamed_content,
+                len(self._last_messages_chain),
             )
 
         except ToolCallTruncatedError as e:
@@ -934,6 +1558,14 @@ class LangGraphAgentBuilder:
             logger.info(
                 "[stream_tokens] SilentExitException caught, re-raising for caller to handle"
             )
+            # Persist partial messages chain before re-raising
+            if _collected_state_messages:
+                new_msgs = _collected_state_messages[len(lc_messages) :]
+                self._last_messages_chain = _serialize_validated_messages_chain(
+                    new_msgs,
+                    provider=self._provider,
+                    model_id=self._model_id,
+                )
             raise
 
         except GraphRecursionError as e:
@@ -944,6 +1576,15 @@ class LangGraphAgentBuilder:
                 self.max_iterations,
             )
 
+            # Persist messages chain from iterations before the limit
+            if _collected_state_messages:
+                new_msgs = _collected_state_messages[len(lc_messages) :]
+                self._last_messages_chain = _serialize_validated_messages_chain(
+                    new_msgs,
+                    provider=self._provider,
+                    model_id=self._model_id,
+                )
+
             # Build messages with the limit reached notice
             # Add a human message to prompt the model to provide final response
             limit_messages = list(lc_messages) + [
@@ -952,6 +1593,11 @@ class LangGraphAgentBuilder:
 
             # Call the LLM directly (without tools) to get final response
             try:
+                _log_direct_llm_request(
+                    messages=limit_messages,
+                    tool_names=[t.name for t in getattr(self, "all_tools", []) or []],
+                    request_name="tool_limit_recovery_stream",
+                )
                 async for chunk in self.llm.astream(limit_messages):
                     if hasattr(chunk, "content"):
                         content = chunk.content
@@ -1048,125 +1694,15 @@ class LangGraphAgentBuilder:
         Returns:
             Tuple of (final_state, all_events)
         """
-        agent = self._build_agent()
-        lc_messages = convert_to_messages(messages)
-
-        exec_config = {"configurable": config} if config else None
-
-        all_events: list[dict[str, Any]] = []
-        final_state: dict[str, Any] = {}
-
-        try:
-            async for event in agent.astream_events(
-                {"messages": lc_messages},
-                config={
-                    **(exec_config or {}),
-                    "recursion_limit": self.max_iterations * 2 + 1,
-                },
-                version="v2",
-            ):
-                # Check cancellation
-                if cancel_event and cancel_event.is_set():
-                    logger.info("Streaming cancelled by user")
-                    break
-
-                all_events.append(event)
-                kind = event.get("event", "")
-
-                # Handle tool events
-                if kind == "on_tool_start":
-                    tool_name = event.get("name", "unknown")
-                    run_id = event.get("run_id", "")
-                    if on_tool_event:
-                        on_tool_event(
-                            "tool_start",
-                            {
-                                "name": tool_name,
-                                "run_id": run_id,
-                                "data": event.get("data", {}),
-                            },
-                        )
-
-                elif kind == "on_tool_end":
-                    tool_name = event.get("name", "unknown")
-                    run_id = event.get("run_id", "")
-                    if on_tool_event:
-                        on_tool_event(
-                            "tool_end",
-                            {
-                                "name": tool_name,
-                                "run_id": run_id,
-                                "data": event.get("data", {}),
-                            },
-                        )
-
-                # Capture final state from LangGraph chain end
-                elif kind == "on_chain_end" and event.get("name") == "LangGraph":
-                    data = event.get("data", {})
-                    output = data.get("output", {})
-                    if output:
-                        final_state = output
-
-            logger.debug(
-                "[stream_events_with_state] Completed: total_events=%d",
-                len(all_events),
-            )
-
-            return final_state, all_events
-
-        except SilentExitException:
-            # Silent exit requested by tool - re-raise to be handled by caller
-            # This is not an error, just a signal to terminate silently
-            logger.info(
-                "[stream_events_with_state] SilentExitException caught, re-raising for caller to handle"
-            )
-            raise
-
-        except GraphRecursionError:
-            # Tool call limit reached - ask model to provide final response
-            logger.warning(
-                "[stream_events_with_state] GraphRecursionError: Tool call limit reached (max_iterations=%d). "
-                "Asking model to provide final response.",
-                self.max_iterations,
-            )
-
-            # Build messages with the limit reached notice
-            limit_messages = list(lc_messages) + [
-                HumanMessage(content=TOOL_LIMIT_REACHED_MESSAGE)
-            ]
-
-            # Call the LLM directly (without tools) to get final response
-            try:
-                response = await self.llm.ainvoke(limit_messages)
-                final_content = ""
-                if hasattr(response, "content"):
-                    if isinstance(response.content, str):
-                        final_content = response.content
-                    elif isinstance(response.content, list):
-                        text_parts = []
-                        for part in response.content:
-                            if isinstance(part, str):
-                                text_parts.append(part)
-                            elif isinstance(part, dict) and part.get("type") == "text":
-                                text_parts.append(part.get("text", ""))
-                        final_content = "".join(text_parts)
-
-                # Create a final state with the response
-                final_state = {
-                    "messages": list(lc_messages) + [AIMessage(content=final_content)]
-                }
-
-                logger.debug(
-                    "[stream_events_with_state] Final response generated after tool limit reached"
-                )
-                return final_state, all_events
-
-            except Exception:
-                logger.exception(
-                    "Error generating final response after tool limit reached"
-                )
-                raise
-
-        except Exception:
-            logger.exception("Error in stream_events_with_state")
-            raise
+        final_state, all_events = await self._collect_final_state_from_events(
+            messages=messages,
+            config=config,
+            cancel_event=cancel_event,
+            on_tool_event=on_tool_event,
+            collect_all_events=True,
+        )
+        logger.debug(
+            "[stream_events_with_state] Completed: total_events=%d",
+            len(all_events),
+        )
+        return final_state, all_events

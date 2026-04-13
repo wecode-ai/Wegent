@@ -3,10 +3,11 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from datetime import datetime
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
 
+from app.schemas.kind import KnowledgeBaseDefaultRef, SkillRefMeta
 from app.schemas.user import UserInDB
 
 
@@ -18,8 +19,11 @@ class BotCreate(BaseModel):
     agent_config: dict[str, Any]
     system_prompt: Optional[str] = None
     mcp_servers: Optional[dict[str, Any]] = None
+    default_knowledge_base_refs: Optional[List[KnowledgeBaseDefaultRef]] = None
     skills: Optional[List[str]] = None
+    skill_refs: Optional[Dict[str, SkillRefMeta]] = None
     preload_skills: Optional[List[str]] = None  # Skills to preload into system prompt
+    preload_skill_refs: Optional[Dict[str, SkillRefMeta]] = None
     namespace: Optional[str] = (
         "default"  # Namespace for the bot (group name or 'default')
     )
@@ -36,8 +40,11 @@ class BotUpdate(BaseModel):
     agent_config: Optional[dict[str, Any]] = None
     system_prompt: Optional[str] = None
     mcp_servers: Optional[dict[str, Any]] = None
+    default_knowledge_base_refs: Optional[List[KnowledgeBaseDefaultRef]] = None
     skills: Optional[List[str]] = None
+    skill_refs: Optional[Dict[str, SkillRefMeta]] = None
     preload_skills: Optional[List[str]] = None  # Skills to preload into system prompt
+    preload_skill_refs: Optional[Dict[str, SkillRefMeta]] = None
     namespace: Optional[str] = None  # Namespace for the bot (group name or 'default')
     is_active: Optional[bool] = None
 
@@ -56,8 +63,11 @@ class BotInDB(BaseModel):
     agent_config: dict[str, Any]
     system_prompt: Optional[str] = None
     mcp_servers: Optional[dict[str, Any]] = None
+    default_knowledge_base_refs: Optional[List[KnowledgeBaseDefaultRef]] = None
     skills: Optional[List[str]] = None
+    skill_refs: Optional[Dict[str, SkillRefMeta]] = None
     preload_skills: Optional[List[str]] = None  # Skills to preload into system prompt
+    preload_skill_refs: Optional[Dict[str, SkillRefMeta]] = None
     is_active: bool = True
     created_at: datetime
     updated_at: datetime
@@ -79,8 +89,11 @@ class BotDetail(BaseModel):
     agent_config: dict[str, Any]
     system_prompt: Optional[str] = None
     mcp_servers: Optional[dict[str, Any]] = None
+    default_knowledge_base_refs: Optional[List[KnowledgeBaseDefaultRef]] = None
     skills: Optional[List[str]] = None
+    skill_refs: Optional[Dict[str, SkillRefMeta]] = None
     preload_skills: Optional[List[str]] = None  # Skills to preload into system prompt
+    preload_skill_refs: Optional[Dict[str, SkillRefMeta]] = None
     is_active: bool = True
     created_at: datetime
     updated_at: datetime

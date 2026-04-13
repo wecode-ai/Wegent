@@ -323,12 +323,14 @@ class AgnoAgent(Agent):
             self.options, self.mode, self.session_id, self.task_data
         )
 
-    def pre_execute(self) -> TaskStatus:
+    async def pre_execute(self) -> Tuple[TaskStatus, Optional[str]]:
         """
         Pre-execution setup for Agno Agent
 
         Returns:
-            TaskStatus: Pre-execution status
+            Tuple[TaskStatus, Optional[str]]: A tuple containing:
+                - TaskStatus: Pre-execution status
+                - Optional[str]: Error message if failed, None if successful
         """
         # Download code if git_url is provided
         try:
@@ -339,17 +341,18 @@ class AgnoAgent(Agent):
                     report_immediately=False,
                     details={"git_url": git_url},
                 )
-                self.download_code()
+                await self.download_code()
         except Exception as e:
-            logger.error(f"Pre-execution failed: {str(e)}")
+            error_msg = f"Pre-execution failed: {str(e)}"
+            logger.error(error_msg)
             self.add_thinking_step_by_key(
                 title_key="thinking.pre_execution_failed",
                 report_immediately=False,
                 details={"error": str(e)},
             )
-            return TaskStatus.FAILED
+            return TaskStatus.FAILED, error_msg
 
-        return TaskStatus.SUCCESS
+        return TaskStatus.SUCCESS, None
 
     def execute(self) -> TaskStatus:
         """
@@ -482,6 +485,22 @@ class AgnoAgent(Agent):
             return await self._async_execute()
         except Exception as e:
             return self._handle_execution_error(e, "Agno Agent async execution")
+        finally:
+            # Self-cleanup: destroy session when background task completes
+            # This is necessary because execute() returns RUNNING immediately
+            # and the caller (AgentService.execute_task) skips cleanup for RUNNING tasks
+            try:
+                from executor.services.agent_service import AgentService
+
+                agent_service = AgentService()
+                await agent_service._destroy_agent_session(self.task_id)
+                logger.info(
+                    f"Task {self.task_id} session cleaned up by execute_async finally block"
+                )
+            except Exception as cleanup_error:
+                logger.warning(
+                    f"Task {self.task_id} error during self-cleanup: {cleanup_error}"
+                )
 
     async def _async_execute(self) -> TaskStatus:
         """

@@ -9,13 +9,15 @@ This module provides a unified execution path for subscription tasks,
 using the ExecutionDispatcher to handle different shell types:
 - Chat Shell -> SSE mode (synchronous execution)
 - ClaudeCode/Agno/Dify -> HTTP+Callback mode (asynchronous execution)
+- INPROCESS mode (standalone mode) -> synchronous execution
 
-All execution modes publish TaskCompletedEvent for unified handling.
+TaskCompletedEvent is published by StatusUpdatingEmitter for unified handling
+across all execution modes.
 """
 
 import logging
-from dataclasses import dataclass
-from typing import Any, Optional
+from dataclasses import dataclass, field
+from typing import Any, List, Optional
 
 from sqlalchemy.orm import Session
 
@@ -43,6 +45,7 @@ class SubscriptionExecutionData:
     user_id: int
     team_id: int
     user_subtask_id: Optional[int]
+    device_id: Optional[str]
 
     # Execution data
     prompt: str
@@ -61,6 +64,8 @@ class SubscriptionExecutionData:
 
     # Default values must come last
     is_subscription: bool = True
+    # Skills to preload for this subscription execution
+    preload_skills: List[dict] = field(default_factory=list)
 
 
 async def execute_subscription_unified(
@@ -89,22 +94,26 @@ async def execute_subscription_unified(
         user: User object
         execution_data: Subscription execution data
     """
-    from app.core.config import settings
     from app.services.chat.trigger.unified import build_execution_request
-    from app.services.execution import (
-        CommunicationMode,
-        ExecutionRouter,
-        execution_dispatcher,
+    from app.services.execution import CommunicationMode, ExecutionRouter
+    from shared.telemetry.context import get_request_id, set_request_context
+
+    current_request_id = get_request_id()
+    request_id = (
+        current_request_id
+        if current_request_id
+        else f"sub-unified-{execution_data.subscription_id}-{execution_data.execution_id}"
     )
+    set_request_context(request_id)
 
     logger.info(
         f"[execute_subscription_unified] Starting execution: "
         f"subscription_id={execution_data.subscription_id}, "
         f"execution_id={execution_data.execution_id}, "
-        f"task_id={execution_data.task_id}"
+        f"task_id={execution_data.task_id}, request_id={request_id}"
     )
 
-    # Build execution request
+    # Build execution request with preload_skills from subscription
     request = await build_execution_request(
         task=task,
         assistant_subtask=assistant_subtask,
@@ -121,15 +130,19 @@ async def execute_subscription_unified(
         is_subscription=True,
         enable_tools=True,
         enable_deep_thinking=True,
+        preload_skills=(
+            execution_data.preload_skills if execution_data.preload_skills else None
+        ),
     )
 
     # Determine communication mode
     router = ExecutionRouter()
-    target = router.route(request, device_id=None)
+    task_device_id = task.json.get("spec", {}).get("device_id")
+    target = router.route(request, device_id=task_device_id)
 
     logger.info(
         f"[execute_subscription_unified] Routing result: "
-        f"mode={target.mode.value}, url={target.url}"
+        f"mode={target.mode.value}, url={target.url}, device_id={task_device_id}"
     )
 
     if target.mode == CommunicationMode.SSE:
@@ -153,7 +166,8 @@ async def _execute_sse_sync(
 ) -> None:
     """Execute subscription via SSE mode (synchronous).
 
-    Waits for the AI response to complete and publishes TaskCompletedEvent.
+    Waits for the AI response to complete. TaskCompletedEvent is published
+    by StatusUpdatingEmitter for unified handling.
 
     Args:
         request: ExecutionRequest
@@ -162,7 +176,6 @@ async def _execute_sse_sync(
     import asyncio
     import threading
 
-    from app.core.events import TaskCompletedEvent, get_event_bus
     from app.services.execution import execution_dispatcher
     from app.services.execution.emitters import SSEResultEmitter
 
@@ -172,9 +185,6 @@ async def _execute_sse_sync(
         f"thread={threading.current_thread().name}, "
         f"is_daemon={threading.current_thread().daemon}"
     )
-
-    event_bus = get_event_bus()
-    accumulated_content = ""
 
     try:
         # Create SSEResultEmitter for collecting response
@@ -213,32 +223,7 @@ async def _execute_sse_sync(
             f"content_length={len(accumulated_content)}"
         )
 
-        # Build result from accumulated content or final_event
-        result = None
-        if accumulated_content:
-            result = {"value": accumulated_content}
-        elif final_event and final_event.result:
-            result = final_event.result
-
-        # Publish TaskCompletedEvent for unified handling
-        logger.info(
-            f"[_execute_sse_sync] About to publish TaskCompletedEvent: "
-            f"task_id={execution_data.task_id}, subtask_id={execution_data.subtask_id}, "
-            f"status=COMPLETED, execution_id={execution_data.execution_id}"
-        )
-        await event_bus.publish(
-            TaskCompletedEvent(
-                task_id=execution_data.task_id,
-                subtask_id=execution_data.subtask_id,
-                user_id=execution_data.user_id,
-                status="COMPLETED",
-                result=result,
-            )
-        )
-        logger.info(
-            f"[_execute_sse_sync] TaskCompletedEvent published successfully: "
-            f"execution_id={execution_data.execution_id}"
-        )
+        # TaskCompletedEvent is published by StatusUpdatingEmitter
 
     except Exception as e:
         logger.error(
@@ -246,17 +231,7 @@ async def _execute_sse_sync(
             f"execution_id={execution_data.execution_id}, error={e}",
             exc_info=True,
         )
-
-        # Publish TaskCompletedEvent with FAILED status
-        await event_bus.publish(
-            TaskCompletedEvent(
-                task_id=execution_data.task_id,
-                subtask_id=execution_data.subtask_id,
-                user_id=execution_data.user_id,
-                status="FAILED",
-                error=str(e),
-            )
-        )
+        # TaskCompletedEvent with FAILED status is published by StatusUpdatingEmitter
 
 
 async def _execute_http_callback(
@@ -265,8 +240,8 @@ async def _execute_http_callback(
 ) -> None:
     """Execute subscription via HTTP+Callback mode (asynchronous).
 
-    Dispatches the task and returns immediately.
-    Task completion is handled by /internal/callback API publishing TaskCompletedEvent.
+    Dispatches the task and waits for completion. TaskCompletedEvent is published
+    by StatusUpdatingEmitter for unified handling across all execution modes.
 
     Note: This function runs in a background thread (APScheduler), so we use
     SSEResultEmitter instead of the default WebSocket emitter chain to avoid
@@ -283,7 +258,8 @@ async def _execute_http_callback(
 
     logger.info(
         f"[_execute_http_callback] Starting HTTP+Callback execution: "
-        f"execution_id={execution_data.execution_id}"
+        f"execution_id={execution_data.execution_id}, "
+        f"device_id={execution_data.device_id}"
     )
 
     # Use SSEResultEmitter to avoid WebSocket/Socket.IO cross-thread issues
@@ -295,10 +271,13 @@ async def _execute_http_callback(
 
     try:
         # Dispatch task with our thread-safe emitter
-        # The executor_manager will call /internal/callback when done
-        # which will publish TaskCompletedEvent
+        # TaskCompletedEvent is published by StatusUpdatingEmitter
         dispatch_task = asyncio.create_task(
-            execution_dispatcher.dispatch(request, device_id=None, emitter=emitter)
+            execution_dispatcher.dispatch(
+                request,
+                device_id=execution_data.device_id,
+                emitter=emitter,
+            )
         )
 
         # Wait for completion and collect results
@@ -322,26 +301,15 @@ async def _execute_http_callback(
             f"task_id={execution_data.task_id}"
         )
 
+        # TaskCompletedEvent is published by StatusUpdatingEmitter
+
     except Exception as e:
         logger.error(
             f"[_execute_http_callback] Dispatch failed: "
             f"execution_id={execution_data.execution_id}, error={e}",
             exc_info=True,
         )
-
-        # Publish TaskCompletedEvent for dispatch failure
-        from app.core.events import TaskCompletedEvent, get_event_bus
-
-        event_bus = get_event_bus()
-        await event_bus.publish(
-            TaskCompletedEvent(
-                task_id=execution_data.task_id,
-                subtask_id=execution_data.subtask_id,
-                user_id=execution_data.user_id,
-                status="FAILED",
-                error=f"Failed to dispatch task: {e}",
-            )
-        )
+        # TaskCompletedEvent with FAILED status is published by StatusUpdatingEmitter
 
 
 def extract_subscription_execution_data(
@@ -380,6 +348,23 @@ def extract_subscription_execution_data(
     except Exception:
         pass  # Use team name as fallback
 
+    # Extract skills from subscription CRD's skillRefs
+    # Convert to the format expected by build_execution_request: [{"name": "skill1", "namespace": "default", "is_public": false}]
+    preload_skills: List[dict] = []
+    if ctx.subscription_crd.spec.skillRefs:
+        for skill_ref in ctx.subscription_crd.spec.skillRefs:
+            preload_skills.append(
+                {
+                    "name": skill_ref.name,
+                    "namespace": skill_ref.namespace,
+                    "is_public": skill_ref.is_public,
+                }
+            )
+        logger.info(
+            f"[extract_subscription_execution_data] Extracted {len(preload_skills)} skills "
+            f"from subscription: {[s['name'] for s in preload_skills]}"
+        )
+
     return SubscriptionExecutionData(
         subscription_id=ctx.subscription.id,
         execution_id=ctx.execution.id,
@@ -388,6 +373,7 @@ def extract_subscription_execution_data(
         user_id=ctx.user.id,
         team_id=ctx.team.id,
         user_subtask_id=user_subtask.id if user_subtask else None,
+        device_id=task.json.get("spec", {}).get("device_id"),
         prompt=ctx.execution.prompt or "",
         model_override_name=model_override_name,
         preserve_history=ctx.preserve_history,
@@ -400,4 +386,5 @@ def extract_subscription_execution_data(
         team_display_name=team_display_name,
         trigger_type=ctx.trigger_type,
         trigger_reason=ctx.execution.trigger_reason or "",
+        preload_skills=preload_skills,
     )

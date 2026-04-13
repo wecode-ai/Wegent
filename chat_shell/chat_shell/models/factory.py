@@ -22,43 +22,66 @@ from langchain_openai import ChatOpenAI
 
 from shared.telemetry.decorators import add_span_event, trace_sync
 
+from .openai_reasoning import ChatOpenAIWithReasoning
+from .providers import PROVIDER_ALIASES, detect_provider
+
 logger = logging.getLogger(__name__)
 
-# Provider detection: (prefixes, provider_name)
-_PROVIDER_PATTERNS = [
-    (("gpt-", "o1-", "o3-", "chatgpt-"), "openai"),
-    (("claude-",), "anthropic"),
-    (("gemini-",), "google"),
-]
-
-# Provider type aliases
-_PROVIDER_ALIASES = {
-    "openai": "openai",
-    "gpt": "openai",
-    "anthropic": "anthropic",
-    "claude": "anthropic",
-    "google": "google",
-    "gemini": "google",
+# Allowed think_config keys per provider, mapped directly to constructor params.
+# NOTE: Only keys that are safe as direct constructor params belong here.
+# For openai, "reasoning" (dict) is NOT whitelisted because setting it as a
+# direct ChatOpenAI param implicitly activates the Responses API format
+# ("input" instead of "messages"), breaking OpenAI-compatible providers like
+# OpenRouter.  Instead, "reasoning" falls through to extra_body, which merges
+# it into the request body while keeping the Chat Completions format.
+_PROVIDER_THINK_KEYS: dict[str, set[str]] = {
+    "anthropic": {"thinking", "effort"},
+    "openai": {"reasoning_effort"},
+    "google": {"thinking_level", "thinking_budget", "include_thoughts"},
 }
 
 
+def _extract_think_params(provider: str, think_config: dict | None) -> dict:
+    """Extract provider-specific thinking params from think_config.
+
+    For known providers, only whitelisted keys are passed through.
+    For OpenAI-compatible providers with unrecognized keys (e.g. Kimi's 'thinking'),
+    extra keys are merged into 'extra_body' for passthrough.
+    """
+    if not think_config:
+        return {}
+
+    allowed = _PROVIDER_THINK_KEYS.get(provider, set())
+    params: dict = {}
+    extra_body: dict = {}
+
+    for key, value in think_config.items():
+        if key in allowed:
+            params[key] = value
+        elif provider == "openai" and key not in allowed:
+            # Unknown keys for openai provider go into extra_body (e.g. Kimi thinking)
+            extra_body[key] = value
+
+    if extra_body:
+        params["extra_body"] = extra_body
+
+    return params
+
+
 def _detect_provider(model_type: str, model_id: str) -> str:
-    """Detect provider from model type or model ID."""
-    # Check model_type alias first
-    if provider := _PROVIDER_ALIASES.get(model_type.lower()):
-        return provider
+    """Detect provider from model type.
 
-    # Fall back to model_id prefix detection
-    model_lower = model_id.lower()
-    for prefixes, provider in _PROVIDER_PATTERNS:
-        if any(model_lower.startswith(p.lower()) for p in prefixes):
-            return provider
-
-    # Default to OpenAI for unknown models (common for OpenAI-compatible APIs)
-    logger.warning(
-        "Unknown provider for %s/%s, defaulting to OpenAI", model_type, model_id
-    )
-    return "openai"
+    Delegates to the shared :func:`detect_provider`.  Falls back to
+    ``"openai"`` when ``model_type`` is not recognized (common for
+    OpenAI-compatible APIs).
+    """
+    try:
+        return detect_provider(model_type)
+    except ValueError:
+        logger.warning(
+            "Unknown provider for %s/%s, defaulting to OpenAI", model_type, model_id
+        )
+        return "openai"
 
 
 def _mask_api_key(api_key: str) -> str:
@@ -85,7 +108,7 @@ class LangChainModelFactory:
                 "model": cfg["model_id"],
                 "api_key": cfg["api_key"],
                 "base_url": cfg.get("base_url") or None,
-                "temperature": kw.get("temperature", 1.0),
+                "temperature": kw.get("temperature"),
                 "max_tokens": cfg.get("max_tokens"),
                 "streaming": kw.get("streaming", False),
                 "model_kwargs": (
@@ -117,15 +140,23 @@ class LangChainModelFactory:
                     else ("dummy" if cfg.get("base_url") else None)
                 ),
                 "anthropic_api_url": cfg.get("base_url") or None,
-                "temperature": kw.get("temperature", 1.0),
+                "temperature": kw.get("temperature"),
                 "max_tokens": cfg.get("max_tokens"),
                 "streaming": kw.get("streaming", False),
-                # Enable prompt caching for Anthropic models (90% cost reduction on cached tokens)
-                # Merge user-provided headers with the prompt-caching beta header
+                # Caching strategy:
+                # - Automatic caching (top-level cache_control): available when
+                #   the provider supports it (is_support_claude_automatic_caching).
+                # - Explicit cache breakpoints: added to message content blocks
+                #   by the MessageConverter when automatic caching is unavailable.
                 "model_kwargs": {
                     "extra_headers": {
                         **(cfg.get("default_headers") or {}),
-                    }
+                    },
+                    **(
+                        {"cache_control": {"type": "ephemeral"}}
+                        if cfg.get("is_support_claude_automatic_caching")
+                        else {}
+                    ),
                 },
             },
         },
@@ -141,7 +172,7 @@ class LangChainModelFactory:
                     else ("dummy" if cfg.get("base_url") else None)
                 ),
                 "base_url": cfg.get("base_url") or None,
-                "temperature": kw.get("temperature", 1.0),
+                "temperature": kw.get("temperature"),
                 "max_output_tokens": cfg.get("max_tokens"),
                 "streaming": kw.get("streaming", False),
                 "additional_headers": cfg.get("default_headers") or None,
@@ -173,6 +204,7 @@ class LangChainModelFactory:
                 - default_headers: Optional custom headers
                 - api_format: Optional API format for OpenAI ("chat/completions" or "responses")
                 - max_output_tokens: Optional max output tokens from Model CRD spec
+                - think_config: Optional provider-native thinking/reasoning params
             **kwargs: Additional parameters (temperature, max_tokens, streaming)
 
         Returns:
@@ -188,8 +220,17 @@ class LangChainModelFactory:
             "api_format": model_config.get("api_format"),
             "max_tokens": model_config.get("max_output_tokens")
             or model_config.get("max_tokens"),
+            "is_support_claude_automatic_caching": model_config.get(
+                "is_support_claude_automatic_caching", False
+            ),
         }
         model_type = model_config.get("model", "openai")
+        think_config = model_config.get("think_config")
+
+        # User-configured temperature from model env takes priority over kwargs
+        config_temperature = model_config.get("temperature")
+        if config_temperature is not None:
+            kwargs["temperature"] = config_temperature
 
         # Log API format if using Responses API
         api_format_log = ""
@@ -217,11 +258,52 @@ class LangChainModelFactory:
         # Filter out None values to use defaults
         params = {k: v for k, v in params.items() if v is not None}
 
-        add_span_event(
-            "instantiating_model_class", {"class": provider_cfg["class"].__name__}
-        )
-        model = provider_cfg["class"](**params)
+        # Apply thinking/reasoning configuration from think_config
+        use_reasoning_wrapper = False
+        if think_config:
+            think_params = _extract_think_params(provider, think_config)
+            if think_params:
+                # For Anthropic: thinking mode requires temperature=1
+                if provider == "anthropic" and "thinking" in think_params:
+                    params["temperature"] = 1.0
+                    logger.info("Anthropic thinking enabled: forcing temperature=1.0")
+
+                # For OpenAI-compatible providers: use reasoning-aware subclass
+                # to capture reasoning_content from non-standard deltas
+                if provider == "openai":
+                    use_reasoning_wrapper = True
+
+                # Merge extra_body with existing extra_body if present
+                if "extra_body" in think_params and "extra_body" in params:
+                    params["extra_body"] = {
+                        **params["extra_body"],
+                        **think_params.pop("extra_body"),
+                    }
+
+                params.update(think_params)
+                logger.info(
+                    "Applied think_config for provider=%s: keys=%s",
+                    provider,
+                    list(think_params.keys()),
+                )
+
+        # Use ChatOpenAIWithReasoning for OpenAI providers with think_config
+        # to capture reasoning_content from non-standard API responses
+        model_class = provider_cfg["class"]
+        if use_reasoning_wrapper and model_class is ChatOpenAI:
+            model_class = ChatOpenAIWithReasoning
+
+        add_span_event("instantiating_model_class", {"class": model_class.__name__})
+        model = model_class(**params)
         add_span_event("model_instance_created")
+
+        # Attach provider metadata for downstream think-block normalization.
+        # These are read by LangGraphAgentBuilder to tag serialized messages
+        # with model_info, enabling cross-model think-block filtering.
+        model._wegent_provider = provider  # type: ignore[attr-defined]
+        model._wegent_model_id = cfg["model_id"]  # type: ignore[attr-defined]
+        model._wegent_api_format = cfg.get("api_format") or ""  # type: ignore[attr-defined]
+
         return model
 
     @classmethod
@@ -242,7 +324,9 @@ class LangChainModelFactory:
         return cls.create_from_config(
             {
                 "model_id": model_name,
-                "model": _detect_provider("", model_name),
+                "model": PROVIDER_ALIASES.get(
+                    model_name.split("-")[0].lower(), "openai"
+                ),
                 "api_key": api_key,
                 "base_url": base_url or "",
             },
@@ -253,17 +337,18 @@ class LangChainModelFactory:
     def get_provider(model_id: str) -> str | None:
         """Get provider name for a model ID.
 
+        Uses the model_id prefix (e.g. ``"gpt-"`` -> ``"openai"``) as a
+        convenience lookup.  For accurate detection, prefer
+        :func:`detect_provider` with ``model_type``.
+
         Args:
             model_id: Model identifier
 
         Returns:
             Provider name ("openai", "anthropic", "google") or None if unknown
         """
-        model_lower = model_id.lower()
-        for prefixes, provider in _PROVIDER_PATTERNS:
-            if any(model_lower.startswith(p.lower()) for p in prefixes):
-                return provider
-        return None
+        prefix = model_id.split("-")[0].lower()
+        return PROVIDER_ALIASES.get(prefix)
 
     @classmethod
     def is_supported(cls, model_id: str) -> bool:

@@ -8,6 +8,7 @@ import { driver, Driver, AllowedButtons, Config } from 'driver.js'
 import { useTranslation } from 'react-i18next'
 import 'driver.js/dist/driver.css'
 import { getTourSteps } from './tourSteps'
+import { useSetupWizard } from '@/features/admin/contexts/SetupWizardContext'
 
 const ONBOARDING_COMPLETED_KEY = 'user_onboarding_completed'
 const ONBOARDING_IN_PROGRESS_KEY = 'onboarding_in_progress'
@@ -32,6 +33,8 @@ export const useOnboarding = ({
   const router = useRouter()
   const driverInstance = useRef<Driver | null>(null)
   const [isReady, setIsReady] = useState(false)
+  const setupWizardContext = useSetupWizard()
+  const isSetupWizardOpen = setupWizardContext?.isSetupWizardOpen ?? false
 
   const isOnboardingCompleted = () => {
     return localStorage.getItem(ONBOARDING_COMPLETED_KEY) === 'true'
@@ -140,7 +143,8 @@ export const useOnboarding = ({
   }, [])
 
   useEffect(() => {
-    if (!isReady || isLoading || hasShareId) {
+    // Don't start onboarding tour if setup wizard is open
+    if (!isReady || isLoading || hasShareId || isSetupWizardOpen) {
       return
     }
 
@@ -160,7 +164,7 @@ export const useOnboarding = ({
       }, 500)
       return () => clearTimeout(timer)
     }
-  }, [isReady, isLoading, hasShareId, currentPage, startTour])
+  }, [isReady, isLoading, hasShareId, isSetupWizardOpen, currentPage, startTour])
 
   // Cleanup on unmount
   useEffect(() => {

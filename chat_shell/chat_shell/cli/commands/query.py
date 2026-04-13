@@ -48,9 +48,9 @@ def _infer_model_type(model: str) -> str:
 @click.option(
     "--temperature",
     "-t",
-    default=0.7,
+    default=None,
     type=float,
-    help="Sampling temperature (0.0-2.0)",
+    help="Sampling temperature (0.0-2.0, default: provider default)",
 )
 @click.option(
     "--max-tokens",
@@ -135,7 +135,7 @@ async def _query_async(
     base_url: str | None,
     api_key_override: str | None,
     system: str,
-    temperature: float,
+    temperature: float | None,
     max_tokens: int,
     stream: bool,
     output_json: bool,

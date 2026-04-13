@@ -51,6 +51,12 @@ SYSTEM_MCP_MOUNT_PATH = "/mcp/system"
 SYSTEM_MCP_TRANSPORT_PATH = "/"
 KNOWLEDGE_MCP_MOUNT_PATH = "/mcp/knowledge"
 KNOWLEDGE_MCP_TRANSPORT_PATH = "/sse"
+INTERACTIVE_FORM_MCP_MOUNT_PATH = "/mcp/interactive-form-question"
+INTERACTIVE_FORM_MCP_TRANSPORT_PATH = "/sse"
+PROMPT_OPTIMIZATION_MCP_MOUNT_PATH = "/mcp/prompt-optimization"
+PROMPT_OPTIMIZATION_MCP_TRANSPORT_PATH = "/sse"
+SUBSCRIPTION_MCP_MOUNT_PATH = "/mcp/subscription"
+SUBSCRIPTION_MCP_TRANSPORT_PATH = "/sse"
 
 
 @dataclass(frozen=True)
@@ -220,6 +226,193 @@ def ensure_knowledge_tools_registered() -> None:
     _register_knowledge_tools()
 
 
+# ============== interactive_form_question MCP Server ==============
+# Provides interactive user input collection tool
+# Available via Skill configuration
+# Uses decorator-based auto-registration from @mcp_tool decorated endpoints
+
+interactive_form_question_mcp_server = FastMCP(
+    "wegent-interactive-form-question-mcp",
+    stateless_http=True,
+    json_response=True,
+    streamable_http_path="/",
+    transport_security=_build_transport_security_settings(),
+)
+
+# Store for interactive_form_question MCP request context (used by McpAppSpec)
+_interactive_form_question_request_token_info: contextvars.ContextVar[
+    Optional[TaskTokenInfo]
+] = contextvars.ContextVar(
+    "_interactive_form_question_request_token_info", default=None
+)
+
+# Flag to track if tools have been registered
+_interactive_form_question_tools_registered = False
+
+
+def _get_interactive_form_question_token_info_from_context() -> Optional[TaskTokenInfo]:
+    """Get token info from interactive_form_question MCP request context."""
+    return _interactive_form_question_request_token_info.get()
+
+
+def _register_interactive_form_question_tools() -> None:
+    """Register interactive_form_question tools from @mcp_tool decorated endpoints.
+
+    This function imports the interactive_form_question tools module to trigger decorator
+    registration, then registers all collected tools to the interactive_form_question MCP server.
+    """
+    global _interactive_form_question_tools_registered
+    if _interactive_form_question_tools_registered:
+        return
+
+    # Import MCP tools module to trigger @mcp_tool decorator registration
+    from app.mcp_server.tool_registry import register_tools_to_server
+    from app.mcp_server.tools import (  # noqa: F401 side-effect: triggers @mcp_tool registration
+        interactive_form_question,
+    )
+
+    # Register all collected tools to the interactive_form_question server
+    count = register_tools_to_server(
+        interactive_form_question_mcp_server, "interactive_form_question"
+    )
+    logger.info(
+        f"[MCP:InteractiveForm] Registered {count} tools from decorated endpoints"
+    )
+
+    _interactive_form_question_tools_registered = True
+
+
+def ensure_interactive_form_question_tools_registered() -> None:
+    """Ensure interactive_form_question MCP tools are registered.
+
+    This should be called during application startup to register
+    all @mcp_tool decorated endpoints as MCP tools.
+    """
+    _register_interactive_form_question_tools()
+
+
+# ============== Prompt Optimization MCP Server ==============
+# Provides prompt optimization tools
+# Available via Skill configuration
+# Uses decorator-based auto-registration from @mcp_tool decorated endpoints
+
+prompt_optimization_mcp_server = FastMCP(
+    "wegent-prompt-optimization-mcp",
+    stateless_http=True,
+    json_response=True,
+    streamable_http_path="/",
+    transport_security=_build_transport_security_settings(),
+)
+
+# Store for prompt_optimization MCP request context (used by McpAppSpec)
+_prompt_optimization_request_token_info: contextvars.ContextVar[
+    Optional[TaskTokenInfo]
+] = contextvars.ContextVar("_prompt_optimization_request_token_info", default=None)
+
+# Flag to track if tools have been registered
+_prompt_optimization_tools_registered = False
+
+
+def _get_prompt_optimization_token_info_from_context() -> Optional[TaskTokenInfo]:
+    """Get token info from prompt_optimization MCP request context."""
+    return _prompt_optimization_request_token_info.get()
+
+
+def _register_prompt_optimization_tools() -> None:
+    """Register prompt_optimization tools from @mcp_tool decorated endpoints.
+
+    This function imports the prompt_optimization tools module to trigger decorator
+    registration, then registers all collected tools to the prompt_optimization MCP server.
+    """
+    global _prompt_optimization_tools_registered
+    if _prompt_optimization_tools_registered:
+        return
+
+    # Import MCP tools module to trigger @mcp_tool decorator registration
+    from app.mcp_server.tool_registry import register_tools_to_server
+    from app.mcp_server.tools import (  # noqa: F401 side-effect: triggers @mcp_tool registration
+        prompt_optimization,
+    )
+
+    # Register all collected tools to the prompt_optimization server
+    count = register_tools_to_server(
+        prompt_optimization_mcp_server, "prompt_optimization"
+    )
+    logger.info(
+        f"[MCP:PromptOptimization] Registered {count} tools from decorated endpoints"
+    )
+
+    _prompt_optimization_tools_registered = True
+
+
+def ensure_prompt_optimization_tools_registered() -> None:
+    """Ensure prompt_optimization MCP tools are registered.
+
+    This should be called during application startup to register
+    all @mcp_tool decorated endpoints as MCP tools.
+    """
+    _register_prompt_optimization_tools()
+
+
+# ============== Subscription MCP Server ==============
+# Provides subscription management tools (preview_subscription, create_subscription)
+# Available via Skill configuration
+# Uses decorator-based auto-registration from @mcp_tool decorated endpoints
+
+subscription_mcp_server = FastMCP(
+    "wegent-subscription-mcp",
+    stateless_http=True,
+    json_response=True,
+    streamable_http_path="/",
+    transport_security=_build_transport_security_settings(),
+)
+
+# Store for subscription MCP request context (used by McpAppSpec)
+_subscription_request_token_info: contextvars.ContextVar[Optional[TaskTokenInfo]] = (
+    contextvars.ContextVar("_subscription_request_token_info", default=None)
+)
+
+# Flag to track if tools have been registered
+_subscription_tools_registered = False
+
+
+def _get_subscription_token_info_from_context() -> Optional[TaskTokenInfo]:
+    """Get token info from subscription MCP request context."""
+    return _subscription_request_token_info.get()
+
+
+def _register_subscription_tools() -> None:
+    """Register subscription tools from @mcp_tool decorated endpoints.
+
+    This function imports the subscription tools module to trigger decorator
+    registration, then registers all collected tools to the subscription MCP server.
+    """
+    global _subscription_tools_registered
+    if _subscription_tools_registered:
+        return
+
+    # Import MCP tools module to trigger @mcp_tool decorator registration
+    from app.mcp_server.tool_registry import register_tools_to_server
+    from app.mcp_server.tools import (  # noqa: F401 side-effect: triggers @mcp_tool registration
+        subscription,
+    )
+
+    # Register all collected tools to the subscription server
+    count = register_tools_to_server(subscription_mcp_server, "subscription")
+    logger.info(f"[MCP:Subscription] Registered {count} tools from decorated endpoints")
+
+    _subscription_tools_registered = True
+
+
+def ensure_subscription_tools_registered() -> None:
+    """Ensure subscription MCP tools are registered.
+
+    This should be called during application startup to register
+    all @mcp_tool decorated endpoints as MCP tools.
+    """
+    _register_subscription_tools()
+
+
 # ============== Starlette App Factory ==============
 
 _SYSTEM_MCP_SPEC = McpAppSpec(
@@ -244,7 +437,46 @@ _KNOWLEDGE_MCP_SPEC = McpAppSpec(
     include_root_metadata=True,
 )
 
-MCP_APP_SPECS = (_SYSTEM_MCP_SPEC, _KNOWLEDGE_MCP_SPEC)
+_INTERACTIVE_FORM_MCP_SPEC = McpAppSpec(
+    name="interactive_form_question",
+    service_name="wegent-interactive-form-question-mcp",
+    mount_path=INTERACTIVE_FORM_MCP_MOUNT_PATH,
+    transport_path=INTERACTIVE_FORM_MCP_TRANSPORT_PATH,
+    server=interactive_form_question_mcp_server,
+    token_context=_interactive_form_question_request_token_info,
+    log_prefix="InteractiveForm",
+    include_root_metadata=True,
+)
+
+_PROMPT_OPTIMIZATION_MCP_SPEC = McpAppSpec(
+    name="prompt_optimization",
+    service_name="wegent-prompt-optimization-mcp",
+    mount_path=PROMPT_OPTIMIZATION_MCP_MOUNT_PATH,
+    transport_path=PROMPT_OPTIMIZATION_MCP_TRANSPORT_PATH,
+    server=prompt_optimization_mcp_server,
+    token_context=_prompt_optimization_request_token_info,
+    log_prefix="PromptOptimization",
+    include_root_metadata=True,
+)
+
+_SUBSCRIPTION_MCP_SPEC = McpAppSpec(
+    name="subscription",
+    service_name="wegent-subscription-mcp",
+    mount_path=SUBSCRIPTION_MCP_MOUNT_PATH,
+    transport_path=SUBSCRIPTION_MCP_TRANSPORT_PATH,
+    server=subscription_mcp_server,
+    token_context=_subscription_request_token_info,
+    log_prefix="Subscription",
+    include_root_metadata=True,
+)
+
+MCP_APP_SPECS = (
+    _SYSTEM_MCP_SPEC,
+    _KNOWLEDGE_MCP_SPEC,
+    _INTERACTIVE_FORM_MCP_SPEC,
+    _PROMPT_OPTIMIZATION_MCP_SPEC,
+    _SUBSCRIPTION_MCP_SPEC,
+)
 
 
 def _build_root_metadata(spec: McpAppSpec) -> Dict[str, Any]:
@@ -260,9 +492,15 @@ def _build_root_metadata(spec: McpAppSpec) -> Dict[str, Any]:
 
 def _build_mcp_app(spec: McpAppSpec) -> Starlette:
     """Create a Starlette app for a streamable-http MCP server."""
-    # Ensure knowledge tools are registered before creating the app
+    # Ensure tools are registered before creating the app
     if spec.name == "knowledge":
         ensure_knowledge_tools_registered()
+    elif spec.name == "interactive_form_question":
+        ensure_interactive_form_question_tools_registered()
+    elif spec.name == "prompt_optimization":
+        ensure_prompt_optimization_tools_registered()
+    elif spec.name == "subscription":
+        ensure_subscription_tools_registered()
 
     async def health_check(request: Request) -> JSONResponse:
         return JSONResponse({"status": "healthy", "service": spec.service_name})
@@ -292,12 +530,17 @@ def _build_mcp_app(spec: McpAppSpec) -> Starlette:
                     token_info.subtask_id,
                     token_info.user_name,
                 )
-                # Set MCPRequestContext for decorator-based tools (knowledge server)
-                if spec.name == "knowledge":
+                # Set MCPRequestContext for decorator-based tools
+                if spec.name in (
+                    "knowledge",
+                    "interactive_form_question",
+                    "prompt_optimization",
+                    "subscription",
+                ):
                     mcp_ctx = MCPRequestContext(
                         token_info=token_info,
                         tool_name="",  # Will be set by tool invocation
-                        server_name="knowledge",
+                        server_name=spec.name,
                     )
                     mcp_ctx_token = set_mcp_context(mcp_ctx)
             else:
@@ -415,9 +658,12 @@ def get_mcp_system_config(backend_url: str, auth_token: str) -> Dict[str, Any]:
     Returns:
         MCP server configuration dictionary
     """
+    # Use API_PREFIX to ensure correct path (e.g., /api/mcp/system)
+    api_prefix = settings.API_PREFIX or ""
+    mcp_path = f"{api_prefix}{SYSTEM_MCP_MOUNT_PATH}"
     return _build_streamable_http_config(
         name="wegent-system",
-        url=f"{backend_url}{SYSTEM_MCP_MOUNT_PATH}",
+        url=f"{backend_url}{mcp_path}",
         auth_token=auth_token,
         timeout=60,
     )
@@ -438,6 +684,46 @@ def get_mcp_knowledge_config(backend_url: str, auth_token: str) -> Dict[str, Any
         url=f"{backend_url}{KNOWLEDGE_MCP_MOUNT_PATH}{KNOWLEDGE_MCP_TRANSPORT_PATH}",
         auth_token=auth_token,
         timeout=300,  # 5 minutes for document operations
+    )
+
+
+def get_mcp_interactive_form_question_config(
+    backend_url: str, auth_token: str
+) -> Dict[str, Any]:
+    """Get interactive_form_question MCP server configuration for Skill injection.
+
+    Args:
+        backend_url: Backend URL (e.g., "http://localhost:8000")
+        auth_token: Authentication token for MCP server (uses placeholder for Skill)
+
+    Returns:
+        MCP server configuration dictionary
+    """
+    return _build_streamable_http_config(
+        name="wegent-interactive-form-question",
+        url=f"{backend_url}{INTERACTIVE_FORM_MCP_MOUNT_PATH}{INTERACTIVE_FORM_MCP_TRANSPORT_PATH}",
+        auth_token=auth_token,
+        timeout=300,  # 5 minutes for user response
+    )
+
+
+def get_mcp_prompt_optimization_config(
+    backend_url: str, auth_token: str
+) -> Dict[str, Any]:
+    """Get prompt_optimization MCP server configuration for Skill injection.
+
+    Args:
+        backend_url: Backend URL (e.g., "http://localhost:8000")
+        auth_token: Authentication token for MCP server (uses placeholder for Skill)
+
+    Returns:
+        MCP server configuration dictionary
+    """
+    return _build_streamable_http_config(
+        name="wegent-prompt-optimization",
+        url=f"{backend_url}{PROMPT_OPTIMIZATION_MCP_MOUNT_PATH}{PROMPT_OPTIMIZATION_MCP_TRANSPORT_PATH}",
+        auth_token=auth_token,
+        timeout=300,  # 5 minutes for prompt optimization
     )
 
 
@@ -471,3 +757,21 @@ def _build_streamable_http_config(
             "timeout": timeout,
         }
     }
+
+
+def get_mcp_subscription_config(backend_url: str, auth_token: str) -> Dict[str, Any]:
+    """Get subscription MCP server configuration for Skill injection.
+
+    Args:
+        backend_url: Backend URL (e.g., "http://localhost:8000")
+        auth_token: Authentication token for MCP server (uses placeholder for Skill)
+
+    Returns:
+        MCP server configuration dictionary
+    """
+    return _build_streamable_http_config(
+        name="wegent-subscription",
+        url=f"{backend_url}{SUBSCRIPTION_MCP_MOUNT_PATH}{SUBSCRIPTION_MCP_TRANSPORT_PATH}",
+        auth_token=auth_token,
+        timeout=60,
+    )

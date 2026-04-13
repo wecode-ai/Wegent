@@ -7,6 +7,57 @@ URL utility functions for handling domain and protocol
 """
 
 
+def normalize_domain(domain: str) -> str:
+    """
+    Normalize domain by removing protocol and trailing slashes.
+
+    Args:
+        domain: Domain name, may include protocol (e.g., "example.com" or "http://example.com")
+
+    Returns:
+        Normalized domain without protocol and trailing slashes
+    """
+    if not domain:
+        return ""
+
+    domain = domain.strip()
+
+    # Remove protocol if present
+    if domain.startswith("http://"):
+        domain = domain[7:]
+    elif domain.startswith("https://"):
+        domain = domain[8:]
+
+    # Remove trailing slashes
+    domain = domain.rstrip("/")
+
+    return domain
+
+
+def domains_match(domain1: str, domain2: str) -> bool:
+    """
+    Check if two domains match, handling different formats (with/without protocol).
+
+    Args:
+        domain1: First domain name (e.g., "github.com" or "http://github.com")
+        domain2: Second domain name (e.g., "github.com" or "https://github.com/")
+
+    Returns:
+        True if domains match after normalization
+
+    Examples:
+        >>> domains_match("github.com", "github.com")
+        True
+        >>> domains_match("http://github.com", "https://github.com")
+        True
+        >>> domains_match("https://gitlab.weibo.cn/", "gitlab.weibo.cn")
+        True
+        >>> domains_match("github.com", "gitlab.com")
+        False
+    """
+    return normalize_domain(domain1) == normalize_domain(domain2)
+
+
 def build_url(domain: str, path: str = "") -> str:
     """
     Build URL from domain and path, respecting protocol if present in domain

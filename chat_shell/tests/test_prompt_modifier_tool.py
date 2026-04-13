@@ -326,3 +326,49 @@ class TestPromptModifierFunction:
         # Assert
         assert "Instructions 1" in result[0].content
         assert "Instructions 2" in result[0].content
+
+    def test_prompt_modifier_preserves_list_content_with_cache_control(self):
+        """Test that prompt_modifier preserves list content blocks (e.g., Anthropic cache breakpoints).
+
+        Cache breakpoints are applied after compression, converting system message
+        content to a list of content blocks with cache_control markers. The
+        prompt_modifier must NOT stringify the list via str(), which would corrupt
+        the system parameter sent to the Anthropic API.
+        """
+        # Arrange
+        mock_llm = MagicMock()
+        registry = ToolRegistry()
+        load_skill = LoadSkillTool(user_id=1, skill_names=["test"], skill_metadata={})
+        load_skill.preload_skill_prompt("test", {"prompt": "Skill instructions"})
+        registry.register(load_skill)
+
+        builder = LangGraphAgentBuilder(llm=mock_llm, tool_registry=registry)
+        prompt_modifier = builder._create_prompt_modifier()
+
+        # Simulate system message content after _set_cache_control converts to list format
+        system_content = [
+            {
+                "type": "text",
+                "text": "Original system prompt",
+                "cache_control": {"type": "ephemeral"},
+            }
+        ]
+        messages = [
+            SystemMessage(content=system_content),
+            HumanMessage(content="Hello"),
+        ]
+        state = {"messages": messages}
+
+        # Act
+        result = prompt_modifier(state)
+
+        # Assert - content must remain a list, NOT a stringified representation
+        assert isinstance(result[0].content, list)
+        # Original block with cache_control is preserved
+        assert result[0].content[0]["type"] == "text"
+        assert result[0].content[0]["text"] == "Original system prompt"
+        assert "cache_control" in result[0].content[0]
+        # Modification is appended as a new content block
+        assert len(result[0].content) == 2
+        assert result[0].content[1]["type"] == "text"
+        assert "Skill instructions" in result[0].content[1]["text"]

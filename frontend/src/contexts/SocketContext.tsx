@@ -92,6 +92,8 @@ interface SocketContextType {
       subtask_id: number
       offset: number
       cached_content: string
+      started_at?: string
+      last_activity_at?: string
     }
     /** Subtasks data for immediate message sync (same format as task detail API) */
     subtasks?: Array<Record<string, unknown>>
@@ -403,6 +405,8 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         subtask_id: number
         offset: number
         cached_content: string
+        started_at?: string
+        last_activity_at?: string
       }
       subtasks?: Array<Record<string, unknown>>
       error?: string
@@ -452,10 +456,27 @@ export function SocketProvider({ children }: { children: ReactNode }) {
               subtask_id: number
               offset: number
               cached_content: string
+              started_at?: string
+              last_activity_at?: string
             }
             subtasks?: Array<Record<string, unknown>>
             error?: string
           }) => {
+            if (response.streaming) {
+              console.info('[StreamingJoinDebug] task:join ack', {
+                taskId,
+                subtaskId: response.streaming.subtask_id,
+                startedAt: response.streaming.started_at,
+                lastActivityAt: response.streaming.last_activity_at,
+                cachedContentLength: response.streaming.cached_content?.length || 0,
+              })
+            } else {
+              console.info('[StreamingJoinDebug] task:join ack (no streaming)', {
+                taskId,
+                hasError: Boolean(response.error),
+              })
+            }
+
             // If there was an error, remove from the set so it can be retried
             if (response.error) {
               joinedTasksRef.current.delete(taskId)

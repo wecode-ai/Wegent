@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+# Import endpoints - RAG module is conditionally imported based on STANDALONE_MODE
 from app.api.endpoints import (
     admin,
     api_keys,
@@ -16,10 +17,12 @@ from app.api.endpoints import (
     openapi_responses,
     pet,
     projects,
+    prompt_optimization,
     quota,
-    rag,
     repository,
     share,
+    skill_identity,
+    skill_market,
     subtasks,
     tables,
     users,
@@ -27,13 +30,21 @@ from app.api.endpoints import (
     web_scraper,
     wiki,
     wizard,
+    work_queue,
 )
+from app.core.config import settings
+
+# RAG module is heavy (llama_index, scipy, pandas, grpc) - skip in standalone mode
+if not settings.STANDALONE_MODE:
+    from app.api.endpoints import rag
+
 from app.api.endpoints.adapter import (
     agents,
     attachments,
     bots,
     chat,
     dify,
+    model_runtime,
     models,
     retrievers,
     shells,
@@ -49,12 +60,18 @@ from app.api.endpoints.internal import bots_router as internal_bots_router
 from app.api.endpoints.internal import (
     callback_router,
     chat_storage_router,
-    rag_router,
+    rag_content_router,
     services_router,
     skills_router,
     subscriptions_router,
     tables_router,
+    workspace_archives_router,
 )
+
+# RAG internal router is conditionally imported based on STANDALONE_MODE
+if not settings.STANDALONE_MODE:
+    from app.api.endpoints.internal import rag_router
+
 from app.api.endpoints.kind import k_router
 from app.api.router import api_router
 
@@ -106,6 +123,9 @@ api_router.include_router(
 api_router.include_router(repository.router, prefix="/git", tags=["repository"])
 api_router.include_router(quota.router, prefix="/quota", tags=["quota"])
 api_router.include_router(dify.router, prefix="/dify", tags=["dify"])
+api_router.include_router(
+    model_runtime.router, prefix="/model-runtime", tags=["model-runtime"]
+)
 api_router.include_router(retrievers.router, prefix="/retrievers", tags=["retrievers"])
 api_router.include_router(wiki.router, prefix="/wiki", tags=["wiki"])
 api_router.include_router(
@@ -132,16 +152,49 @@ api_router.include_router(
     prefix="/knowledge-bases",
     tags=["knowledge-summary"],
 )
+api_router.include_router(
+    knowledge.knowledge_router,
+    prefix="/knowledge",
+    tags=["knowledge"],
+)
 # Unified share endpoints (Team, Task, KnowledgeBase)
 api_router.include_router(share.router, prefix="/share", tags=["share"])
 api_router.include_router(tables.router, prefix="/tables", tags=["tables"])
-api_router.include_router(rag.router, prefix="/rag", tags=["rag"])
+
+# Work queue endpoints (message forwarding and inbox)
+api_router.include_router(
+    work_queue.router, prefix="/work-queues", tags=["work-queues"]
+)
+api_router.include_router(
+    work_queue.messages_router, prefix="/queue-messages", tags=["queue-messages"]
+)
+api_router.include_router(
+    work_queue.forward_router, prefix="/messages/forward", tags=["message-forwarding"]
+)
+api_router.include_router(
+    work_queue.users_router, prefix="/users", tags=["user-queues"]
+)
+
+# RAG router is conditionally registered based on STANDALONE_MODE
+if not settings.STANDALONE_MODE:
+    api_router.include_router(rag.router, prefix="/rag", tags=["rag"])
 api_router.include_router(
     mcp_providers.router, prefix="/mcp-providers", tags=["mcp-providers"]
 )
+
 api_router.include_router(utils.router, prefix="/utils", tags=["utils"])
 api_router.include_router(
     web_scraper.router, prefix="/web-scraper", tags=["web-scraper"]
+)
+# Skill market endpoints (external skill market integration)
+api_router.include_router(
+    skill_market.router, prefix="/skill-market", tags=["skill-market"]
+)
+api_router.include_router(skill_identity.router, tags=["skill-identity"])
+api_router.include_router(
+    prompt_optimization.router,
+    prefix="/prompt-optimization",
+    tags=["prompt-optimization"],
 )
 api_router.include_router(k_router)
 
@@ -149,7 +202,14 @@ api_router.include_router(k_router)
 api_router.include_router(
     chat_storage_router, prefix="/internal", tags=["internal-chat"]
 )
-api_router.include_router(rag_router, prefix="/internal", tags=["internal-rag"])
+api_router.include_router(
+    rag_content_router, prefix="/internal", tags=["internal-rag-content"]
+)
+
+# RAG internal router is conditionally registered based on STANDALONE_MODE
+if not settings.STANDALONE_MODE:
+    api_router.include_router(rag_router, prefix="/internal", tags=["internal-rag"])
+
 api_router.include_router(skills_router, prefix="/internal", tags=["internal-skills"])
 api_router.include_router(tables_router, prefix="/internal", tags=["internal-tables"])
 api_router.include_router(
@@ -157,6 +217,11 @@ api_router.include_router(
 )
 api_router.include_router(
     services_router, prefix="/internal", tags=["internal-services"]
+)
+api_router.include_router(
+    workspace_archives_router,
+    prefix="/internal",
+    tags=["internal-workspace-archives"],
 )
 api_router.include_router(
     subscriptions_router, prefix="/internal", tags=["internal-subscriptions"]

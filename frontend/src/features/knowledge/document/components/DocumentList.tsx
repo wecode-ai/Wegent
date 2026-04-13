@@ -13,7 +13,7 @@ import {
   ChevronUp,
   ChevronDown,
   BookOpen,
-  FolderOpen,
+  Database,
   Trash2,
   Target,
   FileUp,
@@ -22,7 +22,6 @@ import {
   CheckSquare,
   Square,
   AlertTriangle,
-  ArrowRightLeft,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
@@ -34,28 +33,38 @@ import { DocumentUpload, type TableDocument } from './DocumentUpload'
 import { DeleteDocumentDialog } from './DeleteDocumentDialog'
 import { EditDocumentDialog } from './EditDocumentDialog'
 import { RetrievalTestDialog } from './RetrievalTestDialog'
-import { ConvertKnowledgeBaseTypeDialog } from './ConvertKnowledgeBaseTypeDialog'
 import { useDocuments } from '../hooks/useDocuments'
+import { useColumnResize } from '../hooks/useColumnResize'
 import { refreshKnowledgeBaseSummary } from '@/apis/knowledge'
 import { toast } from '@/hooks/use-toast'
 import type { KnowledgeBase, KnowledgeDocument, SplitterConfig } from '@/types/knowledge'
 import { useTranslation } from '@/hooks/useTranslation'
+import { useUser } from '@/features/common/UserContext'
 
-// Maximum documents allowed for notebook type
-const NOTEBOOK_MAX_DOCUMENTS = 50
+/** Group info for breadcrumb display */
+export interface KbGroupInfo {
+  groupId: string
+  groupName: string
+  groupType: 'personal' | 'personal-shared' | 'group' | 'organization'
+}
 
 interface DocumentListProps {
   knowledgeBase: KnowledgeBase
   onBack?: () => void
-  canManage?: boolean
+  canUpload?: boolean
+  canManageAllDocuments?: boolean
   /** Compact mode for sidebar display - uses card layout instead of table */
   compact?: boolean
   /** Callback when document selection changes (for notebook mode context injection) */
   onSelectionChange?: (documentIds: number[]) => void
   /** Callback to refresh knowledge base details (used after summary retry) */
   onRefreshKnowledgeBase?: () => void
-  /** Callback when knowledge base type is converted */
-  onTypeConverted?: (updatedKb: KnowledgeBase) => void
+  /** Optional header actions to display next to the title (e.g., tabs) */
+  headerActions?: React.ReactNode
+  /** Group info for breadcrumb display */
+  groupInfo?: KbGroupInfo
+  /** Callback when group name is clicked */
+  onGroupClick?: (groupId: string, groupType?: string) => void
 }
 
 type SortField = 'name' | 'size' | 'date'
@@ -64,13 +73,17 @@ type SortOrder = 'asc' | 'desc'
 export function DocumentList({
   knowledgeBase,
   onBack,
-  canManage = true,
+  canUpload = true,
+  canManageAllDocuments = false,
   compact = false,
   onSelectionChange,
   onRefreshKnowledgeBase,
-  onTypeConverted,
+  headerActions,
+  groupInfo,
+  onGroupClick,
 }: DocumentListProps) {
   const { t } = useTranslation('knowledge')
+  const { user } = useUser()
   const { documents, loading, error, create, remove, refresh, batchDelete } = useDocuments({
     knowledgeBaseId: knowledgeBase.id,
   })
@@ -81,7 +94,6 @@ export function DocumentList({
 
   const [showUpload, setShowUpload] = useState(false)
   const [showRetrievalTest, setShowRetrievalTest] = useState(false)
-  const [showConvertDialog, setShowConvertDialog] = useState(false)
   const [viewingDoc, setViewingDoc] = useState<KnowledgeDocument | null>(null)
   const [editingDoc, setEditingDoc] = useState<KnowledgeDocument | null>(null)
   const [deletingDoc, setDeletingDoc] = useState<KnowledgeDocument | null>(null)
@@ -99,6 +111,14 @@ export function DocumentList({
   const [reindexingDocId, setReindexingDocId] = useState<number | null>(null)
   // Track if summary is being retried
   const [isSummaryRetrying, setIsSummaryRetrying] = useState(false)
+
+  // Resizable name column width (normal table mode only)
+  const {
+    widthOverride: nameColumnWidth,
+    isResizing: isColumnResizing,
+    handleMouseDown: handleNameResizeMouseDown,
+    columnRef: nameColumnRef,
+  } = useColumnResize()
 
   // Track component mounted state to prevent updates after unmount
   const isMountedRef = useRef(true)
@@ -187,6 +207,14 @@ export function DocumentList({
 
     return result
   }, [documents, searchQuery, sortField, sortOrder])
+
+  const canManageAnyDocuments = canUpload || canManageAllDocuments
+
+  const canManageDocument = (document: KnowledgeDocument) =>
+    canManageAllDocuments || (canUpload && user?.id === document.user_id)
+
+  const canSelectDocument = (document: KnowledgeDocument) =>
+    Boolean(onSelectionChange) || (canManageAllDocuments && canManageDocument(document))
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -379,10 +407,30 @@ export function DocumentList({
           refresh()
         }
       }, 2000)
-    } catch {
+    } catch (err) {
+      // Use ApiError.errorCode for structured error handling
+      let errorMessage = t('document.document.reindexFailed')
+      if (err instanceof Error) {
+        // Check if it's an ApiError with errorCode for structured error handling
+        const apiError = err as { errorCode?: string; message: string }
+        if (apiError.errorCode === 'EXCEL_FILE_SIZE_EXCEEDED') {
+          // Format: EXCEL_FILE_SIZE_EXCEEDED|extension|limit|size
+          const parts = apiError.message.split('|')
+          if (parts.length === 4) {
+            errorMessage = t('document.document.excelFileSizeExceeded', {
+              extension: parts[1],
+              limit: parts[2],
+              size: parts[3],
+            })
+          }
+        } else {
+          // Use the original error message for other errors
+          errorMessage = apiError.message
+        }
+      }
       toast({
         variant: 'destructive',
-        description: t('document.document.reindexFailed'),
+        description: errorMessage,
       })
     } finally {
       if (isMountedRef.current) {
@@ -394,10 +442,7 @@ export function DocumentList({
   const longSummary = knowledgeBase.summary?.long_summary
 
   // Knowledge base type info
-  const kbType = knowledgeBase.kb_type || 'notebook'
-  const isNotebook = kbType === 'notebook'
-  // Check if can convert to notebook (document count must be <= 50)
-  const canConvertToNotebook = documents.length <= NOTEBOOK_MAX_DOCUMENTS
+  const isNotebook = (knowledgeBase.kb_type || 'notebook') === 'notebook'
   // Check if RAG is configured (has retriever and embedding model)
   const ragConfigured = !!(
     knowledgeBase.retrieval_config?.retriever_name &&
@@ -420,10 +465,23 @@ export function DocumentList({
         {isNotebook ? (
           <BookOpen className="w-5 h-5 text-primary flex-shrink-0" />
         ) : (
-          <FolderOpen className="w-5 h-5 text-text-secondary flex-shrink-0" />
+          <Database className="w-5 h-5 text-text-secondary flex-shrink-0" />
         )}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5">
+            {/* Group name prefix with click handler */}
+            {groupInfo && (
+              <>
+                <button
+                  onClick={() => onGroupClick?.(groupInfo.groupId, groupInfo.groupType)}
+                  className="text-base font-medium text-text-secondary hover:text-primary transition-colors truncate max-w-[120px]"
+                  title={groupInfo.groupName}
+                >
+                  {groupInfo.groupName}
+                </button>
+                <span className="text-text-muted">/</span>
+              </>
+            )}
             <h2 className="text-base font-medium text-text-primary truncate">
               {knowledgeBase.name}
             </h2>
@@ -476,33 +534,8 @@ export function DocumentList({
             <p className="text-xs text-text-muted truncate">{knowledgeBase.description}</p>
           )}
         </div>
-        {/* Convert type button - only shown when canManage is true */}
-        {canManage && (
-          <TooltipProvider>
-            <Tooltip delayDuration={200}>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setShowConvertDialog(true)}
-                  disabled={!isNotebook && !canConvertToNotebook}
-                  className="flex items-center gap-1.5"
-                >
-                  <ArrowRightLeft className="w-4 h-4" />
-                  {isNotebook
-                    ? t('document.knowledgeBase.convertToClassic')
-                    : t('document.knowledgeBase.convertToNotebook')}
-                </Button>
-              </TooltipTrigger>
-              {/* Only show tooltip when button is disabled */}
-              {!isNotebook && !canConvertToNotebook && (
-                <TooltipContent side="bottom" className="max-w-xs">
-                  <p className="text-sm">{t('document.knowledgeBase.convertToNotebookDisabled')}</p>
-                </TooltipContent>
-              )}
-            </Tooltip>
-          </TooltipProvider>
-        )}
+        {/* Header actions (e.g., tabs) */}
+        {headerActions}
       </div>
 
       {/* Search bar and action buttons */}
@@ -590,7 +623,7 @@ export function DocumentList({
         </TooltipProvider>
 
         {/* Upload button */}
-        {canManage && (
+        {canUpload && (
           <Button variant="primary" size="sm" onClick={() => setShowUpload(true)}>
             <Upload className="w-4 h-4 mr-1" />
             {t('document.document.upload')}
@@ -613,7 +646,7 @@ export function DocumentList({
       ) : filteredAndSortedDocuments.length > 0 ? (
         <>
           {/* Batch action bar - shown when items are selected (not in notebook mode where selection is for context injection) */}
-          {canManage && selectedIds.size > 0 && !onSelectionChange && (
+          {canManageAllDocuments && selectedIds.size > 0 && !onSelectionChange && (
             <div
               className={`flex items-center gap-3 ${compact ? 'px-2 py-2' : 'px-4 py-2.5'} bg-primary/5 border border-primary/20 rounded-lg`}
             >
@@ -666,7 +699,8 @@ export function DocumentList({
                   onReindex={handleReindexDocument}
                   isRefreshing={refreshingDocId === doc.id}
                   isReindexing={reindexingDocId === doc.id}
-                  canManage={canManage}
+                  canManage={canManageDocument(doc)}
+                  canSelect={canSelectDocument(doc)}
                   showBorder={false}
                   selected={selectedIds.has(doc.id)}
                   onSelect={handleSelectDoc}
@@ -681,7 +715,7 @@ export function DocumentList({
               {/* Table header */}
               <div className="flex items-center gap-4 px-4 py-2.5 bg-surface text-xs text-text-muted font-medium min-w-[800px]">
                 {/* Checkbox for select all */}
-                {canManage && (
+                {canManageAllDocuments && (
                   <div className="flex-shrink-0">
                     <Checkbox
                       checked={isAllSelected}
@@ -694,11 +728,21 @@ export function DocumentList({
                 {/* Icon placeholder */}
                 <div className="w-8 flex-shrink-0" />
                 <div
-                  className="flex-1 min-w-[120px] cursor-pointer hover:text-text-primary select-none"
+                  ref={nameColumnRef}
+                  className={`relative cursor-pointer hover:text-text-primary select-none ${nameColumnWidth ? 'flex-shrink-0' : 'flex-1 min-w-[120px]'}`}
+                  style={nameColumnWidth ? { width: `${nameColumnWidth}px` } : undefined}
                   onClick={() => handleSort('name')}
                 >
                   {t('document.document.columns.name')}
                   <SortIcon field="name" />
+                  {/* Column resize handle - 12px wide hit area on right edge, visible line on hover */}
+                  <div
+                    className="absolute top-0 right-0 bottom-0 w-3 cursor-col-resize z-10 group/resize flex items-center justify-center"
+                    onMouseDown={handleNameResizeMouseDown}
+                    onClick={e => e.stopPropagation()}
+                  >
+                    <div className="w-0.5 h-3/4 rounded-full bg-border group-hover/resize:bg-primary/50 transition-colors" />
+                  </div>
                 </div>
                 {/* Spacer to match DocumentItem middle area */}
                 <div className="w-48 flex-shrink-0" />
@@ -722,8 +766,8 @@ export function DocumentList({
                 <div className="w-24 flex-shrink-0 text-center">
                   {t('document.document.columns.indexStatus')}
                 </div>
-                {canManage && (
-                  <div className="w-16 flex-shrink-0 text-center">
+                {canManageAnyDocuments && (
+                  <div className="w-20 flex-shrink-0 text-center">
                     {t('document.document.columns.actions')}
                   </div>
                 )}
@@ -740,14 +784,20 @@ export function DocumentList({
                   onReindex={handleReindexDocument}
                   isRefreshing={refreshingDocId === doc.id}
                   isReindexing={reindexingDocId === doc.id}
-                  canManage={canManage}
+                  canManage={canManageDocument(doc)}
+                  canSelect={canSelectDocument(doc) && canManageAllDocuments}
                   showBorder={index < filteredAndSortedDocuments.length - 1}
                   selected={selectedIds.has(doc.id)}
                   onSelect={handleSelectDoc}
                   ragConfigured={ragConfigured}
+                  nameColumnWidth={nameColumnWidth ?? undefined}
                 />
               ))}
             </div>
+          )}
+          {/* Overlay during column resize to prevent pointer event interference */}
+          {isColumnResizing && (
+            <div className="fixed inset-0 z-50" style={{ cursor: 'col-resize' }} />
           )}
         </>
       ) : searchQuery ? (
@@ -755,7 +805,7 @@ export function DocumentList({
           <FileText className="w-12 h-12 mb-4 opacity-50" />
           <p>{t('document.document.noResults')}</p>
         </div>
-      ) : canManage ? (
+      ) : canUpload ? (
         <div className="flex flex-col items-center justify-center py-16 text-text-secondary">
           <FileUp className="w-16 h-16 mb-4 text-text-muted opacity-60" />
           <p className="text-base text-text-primary mb-2">{t('document.document.emptyHint')}</p>
@@ -774,6 +824,7 @@ export function DocumentList({
         document={viewingDoc}
         knowledgeBaseId={knowledgeBase.id}
         kbType={knowledgeBase.kb_type}
+        canEdit={viewingDoc ? canManageDocument(viewingDoc) : false}
       />
 
       <DocumentUpload
@@ -808,13 +859,6 @@ export function DocumentList({
         open={showRetrievalTest}
         onOpenChange={setShowRetrievalTest}
         knowledgeBase={knowledgeBase}
-      />
-
-      <ConvertKnowledgeBaseTypeDialog
-        open={showConvertDialog}
-        onOpenChange={setShowConvertDialog}
-        knowledgeBase={knowledgeBase}
-        onSuccess={onTypeConverted}
       />
     </div>
   )

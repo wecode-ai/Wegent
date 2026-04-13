@@ -2,8 +2,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import type { KnowledgeBasesResponse } from '@/types/api'
-import type { DocumentDetailResponse, KnowledgeBaseSummaryResponse } from '@/types/knowledge'
+import type { KnowledgeBasesResponse, PersonalKnowledgeBaseGroup } from '@/types/api'
+import type {
+  AllGroupedKnowledgeResponse,
+  DocumentDetailResponse,
+  KnowledgeBaseSummaryResponse,
+} from '@/types/knowledge'
 import client from './client'
 
 export const knowledgeBaseApi = {
@@ -23,6 +27,32 @@ export const knowledgeBaseApi = {
     const url = `/knowledge-bases${queryString ? `?${queryString}` : ''}`
 
     const response = await client.get<KnowledgeBasesResponse>(url)
+    return response
+  },
+
+  /**
+   * Get personal knowledge bases grouped by ownership
+   * Returns { created_by_me: KnowledgeBase[], shared_with_me: KnowledgeBase[] }
+   */
+  getPersonalGrouped: async (): Promise<PersonalKnowledgeBaseGroup> => {
+    const response = await client.get<PersonalKnowledgeBaseGroup>(
+      '/knowledge-bases/personal/grouped'
+    )
+    return response
+  },
+
+  /**
+   * Get all knowledge bases accessible to the user, grouped by scope.
+   * This endpoint returns all knowledge bases in a single request, solving the N+1 query problem.
+   *
+   * Returns:
+   * - personal: Knowledge bases created by the user and shared with the user
+   * - groups: Knowledge bases from team groups the user has access to
+   * - organization: Organization-level knowledge bases (visible to all)
+   * - summary: Counts for each category
+   */
+  getAllGrouped: async (): Promise<AllGroupedKnowledgeResponse> => {
+    const response = await client.get<AllGroupedKnowledgeResponse>('/knowledge-bases/all-grouped')
     return response
   },
 

@@ -13,7 +13,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.schemas.kind import ModelRef
 
@@ -49,6 +49,27 @@ class SubscriptionEventType(str, Enum):
     GIT_PUSH = "git_push"  # Git push trigger
 
 
+class SubscriptionExecutionTargetType(str, Enum):
+    """Execution target type enumeration."""
+
+    MANAGED = "managed"
+    LOCAL = "local"
+    CLOUD = "cloud"
+
+
+class SubscriptionExecutionTarget(BaseModel):
+    """Execution target for a subscription."""
+
+    type: SubscriptionExecutionTargetType = Field(
+        SubscriptionExecutionTargetType.MANAGED,
+        description="Execution target type: managed, local, or cloud",
+    )
+    device_id: Optional[str] = Field(
+        None,
+        description="Device ID for local or cloud execution targets",
+    )
+
+
 class BackgroundExecutionStatus(str, Enum):
     """Background execution status enumeration."""
 
@@ -76,6 +97,16 @@ class IntervalTriggerConfig(BaseModel):
 
     value: int = Field(..., description="Interval value")
     unit: str = Field(..., description="Interval unit: 'minutes', 'hours', 'days'")
+
+    @model_validator(mode="after")
+    def validate_minimum_interval(self):
+        """Validate minimum interval is at least SUBSCRIPTION_MIN_INTERVAL_MINUTES (default 15)."""
+        from app.core.config import settings
+
+        min_interval = settings.SUBSCRIPTION_MIN_INTERVAL_MINUTES
+        if self.unit == "minutes" and self.value < min_interval:
+            raise ValueError(f"Interval must be at least {min_interval} minutes")
+        return self
 
 
 class OneTimeTriggerConfig(BaseModel):
@@ -144,6 +175,37 @@ class SubscriptionKnowledgeBaseRef(BaseModel):
     namespace: str = Field("default", description="Knowledge base namespace")
 
 
+class SubscriptionSkillRef(BaseModel):
+    """Reference to a Skill for subscription."""
+
+    name: str = Field(..., description="Skill name")
+    namespace: str = Field("default", description="Skill namespace")
+    is_public: bool = Field(
+        False, description="Whether this is a public skill (user_id=0)"
+    )
+
+
+class NotificationWebhookType(str, Enum):
+    """Notification webhook type enumeration."""
+
+    DINGTALK = "dingtalk"
+    FEISHU = "feishu"
+    CUSTOM = "custom"
+
+
+class NotificationWebhook(BaseModel):
+    """Notification webhook configuration for subscription."""
+
+    type: NotificationWebhookType = Field(
+        ..., description="Webhook type: dingtalk, feishu, or custom"
+    )
+    url: str = Field(..., description="Webhook URL")
+    secret: Optional[str] = Field(
+        None, description="Optional signing secret for webhook verification"
+    )
+    enabled: bool = Field(True, description="Whether this webhook is enabled")
+
+
 class SourceSubscriptionRef(BaseModel):
     """Reference to source subscription for rentals."""
 
@@ -193,6 +255,10 @@ class SubscriptionSpec(BaseModel):
         description="Execution timeout in seconds (60-3600, default: 600)",
     )
     enabled: bool = Field(True, description="Whether the subscription is enabled")
+    executionTarget: SubscriptionExecutionTarget = Field(
+        default_factory=SubscriptionExecutionTarget,
+        description="Execution target configuration",
+    )
     description: Optional[str] = Field(None, description="Subscription description")
     # History preservation settings
     preserveHistory: bool = Field(
@@ -219,6 +285,18 @@ class SubscriptionSpec(BaseModel):
         None,
         description="Knowledge bases to bind to this subscription. "
         "AI will have access to these knowledge bases during execution.",
+    )
+    # Notification webhooks
+    notificationWebhooks: Optional[List[NotificationWebhook]] = Field(
+        None,
+        description="Notification webhooks to send execution results to. "
+        "Supports DingTalk, Feishu, and custom webhooks.",
+    )
+    # Skill references
+    skillRefs: Optional[List[SubscriptionSkillRef]] = Field(
+        None,
+        description="Skills to bind to this subscription. "
+        "AI will have access to these skills during execution.",
     )
 
 
@@ -315,6 +393,10 @@ class SubscriptionBase(BaseModel):
         600, ge=60, le=3600, description="Execution timeout (60-3600s)"
     )
     enabled: bool = Field(True, description="Whether enabled")
+    execution_target: SubscriptionExecutionTarget = Field(
+        default_factory=SubscriptionExecutionTarget,
+        description="Execution target configuration",
+    )
     # History preservation settings
     preserve_history: bool = Field(
         False,
@@ -332,12 +414,33 @@ class SubscriptionBase(BaseModel):
         description="Knowledge bases to bind to this subscription. "
         "AI will have access to these knowledge bases during execution.",
     )
+    # Notification webhooks
+    notification_webhooks: Optional[List[NotificationWebhook]] = Field(
+        None,
+        description="Notification webhooks to send execution results to. "
+        "Supports DingTalk, Feishu, and custom webhooks.",
+    )
+    # Skill references
+    skill_refs: Optional[List[SubscriptionSkillRef]] = Field(
+        None,
+        description="Skills to bind to this subscription. "
+        "AI will have access to these skills during execution.",
+    )
+    market_whitelist_user_ids: Optional[List[int]] = Field(
+        None,
+        description="User IDs allowed to discover and rent this market subscription. "
+        "If empty or omitted, all users can discover and rent it.",
+    )
 
 
 class SubscriptionCreate(SubscriptionBase):
     """Subscription creation model."""
 
     namespace: str = Field("default", description="Namespace")
+    # Expiration settings
+    expires_at: Optional[datetime] = Field(
+        None, description="Expiration timestamp (ISO format)"
+    )
 
 
 class SubscriptionUpdate(BaseModel):
@@ -363,11 +466,22 @@ class SubscriptionUpdate(BaseModel):
     retry_count: Optional[int] = Field(None, ge=0, le=3)
     timeout_seconds: Optional[int] = Field(None, ge=60, le=3600)
     enabled: Optional[bool] = None
+    execution_target: Optional[SubscriptionExecutionTarget] = None
     # History preservation settings
     preserve_history: Optional[bool] = None
     history_message_count: Optional[int] = Field(None, ge=0, le=50)
     # Knowledge base references
     knowledge_base_refs: Optional[List[SubscriptionKnowledgeBaseRef]] = None
+    # Notification webhooks
+    notification_webhooks: Optional[List[NotificationWebhook]] = None
+    # Skill references
+    skill_refs: Optional[List[SubscriptionSkillRef]] = None
+    # Market whitelist
+    market_whitelist_user_ids: Optional[List[int]] = None
+    # Expiration settings
+    expires_at: Optional[datetime] = Field(
+        None, description="Expiration timestamp (ISO format)"
+    )
 
 
 class SubscriptionInDB(SubscriptionBase):
@@ -407,6 +521,18 @@ class SubscriptionInDB(SubscriptionBase):
     rental_count: int = Field(
         0, description="Number of rentals (for market subscriptions)"
     )
+    # Trigger config validation status
+    trigger_config_valid: bool = Field(
+        True, description="Whether the trigger configuration is valid"
+    )
+    trigger_config_error: Optional[str] = Field(
+        None, description="Error message if trigger config is invalid"
+    )
+    # Expiration fields
+    expires_at: Optional[datetime] = Field(
+        None, description="Calculated expiration timestamp"
+    )
+    is_expired: bool = Field(False, description="Whether the subscription has expired")
     created_at: datetime
     updated_at: datetime
 
@@ -419,6 +545,9 @@ class SubscriptionListResponse(BaseModel):
 
     total: int
     items: List[SubscriptionInDB]
+    invalid_schedule_count: int = Field(
+        0, description="Number of subscriptions with invalid schedule configuration"
+    )
 
 
 # Background Execution schemas
@@ -791,6 +920,23 @@ class NotificationChannelInfo(BaseModel):
     is_bound: bool = Field(False, description="Whether user has bound to this channel")
 
 
+class NotificationChannelBindingConfig(BaseModel):
+    """Developer binding preferences for a notification channel."""
+
+    channel_id: int = Field(..., description="Messager channel ID")
+    bind_private: bool = Field(
+        True, description="Whether notifications should be delivered to private chat"
+    )
+    bind_group: bool = Field(
+        False,
+        description="Whether notifications should be delivered to bound group chat",
+    )
+    group_conversation_id: Optional[str] = Field(
+        None, description="Bound group conversation ID for group delivery"
+    )
+    group_name: Optional[str] = Field(None, description="Name of the bound group chat")
+
+
 class FollowSettingsResponse(BaseModel):
     """Response for follow notification settings."""
 
@@ -821,6 +967,10 @@ class DeveloperNotificationSettingsResponse(BaseModel):
         default_factory=list,
         description="List of available Messager channels with binding status",
     )
+    channel_binding_configs: List[NotificationChannelBindingConfig] = Field(
+        default_factory=list,
+        description="Per-channel binding preferences for private/group delivery",
+    )
 
 
 class DeveloperNotificationSettingsUpdateRequest(BaseModel):
@@ -829,6 +979,44 @@ class DeveloperNotificationSettingsUpdateRequest(BaseModel):
     notification_level: NotificationLevel = Field(..., description="Notification level")
     notification_channel_ids: Optional[List[int]] = Field(
         default=None, description="List of Messager channel IDs for notifications"
+    )
+    channel_binding_configs: Optional[List[NotificationChannelBindingConfig]] = Field(
+        default=None,
+        description="Per-channel binding preferences for private/group delivery",
+    )
+
+
+class DeveloperBindingSessionStartRequest(BaseModel):
+    """Request to start a developer notification binding session."""
+
+    channel_id: int = Field(..., description="Messager channel ID")
+    bind_private: bool = Field(
+        True, description="Whether private binding should be completed"
+    )
+    bind_group: bool = Field(
+        False, description="Whether group binding should be completed"
+    )
+
+
+class DeveloperBindingSessionCancelRequest(BaseModel):
+    """Request to cancel a developer notification binding session."""
+
+    channel_id: int = Field(..., description="Messager channel ID")
+
+
+class DeveloperBindingSessionResponse(BaseModel):
+    """Response for developer notification binding session status."""
+
+    status: str = Field(..., description="waiting/cancelled")
+    subscription_id: Optional[int] = Field(
+        None, description="Subscription ID (None for new subscriptions)"
+    )
+    channel_id: int = Field(..., description="Messager channel ID")
+    bind_private: Optional[bool] = Field(
+        None, description="Whether private binding is required"
+    )
+    bind_group: Optional[bool] = Field(
+        None, description="Whether group binding is required"
     )
 
 

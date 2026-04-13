@@ -29,8 +29,16 @@ import {
   DeviceOfflinePayload,
   DeviceStatusPayload,
   DeviceSlotUpdatePayload,
+  DeviceUpgradeStatusPayload,
   ServerEvents,
 } from '@/types/socket'
+
+/** Device upgrade state */
+export interface DeviceUpgradeState {
+  status: string
+  message: string
+  progress?: number
+}
 
 interface DeviceContextType {
   /** List of all devices (including offline) */
@@ -49,6 +57,12 @@ interface DeviceContextType {
   isLoading: boolean
   /** Error message if any */
   error: string | null
+  /** Map of device IDs to their upgrade states */
+  upgradingDevices: Record<string, DeviceUpgradeState>
+  /** Check if a device is currently upgrading */
+  isDeviceUpgrading: (deviceId: string) => boolean
+  /** Get upgrade status for a device */
+  getUpgradeStatus: (deviceId: string) => DeviceUpgradeState | undefined
 }
 
 const DeviceContext = createContext<DeviceContextType | null>(null)
@@ -60,9 +74,36 @@ interface DeviceProviderProps {
 export function DeviceProvider({ children }: DeviceProviderProps) {
   const [devices, setDevices] = useState<DeviceInfo[]>([])
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null)
-  const [isLoading, setIsLoading] = useState(false)
+  const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [upgradingDevices, setUpgradingDevices] = useState<Record<string, DeviceUpgradeState>>({})
   const { socket, isConnected } = useSocket()
+
+  /**
+   * Check if a device is currently upgrading.
+   *
+   * @param deviceId - Device unique identifier
+   * @returns True if the device is upgrading
+   */
+  const isDeviceUpgrading = useCallback(
+    (deviceId: string): boolean => {
+      return !!upgradingDevices[deviceId]
+    },
+    [upgradingDevices]
+  )
+
+  /**
+   * Get upgrade status for a device.
+   *
+   * @param deviceId - Device unique identifier
+   * @returns Upgrade state or undefined if not upgrading
+   */
+  const getUpgradeStatus = useCallback(
+    (deviceId: string): DeviceUpgradeState | undefined => {
+      return upgradingDevices[deviceId]
+    },
+    [upgradingDevices]
+  )
 
   // Fetch all devices (including offline)
   const refreshDevices = useCallback(async () => {
@@ -128,9 +169,10 @@ export function DeviceProvider({ children }: DeviceProviderProps) {
     // Device came online
     const handleDeviceOnline = (data: DeviceOnlinePayload) => {
       setDevices(prev => {
+        refreshDevices()
         const exists = prev.find(d => d.device_id === data.device_id)
         if (exists) {
-          // Update existing device status to online
+          // Update status immediately for better UX while refresh is in progress
           return prev.map(d =>
             d.device_id === data.device_id
               ? {
@@ -141,25 +183,7 @@ export function DeviceProvider({ children }: DeviceProviderProps) {
               : d
           )
         }
-        // Add new device (this shouldn't happen often since devices are persisted)
-        return [
-          ...prev,
-          {
-            id: 0, // Will be refreshed on next fetch
-            device_id: data.device_id,
-            name: data.name,
-            status: data.status as DeviceInfo['status'],
-            is_default: false,
-            device_type: 'local' as const,
-            connection_mode: 'websocket' as const,
-            slot_used: 0,
-            slot_max: 5,
-            running_tasks: [],
-            executor_version: null,
-            latest_version: null,
-            update_available: false,
-          },
-        ]
+        return prev // Return unchanged while refresh is in progress
       })
     }
 
@@ -199,19 +223,47 @@ export function DeviceProvider({ children }: DeviceProviderProps) {
       )
     }
 
+    // Device upgrade status updated
+    const handleDeviceUpgradeStatus = (data: DeviceUpgradeStatusPayload) => {
+      setUpgradingDevices(prev => ({
+        ...prev,
+        [data.device_id]: {
+          status: data.status,
+          message: data.message,
+          progress: data.progress,
+        },
+      }))
+
+      // Clear state on terminal status after a delay
+      // Note: We don't refresh devices here on success because the device
+      // needs to restart after upgrade. The refresh will happen automatically
+      // when the device comes back online via handleDeviceOnline event.
+      if (['success', 'error', 'skipped'].includes(data.status)) {
+        setTimeout(() => {
+          setUpgradingDevices(prev => {
+            const next = { ...prev }
+            delete next[data.device_id]
+            return next
+          })
+        }, 5000)
+      }
+    }
+
     // Subscribe to device events
     socket.on(ServerEvents.DEVICE_ONLINE, handleDeviceOnline)
     socket.on(ServerEvents.DEVICE_OFFLINE, handleDeviceOffline)
     socket.on(ServerEvents.DEVICE_STATUS, handleDeviceStatus)
     socket.on(ServerEvents.DEVICE_SLOT_UPDATE, handleDeviceSlotUpdate)
+    socket.on(ServerEvents.DEVICE_UPGRADE_STATUS, handleDeviceUpgradeStatus)
 
     return () => {
       socket.off(ServerEvents.DEVICE_ONLINE, handleDeviceOnline)
       socket.off(ServerEvents.DEVICE_OFFLINE, handleDeviceOffline)
       socket.off(ServerEvents.DEVICE_STATUS, handleDeviceStatus)
       socket.off(ServerEvents.DEVICE_SLOT_UPDATE, handleDeviceSlotUpdate)
+      socket.off(ServerEvents.DEVICE_UPGRADE_STATUS, handleDeviceUpgradeStatus)
     }
-  }, [socket, isConnected, selectedDeviceId])
+  }, [socket, isConnected, selectedDeviceId, refreshDevices])
 
   const value: DeviceContextType = {
     devices,
@@ -222,6 +274,9 @@ export function DeviceProvider({ children }: DeviceProviderProps) {
     refreshDevices,
     isLoading,
     error,
+    upgradingDevices,
+    isDeviceUpgrading,
+    getUpgradeStatus,
   }
 
   return <DeviceContext.Provider value={value}>{children}</DeviceContext.Provider>

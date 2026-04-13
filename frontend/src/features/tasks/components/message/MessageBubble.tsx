@@ -12,6 +12,7 @@ import type {
   GitBranch,
   Attachment,
   SubtaskContextBrief,
+  TaskType,
 } from '@/types/api'
 import {
   Bot,
@@ -44,6 +45,7 @@ import { GeminiAnnotations } from '../chat/GeminiAnnotations'
 import CollapsibleMessage from './CollapsibleMessage'
 import { processCitePatterns } from '../../utils/processCitePatterns'
 import RegenerateModelPopover from './RegenerateModelPopover'
+import VideoConfigBadge from './VideoConfigBadge'
 import type { ClarificationData, FinalPromptData, ClarificationAnswer } from '@/types/api'
 import type { SourceReference, GeminiAnnotation } from '@/types/socket'
 import type { Model } from '../../hooks/useModelSelection'
@@ -81,6 +83,23 @@ export interface Message {
     reasoning_content?: string // Reasoning content from DeepSeek R1 etc.
     blocks?: MessageBlock[] // Message blocks for mixed rendering (new format)
     annotations?: GeminiAnnotation[] // Gemini Deep Research grounding annotations
+    /** Video generation progress (0-100) */
+    progress?: number
+    /** Video generation result */
+    video?: {
+      attachment_id?: number | null
+      video_url: string
+      thumbnail?: string | null // Base64 encoded thumbnail
+      duration?: number | null // Video duration in seconds
+      is_placeholder?: boolean // True when video is still being generated
+    }
+    /** Video generation config (stored in user message subtask for display) */
+    video_config?: {
+      model?: string
+      resolution?: string
+      ratio?: string
+      duration?: number
+    }
   }
   /** @deprecated Use contexts instead */
   attachments?: Attachment[]
@@ -108,6 +127,8 @@ export interface Message {
   sources?: SourceReference[]
   /** Reasoning/thinking content from DeepSeek R1 and similar models */
   reasoningContent?: string
+  /** Whether reasoning content is actively streaming */
+  isReasoningStreaming?: boolean
 }
 
 /** Configuration for paragraph-level action button */
@@ -135,6 +156,8 @@ export interface MessageBubbleProps {
   isWaiting?: boolean
   /** Generic callback when a component inside the message bubble wants to send a message (e.g., ClarificationForm) */
   onSendMessage?: (content: string) => void
+  /** Callback when user submits an ask_user_question form - sends the pre-formatted answer as a new conversation message */
+  onAskUserSubmit?: (askId: string, formattedMessage: string) => void
   /** Callback when user selects text in AI message (optional) - receives selected text */
   onTextSelect?: (selectedText: string) => void
   /** Paragraph-level action configuration - shows action button on hover for each paragraph in AI messages */
@@ -175,8 +198,16 @@ export interface MessageBubbleProps {
   onRegenerate?: (msg: Message, model: Model) => void
   /** Whether regenerate is in progress */
   isRegenerating?: boolean
+  /** Callback when user wants to use a generated image as reference for follow-up generation */
+  onUseAsReference?: (item: import('./ImageGallery').ImageItem) => void
+  /** Callback when user clicks re-edit button - restores original user input to input box */
+  onReEdit?: (msg: Message) => void
   /** Share token for public access to attachments (no login required) */
   shareToken?: string
+  /** Current task type to determine which model category to show in regenerate popover */
+  taskType?: TaskType
+  /** Callback when user clicks forward button - receives the subtaskId of the message to forward */
+  onForwardClick?: (subtaskId: number) => void
 }
 
 // Component for rendering a paragraph with hover action button
@@ -271,6 +302,40 @@ const ParagraphWithAction = ({
   )
 }
 
+/** Determine whether the Re-edit button should be shown for an AI message. */
+function canShowReEdit(
+  msg: Message,
+  isGroupChat: boolean | undefined,
+  onReEdit: ((msg: Message) => void) | undefined
+): boolean {
+  if (!onReEdit || isGroupChat) return false
+  // Must have a valid subtaskId to support re-edit
+  if (!msg.subtaskId) return false
+  const isCompleted =
+    msg.subtaskStatus === 'COMPLETED' ||
+    msg.subtaskStatus === 'CANCELLED' ||
+    msg.status === 'completed'
+  const isNotRunning =
+    msg.subtaskStatus !== 'RUNNING' &&
+    msg.subtaskStatus !== 'PENDING' &&
+    msg.subtaskStatus !== 'PROCESSING' &&
+    msg.status !== 'streaming' &&
+    msg.status !== 'pending'
+  return isCompleted && isNotRunning
+}
+
+function getCopyableContent(rawContent: string): string {
+  const content = (rawContent ?? '').trim()
+  if (!content) return ''
+
+  if (!content.includes('${$$}$')) {
+    return content
+  }
+
+  const [, result] = content.split('${$$}$')
+  return (result || '').trim()
+}
+
 const MessageBubble = memo(
   function MessageBubble({
     msg,
@@ -283,6 +348,7 @@ const MessageBubble = memo(
     t,
     isWaiting,
     onSendMessage,
+    onAskUserSubmit,
     onTextSelect,
     paragraphAction,
     isCurrentUserMessage,
@@ -299,7 +365,11 @@ const MessageBubble = memo(
     isLastAiMessage,
     onRegenerate,
     isRegenerating,
+    onUseAsReference,
+    onReEdit,
     shareToken,
+    taskType,
+    onForwardClick,
   }: MessageBubbleProps) {
     // Use trace hook for telemetry (auto-includes user and task context)
     const { trace } = useTraceAction()
@@ -359,7 +429,7 @@ const MessageBubble = memo(
         <path d="m9 11 3 3L22 4"></path>
       </svg>
     ) : (
-      <Bot className="w-4 h-4" />
+      <Bot className="w-4 h-4" data-testid="ai-message-icon" />
     )
     const headerLabel = isUserTypeMessage ? '' : msg.botName || t('messages.bot') || 'Bot'
 
@@ -378,6 +448,14 @@ const MessageBubble = memo(
     const hasSpecialFormat = React.useMemo(() => {
       if (!msg.content || msg.type === 'user') return false
 
+      // If there are tool blocks, always use MixedContentView to render them
+      if (
+        msg.result?.blocks &&
+        msg.result.blocks.some((b: { type: string }) => b.type === 'tool')
+      ) {
+        return false
+      }
+
       // Quick check: if content doesn't contain any header markers, skip parsing
       const content = msg.content
       const hasClarificationMarker =
@@ -392,7 +470,7 @@ const MessageBubble = memo(
         content.toLowerCase().includes('prompt')
 
       return hasClarificationMarker || hasFinalPromptMarker
-    }, [msg.content, msg.type])
+    }, [msg.content, msg.type, msg.result?.blocks])
 
     const renderProgressBar = (status: string, progress: number) => {
       const normalizedStatus = (status ?? '').toUpperCase()
@@ -503,12 +581,8 @@ const MessageBubble = memo(
     const renderMarkdownResult = (rawResult: string, promptPart?: string) => {
       const trimmed = (rawResult ?? '').trim()
       const fencedMatch = trimmed.match(/^```(?:\s*(?:markdown|md))?\s*\n([\s\S]*?)\n```$/)
-      let normalizedResult = fencedMatch ? fencedMatch[1] : trimmed
-
-      // Pre-process markdown to handle edge cases where ** is followed by punctuation
-      // Markdown parsers don't recognize **'text'** or **text**。 as bold
-      // Convert these patterns to HTML <strong> tags for proper rendering
-      normalizedResult = normalizedResult.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+      const rawMarkdownResult = fencedMatch ? fencedMatch[1] : trimmed
+      let normalizedResult = rawMarkdownResult
 
       // Process [cite: X, Y, Z] patterns to clickable markdown links
       // Only process when annotations are available from Gemini Deep Research
@@ -640,7 +714,7 @@ const MessageBubble = memo(
           {/* Hide BubbleTools during streaming */}
           {!isStreaming && (
             <BubbleTools
-              contentToCopy={`${promptPart ? promptPart + '\n\n' : ''}${normalizedResult}`}
+              contentToCopy={`${promptPart ? promptPart + '\n\n' : ''}${rawMarkdownResult}`}
               onCopySuccess={() => trace.copy(msg.type, msg.subtaskId)}
               tools={[
                 {
@@ -648,7 +722,7 @@ const MessageBubble = memo(
                   title: t('messages.download') || 'Download',
                   icon: <Download className="h-4 w-4 text-text-muted" />,
                   onClick: () => {
-                    const blob = new Blob([`${normalizedResult}`], {
+                    const blob = new Blob([`${rawMarkdownResult}`], {
                       type: 'text/plain;charset=utf-8',
                     })
                     const url = URL.createObjectURL(blob)
@@ -697,8 +771,13 @@ const MessageBubble = memo(
                   isLoading={isRegenerating}
                   trigger={defaultButton}
                   tooltipText={tooltipText}
+                  taskType={taskType}
                 />
               )}
+              showReEdit={canShowReEdit(msg, isGroupChat, onReEdit)}
+              onReEditClick={onReEdit ? () => onReEdit(msg) : undefined}
+              showForward={!!selectedTaskDetail?.id && !!msg.subtaskId && !!onForwardClick}
+              onForwardClick={() => msg.subtaskId && onForwardClick?.(msg.subtaskId)}
             />
           )}
         </>
@@ -737,7 +816,9 @@ const MessageBubble = memo(
                     ))}
                   </div>
                 </div>
-                {remainingContent && <div className="text-sm break-all">{remainingContent}</div>}
+                {remainingContent && (
+                  <div className="chat-message-prompt text-sm break-all">{remainingContent}</div>
+                )}
               </div>
             )
           } catch (e) {
@@ -806,7 +887,8 @@ const MessageBubble = memo(
         }
       }
 
-      return (message.content?.split('\n') || []).map((line, idx) => {
+      // Build content elements
+      const contentElements = (message.content?.split('\n') || []).map((line, idx) => {
         if (line.startsWith('__PROMPT_TRUNCATED__:')) {
           const lineMatch = line.match(/^__PROMPT_TRUNCATED__:(.*)::(.*)$/)
           if (lineMatch) {
@@ -835,6 +917,8 @@ const MessageBubble = memo(
         // Pass disabled={isStreaming} to avoid metadata fetching during streaming
         return <SmartTextLine key={idx} text={line} disabled={isStreaming} />
       })
+
+      return contentElements
     }
     // Helper function to parse Markdown clarification questions
     // Supports flexible formats: with/without code blocks, emoji variations, different header levels
@@ -1122,6 +1206,10 @@ const MessageBubble = memo(
     const renderAiMessage = (message: Message, messageIndex: number) => {
       const content = message.content ?? ''
 
+      // Video rendering is now handled by MixedContentView via video blocks
+      // The old result.video and result.progress logic has been removed
+      // in favor of the unified block-based rendering system
+
       try {
         let contentToParse = content
 
@@ -1207,6 +1295,7 @@ const MessageBubble = memo(
               taskId={selectedTaskDetail?.id}
               isPendingConfirmation={isPendingConfirmation}
               onStageConfirmed={onPipelineStageConfirmed}
+              isMessageStreaming={isStreaming || message.status === 'streaming'}
             />
           )
         }
@@ -1222,7 +1311,9 @@ const MessageBubble = memo(
       const [prompt, result] = content.split('${$$}$')
       return (
         <>
-          {prompt && <div className="text-sm whitespace-pre-line mb-2">{prompt}</div>}
+          {prompt && (
+            <div className="chat-message-prompt text-sm whitespace-pre-line mb-2">{prompt}</div>
+          )}
           {result && renderMarkdownResult(result, prompt)}
         </>
       )
@@ -1307,7 +1398,7 @@ const MessageBubble = memo(
               {!isUserTypeMessage && (msg.reasoningContent || msg.result?.reasoning_content) && (
                 <ReasoningDisplay
                   reasoningContent={msg.reasoningContent || msg.result?.reasoning_content || ''}
-                  isStreaming={msg.subtaskStatus === 'RUNNING' || msg.status === 'streaming'}
+                  isStreaming={!!msg.isReasoningStreaming}
                 />
               )}
               {/* Show tool blocks for messages with thinking but no blocks */}
@@ -1330,8 +1421,37 @@ const MessageBubble = memo(
                 </div>
               )}
               {/* Show contexts (attachments, knowledge bases, etc.) for both user and AI messages */}
+              {/* For AI messages with image/video blocks, filter out attachments to avoid duplicate display */}
               <ContextBadgeList
-                contexts={msg.contexts || undefined}
+                contexts={(() => {
+                  if (!msg.contexts) return undefined
+                  // For AI messages, check if there are image/video blocks in result.blocks
+                  // If so, filter out attachments that are already displayed in ImageGallery/VideoPlayer
+                  if (!isUserTypeMessage && msg.result?.blocks) {
+                    // Get all attachment IDs from image and video blocks
+                    const attachmentIdsInBlocks = new Set<number>()
+                    for (const block of msg.result.blocks) {
+                      // Handle image blocks
+                      if (block.type === 'image' && block.image_attachment_ids) {
+                        for (const id of block.image_attachment_ids) {
+                          if (id) attachmentIdsInBlocks.add(id)
+                        }
+                      }
+                      // Handle video blocks
+                      if (block.type === 'video' && block.video_attachment_id) {
+                        attachmentIdsInBlocks.add(block.video_attachment_id)
+                      }
+                    }
+                    // If there are attachment IDs in blocks, filter them out from contexts
+                    if (attachmentIdsInBlocks.size > 0) {
+                      const filteredContexts = msg.contexts.filter(
+                        ctx => !attachmentIdsInBlocks.has(ctx.id)
+                      )
+                      return filteredContexts.length > 0 ? filteredContexts : undefined
+                    }
+                  }
+                  return msg.contexts
+                })()}
                 onContextReselect={isUserTypeMessage ? onContextReselect : undefined}
                 shareToken={shareToken}
               />
@@ -1364,13 +1484,19 @@ const MessageBubble = memo(
                         taskStatus={msg.subtaskStatus}
                         theme={theme}
                         blocks={msg.result.blocks}
+                        annotations={msg.result?.annotations}
+                        onUseAsReference={onUseAsReference}
+                        taskId={selectedTaskDetail?.id}
+                        subtaskId={msg.subtaskId}
+                        currentMessageIndex={index}
+                        onAskUserSubmit={onAskUserSubmit}
                       />
                       <SourceReferences sources={msg.sources || msg.result?.sources || []} />
                       <GeminiAnnotations annotations={msg.result?.annotations || []} />
                       {/* Hide BubbleTools during streaming */}
                       {!isStreaming && (
                         <BubbleTools
-                          contentToCopy={msg.content || ''}
+                          contentToCopy={getCopyableContent(msg.content || '')}
                           onCopySuccess={() => trace.copy(msg.type, msg.subtaskId)}
                           tools={[
                             {
@@ -1378,7 +1504,7 @@ const MessageBubble = memo(
                               title: t('messages.download') || 'Download',
                               icon: <Download className="h-4 w-4 text-text-muted" />,
                               onClick: () => {
-                                const blob = new Blob([msg.content || ''], {
+                                const blob = new Blob([getCopyableContent(msg.content || '')], {
                                   type: 'text/plain;charset=utf-8',
                                 })
                                 const url = URL.createObjectURL(blob)
@@ -1431,8 +1557,15 @@ const MessageBubble = memo(
                               isLoading={isRegenerating}
                               trigger={defaultButton}
                               tooltipText={tooltipText}
+                              taskType={taskType}
                             />
                           )}
+                          showReEdit={canShowReEdit(msg, isGroupChat, onReEdit)}
+                          onReEditClick={onReEdit ? () => onReEdit(msg) : undefined}
+                          showForward={
+                            !!selectedTaskDetail?.id && !!msg.subtaskId && !!onForwardClick
+                          }
+                          onForwardClick={() => msg.subtaskId && onForwardClick?.(msg.subtaskId)}
                         />
                       )}
                     </>
@@ -1532,6 +1665,10 @@ const MessageBubble = memo(
                 </div>
               )}
             </div>
+            {/* Video config badge - displayed outside the message bubble */}
+            {isUserTypeMessage && msg.result?.video_config && (
+              <VideoConfigBadge config={msg.result.video_config} />
+            )}
           </div>
         </div>
       </ShareTokenProvider>
@@ -1568,13 +1705,15 @@ const MessageBubble = memo(
     const prevBlocksHash =
       prevProps.msg.result?.blocks
         ?.map(
-          b => `${b.id}:${b.status}:${b.type === 'tool' ? !!b.tool_output : b.content?.length || 0}`
+          b =>
+            `${b.id}:${b.status}:${b.type === 'tool' ? !!b.tool_output : (b as { content?: string }).content?.length || 0}`
         )
         .join('|') || ''
     const nextBlocksHash =
       nextProps.msg.result?.blocks
         ?.map(
-          b => `${b.id}:${b.status}:${b.type === 'tool' ? !!b.tool_output : b.content?.length || 0}`
+          b =>
+            `${b.id}:${b.status}:${b.type === 'tool' ? !!b.tool_output : (b as { content?: string }).content?.length || 0}`
         )
         .join('|') || ''
 
@@ -1604,7 +1743,10 @@ const MessageBubble = memo(
       prevProps.isPendingConfirmation === nextProps.isPendingConfirmation &&
       prevProps.isEditing === nextProps.isEditing &&
       prevProps.isLastAiMessage === nextProps.isLastAiMessage &&
-      prevProps.isRegenerating === nextProps.isRegenerating
+      prevProps.isRegenerating === nextProps.isRegenerating &&
+      prevProps.onUseAsReference === nextProps.onUseAsReference &&
+      prevProps.onReEdit === nextProps.onReEdit &&
+      prevProps.taskType === nextProps.taskType
 
     return shouldSkipRender
   }

@@ -3,9 +3,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type {
+  BatchPermissionAddRequest,
+  BatchPermissionAddResponse,
   JoinByLinkRequest,
   JoinByLinkResponse,
   KBShareInfo,
+  MemberRole,
   MyPermissionResponse,
   PermissionAddRequest,
   PermissionApplyRequest,
@@ -28,7 +31,7 @@ interface ResourceMemberResponse {
   user_id: number
   user_name: string | null
   user_email: string | null
-  permission_level: string
+  role: string
   status: string
   invited_by_user_id: number
   invited_by_user_name: string | null
@@ -54,7 +57,7 @@ export const knowledgePermissionApi = {
       `/share/KnowledgeBase/${kbId}/join`,
       {
         share_token: '', // Will be filled by the caller
-        requested_permission_level: request.permission_level,
+        requested_role: request.role,
       }
     )
     return response
@@ -72,7 +75,7 @@ export const knowledgePermissionApi = {
       `/share/KnowledgeBase/${kbId}/requests/${permissionId}/review`,
       {
         approved: request.action === 'approve',
-        permission_level: request.permission_level,
+        role: request.role,
       }
     )
     return response
@@ -81,72 +84,65 @@ export const knowledgePermissionApi = {
   /**
    * List all permissions for a knowledge base
    */
-  listPermissions: async (kbId: number): Promise<PermissionListResponse> => {
+  listPermissions: async (
+    kbId: number,
+    options?: { includePendingRequests?: boolean }
+  ): Promise<PermissionListResponse> => {
     // Fetch approved members
     const membersResponse = await client.get<{ members: ResourceMemberResponse[]; total: number }>(
       `/share/KnowledgeBase/${kbId}/members`
     )
 
-    // Fetch pending requests separately
-    const pendingResponse = await client.get<{
-      requests: {
-        id: number
-        user_id: number
-        user_name: string | null
-        user_email: string | null
-        requested_permission_level: string
-        requested_at: string
-      }[]
-      total: number
-    }>(`/share/KnowledgeBase/${kbId}/requests`)
-
-    // Transform pending requests
-    // Normalize permission_level to lowercase to handle legacy data (e.g., VIEW -> view)
-    const pending = pendingResponse.requests.map(r => ({
-      id: r.id,
-      user_id: r.user_id,
-      username: r.user_name || '',
-      email: r.user_email || '',
-      permission_level: r.requested_permission_level.toLowerCase() as 'view' | 'edit' | 'manage',
-      requested_at: r.requested_at,
-    }))
-
-    // Transform approved members
-    // Normalize permission_level to lowercase to handle legacy data (e.g., VIEW -> view)
-    const approved = membersResponse.members.reduce(
-      (acc, m) => {
-        const level = m.permission_level.toLowerCase() as 'view' | 'edit' | 'manage'
-        if (!acc[level]) acc[level] = []
-        const member: {
+    let pending: PermissionListResponse['pending'] = []
+    if (options?.includePendingRequests) {
+      const pendingResponse = await client.get<{
+        requests: {
           id: number
           user_id: number
-          username: string
-          email: string
-          permission_level: 'view' | 'edit' | 'manage'
+          user_name: string | null
+          user_email: string | null
+          requested_role: string
           requested_at: string
-          reviewed_at?: string
-          reviewed_by?: number
-        } = {
+        }[]
+        total: number
+      }>(`/share/KnowledgeBase/${kbId}/requests`)
+
+      pending = pendingResponse.requests.map(r => {
+        return {
+          id: r.id,
+          user_id: r.user_id,
+          username: r.user_name || '',
+          email: r.user_email || '',
+          role: (r.requested_role as MemberRole) || 'Reporter',
+          requested_at: r.requested_at,
+        }
+      })
+    }
+
+    // Transform approved members - group by role
+    const approved = membersResponse.members.reduce(
+      (acc, m) => {
+        const role = (m.role as MemberRole) || 'Reporter'
+        if (!acc[role]) acc[role] = []
+        const member = {
           id: m.id,
           user_id: m.user_id,
           username: m.user_name || '',
           email: m.user_email || '',
-          permission_level: level,
+          role: role,
           requested_at: m.requested_at,
+          reviewed_at: m.reviewed_at || undefined,
+          reviewed_by: m.reviewed_by_user_id || undefined,
         }
-        if (m.reviewed_at) {
-          member.reviewed_at = m.reviewed_at
-        }
-        if (m.reviewed_by_user_id) {
-          member.reviewed_by = m.reviewed_by_user_id
-        }
-        acc[level].push(member)
+        acc[role].push(member)
         return acc
       },
-      { view: [], edit: [], manage: [] } as {
-        view: typeof pending
-        edit: typeof pending
-        manage: typeof pending
+      { Owner: [], Maintainer: [], Developer: [], Reporter: [], RestrictedAnalyst: [] } as {
+        Owner: typeof pending
+        Maintainer: typeof pending
+        Developer: typeof pending
+        Reporter: typeof pending
+        RestrictedAnalyst: typeof pending
       }
     )
     return { pending, approved }
@@ -174,13 +170,27 @@ export const knowledgePermissionApi = {
     }
     const response = await client.post<PermissionResponse>(`/share/KnowledgeBase/${kbId}/members`, {
       user_id: user.id,
-      permission_level: request.permission_level,
+      role: request.role,
     })
     return response
   },
 
   /**
-   * Update a user's permission level
+   * Batch add permissions for multiple users in a single request
+   */
+  batchAddPermission: async (
+    kbId: number,
+    request: BatchPermissionAddRequest
+  ): Promise<BatchPermissionAddResponse> => {
+    const response = await client.post<BatchPermissionAddResponse>(
+      `/share/KnowledgeBase/${kbId}/members/batch`,
+      request
+    )
+    return response
+  },
+
+  /**
+   * Update a user's role
    */
   updatePermission: async (
     kbId: number,
@@ -190,7 +200,7 @@ export const knowledgePermissionApi = {
     const response = await client.put<PermissionResponse>(
       `/share/KnowledgeBase/${kbId}/members/${permissionId}`,
       {
-        permission_level: request.permission_level,
+        role: request.role,
       }
     )
     return response
@@ -249,7 +259,7 @@ export const knowledgePermissionApi = {
    */
   createShareLink: async (kbId: number, config?: ShareLinkConfig): Promise<ShareLinkResponse> => {
     const response = await client.post<ShareLinkResponse>(`/share/KnowledgeBase/${kbId}/link`, {
-      config: config || { require_approval: true, default_permission_level: 'view' },
+      config: config || { require_approval: true, default_role: 'Reporter' },
     })
     return response
   },

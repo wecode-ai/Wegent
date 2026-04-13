@@ -18,11 +18,8 @@ from app.models.kind import Kind
 from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.kind import KnowledgeBaseTaskRef
-from app.services.group_permission import get_effective_role_in_group
-from app.services.knowledge.knowledge_service import (
-    KnowledgeService,
-    _is_organization_namespace,
-)
+from app.services.knowledge.knowledge_service import KnowledgeService
+from app.services.share import knowledge_share_service
 from app.services.task_member_service import task_member_service
 
 logger = logging.getLogger(__name__)
@@ -76,7 +73,7 @@ class TaskKnowledgeBaseService:
             .filter(
                 TaskResource.id == task_id,
                 TaskResource.kind == "Task",
-                TaskResource.is_active == True,
+                TaskResource.is_active == TaskResource.STATE_ACTIVE,
             )
             .first()
         )
@@ -96,7 +93,12 @@ class TaskKnowledgeBaseService:
         return spec.get("is_group_chat", False)
 
     def can_access_knowledge_base(
-        self, db: Session, user_id: int, kb_name: str, kb_namespace: str
+        self,
+        db: Session,
+        user_id: int,
+        kb_name: str,
+        kb_namespace: str,
+        knowledge_id: Optional[int] = None,
     ) -> bool:
         """Check if user has access to a knowledge base.
 
@@ -105,27 +107,109 @@ class TaskKnowledgeBaseService:
             user_id: User ID
             kb_name: Knowledge base display name (spec.name)
             kb_namespace: Knowledge base namespace
+            knowledge_id: Optional knowledge base Kind.id for unambiguous lookup
 
         Returns:
             True if user has access to the knowledge base
         """
-        # Find the knowledge base by display name (spec.name)
-        kb = self.get_knowledge_base_by_name(db, kb_name, kb_namespace)
+        if knowledge_id is not None:
+            return (
+                knowledge_share_service._get_resource(db, knowledge_id, user_id)
+                is not None
+            )
 
+        kb = self.get_knowledge_base_by_name(db, kb_name, kb_namespace)
         if not kb:
             return False
 
-        # For personal knowledge base (default namespace)
-        if kb.namespace == "default":
-            return kb.user_id == user_id
-
-        # For organization knowledge base, all authenticated users have access
-        if _is_organization_namespace(db, kb.namespace):
+        resolved_kb = knowledge_share_service._get_resource(db, kb.id, user_id)
+        if resolved_kb is not None:
             return True
 
-        # For team knowledge base, check group membership
-        role = get_effective_role_in_group(db, user_id, kb.namespace)
-        return role is not None
+        if kb_namespace != "default":
+            return False
+
+        # Backward compatibility for default-namespace KB refs that were granted
+        # implicitly via existing group-chat bindings before share records existed.
+        return self._is_kb_bound_to_user_group_chat(db, kb.id, user_id)
+
+    def _is_kb_bound_to_user_group_chat(
+        self, db: Session, kb_id: int, user_id: int
+    ) -> bool:
+        """Check if a knowledge base is bound to any group chat that the user is a member of.
+
+        When a knowledge base is bound to a group chat, all members of that group chat
+        should have access to the knowledge base (reporter permission level).
+
+        Args:
+            db: Database session
+            kb_id: Knowledge base Kind.id
+            user_id: User ID to check
+
+        Returns:
+            True if KB is bound to at least one group chat where user is a member
+        """
+        from app.models.resource_member import MemberStatus, ResourceMember
+        from app.models.share_link import ResourceType
+        from app.models.task import TaskResource
+
+        # Query all group chat tasks where this KB is bound and user is a member
+        # We need to check task.json->spec->knowledgeBaseRefs for the KB binding
+        # First, get tasks where user is the owner
+        owned_tasks = (
+            db.query(TaskResource)
+            .filter(
+                TaskResource.kind == "Task",
+                TaskResource.is_active == TaskResource.STATE_ACTIVE,
+                TaskResource.user_id == user_id,
+            )
+            .all()
+        )
+
+        # Then, get tasks where user is an approved member via ResourceMember
+        member_tasks = (
+            db.query(TaskResource)
+            .join(ResourceMember, ResourceMember.resource_id == TaskResource.id)
+            .filter(
+                TaskResource.kind == "Task",
+                TaskResource.is_active == TaskResource.STATE_ACTIVE,
+                ResourceMember.resource_type == ResourceType.TASK,
+                ResourceMember.user_id == user_id,
+                ResourceMember.status == MemberStatus.APPROVED,
+            )
+            .all()
+        )
+
+        # Combine owned and member tasks
+        tasks_with_kb = list(owned_tasks) + list(member_tasks)
+
+        for task in tasks_with_kb:
+            task_json = task.json if isinstance(task.json, dict) else {}
+            spec = task_json.get("spec", {})
+            kb_refs = spec.get("knowledgeBaseRefs", []) or []
+
+            for ref in kb_refs:
+                # Check if this KB is bound (match by ID or by name+namespace)
+                ref_id = ref.get("id")
+                ref_name = ref.get("name")
+                ref_namespace = ref.get("namespace", "default")
+
+                if ref_id == kb_id:
+                    return True
+
+                # Fallback: check by name+namespace if ID not available (legacy data)
+                if ref_id is None and ref_name and ref_namespace:
+                    kb = self.get_knowledge_base_by_id(db, kb_id)
+                    if kb:
+                        kb_spec = kb.json.get("spec", {}) if kb.json else {}
+                        kb_display_name = kb_spec.get("name")
+                        if (
+                            kb_display_name == ref_name
+                            and kb.namespace == ref_namespace
+                        ):
+                            return True
+
+        return False
 
     def get_knowledge_base_by_name(
         self, db: Session, name: str, namespace: str
@@ -520,7 +604,8 @@ class TaskKnowledgeBaseService:
         for idx, kb, needs_migration in found_kbs:
             ref = kb_refs[idx]
             kb_name = ref.get("name")
-            kb_namespace = ref.get("namespace", "default")
+            # Get namespace from the actual KB object, not from ref (ref may not have namespace for new data)
+            kb_namespace = kb.namespace
 
             if needs_migration:
                 refs_to_migrate.append((idx, kb.id))
@@ -673,10 +758,10 @@ class TaskKnowledgeBaseService:
         user_name = user.user_name if user else "Unknown"
 
         # Add new binding (include ID for stable references)
+        # Note: namespace is no longer stored - ID is sufficient for lookup
         new_ref = KnowledgeBaseTaskRef(
             id=kb.id,
             name=kb_name,
-            namespace=kb_namespace,
             boundBy=user_name,
             boundAt=datetime.utcnow().isoformat() + "Z",
         )
@@ -835,8 +920,9 @@ class TaskKnowledgeBaseService:
             )
 
             if not kb:
-                logger.debug(
-                    f"[sync_subtask_kb_to_task] KB not found: knowledge_id={knowledge_id}"
+                logger.info(
+                    f"[sync_subtask_kb_to_task] Skip sync because KB was not found: "
+                    f"task_id={task.id}, knowledge_id={knowledge_id}, user_id={user_id}"
                 )
                 return False
 
@@ -846,16 +932,24 @@ class TaskKnowledgeBaseService:
             kb_namespace = kb.namespace
 
             if not kb_name:
-                logger.debug(
-                    f"[sync_subtask_kb_to_task] KB has no display name: knowledge_id={knowledge_id}"
+                logger.info(
+                    f"[sync_subtask_kb_to_task] Skip sync because KB has no display name: "
+                    f"task_id={task.id}, knowledge_id={knowledge_id}, user_id={user_id}"
                 )
                 return False
 
             # Check user access to the knowledge base
-            if not self.can_access_knowledge_base(db, user_id, kb_name, kb_namespace):
-                logger.debug(
-                    f"[sync_subtask_kb_to_task] User {user_id} has no access to KB "
-                    f"{kb_name}/{kb_namespace}"
+            if not self.can_access_knowledge_base(
+                db,
+                user_id,
+                kb_name,
+                kb_namespace,
+                knowledge_id=knowledge_id,
+            ):
+                logger.info(
+                    f"[sync_subtask_kb_to_task] Skip sync because user has no access "
+                    f"to KB {kb_name}/{kb_namespace}: task_id={task.id}, "
+                    f"knowledge_id={knowledge_id}, user_id={user_id}"
                 )
                 return False
 
@@ -866,9 +960,10 @@ class TaskKnowledgeBaseService:
 
             # Check binding limit - skip silently if reached
             if len(kb_refs) >= self.MAX_BOUND_KNOWLEDGE_BASES:
-                logger.debug(
-                    f"[sync_subtask_kb_to_task] KB limit reached for task {task.id}, "
-                    f"skipping sync of KB {kb_name}/{kb_namespace}"
+                logger.info(
+                    f"[sync_subtask_kb_to_task] Skip sync because KB limit was reached: "
+                    f"task_id={task.id}, knowledge_id={knowledge_id}, user_id={user_id}, "
+                    f"kb={kb_name}/{kb_namespace}, max_bound={self.MAX_BOUND_KNOWLEDGE_BASES}"
                 )
                 return False
 
@@ -878,17 +973,18 @@ class TaskKnowledgeBaseService:
                     ref.get("name") == kb_name
                     and ref.get("namespace", "default") == kb_namespace
                 ):
-                    logger.debug(
-                        f"[sync_subtask_kb_to_task] KB {kb_name}/{kb_namespace} "
-                        f"already bound to task {task.id}"
+                    logger.info(
+                        f"[sync_subtask_kb_to_task] Skip sync because KB is already "
+                        f"bound: task_id={task.id}, knowledge_id={knowledge_id}, "
+                        f"user_id={user_id}, kb={kb_name}/{kb_namespace}"
                     )
                     return False
 
             # Add new binding with ID for stable references
+            # Note: namespace is no longer stored - ID is sufficient for lookup
             new_ref = KnowledgeBaseTaskRef(
                 id=kb.id,
                 name=kb_name,
-                namespace=kb_namespace,
                 boundBy=user_name,
                 boundAt=datetime.utcnow().isoformat() + "Z",
             )

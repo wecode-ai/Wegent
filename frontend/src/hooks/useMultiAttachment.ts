@@ -24,6 +24,8 @@ interface UseMultiAttachmentReturn {
   state: MultiAttachmentUploadState
   /** Handle file selection and upload */
   handleFileSelect: (files: File | File[]) => Promise<void>
+  /** Add an already-uploaded attachment directly (e.g., reference image from history) */
+  addExistingAttachment: (attachment: import('@/types/api').Attachment) => void
   /** Remove specific attachment */
   handleRemove: (attachmentId: number) => Promise<void>
   /** Reset state */
@@ -36,8 +38,11 @@ interface UseMultiAttachmentReturn {
   truncatedAttachments: Map<number, TruncationInfo>
 }
 
-export function useMultiAttachment(): UseMultiAttachmentReturn {
+export function useMultiAttachment(options?: {
+  maxAttachments?: number
+}): UseMultiAttachmentReturn {
   const { t } = useTranslation()
+  const maxAttachments = options?.maxAttachments
   const [state, setState] = useState<MultiAttachmentUploadState>({
     attachments: [],
     uploadingFiles: new Map(),
@@ -56,6 +61,20 @@ export function useMultiAttachment(): UseMultiAttachmentReturn {
         ...prev,
         errors: new Map(),
       }))
+
+      // Check attachment count limit (applies to image/video generation modes)
+      if (maxAttachments !== undefined) {
+        const currentCount = state.attachments.length + state.uploadingFiles.size
+        const incomingCount = fileList.length
+        if (currentCount + incomingCount > maxAttachments) {
+          toast({
+            title: t('chat:generate.attachment_limit_reached'),
+            description: t('chat:generate.max_attachments', { count: maxAttachments }),
+            variant: 'default',
+          })
+          return
+        }
+      }
 
       for (const file of fileList) {
         // Use only filename as fileId to avoid duplicate errors for the same file
@@ -200,7 +219,29 @@ export function useMultiAttachment(): UseMultiAttachmentReturn {
         }
       }
     },
-    [state.attachments, t]
+    [state, t, maxAttachments]
+  )
+
+  const addExistingAttachment = useCallback(
+    (attachment: import('@/types/api').Attachment) => {
+      setState(prev => {
+        // Skip if already in the list (deduplication by id)
+        if (prev.attachments.some(a => a.id === attachment.id)) {
+          return prev
+        }
+        // Respect the maxAttachments cap so re-edit flows cannot exceed the limit
+        // Include uploading files in the count to prevent exceeding the limit
+        const currentTotal = prev.attachments.length + prev.uploadingFiles.size
+        if (maxAttachments !== undefined && currentTotal >= maxAttachments) {
+          return prev
+        }
+        return {
+          ...prev,
+          attachments: [...prev.attachments, attachment],
+        }
+      })
+    },
+    [maxAttachments]
   )
 
   const handleRemove = useCallback(
@@ -250,6 +291,7 @@ export function useMultiAttachment(): UseMultiAttachmentReturn {
   return {
     state,
     handleFileSelect,
+    addExistingAttachment,
     handleRemove,
     reset,
     isReadyToSend,

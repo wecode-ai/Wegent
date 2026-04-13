@@ -8,7 +8,7 @@
  *
  * Future types to be added: 'person' | 'bot' | 'team'
  */
-export type ContextType = 'knowledge_base' | 'table'
+export type ContextType = 'knowledge_base' | 'table' | 'queue_message'
 
 /**
  * Base interface for all context items
@@ -45,6 +45,25 @@ export interface TableContext extends BaseContextItem {
 }
 
 /**
+ * Queue message context item (for processing inbox messages)
+ */
+export interface QueueMessageContext extends BaseContextItem {
+  type: 'queue_message'
+  /** Sender's username */
+  senderName: string
+  /** Optional note from sender */
+  note?: string
+  /** Message content preview (truncated) */
+  contentPreview: string
+  /** Full message content for sending to AI */
+  fullContent: string
+  /** Number of messages in the snapshot */
+  messageCount: number
+  /** Source task ID */
+  sourceTaskId: number
+}
+
+/**
  * Union type for all context items
  * 所有上下文项的联合类型
  *
@@ -53,4 +72,4 @@ export interface TableContext extends BaseContextItem {
  * 2. Create a new interface extending BaseContextItem
  * 3. Add the new interface to this union type
  */
-export type ContextItem = KnowledgeBaseContext | TableContext
+export type ContextItem = KnowledgeBaseContext | TableContext | QueueMessageContext

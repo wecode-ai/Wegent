@@ -12,6 +12,8 @@ import React, {
 } from 'react'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
+import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
 import { Loader2, XIcon, SettingsIcon, Edit, Wand2 } from 'lucide-react'
 import {
   Select,
@@ -20,15 +22,21 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import McpConfigImportModal from './McpConfigImportModal'
-import McpConfigEditModal from './McpConfigEditModal'
-import McpProviderModal from './McpProviderModal'
+import McpConfigSection from './McpConfigSection'
 import SkillManagementModal from './skills/SkillManagementModal'
+import { RichSkillSelector } from './skills/RichSkillSelector'
 import DifyBotConfig from './DifyBotConfig'
-import { PromptFineTuneDialog } from './prompt-fine-tune'
+import PromptFineTuneDialog from '@/features/prompt-tune/components/PromptFineTuneDialog'
+import { KnowledgeBaseMultiSelector } from './knowledge/KnowledgeBaseMultiSelector'
 
 import { Bot } from '@/types/api'
-import { botApis, CreateBotRequest, UpdateBotRequest } from '@/apis/bots'
+import {
+  botApis,
+  CreateBotRequest,
+  KnowledgeBaseDefaultRef,
+  SkillRefMeta,
+  UpdateBotRequest,
+} from '@/apis/bots'
 import {
   isPredefinedModel,
   getModelFromConfig,
@@ -42,12 +50,7 @@ import { fetchUnifiedSkillsList, fetchPublicSkillsList, UnifiedSkill } from '@/a
 import { publicResourceApis, PublicBotFormData } from '@/apis/publicResources'
 import { useTranslation } from '@/hooks/useTranslation'
 import { adaptMcpConfigForAgent, isValidAgentType } from '../utils/mcpTypeAdapter'
-import {
-  mergeMcpConfigs,
-  parseMcpConfig,
-  removeMcpServer,
-  stringifyMcpConfig,
-} from '../utils/mcpConfig'
+import { buildSkillRefsFromSelection } from '../utils/skillRefResolver'
 
 /** Agent types supported by the system */
 export type AgentType = 'ClaudeCode' | 'Agno' | 'Dify'
@@ -59,7 +62,9 @@ export interface BotFormData {
   agent_config: Record<string, unknown>
   system_prompt: string
   mcp_servers: Record<string, unknown>
+  default_knowledge_base_refs: KnowledgeBaseDefaultRef[]
   skills: string[]
+  skill_refs: Record<string, SkillRefMeta>
   // preload_skills: string[]
 }
 
@@ -168,8 +173,14 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
   const [mcpConfig, setMcpConfig] = useState(
     baseBot?.mcp_servers ? JSON.stringify(baseBot.mcp_servers, null, 2) : ''
   )
+  const [defaultKnowledgeBaseRefs, setDefaultKnowledgeBaseRefs] = useState<
+    KnowledgeBaseDefaultRef[]
+  >(baseBot?.default_knowledge_base_refs || [])
   const [selectedSkills, setSelectedSkills] = useState<string[]>(baseBot?.skills || [])
   const [preloadSkills, setPreloadSkills] = useState<string[]>(baseBot?.preload_skills || [])
+  const [selectedSkillRefs, setSelectedSkillRefs] = useState<Record<string, SkillRefMeta>>(
+    baseBot?.skill_refs || {}
+  )
   // Initial bot skills snapshot for preload selection - remains constant during edit session
   const [initialBotSkills, setInitialBotSkills] = useState<string[]>(baseBot?.skills || [])
   const [allSkills, setAllSkills] = useState<UnifiedSkill[]>([])
@@ -177,9 +188,6 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
   const [loadingSkills, setLoadingSkills] = useState(false)
   const [agentConfigError, setAgentConfigError] = useState(false)
 
-  const [mcpEditModalOpen, setMcpEditModalOpen] = useState(false)
-  const [importModalVisible, setImportModalVisible] = useState(false)
-  const [providerModalOpen, setProviderModalOpen] = useState(false)
   const [templateSectionExpanded, setTemplateSectionExpanded] = useState(false)
   const [skillManagementModalOpen, setSkillManagementModalOpen] = useState(false)
   const [promptFineTuneOpen, setPromptFineTuneOpen] = useState(false)
@@ -190,21 +198,6 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     () => (isValidAgentType(agentName) ? agentName : undefined),
     [agentName]
   )
-
-  const mcpConfigState = useMemo(() => {
-    try {
-      return {
-        config: parseMcpConfig(mcpConfig),
-        parseError: false,
-      }
-    } catch {
-      return {
-        config: {} as Record<string, unknown>,
-        parseError: true,
-      }
-    }
-  }, [mcpConfig])
-  const mcpServerNames = useMemo(() => Object.keys(mcpConfigState.config), [mcpConfigState.config])
 
   const prettifyAgentConfig = useCallback(() => {
     setAgentConfig(prev => {
@@ -227,113 +220,6 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
       }
     })
   }, [toast, t])
-
-  const handleOpenMcpEditModal = useCallback(() => {
-    if (readOnly) {
-      return
-    }
-    setMcpEditModalOpen(true)
-  }, [readOnly])
-
-  const handleOpenMcpImportModal = useCallback(() => {
-    if (readOnly) {
-      return
-    }
-    setImportModalVisible(true)
-  }, [readOnly])
-
-  // Handle import server from provider
-  const handleImportServerFromProvider = useCallback(
-    (server: {
-      id: string
-      name: string
-      description?: string
-      type: string
-      base_url?: string
-      headers?: Record<string, string>
-    }) => {
-      try {
-        const currentConfig = parseMcpConfig(mcpConfig)
-        const serverKey = server.id.replace(/[@\/]/g, '_')
-
-        const newServer: Record<string, unknown> = {
-          type: server.type === 'streamableHttp' ? 'streamable-http' : server.type,
-        }
-
-        if (server.base_url) {
-          newServer.url = server.base_url
-        }
-
-        if (server.headers && Object.keys(server.headers).length > 0) {
-          newServer.headers = server.headers
-        }
-
-        const mergedConfig = mergeMcpConfigs(currentConfig, {
-          [serverKey]: newServer,
-        })
-        setMcpConfig(stringifyMcpConfig(mergedConfig))
-      } catch {
-        toast({
-          variant: 'destructive',
-          title: t('common:bot.errors.mcp_config_json'),
-        })
-      }
-    },
-    [mcpConfig, toast, t]
-  )
-
-  // Handle import configuration confirmation
-  const handleImportConfirm = useCallback(
-    (config: Record<string, unknown>, mode: 'replace' | 'append') => {
-      try {
-        // Update MCP configuration
-        if (mode === 'replace') {
-          setMcpConfig(stringifyMcpConfig(config))
-          toast({
-            title: t('common:bot.import_success'),
-          })
-        } else {
-          const currentConfig = parseMcpConfig(mcpConfig)
-          const mergedConfig = mergeMcpConfigs(currentConfig, config)
-          setMcpConfig(stringifyMcpConfig(mergedConfig))
-          toast({
-            title: t('common:bot.append_success'),
-          })
-        }
-        setImportModalVisible(false)
-      } catch {
-        toast({
-          variant: 'destructive',
-          title: t('common:bot.errors.mcp_config_json'),
-        })
-      }
-    },
-    [mcpConfig, toast, t]
-  )
-
-  const handleMcpEditSave = useCallback((config: Record<string, unknown>) => {
-    setMcpConfig(stringifyMcpConfig(config))
-  }, [])
-
-  const handleDeleteMcpServer = useCallback(
-    (serverName: string) => {
-      if (readOnly) {
-        return
-      }
-
-      try {
-        const currentConfig = parseMcpConfig(mcpConfig)
-        const nextConfig = removeMcpServer(currentConfig, serverName)
-        setMcpConfig(stringifyMcpConfig(nextConfig))
-      } catch {
-        toast({
-          variant: 'destructive',
-          title: t('common:bot.errors.mcp_config_json'),
-        })
-      }
-    },
-    [mcpConfig, readOnly, toast, t]
-  )
 
   // Template handlers
   const handleApplyClaudeSonnetTemplate = useCallback(() => {
@@ -373,13 +259,13 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
   // Documentation handlers
   const handleOpenModelDocs = useCallback(() => {
     const lang = i18n.language === 'zh-CN' ? 'zh' : 'en'
-    const docsUrl = `https://github.com/wecode-ai/wegent/blob/main/docs/${lang}/guides/user/configuring-models.md`
+    const docsUrl = `https://github.com/wecode-ai/wegent/blob/main/docs/${lang}/user-guide/configuring-models.md`
     window.open(docsUrl, '_blank')
   }, [i18n.language])
 
   const handleOpenShellDocs = useCallback(() => {
     const lang = i18n.language === 'zh-CN' ? 'zh' : 'en'
-    const docsUrl = `https://github.com/wecode-ai/wegent/blob/main/docs/${lang}/guides/user/configuring-shells.md`
+    const docsUrl = `https://github.com/wecode-ai/wegent/blob/main/docs/${lang}/user-guide/configuring-shells.md`
     window.open(docsUrl, '_blank')
   }, [i18n.language])
 
@@ -443,26 +329,11 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     return shellType === 'Chat'
   }, [agentName, shells])
 
-  // Get current shell type for skill filtering
-  const currentShellType = useMemo(() => {
-    const selectedShell = shells.find(s => s.name === agentName)
-    return selectedShell?.shellType || agentName
-  }, [agentName, shells])
-
   // Filter skills based on current shell type
-  const filterSkillsByShellType = useCallback(
-    (skills: UnifiedSkill[]): UnifiedSkill[] => {
-      return skills.filter(skill => {
-        // If bindShells is not specified or empty, skill is NOT available (must explicitly bind to shells)
-        if (!skill.bindShells || skill.bindShells.length === 0) {
-          return false
-        }
-        // Check if current shell type is in the bindShells list
-        return skill.bindShells.includes(currentShellType)
-      })
-    },
-    [currentShellType]
-  )
+  // Note: bindShells filtering is deprecated, skills can be used in any context
+  const filterSkillsByShellType = useCallback((skills: UnifiedSkill[]): UnifiedSkill[] => {
+    return skills
+  }, [])
 
   useEffect(() => {
     // Only fetch skills when agent supports skills (ClaudeCode or Chat)
@@ -614,7 +485,9 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     }
 
     setSelectedSkills(baseBot?.skills || [])
+    setDefaultKnowledgeBaseRefs(baseBot?.default_knowledge_base_refs || [])
     setPreloadSkills(baseBot?.preload_skills || [])
+    setSelectedSkillRefs(baseBot?.skill_refs || {})
     // Capture initial bot skills - this list remains constant for preload selection
     setInitialBotSkills(baseBot?.skills || [])
     setAgentConfigError(false)
@@ -760,7 +633,15 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
       agent_config: parsedAgentConfig,
       system_prompt: isDifyAgent ? '' : prompt.trim() || '',
       mcp_servers: parsedMcpConfig,
+      default_knowledge_base_refs: defaultKnowledgeBaseRefs,
       skills: selectedSkills.length > 0 ? selectedSkills : [],
+      skill_refs: buildSkillRefsFromSelection(
+        selectedSkills,
+        selectedSkillRefs,
+        availableSkills,
+        scope,
+        groupName
+      ),
       // preload_skills: preloadSkills.length > 0 ? preloadSkills : [],
     }
   }, [
@@ -774,9 +655,13 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     mcpConfig,
     agentName,
     botName,
+    defaultKnowledgeBaseRefs,
     prompt,
     selectedSkills,
-
+    selectedSkillRefs,
+    availableSkills,
+    scope,
+    groupName,
     selectedModelNamespace,
   ])
 
@@ -827,7 +712,9 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
           agent_config: botData.agent_config,
           system_prompt: botData.system_prompt,
           mcp_servers: botData.mcp_servers,
+          default_knowledge_base_refs: botData.default_knowledge_base_refs,
           skills: botData.skills,
+          skill_refs: botData.skill_refs,
           // preload_skills: botData.preload_skills,
           namespace: scope === 'group' && groupName ? groupName : undefined,
         }
@@ -1008,7 +895,15 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
           agent_config: parsedAgentConfig as Record<string, unknown>,
           system_prompt: isDifyAgent ? '' : prompt.trim() || '', // Clear system_prompt for Dify
           mcp_servers: parsedMcpConfig ?? {},
+          default_knowledge_base_refs: defaultKnowledgeBaseRefs,
           skills: selectedSkills.length > 0 ? selectedSkills : [],
+          skill_refs: buildSkillRefsFromSelection(
+            selectedSkills,
+            selectedSkillRefs,
+            availableSkills,
+            scope,
+            groupName
+          ),
           // preload_skills: preloadSkills.length > 0 ? preloadSkills : [],
           namespace: scope === 'group' && groupName ? groupName : undefined,
         }
@@ -1073,7 +968,12 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                   {t('common:common.cancel')}
                 </Button>
               )}
-              <Button onClick={handleSave} disabled={botSaving} variant="primary">
+              <Button
+                onClick={handleSave}
+                disabled={botSaving}
+                variant="primary"
+                data-testid="save-button"
+              >
                 {botSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 {botSaving ? t('common:actions.saving') : t('common:actions.save')}
               </Button>
@@ -1093,13 +993,12 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                   {t('common:bot.name')} <span className="text-red-400">*</span>
                 </label>
               </div>
-              <input
-                type="text"
+              <Input
                 value={botName}
                 onChange={e => setBotName(e.target.value)}
                 placeholder={t('common:bot.name_placeholder')}
                 disabled={readOnly}
-                className={`w-full h-10 px-4 bg-base border border-border rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary text-base ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
+                className={`text-base ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
               />
             </div>
 
@@ -1294,7 +1193,6 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                   </div>
                 )}
 
-                {/* Protocol selector - only show in advanced mode */}
                 {isCustomModel && (
                   <div className="mb-3">
                     <label className="block text-sm font-medium text-text-primary mb-1">
@@ -1334,7 +1232,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                 )}
 
                 {isCustomModel ? (
-                  <textarea
+                  <Textarea
                     value={agentConfig}
                     onChange={e => {
                       if (readOnly) return
@@ -1368,7 +1266,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
 }`
                           : ''
                     }
-                    className={`w-full px-4 py-2 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 font-mono text-base h-[150px] custom-scrollbar ${agentConfigError ? 'border border-red-400 focus:ring-red-300 focus:border-red-400' : 'border border-border focus:ring-primary/40 focus:border-primary'} ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
+                    className={`font-mono text-base h-[150px] custom-scrollbar ${agentConfigError ? 'border-red-400 focus-visible:ring-red-300' : ''} ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
                   />
                 ) : (
                   <Select
@@ -1487,34 +1385,35 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                       </div>
                     ) : (
                       <div className="space-y-2">
-                        <Select
-                          value=""
-                          onValueChange={value => {
+                        <RichSkillSelector
+                          skills={availableSkills}
+                          selectedSkillNames={selectedSkills}
+                          onSelectSkill={skill => {
                             if (readOnly) return
-                            if (value && !selectedSkills.includes(value)) {
-                              setSelectedSkills([...selectedSkills, value])
+                            if (skill && !selectedSkills.includes(skill.name)) {
+                              setSelectedSkills([...selectedSkills, skill.name])
+                              setSelectedSkillRefs(prev => ({
+                                ...prev,
+                                [skill.name]: {
+                                  skill_id: skill.id,
+                                  namespace: skill.namespace || 'default',
+                                  is_public: skill.is_public || false,
+                                },
+                              }))
                             }
                           }}
+                          placeholder={t('common:skills.select_skill_to_add')}
                           disabled={readOnly}
-                        >
-                          <SelectTrigger className="w-full">
-                            <SelectValue placeholder={t('common:skills.select_skill_to_add')} />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {availableSkills
-                              .filter(skill => !selectedSkills.includes(skill.name))
-                              .map(skill => (
-                                <SelectItem key={skill.name} value={skill.name}>
-                                  {skill.displayName || skill.name}
-                                </SelectItem>
-                              ))}
-                          </SelectContent>
-                        </Select>
+                          readOnly={readOnly}
+                        />
 
                         {selectedSkills.length > 0 && (
                           <div className="flex flex-wrap gap-1.5">
                             {selectedSkills.map(skillName => {
-                              const skill = availableSkills.find(s => s.name === skillName)
+                              const skillRef = selectedSkillRefs[skillName]
+                              const skill =
+                                availableSkills.find(s => s.id === skillRef?.skill_id) ||
+                                availableSkills.find(s => s.name === skillName)
                               return (
                                 <div
                                   key={skillName}
@@ -1525,6 +1424,11 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                                     onClick={() => {
                                       if (readOnly) return
                                       setSelectedSkills(selectedSkills.filter(s => s !== skillName))
+                                      setSelectedSkillRefs(prev => {
+                                        const next = { ...prev }
+                                        delete next[skillName]
+                                        return next
+                                      })
                                     }}
                                     disabled={readOnly}
                                     className={`text-text-muted hover:text-text-primary ${readOnly ? 'cursor-not-allowed opacity-50' : ''}`}
@@ -1538,6 +1442,28 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                         )}
                       </div>
                     )}
+                  </div>
+                </div>
+              )}
+
+              {scope !== 'public' && (
+                <div className="flex flex-col">
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="flex items-center">
+                      <label className="block text-base font-medium text-text-primary">
+                        {t('common:bot.default_knowledge_bases')}
+                      </label>
+                      <span className="text-xs text-text-muted ml-2">
+                        {t('common:bot.default_knowledge_bases_optional')}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="bg-base rounded-md p-2 min-h-[80px]">
+                    <KnowledgeBaseMultiSelector
+                      value={defaultKnowledgeBaseRefs}
+                      onChange={setDefaultKnowledgeBaseRefs}
+                      disabled={readOnly}
+                    />
                   </div>
                 </div>
               )}
@@ -1626,78 +1552,13 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
               )}
 
               {/* MCP Config */}
-              <div className="flex flex-col flex-grow">
-                <div className="flex items-center justify-between mb-1">
-                  <div className="flex items-center gap-1.5">
-                    <label className="block text-base font-medium leading-8 text-text-primary">
-                      {t('common:bot.mcp_config')}
-                    </label>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={handleOpenMcpEditModal}
-                      disabled={readOnly}
-                      className="h-8 text-xs disabled:cursor-not-allowed"
-                    >
-                      {t('common:bot.edit_mcp_json')}
-                    </Button>
-                    <span className="text-text-muted text-xs">|</span>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={handleOpenMcpImportModal}
-                      disabled={readOnly}
-                      className="h-8 text-xs disabled:cursor-not-allowed"
-                    >
-                      {t('common:bot.add_mcp_json')}
-                    </Button>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => setProviderModalOpen(true)}
-                      disabled={readOnly}
-                      className="text-xs gap-1.5 disabled:cursor-not-allowed"
-                    >
-                      {t('common:mcpProviders.provider_button')}
-                    </Button>
-                  </div>
-                </div>
-                <div className="w-full bg-base-secondary rounded-md border border-border min-h-[120px] flex-grow overflow-hidden">
-                  {mcpConfigState.parseError ? (
-                    <div className="px-4 py-3 text-sm text-red-500">
-                      {t('common:bot.errors.mcp_config_json')}
-                    </div>
-                  ) : mcpServerNames.length === 0 ? (
-                    <div className="px-4 py-3 text-sm text-text-muted">
-                      {t('common:bot.no_mcp_servers')}
-                    </div>
-                  ) : (
-                    <div className="max-h-44 overflow-y-auto custom-scrollbar divide-y divide-border">
-                      {mcpServerNames.map(serverName => (
-                        <div
-                          key={serverName}
-                          className="flex min-h-11 items-center justify-between px-4 py-2.5"
-                        >
-                          <div className="min-w-0">
-                            <div className="text-sm text-text-primary truncate">{serverName}</div>
-                          </div>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => handleDeleteMcpServer(serverName)}
-                            disabled={readOnly}
-                            className="h-7 px-2 text-xs text-text-muted hover:text-red-500"
-                          >
-                            {t('common:actions.delete')}
-                          </Button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
+              <McpConfigSection
+                mcpConfig={mcpConfig}
+                onMcpConfigChange={setMcpConfig}
+                agentType={mcpAgentType}
+                readOnly={readOnly}
+                toast={toast}
+              />
             </>
           )}
         </div>
@@ -1729,7 +1590,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
             </div>
 
             {/* textarea occupies all space in the second row */}
-            <textarea
+            <Textarea
               value={prompt}
               onChange={e => {
                 if (readOnly) return
@@ -1737,38 +1598,11 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
               }}
               disabled={readOnly}
               placeholder={t('common:bot.prompt_placeholder')}
-              className={`w-full h-full px-4 py-2 bg-base border border-border rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary text-base resize-y custom-scrollbar min-h-[200px] flex-grow ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
+              className={`text-base resize-y custom-scrollbar min-h-[200px] flex-grow ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
             />
           </div>
         )}
       </div>
-
-      {/* MCP Configuration Edit Modal */}
-      <McpConfigEditModal
-        open={mcpEditModalOpen}
-        onOpenChange={setMcpEditModalOpen}
-        initialConfig={mcpConfig}
-        onSave={handleMcpEditSave}
-        toast={toast}
-        agentType={mcpAgentType}
-      />
-
-      {/* MCP Configuration Import Modal */}
-      <McpConfigImportModal
-        visible={importModalVisible}
-        onClose={() => setImportModalVisible(false)}
-        onImport={handleImportConfirm}
-        toast={toast}
-        agentType={mcpAgentType}
-        mode="append-only"
-      />
-
-      {/* MCP Provider Modal */}
-      <McpProviderModal
-        open={providerModalOpen}
-        onOpenChange={setProviderModalOpen}
-        onImportServer={handleImportServerFromProvider}
-      />
 
       {/* Skill Management Modal */}
       <SkillManagementModal

@@ -33,7 +33,7 @@ async def test_create_openai_model():
 
 @pytest.mark.asyncio
 async def test_create_anthropic_model():
-    """Test creating Anthropic model."""
+    """Test creating Anthropic model without automatic caching (default)."""
     config = {
         "model_id": "claude-3-sonnet-20240229",
         "model": "anthropic",
@@ -45,6 +45,24 @@ async def test_create_anthropic_model():
     assert isinstance(model, ChatAnthropic)
     assert model.model == "claude-3-sonnet-20240229"
     assert model.anthropic_api_key.get_secret_value() == "sk-ant-test"
+    # Without is_support_claude_automatic_caching, no top-level cache_control
+    assert "cache_control" not in model.model_kwargs
+
+
+@pytest.mark.asyncio
+async def test_create_anthropic_model_with_automatic_caching():
+    """Test creating Anthropic model with automatic caching enabled."""
+    config = {
+        "model_id": "claude-3-sonnet-20240229",
+        "model": "anthropic",
+        "api_key": "sk-ant-test",
+        "is_support_claude_automatic_caching": True,
+    }
+
+    model = LangChainModelFactory.create_from_config(config)
+
+    assert isinstance(model, ChatAnthropic)
+    assert model.model_kwargs.get("cache_control") == {"type": "ephemeral"}
 
 
 @pytest.mark.asyncio

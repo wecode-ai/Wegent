@@ -32,6 +32,7 @@ from shared.logger import setup_logger
 from shared.status import TaskStatus
 from shared.telemetry.config import get_otel_config
 from shared.telemetry.context import set_task_context, set_user_context
+from shared.telemetry.context.large_data import log_json_body
 from shared.telemetry.core import is_telemetry_enabled
 
 # Use the shared logger setup function
@@ -213,7 +214,18 @@ def _initialize_sandbox_claude(auth_token: str, task_id: str) -> None:
             int(task_id) if task_id else None
         ),  # Enable task-based authorization for shared teams
     )
-    result = downloader.download_and_deploy(all_skills)
+    resolved_skill_map = {
+        **(skills_info.skill_refs or {}),
+        **(skills_info.preload_skill_refs or {}),
+    }
+    logger.info(
+        "[SandboxInit] Resolved skill map prepared: keys=%s",
+        sorted(resolved_skill_map.keys()),
+    )
+    result = downloader.download_and_deploy(
+        all_skills,
+        resolved_skill_map=resolved_skill_map or None,
+    )
     logger.info(
         f"[SandboxInit] Skills deployment complete: "
         f"{result.success_count}/{result.total_count} deployed to {result.skills_dir}"
@@ -451,7 +463,7 @@ async def log_requests(request: Request, call_next):
                 if request_body:
                     current_span = trace.get_current_span()
                     if current_span and current_span.is_recording():
-                        current_span.set_attribute("http.request.body", request_body)
+                        log_json_body("http.request.body", request_body)
         except Exception as e:
             logger.debug(f"Failed to set OTEL context: {e}")
 
@@ -591,7 +603,7 @@ async def openai_responses(request: Request):
 
     logger.info(
         f"[v1/responses] Received OpenAI request: task_id={task_id}, "
-        f"subtask_id={subtask_id}, background={background}"
+        f"subtask_id={subtask_id}, background={background}, request={openai_request}"
     )
 
     # Set task and user context for tracing

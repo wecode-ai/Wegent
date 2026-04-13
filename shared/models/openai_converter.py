@@ -22,8 +22,14 @@ from dataclasses import asdict
 from typing import Any, Optional
 
 from .execution import ExecutionRequest
+from .knowledge import KnowledgeBaseToolAccessMode
 
 logger = logging.getLogger(__name__)
+
+
+def normalize_kb_tool_access_mode(value: Optional[str]) -> str:
+    """Normalize KB tool access mode to a non-null value."""
+    return value or KnowledgeBaseToolAccessMode.FULL
 
 
 def get_metadata_field(task: dict, field: str, default=None):
@@ -107,6 +113,13 @@ class OpenAIRequestConverter:
                 auth = server.get("auth") or server.get("headers")
                 if auth:
                     tool["server_auth"] = auth
+                # Include stdio-specific fields (command, args, env)
+                if "command" in server:
+                    tool["command"] = server["command"]
+                if "args" in server:
+                    tool["args"] = server["args"]
+                if "env" in server:
+                    tool["env"] = server["env"]
                 tools.append(tool)
 
         # Build the OpenAI format request
@@ -143,6 +156,7 @@ class OpenAIRequestConverter:
             "user_subtask_id": request.user_subtask_id,
             "is_group_chat": request.is_group_chat,
             "history_limit": request.history_limit,
+            "stateless": request.stateless,
             "enable_tools": request.enable_tools,
             "enable_web_search": request.enable_web_search,
             "enable_clarification": request.enable_clarification,
@@ -152,11 +166,19 @@ class OpenAIRequestConverter:
             "skill_configs": request.skill_configs,
             "preload_skills": request.preload_skills,
             "user_selected_skills": request.user_selected_skills,
+            "skill_refs": request.skill_refs,
+            "preload_skill_refs": request.preload_skill_refs,
             "knowledge_base_ids": request.knowledge_base_ids,
             "document_ids": request.document_ids,
             "is_user_selected_kb": request.is_user_selected_kb,
+            "kb_tool_access_mode": normalize_kb_tool_access_mode(
+                request.kb_tool_access_mode
+            ),
             "table_contexts": request.table_contexts,
+            "kb_meta_prompt": request.kb_meta_prompt,
+            "task_data": request.task_data,
             "auth_token": request.auth_token,
+            "skill_identity_token": request.skill_identity_token,
             "backend_url": request.backend_url,
             "workspace": request.workspace,
             "is_subscription": request.is_subscription,
@@ -178,6 +200,9 @@ class OpenAIRequestConverter:
             "validation_params": request.validation_params,
             "sandbox_metadata": request.sandbox_metadata,
             "callback_url": request.callback_url,
+            # Pipeline mode session control
+            "new_session": request.new_session,
+            "collaboration_model": request.collaboration_model,
         }
         openai_request["metadata"] = metadata
 
@@ -244,6 +269,13 @@ class OpenAIRequestConverter:
                 auth = tool.get("server_auth")
                 if auth:
                     server["auth"] = auth
+                # Include stdio-specific fields (command, args, env)
+                if "command" in tool:
+                    server["command"] = tool["command"]
+                if "args" in tool:
+                    server["args"] = tool["args"]
+                if "env" in tool:
+                    server["env"] = tool["env"]
                 mcp_servers.append(server)
 
         # Get user dict directly from metadata (passed from from_execution_request)
@@ -275,6 +307,7 @@ class OpenAIRequestConverter:
             user_subtask_id=metadata.get("user_subtask_id"),
             is_group_chat=metadata.get("is_group_chat", False),
             history_limit=metadata.get("history_limit"),
+            stateless=metadata.get("stateless", False),
             model_config=model_config,
             system_prompt=openai_request.get("instructions") or "",
             prompt=prompt,
@@ -288,12 +321,20 @@ class OpenAIRequestConverter:
             skill_configs=metadata.get("skill_configs", []),
             preload_skills=metadata.get("preload_skills", []),
             user_selected_skills=metadata.get("user_selected_skills", []),
+            skill_refs=metadata.get("skill_refs", {}),
+            preload_skill_refs=metadata.get("preload_skill_refs", {}),
             mcp_servers=mcp_servers,
             knowledge_base_ids=metadata.get("knowledge_base_ids"),
             document_ids=metadata.get("document_ids"),
             is_user_selected_kb=metadata.get("is_user_selected_kb", True),
+            kb_tool_access_mode=normalize_kb_tool_access_mode(
+                metadata.get("kb_tool_access_mode")
+            ),
             table_contexts=metadata.get("table_contexts", []),
+            kb_meta_prompt=metadata.get("kb_meta_prompt", "") or "",
+            task_data=metadata.get("task_data"),
             auth_token=metadata.get("auth_token", ""),
+            skill_identity_token=metadata.get("skill_identity_token", ""),
             backend_url=metadata.get("backend_url", ""),
             workspace=metadata.get("workspace", {}),
             is_subscription=metadata.get("is_subscription", False),
@@ -315,6 +356,9 @@ class OpenAIRequestConverter:
             validation_params=metadata.get("validation_params"),
             sandbox_metadata=metadata.get("sandbox_metadata"),
             callback_url=metadata.get("callback_url"),
+            # Pipeline mode session control
+            new_session=metadata.get("new_session", False),
+            collaboration_model=metadata.get("collaboration_model", "single"),
         )
 
 

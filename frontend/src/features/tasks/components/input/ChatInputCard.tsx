@@ -4,26 +4,32 @@
 
 'use client'
 
-import React, { useRef } from 'react'
+import React, { useRef, useState, useCallback } from 'react'
 import { Upload, Sparkles } from 'lucide-react'
 import ChatInput from './ChatInput'
 import InputBadgeDisplay from './InputBadgeDisplay'
 import ExternalApiParamsInput from '../params/ExternalApiParamsInput'
 import { SelectedTeamBadge } from '../selector/SelectedTeamBadge'
 import ChatInputControls, { ChatInputControlsProps } from './ChatInputControls'
+import DeviceSelectorTab from './DeviceSelectorTab'
 import { QuoteCard } from '../text-selection'
 import { ConnectionStatusBanner } from './ConnectionStatusBanner'
-import type { Team, ChatTipItem } from '@/types/api'
+import type { Team, ChatTipItem, TaskType } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { SkillSelectorPopoverRef } from '../selector/SkillSelectorPopover'
 
-export interface ChatInputCardProps extends Omit<ChatInputControlsProps, 'taskInputMessage'> {
+export interface ChatInputCardProps extends Omit<
+  ChatInputControlsProps,
+  'taskInputMessage' | 'taskType'
+> {
   // Input message
   taskInputMessage: string
   setTaskInputMessage: (message: string) => void
 
   // Team and external API
   selectedTeam: Team | null
+  /** Available teams for team selector */
+  teams?: Team[]
   externalApiParams: Record<string, string>
   onExternalApiParamsChange: (params: Record<string, string>) => void
   onAppModeChange: (mode: string | undefined) => void
@@ -35,7 +41,7 @@ export interface ChatInputCardProps extends Omit<ChatInputControlsProps, 'taskIn
   isUsingDefaultTeam?: boolean
 
   // Task type
-  taskType: 'chat' | 'code' | 'knowledge' | 'task'
+  taskType: TaskType
   autoFocus?: boolean
 
   // Knowledge base ID to exclude from context selector (used in notebook mode)
@@ -69,6 +75,12 @@ export interface ChatInputCardProps extends Omit<ChatInputControlsProps, 'taskIn
 
   // Reason why input is disabled (e.g., device offline). Shows as placeholder text.
   disabledReason?: string
+
+  // Hide all selectors (for OpenClaw devices) - only show text input + send button
+  hideSelectors?: boolean
+
+  // Callback to open team edit dialog (shown as pencil icon on badge)
+  onEditTeam?: () => void
 }
 
 /**
@@ -89,6 +101,7 @@ export function ChatInputCard({
   taskInputMessage,
   setTaskInputMessage,
   selectedTeam,
+  teams = [],
   onTeamChange,
   externalApiParams,
   onExternalApiParamsChange,
@@ -111,6 +124,8 @@ export function ChatInputCard({
   inputControlsRef,
   hasNoTeams = false,
   disabledReason,
+  hideSelectors,
+  onEditTeam,
   // ChatInputControls props
   selectedModel,
   setSelectedModel,
@@ -156,8 +171,38 @@ export function ChatInputCard({
   preloadedSkillNames,
   selectedSkillNames,
   onToggleSkill,
+  // Video mode props
+  videoModels,
+  selectedVideoModel,
+  onVideoModelChange,
+  isVideoModelsLoading,
+  selectedResolution,
+  onResolutionChange,
+  availableResolutions,
+  selectedRatio,
+  onRatioChange,
+  availableRatios,
+  selectedDuration,
+  onDurationChange,
+  availableDurations,
+  // Image mode props
+  selectedImageModel,
+  onImageModelChange,
+  isImageModelsLoading,
+  selectedImageSize,
+  onImageSizeChange,
+  // Generate mode switch props
+  onGenerateModeChange,
 }: ChatInputCardProps) {
   const { t } = useTranslation('chat')
+
+  // State for expanded input mode (2x height for easier large text editing)
+  const [isInputExpanded, setIsInputExpanded] = useState(false)
+
+  // Toggle expand/collapse state
+  const handleExpandToggle = useCallback(() => {
+    setIsInputExpanded(prev => !prev)
+  }, [])
 
   // Ref for skill button to enable fly animation from autocomplete
   const skillSelectorRef = useRef<SkillSelectorPopoverRef>(null)
@@ -181,7 +226,7 @@ export function ChatInputCard({
 
       {/* Group Chat Mention Hint - only show in group chat mode */}
       {isGroupChat && (
-        <div className="flex items-center gap-1.5 px-4 py-1.5 mb-1 text-text-muted text-xs">
+        <div className="flex items-center gap-1.5 pl-28 pr-4 py-1.5 mb-1 text-text-muted text-xs">
           <Sparkles className="h-3.5 w-3.5 flex-shrink-0" />
           <span>{t('groupChat.mentionHint')}</span>
         </div>
@@ -189,12 +234,25 @@ export function ChatInputCard({
 
       {/* Chat Input Card */}
       <div
-        className={`relative w-full flex flex-col rounded-3xl border border-border bg-base shadow-[0px_4px_24px_0px_rgba(111,79,191,0.06)] transition-colors ${isDragging ? 'border-primary ring-2 ring-primary/20' : ''}`}
+        className={`relative w-full max-w-[820px] mx-auto rounded-3xl border bg-base shadow-card-hover transition-colors flex flex-col justify-between ${isDragging ? 'border-primary ring-2 ring-primary/20' : 'border-primary/40'}`}
         onDragEnter={onDragEnter}
         onDragLeave={onDragLeave}
         onDragOver={onDragOver}
         onDrop={onDrop}
+        style={{ minHeight: '146px' }}
       >
+        {/* Device Selector Tab - positioned at top left inside card, connected to border */}
+        {!shouldHideChatInput && (
+          <div className="absolute -top-[29px] left-4 z-10">
+            <DeviceSelectorTab
+              disabled={isLoading || isStreaming}
+              hasMessages={hasMessages}
+              taskDeviceId={selectedTaskDetail?.device_id}
+              className="rounded-t-lg"
+            />
+          </div>
+        )}
+
         {/* Drag Overlay */}
         {isDragging && (
           <div className="absolute inset-0 z-50 rounded-3xl bg-base/95 backdrop-blur-sm flex flex-col items-center justify-center border-2 border-dashed border-primary transition-all animate-in fade-in duration-200">
@@ -225,7 +283,7 @@ export function ChatInputCard({
 
         {/* Chat Input with inline badge */}
         {!shouldHideChatInput && (
-          <div className="px-4 pt-2">
+          <div className="px-4 pt-3">
             <ChatInput
               message={taskInputMessage}
               setMessage={setTaskInputMessage}
@@ -241,6 +299,7 @@ export function ChatInputCard({
                     team={selectedTeam}
                     showClearButton={true}
                     onClear={onRestoreDefaultTeam}
+                    onEdit={onEditTeam}
                   />
                 ) : undefined
               }
@@ -263,6 +322,9 @@ export function ChatInputCard({
               skillButtonRef={
                 { current: getSkillButtonElement() } as React.RefObject<HTMLElement | null>
               }
+              // Expand/collapse props for input height toggle
+              isExpanded={isInputExpanded}
+              onExpandToggle={handleExpandToggle}
             />
           </div>
         )}
@@ -274,6 +336,7 @@ export function ChatInputCard({
               team={selectedTeam}
               showClearButton={true}
               onClear={onRestoreDefaultTeam}
+              onEdit={onEditTeam}
             />
           </div>
         )}
@@ -282,6 +345,7 @@ export function ChatInputCard({
         <div ref={inputControlsRef}>
           <ChatInputControls
             selectedTeam={selectedTeam}
+            teams={teams}
             onTeamChange={onTeamChange}
             selectedModel={selectedModel}
             setSelectedModel={setSelectedModel}
@@ -331,6 +395,31 @@ export function ChatInputCard({
             selectedSkillNames={selectedSkillNames}
             onToggleSkill={onToggleSkill}
             skillSelectorRef={skillSelectorRef}
+            // Video mode props
+            taskType={taskType}
+            videoModels={videoModels}
+            selectedVideoModel={selectedVideoModel}
+            onVideoModelChange={onVideoModelChange}
+            isVideoModelsLoading={isVideoModelsLoading}
+            selectedResolution={selectedResolution}
+            onResolutionChange={onResolutionChange}
+            availableResolutions={availableResolutions}
+            selectedRatio={selectedRatio}
+            onRatioChange={onRatioChange}
+            availableRatios={availableRatios}
+            selectedDuration={selectedDuration}
+            onDurationChange={onDurationChange}
+            availableDurations={availableDurations}
+            // Image mode props
+            selectedImageModel={selectedImageModel}
+            onImageModelChange={onImageModelChange}
+            isImageModelsLoading={isImageModelsLoading}
+            selectedImageSize={selectedImageSize}
+            onImageSizeChange={onImageSizeChange}
+            // Generate mode switch props
+            onGenerateModeChange={onGenerateModeChange}
+            // Hide all selectors (for OpenClaw devices)
+            hideSelectors={hideSelectors}
           />
         </div>
       </div>

@@ -46,3 +46,36 @@ class ErrorResponse(BaseModel):
 
     message: str
     code: int
+
+
+# Workspace archive models
+class ArchiveRequest(BaseModel):
+    """Request model for /api/archive endpoint"""
+
+    task_id: int
+    upload_url: str  # Presigned MinIO upload URL
+    max_size_mb: int = 500  # Maximum archive size in MB
+
+
+class ArchiveResponse(BaseModel):
+    """Response model for /api/archive endpoint"""
+
+    task_id: int
+    size_bytes: int
+    session_file_included: bool  # Whether .claude_session_id was included
+    git_included: bool  # Whether .git directory was included
+
+
+class RestoreRequest(BaseModel):
+    """Request model for /api/restore endpoint"""
+
+    task_id: int
+    download_url: str  # Presigned MinIO download URL
+
+
+class RestoreResponse(BaseModel):
+    """Response model for /api/restore endpoint"""
+
+    success: bool
+    session_restored: bool  # Whether .claude_session_id was restored
+    git_restored: bool  # Whether .git directory was restored

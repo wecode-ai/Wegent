@@ -62,6 +62,35 @@ The search will automatically filter to only the selected documents.
 """
 
 
+def _check_user_kb_access_for_selected_docs(
+    db: Session,
+    user_id: int,
+    knowledge_base_ids: set[int],
+) -> tuple[bool, str]:
+    """Check if user has access to knowledge base content for selected documents.
+
+    For Restricted Analysts in a group, they cannot access document content
+    even if the documents are in a knowledge base they belong to.
+
+    Args:
+        db: Database session
+        user_id: User ID
+        knowledge_base_ids: Set of knowledge base IDs to check
+
+    Returns:
+        Tuple of (has_access, reason)
+        - has_access: True if user can access document content
+        - reason: Explanation if access is denied
+    """
+    from app.services.group_permission import (
+        check_knowledge_base_access_for_restricted_analyst_by_ids,
+    )
+
+    return check_knowledge_base_access_for_restricted_analyst_by_ids(
+        db, user_id, list(knowledge_base_ids)
+    )
+
+
 def process_selected_documents_contexts(
     db: Session,
     selected_docs_contexts: List[SubtaskContext],
@@ -118,6 +147,40 @@ def process_selected_documents_contexts(
             "[process_selected_documents_contexts] No document IDs found in contexts"
         )
         return message, base_system_prompt, extra_tools
+
+    # Resolve KnowledgeDocument rows to get their knowledge_base_id values
+    # This ensures we check access for all KBs that contain the selected documents
+    documents = (
+        db.query(KnowledgeDocument)
+        .filter(KnowledgeDocument.id.in_(all_document_ids))
+        .all()
+    )
+    # Collect knowledge_base_ids from the actual KnowledgeDocument rows
+    resolved_kb_ids = {doc.kind_id for doc in documents if doc.kind_id}
+    if resolved_kb_ids:
+        knowledge_base_ids = knowledge_base_ids.union(resolved_kb_ids)
+        logger.info(
+            f"[process_selected_documents_contexts] Resolved KB IDs from documents: {resolved_kb_ids}, "
+            f"total KB IDs to check: {knowledge_base_ids}"
+        )
+
+    # Check if user is a Restricted Analyst for any of the knowledge bases
+    has_access, denial_reason = _check_user_kb_access_for_selected_docs(
+        db, user_id, knowledge_base_ids
+    )
+
+    if not has_access:
+        logger.warning(
+            f"[process_selected_documents_contexts] User {user_id} is Restricted Analyst, "
+            f"blocking access to selected documents from KBs: {knowledge_base_ids}, "
+            f"reason: {denial_reason}"
+        )
+        # Return message unchanged, but add a note to the system prompt
+        # Don't add any tools or document content
+        from shared.prompts import KB_PROMPT_RESTRICTED_ANALYST
+
+        restricted_prompt = f"{base_system_prompt}\n\n{KB_PROMPT_RESTRICTED_ANALYST.format(reason=denial_reason)}"
+        return message, restricted_prompt, extra_tools
 
     logger.info(
         f"[process_selected_documents_contexts] Processing {len(all_document_ids)} documents "
@@ -295,11 +358,14 @@ def _inject_documents_directly(
 
     # Inject into message
     if isinstance(message, list):
-        # OpenAI Responses API format - prepend to first input_text block
-        final_message = _prepend_to_responses_api_content(message, documents_text)
+        # OpenAI Responses API format - insert context block before user message
+        final_message = _insert_context_block(message, documents_text)
     else:
-        # String message - prepend documents
-        final_message = documents_text + f"\n\n[User Question]:\n{message}"
+        # String message - convert to list format with separate context block
+        final_message = [
+            {"type": "input_text", "text": documents_text},
+            {"type": "input_text", "text": message},
+        ]
 
     logger.info(
         f"[_inject_documents_directly] Injected {len(documents_content)} documents "
@@ -309,40 +375,40 @@ def _inject_documents_directly(
     return final_message, base_system_prompt, extra_tools
 
 
-def _prepend_to_responses_api_content(
+def _insert_context_block(
     content_blocks: list[dict[str, Any]],
-    prefix_text: str,
+    context_text: str,
 ) -> list[dict[str, Any]]:
     """
-    Prepend text to the first input_text block in OpenAI Responses API format.
+    Insert a context text block before the last input_text (user message) block.
+
+    Convention: the last input_text block is always the user's message;
+    all preceding input_text blocks are system context.  This inserts a new
+    context block right before the user message.
 
     Args:
         content_blocks: List of content blocks in Responses API format
-        prefix_text: Text to prepend
+        context_text: Context text to insert
 
     Returns:
-        Modified content blocks with prefix prepended to first text block
+        New content blocks list with context block inserted
     """
-    result = []
-    prefix_added = False
+    result = list(content_blocks)
+    context_block = {"type": "input_text", "text": context_text}
 
-    for block in content_blocks:
-        if block.get("type") == "input_text" and not prefix_added:
-            # Prepend to first input_text block
-            original_text = block.get("text", "")
-            result.append(
-                {
-                    "type": "input_text",
-                    "text": prefix_text + "\n\n" + original_text,
-                }
-            )
-            prefix_added = True
-        else:
-            result.append(block)
+    # Find the last input_text index (the user message)
+    last_text_idx = None
+    for i in range(len(result) - 1, -1, -1):
+        if result[i].get("type") == "input_text":
+            last_text_idx = i
+            break
 
-    # If no input_text block found, add one at the beginning
-    if not prefix_added:
-        result.insert(0, {"type": "input_text", "text": prefix_text})
+    if last_text_idx is not None:
+        # Insert context block just before the user message
+        result.insert(last_text_idx, context_block)
+    else:
+        # No text blocks at all — insert at beginning
+        result.insert(0, context_block)
 
     return result
 

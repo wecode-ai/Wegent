@@ -144,7 +144,7 @@ class WeGentToResponseAdapter:
 
         return {
             "model_config": model_config,
-            "temperature": agent_config.get("temperature", 0.7),
+            "temperature": agent_config.get("temperature"),
             "max_tokens": agent_config.get("max_tokens", 32768),
             "input": input_config,
             "session_id": wegent_request.session_id,
@@ -167,10 +167,28 @@ class WeGentToResponseAdapter:
         """Build model_config from agent_config."""
         # Extract model configuration
         model_spec = agent_config.get("model_spec", {})
+        model_ref = agent_config.get("model")
+        if not isinstance(model_ref, dict):
+            model_ref = {}
+        model_name = model_spec.get("model_name")
+        if model_name is None:
+            model_name = agent_config.get("model_name")
+        if model_name is None:
+            model_name = model_ref.get("model_name")
+
+        model_namespace = model_spec.get("model_namespace")
+        if model_namespace is None:
+            model_namespace = agent_config.get("model_namespace")
+        if model_namespace is None:
+            model_namespace = model_ref.get("model_namespace")
+        if model_namespace is None:
+            model_namespace = "default"
 
         return {
             "model_id": model_spec.get("model_id", agent_config.get("model", "")),
             "model": model_spec.get("model", agent_config.get("model_type", "openai")),
+            "model_name": model_name,
+            "model_namespace": model_namespace,
             "api_key": model_spec.get("api_key", agent_config.get("api_key", "")),
             "base_url": model_spec.get("base_url", agent_config.get("base_url")),
             "api_format": model_spec.get("api_format", "chat"),
@@ -287,7 +305,7 @@ class WeGentToResponseAdapter:
         return AgentConfig(
             model_config=request_dict["model_config"],
             system_prompt=request_dict.get("system"),
-            temperature=request_dict.get("temperature", 0.7),
+            temperature=request_dict.get("temperature"),
             max_tokens=request_dict.get("max_tokens", 32768),
             tools_config=request_dict.get("tools"),
             tool_choice=request_dict.get("tool_choice", "auto"),

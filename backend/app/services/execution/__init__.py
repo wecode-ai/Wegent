@@ -11,7 +11,10 @@ This module provides unified task dispatch functionality including:
 - ResultEmitter: Unified interface for emitting execution events
 - TaskRequestBuilder: Builds ExecutionRequest from database models
 - schedule_dispatch: Helper for dispatching tasks from sync context
+- ExecutorRecoveryService: Recovers executor Pods after deletion
 """
+
+from shared.models import ExecutionRequest
 
 from .dispatcher import ExecutionDispatcher, execution_dispatcher
 from .emitters import (
@@ -28,9 +31,104 @@ from .emitters import (
     StreamableEmitter,
     WebSocketResultEmitter,
 )
+from .recovery_service import ExecutorRecoveryService, recovery_service
 from .request_builder import TaskRequestBuilder
 from .router import CommunicationMode, ExecutionRouter, ExecutionTarget
 from .schedule_helper import schedule_dispatch
+
+
+def get_executor_runtime_client():
+    """Get the executor runtime client for runtime preparation APIs."""
+    return _ExecutorRuntimeClient()
+
+
+class _ExecutorRuntimeClient:
+    """Thin client for calling executor_manager runtime APIs."""
+
+    async def create_sandbox(
+        self,
+        shell_type: str,
+        user_id: int,
+        user_name: str,
+        timeout: int = None,
+        workspace_ref: str = None,
+        bot_config: dict = None,
+        metadata: dict = None,
+    ):
+        """Create a sandbox via executor_manager API."""
+        import httpx
+
+        from app.core.config import settings
+
+        base_url = settings.EXECUTOR_MANAGER_URL.rstrip("/")
+        url = f"{base_url}/executor-manager/sandboxes"
+
+        payload = {
+            "shell_type": shell_type,
+            "user_id": user_id,
+            "user_name": user_name,
+            "metadata": metadata or {},
+        }
+
+        if timeout:
+            payload["timeout"] = timeout
+        if workspace_ref:
+            payload["workspace_ref"] = workspace_ref
+        if bot_config:
+            payload["bot_config"] = bot_config
+
+        try:
+            async with httpx.AsyncClient(timeout=180.0) as client:
+                response = await client.post(
+                    url,
+                    json=payload,
+                    headers={"Content-Type": "application/json"},
+                )
+                response.raise_for_status()
+                data = response.json()
+
+                # Create a simple sandbox object
+                class SimpleSandbox:
+                    def __init__(self, data):
+                        self.sandbox_id = data.get("sandbox_id")
+                        self.container_name = data.get("container_name")
+                        self.base_url = data.get("base_url")
+                        self.executor_namespace = data.get("executor_namespace")
+                        self.metadata = data.get("metadata", {})
+
+                return SimpleSandbox(data), None
+        except Exception as e:
+            return None, str(e)
+
+    async def prepare_executor(self, request: ExecutionRequest):
+        """Prepare a normal executor runtime without dispatching the task."""
+        import httpx
+
+        from app.core.config import settings
+
+        base_url = settings.EXECUTOR_MANAGER_URL.rstrip("/")
+        url = f"{base_url}/executor-manager/executors/prepare"
+
+        try:
+            async with httpx.AsyncClient(timeout=180.0) as client:
+                response = await client.post(
+                    url,
+                    json=request.to_dict(),
+                    headers={"Content-Type": "application/json"},
+                )
+                response.raise_for_status()
+                data = response.json()
+
+                class SimpleSandbox:
+                    def __init__(self, data):
+                        self.container_name = data.get("executor_name")
+                        self.executor_namespace = data.get("executor_namespace")
+                        self.metadata = data
+
+                return SimpleSandbox(data), None
+        except Exception as e:
+            return None, str(e)
+
 
 __all__ = [
     # Router
@@ -44,6 +142,10 @@ __all__ = [
     "TaskRequestBuilder",
     # Schedule Helper
     "schedule_dispatch",
+    # Recovery Service
+    "ExecutorRecoveryService",
+    "recovery_service",
+    "get_executor_runtime_client",
     # Emitters - Protocol
     "ResultEmitter",
     "StreamableEmitter",

@@ -26,19 +26,18 @@ import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContex
 import { useSearchShortcut } from '@/features/tasks/hooks/useSearchShortcut'
 import { useTranslation } from '@/hooks/useTranslation'
 import { ChatArea } from '@/features/tasks/components/chat'
-import { teamService } from '@/features/tasks/service/teamService'
+import { useTeamContext } from '@/contexts/TeamContext'
 import { useKnowledgeBaseDetail } from '@/features/knowledge/document/hooks'
+import { useNamespaceRoleMap } from '@/features/knowledge/document/hooks/useNamespaceRoleMap'
+import { useKnowledgePermissions } from '@/features/knowledge/permission/hooks/useKnowledgePermissions'
 import { DocumentList, KnowledgeBaseSummaryCard } from '@/features/knowledge/document/components'
 import { BoundKnowledgeBaseSummary } from '@/features/tasks/components/group-chat'
 import { taskKnowledgeBaseApi } from '@/apis/task-knowledge-base'
-import { listGroups } from '@/apis/groups'
+import {
+  canManageKnowledgeBase,
+  canManageKnowledgeBaseDocuments,
+} from '@/utils/namespace-permissions'
 import type { Team } from '@/types/api'
-import type { GroupRole } from '@/types/group'
-interface KnowledgeBaseChatPageMobileProps {
-  /** Callback when knowledge base type is changed (notebook <-> classic) */
-  onKbTypeChanged?: () => void
-}
-
 /**
  * Mobile-specific implementation of Knowledge Base Chat Page
  *
@@ -48,7 +47,7 @@ interface KnowledgeBaseChatPageMobileProps {
  * - Touch-friendly controls (min 44px targets)
  * - Full-screen chat area
  */
-export function KnowledgeBaseChatPageMobile({ onKbTypeChanged }: KnowledgeBaseChatPageMobileProps) {
+export function KnowledgeBaseChatPageMobile() {
   const { t } = useTranslation('knowledge')
   const router = useRouter()
   const params = useParams()
@@ -69,8 +68,18 @@ export function KnowledgeBaseChatPageMobile({ onKbTypeChanged }: KnowledgeBaseCh
     autoLoad: !!knowledgeBaseId,
   })
 
-  // Team state from service
-  const { teams, isTeamsLoading, refreshTeams } = teamService.useTeams()
+  const { myPermission, fetchMyPermission } = useKnowledgePermissions({
+    kbId: knowledgeBaseId || 0,
+  })
+
+  useEffect(() => {
+    if (knowledgeBase && knowledgeBaseId) {
+      fetchMyPermission()
+    }
+  }, [knowledgeBase, knowledgeBaseId, fetchMyPermission])
+
+  // Team state from context (centralized to avoid duplicate API calls)
+  const { teams, isTeamsLoading, refreshTeams } = useTeamContext()
 
   // User state
   const { user } = useUser()
@@ -114,25 +123,7 @@ export function KnowledgeBaseChatPageMobile({ onKbTypeChanged }: KnowledgeBaseCh
   // Search dialog state
   const [isSearchDialogOpen, setIsSearchDialogOpen] = useState(false)
 
-  // Group role map for permission checking
-  const [groupRoleMap, setGroupRoleMap] = useState<Map<string, GroupRole>>(new Map())
-
-  // Fetch all groups and build role map for permission checking
-  useEffect(() => {
-    listGroups()
-      .then(response => {
-        const roleMap = new Map<string, GroupRole>()
-        response.items.forEach(group => {
-          if (group.my_role) {
-            roleMap.set(group.name, group.my_role)
-          }
-        })
-        setGroupRoleMap(roleMap)
-      })
-      .catch(error => {
-        console.error('Failed to load groups for role map:', error)
-      })
-  }, [])
+  const namespaceRoleMap = useNamespaceRoleMap()
 
   // Toggle search dialog
   const toggleSearchDialog = useCallback(() => {
@@ -174,19 +165,23 @@ export function KnowledgeBaseChatPageMobile({ onKbTypeChanged }: KnowledgeBaseCh
   // Check if user can manage this KB
   const canManageKb = useMemo(() => {
     if (!knowledgeBase || !user) return false
-    // Personal knowledge base - check user ownership
-    if (knowledgeBase.namespace === 'default') {
-      return knowledgeBase.user_id === user.id
-    }
-    // Organization knowledge base - only admin can manage
-    if (knowledgeBase.namespace === 'organization') {
-      return user.role === 'admin'
-    }
-    // Group knowledge base - check group role
-    // Developer or higher can edit, Maintainer or higher can delete
-    const groupRole = groupRoleMap.get(knowledgeBase.namespace)
-    return groupRole === 'Owner' || groupRole === 'Maintainer' || groupRole === 'Developer'
-  }, [knowledgeBase, user, groupRoleMap])
+    return canManageKnowledgeBase({
+      currentUserId: user.id,
+      knowledgeBase,
+      knowledgeRole: myPermission?.role,
+      namespaceRole: namespaceRoleMap.get(knowledgeBase.namespace),
+    })
+  }, [knowledgeBase, user, myPermission?.role, namespaceRoleMap])
+
+  const canUploadDocuments = useMemo(() => {
+    if (!knowledgeBase || !user) return false
+    return canManageKnowledgeBaseDocuments({
+      currentUserId: user.id,
+      knowledgeBase,
+      knowledgeRole: myPermission?.role,
+      namespaceRole: namespaceRoleMap.get(knowledgeBase.namespace),
+    })
+  }, [knowledgeBase, user, myPermission?.role, namespaceRoleMap])
 
   // Loading state
   if (kbLoading) {
@@ -267,12 +262,6 @@ export function KnowledgeBaseChatPageMobile({ onKbTypeChanged }: KnowledgeBaseCh
 
         {/* Chat area with KB summary */}
         <div className="flex-1 flex flex-col min-h-0">
-          {/* KB Summary Card - shown when no task is selected */}
-          {!hasOpenTask && (
-            <div className="px-4 pt-4">
-              <KnowledgeBaseSummaryCard knowledgeBase={knowledgeBase} />
-            </div>
-          )}
           <ChatArea
             teams={filteredTeams}
             isTeamsLoading={isTeamsLoading}
@@ -287,6 +276,9 @@ export function KnowledgeBaseChatPageMobile({ onKbTypeChanged }: KnowledgeBaseCh
               namespace: knowledgeBase.namespace,
               document_count: knowledgeBase.document_count,
             }}
+            guidedQuestions={knowledgeBase.guided_questions}
+            inputAlwaysAtBottom={true}
+            emptyStateContent={<KnowledgeBaseSummaryCard knowledgeBase={knowledgeBase} />}
             onTaskCreated={async (taskId: number) => {
               // Bind the knowledge base to the newly created task
               try {
@@ -320,11 +312,8 @@ export function KnowledgeBaseChatPageMobile({ onKbTypeChanged }: KnowledgeBaseCh
           <div className="p-4 overflow-auto flex-1">
             <DocumentList
               knowledgeBase={knowledgeBase}
-              canManage={canManageKb}
-              onTypeConverted={() => {
-                // Notify parent page.tsx to refresh and re-route based on new kb_type
-                onKbTypeChanged?.()
-              }}
+              canUpload={canUploadDocuments}
+              canManageAllDocuments={canManageKb}
             />
           </div>
         </DrawerContent>

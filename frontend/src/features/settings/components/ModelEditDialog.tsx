@@ -36,8 +36,16 @@ import {
   STTConfig,
   EmbeddingConfig,
   RerankConfig,
+  VideoGenerationConfig,
   AvailableModel,
 } from '@/apis/models'
+import {
+  ImageConfigSection,
+  ImageConfigState,
+  getDefaultImageConfig,
+  toImageGenerationConfig,
+  fromImageGenerationConfig,
+} from './model-config'
 
 // Model form data that can be used by callers
 export interface ModelFormData {
@@ -62,6 +70,15 @@ export interface ModelFormData {
   embeddingEncodingFormat?: 'float' | 'base64'
   rerankTopN?: number
   rerankReturnDocuments?: boolean
+  // Video-specific configs
+  videoResolution?: '480p' | '720p' | '1080p'
+  videoRatio?: '16:9' | '4:3' | '1:1' | '3:4' | '9:16' | '21:9' | 'adaptive'
+  videoDuration?: number
+  videoGenerateAudio?: boolean
+  videoDraft?: boolean
+  videoSeed?: number
+  videoCameraFixed?: boolean
+  videoWatermark?: boolean
 }
 
 // Initial data for editing (can be from ModelCRD or admin model JSON)
@@ -82,6 +99,34 @@ export interface ModelInitialData {
   sttConfig?: STTConfig
   embeddingConfig?: EmbeddingConfig
   rerankConfig?: RerankConfig
+  videoConfig?: VideoGenerationConfig
+  imageConfig?: import('@/apis/models').ImageGenerationConfig
+  thinkingConfig?: Record<string, unknown>
+}
+
+/**
+ * Extract thinkingConfig from model - reads from env (single source of truth).
+ * Unwraps double-nested thinking_config if found (caused by earlier bug).
+ */
+function extractThinkingConfig(
+  model: import('@/apis/models').ModelCRD
+): Record<string, unknown> | undefined {
+  const env = model.spec?.modelConfig?.env
+  let config = (env?.thinking_config ?? env?.thinkingConfig) as Record<string, unknown> | undefined
+  // Unwrap double-nested thinking_config from corrupted DB data
+  if (config) {
+    const keys = Object.keys(config)
+    if (
+      keys.length === 1 &&
+      (keys[0] === 'thinking_config' || keys[0] === 'thinkingConfig') &&
+      typeof config[keys[0]] === 'object' &&
+      config[keys[0]] !== null &&
+      !Array.isArray(config[keys[0]])
+    ) {
+      config = config[keys[0]] as Record<string, unknown>
+    }
+  }
+  return config
 }
 
 interface ModelEditDialogProps {
@@ -119,6 +164,8 @@ const MODEL_CATEGORY_OPTIONS: { value: ModelCategoryType; labelKey: string }[] =
   // { value: 'stt', labelKey: 'models.model_category_type_stt' },
   { value: 'embedding', labelKey: 'models.model_category_type_embedding' },
   { value: 'rerank', labelKey: 'models.model_category_type_rerank' },
+  { value: 'video', labelKey: 'models.model_category_type_video' },
+  { value: 'image', labelKey: 'models.model_category_type_image' },
 ]
 
 // Protocol options by model category type
@@ -156,7 +203,30 @@ const PROTOCOL_BY_CATEGORY: Record<
     { value: 'jina', label: 'Jina Reranker' },
     { value: 'custom', label: 'Custom API' },
   ],
+  video: [
+    { value: 'seedance', label: 'Seedance', hint: '火山引擎视频生成' },
+    { value: 'runway', label: 'Runway', hint: 'Runway Gen-3' },
+    { value: 'pika', label: 'Pika', hint: 'Pika Labs' },
+    { value: 'custom', label: 'Custom API' },
+  ],
+  image: [
+    { value: 'openai', label: 'OpenAI DALL-E', hint: 'DALL-E 3' },
+    { value: 'doubao', label: 'Doubao', hint: '豆包图像生成' },
+    { value: 'stability', label: 'Stability AI', hint: 'Stable Diffusion' },
+    { value: 'midjourney', label: 'Midjourney', hint: 'Midjourney API' },
+    { value: 'custom', label: 'Custom API' },
+  ],
 }
+
+// Seedance model options
+const SEEDANCE_MODEL_OPTIONS = [
+  { value: 'doubao-seedance-1-5-pro-251215', label: 'Seedance 1.5 Pro (推荐)' },
+  { value: 'doubao-seedance-1-0-pro', label: 'Seedance 1.0 Pro' },
+  { value: 'doubao-seedance-1-0-pro-fast', label: 'Seedance 1.0 Pro Fast' },
+  { value: 'doubao-seedance-1-0-lite-t2v', label: 'Seedance 1.0 Lite (文生视频)' },
+  { value: 'doubao-seedance-1-0-lite-i2v', label: 'Seedance 1.0 Lite (图生视频)' },
+  { value: 'custom', label: 'Custom...' },
+]
 
 const OPENAI_MODEL_OPTIONS = [
   { value: 'gpt-4o', label: 'gpt-4o (Recommended)' },
@@ -221,6 +291,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
             sttConfig: model.spec.sttConfig,
             embeddingConfig: model.spec.embeddingConfig,
             rerankConfig: model.spec.rerankConfig,
+            thinkingConfig: extractThinkingConfig(model),
           }
         : null)
     )
@@ -239,12 +310,16 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
   const [baseUrl, setBaseUrl] = useState('')
   const [customHeaders, setCustomHeaders] = useState('')
   const [customHeadersError, setCustomHeadersError] = useState('')
+  const [modelIdNameError, setModelIdNameError] = useState('')
   const [showApiKey, setShowApiKey] = useState(false)
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
   // LLM-specific config state
   const [contextWindow, setContextWindow] = useState<number | undefined>(undefined)
   const [maxOutputTokens, setMaxOutputTokens] = useState<number | undefined>(undefined)
+  // Thinking/Reasoning config (JSON passthrough)
+  const [thinkingConfigStr, setThinkingConfigStr] = useState('')
+  const [thinkingConfigError, setThinkingConfigError] = useState('')
 
   // Type-specific config state
   // TTS
@@ -264,6 +339,20 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
   // Rerank
   const [rerankTopN, setRerankTopN] = useState<number | undefined>(undefined)
   const [rerankReturnDocuments, setRerankReturnDocuments] = useState(true)
+  // Video
+  const [videoGenerateAudio, setVideoGenerateAudio] = useState<boolean>(true)
+  const [videoDraft, setVideoDraft] = useState<boolean>(false)
+  const [videoSeed, setVideoSeed] = useState<number>(-1)
+  const [videoCameraFixed, setVideoCameraFixed] = useState<boolean>(false)
+  const [videoWatermark, setVideoWatermark] = useState<boolean>(false)
+  // Image - use ImageConfigState from extracted component
+  const [imageConfig, setImageConfig] = useState<ImageConfigState>(getDefaultImageConfig())
+
+  // Video capabilities state
+  const [capRatios, setCapRatios] = useState<string[]>([])
+  const [capResolutions, setCapResolutions] = useState<string[]>([])
+  const [capDurations, setCapDurations] = useState<number[]>([])
+  const [customDuration, setCustomDuration] = useState<string>('')
 
   // Fetch models state
   const [fetchingModels, setFetchingModels] = useState(false)
@@ -288,12 +377,16 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         setModelIdName(effectiveInitialData.name || '')
         setDisplayName(effectiveInitialData.displayName || '')
         // Set model category type
-        setModelCategoryType(effectiveInitialData.modelCategoryType || 'llm')
+        const categoryType = effectiveInitialData.modelCategoryType || 'llm'
+        setModelCategoryType(categoryType)
         const modelType = effectiveInitialData.providerType
         const protocol = effectiveInitialData.protocol
         // Map model type to provider type
-        // Check protocol first for openai-responses and gemini-deep-research
-        if (protocol === 'openai-responses') {
+        // For video models, use protocol directly as provider type (seedance, runway, pika, etc.)
+        if (categoryType === 'video' && protocol) {
+          setProviderType(protocol)
+        } else if (protocol === 'openai-responses') {
+          // Check protocol first for openai-responses and gemini-deep-research
           setProviderType('openai-responses')
         } else if (protocol === 'gemini-deep-research') {
           setProviderType('gemini-deep-research')
@@ -343,9 +436,42 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
           setRerankTopN(effectiveInitialData.rerankConfig.top_n)
           setRerankReturnDocuments(effectiveInitialData.rerankConfig.return_documents ?? true)
         }
+        // Load video-specific configs
+        if (effectiveInitialData.videoConfig) {
+          setVideoGenerateAudio(effectiveInitialData.videoConfig.generate_audio ?? true)
+          setVideoDraft(effectiveInitialData.videoConfig.draft ?? false)
+          setVideoSeed(effectiveInitialData.videoConfig.seed ?? -1)
+          setVideoCameraFixed(effectiveInitialData.videoConfig.camera_fixed ?? false)
+          setVideoWatermark(effectiveInitialData.videoConfig.watermark ?? false)
+          // Load capabilities
+          const caps = effectiveInitialData.videoConfig.capabilities
+          if (caps) {
+            setCapRatios(caps.aspect_ratios?.map(r => r.value) ?? [])
+            setCapResolutions(caps.resolutions?.map(r => r.label) ?? [])
+            setCapDurations(caps.durations_sec ?? [])
+          } else {
+            setCapRatios([])
+            setCapResolutions([])
+            setCapDurations([])
+          }
+        }
+        // Load image-specific configs
+        if (effectiveInitialData.imageConfig) {
+          setImageConfig(fromImageGenerationConfig(effectiveInitialData.imageConfig))
+        }
         // Load LLM-specific configs
         setContextWindow(effectiveInitialData.contextWindow)
         setMaxOutputTokens(effectiveInitialData.maxOutputTokens)
+        // Load thinking config
+        if (
+          effectiveInitialData.thinkingConfig &&
+          Object.keys(effectiveInitialData.thinkingConfig).length > 0
+        ) {
+          setThinkingConfigStr(JSON.stringify(effectiveInitialData.thinkingConfig, null, 2))
+        } else {
+          setThinkingConfigStr('')
+        }
+        setThinkingConfigError('')
       } else {
         // Reset for new model
         setModelIdName('')
@@ -367,28 +493,51 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         setEmbeddingEncodingFormat('float')
         setRerankTopN(undefined)
         setRerankReturnDocuments(true)
+        // Reset video-specific configs
+        setVideoGenerateAudio(true)
+        setVideoDraft(false)
+        setVideoSeed(-1)
+        setVideoCameraFixed(false)
+        setVideoWatermark(false)
+        // Reset image-specific configs
+        setImageConfig(getDefaultImageConfig())
+        // Reset video capabilities
+        setCapRatios([])
+        setCapResolutions([])
+        setCapDurations([])
+        setCustomDuration('')
         // Reset LLM-specific configs
         setContextWindow(undefined)
         setMaxOutputTokens(undefined)
+        setThinkingConfigStr('')
+        setThinkingConfigError('')
       }
       setCustomHeadersError('')
+      setModelIdNameError('')
       setShowApiKey(false)
     }
   }, [open, effectiveInitialData])
 
   // Determine model options based on model category type and provider
-  // For embedding/rerank, only show "Custom..." option since they don't use preset LLM models
+  // For embedding/rerank/image, only show "Custom..." option since they don't use preset LLM models
   // For openai-responses, use the same model options as openai
+  // For video models, use provider-specific options
   const baseModelOptions =
-    modelCategoryType === 'embedding' || modelCategoryType === 'rerank'
+    modelCategoryType === 'embedding' ||
+    modelCategoryType === 'rerank' ||
+    modelCategoryType === 'image'
       ? [{ value: 'custom', label: 'Custom...' }]
-      : providerType === 'openai' || providerType === 'openai-responses'
-        ? OPENAI_MODEL_OPTIONS
-        : providerType === 'gemini'
-          ? GEMINI_MODEL_OPTIONS
-          : providerType === 'gemini-deep-research'
-            ? GEMINI_DEEP_RESEARCH_MODEL_OPTIONS
-            : ANTHROPIC_MODEL_OPTIONS
+      : modelCategoryType === 'video'
+        ? providerType === 'seedance'
+          ? SEEDANCE_MODEL_OPTIONS
+          : [{ value: 'custom', label: 'Custom...' }]
+        : providerType === 'openai' || providerType === 'openai-responses'
+          ? OPENAI_MODEL_OPTIONS
+          : providerType === 'gemini'
+            ? GEMINI_MODEL_OPTIONS
+            : providerType === 'gemini-deep-research'
+              ? GEMINI_DEEP_RESEARCH_MODEL_OPTIONS
+              : ANTHROPIC_MODEL_OPTIONS
 
   // Merge fetched models with base options
   const modelOptions = React.useMemo(() => {
@@ -434,10 +583,28 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
     if (protocols && protocols.length > 0) {
       setProviderType(protocols[0].value)
     }
-    // For embedding/rerank, automatically set to custom mode
-    if (value === 'embedding' || value === 'rerank') {
+    // For embedding/rerank/image, automatically set to custom mode
+    // For video, reset model selection
+    if (value === 'embedding' || value === 'rerank' || value === 'image') {
       setModelId('custom')
       setCustomModelId('')
+      // Reset image-specific configs to defaults when switching to image
+      if (value === 'image') {
+        setImageConfig(getDefaultImageConfig())
+      }
+    } else if (value === 'video') {
+      setModelId('')
+      setCustomModelId('')
+      // Reset video-specific configs to defaults
+      setVideoGenerateAudio(true)
+      setVideoDraft(false)
+      setVideoSeed(-1)
+      setVideoCameraFixed(false)
+      setVideoWatermark(false)
+      setCapRatios([])
+      setCapResolutions([])
+      setCapDurations([])
+      setCustomDuration('')
     } else {
       setModelId('')
       setCustomModelId('')
@@ -480,6 +647,22 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         setBaseUrl('')
       } else {
         setBaseUrl('https://api.anthropic.com')
+      }
+    } else if (modelCategoryType === 'video') {
+      // Set default base URL for video providers
+      if (value === 'seedance') {
+        setBaseUrl('https://ark.cn-beijing.volces.com/api/v3')
+      } else {
+        setBaseUrl('')
+      }
+    } else if (modelCategoryType === 'image') {
+      // Set default base URL for image providers
+      if (value === 'openai') {
+        setBaseUrl('https://api.openai.com/v1')
+      } else if (value === 'doubao') {
+        setBaseUrl('https://ark.cn-beijing.volces.com/api/v3')
+      } else {
+        setBaseUrl('')
       }
     }
   }
@@ -630,6 +813,20 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
     }
   }
 
+  const validateModelIdName = (value: string): boolean => {
+    if (!value.trim()) {
+      setModelIdNameError('')
+      return false
+    }
+    const nameRegex = /^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$/
+    if (!nameRegex.test(value)) {
+      setModelIdNameError(t('common:models.errors.id_invalid'))
+      return false
+    }
+    setModelIdNameError('')
+    return true
+  }
+
   const validateCustomHeaders = (value: string): Record<string, string> | null => {
     if (!value.trim()) {
       setCustomHeadersError('')
@@ -660,6 +857,48 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
     validateCustomHeaders(value)
   }
 
+  const validateThinkingConfig = (value: string): Record<string, unknown> | null => {
+    if (!value.trim()) {
+      setThinkingConfigError('')
+      return {}
+    }
+    try {
+      const parsed = JSON.parse(value)
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+        setThinkingConfigError(t('common:models.errors.thinking_config_invalid_object'))
+        return null
+      }
+      setThinkingConfigError('')
+      // Unwrap if user provided {"thinking_config": {...}} wrapper —
+      // the code already stores the value under the thinking_config key,
+      // so we need the inner value to avoid double-nesting.
+      const keys = Object.keys(parsed)
+      if (
+        keys.length === 1 &&
+        (keys[0] === 'thinking_config' || keys[0] === 'thinkingConfig') &&
+        typeof parsed[keys[0]] === 'object' &&
+        parsed[keys[0]] !== null &&
+        !Array.isArray(parsed[keys[0]])
+      ) {
+        return parsed[keys[0]] as Record<string, unknown>
+      }
+      return parsed as Record<string, unknown>
+    } catch {
+      setThinkingConfigError(t('common:models.errors.thinking_config_invalid_json'))
+      return null
+    }
+  }
+
+  const handleThinkingConfigChange = (value: string) => {
+    setThinkingConfigStr(value)
+    validateThinkingConfig(value)
+  }
+
+  const handleModelIdNameChange = (value: string) => {
+    setModelIdName(value)
+    validateModelIdName(value)
+  }
+
   const handleSave = async () => {
     if (isGroupScope && !isEditing && !groupName) {
       toast({
@@ -678,8 +917,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
       return
     }
 
-    const nameRegex = /^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$/
-    if (!nameRegex.test(modelIdName)) {
+    if (!validateModelIdName(modelIdName)) {
       toast({
         variant: 'destructive',
         title: t('common:models.errors.id_invalid'),
@@ -709,6 +947,16 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
       toast({
         variant: 'destructive',
         title: t('common:models.errors.custom_headers_invalid'),
+      })
+      return
+    }
+
+    // Validate thinking config if provided
+    const parsedThinkingConfig = validateThinkingConfig(thinkingConfigStr)
+    if (parsedThinkingConfig === null) {
+      toast({
+        variant: 'destructive',
+        title: t('common:models.errors.thinking_config_invalid_json'),
       })
       return
     }
@@ -749,6 +997,48 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
             }
           : undefined
 
+      // Build video capabilities if any are configured
+      const hasCapabilities =
+        capRatios.length > 0 || capResolutions.length > 0 || capDurations.length > 0
+      const capabilities = hasCapabilities
+        ? {
+            ...(capRatios.length > 0 && {
+              aspect_ratios: capRatios.map(v => ({ label: v, value: v })),
+            }),
+            ...(capResolutions.length > 0 && {
+              resolutions: capResolutions.map(v => ({ label: v })),
+            }),
+            ...(capDurations.length > 0 && { durations_sec: capDurations }),
+          }
+        : undefined
+
+      const videoConfig: VideoGenerationConfig | undefined =
+        modelCategoryType === 'video'
+          ? {
+              // Derive defaults from capabilities (first item = default)
+              resolution: (capResolutions[0] || '720p') as '480p' | '720p' | '1080p',
+              ratio: (capRatios[0] || '16:9') as
+                | '16:9'
+                | '4:3'
+                | '1:1'
+                | '3:4'
+                | '9:16'
+                | '21:9'
+                | 'adaptive',
+              duration: capDurations[0] || 5,
+              generate_audio: videoGenerateAudio,
+              draft: videoDraft,
+              seed: videoSeed,
+              camera_fixed: videoCameraFixed,
+              watermark: videoWatermark,
+              ...(capabilities && { capabilities }),
+            }
+          : undefined
+
+      // Build image config from state
+      const imageGenerationConfig =
+        modelCategoryType === 'image' ? toImageGenerationConfig(imageConfig) : undefined
+
       // Map provider type to model field value
       // For LLM: openai -> openai, openai-responses -> openai, anthropic -> claude, gemini -> gemini
       // For embedding/rerank: use provider type directly (openai, cohere, jina, custom)
@@ -782,12 +1072,21 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
               ...(baseUrl && { base_url: baseUrl }),
               ...(parsedHeaders &&
                 Object.keys(parsedHeaders).length > 0 && { custom_headers: parsedHeaders }),
+              // Thinking/reasoning config stored in env (single source of truth)
+              ...(parsedThinkingConfig &&
+                Object.keys(parsedThinkingConfig).length > 0 && {
+                  thinking_config: parsedThinkingConfig,
+                }),
             },
           },
           modelType: modelCategoryType,
           // Save protocol for openai-responses and gemini-deep-research to distinguish from regular variants
           ...(providerType === 'openai-responses' && { protocol: 'openai-responses' }),
           ...(providerType === 'gemini-deep-research' && { protocol: 'gemini-deep-research' }),
+          // Save protocol for video models to specify the provider (seedance, runway, pika, etc.)
+          ...(modelCategoryType === 'video' && { protocol: providerType }),
+          // Save protocol for image models to specify the provider (openai, doubao, stability, etc.)
+          ...(modelCategoryType === 'image' && { protocol: providerType }),
           // LLM-specific fields
           ...(modelCategoryType === 'llm' && contextWindow && { contextWindow }),
           ...(modelCategoryType === 'llm' && maxOutputTokens && { maxOutputTokens }),
@@ -795,6 +1094,8 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
           ...(sttConfig && { sttConfig }),
           ...(embeddingConfig && { embeddingConfig }),
           ...(rerankConfig && { rerankConfig }),
+          ...(videoConfig && { videoConfig }),
+          ...(imageGenerationConfig && { imageConfig: imageGenerationConfig }),
         },
         status: {
           state: 'Available',
@@ -823,6 +1124,22 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         embeddingEncodingFormat,
         rerankTopN,
         rerankReturnDocuments,
+        // Video-specific configs (derive defaults from capabilities)
+        videoResolution: (capResolutions[0] || '720p') as '480p' | '720p' | '1080p',
+        videoRatio: (capRatios[0] || '16:9') as
+          | '16:9'
+          | '4:3'
+          | '1:1'
+          | '3:4'
+          | '9:16'
+          | '21:9'
+          | 'adaptive',
+        videoDuration: capDurations[0] || 5,
+        videoGenerateAudio,
+        videoDraft,
+        videoSeed,
+        videoCameraFixed,
+        videoWatermark,
       }
 
       // If custom onSave callback is provided, use it
@@ -915,12 +1232,14 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
               </Label>
               <Input
                 id="modelIdName"
+                data-testid="model-id-name-input"
                 value={modelIdName}
-                onChange={e => setModelIdName(e.target.value)}
+                onChange={e => handleModelIdNameChange(e.target.value)}
                 placeholder="my-gpt-model"
                 disabled={isEditing}
-                className="bg-base"
+                className={`bg-base ${modelIdNameError ? 'border-error' : ''}`}
               />
+              {modelIdNameError && <p className="text-xs text-error">{modelIdNameError}</p>}
               <p className="text-xs text-text-muted">
                 {isEditing ? t('common:models.id_readonly_hint') : t('common:models.id_hint')}
               </p>
@@ -1172,6 +1491,25 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
             </div>
           )}
 
+          {/* Thinking/Reasoning Config - JSON passthrough for LLM models */}
+          {modelCategoryType === 'llm' && (
+            <div className="space-y-2">
+              <Label htmlFor="thinking_config" className="text-sm font-medium">
+                {t('common:models.thinking_config')}
+              </Label>
+              <Textarea
+                id="thinking_config"
+                data-testid="thinking-config-input"
+                value={thinkingConfigStr}
+                onChange={e => handleThinkingConfigChange(e.target.value)}
+                placeholder={`{\n  "thinking": { "type": "enabled" }\n}`}
+                className={`bg-base font-mono text-sm min-h-[80px] ${thinkingConfigError ? 'border-error' : ''}`}
+              />
+              {thinkingConfigError && <p className="text-xs text-error">{thinkingConfigError}</p>}
+              <p className="text-xs text-text-muted">{t('common:models.thinking_config_hint')}</p>
+            </div>
+          )}
+
           {/* TTS-specific fields */}
           {modelCategoryType === 'tts' && (
             <div className="space-y-4 p-4 bg-muted rounded-lg">
@@ -1347,6 +1685,280 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
                 </div>
               </div>
             </div>
+          )}
+
+          {/* Video-specific fields */}
+          {modelCategoryType === 'video' && (
+            <div className="space-y-4 p-4 bg-muted rounded-lg">
+              <h4 className="text-sm font-medium text-text-secondary">
+                {t('common:models.video_config_title')}
+              </h4>
+
+              {/* Model capabilities configuration */}
+              <div>
+                <p className="text-xs text-text-muted mb-3">
+                  {t('common:models.video_capabilities_hint')}
+                </p>
+
+                {/* Supported aspect ratios */}
+                <div className="space-y-2 mb-4">
+                  <Label className="text-sm font-medium">
+                    {t('common:models.video_capabilities_ratios')}
+                  </Label>
+                  <div className="flex flex-wrap gap-2">
+                    {['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'].map(ratio => (
+                      <button
+                        key={ratio}
+                        type="button"
+                        onClick={() =>
+                          setCapRatios(prev =>
+                            prev.includes(ratio) ? prev.filter(r => r !== ratio) : [...prev, ratio]
+                          )
+                        }
+                        className={cn(
+                          'px-3 py-1.5 text-xs rounded-md border transition-colors',
+                          capRatios.includes(ratio)
+                            ? 'bg-primary/10 border-primary text-primary'
+                            : 'bg-base border-border text-text-secondary hover:border-text-muted'
+                        )}
+                      >
+                        {ratio}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Supported resolutions */}
+                <div className="space-y-2 mb-4">
+                  <Label className="text-sm font-medium">
+                    {t('common:models.video_capabilities_resolutions')}
+                  </Label>
+                  <div className="flex flex-wrap gap-2">
+                    {['480p', '720p', '1080p'].map(res => (
+                      <button
+                        key={res}
+                        type="button"
+                        onClick={() =>
+                          setCapResolutions(prev =>
+                            prev.includes(res) ? prev.filter(r => r !== res) : [...prev, res]
+                          )
+                        }
+                        className={cn(
+                          'px-3 py-1.5 text-xs rounded-md border transition-colors',
+                          capResolutions.includes(res)
+                            ? 'bg-primary/10 border-primary text-primary'
+                            : 'bg-base border-border text-text-secondary hover:border-text-muted'
+                        )}
+                      >
+                        {res}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Supported durations */}
+                <div className="space-y-2">
+                  <Label className="text-sm font-medium">
+                    {t('common:models.video_capabilities_durations')}
+                  </Label>
+                  <div className="flex flex-wrap gap-2 items-center">
+                    {[5, 10].map(dur => (
+                      <button
+                        key={dur}
+                        type="button"
+                        onClick={() =>
+                          setCapDurations(prev =>
+                            prev.includes(dur)
+                              ? prev.filter(d => d !== dur)
+                              : [...prev, dur].sort((a, b) => a - b)
+                          )
+                        }
+                        className={cn(
+                          'px-3 py-1.5 text-xs rounded-md border transition-colors',
+                          capDurations.includes(dur)
+                            ? 'bg-primary/10 border-primary text-primary'
+                            : 'bg-base border-border text-text-secondary hover:border-text-muted'
+                        )}
+                      >
+                        {dur}s
+                      </button>
+                    ))}
+                    {/* Show custom durations that aren't predefined */}
+                    {capDurations
+                      .filter(d => d !== 5 && d !== 10)
+                      .map(dur => (
+                        <button
+                          key={dur}
+                          type="button"
+                          onClick={() => setCapDurations(prev => prev.filter(d => d !== dur))}
+                          className="px-3 py-1.5 text-xs rounded-md border bg-primary/10 border-primary text-primary transition-colors"
+                        >
+                          {dur}s ×
+                        </button>
+                      ))}
+                    {/* Custom duration input */}
+                    <div className="flex items-center gap-1">
+                      <Input
+                        type="number"
+                        min={1}
+                        max={300}
+                        placeholder={t('common:models.video_capabilities_custom_add')}
+                        value={customDuration}
+                        onChange={e => setCustomDuration(e.target.value)}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter') {
+                            const val = parseInt(customDuration)
+                            if (val > 0 && !capDurations.includes(val)) {
+                              setCapDurations(prev => [...prev, val].sort((a, b) => a - b))
+                              setCustomDuration('')
+                            }
+                          }
+                        }}
+                        className="w-20 h-8 text-xs bg-base"
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-8 px-2"
+                        onClick={() => {
+                          const val = parseInt(customDuration)
+                          if (val > 0 && !capDurations.includes(val)) {
+                            setCapDurations(prev => [...prev, val].sort((a, b) => a - b))
+                            setCustomDuration('')
+                          }
+                        }}
+                      >
+                        +
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Feature toggles */}
+              <div className="border-t pt-4 mt-4">
+                <h5 className="text-sm font-medium text-text-secondary mb-3">
+                  {t('common:models.video_feature_toggles')}
+                </h5>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <Label className="text-sm font-medium">
+                        {t('common:models.video_generate_audio')}
+                      </Label>
+                      <p className="text-xs text-text-muted">
+                        {t('common:models.video_generate_audio_hint')}
+                      </p>
+                    </div>
+                    <Select
+                      value={videoGenerateAudio ? 'true' : 'false'}
+                      onValueChange={v => setVideoGenerateAudio(v === 'true')}
+                    >
+                      <SelectTrigger className="w-20 bg-base">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="true">是</SelectItem>
+                        <SelectItem value="false">否</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <Label className="text-sm font-medium">
+                        {t('common:models.video_draft_mode')}
+                      </Label>
+                      <p className="text-xs text-text-muted">
+                        {t('common:models.video_draft_mode_hint')}
+                      </p>
+                    </div>
+                    <Select
+                      value={videoDraft ? 'true' : 'false'}
+                      onValueChange={v => setVideoDraft(v === 'true')}
+                    >
+                      <SelectTrigger className="w-20 bg-base">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="true">是</SelectItem>
+                        <SelectItem value="false">否</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <Label className="text-sm font-medium">
+                        {t('common:models.video_camera_fixed')}
+                      </Label>
+                      <p className="text-xs text-text-muted">
+                        {t('common:models.video_camera_fixed_hint')}
+                      </p>
+                    </div>
+                    <Select
+                      value={videoCameraFixed ? 'true' : 'false'}
+                      onValueChange={v => setVideoCameraFixed(v === 'true')}
+                    >
+                      <SelectTrigger className="w-20 bg-base">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="true">是</SelectItem>
+                        <SelectItem value="false">否</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <Label className="text-sm font-medium">
+                        {t('common:models.video_watermark')}
+                      </Label>
+                    </div>
+                    <Select
+                      value={videoWatermark ? 'true' : 'false'}
+                      onValueChange={v => setVideoWatermark(v === 'true')}
+                    >
+                      <SelectTrigger className="w-20 bg-base">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="true">是</SelectItem>
+                        <SelectItem value="false">否</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              </div>
+
+              {/* Advanced parameters */}
+              <div className="border-t pt-4 mt-4">
+                <h5 className="text-sm font-medium text-text-secondary mb-3">
+                  {t('common:models.video_advanced_options')}
+                </h5>
+                <div className="space-y-2">
+                  <Label htmlFor="video_seed" className="text-sm font-medium">
+                    {t('common:models.video_seed')}
+                  </Label>
+                  <Input
+                    id="video_seed"
+                    type="number"
+                    value={videoSeed}
+                    onChange={e => setVideoSeed(parseInt(e.target.value) || -1)}
+                    placeholder="-1"
+                    className="bg-base w-40"
+                  />
+                  <p className="text-xs text-text-muted">{t('common:models.video_seed_hint')}</p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Image-specific fields */}
+          {modelCategoryType === 'image' && (
+            <ImageConfigSection
+              config={imageConfig}
+              onChange={changes => setImageConfig(prev => ({ ...prev, ...changes }))}
+            />
           )}
         </div>
 

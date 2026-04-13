@@ -29,6 +29,7 @@ from app.schemas.device import (
     DeviceType,
 )
 from app.services.device.base_provider import BaseDeviceProvider
+from app.services.device.version_service import executor_version_service
 
 logger = logging.getLogger(__name__)
 
@@ -123,7 +124,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
             )
         else:
             # Check if this is the first device for the user
-            existing_count = (
+            existing_devices = (
                 db.query(Kind)
                 .filter(
                     and_(
@@ -133,7 +134,13 @@ class LocalDeviceProvider(BaseDeviceProvider):
                         Kind.is_active == True,
                     )
                 )
-                .count()
+                .all()
+            )
+            existing_count = sum(
+                1
+                for device in existing_devices
+                if device.json.get("spec", {}).get("deviceType", DeviceType.LOCAL.value)
+                == DeviceType.LOCAL.value
             )
             is_first_device = existing_count == 0
 
@@ -259,7 +266,10 @@ class LocalDeviceProvider(BaseDeviceProvider):
 
         # Get version info
         executor_version = online_info.get("executor_version") if online_info else None
-        latest_version = settings.EXECUTOR_LATEST_VERSION
+        latest_version = (
+            await executor_version_service.get_latest_version()
+            or settings.EXECUTOR_LATEST_VERSION
+        )
         update_available = self._is_update_available(executor_version, latest_version)
 
         return {
@@ -283,6 +293,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
             "latest_version": latest_version,
             "update_available": update_available,
             "client_ip": spec.get("clientIp"),
+            "bind_shell": spec.get("bindShell", "claudecode"),
         }
 
     async def _get_online_info(
@@ -319,33 +330,51 @@ class LocalDeviceProvider(BaseDeviceProvider):
             .all()
         )
 
-        result = []
+        # Filter local devices and collect device IDs
+        local_devices = []
         for device_kind in devices:
+            spec = device_kind.json.get("spec", {})
+            device_type = spec.get("deviceType", DeviceType.LOCAL.value)
+            if device_type != DeviceType.CLOUD.value:
+                local_devices.append(device_kind)
+
+        if not local_devices:
+            return []
+
+        # Batch fetch online info from Redis using mget
+        device_ids = [d.name for d in local_devices]
+        redis_keys = [self.generate_online_key(user_id, did) for did in device_ids]
+        online_info_map = await cache_manager.mget(redis_keys)
+
+        # Build result list
+        result = []
+        latest_version = (
+            await executor_version_service.get_latest_version()
+            or settings.EXECUTOR_LATEST_VERSION
+        )
+
+        for i, device_kind in enumerate(local_devices):
             device_json = device_kind.json
             spec = device_json.get("spec", {})
             device_id = device_kind.name
+            redis_key = redis_keys[i]
 
-            # Skip non-local devices (future-proofing)
-            device_type = spec.get("deviceType", DeviceType.LOCAL.value)
-            if device_type != DeviceType.LOCAL.value:
-                continue
-
-            # Get online status from Redis
-            online_info = await self._get_online_info(user_id, device_id)
+            online_info = online_info_map.get(redis_key)
+            is_online = online_info is not None
 
             # Skip offline devices if requested
-            is_online = online_info is not None
             if not include_offline and not is_online:
                 continue
 
-            # Get slot usage
-            slot_info = await self.get_slot_usage(db, user_id, device_id)
+            # Get slot usage from cached online info (no extra Redis call)
+            running_task_ids = []
+            if online_info and "running_task_ids" in online_info:
+                running_task_ids = online_info["running_task_ids"]
 
             # Get version info
             executor_version = (
                 online_info.get("executor_version") if online_info else None
             )
-            latest_version = settings.EXECUTOR_LATEST_VERSION
             update_available = self._is_update_available(
                 executor_version, latest_version
             )
@@ -361,7 +390,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
                         else "offline"
                     ),
                     "is_default": spec.get("isDefault", False),
-                    "device_type": device_type,
+                    "device_type": spec.get("deviceType", DeviceType.LOCAL.value),
                     "connection_mode": spec.get(
                         "connectionMode", DeviceConnectionMode.WEBSOCKET.value
                     ),
@@ -369,13 +398,14 @@ class LocalDeviceProvider(BaseDeviceProvider):
                     "last_heartbeat": (
                         online_info.get("last_heartbeat") if online_info else None
                     ),
-                    "slot_used": slot_info["used"],
-                    "slot_max": slot_info["max"],
-                    "running_tasks": slot_info["running_tasks"],
+                    "slot_used": len(running_task_ids),
+                    "slot_max": MAX_DEVICE_SLOTS,
+                    "running_tasks": [],
                     "executor_version": executor_version,
                     "latest_version": latest_version,
                     "update_available": update_available,
                     "client_ip": spec.get("clientIp"),
+                    "bind_shell": spec.get("bindShell", "claudecode"),
                 }
             )
 
@@ -417,23 +447,15 @@ class LocalDeviceProvider(BaseDeviceProvider):
         info = await self._get_online_info(user_id, device_id)
         return info is not None
 
-    async def get_slot_usage(
-        self,
-        db: Session,
-        user_id: int,
-        device_id: str,
+    @staticmethod
+    def _build_slot_usage(
+        db: Session, running_task_ids: Optional[List[int]]
     ) -> Dict[str, Any]:
-        """Get slot usage information for a device."""
+        """Build slot usage payload from reported task IDs."""
         from app.models.task import TaskResource
 
-        # Get device online info from Redis (includes running_task_ids)
-        device_info = await self._get_online_info(user_id, device_id)
+        running_task_ids = running_task_ids or []
 
-        running_task_ids = []
-        if device_info and "running_task_ids" in device_info:
-            running_task_ids = device_info["running_task_ids"]
-
-        # Query task details from database
         running_tasks = []
         if running_task_ids:
             tasks = (
@@ -477,6 +499,39 @@ class LocalDeviceProvider(BaseDeviceProvider):
             "max": MAX_DEVICE_SLOTS,
             "running_tasks": running_tasks,
         }
+
+    async def get_slot_usage(
+        self,
+        db: Session,
+        user_id: int,
+        device_id: str,
+    ) -> Dict[str, Any]:
+        """Get slot usage information for a device."""
+        # Get device online info from Redis (includes running_task_ids)
+        device_info = await self._get_online_info(user_id, device_id)
+
+        running_task_ids = []
+        if device_info and "running_task_ids" in device_info:
+            running_task_ids = device_info["running_task_ids"]
+
+        return self._build_slot_usage(db, running_task_ids)
+
+    def get_slot_usage_sync(
+        self,
+        db: Session,
+        user_id: int,
+        device_id: str,
+    ) -> Dict[str, Any]:
+        """Get slot usage information for sync callers."""
+        device_info = cache_manager.get_sync(
+            self.generate_online_key(user_id, device_id)
+        )
+
+        running_task_ids = []
+        if device_info and "running_task_ids" in device_info:
+            running_task_ids = device_info["running_task_ids"]
+
+        return self._build_slot_usage(db, running_task_ids)
 
     async def update_status(
         self,

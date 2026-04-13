@@ -10,7 +10,16 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from pydantic import AliasChoices, BaseModel, Field, model_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    Field,
+    field_serializer,
+    field_validator,
+    model_validator,
+)
+
+from app.utils.workspace_archive_time import normalize_workspace_archive_datetime
 
 
 # API Format Enum for OpenAI-compatible models
@@ -36,6 +45,8 @@ class ModelCategoryType(str, Enum):
     - STT: Speech-to-Text models
     - EMBEDDING: Vector embedding models
     - RERANK: Reranking models
+    - VIDEO: Video generation models
+    - IMAGE: Image generation models
     """
 
     LLM = "llm"
@@ -43,6 +54,8 @@ class ModelCategoryType(str, Enum):
     STT = "stt"
     EMBEDDING = "embedding"
     RERANK = "rerank"
+    VIDEO = "video"
+    IMAGE = "image"
 
 
 # Type-specific configurations
@@ -89,6 +102,10 @@ class RerankConfig(BaseModel):
     )
 
 
+# Import generation configs from separate module
+from .generation import ImageGenerationConfig, VideoGenerationConfig
+
+
 class ObjectMeta(BaseModel):
     """Standard Kubernetes object metadata"""
 
@@ -107,18 +124,52 @@ class Status(BaseModel):
     # conditions: Optional[List[Dict[str, Any]]] = None
 
 
+# Skill reference metadata for precise skill identification
+class SkillRefMeta(BaseModel):
+    """Skill reference metadata for precise skill identification.
+
+    Used in Ghost.spec.skill_refs to avoid ambiguity when multiple skills
+    have the same name in different namespaces.
+    """
+
+    skill_id: int = Field(..., description="Unique skill ID (Kind.id)")
+    namespace: str = Field("default", description="Skill namespace")
+    is_public: bool = Field(False, description="Whether this is a public skill")
+
+
+class KnowledgeBaseDefaultRef(BaseModel):
+    """Knowledge base binding used for Ghost-level defaults."""
+
+    id: int
+    name: str
+
+
 # Ghost CRD schemas
 class GhostSpec(BaseModel):
     """Ghost specification"""
 
     systemPrompt: str
     mcpServers: Optional[Dict[str, Any]] = None
+    defaultKnowledgeBaseRefs: Optional[List[KnowledgeBaseDefaultRef]] = None
     skills: Optional[List[str]] = None  # Skill names list
     preload_skills: Optional[List[str]] = Field(
         None,
         description="List of skill names to preload into system prompt. "
         "Must be a subset of skills. When specified, these skills' prompts "
         "will be automatically injected into the system message.",
+    )
+    skill_refs: Optional[Dict[str, SkillRefMeta]] = Field(
+        None,
+        description="Mapping from skill name to skill metadata for precise identification. "
+        "Used to avoid ambiguity when multiple skills have the same name. "
+        "Keys must match the skills list. "
+        "Example: {'excel-helper': {'skill_id': 101, 'namespace': 'default', 'is_public': false}}",
+    )
+    preload_skill_refs: Optional[Dict[str, SkillRefMeta]] = Field(
+        None,
+        description="Mapping from preload skill name to skill metadata. "
+        "Keys must match the preload_skills list. "
+        "Used for precise skill identification during preloading.",
     )
 
 
@@ -194,6 +245,16 @@ class ModelSpec(BaseModel):
     )
     rerankConfig: Optional[RerankConfig] = Field(
         None, description="Rerank-specific configuration (when modelType='rerank')"
+    )
+    videoConfig: Optional[VideoGenerationConfig] = Field(
+        None, description="Video generation configuration (when modelType='video')"
+    )
+    imageConfig: Optional[ImageGenerationConfig] = Field(
+        None, description="Image generation configuration (when modelType='image')"
+    )
+    isAdvanced: Optional[bool] = Field(
+        None,
+        description="Whether this is an advanced model. Advanced models are hidden by default in chat model selector.",
     )
 
 
@@ -291,6 +352,12 @@ class BotSpec(BaseModel):
     ghostRef: GhostRef
     shellRef: ShellRef
     modelRef: Optional[ModelRef] = None
+    secondaryModelRef: Optional[ModelRef] = Field(
+        None,
+        description="Secondary LLM model for auxiliary tasks. "
+        "Effective when primary modelRef.modelType is 'video'. "
+        "Used for intent recognition and prompt merging.",
+    )
 
 
 class BotStatus(Status):
@@ -441,15 +508,19 @@ class KnowledgeBaseTaskRef(BaseModel):
     """Reference to a KnowledgeBase bound to a Task (group chat)
 
     Note: The 'id' field stores Kind.id for stable references.
-    The 'name' field stores the display name (spec.name) for backward compatibility.
+    The 'name' field stores the display name (spec.name) for display purposes.
     When looking up a knowledge base:
-    1. If 'id' exists, query by Kind.id directly (preferred)
-    2. If 'id' is None, fall back to name + namespace lookup (legacy data)
+    1. Query by Kind.id directly (id is the unique identifier)
+    2. Legacy data with namespace field will be ignored during lookup
+
+    The namespace field was removed because:
+    - Knowledge base ID is globally unique and sufficient for lookup
+    - When KB migrates from personal to group namespace, we don't need to update all task refs
     """
 
     id: Optional[int] = None  # Knowledge base Kind.id (primary reference)
-    name: str  # Display name (spec.name), kept for backward compatibility
-    namespace: str = "default"
+    name: str  # Display name (spec.name), kept for display purposes
+    # Note: namespace field removed - use id for lookup, existing data with namespace is ignored
     boundBy: Optional[str] = None  # Username of the person who bound this KB
     boundAt: Optional[str] = None  # Binding timestamp in ISO format
 
@@ -466,6 +537,15 @@ class TaskSpec(BaseModel):
         None  # Bound knowledge bases for group chat
     )
     device_id: Optional[str] = None  # Device ID used for execution (for task history)
+    # Pipeline mode: current stage index (0-based)
+    # Updated when user confirms to proceed to next stage
+    # Used to determine which bot to use for follow-up questions
+    currentStage: Optional[int] = Field(
+        None,
+        description="Current pipeline stage index (0-based). "
+        "Only set for pipeline collaboration mode. "
+        "Updated when user confirms to proceed to next stage.",
+    )
 
 
 class TaskApp(BaseModel):
@@ -474,6 +554,39 @@ class TaskApp(BaseModel):
     name: str
     address: str
     previewUrl: str
+
+
+class ArchiveInfo(BaseModel):
+    """Workspace archive information for Pod recovery after deletion.
+
+    Stores metadata about archived workspace files that can be restored
+    when a user sends a message after the executor Pod has been deleted.
+    """
+
+    storageKey: Optional[str] = Field(
+        None,
+        description="MinIO storage key (e.g., 'workspace-archives/12345/archive.tar.gz')",
+    )
+    archivedAt: Optional[datetime] = Field(
+        None, description="Timestamp when the workspace was archived"
+    )
+    expiresAt: Optional[datetime] = Field(
+        None, description="Timestamp when the archive expires (30 days after archiving)"
+    )
+    sizeBytes: Optional[int] = Field(None, description="Archive file size in bytes")
+    sessionFileIncluded: bool = Field(
+        False, description="Whether .claude_session_id file is included in the archive"
+    )
+    gitIncluded: bool = Field(
+        False, description="Whether .git directory is included in the archive"
+    )
+
+    @field_serializer("archivedAt", "expiresAt")
+    def serialize_archive_datetimes(self, value: Optional[datetime]) -> Optional[str]:
+        """Serialize archive timestamps in the configured display timezone."""
+        if value is None:
+            return None
+        return normalize_workspace_archive_datetime(value).isoformat()
 
 
 class TaskStatus(Status):
@@ -489,6 +602,11 @@ class TaskStatus(Status):
     completedAt: Optional[datetime] = None
     subTasks: Optional[List[Dict[str, Any]]] = None
     app: Optional[TaskApp] = None  # App preview information
+    archive: Optional[ArchiveInfo] = Field(
+        None,
+        description="Workspace archive information for Pod recovery after deletion. "
+        "Set when executor Pod is deleted after task completion.",
+    )
 
 
 class Task(BaseModel):
@@ -613,6 +731,14 @@ class SkillSpec(BaseModel):
         "Tracks where the skill was imported from (upload or git repository). "
         "Used to enable updating skills from their original Git source.",
     )
+
+    @field_validator("version", mode="before")
+    @classmethod
+    def validate_version(cls, v):
+        """Convert float/int version to string to handle YAML parsing."""
+        if v is None:
+            return v
+        return str(v)
 
 
 class SkillStatus(Status):
@@ -919,6 +1045,14 @@ class GitSkillInfo(BaseModel):
         None, description="Tags from SKILL.md frontmatter"
     )
 
+    @field_validator("version", mode="before")
+    @classmethod
+    def validate_version(cls, v):
+        """Convert float/int version to string to handle YAML parsing."""
+        if v is None:
+            return v
+        return str(v)
+
 
 class GitScanResponse(BaseModel):
     """Response from scanning a Git repository for skills"""
@@ -1008,6 +1142,14 @@ class GitBatchUpdateSuccessItem(BaseModel):
     source: Optional[Dict[str, Any]] = Field(
         None, description="Updated source information"
     )
+
+    @field_validator("version", mode="before")
+    @classmethod
+    def validate_version(cls, v):
+        """Convert float/int version to string to handle YAML parsing."""
+        if v is None:
+            return v
+        return str(v)
 
 
 class GitBatchUpdateSkippedItem(BaseModel):

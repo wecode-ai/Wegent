@@ -17,8 +17,13 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.kind import Kind
-from app.models.resource_member import EPOCH_TIME, MemberStatus, ResourceMember
-from app.models.share_link import PermissionLevel, ResourceType
+from app.models.resource_member import (
+    EPOCH_TIME,
+    MemberStatus,
+    ResourceMember,
+    ResourceRole,
+)
+from app.models.share_link import ResourceType
 from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.task_member import MemberStatus as SchemaMemberStatus
@@ -34,13 +39,13 @@ class TaskMemberService:
     """Service for managing group chat members using ResourceMember."""
 
     def get_task(self, db: Session, task_id: int) -> Optional[TaskResource]:
-        """Get a task by ID"""
+        """Get a task by ID (including subscription tasks)"""
         return (
             db.query(TaskResource)
             .filter(
                 TaskResource.id == task_id,
                 TaskResource.kind == "Task",
-                TaskResource.is_active == True,
+                TaskResource.is_active.in_(TaskResource.is_active_query()),
             )
             .first()
         )
@@ -68,6 +73,7 @@ class TaskMemberService:
             return True
 
         # Check ResourceMember for approved status
+        # Exclude share records (copied_resource_id > 0), only consider actual group chat members
         member = (
             db.query(ResourceMember)
             .filter(
@@ -75,6 +81,7 @@ class TaskMemberService:
                 ResourceMember.resource_id == task_id,
                 ResourceMember.user_id == user_id,
                 ResourceMember.status == MemberStatus.APPROVED,
+                ResourceMember.copied_resource_id == 0,
             )
             .first()
         )
@@ -113,13 +120,16 @@ class TaskMemberService:
         if spec.get("is_group_chat", False):
             return False  # Already a group chat
 
-        # Set is_group_chat flag
+        # Set is_group_chat flag in JSON
         spec["is_group_chat"] = True
         task_json["spec"] = spec
 
         # IMPORTANT: Mark the json field as modified so SQLAlchemy detects the change
         task.json = task_json
         flag_modified(task, "json")
+
+        # Sync to physical column for optimized queries
+        task.is_group_chat = True
 
         task.updated_at = datetime.utcnow()
 
@@ -131,12 +141,14 @@ class TaskMemberService:
 
     def get_member_count(self, db: Session, task_id: int) -> int:
         """Get the number of active members in a task (including owner)"""
+        # Exclude share records (copied_resource_id > 0), only count actual group chat members
         member_count = (
             db.query(ResourceMember)
             .filter(
                 ResourceMember.resource_type == ResourceType.TASK,
                 ResourceMember.resource_id == task_id,
                 ResourceMember.status == MemberStatus.APPROVED,
+                ResourceMember.copied_resource_id == 0,
             )
             .count()
         )
@@ -175,12 +187,14 @@ class TaskMemberService:
         members.append(owner_member)
 
         # Get other members from ResourceMember
+        # Exclude share records (copied_resource_id > 0), only get actual group chat members
         task_members = (
             db.query(ResourceMember)
             .filter(
                 ResourceMember.resource_type == ResourceType.TASK,
                 ResourceMember.resource_id == task_id,
                 ResourceMember.status == MemberStatus.APPROVED,
+                ResourceMember.copied_resource_id == 0,
             )
             .all()
         )
@@ -254,9 +268,9 @@ class TaskMemberService:
             existing.invited_by_user_id = invited_by
             existing.requested_at = datetime.utcnow()
             existing.updated_at = datetime.utcnow()
-            existing.permission_level = (
-                PermissionLevel.MANAGE
-            )  # Group chat members get manage permission
+            existing.role = (
+                ResourceRole.Maintainer.value
+            )  # Group chat members get maintainer role
             # Clear stale review metadata from previous rejection
             existing.reviewed_by_user_id = 0
             existing.reviewed_at = EPOCH_TIME
@@ -275,7 +289,7 @@ class TaskMemberService:
             resource_type=ResourceType.TASK,
             resource_id=task_id,
             user_id=user_id,
-            permission_level=PermissionLevel.MANAGE,  # Group chat members get manage permission
+            role=ResourceRole.Maintainer.value,  # Group chat members get maintainer role
             status=MemberStatus.APPROVED,
             invited_by_user_id=invited_by,
             share_link_id=0,

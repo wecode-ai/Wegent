@@ -128,7 +128,16 @@ class TestTraceWebSocketEventDecorator:
                         mock_context
                     )
 
-                    await ns.trigger_event("chat:send", "sid123", event_data)
+                    # Patch get_current_span to return mock_span for log_large_attribute
+                    with patch(
+                        "shared.telemetry.context.span._is_telemetry_enabled",
+                        return_value=True,
+                    ):
+                        with patch(
+                            "shared.telemetry.context.span.get_current_span",
+                            return_value=mock_span,
+                        ):
+                            await ns.trigger_event("chat:send", "sid123", event_data)
 
                     # Verify event data was extracted (using dot notation)
                     calls = mock_span.set_attribute.call_args_list
@@ -137,14 +146,12 @@ class TestTraceWebSocketEventDecorator:
                     assert attribute_dict["task.id"] == 789
                     assert attribute_dict["team_id"] == 456
                     assert attribute_dict["subtask.id"] == 123
-                    # Verify request body is included as JSON
-                    assert "websocket.request_body" in attribute_dict
-                    import json
-
-                    assert (
-                        json.loads(attribute_dict["websocket.request_body"])
-                        == event_data
-                    )
+                    # Verify request body is logged via log_large_attribute
+                    # which stores length and preview as attributes
+                    assert "websocket.request_body.length" in attribute_dict
+                    assert "websocket.request_body.preview" in attribute_dict
+                    # Verify the event was added for the full request body
+                    assert mock_span.add_event.called
 
     @pytest.mark.asyncio
     async def test_decorator_handles_none_values_safely(self):
@@ -386,13 +393,21 @@ class TestSetEventDataAttributes:
             "subtask_id": 789,
         }
 
-        _set_event_data_attributes(mock_span, event_data)
+        with patch(
+            "shared.telemetry.context.span._is_telemetry_enabled", return_value=True
+        ):
+            with patch(
+                "shared.telemetry.context.span.get_current_span", return_value=mock_span
+            ):
+                _set_event_data_attributes(mock_span, event_data)
 
-        # Verify all fields were set (including request body and server IP)
+        # Verify all fields were set (including request body length/preview and server IP)
         calls = mock_span.set_attribute.call_args_list
         assert (
-            len(calls) == 5
-        )  # task_id, team_id, subtask_id, server.ip, websocket.request_body
+            len(calls) == 6
+        )  # task_id, team_id, subtask_id, server.ip, websocket.request_body.length, websocket.request_body.preview
+        # Verify the event was added for the full request body
+        assert mock_span.add_event.called
 
     def test_handles_missing_fields(self):
         """Test that missing fields are handled gracefully."""
@@ -402,12 +417,20 @@ class TestSetEventDataAttributes:
             # team_id and subtask_id missing
         }
 
-        # Should not raise exception
-        _set_event_data_attributes(mock_span, event_data)
+        with patch(
+            "shared.telemetry.context.span._is_telemetry_enabled", return_value=True
+        ):
+            with patch(
+                "shared.telemetry.context.span.get_current_span", return_value=mock_span
+            ):
+                # Should not raise exception
+                _set_event_data_attributes(mock_span, event_data)
 
-        # task_id, server.ip and websocket.request_body should be set
+        # task_id, server.ip, websocket.request_body.length, websocket.request_body.preview should be set
         calls = mock_span.set_attribute.call_args_list
-        assert len(calls) == 3  # task_id, server.ip, websocket.request_body
+        assert (
+            len(calls) == 4
+        )  # task_id, server.ip, websocket.request_body.length, websocket.request_body.preview
 
     def test_handles_none_values(self):
         """Test that None values are not set."""
@@ -418,10 +441,18 @@ class TestSetEventDataAttributes:
             "subtask_id": None,
         }
 
-        _set_event_data_attributes(mock_span, event_data)
+        with patch(
+            "shared.telemetry.context.span._is_telemetry_enabled", return_value=True
+        ):
+            with patch(
+                "shared.telemetry.context.span.get_current_span", return_value=mock_span
+            ):
+                _set_event_data_attributes(mock_span, event_data)
 
-        # team_id, server.ip and websocket.request_body should be set
+        # team_id, server.ip, websocket.request_body.length, websocket.request_body.preview should be set
         calls = mock_span.set_attribute.call_args_list
-        assert len(calls) == 3  # team_id, server.ip, websocket.request_body
+        assert (
+            len(calls) == 4
+        )  # team_id, server.ip, websocket.request_body.length, websocket.request_body.preview
         assert calls[0][0][0] == "team_id"
         assert calls[0][0][1] == 456

@@ -15,6 +15,8 @@ export interface UserPreferences {
   search_key?: 'cmd_k' | 'cmd_f' | 'disabled'
   quick_access?: QuickAccessConfig
   memory_enabled?: boolean
+  /** Default execution target: 'cloud' for cloud mode, or device_id for a specific device */
+  default_execution_target?: string | null
 }
 
 // User Types
@@ -39,6 +41,8 @@ export interface User {
   updated_at: string
   git_info: GitInfo[]
   preferences?: UserPreferences
+  /** Whether admin setup wizard has been completed (only returned for 'admin' user) */
+  admin_setup_completed?: boolean | null
 }
 
 /** Git account information */
@@ -62,6 +66,17 @@ export interface GitInfo {
 }
 
 // Bot Types
+export interface SkillRefMeta {
+  skill_id: number
+  namespace: string
+  is_public: boolean
+}
+
+export interface KnowledgeBaseDefaultRef {
+  id: number
+  name: string
+}
+
 export interface Bot {
   id: number
   name: string
@@ -71,8 +86,11 @@ export interface Bot {
   agent_config: Record<string, unknown>
   system_prompt: string
   mcp_servers: Record<string, unknown>
+  default_knowledge_base_refs?: KnowledgeBaseDefaultRef[]
   skills?: string[] // Skills associated with this bot
+  skill_refs?: Record<string, SkillRefMeta>
   preload_skills?: string[] // Skills to preload into system prompt
+  preload_skill_refs?: Record<string, SkillRefMeta>
   is_active: boolean
   created_at: string
   updated_at: string
@@ -140,9 +158,11 @@ export interface Team {
   agent_type?: string // agno, claude, dify, etc.
   is_mix_team?: boolean // true if team has multiple different agent types (e.g., ClaudeCode + Agno)
   recommended_mode?: 'chat' | 'code' | 'both' // Recommended usage mode (for QuickAccess)
-  bind_mode?: ('chat' | 'code' | 'knowledge' | 'task')[] // Allowed modes for this team
+  bind_mode?: TaskType[] // Allowed modes for this team
   icon?: string // Icon ID from preset icon library
   requires_workspace?: boolean // Whether this team requires a workspace/repository (null = auto-infer from shell)
+  /** Modes this team is the default for (e.g., ['chat', 'code']) - computed from env config */
+  default_for_modes?: string[]
   user?: {
     user_name: string
   }
@@ -174,7 +194,15 @@ export type TaskStatus =
   | 'CANCELLING'
   | 'DELETE'
   | 'PENDING_CONFIRMATION' // Pipeline stage completed, waiting for user confirmation
-export type TaskType = 'chat' | 'code' | 'knowledge' | 'task'
+export type TaskType = 'chat' | 'code' | 'knowledge' | 'task' | 'video' | 'image'
+
+// Video result type (corresponds to VideoAgent's result.video from backend)
+export interface VideoResult {
+  attachment_id: number
+  video_url: string
+  thumbnail?: string // Base64 thumbnail
+  duration?: number // Video duration in seconds
+}
 
 // Git commit statistics
 interface CommitStats {
@@ -303,6 +331,19 @@ export interface SubtaskResult {
   workbench?: WorkbenchData
   /** Persisted correction data from AI correction mode */
   correction?: CorrectionData
+  /** Video generation result */
+  video?: VideoResult
+  /** Reference image for multi-turn video generation */
+  image?: string
+  /** Video generation progress (0-100) */
+  progress?: number
+  /** Video generation config (stored in user message subtask for display) */
+  video_config?: {
+    model?: string
+    resolution?: string
+    ratio?: string
+    duration?: number
+  }
   [key: string]: unknown
 }
 
@@ -443,6 +484,63 @@ export interface ClarificationAnswer {
 export interface ClarificationAnswerPayload {
   type: 'clarification_answer'
   answers: ClarificationAnswer[]
+}
+
+// Ask User Types (MCP tool-based interactive form)
+export interface AskUserOption {
+  label: string
+  value: string
+  recommended?: boolean
+}
+
+/** A single question in multi-question mode */
+export interface AskUserQuestion {
+  /** Unique identifier for this question within the form (e.g. 'q1', 'destination') */
+  id: string
+  question: string
+  description?: string | null
+  input_type: 'choice' | 'text'
+  options?: AskUserOption[] | null
+  multi_select: boolean
+  required: boolean
+  default?: string[] | null
+  placeholder?: string | null
+}
+
+export interface AskUserFormData {
+  type: 'interactive_form_question'
+  ask_id: string
+  /** Tool use ID from Claude (UUID format) - used as fallback for answer submission */
+  tool_use_id?: string | null
+  task_id: number
+  subtask_id: number
+  /** Top-level question text (used as form header in multi-question mode, or the question in single mode) */
+  question: string
+  description?: string | null
+  /** Multi-question mode: list of questions, each with independent type/options */
+  questions?: AskUserQuestion[] | null
+  /** Single-question mode fields (ignored when questions is provided) */
+  options?: AskUserOption[] | null
+  multi_select?: boolean
+  input_type?: 'choice' | 'text'
+  placeholder?: string | null
+  required: boolean
+  default?: string[] | null
+  /**
+   * Tool output from the backend after the tool completes.
+   * Used to detect timeout: {"error": "Timeout waiting for user response", "answer": null}
+   */
+  tool_output?: Record<string, unknown> | null
+}
+
+export interface AskUserAnswer {
+  ask_id: string
+  /** Tool use ID for fallback lookup when ask_id doesn't match */
+  tool_use_id?: string | null
+  /** Single-question answer */
+  answer?: string | string[]
+  /** Multi-question answers: {question_id: value_or_list} */
+  answers?: Record<string, string | string[]>
 }
 
 export interface FinalPromptData {
@@ -609,6 +707,7 @@ export interface KnowledgeBaseRef {
 export type {
   KnowledgeBase,
   KnowledgeBaseListResponse as KnowledgeBasesResponse,
+  PersonalKnowledgeBaseGroup,
 } from './knowledge'
 
 // Project Types

@@ -13,6 +13,7 @@ Note: Agent creation is NOT handled here - it belongs to the service layer.
 """
 
 import asyncio
+import json
 import logging
 from dataclasses import dataclass, field
 from typing import Any
@@ -21,7 +22,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from chat_shell.core.config import settings
 from chat_shell.core.database import get_db_context
-from chat_shell.tools.builtin import PreviewSubscriptionTool
 from shared.models.execution import ExecutionRequest
 from shared.telemetry.decorators import add_span_event, trace_async
 
@@ -36,12 +36,14 @@ class ChatContextResult:
         history: Chat history messages
         extra_tools: All tools including builtin tools (LoadSkillTool, WebSearchTool, etc.)
         system_prompt: System prompt (may be updated by KB tools)
+        kb_meta_prompt: Knowledge base meta prompt (dynamic, injected via dynamic_context)
         mcp_clients: MCP clients for cleanup
     """
 
     history: list = field(default_factory=list)
     extra_tools: list = field(default_factory=list)
     system_prompt: str = ""
+    kb_meta_prompt: str = ""
     mcp_clients: list = field(default_factory=list)
 
 
@@ -143,7 +145,7 @@ class ChatContext:
                 "parallel_tasks_completed",
                 {
                     "history_count": len(history),
-                    "kb_tools_count": len(kb_result[0]) if kb_result else 0,
+                    "kb_tools_count": len(kb_result.extra_tools),
                     "skill_tools_count": len(skill_tools),
                     "skill_mcp_clients_count": len(skill_mcp_clients),
                     "mcp_tools_count": len(mcp_result[0]) if mcp_result else 0,
@@ -176,9 +178,9 @@ class ChatContext:
 
             # Process KB tools result for system prompt
             system_prompt = self._request.system_prompt or ""
-            kb_tools, updated_system_prompt = kb_result
-            if kb_tools:
-                system_prompt = updated_system_prompt
+            if kb_result.extra_tools:
+                system_prompt = kb_result.enhanced_system_prompt
+            kb_meta_prompt = kb_result.kb_meta_prompt
 
             # Track MCP clients for cleanup (both from MCP servers and skills)
             _, mcp_clients = mcp_result
@@ -198,6 +200,7 @@ class ChatContext:
                 history=history,
                 extra_tools=extra_tools,
                 system_prompt=system_prompt,
+                kb_meta_prompt=kb_meta_prompt,
                 mcp_clients=all_mcp_clients,
             )
 
@@ -237,9 +240,30 @@ class ChatContext:
         """Load chat history asynchronously."""
         from chat_shell.history import get_chat_history
 
+        request_history = (
+            list(self._request.history)
+            if isinstance(self._request.history, list) and self._request.history
+            else []
+        )
+        if self._request.stateless:
+            logger.info(
+                "[CHAT_CONTEXT] Using request-provided history for stateless request: "
+                "task_id=%d, subtask_id=%d, count=%d",
+                self._request.task_id,
+                self._request.subtask_id,
+                len(request_history),
+            )
+            return request_history
+
         # Use user_message_id to exclude current user message (and all messages after it)
-        # Fall back to message_id if user_message_id is not provided
-        exclude_message_id = self._request.user_message_id or self._request.message_id
+        # If user_message_id is not provided, infer it from message_id:
+        # message_id is assistant_subtask.message_id, user message is message_id - 1
+        if self._request.user_message_id:
+            exclude_message_id = self._request.user_message_id
+        elif self._request.message_id and self._request.message_id > 1:
+            exclude_message_id = self._request.message_id - 1
+        else:
+            exclude_message_id = None
 
         # Get history_limit from request (used by subscription tasks)
         history_limit = getattr(self._request, "history_limit", None)
@@ -261,6 +285,27 @@ class ChatContext:
             limit=history_limit,
         )
         add_span_event("chat_history_loaded", {"message_count": len(history)})
+
+        # Log detailed history content for debugging preserve_history feature
+        logger.info(
+            "[CHAT_CONTEXT] <<< History loaded: task_id=%d, count=%d, history_limit=%s",
+            self._request.task_id,
+            len(history),
+            history_limit,
+        )
+        if (
+            not history
+            and request_history
+            and (history_limit is None or history_limit > 0)
+        ):
+            logger.info(
+                "[CHAT_CONTEXT] Falling back to request-provided history: task_id=%d, "
+                "subtask_id=%d, count=%d",
+                self._request.task_id,
+                self._request.subtask_id,
+                len(request_history),
+            )
+            return request_history
         return history
 
     @trace_async(
@@ -270,7 +315,7 @@ class ChatContext:
             "context.kb_ids_count": len(self._request.knowledge_base_ids or []),
         },
     )
-    async def _prepare_kb_tools(self, db: AsyncSession) -> tuple[list, str]:
+    async def _prepare_kb_tools(self, db: AsyncSession):
         """Prepare knowledge base tools asynchronously.
 
         In HTTP mode (when Backend calls chat_shell via HTTP), the system prompt
@@ -278,11 +323,16 @@ class ChatContext:
         checking for KB prompt markers to avoid duplicate KB prompts.
         """
         from chat_shell.tools.knowledge_factory import prepare_knowledge_base_tools
+        from shared.models.knowledge import KnowledgeBaseToolsResult
 
         base_system_prompt = self._request.system_prompt or ""
         if not self._request.knowledge_base_ids:
             add_span_event("no_kb_ids_skipped")
-            return [], base_system_prompt
+            return KnowledgeBaseToolsResult(
+                extra_tools=[],
+                enhanced_system_prompt=base_system_prompt,
+                kb_meta_prompt="",
+            )
 
         add_span_event(
             "preparing_kb_tools",
@@ -322,10 +372,13 @@ class ChatContext:
             document_ids=self._request.document_ids,
             model_id=model_id,
             context_window=context_window,
+            model_config=self._request.model_config,
             skip_prompt_enhancement=skip_prompt_enhancement,
             user_name=self._request.user_name,
+            auth_token=self._request.auth_token,
+            kb_tool_access_mode=self._request.kb_tool_access_mode,
         )
-        add_span_event("kb_tools_prepared", {"tools_count": len(result[0])})
+        add_span_event("kb_tools_prepared", {"tools_count": len(result.extra_tools)})
         return result
 
     def _should_skip_kb_prompt_enhancement(self, system_prompt: str) -> bool:
@@ -400,6 +453,7 @@ class ChatContext:
             user_selected_skills=self._request.user_selected_skills,
             user_name=self._request.user_name,
             auth_token=self._request.auth_token,
+            skill_identity_token=self._request.skill_identity_token,
             task_data=self._request,
         )
         add_span_event(
@@ -553,9 +607,13 @@ class ChatContext:
         """
 
         logger.info(
-            "[CHAT_CONTEXT] _connect_mcp_servers called: task_id=%d, mcp_servers=%s",
+            "[CHAT_CONTEXT] _connect_mcp_servers called: task_id=%d, mcp_server_names=%s",
             self._request.task_id,
-            self._request.mcp_servers,
+            [
+                server.get("name", "server")
+                for server in (self._request.mcp_servers or [])
+                if isinstance(server, dict)
+            ],
         )
 
         if not self._request.mcp_servers:
@@ -643,7 +701,7 @@ class ChatContext:
 
     def _build_extra_tools(
         self,
-        kb_result: tuple[list, str],
+        kb_result,
         skill_tools: list,
         mcp_result: tuple[list, list],
     ) -> list:
@@ -653,7 +711,7 @@ class ChatContext:
         KB tools, skill tools, and MCP tools.
 
         Args:
-            kb_result: Tuple of (kb_tools, updated_system_prompt)
+            kb_result: KnowledgeBaseToolsResult
             skill_tools: List of skill tools
             mcp_result: Tuple of (mcp_tools, mcp_clients)
 
@@ -663,6 +721,36 @@ class ChatContext:
         extra_tools = (
             list(self._request.extra_tools) if self._request.extra_tools else []
         )
+        logger.info(
+            "[CHAT_CONTEXT] Building extra tools: task_id=%d subtask_id=%d enable_tools=%s "
+            "enable_web_search=%s is_subscription=%s preset_extra_tools=%d",
+            self._request.task_id,
+            self._request.subtask_id,
+            self._request.enable_tools,
+            self._request.enable_web_search,
+            self._request.is_subscription,
+            len(extra_tools),
+        )
+        if not self._request.enable_tools:
+            if extra_tools:
+                tool_names = [
+                    tool.name for tool in extra_tools if hasattr(tool, "name")
+                ]
+                logger.info(
+                    "[CHAT_CONTEXT] Returning preset extra tools only because enable_tools=false: "
+                    "task_id=%d subtask_id=%d tool_names=%s",
+                    self._request.task_id,
+                    self._request.subtask_id,
+                    json.dumps(tool_names, ensure_ascii=False),
+                )
+            else:
+                logger.info(
+                    "[CHAT_CONTEXT] Skipping builtin/skill/mcp tools because enable_tools=false: "
+                    "task_id=%d subtask_id=%d",
+                    self._request.task_id,
+                    self._request.subtask_id,
+                )
+            return extra_tools
 
         # === Builtin Tools ===
 
@@ -711,66 +799,9 @@ class ChatContext:
                 len(self._request.table_contexts),
             )
 
-        # Add CreateSubscriptionTool (always enabled)
-        from chat_shell.tools.builtin import CreateSubscriptionTool
-
-        # Derive backend_url from REMOTE_STORAGE_URL (remove /api/internal suffix)
-        backend_url = None
-        if settings.REMOTE_STORAGE_URL:
-            # REMOTE_STORAGE_URL is like "http://localhost:8000/api/internal"
-            # We need "http://localhost:8000" for the subscription API
-            base_url = settings.REMOTE_STORAGE_URL
-            if base_url.endswith("/api/internal"):
-                backend_url = base_url[: -len("/api/internal")]
-            elif base_url.endswith("/api"):
-                backend_url = base_url[: -len("/api")]
-            else:
-                backend_url = base_url
-
-        # Extract model_name and model_namespace from model_config for subscription
-        model_name = None
-        model_namespace = "default"
-        if self._request.model_config:
-            model_name = self._request.model_config.get("model_name")
-            # Use `or "default"` to handle both missing key and None value
-            model_namespace = (
-                self._request.model_config.get("model_namespace") or "default"
-            )
-
-        create_subscription_tool = CreateSubscriptionTool(
-            user_id=self._request.user_id,
-            team_id=self._request.team_id,
-            team_name=self._request.team_name,
-            team_namespace=self._request.bot_namespace or "default",
-            timezone=self._request.timezone,
-            backend_url=backend_url,
-            model_name=model_name,
-            model_namespace=model_namespace,
-        )
-
-        extra_tools.append(create_subscription_tool)
-
-        preview_subscription_tool = PreviewSubscriptionTool(
-            user_id=self._request.user_id,
-            team_id=self._request.team_id,
-            team_name=self._request.team_name,
-            team_namespace=self._request.bot_namespace or "default",
-            timezone=self._request.timezone,
-            model_name=model_name,
-            model_namespace=model_namespace,
-        )
-
-        extra_tools.append(preview_subscription_tool)
-        logger.debug(
-            "[CHAT_CONTEXT] Added CreateSubscriptionTool: team_id=%d, team_name=%s, "
-            "model_name=%s, model_namespace=%s, backend_url=%s",
-            self._request.team_id,
-            self._request.team_name,
-            model_name,
-            model_namespace,
-            backend_url,
-        )
-
+        # Note: Subscription tools (preview_subscription, create_subscription) have been moved
+        # to Backend MCP Server and are now provided via the subscription-manager skill.
+        # They are automatically injected by Backend into skill_configs for all non-subscription tasks.
         # Note: SilentExitTool has been removed.
         # silent_exit functionality is now provided by Backend MCP Server.
         # For subscription tasks, the system MCP server is loaded via MCP tools.
@@ -784,9 +815,8 @@ class ChatContext:
         # === External Tools ===
 
         # Add KB tools
-        kb_tools, _ = kb_result
-        if kb_tools:
-            extra_tools.extend(kb_tools)
+        if kb_result.extra_tools:
+            extra_tools.extend(kb_result.extra_tools)
 
         # Add skill tools (dynamically created from skill configs)
         if skill_tools:
@@ -796,5 +826,22 @@ class ChatContext:
         mcp_tools, _ = mcp_result
         if mcp_tools:
             extra_tools.extend(mcp_tools)
+
+        tool_names = [tool.name for tool in extra_tools if hasattr(tool, "name")]
+        logger.info(
+            "[CHAT_CONTEXT] Built extra tools: task_id=%d subtask_id=%d count=%d tool_names=%s",
+            self._request.task_id,
+            self._request.subtask_id,
+            len(extra_tools),
+            json.dumps(tool_names, ensure_ascii=False),
+        )
+        if not self._request.enable_tools and tool_names:
+            logger.warning(
+                "[CHAT_CONTEXT] enable_tools=false but tools were still attached: "
+                "task_id=%d subtask_id=%d tool_names=%s",
+                self._request.task_id,
+                self._request.subtask_id,
+                json.dumps(tool_names, ensure_ascii=False),
+            )
 
         return extra_tools

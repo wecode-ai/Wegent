@@ -6,21 +6,13 @@
 
 /**
  * Subscription creation/edit form component.
+ * Refactored to use sub-components for better maintainability.
  */
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { Copy, Check, Terminal, Brain, ChevronDown, Eye, EyeOff, Database } from 'lucide-react'
+import { useCallback, useEffect, useState } from 'react'
+import { Copy, Check, Terminal, AlertTriangle } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Textarea } from '@/components/ui/textarea'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import {
   Dialog,
   DialogContent,
@@ -29,47 +21,41 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { Switch } from '@/components/ui/switch'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from '@/components/ui/command'
+import { deviceApis, type DeviceInfo } from '@/apis/devices'
 import { subscriptionApis } from '@/apis/subscription'
 import { teamApis } from '@/apis/team'
 import { modelApis, UnifiedModel } from '@/apis/models'
-import type { Team, GitRepoInfo, GitBranch } from '@/types/api'
+import { userApis } from '@/apis/user'
+import { fetchUnifiedSkillsList, type UnifiedSkill } from '@/apis/skills'
+import type { Team, GitRepoInfo, GitBranch, SearchUser } from '@/types/api'
 import type {
+  NotificationChannelBindingConfig,
   NotificationChannelInfo,
   NotificationLevel,
+  NotificationWebhook,
   Subscription,
+  SubscriptionBindingUpdatePayload,
   SubscriptionCreateRequest,
+  SubscriptionExecutionTarget,
+  SubscriptionGroupInfoPayload,
   SubscriptionKnowledgeBaseRef,
+  SubscriptionSkillRef,
   SubscriptionTaskType,
   SubscriptionTriggerType,
   SubscriptionUpdateRequest,
   SubscriptionVisibility,
 } from '@/types/subscription'
 import { toast } from 'sonner'
-import { CronSchedulePicker } from './CronSchedulePicker'
-import { KnowledgeBaseSelector } from './KnowledgeBaseSelector'
-import { RepositorySelector, BranchSelector } from '@/features/tasks/components/selector'
-import { DateTimePicker } from '@/components/ui/date-time-picker'
-import { cn, parseUTCDate } from '@/lib/utils'
 import { getCompatibleProviderFromAgentType } from '@/utils/modelCompatibility'
-
-// Model type for selector
-interface SubscriptionModel {
-  name: string
-  displayName?: string | null
-  provider?: string
-  modelId?: string
-  type?: string
-}
+import { useSocket } from '@/contexts/SocketContext'
+import {
+  SendAreaSection,
+  BasicInfoSection,
+  SubscriptionOptionsSection,
+  NotificationSection,
+  type SubscriptionModel,
+  validateIntervalTrigger,
+} from './subscription-form'
 
 const resolveGitType = (gitDomain?: string): GitRepoInfo['type'] => {
   if (!gitDomain) return 'github'
@@ -243,6 +229,7 @@ interface SubscriptionFormProps {
     enabled: boolean
     preserveHistory: boolean
     visibility: SubscriptionVisibility
+    executionTarget: SubscriptionExecutionTarget
   }>
 }
 
@@ -262,6 +249,29 @@ const defaultTriggerConfig: Record<SubscriptionTriggerType, Record<string, unkno
   event: { event_type: 'webhook' },
 }
 
+const normalizeExecutionTarget = (
+  target?: Partial<SubscriptionExecutionTarget>
+): SubscriptionExecutionTarget => ({
+  type: target?.type || 'managed',
+  ...(target?.device_id ? { device_id: target.device_id } : {}),
+})
+
+const sortDevicesForSelection = (devices: DeviceInfo[]): DeviceInfo[] =>
+  [...devices].sort((left, right) => {
+    if (left.device_type !== right.device_type) {
+      return left.device_type === 'local' ? -1 : 1
+    }
+    if (left.is_default !== right.is_default) {
+      return left.is_default ? -1 : 1
+    }
+    return left.name.localeCompare(right.name)
+  })
+
+const getPreferredDevice = (devices: DeviceInfo[]): DeviceInfo | null => {
+  const sortedDevices = sortDevicesForSelection(devices)
+  return sortedDevices[0] || null
+}
+
 export function SubscriptionForm({
   open,
   onOpenChange,
@@ -270,6 +280,7 @@ export function SubscriptionForm({
   initialData,
 }: SubscriptionFormProps) {
   const { t } = useTranslation('feed')
+  const { socket } = useSocket()
   const isEditing = !!subscription
   const isRental = subscription?.is_rental ?? false
 
@@ -288,23 +299,39 @@ export function SubscriptionForm({
   const [teamId, setTeamId] = useState<number | null>(null)
   const [promptTemplate, setPromptTemplate] = useState(initialData?.promptTemplate || '')
   const [retryCount, setRetryCount] = useState(initialData?.retryCount ?? 0)
-  const [timeoutSeconds, setTimeoutSeconds] = useState(initialData?.timeoutSeconds ?? 600) // Default 10 minutes
+  const [timeoutSeconds, setTimeoutSeconds] = useState(initialData?.timeoutSeconds ?? 600)
   const [enabled, setEnabled] = useState(initialData?.enabled ?? true)
-  const [preserveHistory, setPreserveHistory] = useState(initialData?.preserveHistory ?? false) // History preservation
+  const [executionTarget, setExecutionTarget] = useState<SubscriptionExecutionTarget>(
+    normalizeExecutionTarget(initialData?.executionTarget)
+  )
+  const [preserveHistory, setPreserveHistory] = useState(initialData?.preserveHistory ?? false)
+  const [historyMessageCount, setHistoryMessageCount] = useState(10)
   const [visibility, setVisibility] = useState<SubscriptionVisibility>(
     initialData?.visibility || 'private'
-  ) // Visibility setting
+  )
+  const [marketWhitelistUsers, setMarketWhitelistUsers] = useState<SearchUser[]>([])
+  const [availableDevices, setAvailableDevices] = useState<DeviceInfo[]>([])
+  const [devicesLoading, setDevicesLoading] = useState(false)
+
+  // Expiration state
+  const [expirationType, setExpirationType] = useState<'none' | 'fixed_date' | 'duration_days'>(
+    'none'
+  )
+  const [expirationDate, setExpirationDate] = useState<Date | undefined>(undefined)
+  const [durationDays, setDurationDays] = useState<number>(30)
 
   // Knowledge base selection state
   const [knowledgeBaseRefs, setKnowledgeBaseRefs] = useState<SubscriptionKnowledgeBaseRef[]>([])
+
+  // Skills selection state
+  const [skillRefs, setSkillRefs] = useState<SubscriptionSkillRef[]>([])
+  const [availableSkills, setAvailableSkills] = useState<UnifiedSkill[]>([])
+  const [skillsLoading, setSkillsLoading] = useState(false)
 
   // Model selection state
   const [selectedModel, setSelectedModel] = useState<SubscriptionModel | null>(null)
   const [models, setModels] = useState<SubscriptionModel[]>([])
   const [modelsLoading, setModelsLoading] = useState(false)
-  const [modelSelectorOpen, setModelSelectorOpen] = useState(false)
-  const [modelSearchValue, setModelSearchValue] = useState('')
-  const promptTemplateRef = useRef<HTMLTextAreaElement>(null)
 
   // Repository/Branch state for code-type teams
   const [selectedRepo, setSelectedRepo] = useState<GitRepoInfo | null>(null)
@@ -317,23 +344,46 @@ export function SubscriptionForm({
   // Submit state
   const [submitting, setSubmitting] = useState(false)
 
-  // Developer notification settings state (inline form)
+  // Developer notification settings state
   const [devNotificationLevel, setDevNotificationLevel] = useState<NotificationLevel>('notify')
   const [devNotificationChannels, setDevNotificationChannels] = useState<number[]>([])
   const [devAvailableChannels, setDevAvailableChannels] = useState<NotificationChannelInfo[]>([])
+  const [channelBindingConfigs, setChannelBindingConfigs] = useState<
+    NotificationChannelBindingConfig[]
+  >([])
+  const [bindingWaitingState, setBindingWaitingState] = useState<Record<number, boolean>>({})
   const [devSettingsLoading, setDevSettingsLoading] = useState(false)
 
-  // Load developer notification settings when editing
+  // Notification webhooks state
+  const [notificationWebhooks, setNotificationWebhooks] = useState<NotificationWebhook[]>([])
+
+  // Load developer notification settings
   useEffect(() => {
     const loadDeveloperSettings = async () => {
-      if (!isEditing || !subscription || isRental) return
+      if (isRental) return
 
       setDevSettingsLoading(true)
       try {
-        const response = await subscriptionApis.getDeveloperNotificationSettings(subscription.id)
-        setDevNotificationLevel(response.notification_level)
-        setDevNotificationChannels(response.notification_channel_ids || [])
-        setDevAvailableChannels(response.available_channels || [])
+        if (isEditing && subscription) {
+          const response = await subscriptionApis.getDeveloperNotificationSettings(subscription.id)
+          setDevNotificationLevel(response.notification_level)
+          setDevNotificationChannels(response.notification_channel_ids || [])
+          setDevAvailableChannels(response.available_channels || [])
+          setChannelBindingConfigs(response.channel_binding_configs || [])
+        } else {
+          setDevNotificationLevel('notify')
+          setDevNotificationChannels([])
+          setChannelBindingConfigs([])
+          try {
+            // Use the new API to get available channels without requiring a subscription
+            const availableChannels = await userApis.getAvailableChannels()
+            setDevAvailableChannels(availableChannels || [])
+            setChannelBindingConfigs([])
+          } catch {
+            setDevAvailableChannels([])
+            setChannelBindingConfigs([])
+          }
+        }
       } catch (error) {
         console.error('Failed to load developer notification settings:', error)
       } finally {
@@ -346,23 +396,45 @@ export function SubscriptionForm({
     }
   }, [isEditing, subscription, isRental, open])
 
-  // Load teams - only show teams with chat or code mode (exclude knowledge-only teams)
+  // Determine if device mode is selected
+  const isDeviceMode = executionTarget.type !== 'managed'
+
+  // Load teams
   useEffect(() => {
     const loadTeams = async () => {
       setTeamsLoading(true)
       try {
         const response = await teamApis.getTeams({ page: 1, limit: 100 })
-        // Filter teams to only include those with chat or code mode
         const filteredTeams = response.items.filter(team => {
           const bindMode = team.bind_mode
-          // If bind_mode is not set, include the team (backward compatibility)
           if (!bindMode || bindMode.length === 0) {
-            return true
+            return !isDeviceMode
           }
-          // Include team if it has chat or code mode
+          if (isDeviceMode) {
+            return bindMode.includes('task')
+          }
           return bindMode.includes('chat') || bindMode.includes('code')
         })
         setTeams(filteredTeams)
+
+        if (!isEditing && !isRental && filteredTeams.length > 0 && !isDeviceMode) {
+          try {
+            const defaultTeams = await userApis.getDefaultTeams()
+            const chatDefault = defaultTeams.chat
+            if (chatDefault) {
+              const matchedTeam = filteredTeams.find(
+                team =>
+                  team.name === chatDefault.name &&
+                  (team.namespace || 'default') === chatDefault.namespace
+              )
+              if (matchedTeam) {
+                setTeamId(matchedTeam.id)
+              }
+            }
+          } catch (error) {
+            console.error('Failed to load default teams:', error)
+          }
+        }
       } catch (error) {
         console.error('Failed to load teams:', error)
       } finally {
@@ -372,7 +444,7 @@ export function SubscriptionForm({
     if (open) {
       loadTeams()
     }
-  }, [open])
+  }, [open, isEditing, isRental, isDeviceMode])
 
   // Load models
   useEffect(() => {
@@ -400,84 +472,99 @@ export function SubscriptionForm({
     }
   }, [open, t])
 
+  // Load skills
+  // Load skills
+  useEffect(() => {
+    const loadSkills = async () => {
+      setSkillsLoading(true)
+      try {
+        // Use scope='all' to include personal + group + public skills
+        const response = await fetchUnifiedSkillsList({ scope: 'all' })
+        setAvailableSkills(response)
+      } catch (error) {
+        console.error('Failed to load skills:', error)
+      } finally {
+        setSkillsLoading(false)
+      }
+    }
+    if (open) {
+      loadSkills()
+    }
+  }, [open])
+  // Load devices
+  useEffect(() => {
+    const loadDevices = async () => {
+      setDevicesLoading(true)
+      try {
+        const response = await deviceApis.getAllDevices()
+        setAvailableDevices(response.items || [])
+      } catch (error) {
+        console.error('Failed to load devices:', error)
+      } finally {
+        setDevicesLoading(false)
+      }
+    }
+
+    if (open) {
+      loadDevices()
+    }
+  }, [open])
+
+  // Auto-select device
+  useEffect(() => {
+    if (executionTarget.type === 'managed' || devicesLoading) {
+      return
+    }
+
+    const matchedDevice = availableDevices.find(
+      device => device.device_id === executionTarget.device_id
+    )
+    if (matchedDevice) {
+      if (matchedDevice.device_type !== executionTarget.type) {
+        setExecutionTarget({
+          type: matchedDevice.device_type,
+          device_id: matchedDevice.device_id,
+        })
+      }
+      return
+    }
+
+    const preferredDevice = getPreferredDevice(availableDevices)
+    if (!preferredDevice) {
+      return
+    }
+
+    setExecutionTarget({
+      type: preferredDevice.device_type,
+      device_id: preferredDevice.device_id,
+    })
+  }, [availableDevices, devicesLoading, executionTarget])
+
   // Get selected team
   const selectedTeam = teams.find(t => t.id === teamId)
 
-  // Check if selected team is code-type (needs repository selection)
+  // Check if selected team is code-type
   const isCodeTypeTeam =
     selectedTeam?.recommended_mode === 'code' || selectedTeam?.recommended_mode === 'both'
 
-  // Check if selected team has model configured in any of its bots
+  // Check if selected team has model configured
   const teamHasModel = (() => {
     if (!selectedTeam?.bots || selectedTeam.bots.length === 0) {
       return false
     }
-    // Check if any bot has a model configured (bind_model in agent_config)
     return selectedTeam.bots.some(teamBot => {
       const agentConfig = teamBot.bot?.agent_config
       if (!agentConfig) return false
-      // Check for bind_model field which indicates a model is configured
       return !!(agentConfig as Record<string, unknown>).bind_model
     })
   })()
 
   const compatibleProvider = getCompatibleProviderFromAgentType(selectedTeam?.agent_type)
+  const selectableDevices = sortDevicesForSelection(availableDevices)
+  const hasSelectableDevices = selectableDevices.length > 0
 
   // Determine if model selection is required
-  // For rental subscriptions: model is REQUIRED (must select a model to use)
-  // For non-rental: required only if team has no model configured
   const modelRequired = isRental ? !selectedModel : !teamHasModel && !selectedModel
-  const promptVariables = [
-    '{{date}}',
-    '{{time}}',
-    '{{datetime}}',
-    '{{subscription_name}}',
-    '{{webhook_data}}',
-  ]
-  const promptVariablesHint = t('prompt_variables_hint')
-  const promptVariablesLabel = promptVariablesHint.split(/[:：]/)[0]?.trim() || promptVariablesHint
-  const promptVariablesDelimiter = promptVariablesHint.includes('：') ? '：' : ':'
-
-  // Handle repository change
-  const handleRepoChange = useCallback((repo: GitRepoInfo | null) => {
-    setSelectedRepo(repo)
-    setSelectedBranch(null) // Reset branch when repo changes
-  }, [])
-
-  // Handle branch change
-  const handleBranchChange = useCallback((branch: GitBranch | null) => {
-    setSelectedBranch(branch)
-  }, [])
-
-  const handleInsertPromptVariable = useCallback((variable: string) => {
-    const textarea = promptTemplateRef.current
-    if (!textarea) {
-      setPromptTemplate(prevValue => `${prevValue}${variable}`)
-      return
-    }
-
-    const currentValue = textarea.value
-    const selectionStart = textarea.selectionStart ?? currentValue.length
-    const selectionEnd = textarea.selectionEnd ?? currentValue.length
-    const nextValue =
-      currentValue.slice(0, selectionStart) + variable + currentValue.slice(selectionEnd)
-
-    setPromptTemplate(nextValue)
-    requestAnimationFrame(() => {
-      textarea.focus()
-      const caretPosition = selectionStart + variable.length
-      textarea.setSelectionRange(caretPosition, caretPosition)
-    })
-  }, [])
-
-  // Handle team change - reset repo/branch when team changes
-  const handleTeamChange = useCallback((value: string) => {
-    const newTeamId = parseInt(value)
-    setTeamId(newTeamId)
-    // Reset repository selection when team changes
-    setSelectedRepo(null)
-    setSelectedBranch(null)
-  }, [])
 
   // Reset form when subscription changes
   useEffect(() => {
@@ -492,9 +579,19 @@ export function SubscriptionForm({
       setRetryCount(subscription.retry_count)
       setTimeoutSeconds(subscription.timeout_seconds || 600)
       setEnabled(subscription.enabled)
+      setExecutionTarget(normalizeExecutionTarget(subscription.execution_target))
       setPreserveHistory(subscription.preserve_history || false)
+      setHistoryMessageCount(subscription.history_message_count || 10)
       setVisibility(subscription.visibility || 'private')
+      setMarketWhitelistUsers(
+        (subscription.market_whitelist_user_ids || []).map(userId => ({
+          id: userId,
+          user_name: `ID: ${userId}`,
+        }))
+      )
       setKnowledgeBaseRefs(subscription.knowledge_base_refs || [])
+      setSkillRefs(subscription.skill_refs || [])
+      setNotificationWebhooks(subscription.notification_webhooks || [])
       const repoInfo = buildRepoInfoFromSubscription(subscription)
       setSelectedRepo(repoInfo)
       setSelectedBranch(
@@ -506,17 +603,24 @@ export function SubscriptionForm({
             }
           : null
       )
-      // Restore model selection from subscription
       if (subscription.model_ref) {
         setSelectedModel({
           name: subscription.model_ref.name,
-          displayName: subscription.model_ref.name, // Will be updated when models load
+          displayName: subscription.model_ref.name,
         })
       } else {
         setSelectedModel(null)
       }
+      // Restore expiration state from subscription
+      if (subscription.expires_at) {
+        setExpirationType('fixed_date')
+        setExpirationDate(new Date(subscription.expires_at))
+      } else {
+        setExpirationType('none')
+        setExpirationDate(undefined)
+      }
+      setDurationDays(30)
     } else {
-      // Use initialData if provided, otherwise use defaults
       setDisplayName(initialData?.displayName || '')
       setDescription(initialData?.description || '')
       setTaskType(initialData?.taskType || 'collection')
@@ -529,12 +633,21 @@ export function SubscriptionForm({
       setRetryCount(initialData?.retryCount ?? 0)
       setTimeoutSeconds(initialData?.timeoutSeconds ?? 600)
       setEnabled(initialData?.enabled ?? true)
+      setExecutionTarget(normalizeExecutionTarget(initialData?.executionTarget))
       setPreserveHistory(initialData?.preserveHistory ?? false)
+      setHistoryMessageCount(10)
       setVisibility(initialData?.visibility || 'private')
+      setMarketWhitelistUsers([])
       setSelectedRepo(null)
       setSelectedBranch(null)
       setSelectedModel(null)
       setKnowledgeBaseRefs([])
+      setSkillRefs([])
+      setNotificationWebhooks([])
+      // Reset expiration state
+      setExpirationType('none')
+      setExpirationDate(undefined)
+      setDurationDays(30)
     }
   }, [subscription, open, initialData])
 
@@ -548,10 +661,21 @@ export function SubscriptionForm({
     }
   }, [models, selectedModel])
 
-  // Handle trigger type change
-  const handleTriggerTypeChange = useCallback((value: SubscriptionTriggerType) => {
-    setTriggerType(value)
-    setTriggerConfig(defaultTriggerConfig[value])
+  // Clear incompatible model selection when team changes
+  useEffect(() => {
+    if (!selectedModel || !compatibleProvider) return
+    const matchedModel = models.find(model => model.name === selectedModel.name)
+    const resolvedProvider = matchedModel?.provider || selectedModel.provider
+    if (resolvedProvider && resolvedProvider !== compatibleProvider) {
+      setSelectedModel(null)
+    }
+  }, [compatibleProvider, models, selectedModel])
+
+  // Handle team change - reset repo/branch when team changes
+  const handleTeamChange = useCallback((newTeamId: number | null) => {
+    setTeamId(newTeamId)
+    setSelectedRepo(null)
+    setSelectedBranch(null)
   }, [])
 
   // Handle submit
@@ -562,14 +686,22 @@ export function SubscriptionForm({
       return
     }
 
-    // For rental subscriptions: model is REQUIRED
+    if (executionTarget.type !== 'managed' && !executionTarget.device_id) {
+      toast.error(t('validation_execution_target_device_required'))
+      return
+    }
+
+    if (executionTarget.type !== 'managed' && !hasSelectableDevices) {
+      toast.error(t('validation_execution_target_no_devices'))
+      return
+    }
+
     if (isRental) {
       if (!selectedModel) {
         toast.error(t('validation_model_required'))
         return
       }
     } else {
-      // For non-rental subscriptions: team, prompt, and model (if team has no model) are required
       if (!teamId) {
         toast.error(t('validation_team_required'))
         return
@@ -579,8 +711,6 @@ export function SubscriptionForm({
         return
       }
 
-      // Check if model is required but not selected
-      // Find the team to check if it has model configured
       const team = teams.find(t => t.id === teamId)
       const hasTeamModel = team?.bots?.some(teamBot => {
         const agentConfig = teamBot.bot?.agent_config
@@ -593,10 +723,18 @@ export function SubscriptionForm({
       }
     }
 
+    // Validate interval trigger minimum 20 minutes
+    const intervalError = validateIntervalTrigger(triggerType, triggerConfig, t)
+    if (intervalError) {
+      toast.error(intervalError)
+      return
+    }
+
     setSubmitting(true)
     try {
+      const marketWhitelistUserIds = Array.from(new Set(marketWhitelistUsers.map(user => user.id)))
+
       if (isEditing && subscription) {
-        // For rental subscriptions, only update allowed fields (not team, prompt, visibility)
         const updateData: SubscriptionUpdateRequest = {
           display_name: displayName,
           description: description || undefined,
@@ -606,16 +744,17 @@ export function SubscriptionForm({
           retry_count: retryCount,
           timeout_seconds: timeoutSeconds,
           enabled,
+          execution_target: executionTarget,
           preserve_history: preserveHistory,
-          // Only include team_id, prompt_template, visibility for non-rental subscriptions
+          history_message_count: preserveHistory ? historyMessageCount : undefined,
           ...(isRental
             ? {}
             : {
                 team_id: teamId ?? undefined,
                 prompt_template: promptTemplate,
                 visibility,
+                market_whitelist_user_ids: marketWhitelistUserIds,
               }),
-          // Include git repo info if selected (only for non-rental)
           ...(!isRental &&
             selectedRepo && {
               git_repo: selectedRepo.git_repo,
@@ -623,30 +762,37 @@ export function SubscriptionForm({
               git_domain: selectedRepo.git_domain,
               branch_name: selectedBranch?.name || 'main',
             }),
-          // Include model selection - always override bot model when specified
           model_ref: selectedModel ? { name: selectedModel.name, namespace: 'default' } : undefined,
-          force_override_bot_model: !!selectedModel, // Always override when model is selected
-          // Include knowledge base references
+          force_override_bot_model: !!selectedModel,
           knowledge_base_refs: knowledgeBaseRefs.length > 0 ? knowledgeBaseRefs : undefined,
+          skill_refs: skillRefs.length > 0 ? skillRefs : undefined,
+          notification_webhooks: notificationWebhooks.length > 0 ? notificationWebhooks : undefined,
+          // Expiration settings
+          ...(expirationType !== 'none' && {
+            expires_at:
+              expirationType === 'fixed_date' && expirationDate
+                ? expirationDate.toISOString()
+                : expirationType === 'duration_days'
+                  ? new Date(Date.now() + durationDays * 24 * 60 * 60 * 1000).toISOString()
+                  : undefined,
+          }),
         }
         await subscriptionApis.updateSubscription(subscription.id, updateData)
 
-        // Update developer notification settings if not rental
         if (!isRental) {
           try {
             await subscriptionApis.updateDeveloperNotificationSettings(subscription.id, {
               notification_level: devNotificationLevel,
               notification_channel_ids: devNotificationChannels,
+              channel_binding_configs: channelBindingConfigs,
             })
           } catch (error) {
             console.error('Failed to update developer notification settings:', error)
-            // Don't block the main update if this fails
           }
         }
 
         toast.success(t('update_success'))
       } else {
-        // Generate name from display name
         const generatedName =
           displayName
             .toLowerCase()
@@ -666,22 +812,44 @@ export function SubscriptionForm({
           retry_count: retryCount,
           timeout_seconds: timeoutSeconds,
           enabled,
+          execution_target: executionTarget,
           preserve_history: preserveHistory,
+          history_message_count: preserveHistory ? historyMessageCount : undefined,
           visibility,
-          // Include git repo info if selected
+          market_whitelist_user_ids: marketWhitelistUserIds,
           ...(selectedRepo && {
             git_repo: selectedRepo.git_repo,
             git_repo_id: selectedRepo.git_repo_id,
             git_domain: selectedRepo.git_domain,
             branch_name: selectedBranch?.name || 'main',
           }),
-          // Include model selection - always override bot model when specified
           model_ref: selectedModel ? { name: selectedModel.name, namespace: 'default' } : undefined,
-          force_override_bot_model: !!selectedModel, // Always override when model is selected
-          // Include knowledge base references
+          force_override_bot_model: !!selectedModel,
           knowledge_base_refs: knowledgeBaseRefs.length > 0 ? knowledgeBaseRefs : undefined,
+          skill_refs: skillRefs.length > 0 ? skillRefs : undefined,
+          notification_webhooks: notificationWebhooks.length > 0 ? notificationWebhooks : undefined,
+          // Expiration settings
+          ...(expirationType !== 'none' && {
+            expires_at:
+              expirationType === 'fixed_date' && expirationDate
+                ? expirationDate.toISOString()
+                : expirationType === 'duration_days'
+                  ? new Date(Date.now() + durationDays * 24 * 60 * 60 * 1000).toISOString()
+                  : undefined,
+          }),
         }
-        await subscriptionApis.createSubscription(createData)
+        const createdSubscription = await subscriptionApis.createSubscription(createData)
+
+        try {
+          await subscriptionApis.updateDeveloperNotificationSettings(createdSubscription.id, {
+            notification_level: devNotificationLevel,
+            notification_channel_ids: devNotificationChannels,
+            channel_binding_configs: channelBindingConfigs,
+          })
+        } catch (error) {
+          console.error('Failed to update developer notification settings:', error)
+        }
+
         toast.success(t('create_success'))
       }
       onSuccess()
@@ -704,12 +872,18 @@ export function SubscriptionForm({
     retryCount,
     timeoutSeconds,
     enabled,
+    executionTarget,
+    hasSelectableDevices,
     preserveHistory,
+    historyMessageCount,
     visibility,
+    marketWhitelistUsers,
     selectedRepo,
     selectedBranch,
     selectedModel,
     knowledgeBaseRefs,
+    skillRefs,
+    notificationWebhooks,
     isEditing,
     isRental,
     subscription,
@@ -719,185 +893,81 @@ export function SubscriptionForm({
     teams,
     devNotificationLevel,
     devNotificationChannels,
+    channelBindingConfigs,
+    expirationType,
+    expirationDate,
+    durationDays,
   ])
 
-  // Filter models based on search
-  const compatibleModels = compatibleProvider
-    ? models.filter(model => model.provider === compatibleProvider)
-    : models
+  const startBindingSession = useCallback(
+    async (channelId: number, bindPrivate: boolean, bindGroup: boolean) => {
+      await subscriptionApis.startDeveloperBindingSession(subscription?.id || null, {
+        channel_id: channelId,
+        bind_private: bindPrivate,
+        bind_group: bindGroup,
+      })
+      setBindingWaitingState(prev => ({ ...prev, [channelId]: true }))
+    },
+    [subscription?.id]
+  )
 
-  const filteredModels = compatibleModels.filter(model => {
-    const searchLower = modelSearchValue.toLowerCase()
-    return (
-      model.name.toLowerCase().includes(searchLower) ||
-      (model.displayName && model.displayName.toLowerCase().includes(searchLower)) ||
-      (model.provider && model.provider.toLowerCase().includes(searchLower))
-    )
-  })
+  const cancelBindingSession = useCallback(
+    async (channelId: number) => {
+      await subscriptionApis.cancelDeveloperBindingSession(subscription?.id || null, {
+        channel_id: channelId,
+      })
+      setBindingWaitingState(prev => ({ ...prev, [channelId]: false }))
+    },
+    [subscription?.id]
+  )
 
-  // Clear incompatible model selection when team changes
+  // Listen for group info received event from WebSocket
   useEffect(() => {
-    if (!selectedModel || !compatibleProvider) return
-    const matchedModel = models.find(model => model.name === selectedModel.name)
-    const resolvedProvider = matchedModel?.provider || selectedModel.provider
-    if (resolvedProvider && resolvedProvider !== compatibleProvider) {
-      setSelectedModel(null)
-    }
-  }, [compatibleProvider, models, selectedModel])
+    if (!socket) return
 
-  const renderTriggerConfig = () => {
-    switch (triggerType) {
-      case 'cron':
-        return (
-          <div className="space-y-2">
-            <CronSchedulePicker
-              value={(triggerConfig.expression as string) || '0 9 * * *'}
-              onChange={expression => setTriggerConfig({ ...triggerConfig, expression })}
-            />
-            <p className="text-xs text-text-muted">
-              {t('timezone_hint')}: {(triggerConfig.timezone as string) || getUserTimezone()}
-            </p>
-          </div>
+    const bindingUpdateHandler = (payload: SubscriptionBindingUpdatePayload) => {
+      setDevAvailableChannels(prev =>
+        prev.map(channel =>
+          channel.id === payload.channel_id && payload.private_bound
+            ? {
+                ...channel,
+                is_bound: true,
+              }
+            : channel
         )
-      case 'interval':
-        return (
-          <div className="flex gap-3">
-            <div className="flex-1">
-              <Label>{t('interval_value')}</Label>
-              <Input
-                type="number"
-                min={1}
-                value={(triggerConfig.value as number) || 1}
-                onChange={e =>
-                  setTriggerConfig({
-                    ...triggerConfig,
-                    value: parseInt(e.target.value) || 1,
-                  })
-                }
-              />
-            </div>
-            <div className="flex-1">
-              <Label>{t('interval_unit')}</Label>
-              <Select
-                value={(triggerConfig.unit as string) || 'hours'}
-                onValueChange={value => setTriggerConfig({ ...triggerConfig, unit: value })}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="minutes">{t('unit_minutes')}</SelectItem>
-                  <SelectItem value="hours">{t('unit_hours')}</SelectItem>
-                  <SelectItem value="days">{t('unit_days')}</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-        )
-      case 'one_time': {
-        // Convert UTC ISO string to local Date object
-        const getLocalDate = (isoString: string | undefined): Date | undefined => {
-          if (!isoString) return undefined
-          // Use parseUTCDate to correctly parse UTC time from backend
-          const date = parseUTCDate(isoString)
-          if (!date || isNaN(date.getTime())) return undefined
-          return date
-        }
+      )
 
-        const currentDate = getLocalDate(triggerConfig.execute_at as string)
-
-        return (
-          <div className="space-y-3">
-            <Label>{t('execute_at')}</Label>
-            <DateTimePicker
-              value={currentDate}
-              onChange={date => {
-                if (date) {
-                  setTriggerConfig({
-                    ...triggerConfig,
-                    execute_at: date.toISOString(),
-                  })
-                }
-              }}
-              placeholder={t('select_datetime')}
-            />
-          </div>
-        )
+      if (payload.completed && !payload.group_bound) {
+        setBindingWaitingState(prev => ({ ...prev, [payload.channel_id]: false }))
       }
-      case 'event':
-        return (
-          <div>
-            <Label>{t('event_type')}</Label>
-            <Select
-              value={(triggerConfig.event_type as string) || 'webhook'}
-              onValueChange={value => setTriggerConfig({ ...triggerConfig, event_type: value })}
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="webhook">Webhook</SelectItem>
-                <SelectItem value="git_push">Git Push</SelectItem>
-              </SelectContent>
-            </Select>
-            {triggerConfig.event_type === 'git_push' && (
-              <div className="mt-3 space-y-3">
-                <div>
-                  <Label>{t('git_repository')}</Label>
-                  <Input
-                    value={
-                      (
-                        triggerConfig.git_push as
-                          | { repository?: string; branch?: string }
-                          | undefined
-                      )?.repository || ''
-                    }
-                    onChange={e =>
-                      setTriggerConfig({
-                        ...triggerConfig,
-                        git_push: {
-                          ...(triggerConfig.git_push as
-                            | { repository?: string; branch?: string }
-                            | undefined),
-                          repository: e.target.value,
-                        },
-                      })
-                    }
-                    placeholder="owner/repo"
-                  />
-                </div>
-                <div>
-                  <Label>{t('git_branch')}</Label>
-                  <Input
-                    value={
-                      (
-                        triggerConfig.git_push as
-                          | { repository?: string; branch?: string }
-                          | undefined
-                      )?.branch || ''
-                    }
-                    onChange={e =>
-                      setTriggerConfig({
-                        ...triggerConfig,
-                        git_push: {
-                          ...(triggerConfig.git_push as
-                            | { repository?: string; branch?: string }
-                            | undefined),
-                          branch: e.target.value,
-                        },
-                      })
-                    }
-                    placeholder="main"
-                  />
-                </div>
-              </div>
-            )}
-          </div>
-        )
-      default:
-        return null
     }
-  }
+
+    const handler = (payload: SubscriptionGroupInfoPayload) => {
+      // Update channelBindingConfigs with group info
+      setChannelBindingConfigs(prev =>
+        prev.map(item =>
+          item.channel_id === payload.channel_id
+            ? {
+                ...item,
+                group_conversation_id: payload.group_conversation_id,
+                group_name: payload.group_name,
+              }
+            : item
+        )
+      )
+      // Update binding waiting state
+      setBindingWaitingState(prev => ({ ...prev, [payload.channel_id]: false }))
+      // Show success toast
+      toast.success(t('notification_settings.binding_success'))
+    }
+
+    socket.on('subscription:group_binding_updated', bindingUpdateHandler)
+    socket.on('subscription:group_info_received', handler)
+    return () => {
+      socket.off('subscription:group_binding_updated', bindingUpdateHandler)
+      socket.off('subscription:group_info_received', handler)
+    }
+  }, [socket, t])
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -912,529 +982,119 @@ export function SubscriptionForm({
         </DialogHeader>
 
         <div className="flex-1 overflow-y-auto py-6 px-1">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-6 px-1">
-            {/* Left Column - Basic Info */}
-            <div className="space-y-5">
-              <div className="pb-2 border-b border-border/50">
-                <h3 className="text-sm font-semibold text-text-secondary uppercase tracking-wide">
-                  {t('basic_info') || '基本信息'}
-                </h3>
-              </div>
+          {/* Section 1: Basic Info */}
+          <BasicInfoSection
+            displayName={displayName}
+            setDisplayName={setDisplayName}
+            description={description}
+            setDescription={setDescription}
+            enabled={enabled}
+            setEnabled={setEnabled}
+            visibility={visibility}
+            setVisibility={setVisibility}
+            marketWhitelistUsers={marketWhitelistUsers}
+            setMarketWhitelistUsers={setMarketWhitelistUsers}
+            isRental={isRental}
+          />
 
-              {/* Display Name */}
-              <div className="space-y-2">
-                <Label className="text-sm font-medium">
-                  {t('display_name')} <span className="text-destructive">*</span>
-                </Label>
-                <Input
-                  value={displayName}
-                  onChange={e => setDisplayName(e.target.value)}
-                  placeholder={t('display_name_placeholder')}
-                  className="h-10"
-                />
-              </div>
-
-              {/* Description */}
-              <div className="space-y-2">
-                <Label className="text-sm font-medium">{t('description')}</Label>
-                <Input
-                  value={description}
-                  onChange={e => setDescription(e.target.value)}
-                  placeholder={t('description_placeholder')}
-                  className="h-10"
-                />
-              </div>
-
-              {/* Task Type */}
-              <div className="space-y-2">
-                <Label className="text-sm font-medium">
-                  {t('task_type')} <span className="text-destructive">*</span>
-                </Label>
-                <Select
-                  value={taskType}
-                  onValueChange={value => setTaskType(value as SubscriptionTaskType)}
-                >
-                  <SelectTrigger className="h-10">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="collection">
-                      {t('task_type_collection')} - {t('task_type_collection_desc')}
-                    </SelectItem>
-                    <SelectItem value="execution">
-                      {t('task_type_execution')} - {t('task_type_execution_desc')}
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {/* Team Selection - Hidden for rental subscriptions */}
-              {!isRental && (
-                <div className="space-y-2">
-                  <Label className="text-sm font-medium">
-                    {t('select_team')} <span className="text-destructive">*</span>
-                  </Label>
-                  <Select
-                    value={teamId?.toString() || ''}
-                    onValueChange={handleTeamChange}
-                    disabled={teamsLoading}
-                  >
-                    <SelectTrigger className="h-10">
-                      <SelectValue placeholder={t('select_team_placeholder')} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {teams.map(team => (
-                        <SelectItem key={team.id} value={team.id.toString()}>
-                          {team.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              )}
-
-              {/* Repository Selection - Only show for code-type teams */}
-              {isCodeTypeTeam && (
-                <div className="space-y-3 rounded-lg border border-border bg-background-secondary/30 p-4">
-                  <div className="text-sm font-medium text-text-secondary">
-                    {t('workspace_settings')}
-                  </div>
-
-                  {/* Repository Selection */}
-                  <div className="space-y-2">
-                    <Label className="text-sm font-medium">{t('select_repository')}</Label>
-                    <div className="border border-border rounded-md px-2 py-1.5">
-                      <RepositorySelector
-                        selectedRepo={selectedRepo}
-                        handleRepoChange={handleRepoChange}
-                        disabled={false}
-                        fullWidth={true}
-                      />
-                    </div>
-                  </div>
-
-                  {/* Branch Selection - Only show when repository is selected */}
-                  {selectedRepo && (
-                    <div className="space-y-2">
-                      <Label className="text-sm font-medium">{t('select_branch')}</Label>
-                      <div className="border border-border rounded-md px-2 py-1.5">
-                        <BranchSelector
-                          selectedRepo={selectedRepo}
-                          selectedBranch={selectedBranch}
-                          handleBranchChange={handleBranchChange}
-                          disabled={false}
-                        />
-                      </div>
-                    </div>
-                  )}
-
-                  <p className="text-xs text-text-muted">{t('workspace_hint')}</p>
-                </div>
-              )}
-
-              {/* Model Selection */}
-              <div className="space-y-3 rounded-lg border border-border bg-background-secondary/30 p-4">
-                <div className="flex items-center gap-2">
-                  <Brain className="h-4 w-4 text-primary" />
-                  <span className="text-sm font-medium text-text-secondary">
-                    {t('model_settings')}
-                  </span>
-                </div>
-
-                <div className="space-y-2">
-                  <Label className="text-sm font-medium">{t('select_model')}</Label>
-                  <Popover open={modelSelectorOpen} onOpenChange={setModelSelectorOpen}>
-                    <PopoverTrigger asChild>
-                      <Button
-                        variant="outline"
-                        role="combobox"
-                        aria-expanded={modelSelectorOpen}
-                        className="w-full justify-between h-10"
-                        disabled={modelsLoading}
-                      >
-                        {modelsLoading ? (
-                          t('common:loading')
-                        ) : selectedModel ? (
-                          <span className="truncate">
-                            {selectedModel.displayName || selectedModel.name}
-                          </span>
-                        ) : (
-                          <span className="text-text-muted">{t('select_model_placeholder')}</span>
-                        )}
-                        <ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent
-                      className={cn(
-                        'w-[400px] p-0',
-                        'max-h-[var(--radix-popover-content-available-height,360px)]',
-                        'flex flex-col overflow-hidden'
-                      )}
-                      align="start"
-                    >
-                      <Command className="flex flex-col flex-1 min-h-0">
-                        <CommandInput
-                          placeholder={t('search_model')}
-                          value={modelSearchValue}
-                          onValueChange={setModelSearchValue}
-                        />
-                        <CommandList
-                          className="min-h-[36px] max-h-[240px] overflow-y-auto flex-1"
-                          onWheel={event => {
-                            event.stopPropagation()
-                          }}
-                        >
-                          <CommandEmpty>{t('no_model_found')}</CommandEmpty>
-                          <CommandGroup>
-                            {/* Option to clear selection */}
-                            <CommandItem
-                              value="__clear__"
-                              onSelect={() => {
-                                setSelectedModel(null)
-                                setModelSelectorOpen(false)
-                                setModelSearchValue('')
-                              }}
-                            >
-                              <span className="text-text-muted">{t('use_default_model')}</span>
-                            </CommandItem>
-                            {filteredModels.map(model => (
-                              <CommandItem
-                                key={model.name}
-                                value={model.name}
-                                onSelect={() => {
-                                  setSelectedModel(model)
-                                  setModelSelectorOpen(false)
-                                  setModelSearchValue('')
-                                }}
-                              >
-                                <div className="flex flex-col">
-                                  <span
-                                    className={cn(
-                                      selectedModel?.name === model.name && 'font-medium'
-                                    )}
-                                  >
-                                    {model.displayName || model.name}
-                                  </span>
-                                  <span className="text-xs text-text-muted">
-                                    {model.provider} · {model.modelId}
-                                  </span>
-                                </div>
-                                {selectedModel?.name === model.name && (
-                                  <Check className="ml-auto h-4 w-4" />
-                                )}
-                              </CommandItem>
-                            ))}
-                          </CommandGroup>
-                        </CommandList>
-                      </Command>
-                    </PopoverContent>
-                  </Popover>
-                  <p className="text-xs text-text-muted">
-                    {modelRequired ? (
-                      <span className="text-destructive">{t('model_required_hint')}</span>
-                    ) : (
-                      t('model_hint')
-                    )}
-                  </p>
-                </div>
-              </div>
-
-              {/* Knowledge Base Selection */}
-              <div className="space-y-3 rounded-lg border border-border bg-background-secondary/30 p-4">
-                <div className="flex items-center gap-2">
-                  <Database className="h-4 w-4 text-primary" />
-                  <span className="text-sm font-medium text-text-secondary">
-                    {t('knowledge_base_settings')}
-                  </span>
-                </div>
-                <div className="space-y-2">
-                  <Label className="text-sm font-medium">{t('knowledge_bases')}</Label>
-                  <KnowledgeBaseSelector
-                    selectedKnowledgeBases={knowledgeBaseRefs}
-                    onChange={setKnowledgeBaseRefs}
-                    disabled={isRental}
-                  />
-                  <p className="text-xs text-text-muted">{t('knowledge_base_hint')}</p>
-                </div>
-              </div>
-
-              {/* Preserve History */}
-              <div className="flex items-center justify-between pt-2">
-                <div className="space-y-0.5">
-                  <Label className="text-sm font-medium">{t('preserve_history')}</Label>
-                  <p className="text-xs text-text-muted">{t('preserve_history_hint')}</p>
-                </div>
-                <Switch checked={preserveHistory} onCheckedChange={setPreserveHistory} />
-              </div>
-              {/* Visibility - Hidden for rental subscriptions */}
-              {!isRental && (
-                <div className="space-y-2 pt-2">
-                  <Label className="text-sm font-medium">{t('visibility')}</Label>
-                  <div className="flex gap-2">
-                    <Button
-                      type="button"
-                      variant={visibility === 'private' ? 'primary' : 'outline'}
-                      size="sm"
-                      onClick={() => setVisibility('private')}
-                      className="flex-1"
-                    >
-                      <EyeOff className="h-4 w-4 mr-1.5" />
-                      {t('visibility_private')}
-                    </Button>
-                    <Button
-                      type="button"
-                      variant={visibility === 'public' ? 'primary' : 'outline'}
-                      size="sm"
-                      onClick={() => setVisibility('public')}
-                      className="flex-1"
-                    >
-                      <Eye className="h-4 w-4 mr-1.5" />
-                      {t('visibility_public')}
-                    </Button>
-                    <Button
-                      type="button"
-                      variant={visibility === 'market' ? 'primary' : 'outline'}
-                      size="sm"
-                      onClick={() => setVisibility('market')}
-                      className="flex-1"
-                    >
-                      <Eye className="h-4 w-4 mr-1.5" />
-                      {t('visibility_market')}
-                    </Button>
-                  </div>
-                  <p className="text-xs text-text-muted">
-                    {visibility === 'market' ? t('visibility_market_hint') : t('visibility_hint')}
-                  </p>
-                </div>
-              )}
-
-              {/* Enabled */}
-              <div className="flex items-center justify-between pt-2">
-                <Label className="text-sm font-medium">{t('enable_subscription')}</Label>
-                <Switch checked={enabled} onCheckedChange={setEnabled} />
-              </div>
-
-              {/* Developer Notification Settings - Only show when editing and not rental */}
-              {isEditing && !isRental && (
-                <div className="space-y-3 pt-4 border-t border-border/50">
-                  <div className="space-y-2">
-                    <Label className="text-sm font-medium">
-                      {t('developer_notification_settings.title')}
-                    </Label>
-                    <p className="text-xs text-text-muted">
-                      {t('developer_notification_settings.description', {
-                        name: subscription?.display_name || displayName,
-                      })}
-                    </p>
-                  </div>
-
-                  {/* Notification Level Selection */}
-                  <div className="space-y-2">
-                    <div className="flex gap-2">
-                      {(['silent', 'default', 'notify'] as NotificationLevel[]).map(level => (
-                        <Button
-                          key={level}
-                          type="button"
-                          variant={devNotificationLevel === level ? 'primary' : 'outline'}
-                          size="sm"
-                          className="flex-1 h-9"
-                          onClick={() => setDevNotificationLevel(level)}
-                          disabled={devSettingsLoading}
-                        >
-                          {t(`notification_level.${level}`)}
-                        </Button>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Notification Channels - Only show when level is 'notify' */}
-                  {devNotificationLevel === 'notify' && (
-                    <div className="space-y-2">
-                      <Label className="text-xs text-text-muted">
-                        {t('developer_notification_settings.channels')}
-                      </Label>
-                      {devAvailableChannels.length > 0 ? (
-                        <>
-                          <div className="flex flex-wrap gap-2">
-                            {devAvailableChannels.map(channel => (
-                              <Button
-                                key={channel.id}
-                                type="button"
-                                variant={
-                                  devNotificationChannels.includes(channel.id)
-                                    ? 'primary'
-                                    : 'outline'
-                                }
-                                size="sm"
-                                className="h-8"
-                                onClick={() => {
-                                  setDevNotificationChannels(prev =>
-                                    prev.includes(channel.id)
-                                      ? prev.filter(id => id !== channel.id)
-                                      : [...prev, channel.id]
-                                  )
-                                }}
-                                disabled={devSettingsLoading}
-                              >
-                                {channel.name}
-                                {!channel.is_bound && (
-                                  <span className="ml-1 text-xs opacity-60">
-                                    ({t('common:actions.configure')})
-                                  </span>
-                                )}
-                              </Button>
-                            ))}
-                          </div>
-                          <p className="text-xs text-text-muted">
-                            {t('developer_notification_settings.channels_hint')}
-                          </p>
-                        </>
-                      ) : (
-                        <p className="text-xs text-text-muted">
-                          {t('developer_notification_settings.no_channels_hint')}
-                        </p>
-                      )}
-                    </div>
-                  )}
-
-                  {devSettingsLoading && (
-                    <p className="text-xs text-text-muted">{t('common:loading')}</p>
-                  )}
-                </div>
-              )}
-            </div>
-
-            {/* Right Column - Trigger & Execution */}
-            <div className="space-y-5">
-              <div className="pb-2 border-b border-border/50">
-                <h3 className="text-sm font-semibold text-text-secondary uppercase tracking-wide">
-                  {t('trigger_settings') || '触发设置'}
-                </h3>
-              </div>
-
-              {/* Trigger Type */}
-              <div className="space-y-2">
-                <Label className="text-sm font-medium">
-                  {t('trigger_type')} <span className="text-destructive">*</span>
-                </Label>
-                <Select value={triggerType} onValueChange={handleTriggerTypeChange}>
-                  <SelectTrigger className="h-10">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="cron">{t('trigger_cron')}</SelectItem>
-                    <SelectItem value="interval">{t('trigger_interval')}</SelectItem>
-                    <SelectItem value="one_time">{t('trigger_one_time')}</SelectItem>
-                    <SelectItem value="event">{t('trigger_event')}</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {/* Trigger Config */}
-              <div className="rounded-lg border border-border bg-background-secondary/30 p-4">
-                <div className="mb-3 text-sm font-medium text-text-secondary">
-                  {t('trigger_config')}
-                </div>
-                {renderTriggerConfig()}
-              </div>
-
-              {/* Webhook API Usage - Only show for event trigger with webhook when editing */}
-              {isEditing &&
-                subscription &&
-                triggerType === 'event' &&
-                triggerConfig.event_type === 'webhook' &&
-                subscription.webhook_url && <WebhookApiSection subscription={subscription} />}
-
-              {/* Retry Count & Timeout in a row */}
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label className="text-sm font-medium">{t('retry_count')}</Label>
-                  <Select
-                    value={retryCount.toString()}
-                    onValueChange={value => setRetryCount(parseInt(value))}
-                  >
-                    <SelectTrigger className="h-10">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="0">0 ({t('no_retry')})</SelectItem>
-                      <SelectItem value="1">1</SelectItem>
-                      <SelectItem value="2">2</SelectItem>
-                      <SelectItem value="3">3</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="space-y-2">
-                  <Label className="text-sm font-medium">{t('timeout_seconds')}</Label>
-                  <Select
-                    value={timeoutSeconds.toString()}
-                    onValueChange={value => setTimeoutSeconds(parseInt(value))}
-                  >
-                    <SelectTrigger className="h-10">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="60">1 {t('timeout_minute')}</SelectItem>
-                      <SelectItem value="120">2 {t('timeout_minutes')}</SelectItem>
-                      <SelectItem value="300">5 {t('timeout_minutes')}</SelectItem>
-                      <SelectItem value="600">
-                        10 {t('timeout_minutes')} ({t('default')})
-                      </SelectItem>
-                      <SelectItem value="900">15 {t('timeout_minutes')}</SelectItem>
-                      <SelectItem value="1800">30 {t('timeout_minutes')}</SelectItem>
-                      <SelectItem value="3600">60 {t('timeout_minutes')}</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-              <p className="text-xs text-text-muted -mt-2">{t('timeout_hint')}</p>
-            </div>
-          </div>
-
-          {/* Full Width - Prompt Template - Hidden for rental subscriptions */}
+          {/* Section 2: Task Settings (Send Area) */}
           {!isRental && (
-            <div className="mt-6 pt-6 border-t border-border/50">
-              <div className="pb-3">
-                <h3 className="text-sm font-semibold text-text-secondary uppercase tracking-wide">
-                  {t('prompt_config') || 'Prompt 配置'}
-                </h3>
-              </div>
-              <div className="space-y-2">
-                <Label className="text-sm font-medium">
-                  {t('prompt_template')} <span className="text-destructive">*</span>
-                </Label>
-                <Textarea
-                  ref={promptTemplateRef}
-                  value={promptTemplate}
-                  onChange={e => setPromptTemplate(e.target.value)}
-                  placeholder={t('prompt_template_placeholder')}
-                  rows={5}
-                  className="resize-none"
-                />
-                <div className="flex flex-wrap items-center gap-2 text-xs text-text-muted">
-                  <span>
-                    {promptVariablesLabel}
-                    {promptVariablesDelimiter}
-                  </span>
-                  {promptVariables.map(variable => (
-                    <Button
-                      key={variable}
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      className={cn(
-                        'h-7 px-2 text-[11px] rounded-full border-border',
-                        'bg-surface text-text-secondary hover:text-text-primary hover:bg-hover'
-                      )}
-                      onClick={() => handleInsertPromptVariable(variable)}
-                    >
-                      {variable}
-                    </Button>
-                  ))}
+            <SendAreaSection
+              promptTemplate={promptTemplate}
+              setPromptTemplate={setPromptTemplate}
+              teamId={teamId}
+              setTeamId={handleTeamChange}
+              teams={teams}
+              teamsLoading={teamsLoading}
+              selectedModel={selectedModel}
+              setSelectedModel={setSelectedModel}
+              models={models}
+              modelsLoading={modelsLoading}
+              modelRequired={modelRequired}
+              compatibleProvider={compatibleProvider ?? undefined}
+              skillRefs={skillRefs}
+              setSkillRefs={setSkillRefs}
+              availableSkills={availableSkills}
+              skillsLoading={skillsLoading}
+              knowledgeBaseRefs={knowledgeBaseRefs}
+              setKnowledgeBaseRefs={setKnowledgeBaseRefs}
+              preserveHistory={preserveHistory}
+              setPreserveHistory={setPreserveHistory}
+              historyMessageCount={historyMessageCount}
+              setHistoryMessageCount={setHistoryMessageCount}
+              executionTarget={executionTarget}
+              setExecutionTarget={setExecutionTarget}
+              availableDevices={availableDevices}
+              devicesLoading={devicesLoading}
+              isRental={isRental}
+            />
+          )}
+
+          {/* Invalid Schedule Warning - Only show when editing an invalid subscription */}
+          {isEditing && subscription && subscription.trigger_config_valid === false && (
+            <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3">
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-amber-800">
+                    {t('invalid_schedule_edit_warning_title')}
+                  </p>
+                  <p className="text-xs text-amber-700 mt-1">
+                    {subscription.trigger_config_error || t('invalid_schedule_edit_warning_desc')}
+                  </p>
+                  <p className="text-xs text-amber-700 mt-1">{t('invalid_schedule_edit_action')}</p>
                 </div>
               </div>
             </div>
+          )}
+
+          {/* Section 3: Subscription Options */}
+          <SubscriptionOptionsSection
+            triggerType={triggerType}
+            setTriggerType={setTriggerType}
+            triggerConfig={triggerConfig}
+            setTriggerConfig={setTriggerConfig}
+            isCodeTypeTeam={isCodeTypeTeam}
+            selectedRepo={selectedRepo}
+            setSelectedRepo={setSelectedRepo}
+            selectedBranch={selectedBranch}
+            setSelectedBranch={setSelectedBranch}
+            retryCount={retryCount}
+            setRetryCount={setRetryCount}
+            timeoutSeconds={timeoutSeconds}
+            setTimeoutSeconds={setTimeoutSeconds}
+            expirationType={expirationType}
+            setExpirationType={setExpirationType}
+            expirationDate={expirationDate}
+            setExpirationDate={setExpirationDate}
+            durationDays={durationDays}
+            setDurationDays={setDurationDays}
+          />
+
+          {/* Webhook API Usage - Only show for event trigger with webhook when editing */}
+          {isEditing &&
+            subscription &&
+            triggerType === 'event' &&
+            triggerConfig.event_type === 'webhook' &&
+            subscription.webhook_url && <WebhookApiSection subscription={subscription} />}
+
+          {/* Section 4: Notification Settings */}
+          {!isRental && (
+            <NotificationSection
+              devNotificationLevel={devNotificationLevel}
+              setDevNotificationLevel={setDevNotificationLevel}
+              devNotificationChannels={devNotificationChannels}
+              setDevNotificationChannels={setDevNotificationChannels}
+              devAvailableChannels={devAvailableChannels}
+              devSettingsLoading={devSettingsLoading}
+              notificationWebhooks={notificationWebhooks}
+              setNotificationWebhooks={setNotificationWebhooks}
+              channelBindingConfigs={channelBindingConfigs}
+              setChannelBindingConfigs={setChannelBindingConfigs}
+              onStartBinding={startBindingSession}
+              onCancelBinding={cancelBindingSession}
+              bindingWaitingState={bindingWaitingState}
+            />
           )}
         </div>
 
@@ -1447,7 +1107,12 @@ export function SubscriptionForm({
           >
             {t('common:actions.cancel')}
           </Button>
-          <Button onClick={handleSubmit} disabled={submitting} className="min-w-[100px]">
+          <Button
+            variant="primary"
+            onClick={handleSubmit}
+            disabled={submitting}
+            className="min-w-[100px]"
+          >
             {submitting
               ? t('common:actions.saving')
               : isEditing

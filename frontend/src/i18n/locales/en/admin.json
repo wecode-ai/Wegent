@@ -13,7 +13,8 @@
     "api_keys": "API Keys",
     "system_config": "System Config",
     "im_channels": "IM Channels",
-    "monitor": "Monitor"
+    "monitor": "Subscription Monitor",
+    "device_monitor": "Device Monitor"
   },
   "stats": {
     "total_users": "Total Users",
@@ -129,7 +130,9 @@
     "namespace_label": "Namespace",
     "status": {
       "active": "Active",
-      "inactive": "Inactive"
+      "inactive": "Inactive",
+      "advanced": "Advanced",
+      "standard": "Standard"
     },
     "columns": {
       "id": "ID",
@@ -145,7 +148,8 @@
       "namespace": "Namespace",
       "namespace_placeholder": "default",
       "config": "Model Configuration",
-      "config_placeholder": "Enter model configuration as JSON"
+      "config_placeholder": "Enter model configuration as JSON",
+      "is_advanced": "Advanced Model"
     },
     "confirm": {
       "delete_title": "Delete Model",
@@ -739,6 +743,9 @@
       "client_secret": "Client Secret",
       "client_secret_placeholder": "Enter the platform Client Secret",
       "client_secret_edit_placeholder": "Enter new Client Secret (leave empty to keep existing)",
+      "card_template_id": "AI Card Template ID",
+      "card_template_id_placeholder": "Enter DingTalk AI Card Template ID (optional)",
+      "card_template_id_help": "When configured, subscription notifications will be sent as AI Cards",
       "bot_token": "Bot Token",
       "bot_token_placeholder": "Enter Telegram Bot Token",
       "bot_token_edit_placeholder": "Enter new Bot Token (leave empty to keep existing)",
@@ -787,6 +794,77 @@
       "team_required": "A default agent must be selected",
       "model_required_for_team": "The selected agent has no model configured. You must select a default model.",
       "target_user_required": "A target user must be selected when using Specific User mode"
+    }
+  },
+  "device_monitor": {
+    "title": "Device Monitor",
+    "description": "View online status and running state of all registered devices",
+    "loading": "Loading devices...",
+    "no_devices": "No devices found",
+    "search_placeholder": "Search device name, ID, or username...",
+    "filters": {
+      "all_status": "All Status",
+      "all_device_type": "All Types",
+      "all_bind_shell": "All Shells"
+    },
+    "version_filter": {
+      "placeholder": "Filter by version, e.g. 1.6.5",
+      "operators": {
+        "gt": ">",
+        "gte": ">=",
+        "eq": "=",
+        "lt": "<",
+        "lte": "<="
+      }
+    },
+    "status": {
+      "online": "Online",
+      "offline": "Offline",
+      "busy": "Busy"
+    },
+    "device_type": {
+      "local": "Local Device",
+      "cloud": "Cloud Device"
+    },
+    "bind_shell": {
+      "claudecode": "Claude Code",
+      "openclaw": "OpenClaw"
+    },
+    "stats": {
+      "total": "Total Devices",
+      "user_count": "Users",
+      "online": "Online",
+      "offline": "Offline Cloud Devices",
+      "busy": "Busy",
+      "local": "Local Devices",
+      "cloud": "Cloud Devices"
+    },
+    "columns": {
+      "name": "Device Name",
+      "device_id": "Device ID",
+      "device_type": "Device Type",
+      "bind_shell": "Shell",
+      "status": "Status",
+      "user": "Owner",
+      "version": "Version",
+      "ip": "IP Address",
+      "created_at": "Created At"
+    },
+    "errors": {
+      "load_failed": "Failed to load device list",
+      "load_stats_failed": "Failed to load statistics",
+      "upgrade_failed": "Failed to send upgrade command",
+      "restart_failed": "Failed to send restart command",
+      "migrate_failed": "Failed to send migrate command"
+    },
+    "actions": {
+      "upgrade": "Upgrade",
+      "upgrade_unsupported": "Version below {{version}}, online upgrade not supported",
+      "restart": "Restart",
+      "migrate": "Migrate",
+      "upgrade_sent": "Upgrade command sent",
+      "restart_sent": "Restart command sent",
+      "migrate_sent": "Migrate command sent"
     }
   }
 }

@@ -235,6 +235,13 @@ class SubtaskInDB(SubtaskBase):
 
         return result
 
+    @field_serializer("prompt")
+    def clean_prompt(self, value: Optional[str]) -> Optional[str]:
+        """Strip system-injected metadata blocks from prompt before serialization."""
+        from app.utils.prompt_utils import extract_display_prompt
+
+        return extract_display_prompt(value)
+
     @field_serializer("result")
     def mask_result(self, value: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
         """Mask sensitive data in result field before serialization"""
@@ -297,6 +304,7 @@ class StreamingStatus(BaseModel):
     started_by_username: Optional[str] = None
     current_content: Optional[str] = None
     started_at: Optional[datetime] = None
+    last_activity_at: Optional[datetime] = None
 
 
 class SubtaskExecutorUpdate(BaseModel):

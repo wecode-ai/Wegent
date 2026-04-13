@@ -42,6 +42,7 @@ from app.db.base import Base
 from app.db.session import SessionLocal, engine
 from app.models import *  # noqa: F401,F403
 from app.services.jobs import start_background_jobs, stop_background_jobs
+from shared.telemetry.context.large_data import log_json_body
 
 # Redis lock key for startup operations (migrations + YAML init)
 # Only used to prevent concurrent initialization, not to skip initialization
@@ -69,7 +70,13 @@ async def lifespan(app: FastAPI):
     # ==================== MCP SERVER LIFESPAN ====================
     # MCP servers need their session_manager.run() to be called within the lifespan
     # This is required for the streamable HTTP transport to work properly
-    from app.mcp_server.server import knowledge_mcp_server, system_mcp_server
+    from app.mcp_server.server import (
+        interactive_form_question_mcp_server,
+        knowledge_mcp_server,
+        prompt_optimization_mcp_server,
+        subscription_mcp_server,
+        system_mcp_server,
+    )
 
     # ==================== STARTUP ====================
     # Try to get Redis client for distributed locking
@@ -134,7 +141,6 @@ async def lifespan(app: FastAPI):
                     logger.info("✓ Alembic migrations completed successfully")
                 except subprocess.CalledProcessError as e:
                     logger.error(f"✗ Error running Alembic migrations: {e}")
-                    raise
                 except Exception as e:
                     logger.error(f"✗ Unexpected error running Alembic migrations: {e}")
                     raise
@@ -194,6 +200,9 @@ async def lifespan(app: FastAPI):
 
         except Exception as e:
             logger.error(f"✗ Startup initialization failed: {e}")
+            # Re-raise the exception to terminate startup
+            # This ensures the application does not start with a broken database state
+            raise
         finally:
             # Release lock
             redis_client.delete(STARTUP_LOCK_KEY)
@@ -247,6 +256,13 @@ async def lifespan(app: FastAPI):
     event_bus.subscribe(TaskCompletedEvent, handle_task_completed)
     logger.info("✓ Subscription task completion handler registered")
 
+    # Register IM channel task completion handler
+    # This sends task results back to IM channels (DingTalk, Feishu, etc.)
+    from app.services.channels import handle_channel_task_completed
+
+    event_bus.subscribe(TaskCompletedEvent, handle_channel_task_completed)
+    logger.info("✓ IM channel task completion handler registered")
+
     logger.info("✓ Event bus initialized and handlers registered")
 
     # Initialize PendingRequestRegistry for skill frontend interactions
@@ -295,7 +311,17 @@ async def lifespan(app: FastAPI):
         logger.info("✓ System MCP server session manager started")
         async with knowledge_mcp_server.session_manager.run():
             logger.info("✓ Knowledge MCP server session manager started")
-            yield
+            async with interactive_form_question_mcp_server.session_manager.run():
+                logger.info(
+                    "✓ interactive_form_question MCP server session manager started"
+                )
+                async with prompt_optimization_mcp_server.session_manager.run():
+                    logger.info(
+                        "✓ Prompt optimization MCP server session manager started"
+                    )
+                    async with subscription_mcp_server.session_manager.run():
+                        logger.info("✓ Subscription MCP server session manager started")
+                        yield
 
     # ==================== SHUTDOWN ====================
     logger.info("=" * 60)
@@ -525,7 +551,7 @@ def create_app():
                 if request_body:
                     current_span = trace.get_current_span()
                     if current_span and current_span.is_recording():
-                        current_span.set_attribute("http.request.body", request_body)
+                        log_json_body("http.request.body", request_body)
 
         # Pre-request logging with request ID
         logger.info(
@@ -617,6 +643,7 @@ def create_app():
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+        expose_headers=["Content-Disposition"],
     )
 
     # Register exception handlers
@@ -709,3 +736,13 @@ async def root():
         "docs_url": f"{settings.API_PREFIX}/docs",
         "socketio_path": "/socket.io",
     }
+
+
+# Health check endpoint (registered on FastAPI app)
+@_fastapi_app.get("/health")
+async def health():
+    """
+    Health check endpoint for container orchestration and load balancers.
+    Returns a simple status indicating the service is running.
+    """
+    return {"status": "healthy"}

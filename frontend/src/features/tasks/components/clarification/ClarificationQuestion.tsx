@@ -68,6 +68,7 @@ export default function ClarificationQuestion({
           onValueChange={value => onChange({ answer_type: 'choice', value })}
           disabled={readonly}
           className="flex flex-col gap-2"
+          data-testid={`clarification-question-${question.question_id}-radio`}
         >
           {question.options?.map((option, index) => (
             <div key={option.value} className="flex items-center space-x-2">
@@ -75,6 +76,7 @@ export default function ClarificationQuestion({
                 value={option.value}
                 id={`question-${question.question_text}-option-${index}`}
                 disabled={readonly}
+                data-testid={`clarification-option-${index}`}
               />
               <label
                 htmlFor={`question-${question.question_text}-option-${index}`}
@@ -105,7 +107,10 @@ export default function ClarificationQuestion({
       }
 
       return (
-        <div className="flex flex-col gap-2">
+        <div
+          className="flex flex-col gap-2"
+          data-testid={`clarification-question-${question.question_id}-checkbox`}
+        >
           {question.options?.map((option, index) => (
             <div key={option.value} className="flex items-center space-x-2">
               <Checkbox
@@ -113,6 +118,7 @@ export default function ClarificationQuestion({
                 checked={selectedValues.includes(option.value)}
                 onCheckedChange={checked => handleCheckboxChange(option.value, checked as boolean)}
                 disabled={readonly}
+                data-testid={`clarification-option-${index}`}
               />
               <label
                 htmlFor={`question-${question.question_text}-option-${index}`}
@@ -145,6 +151,7 @@ export default function ClarificationQuestion({
         disabled={readonly}
         rows={3}
         className="w-full"
+        data-testid="clarification-custom-textarea"
       />
     )
   }

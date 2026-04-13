@@ -32,6 +32,7 @@ from app.schemas.subscription import (
     Subscription,
     SubscriptionCreate,
     SubscriptionEventType,
+    SubscriptionExecutionTarget,
     SubscriptionMetadata,
     SubscriptionSpec,
     SubscriptionStatus,
@@ -103,6 +104,26 @@ def resolve_prompt_template(
     return result
 
 
+def validate_subscription_for_read(subscription_json: Dict[str, Any]) -> Subscription:
+    """Validate subscription JSON for read paths with legacy trigger compatibility."""
+    try:
+        return Subscription.model_validate(subscription_json)
+    except Exception as e:
+        error_str = str(e)
+        if (
+            "Interval must be at least" in error_str
+            or "Cron interval must be at least" in error_str
+        ):
+            # Import here to avoid circular imports.
+            from app.services.subscription import subscription_service
+
+            fixed_json = subscription_service._fix_invalid_trigger_config_for_read(
+                subscription_json
+            )
+            return Subscription.model_validate(fixed_json)
+        raise
+
+
 def build_subscription_crd(
     subscription_in: SubscriptionCreate,
     team: Kind,
@@ -139,6 +160,7 @@ def build_subscription_crd(
     spec = SubscriptionSpec(
         displayName=subscription_in.display_name,
         taskType=subscription_in.task_type,
+        visibility=subscription_in.visibility,
         trigger=trigger,
         teamRef=SubscriptionTeamRef(name=team.name, namespace=team.namespace),
         workspaceRef=(
@@ -152,12 +174,19 @@ def build_subscription_crd(
         retryCount=subscription_in.retry_count,
         timeoutSeconds=subscription_in.timeout_seconds,
         enabled=subscription_in.enabled,
+        executionTarget=SubscriptionExecutionTarget.model_validate(
+            subscription_in.execution_target.model_dump()
+        ),
         description=subscription_in.description,
         # History preservation settings
         preserveHistory=subscription_in.preserve_history,
         historyMessageCount=subscription_in.history_message_count,
         # Knowledge base references
         knowledgeBaseRefs=subscription_in.knowledge_base_refs,
+        # Notification webhooks
+        notificationWebhooks=subscription_in.notification_webhooks,
+        # Skill references
+        skillRefs=subscription_in.skill_refs,
     )
 
     status = SubscriptionStatus()
@@ -204,11 +233,19 @@ def build_trigger_config(
             ),
         )
     elif trigger_type_enum == SubscriptionTriggerType.INTERVAL:
+        from app.core.config import settings
+
+        value = trigger_config.get("value", 1)
+        unit = trigger_config.get("unit", "hours")
+        # Enforce minimum interval of SUBSCRIPTION_MIN_INTERVAL_MINUTES (default 15)
+        min_interval = settings.SUBSCRIPTION_MIN_INTERVAL_MINUTES
+        if unit == "minutes" and value < min_interval:
+            value = min_interval
         return SubscriptionTriggerConfig(
             type=trigger_type_enum,
             interval=IntervalTriggerConfig(
-                value=trigger_config.get("value", 1),
-                unit=trigger_config.get("unit", "hours"),
+                value=value,
+                unit=unit,
             ),
         )
     elif trigger_type_enum == SubscriptionTriggerType.ONE_TIME:
@@ -447,7 +484,7 @@ def create_or_get_workspace(
             TaskResource.kind == KIND_WORKSPACE,
             TaskResource.name == workspace_name,
             TaskResource.namespace == namespace,
-            TaskResource.is_active == True,
+            TaskResource.is_active == TaskResource.STATE_ACTIVE,
         )
         .first()
     )
@@ -529,7 +566,7 @@ def build_workspace_repo_cache(
         .filter(
             TaskResource.id.in_(workspace_id_list),
             TaskResource.kind == "Workspace",
-            TaskResource.is_active == True,
+            TaskResource.is_active == TaskResource.STATE_ACTIVE,
         )
         .all()
     )
@@ -567,7 +604,7 @@ def resolve_workspace_repo_fields(
             .filter(
                 TaskResource.id == workspace_id,
                 TaskResource.kind == "Workspace",
-                TaskResource.is_active == True,
+                TaskResource.is_active == TaskResource.STATE_ACTIVE,
             )
             .first()
         )
@@ -579,7 +616,7 @@ def resolve_workspace_repo_fields(
                 TaskResource.kind == "Workspace",
                 TaskResource.name == workspace_ref.name,
                 TaskResource.namespace == workspace_ref.namespace,
-                TaskResource.is_active == True,
+                TaskResource.is_active == TaskResource.STATE_ACTIVE,
             )
             .first()
         )
@@ -619,3 +656,31 @@ def extract_result_summary(result: Optional[Dict[str, Any]]) -> Optional[str]:
 
     # Return full content - database column is TEXT type which can store large content
     return value
+
+
+def is_subscription_expired(
+    expires_at: Optional[datetime],
+    current_time: Optional[datetime] = None,
+) -> bool:
+    """Check if a subscription has expired.
+
+    Args:
+        expires_at: The expiration timestamp (stored in _internal.expires_at)
+        current_time: Optional current time (defaults to UTC now)
+
+    Returns:
+        True if expired, False otherwise
+    """
+    if not expires_at:
+        return False
+
+    if current_time is None:
+        current_time = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    # Handle timezone-aware comparison
+    if expires_at.tzinfo and not current_time.tzinfo:
+        current_time = current_time.replace(tzinfo=timezone.utc)
+    elif not expires_at.tzinfo and current_time.tzinfo:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+
+    return current_time >= expires_at

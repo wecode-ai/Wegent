@@ -6,12 +6,18 @@ import json
 from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, EmailStr, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, field_validator
 
 
 class MCPProviderKeys(BaseModel):
-    """MCP provider API keys"""
+    """MCP provider API keys
 
+    Supports dynamic fields for flexible provider key storage.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    # Legacy fields for backward compatibility
     bailian: Optional[str] = None  # Aliyun Bailian API key
     modelscope: Optional[str] = None  # ModelScope API key
     mcp_router: Optional[str] = None  # MCP Router API key
@@ -24,6 +30,8 @@ class UserPreferences(BaseModel):
     search_key: Literal["cmd_k", "cmd_f", "disabled"] = "cmd_k"
     memory_enabled: bool = False
     mcp_provider_keys: Optional[MCPProviderKeys] = None
+    # Default execution target: 'cloud' for cloud mode, or device_id for a specific device
+    default_execution_target: Optional[str] = None
 
 
 class Token(BaseModel):
@@ -91,6 +99,8 @@ class UserInDB(UserBase):
     auth_source: str = "unknown"
     created_at: datetime
     updated_at: datetime
+    # Admin-only field: indicates if admin setup wizard has been completed
+    admin_setup_completed: Optional[bool] = None
 
     @field_validator("preferences", mode="before")
     @classmethod

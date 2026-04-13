@@ -121,6 +121,9 @@ class StreamingState:
     # Loaded skills tracking (for persistence across conversation turns)
     loaded_skills: list = field(default_factory=list)
 
+    # Complete messages chain from LangGraph agent execution (tool calls + results)
+    messages_chain: list = field(default_factory=list)
+
     def append_content(self, token: str) -> None:
         """Append token to accumulated response."""
         self.full_response += token
@@ -203,6 +206,9 @@ class StreamingState:
         # This is saved to result and used by restore_from_history
         if include_value and self.loaded_skills:
             result["loaded_skills"] = self.loaded_skills
+        # Include messages chain for multi-turn tool call history
+        if include_value and self.messages_chain:
+            result["messages_chain"] = self.messages_chain
         return result
 
 
@@ -400,11 +406,16 @@ class StreamingCore:
         )
 
         # Emit done event via ResponsesAPIEmitter
+        # Pass all result fields through extra_fields so they are included
+        # in the response.completed event and persisted to the DB.
         await self.emitter.done(
             content=result.get("value", ""),
             sources=result.get("sources"),
             silent_exit=result.get("silent_exit"),
             silent_exit_reason=result.get("silent_exit_reason"),
+            loaded_skills=result.get("loaded_skills"),
+            messages_chain=result.get("messages_chain"),
+            reasoning_content=result.get("reasoning_content"),
         )
 
         return result

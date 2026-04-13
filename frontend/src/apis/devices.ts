@@ -16,6 +16,9 @@ export type DeviceStatus = 'online' | 'offline' | 'busy'
 // Device type enum matching backend DeviceType
 export type DeviceType = 'local' | 'cloud'
 
+// Bind shell type enum matching backend BindShell
+export type BindShell = 'claudecode' | 'openclaw'
+
 // Device connection mode enum matching backend DeviceConnectionMode
 export type DeviceConnectionMode = 'websocket' // Future: 'api'
 
@@ -25,6 +28,12 @@ export interface DeviceRunningTask {
   title: string
   status: string
   created_at?: string
+}
+
+export interface CloudDeviceConfig {
+  sandboxId: string
+  imageId: string
+  createdAt: string
 }
 
 export interface DeviceInfo {
@@ -45,11 +54,29 @@ export interface DeviceInfo {
   executor_version: string | null
   latest_version: string | null
   update_available: boolean
+  // Cloud device specific config
+  cloud_config?: CloudDeviceConfig
+  // Shell binding type
+  bind_shell?: BindShell
 }
 
 export interface DeviceListResponse {
   items: DeviceInfo[]
   total: number
+}
+
+export interface UpgradeDeviceOptions {
+  force?: boolean
+  auto_confirm?: boolean
+  verbose?: boolean
+  force_stop_tasks?: boolean
+  registry?: string
+  registry_token?: string
+}
+
+export interface UpgradeDeviceResponse {
+  success: boolean
+  message: string
 }
 
 /**
@@ -104,5 +131,31 @@ export const deviceApis = {
    */
   async cancelTask(taskId: number): Promise<{ message: string; status: string }> {
     return apiClient.post(`/tasks/${taskId}/cancel`)
+  },
+
+  /**
+   * Trigger a remote upgrade for a device.
+   *
+   * @param deviceId - Device unique identifier
+   * @param options - Upgrade options (force, auto_confirm, verbose, force_stop_tasks, registry, registry_token)
+   */
+  async upgradeDevice(
+    deviceId: string,
+    options?: UpgradeDeviceOptions
+  ): Promise<UpgradeDeviceResponse> {
+    return apiClient.post(`/devices/${encodeURIComponent(deviceId)}/upgrade`, options || {})
+  },
+
+  /**
+   * Update a device's display name (alias).
+   *
+   * @param deviceId - Device unique identifier
+   * @param alias - New display name for the device
+   */
+  async updateDeviceAlias(
+    deviceId: string,
+    alias: string
+  ): Promise<{ message: string; alias: string }> {
+    return apiClient.put(`/devices/${encodeURIComponent(deviceId)}/alias`, { alias })
   },
 }

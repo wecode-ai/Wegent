@@ -13,15 +13,23 @@ from .enums import (
     ContextStatus,
     ContextType,
     InjectionMode,
+    QueueMessagePriority,
+    QueueMessageStatus,
+    QueueVisibility,
     SenderType,
     SubtaskRole,
     SubtaskStatus,
+    TriggerMode,
 )
 from .kind import Kind
 from .skill_binary import SkillBinary
 from .subtask import Subtask
 from .subtask_context import SubtaskContext
 from .user import User
+from .work_queue import (
+    QueueMessage,
+    RecentContact,
+)
 
 __all__ = [
     # Base
@@ -33,10 +41,18 @@ __all__ = [
     "ContextType",
     "ContextStatus",
     "InjectionMode",
+    # Work Queue Enums
+    "QueueVisibility",
+    "QueueMessageStatus",
+    "QueueMessagePriority",
+    "TriggerMode",
     # Models
     "Subtask",
     "SubtaskContext",
     "User",
     "Kind",
     "SkillBinary",
+    # Work Queue Models
+    "QueueMessage",
+    "RecentContact",
 ]

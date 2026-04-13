@@ -5,14 +5,17 @@
 import base64
 import json
 import logging
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 from urllib.parse import parse_qs, urlencode, urlparse
 
 import httpx
-from authlib.integrations.httpx_client import AsyncOAuth2Client
-from authlib.jose import jwt
-from authlib.oidc.core import CodeIDToken
 from fastapi import HTTPException
+
+# Lazy imports for memory optimization - authlib is only loaded when OIDC is used
+if TYPE_CHECKING:
+    from authlib.integrations.httpx_client import AsyncOAuth2Client
+    from authlib.jose import jwt
+    from authlib.oidc.core import CodeIDToken
 
 from shared.utils.sensitive_data_masker import mask_sensitive_data
 
@@ -146,6 +149,9 @@ class OIDCService:
 
     async def exchange_code_for_tokens(self, code: str, state: str) -> Dict[str, Any]:
         """Exchange Authorization Code for Tokens"""
+        # Lazy import authlib for memory optimization
+        from authlib.integrations.httpx_client import AsyncOAuth2Client
+
         metadata = await self.get_metadata()
         token_endpoint = metadata.get("token_endpoint")
 
@@ -172,6 +178,9 @@ class OIDCService:
 
     async def verify_id_token(self, id_token: str, nonce: str) -> Dict[str, Any]:
         """Verify ID Token"""
+        # Lazy import authlib for memory optimization
+        from authlib.jose import jwt
+
         metadata = await self.get_metadata()
         last_error: Optional[Exception] = None
         header = self._parse_jwt_header(id_token)

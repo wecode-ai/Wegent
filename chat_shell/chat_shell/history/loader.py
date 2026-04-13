@@ -19,11 +19,40 @@ For HTTP Mode (CHAT_SHELL_MODE=http):
 
 import asyncio
 import logging
-from typing import Any, List, Optional
+from typing import Any, Optional
 
 from chat_shell.core.config import settings
+from chat_shell.messages.utils import group_tool_call_messages as _group_messages
+from shared.prompts.constants import parse_prompt_blocks
 
 logger = logging.getLogger(__name__)
+
+# Prefixes for system-context text blocks that are already persisted in
+# SubtaskContext (LONGTEXT) and re-injected at history-load time.
+# These blocks are filtered out when persisting to subtask.prompt.
+_CONTEXT_BLOCK_PREFIXES = (
+    "<attachment>",
+    "<knowledge_base>",
+    "<selected_documents>",
+    "<system-reminder>",
+)
+
+
+def _extract_user_text(content: list[dict[str, Any]]) -> str | None:
+    """Extract the user's plain text from a content block list.
+
+    The first text block that does not start with a known context prefix
+    is treated as the user's own message.  Returns ``None`` if no user
+    text block is found.
+    """
+    for block in content:
+        if block.get("type") != "text":
+            continue
+        text = block.get("text", "")
+        if not text.lstrip().startswith(_CONTEXT_BLOCK_PREFIXES):
+            return text
+    return None
+
 
 # Global remote history store instance (lazy initialized for HTTP mode)
 _remote_history_store: Optional["RemoteHistoryStore"] = None
@@ -111,6 +140,99 @@ def _is_http_mode() -> bool:
         return False
 
 
+async def update_user_message_content(
+    task_id: int,
+    user_subtask_id: int,
+    content: Any,
+) -> None:
+    """Persist the user's plain text message to the DB.
+
+    Context blocks (attachments, knowledge base, selected documents) and
+    the ``<system-reminder>`` block are **not** stored — they are already
+    persisted in ``SubtaskContext`` (LONGTEXT) and re-injected at
+    history-load time.  Storing only the plain text keeps the value well
+    under the MySQL TEXT column limit and ensures the frontend can display
+    it directly without JSON parsing.
+
+    Args:
+        task_id: Task ID (used to build the session_id for HTTP mode)
+        user_subtask_id: ID of the user Subtask record to update
+        content: Formatted content — either a string or a list of content blocks
+    """
+    if isinstance(content, list):
+        # Extract the user's own text; skip context / image / reminder blocks.
+        storage_content: Any = _extract_user_text(content) or ""
+    else:
+        storage_content = content
+
+    is_http = _is_http_mode()
+    if is_http:
+        await _update_user_message_remote(task_id, user_subtask_id, storage_content)
+    else:
+        await asyncio.to_thread(
+            _update_user_message_in_db_sync, user_subtask_id, storage_content
+        )
+
+
+async def _update_user_message_remote(
+    task_id: int,
+    user_subtask_id: int,
+    content: Any,
+) -> None:
+    """Update user message via RemoteHistoryStore (HTTP mode)."""
+    try:
+        store = _get_remote_history_store()
+        session_id = f"task-{task_id}"
+        await store.update_message(
+            session_id=session_id,
+            message_id=str(user_subtask_id),
+            content=content,
+        )
+        logger.debug(
+            "[history] Updated user message in remote store: "
+            "task_id=%d, user_subtask_id=%d",
+            task_id,
+            user_subtask_id,
+        )
+    except Exception as e:
+        # Non-fatal: prefix caching degrades gracefully if the update fails
+        logger.warning(
+            "[history] Failed to update user message (task_id=%d, "
+            "user_subtask_id=%d): %s",
+            task_id,
+            user_subtask_id,
+            e,
+        )
+
+
+def _update_user_message_in_db_sync(user_subtask_id: int, content: Any) -> None:
+    """Update user message directly in DB (package mode)."""
+    try:
+        from app.db.session import SessionLocal
+        from app.models.subtask import Subtask, SubtaskRole
+
+        db = SessionLocal()
+        try:
+            subtask = db.query(Subtask).filter(Subtask.id == user_subtask_id).first()
+            if subtask and subtask.role == SubtaskRole.USER:
+                subtask.prompt = (
+                    str(content) if not isinstance(content, str) else content
+                )
+                db.commit()
+                logger.debug(
+                    "[history] Updated user message in DB: user_subtask_id=%d",
+                    user_subtask_id,
+                )
+        finally:
+            db.close()
+    except Exception as e:
+        logger.warning(
+            "[history] Failed to update user message in DB " "(user_subtask_id=%d): %s",
+            user_subtask_id,
+            e,
+        )
+
+
 async def get_chat_history(
     task_id: int,
     is_group_chat: bool,
@@ -143,6 +265,14 @@ async def get_chat_history(
         limit,
         is_http,
     )
+
+    if limit is not None and limit <= 0:
+        logger.info(
+            "[history] get_chat_history: history disabled by limit=%s for task_id=%d",
+            limit,
+            task_id,
+        )
+        return []
 
     if is_http:
         history = await _load_history_from_remote(
@@ -306,7 +436,7 @@ def _load_history_from_db_sync(
             .outerjoin(User, Subtask.sender_user_id == User.id)
             .filter(
                 Subtask.task_id == task_id,
-                Subtask.status == SubtaskStatus.COMPLETED,
+                Subtask.status.in_([SubtaskStatus.COMPLETED, SubtaskStatus.FAILED]),
             )
         )
 
@@ -324,22 +454,25 @@ def _load_history_from_db_sync(
             subtasks = query.order_by(Subtask.message_id.asc()).all()
 
         for subtask, sender_username in subtasks:
-            msg = _build_history_message(db, subtask, sender_username, is_group_chat)
-            if msg:
-                history.append(msg)
+            msgs = _build_history_messages(db, subtask, sender_username, is_group_chat)
+            history.extend(msgs)
     finally:
         db.close()
 
     return history
 
 
-def _build_history_message(
+def _build_history_messages(
     db,
     subtask,
     sender_username: str | None,
     is_group_chat: bool = False,
-) -> dict[str, Any] | None:
-    """Build a single history message from a subtask.
+) -> list[dict[str, Any]]:
+    """Build history messages from a subtask.
+
+    Returns a list of message dicts because a single assistant subtask may
+    expand into multiple messages when it contains a ``messages_chain``
+    (intermediate tool call / tool result messages).
 
     For user messages, this function:
     1. Loads all contexts (attachments and knowledge_base) in one query
@@ -347,14 +480,25 @@ def _build_history_message(
     3. Processes knowledge_base contexts with remaining token space
     4. Follows MAX_EXTRACTED_TEXT_LENGTH limit with attachments having priority
     """
-    from app.models.subtask import SubtaskRole
+    from app.models.subtask import SubtaskRole, SubtaskStatus
     from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
 
     if subtask.role == SubtaskRole.USER:
-        # Build text content
-        text_content = subtask.prompt or ""
+        # Parse multi-block prompt format (JSON array with system-reminder blocks).
+        raw_prompt = subtask.prompt or ""
+        text_content, extra_blocks = parse_prompt_blocks(raw_prompt)
+        # Detect structured prompts: the prompt was a stored JSON array even when
+        # extra_blocks is empty (e.g. a single-block array after image stripping).
+        is_structured_prompt = bool(extra_blocks) or text_content != raw_prompt
+
+        # For group chat, prefix is already embedded by build_messages when the
+        # message was first sent.  However legacy structured prompts (JSON arrays
+        # stored before the prefix-baking change) may lack the prefix.  Check the
+        # actual text content instead of relying solely on the format flag.
         if is_group_chat and sender_username:
-            text_content = f"User[{sender_username}]: {text_content}"
+            expected_prefix = f"User[{sender_username}]:"
+            if not text_content.lstrip().startswith(expected_prefix):
+                text_content = f"User[{sender_username}]: {text_content}"
 
         # Load all contexts in one query and separate by type
         all_contexts = (
@@ -371,7 +515,13 @@ def _build_history_message(
         )
 
         if not all_contexts:
-            return {"role": "user", "content": text_content}
+            if is_structured_prompt:
+                content_blocks: list[dict[str, Any]] = [
+                    {"type": "text", "text": text_content},
+                    *extra_blocks,
+                ]
+                return [{"role": "user", "content": content_blocks}]
+            return [{"role": "user", "content": text_content}]
 
         # Separate contexts by type
         attachments = [
@@ -460,53 +610,129 @@ def _build_history_message(
                         )
                     break
 
-        # Combine all text parts with XML tags:
-        # - attachments wrapped in <attachment> tag
-        # - knowledge bases wrapped in <knowledge_base> tag
-        combined_prefix = ""
+        # Output assembly.
+        #
+        # Context content (attachment text, KB text) is always rebuilt from
+        # SubtaskContext records — the source of truth.  Each context type
+        # becomes its own independent text block (not wrapped in
+        # <system-reminder>).  This matches the format produced by
+        # MessageConverter._convert_responses_api_to_langchain().
+
+        context_blocks: list[dict[str, Any]] = []
         if attachment_text_parts:
-            combined_prefix += (
-                "<attachment>\n" + "".join(attachment_text_parts) + "</attachment>\n\n"
+            context_blocks.append(
+                {
+                    "type": "text",
+                    "text": "<attachment>"
+                    + "".join(attachment_text_parts)
+                    + "</attachment>",
+                }
             )
         if kb_text_parts:
-            combined_prefix += (
-                "<knowledge_base>\n" + "".join(kb_text_parts) + "</knowledge_base>\n\n"
+            context_blocks.append(
+                {
+                    "type": "text",
+                    "text": "<knowledge_base>"
+                    + "".join(kb_text_parts)
+                    + "</knowledge_base>",
+                }
             )
 
-        if combined_prefix:
-            text_content = f"{combined_prefix}{text_content}"
-
         if vision_parts:
-            # Add image metadata headers to text content for reference
-            # Wrap image metadata in <attachment> tag for consistency with first upload
+            # Add image metadata headers as attachment context
             if image_metadata_headers:
-                headers_text = "\n\n".join(image_metadata_headers)
-                text_content = (
-                    f"<attachment>\n{headers_text}\n</attachment>\n\n{text_content}"
+                img_text = "".join(image_metadata_headers)
+                attachment_idx = next(
+                    (
+                        i
+                        for i, b in enumerate(context_blocks)
+                        if b["text"].startswith("<attachment>")
+                    ),
+                    None,
                 )
-            return {
-                "role": "user",
-                "content": [{"type": "text", "text": text_content}, *vision_parts],
-            }
-        return {"role": "user", "content": text_content}
+                if attachment_idx is None:
+                    context_blocks.insert(
+                        0,
+                        {
+                            "type": "text",
+                            "text": f"<attachment>{img_text}</attachment>",
+                        },
+                    )
+                else:
+                    old = context_blocks[attachment_idx]["text"]
+                    inner = old[len("<attachment>") : -len("</attachment>")]
+                    context_blocks[attachment_idx] = {
+                        "type": "text",
+                        "text": f"<attachment>{img_text}{inner}</attachment>",
+                    }
+
+            multimodal_blocks: list[dict[str, Any]] = [
+                {"type": "text", "text": text_content},
+                *vision_parts,
+                *context_blocks,
+            ]
+            return [{"role": "user", "content": multimodal_blocks}]
+
+        # Text-only path
+        if context_blocks:
+            return [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": text_content},
+                        *context_blocks,
+                    ],
+                }
+            ]
+        if is_structured_prompt:
+            return [
+                {
+                    "role": "user",
+                    "content": [{"type": "text", "text": text_content}],
+                }
+            ]
+        return [{"role": "user", "content": text_content}]
 
     elif subtask.role == SubtaskRole.ASSISTANT:
         if not subtask.result or not isinstance(subtask.result, dict):
-            return None
+            return []
+
+        # For FAILED assistant subtasks, only include result.value (if any).
+        # Do not expand messages_chain for failed turns.
+        if subtask.status == SubtaskStatus.FAILED:
+            content = subtask.result.get("value", "")
+            if not content:
+                return []
+            return [{"role": "assistant", "content": content}]
+
+        # If messages_chain is available, use it to reconstruct the full
+        # conversation turn (tool calls, tool results, and final response).
+        messages_chain = subtask.result.get("messages_chain")
+        if messages_chain and isinstance(messages_chain, list):
+            # Attach loaded_skills to the last assistant message in the chain
+            loaded_skills = subtask.result.get("loaded_skills")
+            if loaded_skills:
+                for msg in reversed(messages_chain):
+                    if msg.get("role") == "assistant":
+                        msg["loaded_skills"] = loaded_skills
+                        break
+            return messages_chain
+
+        # Fallback for legacy data without messages_chain
         content = subtask.result.get("value", "")
         if not content:
-            return None
+            return []
 
-        msg = {"role": "assistant", "content": content}
+        msg: dict[str, Any] = {"role": "assistant", "content": content}
 
         # Include loaded_skills for skill state restoration across conversation turns
         loaded_skills = subtask.result.get("loaded_skills")
         if loaded_skills:
             msg["loaded_skills"] = loaded_skills
 
-        return msg
+        return [msg]
 
-    return None
+    return []
 
 
 def _build_vision_content_block(context) -> dict[str, Any] | None:
@@ -643,6 +869,16 @@ def _build_knowledge_base_text_prefix(context) -> str:
     Note: This returns raw content. The caller is responsible for wrapping
     multiple knowledge base contents in a single <knowledge_base> XML tag.
     """
+    type_data = getattr(context, "type_data", None) or {}
+    rag_result = type_data.get("rag_result") or {}
+    if rag_result.get("restricted_mode") or type_data.get("restricted_mode"):
+        logger.info(
+            "[history] Skipping restricted knowledge base context: id=%s, kb_id=%s",
+            getattr(context, "id", None),
+            getattr(context, "knowledge_id", None),
+        )
+        return ""
+
     if not context.extracted_text:
         return ""
 
@@ -652,219 +888,55 @@ def _build_knowledge_base_text_prefix(context) -> str:
 
 
 def _truncate_history(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Truncate chat history keeping first N and last M messages."""
-    first_n = getattr(settings, "GROUP_CHAT_HISTORY_FIRST_MESSAGES", 5)
-    last_m = getattr(settings, "GROUP_CHAT_HISTORY_LAST_MESSAGES", 10)
+    """Truncate chat history keeping first N and last M messages.
 
-    if len(history) <= first_n + last_m:
+    This is used for group chat to reduce prompt length while retaining
+    the start of the conversation and the most recent context.
+
+    Tool-call groups (assistant with ``tool_calls`` + tool responses) are
+    treated as atomic units so that truncation never splits a group.
+    The actual number of messages kept may slightly exceed ``first_n + last_n``
+    to preserve group integrity.
+    """
+
+    first_n = settings.GROUP_CHAT_HISTORY_FIRST_MESSAGES
+    last_n = settings.GROUP_CHAT_HISTORY_LAST_MESSAGES
+
+    # Handle edge case where both values are 0 or negative
+    if first_n <= 0 and last_n <= 0:
         return history
 
-    return history[:first_n] + history[-last_m:]
+    if len(history) <= first_n + last_n:
+        return history
 
+    groups = _group_messages(history)
 
-def _get_summary_text(summary_data: dict, kb_count: int) -> str:
-    """
-    Get appropriate summary text based on KB count.
+    # Determine which groups to keep from the head (first_n messages)
+    head_count = 0
+    head_groups = 0
+    for g in groups:
+        if head_count >= first_n:
+            break
+        head_count += len(g)
+        head_groups += 1
 
-    Args:
-        summary_data: Summary dict from KB spec
-        kb_count: Total number of KBs
+    # Determine which groups to keep from the tail (last_n messages)
+    tail_count = 0
+    tail_groups = 0
+    for g in reversed(groups):
+        if tail_count >= last_n:
+            break
+        tail_count += len(g)
+        tail_groups += 1
 
-    Returns:
-        Summary text (long for ≤2 KBs, short for ≥3 KBs)
-    """
-    use_short = kb_count >= 3
+    # If head + tail covers all groups, return as-is
+    if head_groups + tail_groups >= len(groups):
+        return history
 
-    if use_short:
-        summary_text = summary_data.get("short_summary")
-        # Fallback to long if short not available
-        if not summary_text:
-            summary_text = summary_data.get("long_summary")
-    else:
-        summary_text = summary_data.get("long_summary")
-        # Fallback to short if long not available
-        if not summary_text:
-            summary_text = summary_data.get("short_summary")
+    head = groups[:head_groups]
+    tail = groups[len(groups) - tail_groups :] if tail_groups > 0 else []
 
-    return summary_text or ""
-
-
-def get_knowledge_base_meta_prompt(
-    db,
-    task_id: int,
-) -> str:
-    """
-    Build knowledge base meta information prompt for system prompt injection.
-
-    This function now includes KB summary information when available:
-    - For 1-2 KBs: Uses long_summary
-    - For 3+ KBs: Uses short_summary to save tokens
-    - Shows topics if available
-
-    This is a synchronous function called from backend's preprocessing code.
-    Only used in Package mode.
-
-    Args:
-        db: Database session (from backend)
-        task_id: Task ID
-
-    Returns:
-        Formatted prompt string with knowledge base meta information
-        (including inline summary sub-bullets when available),
-        or empty string if no knowledge bases are found
-    """
-    kb_meta_list = get_knowledge_base_meta_for_task(db, task_id)
-
-    if not kb_meta_list:
-        return ""
-
-    # Build KB list with inline summary sub-bullets
-    kb_lines = []
-    kb_count = len(kb_meta_list)
-
-    for kb_meta in kb_meta_list:
-        kb_name = kb_meta.get("kb_name", "Unknown")
-        kb_id = kb_meta.get("kb_id", "N/A")
-        kb_kind = kb_meta.get("kb_kind")
-
-        # Main KB line
-        kb_lines.append(f"- KB Name: {kb_name}, KB ID: {kb_id}")
-
-        # Add summary sub-bullets if available
-        if kb_kind:
-            try:
-                kb_spec = kb_kind.json.get("spec", {})
-                summary_data = kb_spec.get("summary", {})
-
-                # Check if summary is available and completed
-                if (
-                    kb_spec.get("summaryEnabled")
-                    and summary_data.get("status") == "completed"
-                ):
-                    # Get appropriate summary text based on total KB count
-                    summary_text = _get_summary_text(summary_data, kb_count)
-                    topics = summary_data.get("topics", [])
-
-                    # Add summary sub-bullet
-                    if summary_text:
-                        kb_lines.append(f"  - Summary: {summary_text}")
-
-                    # Add topics sub-bullet
-                    if topics:
-                        topics_str = ", ".join(topics)
-                        kb_lines.append(f"  - Topics: {topics_str}")
-            except Exception as e:
-                # Log but don't break prompt generation
-                logger.warning(
-                    f"Failed to extract summary for KB {kb_id}: {e}", exc_info=True
-                )
-
-    kb_list_str = "\n".join(kb_lines)
-
-    # Return content without leading newline since the template handles formatting
-    # The content will be injected into the {kb_meta_list} placeholder in KB_PROMPT templates
-    prompt = f"""
-Available Knowledge Bases (from conversation context):
-{kb_list_str}
-
-Note: The knowledge base content has been pre-filled from history. If the provided information is insufficient, you can use the knowledge_base_search tool to retrieve more relevant content.
-"""
-
-    return prompt
-
-
-def get_knowledge_base_meta_for_task(
-    db,
-    task_id: int,
-) -> List[dict]:
-    """
-    Get list of knowledge base meta information for a task.
-
-    This is a synchronous function. Only used in Package mode.
-
-    Args:
-        db: Database session (from backend)
-        task_id: Task ID
-
-    Returns:
-        List of dicts with kb_name, kb_id, and kb_kind (Kind object)
-    """
-    try:
-        from app.models.subtask import Subtask
-        from app.models.subtask_context import ContextType, SubtaskContext
-        from app.services.knowledge.task_knowledge_base_service import (
-            task_knowledge_base_service,
-        )
-    except (ImportError, ModuleNotFoundError):
-        # Backend ORM is not available when chat_shell runs as an independent service.
-        # This helper is only meaningful in package mode; return empty meta in other modes.
-        return []
-
-    try:
-        # Get all subtask IDs for this task
-        subtask_ids = [
-            row[0]
-            for row in db.query(Subtask.id).filter(Subtask.task_id == task_id).all()
-        ]
-
-        if not subtask_ids:
-            return []
-
-        # Get knowledge base contexts
-        contexts = (
-            db.query(SubtaskContext)
-            .filter(
-                SubtaskContext.subtask_id.in_(subtask_ids),
-                SubtaskContext.context_type == ContextType.KNOWLEDGE_BASE.value,
-            )
-            .all()
-        )
-
-        # Extract unique KB IDs with metadata
-        kb_ids = []
-        seen_kb_ids = set()
-        kb_name_map = {}  # Store context names for fallback
-
-        for ctx in contexts:
-            kb_id = ctx.knowledge_id
-            if kb_id and kb_id not in seen_kb_ids:
-                seen_kb_ids.add(kb_id)
-                kb_ids.append(kb_id)
-                kb_name_map[kb_id] = ctx.name or "Unknown"
-
-        if not kb_ids:
-            return []
-
-        # Batch fetch KB Kind objects (single query, avoid N+1)
-        kb_map = task_knowledge_base_service.get_knowledge_bases_by_ids(db, kb_ids)
-
-        # Build meta list with KB Kind objects
-        kb_meta_list = []
-        for kb_id in kb_ids:  # Preserve order
-            kb_kind = kb_map.get(kb_id)
-            if kb_kind:
-                kb_spec = kb_kind.json.get("spec", {})
-                kb_meta_list.append(
-                    {
-                        "kb_id": kb_id,
-                        "kb_name": kb_spec.get(
-                            "name", kb_name_map.get(kb_id, "Unknown")
-                        ),
-                        "kb_kind": kb_kind,  # Include Kind object for summary extraction
-                    }
-                )
-            else:
-                # KB not found, use fallback name from context
-                kb_meta_list.append(
-                    {
-                        "kb_id": kb_id,
-                        "kb_name": kb_name_map.get(kb_id, "Unknown"),
-                        "kb_kind": None,
-                    }
-                )
-
-        return kb_meta_list
-
-    except Exception as e:
-        logger.exception(f"Failed to get KB meta for task {task_id}: {e}")
-        return []
+    result: list[dict[str, Any]] = []
+    for g in [*head, *tail]:
+        result.extend(g)
+    return result

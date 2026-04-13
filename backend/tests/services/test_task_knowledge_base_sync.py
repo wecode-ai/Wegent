@@ -2,16 +2,19 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""
-Tests for subtask knowledge base sync to task level functionality.
+"""Tests for subtask knowledge base sync to task level functionality.
 
 This module tests the following features:
 1. sync_subtask_kb_to_task method in TaskKnowledgeBaseService
 2. Knowledge base priority logic (subtask > task level)
 3. Deduplication and limit enforcement
 4. ID-based lookup and automatic migration from name-only refs
+
+NOTE:
+- KB meta prompt formatting is tested separately in chat preprocessing.
 """
 
+import logging
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
@@ -21,6 +24,7 @@ from app.models.kind import Kind
 from app.models.subtask_context import SubtaskContext
 from app.models.task import TaskResource
 from app.services.knowledge import TaskKnowledgeBaseService
+from app.services.share import knowledge_share_service
 
 
 @pytest.mark.unit
@@ -93,7 +97,13 @@ class TestSyncSubtaskKBToTask:
                 )
 
                 assert result is True
-                mock_access.assert_called_once_with(mock_db, 1, "Test KB", "default")
+                mock_access.assert_called_once_with(
+                    mock_db,
+                    1,
+                    "Test KB",
+                    "default",
+                    knowledge_id=10,
+                )
                 mock_db.commit.assert_called_once()
                 mock_flag.assert_called_once()
 
@@ -101,7 +111,8 @@ class TestSyncSubtaskKBToTask:
                 kb_refs = mock_task.json["spec"]["knowledgeBaseRefs"]
                 assert len(kb_refs) == 1
                 assert kb_refs[0]["name"] == "Test KB"
-                assert kb_refs[0]["namespace"] == "default"
+                # Note: namespace is no longer stored in new refs - ID is sufficient
+                assert "namespace" not in kb_refs[0]
                 assert kb_refs[0]["boundBy"] == "testuser"
 
     def test_sync_kb_to_task_already_bound(self, service, mock_db, mock_knowledge_base):
@@ -188,6 +199,74 @@ class TestSyncSubtaskKBToTask:
             assert result is False
             mock_db.commit.assert_not_called()
 
+    def test_sync_kb_to_task_logs_skip_reason_at_info_level(
+        self, service, mock_db, mock_knowledge_base, mock_task, caplog
+    ):
+        """Skip reasons should be visible in info logs for production debugging."""
+        mock_query = MagicMock()
+        mock_db.query.return_value = mock_query
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = mock_knowledge_base
+
+        with patch.object(service, "can_access_knowledge_base", return_value=False):
+            with caplog.at_level(
+                logging.INFO,
+                logger="app.services.knowledge.task_knowledge_base_service",
+            ):
+                result = service.sync_subtask_kb_to_task(
+                    db=mock_db,
+                    task=mock_task,
+                    knowledge_id=10,
+                    user_id=1,
+                    user_name="testuser",
+                )
+
+        assert result is False
+        assert "has no access to KB Test KB/default" in caplog.text
+        assert "task_id=100" in caplog.text
+        assert "user_id=1" in caplog.text
+
+    def test_sync_kb_to_task_allows_explicitly_shared_personal_kb(
+        self, service, mock_db, mock_task
+    ):
+        """A personal KB shared via ResourceMember should still sync to task refs."""
+        shared_kb = Mock(spec=Kind)
+        shared_kb.id = 10
+        shared_kb.kind = "KnowledgeBase"
+        shared_kb.namespace = "default"
+        shared_kb.user_id = 2
+        shared_kb.is_active = True
+        shared_kb.json = {"spec": {"name": "Shared Personal KB"}}
+
+        mock_query = MagicMock()
+        mock_db.query.return_value = mock_query
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = shared_kb
+
+        with patch.object(
+            knowledge_share_service,
+            "_get_resource",
+            return_value=shared_kb,
+        ) as mock_get_resource:
+            with patch(
+                "app.services.knowledge.task_knowledge_base_service.flag_modified"
+            ):
+                result = service.sync_subtask_kb_to_task(
+                    db=mock_db,
+                    task=mock_task,
+                    knowledge_id=10,
+                    user_id=1,
+                    user_name="testuser",
+                )
+
+        assert result is True
+        mock_get_resource.assert_called_once_with(mock_db, 10, 1)
+        assert mock_task.json["spec"]["knowledgeBaseRefs"][0]["id"] == 10
+        assert (
+            mock_task.json["spec"]["knowledgeBaseRefs"][0]["name"]
+            == "Shared Personal KB"
+        )
+
     def test_sync_kb_to_task_kb_not_found(self, service, mock_db, mock_task):
         """Test that sync is skipped when KB is not found"""
         mock_query = MagicMock()
@@ -226,6 +305,7 @@ class TestKBPriorityLogic:
         # Create subtask KB contexts
         kb_context = Mock(spec=SubtaskContext)
         kb_context.knowledge_id = 10
+        kb_context.type_data = None
 
         # Mock task-level KB (should be ignored when subtask has KB)
         with patch(
@@ -236,19 +316,24 @@ class TestKBPriorityLogic:
             with patch("chat_shell.tools.builtin.KnowledgeBaseTool") as mock_kb_tool:
                 mock_kb_tool.return_value = Mock()
 
-                _tools, _prompt = _prepare_kb_tools_from_contexts(
-                    kb_contexts=[kb_context],
-                    user_id=1,
-                    db=mock_db,
-                    base_system_prompt="Base prompt",
-                    task_id=100,
-                    user_subtask_id=1,
-                )
+                with patch(
+                    "app.services.chat.preprocessing.contexts._get_user_kb_tool_access_mode",
+                    return_value=("full", ""),
+                ):
+                    kb_result = _prepare_kb_tools_from_contexts(
+                        kb_contexts=[kb_context],
+                        user_id=1,
+                        db=mock_db,
+                        base_system_prompt="Base prompt",
+                        task_id=100,
+                        user_subtask_id=1,
+                    )
 
-                # Should use only subtask KB (10), not task-level (20, 30)
-                mock_kb_tool.assert_called_once()
-                call_args = mock_kb_tool.call_args
-                assert call_args[1]["knowledge_base_ids"] == [10]
+                    # Should use only subtask KB (10), not task-level (20, 30)
+                    mock_kb_tool.assert_called_once()
+                    call_args = mock_kb_tool.call_args
+                    assert call_args[1]["knowledge_base_ids"] == [10]
+                    assert len(kb_result.extra_tools) == 1
 
     def test_fallback_to_task_kb_when_no_subtask_kb(self, mock_db):
         """Test that task-level KB is used when subtask has no KB"""
@@ -265,19 +350,82 @@ class TestKBPriorityLogic:
             with patch("chat_shell.tools.builtin.KnowledgeBaseTool") as mock_kb_tool:
                 mock_kb_tool.return_value = Mock()
 
-                _tools, _prompt = _prepare_kb_tools_from_contexts(
-                    kb_contexts=[],  # No subtask KB
-                    user_id=1,
-                    db=mock_db,
-                    base_system_prompt="Base prompt",
-                    task_id=100,
-                    user_subtask_id=1,
-                )
+                with patch(
+                    "app.services.chat.preprocessing.contexts._get_user_kb_tool_access_mode",
+                    return_value=("full", ""),
+                ):
+                    kb_result = _prepare_kb_tools_from_contexts(
+                        kb_contexts=[],  # No subtask KB
+                        user_id=1,
+                        db=mock_db,
+                        base_system_prompt="Base prompt",
+                        task_id=100,
+                        user_subtask_id=1,
+                    )
 
-                # Should use task-level KBs (20, 30)
-                mock_kb_tool.assert_called_once()
-                call_args = mock_kb_tool.call_args
-                assert set(call_args[1]["knowledge_base_ids"]) == {20, 30}
+                    # Should use task-level KBs (20, 30)
+                    mock_kb_tool.assert_called_once()
+                    call_args = mock_kb_tool.call_args
+                    assert set(call_args[1]["knowledge_base_ids"]) == {20, 30}
+                    assert len(kb_result.extra_tools) == 1
+
+    def test_restricted_analyst_uses_search_only_mode(self, mock_db):
+        """Restricted Analysts should get search-only KB access instead of full denial."""
+        from app.services.chat.preprocessing.contexts import (
+            _prepare_kb_tools_from_contexts,
+        )
+
+        kb_context = Mock(spec=SubtaskContext)
+        kb_context.knowledge_id = 10
+        kb_context.type_data = None
+
+        with patch(
+            "app.services.chat.preprocessing.contexts._get_bound_knowledge_base_ids"
+        ) as mock_get_bound:
+            mock_get_bound.return_value = []
+
+            with patch("chat_shell.tools.builtin.KnowledgeBaseTool") as mock_kb_tool:
+                mock_kb_tool.return_value = Mock()
+
+                with patch(
+                    "app.services.chat.preprocessing.contexts._get_user_kb_tool_access_mode",
+                    return_value=("restricted_search_only", "test reason"),
+                ):
+                    with patch(
+                        "app.services.chat.preprocessing.contexts._build_kb_meta_prompt",
+                        return_value=(
+                            "Restricted Knowledge Bases In Scope:\n"
+                            "- KB Name: Test KB, KB ID: 10"
+                        ),
+                    ):
+                        kb_result = _prepare_kb_tools_from_contexts(
+                            kb_contexts=[kb_context],
+                            user_id=1,
+                            db=mock_db,
+                            base_system_prompt="Base prompt",
+                            task_id=100,
+                            user_subtask_id=1,
+                            model_config={"model_id": "gpt-test"},
+                        )
+
+                    mock_kb_tool.assert_called_once()
+                    call_args = mock_kb_tool.call_args
+                    assert call_args[1]["knowledge_base_ids"] == [10]
+                    assert call_args[1]["injection_mode"] == "hybrid"
+                    assert call_args[1]["tool_access_mode"] == "restricted_search_only"
+                    assert call_args[1]["current_model_name"] is None
+                    assert call_args[1]["current_model_namespace"] == "default"
+                    assert len(kb_result.extra_tools) == 1
+                    assert kb_result.knowledge_base_ids == [10]
+                    assert "Restricted Knowledge Bases In Scope" in (
+                        kb_result.kb_meta_prompt
+                    )
+                    assert "KB ID: 10" in kb_result.kb_meta_prompt
+                    assert "Summary:" not in kb_result.kb_meta_prompt
+                    assert kb_result.kb_tool_access_mode == "restricted_search_only"
+                    assert "Knowledge Base Restricted Analysis" in (
+                        kb_result.enhanced_system_prompt
+                    )
 
     def test_no_kb_when_both_empty(self, mock_db):
         """Test that no KB tool is created when both levels have no KB"""
@@ -290,23 +438,24 @@ class TestKBPriorityLogic:
         ) as mock_get_bound:
             mock_get_bound.return_value = []  # No task-level KBs
 
-            with patch(
-                "app.services.chat.preprocessing.contexts._build_historical_kb_meta_prompt"
-            ) as mock_history:
-                mock_history.return_value = ""
+            kb_result = _prepare_kb_tools_from_contexts(
+                kb_contexts=[],  # No subtask KB
+                user_id=1,
+                db=mock_db,
+                base_system_prompt="Base prompt",
+                task_id=100,
+                user_subtask_id=1,
+            )
 
-                tools, prompt = _prepare_kb_tools_from_contexts(
-                    kb_contexts=[],  # No subtask KB
-                    user_id=1,
-                    db=mock_db,
-                    base_system_prompt="Base prompt",
-                    task_id=100,
-                    user_subtask_id=1,
-                )
-
-                # Should return empty tools
-                assert tools == []
-                assert prompt == "Base prompt"
+            # Should return empty tools
+            assert kb_result.extra_tools == []
+            assert kb_result.enhanced_system_prompt == "Base prompt"
+            assert kb_result.kb_meta_prompt == ""
+            # New KB fields must also default to empty/False
+            assert kb_result.knowledge_base_ids == []
+            assert kb_result.is_user_selected_kb is False
+            assert kb_result.document_ids == []
+            assert kb_result.kb_tool_access_mode == "full"
 
 
 @pytest.mark.unit
@@ -524,7 +673,8 @@ class TestKBRefIdBasedLookup:
                                         assert len(kb_refs) == 1
                                         assert kb_refs[0]["id"] == 10
                                         assert kb_refs[0]["name"] == "Test KB"
-                                        assert kb_refs[0]["namespace"] == "default"
+                                        # Note: namespace is no longer stored in new refs
+                                        assert "namespace" not in kb_refs[0]
 
     def test_duplicate_check_with_id(self, service, mock_db, mock_knowledge_base):
         """Test that duplicate detection works with ID"""
@@ -606,6 +756,106 @@ class TestKBRefIdBasedLookup:
                 # Verify ID is included
                 assert kb_refs[0]["id"] == 10
                 assert kb_refs[0]["name"] == "Test KB"
+
+    def test_sync_kb_appends_to_existing_task_level_refs(self, service, mock_db):
+        """Test that message-time KB sync appends to existing task-level refs."""
+        mock_task = Mock(spec=TaskResource)
+        mock_task.id = 100
+        mock_task.json = {
+            "spec": {
+                "title": "Test Task",
+                "knowledgeBaseRefs": [
+                    {"id": 11, "name": "Ghost Docs"},
+                    {"id": 22, "name": "Runbooks"},
+                ],
+            }
+        }
+
+        appended_kb = Mock(spec=Kind)
+        appended_kb.id = 33
+        appended_kb.kind = "KnowledgeBase"
+        appended_kb.namespace = "default"
+        appended_kb.is_active = True
+        appended_kb.json = {"spec": {"name": "Release Notes"}}
+
+        mock_query = MagicMock()
+        mock_db.query.return_value = mock_query
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = appended_kb
+
+        with patch.object(service, "can_access_knowledge_base", return_value=True):
+            with patch(
+                "app.services.knowledge.task_knowledge_base_service.flag_modified"
+            ):
+                result = service.sync_subtask_kb_to_task(
+                    db=mock_db,
+                    task=mock_task,
+                    knowledge_id=33,
+                    user_id=1,
+                    user_name="testuser",
+                )
+
+                assert result is True
+                assert {
+                    ref["id"] for ref in mock_task.json["spec"]["knowledgeBaseRefs"]
+                } == {11, 22, 33}
+
+    def test_sync_kb_uses_selected_kb_when_default_namespace_has_name_collision(
+        self, service, mock_db
+    ):
+        """Sync should trust the selected KB ID even if another user has the same name."""
+        mock_task = Mock(spec=TaskResource)
+        mock_task.id = 100
+        mock_task.json = {
+            "spec": {
+                "title": "Test Task",
+                "knowledgeBaseRefs": [],
+            }
+        }
+
+        selected_kb = Mock(spec=Kind)
+        selected_kb.id = 10
+        selected_kb.kind = "KnowledgeBase"
+        selected_kb.namespace = "default"
+        selected_kb.user_id = 1
+        selected_kb.is_active = True
+        selected_kb.json = {"spec": {"name": "Shared Name KB"}}
+
+        other_user_same_name_kb = Mock(spec=Kind)
+        other_user_same_name_kb.id = 99
+        other_user_same_name_kb.kind = "KnowledgeBase"
+        other_user_same_name_kb.namespace = "default"
+        other_user_same_name_kb.user_id = 2
+        other_user_same_name_kb.is_active = True
+        other_user_same_name_kb.json = {"spec": {"name": "Shared Name KB"}}
+
+        mock_query = MagicMock()
+        mock_db.query.return_value = mock_query
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = selected_kb
+        mock_query.all.return_value = [other_user_same_name_kb, selected_kb]
+
+        with patch.object(
+            service, "_is_kb_bound_to_user_group_chat", return_value=False
+        ):
+            with patch(
+                "app.services.knowledge.task_knowledge_base_service.flag_modified"
+            ):
+                result = service.sync_subtask_kb_to_task(
+                    db=mock_db,
+                    task=mock_task,
+                    knowledge_id=10,
+                    user_id=1,
+                    user_name="testuser",
+                )
+
+                assert result is True
+                kb_refs = mock_task.json["spec"]["knowledgeBaseRefs"]
+                assert len(kb_refs) == 1
+                assert kb_refs[0]["id"] == 10
+                assert kb_refs[0]["name"] == "Shared Name KB"
+                assert kb_refs[0]["boundBy"] == "testuser"
+                assert "boundAt" in kb_refs[0]
 
     def test_sync_kb_dedup_by_id(self, service, mock_db, mock_knowledge_base):
         """Test that sync deduplication works with ID"""
@@ -810,3 +1060,33 @@ class TestContextsIdBasedLookup:
             result = _get_bound_knowledge_base_ids(mock_db, task_id=100)
 
             assert result == []
+
+    def test_sync_kb_contexts_logs_info_when_sync_is_skipped(self, mock_db, caplog):
+        """Test that outer context sync emits info log when service returns False."""
+        from app.services.chat.preprocessing.contexts import _sync_kb_contexts_to_task
+
+        mock_task = Mock(spec=TaskResource)
+        mock_task.id = 100
+
+        kb_context = Mock(spec=SubtaskContext)
+        kb_context.type_data = {"knowledge_id": 10}
+
+        with patch(
+            "app.services.knowledge.TaskKnowledgeBaseService"
+        ) as mock_service_cls:
+            mock_service = mock_service_cls.return_value
+            mock_service.sync_subtask_kb_to_task.return_value = False
+
+            with caplog.at_level(
+                logging.INFO,
+                logger="app.services.chat.preprocessing.contexts",
+            ):
+                _sync_kb_contexts_to_task(
+                    db=mock_db,
+                    kb_contexts=[kb_context],
+                    task=mock_task,
+                    user_id=1,
+                    user_name="testuser",
+                )
+
+        assert "Sync skipped for KB 10 on task 100" in caplog.text

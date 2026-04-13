@@ -13,7 +13,7 @@ import {
   CollapsedSidebarButtons,
 } from '@/features/tasks/components/sidebar'
 import { SettingsTabNav, SettingsTabId } from '@/features/settings/components/SettingsTabNav'
-import GitHubIntegration from '@/features/settings/components/GitHubIntegration'
+import IntegrationsPage from '@/features/settings/components/IntegrationsPage'
 import NotificationSettings from '@/features/settings/components/NotificationSettings'
 import { GroupManager } from '@/features/settings/components/groups/GroupManager'
 import { ModelListWithScope } from '@/features/settings/components/ModelListWithScope'
@@ -72,6 +72,28 @@ function SettingsContent() {
     return searchParams.get('group') || null
   })
 
+  // Sync state with URL parameters when they change (e.g., from GroupManager navigation)
+  useEffect(() => {
+    const tab = searchParams.get('tab')
+    const group = searchParams.get('group')
+
+    if (tab) {
+      // Map old simple tab values to new format (same as getInitialTab)
+      const tabMap: Record<string, SettingsTabId> = {
+        team: 'personal-team',
+        models: 'personal-models',
+        shells: 'personal-shells',
+      }
+      const mappedTab = (tabMap[tab] || tab) as SettingsTabId
+      if (mappedTab !== activeTab) {
+        setActiveTab(mappedTab)
+      }
+    }
+    if (group !== selectedGroup) {
+      setSelectedGroup(group)
+    }
+  }, [searchParams])
+
   // Mobile sidebar state
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
 
@@ -100,7 +122,7 @@ function SettingsContent() {
   }
 
   // Handle tab change
-  const handleTabChange = (tab: SettingsTabId) => {
+  const handleTabChange = (tab: SettingsTabId, groupName?: string | null) => {
     setActiveTab(tab)
     // Update URL with new tab
     const section = tab.startsWith('personal-')
@@ -108,7 +130,10 @@ function SettingsContent() {
       : tab.startsWith('group-')
         ? 'groups'
         : tab
-    const groupParam = selectedGroup ? `&group=${encodeURIComponent(selectedGroup)}` : ''
+    // Use provided groupName if available (for when tab change is triggered with group selection),
+    // otherwise fall back to current selectedGroup
+    const groupToUse = groupName !== undefined ? groupName : selectedGroup
+    const groupParam = groupToUse ? `&group=${encodeURIComponent(groupToUse)}` : ''
     router.replace(`?section=${section}&tab=${tab}${groupParam}`)
   }
 
@@ -185,7 +210,7 @@ function SettingsContent() {
           />
         )
       case 'integrations':
-        return <GitHubIntegration />
+        return <IntegrationsPage />
       case 'general':
         return <NotificationSettings />
       case 'api-keys':

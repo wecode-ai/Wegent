@@ -387,6 +387,62 @@ class TestKnowledgeServiceDeleteDocument:
         assert result.success is False
         assert result.kb_id is None
 
+    def test_delete_document_routes_rag_cleanup_through_gateway(
+        self,
+        test_db: Session,
+        test_user: User,
+        test_knowledge_base: Kind,
+        test_document: KnowledgeDocument,
+    ):
+        """Test delete_document delegates RAG cleanup through the local gateway."""
+        from sqlalchemy.orm.attributes import flag_modified
+
+        from app.services.knowledge import KnowledgeService
+
+        test_knowledge_base.json["spec"]["retrievalConfig"] = {
+            "retriever_name": "retriever-a",
+            "retriever_namespace": "default",
+        }
+        flag_modified(test_knowledge_base, "json")
+        test_db.commit()
+        delete_runtime_spec = object()
+        mock_gateway = MagicMock()
+        mock_gateway.delete_document_index = AsyncMock(
+            return_value={"status": "success"}
+        )
+
+        with (
+            patch(
+                "app.services.rag.gateway_factory.get_delete_gateway",
+                return_value=mock_gateway,
+            ) as mock_get_delete_gateway,
+            patch(
+                "app.services.rag.runtime_resolver.RagRuntimeResolver.build_delete_runtime_spec",
+                return_value=delete_runtime_spec,
+            ) as mock_build_delete_runtime_spec,
+        ):
+            result = KnowledgeService.delete_document(
+                db=test_db,
+                document_id=test_document.id,
+                user_id=test_user.id,
+            )
+
+        assert result.success is True
+        mock_get_delete_gateway.assert_called_once()
+        mock_build_delete_runtime_spec.assert_called_once_with(
+            db=test_db,
+            knowledge_base_id=test_knowledge_base.id,
+            document_ref=str(test_document.id),
+            index_owner_user_id=test_user.id,
+        )
+        mock_gateway.delete_document_index.assert_awaited_once_with(
+            delete_runtime_spec,
+            db=test_db,
+        )
+        assert mock_build_delete_runtime_spec.call_args.kwargs["knowledge_base_id"] == (
+            test_knowledge_base.id
+        )
+
 
 class TestKnowledgeServiceBatchDeleteDocuments:
     """Test batch_delete_documents returning KB IDs for summary updates."""

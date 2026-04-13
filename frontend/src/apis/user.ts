@@ -15,6 +15,7 @@ import type {
   WelcomeConfigResponse,
   DefaultTeamsResponse,
 } from '@/types/api'
+import type { NotificationChannelInfo } from '@/types/subscription'
 
 // Type definitions
 export interface LoginRequest {
@@ -50,6 +51,15 @@ export interface SearchUsersResponse {
 export interface FeatureFlags {
   /** Whether long-term memory service (mem0) is available */
   memory_enabled: boolean
+}
+
+export interface McpProviderServiceConfig {
+  provider_id: string
+  service_id: string
+  server_name: string
+  detail_url: string
+  enabled: boolean
+  url: string
 }
 
 const TOKEN_KEY = 'auth_token'
@@ -182,12 +192,44 @@ export const userApis = {
     return apiClient.get(`/users/search?q=${encodeURIComponent(query)}`)
   },
 
+  async getMcpProviderServices(providerId: string): Promise<McpProviderServiceConfig[]> {
+    return apiClient.get(`/users/me/mcps/providers/${encodeURIComponent(providerId)}/services`)
+  },
+
+  async getMcpProviderService(
+    providerId: string,
+    serviceId: string
+  ): Promise<McpProviderServiceConfig> {
+    return apiClient.get(
+      `/users/me/mcps/providers/${encodeURIComponent(providerId)}/services/${encodeURIComponent(serviceId)}`
+    )
+  },
+
+  async updateMcpProviderService(
+    providerId: string,
+    serviceId: string,
+    data: Pick<McpProviderServiceConfig, 'enabled' | 'url'>
+  ): Promise<McpProviderServiceConfig> {
+    return apiClient.put(
+      `/users/me/mcps/providers/${encodeURIComponent(providerId)}/services/${encodeURIComponent(serviceId)}`,
+      data
+    )
+  },
+
   /**
    * Get system-level feature flags
    * These flags indicate which features are available based on backend configuration
    */
   async getFeatureFlags(): Promise<FeatureFlags> {
     return apiClient.get('/users/features')
+  },
+
+  /**
+   * Get available Messager channels for the current user
+   * This does not require an existing subscription
+   */
+  async getAvailableChannels(): Promise<NotificationChannelInfo[]> {
+    return apiClient.get('/users/me/available-channels')
   },
 
   isAuthenticated(): boolean {

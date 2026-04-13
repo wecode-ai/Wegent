@@ -23,6 +23,12 @@ Wegent is an open-source AI-native operating system for defining, organizing, an
 - **docs/**: Detailed architecture, design documents, and comprehensive guides
 - When adding new features, put detailed docs in `docs/en/` and `docs/zh/`, reference from AGENTS.md
 
+**Recent design docs:**
+- Prompt caching optimization via dynamic context injection: [`docs/zh/developer-guide/dynamic-context.md`](docs/zh/developer-guide/dynamic-context.md)
+- English version: [`docs/en/developer-guide/dynamic-context.md`](docs/en/developer-guide/dynamic-context.md)
+- Exposing capabilities guide (how to make features available to AI agents): [`docs/zh/developer-guide/exposing-capabilities.md`](docs/zh/developer-guide/exposing-capabilities.md)
+- English version: [`docs/en/developer-guide/exposing-capabilities.md`](docs/en/developer-guide/exposing-capabilities.md)
+
 **📚 Documentation Writing Rules:**
 - All documentation files MUST include frontmatter with `sidebar_position` for ordering:
   ```markdown
@@ -150,6 +156,19 @@ npm run format && npm run lint
 
 1. Search existing components in `src/components/ui/`, `src/components/common/`, `src/features/*/components/`
 2. Extract reusable logic if implementing similar UI patterns multiple times
+
+### Testing Attributes (data-testid)
+
+⚠️ **Preserve and add `data-testid` attributes for E2E testing**
+
+**When modifying existing code:**
+- ✅ **ALWAYS preserve** existing `data-testid` attributes - they are used by E2E tests
+- ❌ Never rename or remove `data-testid` unless you are also updating the corresponding E2E tests
+
+**When creating new interactive components:**
+- ✅ **MUST add** `data-testid` attributes to interactive elements (buttons, inputs, links, selects, etc.)
+- ✅ Use descriptive, consistent naming: `{action}-{element-type}` (e.g., `save-button`, `cancel-link`, `search-input`)
+- ❌ Do not omit `data-testid` on interactive elements
 
 ### Responsive Architecture
 
@@ -552,7 +571,7 @@ t('actions.save')             // Ambiguous - which namespace?
 
 ```bash
 # Start services
-docker-compose up -d
+docker compose up -d
 
 # Run tests (Python modules use uv)
 cd backend && uv run pytest

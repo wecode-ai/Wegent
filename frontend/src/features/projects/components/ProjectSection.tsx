@@ -111,7 +111,7 @@ export function ProjectSection({ onTaskSelect }: ProjectSectionProps) {
   }
 
   return (
-    <div className="pb-3 mb-2">
+    <div className="mb-2">
       {/* Section Header */}
       <div className="flex items-center justify-between px-1 py-1.5 group">
         <button
@@ -129,11 +129,11 @@ export function ProjectSection({ onTaskSelect }: ProjectSectionProps) {
         <Button
           variant="ghost"
           size="sm"
-          className="h-6 w-6 p-0"
+          className="p-0.5 text-text-muted hover:text-text-primary transition-colors rounded"
           onClick={() => setCreateDialogOpen(true)}
           title={t('create.title')}
         >
-          <FolderPlus className="w-3.5 h-3.5 text-text-muted" />
+          <FolderPlus className="w-3.5 h-3.5" />
         </Button>
       </div>
 

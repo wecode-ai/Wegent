@@ -22,6 +22,7 @@ import PublicBotList from '@/features/admin/components/PublicBotList'
 import ApiKeyManagement from '@/features/admin/components/ApiKeyManagement'
 import SystemConfigPanel from '@/features/admin/components/SystemConfigPanel'
 import BackgroundExecutionMonitorPanel from '@/features/admin/components/BackgroundExecutionMonitorPanel'
+import DeviceMonitorPanel from '@/features/admin/components/DeviceMonitorPanel'
 import GlobalAdminSetupWizard from '@/features/admin/components/GlobalAdminSetupWizard'
 import IMChannelList from '@/features/admin/components/IMChannelList'
 import { UserProvider, useUser } from '@/features/common/UserContext'
@@ -82,6 +83,7 @@ function AdminContent() {
         'system-config',
         'im-channels',
         'monitor',
+        'device-monitor',
       ].includes(tab)
     ) {
       return tab as AdminTabId
@@ -149,6 +151,8 @@ function AdminContent() {
         return <IMChannelList />
       case 'monitor':
         return <BackgroundExecutionMonitorPanel />
+      case 'device-monitor':
+        return <DeviceMonitorPanel />
       default:
         return <UserList />
     }

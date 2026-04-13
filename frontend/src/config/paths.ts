@@ -37,6 +37,9 @@ export const paths = {
   feed: {
     getHref: () => '/feed',
   },
+  inbox: {
+    getHref: () => '/inbox',
+  },
   feedSubscriptions: {
     getHref: () => '/feed/subscriptions',
   },
@@ -45,6 +48,9 @@ export const paths = {
   },
   feedInvitations: {
     getHref: () => '/feed/invitations',
+  },
+  generate: {
+    getHref: () => '/generate',
   },
   settings: {
     root: {
@@ -61,6 +67,9 @@ export const paths = {
     },
     models: {
       getHref: () => '/settings?tab=models',
+    },
+    groupManager: {
+      getHref: () => '/settings?tab=group-manager',
     },
   },
 } as const

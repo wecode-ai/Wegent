@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.user import User
 from app.services.memory.schemas import MemorySearchResult
+from shared.telemetry.context.large_data import log_large_string_list
 from shared.telemetry.decorators import (
     add_span_event,
     set_span_attribute,
@@ -59,7 +60,7 @@ def inject_memories_to_prompt(
 
     # Set memory IDs (truncated to first 5 for performance)
     memory_ids = [memory.id for memory in memories[:5]]
-    set_span_attribute("memory.ids", ",".join(memory_ids))
+    log_large_string_list("memory.ids", memory_ids)
     if len(memories) > 5:
         set_span_attribute("memory.ids_truncated", True)
 
@@ -147,7 +148,7 @@ def format_metadata_for_logging(metadata: dict) -> str:
     # Track which fields were kept
     set_span_attribute("metadata.filtered_count", len(filtered))
     if filtered:
-        set_span_attribute("metadata.filtered_fields", ",".join(filtered.keys()))
+        log_large_string_list("metadata.filtered_fields", list(filtered.keys()))
 
     return str(filtered)
 

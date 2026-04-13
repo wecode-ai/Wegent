@@ -284,12 +284,13 @@ class WebPageSocketEmitter:
         block_id: str,
         content: Optional[str] = None,
         tool_output: Optional[Any] = None,
+        tool_input: Optional[Dict[str, Any]] = None,
         status: Optional[str] = None,
     ) -> None:
         """
         Emit chat:block_updated event to task room.
 
-        Used when a tool block is updated (e.g., tool execution completed).
+        Used when a tool block is updated (e.g., tool execution completed or tool input received).
 
         Args:
             task_id: Task ID
@@ -297,7 +298,8 @@ class WebPageSocketEmitter:
             block_id: Block ID to update
             content: Optional text content update
             tool_output: Optional tool output data
-            status: Optional status update (pending, streaming, done, error)
+            tool_input: Optional tool input/arguments update (for interactive_form_question form rendering)
+            status: Optional status update (pending, streaming, running, done, error)
         """
         payload: Dict[str, Any] = {
             "task_id": task_id,
@@ -308,6 +310,8 @@ class WebPageSocketEmitter:
             payload["content"] = content
         if tool_output is not None:
             payload["tool_output"] = tool_output
+        if tool_input is not None:
+            payload["tool_input"] = tool_input
         if status is not None:
             payload["status"] = status
 
@@ -319,7 +323,7 @@ class WebPageSocketEmitter:
         )
         logger.debug(
             f"[WS] emit chat:block_updated task={task_id} subtask={subtask_id} "
-            f"block_id={block_id} status={status}"
+            f"block_id={block_id} status={status} has_tool_input={tool_input is not None}"
         )
 
     # ============================================================
@@ -622,6 +626,53 @@ class WebPageSocketEmitter:
             namespace=self.namespace,
         )
         logger.debug(f"[WS] emit unread:count user={user_id} count={count}")
+
+    async def emit_queue_message_received(
+        self,
+        user_id: int,
+        message_id: int,
+        queue_id: int,
+        queue_name: str,
+        sender_id: int,
+        sender_name: str,
+        preview: str,
+        priority: str,
+        created_at: str,
+    ) -> None:
+        """
+        Emit queue:message_received event to user room.
+
+        This notifies the user that a new message has been received in their work queue.
+
+        Args:
+            user_id: Target user ID (recipient)
+            message_id: Queue message ID
+            queue_id: Work queue ID
+            queue_name: Work queue name
+            sender_id: Sender user ID
+            sender_name: Sender username
+            preview: Message content preview
+            priority: Message priority
+            created_at: Creation timestamp
+        """
+        await self.sio.emit(
+            ServerEvents.QUEUE_MESSAGE_RECEIVED,
+            {
+                "message_id": message_id,
+                "queue_id": queue_id,
+                "queue_name": queue_name,
+                "sender_id": sender_id,
+                "sender_name": sender_name,
+                "preview": preview,
+                "priority": priority,
+                "created_at": created_at,
+            },
+            room=f"user:{user_id}",
+            namespace=self.namespace,
+        )
+        logger.debug(
+            f"[WS] emit queue:message_received user={user_id} message={message_id} queue={queue_id}"
+        )
 
     async def emit_task_app_update(
         self,
@@ -996,7 +1047,6 @@ def get_main_event_loop() -> Optional[asyncio.AbstractEventLoop]:
     Returns:
         The main event loop or None if not initialized
     """
-    return _main_event_loop
     return _main_event_loop
 
 

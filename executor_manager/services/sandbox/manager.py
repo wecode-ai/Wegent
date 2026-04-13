@@ -184,15 +184,6 @@ class SandboxManager(metaclass=SingletonMeta):
         # Build task data for executor
         task_data = self._build_sandbox_task(sandbox)
 
-        # Log task data for debugging auth_token transmission
-        logger.info(
-            f"[SandboxManager] Creating sandbox container with task_data: "
-            f"task_id={task_data.get('task_id')}, "
-            f"type={task_data.get('type')}, "
-            f"auth_token={'present' if task_data.get('auth_token') else 'missing'}, "
-            f"metadata_keys={list(sandbox.metadata.keys())}"
-        )
-
         # Get executor and create container
         executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
 
@@ -209,6 +200,12 @@ class SandboxManager(metaclass=SingletonMeta):
         # Get container name
         container_name = result.get("executor_name", sandbox.container_name)
         sandbox.container_name = container_name
+        executor_namespace = result.get("executor_namespace") or sandbox.metadata.get(
+            "executor_namespace"
+        )
+        if executor_namespace:
+            sandbox.executor_namespace = executor_namespace
+            sandbox.metadata["executor_namespace"] = executor_namespace
 
         # Wait for container to be ready and get base_url
         base_url = await self._wait_for_container_ready(executor, container_name)
@@ -352,6 +349,16 @@ class SandboxManager(metaclass=SingletonMeta):
         auth_token = sandbox.metadata.get("auth_token")
         if auth_token:
             task["auth_token"] = auth_token
+
+        # Add skip_git_clone flag for workspace recovery scenarios
+        # When restoring from archive, we skip git clone to avoid conflicts
+        skip_git_clone = sandbox.metadata.get("skip_git_clone", False)
+        if skip_git_clone:
+            task["skip_git_clone"] = True
+
+        skill_identity_token = sandbox.metadata.get("skill_identity_token")
+        if skill_identity_token:
+            task["skill_identity_token"] = skill_identity_token
 
         return task
 
@@ -844,7 +851,8 @@ class SandboxManager(metaclass=SingletonMeta):
         IMPORTANT: This method uses async Redis operations to avoid blocking
         the event loop, which is critical for maintaining HTTP responsiveness.
         """
-        task_ids = self._repository.get_active_sandbox_ids()
+        # Use async method to avoid blocking the event loop
+        task_ids = await self._repository.get_active_sandbox_ids_async()
         if not task_ids:
             return
 
@@ -854,7 +862,8 @@ class SandboxManager(metaclass=SingletonMeta):
 
         for task_id_str in task_ids:
             try:
-                sandbox = self._repository.load_sandbox(task_id_str)
+                # Use async method to avoid blocking the event loop
+                sandbox = await self._repository.load_sandbox_async(task_id_str)
                 if sandbox is None or sandbox.status != SandboxStatus.RUNNING:
                     continue
 

@@ -103,91 +103,93 @@ export default function GitHubIntegration() {
   }
 
   return (
-    <div className="space-y-3">
-      <div>
-        <h2 className="text-xl font-semibold text-text-primary mb-1">
-          {t('common:integrations.title')}
-        </h2>
-        <p className="text-sm text-text-muted mb-1">{t('common:integrations.description')}</p>
+    <div className="space-y-3 rounded-md border border-border bg-base p-4">
+      <div className="space-y-1">
+        <h3 className="text-base font-medium text-text-primary">
+          {t('common:integrations.git_title')}
+        </h3>
+        <p className="text-sm text-text-muted">{t('common:integrations.git_description')}</p>
       </div>
-      <div className="bg-base border border-border rounded-md p-2 space-y-1 max-h-[70vh] overflow-y-auto custom-scrollbar w-full">
-        {isLoading ? (
-          <LoadingState fullScreen={false} message={t('common:integrations.loading')} />
-        ) : (
-          <>
-            {platforms.length > 0 ? (
-              platforms.map((info, index) => (
-                <div key={info.id || `${info.git_domain}-${index}`}>
-                  <div className="flex items-center justify-between py-0.5">
-                    <div className="flex items-center space-x-2 w-0 flex-1 min-w-0">
-                      {info.type === 'gitlab' || info.type === 'gitee' ? (
-                        <FiGitlab className="w-4 h-4 text-text-primary" />
-                      ) : info.type === 'gitea' ? (
-                        <SiGitea className="w-4 h-4 text-text-primary" />
-                      ) : info.type === 'gerrit' ? (
-                        <FiGitBranch className="w-4 h-4 text-text-primary" />
-                      ) : (
-                        <FiGithub className="w-4 h-4 text-text-primary" />
-                      )}
-                      <div>
-                        <div className="flex items-center space-x-1">
-                          <h3 className="text-base font-medium text-text-primary truncate mb-0">
-                            {info.git_domain}
-                            {info.git_login && (
-                              <span className="text-xs text-text-muted ml-2">
-                                ({info.git_login})
-                              </span>
-                            )}
-                          </h3>
-                        </div>
-                        <div>
-                          <p className="text-xs text-text-muted break-all font-mono mt-0">
-                            {info.type === 'gerrit' && info.user_name ? `${info.user_name} | ` : ''}
-                            {getMaskedTokenDisplay(info.git_token)}
-                          </p>
-                        </div>
+
+      {isLoading ? (
+        <LoadingState fullScreen={false} message={t('common:integrations.loading')} />
+      ) : (
+        <>
+          {platforms.length > 0 && (
+            <div className="space-y-2 max-h-[50vh] overflow-y-auto custom-scrollbar">
+              {platforms.map((info, index) => (
+                <div
+                  key={info.id || `${info.git_domain}-${index}`}
+                  className="flex items-center justify-between rounded-md border border-border/70 bg-surface px-3 py-2.5"
+                >
+                  <div className="flex items-center space-x-3 min-w-0 flex-1">
+                    {info.type === 'gitlab' || info.type === 'gitee' ? (
+                      <FiGitlab className="w-5 h-5 text-text-primary flex-shrink-0" />
+                    ) : info.type === 'gitea' ? (
+                      <SiGitea className="w-5 h-5 text-text-primary flex-shrink-0" />
+                    ) : info.type === 'gerrit' ? (
+                      <FiGitBranch className="w-5 h-5 text-text-primary flex-shrink-0" />
+                    ) : (
+                      <FiGithub className="w-5 h-5 text-text-primary flex-shrink-0" />
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center">
+                        <span className="text-sm font-medium text-text-primary truncate">
+                          {info.git_domain}
+                        </span>
+                        {info.git_login && (
+                          <span className="text-xs text-text-muted ml-2 flex-shrink-0">
+                            ({info.git_login})
+                          </span>
+                        )}
                       </div>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => handleEdit(info)}
-                        title={t('common:integrations.edit_token')}
-                        className="h-8 w-8"
-                      >
-                        <PencilIcon className="w-4 h-4" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => handleDelete(info)}
-                        title={t('common:integrations.delete')}
-                        className="h-8 w-8 hover:text-error"
-                      >
-                        <TrashIcon className="w-4 h-4" />
-                      </Button>
+                      <p className="text-xs text-text-muted break-all font-mono">
+                        {info.type === 'gerrit' && info.user_name ? `${info.user_name} | ` : ''}
+                        {getMaskedTokenDisplay(info.git_token)}
+                      </p>
                     </div>
                   </div>
-                  {index < platforms.length - 1 && (
-                    <div className="border-t border-border mt-1 pt-1" />
-                  )}
+                  <div className="flex items-center gap-1 flex-shrink-0 ml-2">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => handleEdit(info)}
+                      title={t('common:integrations.edit_token')}
+                      className="h-8 w-8"
+                      data-testid={`edit-git-token-${index}`}
+                    >
+                      <PencilIcon className="w-4 h-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => handleDelete(info)}
+                      title={t('common:integrations.delete')}
+                      className="h-8 w-8 hover:text-error"
+                      data-testid={`delete-git-token-${index}`}
+                    >
+                      <TrashIcon className="w-4 h-4" />
+                    </Button>
+                  </div>
                 </div>
-              ))
-            ) : (
-              <div className="text-center text-text-muted py-4">
-                <p className="text-sm">{t('common:integrations.no_tokens')}</p>
-              </div>
-            )}
-            <div className="border-t border-border"></div>
-            <div className="flex justify-center">
-              <UnifiedAddButton onClick={handleAdd}>
-                {t('common:integrations.new_token')}
-              </UnifiedAddButton>
+              ))}
             </div>
-          </>
-        )}
-      </div>
+          )}
+
+          {platforms.length === 0 && (
+            <div className="rounded-md border border-border/70 bg-surface px-3 py-4 text-center">
+              <p className="text-sm text-text-muted">{t('common:integrations.no_tokens')}</p>
+            </div>
+          )}
+
+          <div className="flex items-center gap-2 pt-1">
+            <UnifiedAddButton onClick={handleAdd} data-testid="add-git-token-button">
+              {t('common:integrations.new_token')}
+            </UnifiedAddButton>
+          </div>
+        </>
+      )}
+
       <GitHubEdit
         isOpen={showModal}
         onClose={() => setShowModal(false)}

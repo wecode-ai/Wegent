@@ -11,6 +11,14 @@ WORKDIR /app
 COPY frontend/package.json frontend/package-lock.json ./
 COPY frontend/scripts ./scripts
 
+# Font download configuration for internal deployments
+ARG GOOGLE_SANS_CSS_URLS=""
+ARG SKIP_UI_FONT_DOWNLOAD=""
+ARG SKIP_PDF_FONT_DOWNLOAD=""
+ENV GOOGLE_SANS_CSS_URLS=${GOOGLE_SANS_CSS_URLS}
+ENV SKIP_UI_FONT_DOWNLOAD=${SKIP_UI_FONT_DOWNLOAD}
+ENV SKIP_PDF_FONT_DOWNLOAD=${SKIP_PDF_FONT_DOWNLOAD}
+
 # Install dependencies (this layer will be cached, only reinstall when package.json changes)
 RUN npm ci && npm cache clean --force
 
@@ -18,6 +26,10 @@ RUN npm ci && npm cache clean --force
 FROM node:22-slim AS builder
 
 WORKDIR /app
+
+# App version injected at build time (e.g. "0.1.5")
+ARG APP_VERSION="dev"
+ENV NEXT_PUBLIC_APP_VERSION=${APP_VERSION}
 
 # Copy node_modules from deps stage
 COPY --from=deps /app/node_modules ./node_modules

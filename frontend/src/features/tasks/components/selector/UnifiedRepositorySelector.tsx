@@ -24,6 +24,7 @@ import { useRepositorySearch } from '../../hooks/useRepositorySearch'
 import { RepoListView } from './RepoListView'
 import { BranchListView } from './BranchListView'
 import { TaskContext } from '../../contexts/taskContext'
+import { getRepositoryIdentity } from './repositoryIdentity'
 
 /**
  * Props for UnifiedRepositorySelector component
@@ -137,6 +138,7 @@ export default function UnifiedRepositorySelector({
     handleSearchChange,
     handleRefreshCache,
     handleChange: handleRepoSelectFromSearch,
+    resetSearch,
   } = useRepositorySearch({
     selectedRepo,
     handleRepoChange: onRepoChange,
@@ -144,20 +146,32 @@ export default function UnifiedRepositorySelector({
     selectedTaskDetail,
   })
 
-  // Convert repos to items
+  // Convert repos to items and remove duplicates
   const repoItems = useMemo(() => {
-    const items = repos.map(repo => ({
-      value: repo.git_repo_id.toString(),
+    // Remove duplicates by repository identity
+    const seen = new Set<string>()
+    const uniqueRepos = repos.filter(repo => {
+      const key = getRepositoryIdentity(repo)
+      if (seen.has(key)) {
+        return false
+      }
+      seen.add(key)
+      return true
+    })
+
+    const items = uniqueRepos.map(repo => ({
+      value: getRepositoryIdentity(repo),
       label: repo.git_repo,
       searchText: repo.git_repo,
     }))
 
     // Ensure selected repo is in the items list
     if (selectedRepo) {
-      const hasSelected = items.some(item => item.value === selectedRepo.git_repo_id.toString())
+      const selectedRepoIdentity = getRepositoryIdentity(selectedRepo)
+      const hasSelected = items.some(item => item.value === selectedRepoIdentity)
       if (!hasSelected) {
         items.unshift({
-          value: selectedRepo.git_repo_id.toString(),
+          value: selectedRepoIdentity,
           label: selectedRepo.git_repo,
           searchText: selectedRepo.git_repo,
         })
@@ -260,6 +274,7 @@ export default function UnifiedRepositorySelector({
   }, [selectedRepo, selectedTaskDetail?.branch_name])
 
   // Set initial view when popover opens based on selection state
+  // Reset search when popover closes
   useEffect(() => {
     if (isOpen) {
       // If repo is already selected, start with branch view for quick branch switching
@@ -269,8 +284,11 @@ export default function UnifiedRepositorySelector({
       } else {
         setCurrentView('repo')
       }
+    } else {
+      // Reset search when closing
+      resetSearch()
     }
-  }, [isOpen, selectedRepo])
+  }, [isOpen, selectedRepo, resetSearch])
 
   // Auto-open popover when requiresWorkspace changes from false to true (e.g., team switch)
   // and no repo is currently selected.
@@ -388,7 +406,11 @@ export default function UnifiedRepositorySelector({
   const isLoading = repoLoading || branchLoading
 
   return (
-    <div className={cn('flex items-center min-w-0', className)} data-tour="unified-repo-selector">
+    <div
+      className={cn('flex items-center min-w-0', className)}
+      data-tour="unified-repo-selector"
+      data-testid="repo-branch-selector"
+    >
       <Popover
         open={isOpen}
         onOpenChange={open => {
@@ -403,12 +425,12 @@ export default function UnifiedRepositorySelector({
               <PopoverTrigger asChild>
                 <div
                   className={cn(
-                    'group flex items-center gap-1.5 min-w-0 rounded-full pl-2.5 pr-3 py-2.5 h-9',
+                    'group flex items-center gap-1 min-w-0 rounded-full pl-2 pr-2 py-2 h-9',
                     'transition-all duration-200 cursor-pointer',
                     // When workspace is required but not selected - show error state like ModelSelector
                     requiresWorkspace && isNotSelected
-                      ? 'border border-error text-error bg-error/5 hover:bg-error/10'
-                      : 'border border-border bg-base text-text-primary hover:bg-hover',
+                      ? 'text-error bg-error/5 hover:bg-error/10'
+                      : 'bg-transparent text-text-primary hover:bg-hover',
                     isLoading ? 'animate-pulse' : '',
                     'focus:outline-none focus:ring-0',
                     (disabled || isLoading) && 'cursor-not-allowed opacity-50'
@@ -503,7 +525,7 @@ export default function UnifiedRepositorySelector({
               >
                 <RepoListView
                   repos={repoItems}
-                  selectedRepoId={selectedRepo?.git_repo_id.toString() ?? null}
+                  selectedRepoId={selectedRepo ? getRepositoryIdentity(selectedRepo) : null}
                   onSelect={handleRepoSelect}
                   onSearchChange={handleSearchChange}
                   onConfigureClick={handleIntegrationClick}
@@ -512,6 +534,7 @@ export default function UnifiedRepositorySelector({
                   isSearching={isSearching}
                   isRefreshing={isRefreshing}
                   error={repoError}
+                  isOpen={isOpen}
                   onClearSelection={
                     // Only show clear button if we have a way to toggle workspace requirement
                     // And currently workspace IS required (so we can clear it)

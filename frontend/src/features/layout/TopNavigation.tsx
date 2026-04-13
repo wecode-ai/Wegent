@@ -11,13 +11,14 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { useIsMobile, useIsDesktop } from './hooks/useMediaQuery'
 import TaskTitleDropdown from './TaskTitleDropdown'
 import { TaskDetail } from '@/types/api'
-
 type TopNavigationProps = {
-  activePage?: 'chat' | 'code' | 'wiki' | 'dashboard' | 'devices'
+  activePage?: 'chat' | 'code' | 'wiki' | 'dashboard' | 'devices' | 'flow' | 'inbox'
   variant?: 'with-sidebar' | 'standalone'
   showLogo?: boolean
   title?: string
   titleSuffix?: React.ReactNode // Content to render after the title (e.g., bound knowledge base badge)
+  /** Content to render in the center area (e.g., tabs for knowledge page) */
+  centerContent?: React.ReactNode
   taskDetail?: TaskDetail | null
   children?: React.ReactNode
   onMobileSidebarToggle?: () => void
@@ -25,6 +26,7 @@ type TopNavigationProps = {
   onMembersChanged?: () => void // Callback to refresh task detail when converted to group chat
   isSidebarCollapsed?: boolean
   hideGroupChatOptions?: boolean // Hide group chat management options (e.g., in notebook mode)
+  isRightPanelCollapsed?: boolean // Whether right panel is collapsed (adds right padding for expand button)
 }
 
 export default function TopNavigation({
@@ -32,6 +34,7 @@ export default function TopNavigation({
   showLogo = false,
   title,
   titleSuffix,
+  centerContent,
   taskDetail,
   children,
   onMobileSidebarToggle,
@@ -39,6 +42,7 @@ export default function TopNavigation({
   onMembersChanged,
   isSidebarCollapsed = false,
   hideGroupChatOptions = false,
+  isRightPanelCollapsed: _isRightPanelCollapsed = false,
 }: TopNavigationProps) {
   const { t } = useTranslation()
   const isMobile = useIsMobile()
@@ -50,11 +54,14 @@ export default function TopNavigation({
   // Determine if we should show the logo
   const shouldShowLogo = showLogo || (variant === 'standalone' && !isMobile)
 
+  // Compute padding classes separately to avoid conflicts
+  const leftPaddingClass = isSidebarCollapsed && isDesktop ? 'pl-24' : 'pl-4 sm:pl-6'
+  // Right padding is always the same - the expand button is fixed positioned and doesn't need reserved space
+  const rightPaddingClass = 'pr-4 sm:pr-6'
+
   return (
     <div
-      className={`relative flex items-center justify-between py-2 sm:py-3 min-h-[44px] bg-base ${
-        isSidebarCollapsed && isDesktop ? 'pl-24 pr-4 sm:pr-6' : 'px-4 sm:px-6'
-      }`}
+      className={`relative flex items-center justify-between py-2 sm:py-3 min-h-[44px] bg-base ${leftPaddingClass} ${rightPaddingClass}`}
     >
       {/* Left side - Mobile sidebar toggle, Logo, and Title */}
       <div className="flex items-center gap-3 min-w-0 flex-1 overflow-hidden">
@@ -101,6 +108,9 @@ export default function TopNavigation({
 
         {/* Title suffix - content rendered after the title (e.g., bound knowledge base badge) */}
         {titleSuffix}
+
+        {/* Center content - content rendered in the center area (e.g., tabs) */}
+        {centerContent}
       </div>
 
       {/* Right side - User menu and other controls */}

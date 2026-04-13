@@ -29,6 +29,7 @@ from app.models.user import User
 from app.schemas.kind import Bot, Ghost, Model, Shell, Task, Team
 from app.schemas.team import BotInfo, TeamCreate, TeamDetail, TeamInDB, TeamUpdate
 from app.services.adapters.shell_utils import get_shell_type
+from app.services.adapters.task_kinds.running_tasks import get_running_tasks_for_team
 from app.services.base import BaseService
 from app.services.readers.kinds import KindType, kindReader
 from app.services.readers.users import userReader
@@ -257,13 +258,65 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             f"[get_user_teams] get_user_groups took {time.time() - t0:.3f}s, namespaces={namespaces_to_query}"
         )
 
-        # Build queries for each namespace
+        # Build queries - separate default namespace from group namespaces
+        # Optimization: use IN clause for group namespaces instead of separate queries
         queries = []
+        group_namespaces = [ns for ns in namespaces_to_query if ns != "default"]
+        has_default = "default" in namespaces_to_query
 
-        for namespace in namespaces_to_query:
-            if namespace == "default":
-                # Query for user's own teams in default namespace
-                own_teams_query = db.query(
+        if has_default:
+            # Query for user's own teams in default namespace
+            own_teams_query = db.query(
+                Kind.id.label("team_id"),
+                Kind.user_id.label("team_user_id"),
+                Kind.name.label("team_name"),
+                Kind.namespace.label("team_namespace"),
+                Kind.json.label("team_json"),
+                Kind.created_at.label("team_created_at"),
+                Kind.updated_at.label("team_updated_at"),
+                literal_column("0").label("share_status"),  # Default 0 for own teams
+                literal_column(str(user_id)).label("context_user_id"),
+            ).filter(
+                Kind.user_id == user_id,
+                Kind.kind == "Team",
+                Kind.namespace == "default",
+                Kind.is_active == True,
+            )
+            queries.append(own_teams_query)
+
+            # Add shared teams for personal and all scopes
+            if scope in ("personal", "all"):
+                # Query for shared teams using ResourceMember
+                shared_teams_query = (
+                    db.query(
+                        Kind.id.label("team_id"),
+                        Kind.user_id.label("team_user_id"),
+                        Kind.name.label("team_name"),
+                        Kind.namespace.label("team_namespace"),
+                        Kind.json.label("team_json"),
+                        Kind.created_at.label("team_created_at"),
+                        Kind.updated_at.label("team_updated_at"),
+                        literal_column("2").label("share_status"),  # 2 for shared teams
+                        Kind.user_id.label(
+                            "context_user_id"
+                        ),  # Use team owner, not inviter
+                    )
+                    .join(
+                        ResourceMember,
+                        (ResourceMember.resource_id == Kind.id)
+                        & (ResourceMember.resource_type == ResourceType.TEAM),
+                    )
+                    .filter(
+                        ResourceMember.user_id == user_id,
+                        ResourceMember.status == MemberStatus.APPROVED,
+                        Kind.is_active == True,
+                        Kind.kind == "Team",
+                    )
+                )
+                queries.append(shared_teams_query)
+
+                # Query for public teams (user_id=0)
+                public_teams_query = db.query(
                     Kind.id.label("team_id"),
                     Kind.user_id.label("team_user_id"),
                     Kind.name.label("team_name"),
@@ -273,87 +326,37 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                     Kind.updated_at.label("team_updated_at"),
                     literal_column("0").label(
                         "share_status"
-                    ),  # Default 0 for own teams
-                    literal_column(str(user_id)).label("context_user_id"),
+                    ),  # 0 for public teams (system-owned)
+                    literal_column("0").label("context_user_id"),
                 ).filter(
-                    Kind.user_id == user_id,
+                    Kind.user_id == 0,
                     Kind.kind == "Team",
                     Kind.namespace == "default",
                     Kind.is_active == True,
                 )
-                queries.append(own_teams_query)
+                queries.append(public_teams_query)
 
-                # Add shared teams for personal and all scopes
-                if scope in ("personal", "all"):
-                    # Query for shared teams using ResourceMember
-                    shared_teams_query = (
-                        db.query(
-                            Kind.id.label("team_id"),
-                            Kind.user_id.label("team_user_id"),
-                            Kind.name.label("team_name"),
-                            Kind.namespace.label("team_namespace"),
-                            Kind.json.label("team_json"),
-                            Kind.created_at.label("team_created_at"),
-                            Kind.updated_at.label("team_updated_at"),
-                            literal_column("2").label(
-                                "share_status"
-                            ),  # 2 for shared teams
-                            Kind.user_id.label(
-                                "context_user_id"
-                            ),  # Use team owner, not inviter
-                        )
-                        .join(
-                            ResourceMember,
-                            (ResourceMember.resource_id == Kind.id)
-                            & (ResourceMember.resource_type == ResourceType.TEAM),
-                        )
-                        .filter(
-                            ResourceMember.user_id == user_id,
-                            ResourceMember.status == MemberStatus.APPROVED,
-                            Kind.is_active == True,
-                            Kind.kind == "Team",
-                        )
-                    )
-                    queries.append(shared_teams_query)
-
-                    # Query for public teams (user_id=0)
-                    public_teams_query = db.query(
-                        Kind.id.label("team_id"),
-                        Kind.user_id.label("team_user_id"),
-                        Kind.name.label("team_name"),
-                        Kind.namespace.label("team_namespace"),
-                        Kind.json.label("team_json"),
-                        Kind.created_at.label("team_created_at"),
-                        Kind.updated_at.label("team_updated_at"),
-                        literal_column("0").label(
-                            "share_status"
-                        ),  # 0 for public teams (system-owned)
-                        literal_column("0").label("context_user_id"),
-                    ).filter(
-                        Kind.user_id == 0,
-                        Kind.kind == "Team",
-                        Kind.namespace == "default",
-                        Kind.is_active == True,
-                    )
-                    queries.append(public_teams_query)
-            else:
-                # Query for group teams
-                group_teams_query = db.query(
-                    Kind.id.label("team_id"),
-                    Kind.user_id.label("team_user_id"),
-                    Kind.name.label("team_name"),
-                    Kind.namespace.label("team_namespace"),
-                    Kind.json.label("team_json"),
-                    Kind.created_at.label("team_created_at"),
-                    Kind.updated_at.label("team_updated_at"),
-                    literal_column("0").label("share_status"),
-                    Kind.user_id.label("context_user_id"),
-                ).filter(
-                    Kind.kind == "Team",
-                    Kind.namespace == namespace,
-                    Kind.is_active == True,
-                )
-                queries.append(group_teams_query)
+        # Optimized: Query all group teams in a single query using IN clause
+        # instead of creating separate queries for each namespace
+        if group_namespaces:
+            group_teams_query = db.query(
+                Kind.id.label("team_id"),
+                Kind.user_id.label("team_user_id"),
+                Kind.name.label("team_name"),
+                Kind.namespace.label("team_namespace"),
+                Kind.json.label("team_json"),
+                Kind.created_at.label("team_created_at"),
+                Kind.updated_at.label("team_updated_at"),
+                literal_column("0").label("share_status"),
+                Kind.user_id.label("context_user_id"),
+            ).filter(
+                Kind.kind == "Team",
+                Kind.namespace.in_(
+                    group_namespaces
+                ),  # Use IN clause for all group namespaces
+                Kind.is_active == True,
+            )
+            queries.append(group_teams_query)
 
         # Handle empty queries case
         if not queries:
@@ -938,67 +941,19 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         return self._convert_to_team_dict(team, db, user_id)
 
     def _get_running_tasks_for_team(
-        self, db: Session, team_name: str, team_namespace: str
+        self, db: Session, team: Kind
     ) -> List[Dict[str, Any]]:
         """
         Get all running tasks for a team.
 
         Args:
             db: Database session
-            team_name: Team name
-            team_namespace: Team namespace
+            team: Team resource
 
         Returns:
             List of running task info dictionaries
         """
-        from sqlalchemy import func, or_
-
-        from app.models.task import TaskResource
-
-        # Use JSON queries to filter at database level instead of loading all tasks into memory
-        # This is much faster when there are many tasks
-        tasks = (
-            db.query(TaskResource)
-            .filter(
-                TaskResource.kind == "Task",
-                TaskResource.is_active == True,
-                # Filter by team reference using JSON path
-                func.json_unquote(
-                    func.json_extract(TaskResource.json, "$.spec.teamRef.name")
-                )
-                == team_name,
-                func.json_unquote(
-                    func.json_extract(TaskResource.json, "$.spec.teamRef.namespace")
-                )
-                == team_namespace,
-                # Filter by status using JSON path - only get PENDING or RUNNING tasks
-                or_(
-                    func.json_unquote(
-                        func.json_extract(TaskResource.json, "$.status.status")
-                    )
-                    == "PENDING",
-                    func.json_unquote(
-                        func.json_extract(TaskResource.json, "$.status.status")
-                    )
-                    == "RUNNING",
-                ),
-            )
-            .all()
-        )
-
-        running_tasks = []
-        for task in tasks:
-            task_crd = Task.model_validate(task.json)
-            running_tasks.append(
-                {
-                    "task_id": task.id,
-                    "task_name": task.name,
-                    "task_title": task_crd.spec.title,
-                    "status": task_crd.status.status if task_crd.status else "UNKNOWN",
-                }
-            )
-
-        return running_tasks
+        return get_running_tasks_for_team(db, team)
 
     def check_running_tasks(
         self, db: Session, *, team_id: int, user_id: int
@@ -1019,11 +974,8 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         if not team:
             raise HTTPException(status_code=404, detail="Team not found")
 
-        team_name = team.name
-        team_namespace = team.namespace
-
         # Get running tasks for this team
-        running_tasks = self._get_running_tasks_for_team(db, team_name, team_namespace)
+        running_tasks = self._get_running_tasks_for_team(db, team)
 
         return {
             "has_running_tasks": len(running_tasks) > 0,
@@ -1086,18 +1038,13 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 # Personal team but wrong owner
                 raise HTTPException(status_code=403, detail="Access denied")
 
-        team_name = team.name
-        team_namespace = team.namespace
-
         # Check if team has running tasks (unless force delete)
         if not force:
-            running_tasks = self._get_running_tasks_for_team(
-                db, team_name, team_namespace
-            )
+            running_tasks = self._get_running_tasks_for_team(db, team)
             if running_tasks:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Team '{team_name}' has {len(running_tasks)} running task(s). Use force=true to delete anyway.",
+                    detail=f"Team '{team.name}' has {len(running_tasks)} running task(s). Use force=true to delete anyway.",
                 )
 
         # delete share team - use ResourceMember
@@ -1904,7 +1851,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             .filter(
                 TaskResource.user_id == user_id,
                 TaskResource.kind == "Task",
-                TaskResource.is_active == True,
+                TaskResource.is_active == TaskResource.STATE_ACTIVE,
             )
             .all()
         )

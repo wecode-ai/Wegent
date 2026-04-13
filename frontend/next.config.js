@@ -14,7 +14,7 @@ const nextConfig = {
   output: 'standalone',
   // Allow cross-origin requests in development mode
   // This prevents "Cross origin request detected" warning
-  allowedDevOrigins: ['localhost:3000'],
+  allowedDevOrigins: ['localhost:3000', '10.37.254.194'],
   // Transpile node_modules that ship modern JS syntax for iOS 16 Safari compatibility
   transpilePackages: [
     'mermaid',
@@ -130,29 +130,24 @@ const nextConfig = {
   // Note: API proxying is now handled by /api/[...path]/route.ts
   // This allows RUNTIME_INTERNAL_API_URL to be read at runtime instead of build time
 
-  // Configure cache headers to prevent Safari aggressive caching issues
+  // Disable ETag generation to prevent Safari conditional caching issues
+  // Safari may use stale ETag and receive 304 Not Modified after deployment
+  generateEtags: false,
+  // Configure cache headers for Safari compatibility
   async headers() {
     return [
       {
-        // Apply to all routes
+        // HTML pages - allow caching but require revalidation
         source: '/:path*',
         headers: [
           {
             key: 'Cache-Control',
-            value: 'no-cache, no-store, must-revalidate',
-          },
-          {
-            key: 'Pragma',
-            value: 'no-cache',
-          },
-          {
-            key: 'Expires',
-            value: '0',
+            value: 'no-cache, must-revalidate',
           },
         ],
       },
       {
-        // Static assets with hash in filename can be cached longer
+        // Static assets with hash in filename - long-term cache (immutable)
         source: '/_next/static/:path*',
         headers: [
           {
@@ -162,7 +157,7 @@ const nextConfig = {
         ],
       },
       {
-        // Public assets (fonts, images) - cache with revalidation
+        // Public assets (fonts, images) - long-term cache
         source: '/fonts/:path*',
         headers: [
           {

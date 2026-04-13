@@ -25,30 +25,15 @@ import type { KnowledgeBase } from '@/types/api'
 import type { BoundKnowledgeBaseDetail } from '@/types/task-knowledge-base'
 import type { ContextItem, KnowledgeBaseContext, TableContext } from '@/types/context'
 import { useTranslation } from '@/hooks/useTranslation'
+import { useOrganizationNamespace } from '@/hooks/useOrganizationNamespace'
 import { cn } from '@/lib/utils'
 import { formatDocumentCount } from '@/lib/i18n-helpers'
+import { getKnowledgeBaseGroup } from '@/utils/knowledge-base-grouping'
 
-// Grouped knowledge bases structure
 interface GroupedKnowledgeBases {
   personal: KnowledgeBase[]
-  group: KnowledgeBase[]
+  group: Map<string, KnowledgeBase[]> // namespace -> knowledge bases
   organization: KnowledgeBase[]
-}
-
-/**
- * Categorize knowledge base by namespace
- * - 'default' -> personal
- * - 'organization' -> organization
- * - others -> group
- */
-function categorizeKnowledgeBase(kb: KnowledgeBase): keyof GroupedKnowledgeBases {
-  if (kb.namespace === 'default') {
-    return 'personal'
-  } else if (kb.namespace === 'organization') {
-    return 'organization'
-  } else {
-    return 'group'
-  }
 }
 
 interface ContextSelectorProps {
@@ -57,6 +42,10 @@ interface ContextSelectorProps {
   selectedContexts: ContextItem[]
   onSelect: (context: ContextItem) => void
   onDeselect: (id: number | string) => void
+  /** Batch selection callback for selecting multiple contexts at once (e.g., group selection) */
+  onSelectMultiple?: (contexts: ContextItem[]) => void
+  /** Batch deselection callback for deselecting multiple contexts at once */
+  onDeselectMultiple?: (ids: (number | string)[]) => void
   children: React.ReactNode
   /** Task ID for group chat mode - if provided, shows bound knowledge bases */
   taskId?: number
@@ -132,6 +121,8 @@ export default function ContextSelector({
   selectedContexts,
   onSelect,
   onDeselect,
+  onSelectMultiple,
+  onDeselectMultiple,
   children,
   taskId,
   isGroupChat,
@@ -147,6 +138,14 @@ export default function ContextSelector({
   const [tableError, setTableError] = useState<string | null>(null)
   const [searchValue, setSearchValue] = useState('')
   const [activeTab, setActiveTab] = useState('knowledge')
+  const {
+    organizationNamespace,
+    loading: organizationNamespaceLoading,
+    error: organizationNamespaceError,
+    reload: reloadOrganizationNamespace,
+  } = useOrganizationNamespace()
+  const knowledgeBaseError =
+    error || (organizationNamespaceError ? t('knowledge:fetch_error') : null)
 
   const fetchKnowledgeBases = useCallback(async () => {
     setLoading(true)
@@ -218,27 +217,44 @@ export default function ContextSelector({
 
     const groups: GroupedKnowledgeBases = {
       personal: [],
-      group: [],
+      group: new Map(),
       organization: [],
     }
 
     for (const kb of filtered) {
-      const category = categorizeKnowledgeBase(kb)
-      groups[category].push(kb)
+      const category = getKnowledgeBaseGroup(kb.namespace, organizationNamespace)
+      if (category === 'group') {
+        // Group by namespace (group name)
+        const existing = groups.group.get(kb.namespace) || []
+        existing.push(kb)
+        groups.group.set(kb.namespace, existing)
+      } else {
+        groups[category].push(kb)
+      }
     }
 
-    // Sort each group by name
+    // Sort personal and organization by name
     groups.personal.sort((a, b) => a.name.localeCompare(b.name))
-    groups.group.sort((a, b) => a.name.localeCompare(b.name))
     groups.organization.sort((a, b) => a.name.localeCompare(b.name))
 
+    // Sort each group's knowledge bases by name
+    for (const kbs of groups.group.values()) {
+      kbs.sort((a, b) => a.name.localeCompare(b.name))
+    }
+
+    // Sort group namespaces
+    const sortedGroupEntries = Array.from(groups.group.entries()).sort((a, b) =>
+      a[0].localeCompare(b[0])
+    )
+    groups.group = new Map(sortedGroupEntries)
+
     return groups
-  }, [knowledgeBases, boundKnowledgeBases, excludeKnowledgeBaseId])
+  }, [knowledgeBases, boundKnowledgeBases, excludeKnowledgeBaseId, organizationNamespace])
 
   // Check if there are any knowledge bases to show
   const hasKnowledgeBases =
     groupedKnowledgeBases.personal.length > 0 ||
-    groupedKnowledgeBases.group.length > 0 ||
+    groupedKnowledgeBases.group.size > 0 ||
     groupedKnowledgeBases.organization.length > 0
 
   // Check if a context item is selected
@@ -246,7 +262,17 @@ export default function ContextSelector({
     return selectedContexts.some(ctx => ctx.id === id)
   }
 
-  // Handle knowledge base selection
+  // Check if all knowledge bases in a group are selected
+  const isGroupFullySelected = (kbs: KnowledgeBase[]) => {
+    return kbs.every(kb => isSelected(kb.id))
+  }
+
+  // Check if some (but not all) knowledge bases in a group are selected
+  const isGroupPartiallySelected = (kbs: KnowledgeBase[]) => {
+    const selectedCount = kbs.filter(kb => isSelected(kb.id)).length
+    return selectedCount > 0 && selectedCount < kbs.length
+  }
+
   // Handle knowledge base selection
   const handleSelect = (kb: KnowledgeBase) => {
     if (isSelected(kb.id)) {
@@ -264,6 +290,55 @@ export default function ContextSelector({
       }
       onSelect(context)
     }
+  }
+
+  // Handle group selection - select/deselect all knowledge bases in the group
+  const handleGroupSelect = (_namespace: string, kbs: KnowledgeBase[]) => {
+    const isFullySelected = isGroupFullySelected(kbs)
+
+    if (isFullySelected) {
+      // Deselect all knowledge bases in the group
+      // Use batch deselect if available to avoid closure issues
+      const idsToDeselect = kbs.filter(kb => isSelected(kb.id)).map(kb => kb.id)
+      if (onDeselectMultiple && idsToDeselect.length > 0) {
+        onDeselectMultiple(idsToDeselect)
+      } else {
+        // Fallback to individual deselect
+        kbs.forEach(kb => {
+          if (isSelected(kb.id)) {
+            onDeselect(kb.id)
+          }
+        })
+      }
+    } else {
+      // Select all unselected knowledge bases in the group
+      // Use batch select if available to avoid closure issues
+      const contextsToAdd: KnowledgeBaseContext[] = kbs
+        .filter(kb => !isSelected(kb.id))
+        .map(kb => ({
+          id: kb.id,
+          name: kb.name,
+          type: 'knowledge_base' as const,
+          description: kb.description ?? undefined,
+          retriever_name: kb.retrieval_config?.retriever_name,
+          retriever_namespace: kb.retrieval_config?.retriever_namespace,
+          document_count: kb.document_count,
+        }))
+
+      if (onSelectMultiple && contextsToAdd.length > 0) {
+        onSelectMultiple(contextsToAdd)
+      } else {
+        // Fallback to individual select
+        contextsToAdd.forEach(context => {
+          onSelect(context)
+        })
+      }
+    }
+  }
+
+  const handleKnowledgeBaseRetry = () => {
+    reloadOrganizationNamespace()
+    fetchKnowledgeBases()
   }
 
   // Handle bound knowledge base selection (from group chat)
@@ -368,15 +443,15 @@ export default function ContextSelector({
                 )}
               />
               <CommandList className="min-h-[36px] max-h-[300px] overflow-y-auto flex-1">
-                {loading ? (
+                {loading || organizationNamespaceLoading ? (
                   <div className="py-4 px-3 text-center text-sm text-text-muted">
                     {t('common:actions.loading')}
                   </div>
-                ) : error ? (
+                ) : knowledgeBaseError ? (
                   <div className="py-4 px-3 text-center">
-                    <p className="text-sm text-red-500 mb-2">{error}</p>
+                    <p className="text-sm text-red-500 mb-2">{knowledgeBaseError}</p>
                     <button
-                      onClick={fetchKnowledgeBases}
+                      onClick={handleKnowledgeBaseRetry}
                       className="text-xs text-primary hover:underline"
                     >
                       {t('common:actions.retry')}
@@ -488,9 +563,8 @@ export default function ContextSelector({
                         ))}
                       </CommandGroup>
                     )}
-
-                    {/* Group Knowledge Bases */}
-                    {groupedKnowledgeBases.group.length > 0 && (
+                    {/* Group Knowledge Bases - grouped by namespace with nested style */}
+                    {groupedKnowledgeBases.group.size > 0 && (
                       <>
                         {groupedKnowledgeBases.personal.length > 0 && <CommandSeparator />}
                         <CommandGroup
@@ -501,14 +575,50 @@ export default function ContextSelector({
                             </div>
                           }
                         >
-                          {groupedKnowledgeBases.group.map(kb => (
-                            <KnowledgeBaseItem
-                              key={kb.id}
-                              kb={kb}
-                              isSelected={isSelected(kb.id)}
-                              onSelect={() => handleSelect(kb)}
-                            />
-                          ))}
+                          {Array.from(groupedKnowledgeBases.group.entries()).map(
+                            ([namespace, kbs]) => {
+                              const groupFullySelected = isGroupFullySelected(kbs)
+                              const groupPartiallySelected = isGroupPartiallySelected(kbs)
+                              return (
+                                <React.Fragment key={namespace}>
+                                  {/* Group name as clickable sub-heading */}
+                                  <CommandItem
+                                    value={`group:${namespace}`}
+                                    onSelect={() => handleGroupSelect(namespace, kbs)}
+                                    className={cn(
+                                      'group cursor-pointer select-none',
+                                      'px-3 py-1.5 text-xs font-medium text-text-secondary',
+                                      'bg-muted/50 rounded-md mx-1 my-1',
+                                      'data-[selected=true]:bg-primary/10 data-[selected=true]:text-primary',
+                                      'aria-selected:bg-hover',
+                                      '!flex !flex-row !items-center !justify-between !gap-2'
+                                    )}
+                                  >
+                                    <span>{namespace}</span>
+                                    <Check
+                                      className={cn(
+                                        'h-3.5 w-3.5 shrink-0',
+                                        groupFullySelected
+                                          ? 'opacity-100 text-primary'
+                                          : groupPartiallySelected
+                                            ? 'opacity-100 text-primary/50'
+                                            : 'opacity-0'
+                                      )}
+                                    />
+                                  </CommandItem>
+                                  {/* Knowledge bases under this group */}
+                                  {kbs.map(kb => (
+                                    <KnowledgeBaseItem
+                                      key={kb.id}
+                                      kb={kb}
+                                      isSelected={isSelected(kb.id)}
+                                      onSelect={() => handleSelect(kb)}
+                                    />
+                                  ))}
+                                </React.Fragment>
+                              )
+                            }
+                          )}
                         </CommandGroup>
                       </>
                     )}
@@ -517,7 +627,7 @@ export default function ContextSelector({
                     {groupedKnowledgeBases.organization.length > 0 && (
                       <>
                         {(groupedKnowledgeBases.personal.length > 0 ||
-                          groupedKnowledgeBases.group.length > 0) && <CommandSeparator />}
+                          groupedKnowledgeBases.group.size > 0) && <CommandSeparator />}
                         <CommandGroup
                           heading={
                             <div className="flex items-center gap-1.5 text-xs font-medium text-text-muted">

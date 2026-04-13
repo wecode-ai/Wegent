@@ -9,14 +9,14 @@ It decouples pet logic from chat and memory modules, maintaining low coupling
 between modules.
 
 Event handlers:
-- ChatCompletedEvent: Updates pet experience when chat is completed
+- TaskCompletedEvent: Updates pet experience when task is completed successfully
 - MemoryCreatedEvent: Updates pet appearance traits based on memory content
 """
 
 import logging
 from typing import List
 
-from app.core.events import ChatCompletedEvent, MemoryCreatedEvent, get_event_bus
+from app.core.events import MemoryCreatedEvent, TaskCompletedEvent, get_event_bus
 from app.db.session import SessionLocal
 from app.schemas.pet import STAGE_NAMES
 from app.services.pet.manager import pet_service
@@ -24,18 +24,27 @@ from app.services.pet.manager import pet_service
 logger = logging.getLogger(__name__)
 
 
-async def handle_chat_completed(event: ChatCompletedEvent) -> None:
-    """Handle chat completed event to update pet experience.
+async def handle_task_completed_for_pet(event: TaskCompletedEvent) -> None:
+    """Handle task completed event to update pet experience.
 
     This handler:
-    1. Calls PetService.add_chat_experience to update the pet's experience
-    2. Emits WebSocket events to notify the frontend about experience gain
-    3. If the pet evolved, emits a stage evolution event
+    1. Only processes COMPLETED status (not FAILED or CANCELLED)
+    2. Calls PetService.add_chat_experience to update the pet's experience
+    3. Emits WebSocket events to notify the frontend about experience gain
+    4. If the pet evolved, emits a stage evolution event
 
     Args:
-        event: ChatCompletedEvent with user_id
+        event: TaskCompletedEvent with user_id, status, etc.
     """
-    logger.info("[PET] handle_chat_completed called: user_id=%d", event.user_id)
+    # Only update pet experience for successfully completed tasks
+    if event.status != "COMPLETED":
+        return
+
+    logger.info(
+        "[PET] handle_task_completed_for_pet called: user_id=%d, task_id=%d",
+        event.user_id,
+        event.task_id,
+    )
     try:
         # Use ExtendedEventEmitter for pet events
         from app.services.chat.webpage_ws_extended_emitter import (
@@ -157,9 +166,9 @@ def register_pet_event_handlers() -> None:
     """
     event_bus = get_event_bus()
 
-    # Subscribe to chat completed events
-    event_bus.subscribe(ChatCompletedEvent, handle_chat_completed)
-    logger.info("[PET] Subscribed to ChatCompletedEvent")
+    # Subscribe to task completed events for pet experience updates
+    event_bus.subscribe(TaskCompletedEvent, handle_task_completed_for_pet)
+    logger.info("[PET] Subscribed to TaskCompletedEvent for pet experience")
 
     # Subscribe to memory created events
     event_bus.subscribe(MemoryCreatedEvent, handle_memory_created)

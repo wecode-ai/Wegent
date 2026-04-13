@@ -43,7 +43,26 @@ export interface RuntimeConfig {
   otelServiceName: string
   /** OpenTelemetry collector endpoint */
   otelCollectorEndpoint: string
+  /** Bind group description text (supports multiple paragraphs separated by |) */
+  bindGroupDesc: string
+  /** Bind group steps configuration (JSON string with array of {title, hint}) */
+  bindGroupSteps: string
+  /** Application version (e.g. "0.1.5"), "dev" in local development */
+  appVersion: string
 }
+
+/** Default bind group steps configuration */
+export const DEFAULT_BIND_GROUP_STEPS = JSON.stringify({
+  variables: { botName: '机器人' },
+  steps: [
+    {
+      title: '添加{{botName}}到群聊',
+      hint: '打开“群设置” → 选择“机器人” → 选择“添加机器人” → 搜索并添加{{botName}}',
+    },
+    { title: '点击开始绑定', hint: '' },
+    { title: '在群聊中 @{{botName}} 发送消息', hint: '' },
+  ],
+})
 
 // Cache for runtime config to avoid repeated API calls
 let runtimeConfigCache: RuntimeConfig | null = null
@@ -65,7 +84,9 @@ export const fetchRuntimeConfig = async (): Promise<RuntimeConfig> => {
   }
 
   // Fetch config from API
-  runtimeConfigPromise = fetch('/runtime-config')
+  runtimeConfigPromise = fetch('/runtime-config', {
+    ...(process.env.NODE_ENV === 'development' && { cache: 'no-store' as RequestCache }),
+  })
     .then(res => {
       if (!res.ok) {
         throw new Error('Failed to fetch runtime config')
@@ -97,6 +118,9 @@ export const fetchRuntimeConfig = async (): Promise<RuntimeConfig> => {
         otelServiceName: process.env.NEXT_PUBLIC_OTEL_SERVICE_NAME || 'wegent-frontend',
         otelCollectorEndpoint:
           process.env.NEXT_PUBLIC_OTEL_COLLECTOR_ENDPOINT || 'http://localhost:4318',
+        bindGroupDesc: process.env.NEXT_PUBLIC_BIND_GROUP_DESC || '',
+        bindGroupSteps: process.env.NEXT_PUBLIC_BIND_GROUP_STEPS || DEFAULT_BIND_GROUP_STEPS,
+        appVersion: process.env.NEXT_PUBLIC_APP_VERSION || 'dev',
       }
       runtimeConfigCache = fallback
       return fallback
@@ -134,6 +158,9 @@ export const getRuntimeConfigSync = (): RuntimeConfig => {
     otelServiceName: process.env.NEXT_PUBLIC_OTEL_SERVICE_NAME || 'wegent-frontend',
     otelCollectorEndpoint:
       process.env.NEXT_PUBLIC_OTEL_COLLECTOR_ENDPOINT || 'http://localhost:4318',
+    bindGroupDesc: process.env.NEXT_PUBLIC_BIND_GROUP_DESC || '',
+    bindGroupSteps: process.env.NEXT_PUBLIC_BIND_GROUP_STEPS || DEFAULT_BIND_GROUP_STEPS,
+    appVersion: process.env.NEXT_PUBLIC_APP_VERSION || 'dev',
   }
 }
 
