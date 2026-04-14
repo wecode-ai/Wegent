@@ -5,7 +5,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import { useParams, useRouter } from 'next/navigation'
+import { useRouter } from 'next/navigation'
 import { ArrowLeft } from 'lucide-react'
 import TopNavigation from '@/features/layout/TopNavigation'
 import { TaskSidebar, SearchDialog } from '@/features/tasks/components/sidebar'
@@ -32,15 +32,15 @@ import {
  * - Full-screen document list
  * - Touch-friendly controls (min 44px targets)
  */
-export function KnowledgeBaseClassicPageMobile() {
+interface Props {
+  knowledgeBaseId: number
+  /** Initial document path to auto-open (from virtual URL path segments) */
+  initialDocPath?: string
+}
+
+export function KnowledgeBaseClassicPageMobile({ knowledgeBaseId, initialDocPath }: Props) {
   const { t } = useTranslation('knowledge')
   const router = useRouter()
-  const params = useParams()
-
-  // Parse knowledge base ID from URL
-  const knowledgeBaseId = params.knowledgeBaseId
-    ? parseInt(params.knowledgeBaseId as string, 10)
-    : null
 
   // Fetch knowledge base details
   const {
@@ -48,19 +48,19 @@ export function KnowledgeBaseClassicPageMobile() {
     loading: kbLoading,
     error: kbError,
   } = useKnowledgeBaseDetail({
-    knowledgeBaseId: knowledgeBaseId || 0,
-    autoLoad: !!knowledgeBaseId,
+    knowledgeBaseId,
+    autoLoad: true,
   })
 
   const { myPermission, fetchMyPermission } = useKnowledgePermissions({
-    kbId: knowledgeBaseId || 0,
+    kbId: knowledgeBaseId,
   })
 
   useEffect(() => {
-    if (knowledgeBase && knowledgeBaseId) {
+    if (knowledgeBase) {
       fetchMyPermission()
     }
-  }, [knowledgeBase, knowledgeBaseId, fetchMyPermission])
+  }, [knowledgeBase, fetchMyPermission])
 
   // User state
   const { user } = useUser()
@@ -180,6 +180,7 @@ export function KnowledgeBaseClassicPageMobile() {
             knowledgeBase={knowledgeBase}
             canUpload={canUploadDocuments}
             canManageAllDocuments={canManageKb}
+            initialDocPath={initialDocPath}
           />
         </div>
       </div>

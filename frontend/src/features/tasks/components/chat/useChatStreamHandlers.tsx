@@ -116,6 +116,7 @@ export interface ChatStreamHandlers {
   /** Pending task ID - can be tempTaskId (negative) or taskId (positive) before selectedTaskDetail updates */
   pendingTaskId: number | null
   isStreaming: boolean
+  isAwaitingResponseStart: boolean
   isSubtaskStreaming: boolean
   isStopping: boolean
   hasPendingUserMessage: boolean
@@ -230,6 +231,7 @@ export function useChatStreamHandlers({
   // Local state
   const [pendingTaskId, setPendingTaskId] = useState<number | null>(null)
   const [localPendingMessage, setLocalPendingMessage] = useState<string | null>(null)
+  const [isAwaitingResponseStart, setIsAwaitingResponseStart] = useState(false)
   const [isCancelling, setIsCancelling] = useState(false)
 
   // Refs
@@ -244,6 +246,7 @@ export function useChatStreamHandlers({
   const resetStreamingState = useCallback(() => {
     setLocalPendingMessage(null)
     setPendingTaskId(null)
+    setIsAwaitingResponseStart(false)
   }, [])
 
   // Get current display task ID
@@ -269,6 +272,12 @@ export function useChatStreamHandlers({
   // Alias for backward compatibility - both refer to the same state machine value
   const isSubtaskStreaming = isStreaming
   const isStopping = taskState?.isStopping || false
+
+  useEffect(() => {
+    if (isMachineStreaming || selectedTaskDetail?.status === 'RUNNING') {
+      setIsAwaitingResponseStart(false)
+    }
+  }, [isMachineStreaming, selectedTaskDetail?.status])
   // Check for pending user messages
   const hasPendingUserMessage = useMemo(() => {
     if (localPendingMessage) return true
@@ -477,6 +486,7 @@ export function useChatStreamHandlers({
       }
 
       setIsLoading(true)
+      setIsAwaitingResponseStart(!(selectedTaskDetail?.is_group_chat || false))
 
       // Set local pending state immediately
       setLocalPendingMessage(message)
@@ -702,6 +712,10 @@ export function useChatStreamHandlers({
           setPendingTaskId(tempTaskId)
         }
 
+        if (selectedTaskDetail?.id) {
+          refreshSelectedTaskDetail(false)
+        }
+
         setTimeout(() => scrollToBottom(true), 0)
       } catch (err) {
         handleSendError(err as Error, message)
@@ -727,6 +741,7 @@ export function useChatStreamHandlers({
       enableDeepThinking,
       enableClarification,
       refreshTasks,
+      refreshSelectedTaskDetail,
       searchParams,
       router,
       pathname,
@@ -801,6 +816,7 @@ export function useChatStreamHandlers({
       }
 
       setIsLoading(true)
+      setIsAwaitingResponseStart(!(selectedTaskDetail?.is_group_chat || false))
 
       // Set local pending state immediately
       setLocalPendingMessage(message)
@@ -949,6 +965,10 @@ export function useChatStreamHandlers({
           setPendingTaskId(tempTaskId)
         }
 
+        if (selectedTaskDetail?.id) {
+          refreshSelectedTaskDetail(false)
+        }
+
         setTimeout(() => scrollToBottom(true), 0)
       } catch (err) {
         handleSendError(err as Error, message)
@@ -966,6 +986,7 @@ export function useChatStreamHandlers({
       enableDeepThinking,
       enableClarification,
       refreshTasks,
+      refreshSelectedTaskDetail,
       searchParams,
       router,
       showRepositorySelector,
@@ -1118,6 +1139,7 @@ export function useChatStreamHandlers({
     // Stream state
     pendingTaskId,
     isStreaming,
+    isAwaitingResponseStart,
     isSubtaskStreaming,
     isStopping,
     hasPendingUserMessage,

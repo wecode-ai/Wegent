@@ -86,6 +86,7 @@ export interface MobileChatInputControlsProps {
   // State flags
   isLoading: boolean
   isStreaming: boolean
+  isAwaitingResponseStart?: boolean
   isStopping: boolean
   hasMessages: boolean
   shouldHideChatInput: boolean
@@ -145,6 +146,7 @@ export function MobileChatInputControls({
   onFileSelect,
   isLoading,
   isStreaming,
+  isAwaitingResponseStart = false,
   isStopping,
   hasMessages,
   shouldHideChatInput,
@@ -175,7 +177,7 @@ export function MobileChatInputControls({
       hasNoTeams ||
       (shouldHideChatInput ? false : !taskInputMessage.trim())
 
-    if (isStreaming || isStopping) {
+    if (isStreaming || isAwaitingResponseStart || isStopping) {
       if (isStopping) {
         return (
           <ActionButton

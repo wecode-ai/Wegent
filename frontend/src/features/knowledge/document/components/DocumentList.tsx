@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useState, useMemo, useEffect, useRef } from 'react'
+import { useState, useMemo, useEffect, useRef, Suspense } from 'react'
 import {
   ArrowLeft,
   Upload,
@@ -40,6 +40,48 @@ import { toast } from '@/hooks/use-toast'
 import type { KnowledgeBase, KnowledgeDocument, SplitterConfig } from '@/types/knowledge'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useUser } from '@/features/common/UserContext'
+import { useSearchParams, useRouter, usePathname } from 'next/navigation'
+
+/**
+ * Inner component that uses useSearchParams (must be inside Suspense boundary).
+ * Reads the ?doc= URL parameter and auto-opens the matching document.
+ */
+function DocAutoOpener({
+  documents,
+  loading,
+  onOpen,
+}: {
+  documents: KnowledgeDocument[]
+  loading: boolean
+  onOpen: (doc: KnowledgeDocument) => void
+}) {
+  const searchParams = useSearchParams()
+  const router = useRouter()
+  const pathname = usePathname()
+  const [done, setDone] = useState(false)
+
+  useEffect(() => {
+    if (done || loading || documents.length === 0) return
+    const docParam = searchParams.get('doc')
+    if (!docParam) {
+      setDone(true)
+      return
+    }
+    // Find document by name (exact match)
+    const targetDoc = documents.find(doc => doc.name === docParam)
+    if (targetDoc) {
+      onOpen(targetDoc)
+      // Remove the ?doc= param from URL without triggering navigation
+      const params = new URLSearchParams(searchParams.toString())
+      params.delete('doc')
+      const newSearch = params.toString()
+      router.replace(pathname + (newSearch ? `?${newSearch}` : ''), { scroll: false })
+    }
+    setDone(true)
+  }, [done, loading, documents, searchParams, onOpen, router, pathname])
+
+  return null
+}
 
 /** Group info for breadcrumb display */
 export interface KbGroupInfo {
@@ -65,6 +107,10 @@ interface DocumentListProps {
   groupInfo?: KbGroupInfo
   /** Callback when group name is clicked */
   onGroupClick?: (groupId: string, groupType?: string) => void
+  /** Initial document path to auto-open (from virtual URL path segments) */
+  initialDocPath?: string
+  /** Whether this KB belongs to an organization-level namespace (affects URL format in DocumentDetailDialog) */
+  isOrganization?: boolean
 }
 
 type SortField = 'name' | 'size' | 'date'
@@ -81,6 +127,8 @@ export function DocumentList({
   headerActions,
   groupInfo,
   onGroupClick,
+  initialDocPath,
+  isOrganization = false,
 }: DocumentListProps) {
   const { t } = useTranslation('knowledge')
   const { user } = useUser()
@@ -105,6 +153,8 @@ export function DocumentList({
   const [showSearchPopover, setShowSearchPopover] = useState(false)
   // Track if initial selection has been done
   const [initialSelectionDone, setInitialSelectionDone] = useState(false)
+  // Track if initialDocPath has been handled
+  const [initialDocPathHandled, setInitialDocPathHandled] = useState(false)
   // Track which document is being refreshed
   const [refreshingDocId, setRefreshingDocId] = useState<number | null>(null)
   // Track which document is being reindexed
@@ -161,6 +211,17 @@ export function DocumentList({
       }
     }
   }
+
+  // Auto-open document from initialDocPath prop (from virtual URL path segments)
+  // This runs once when documents are loaded, without modifying the URL
+  useEffect(() => {
+    if (!initialDocPath || initialDocPathHandled || loading || documents.length === 0) return
+    const targetDoc = documents.find(doc => doc.name === initialDocPath)
+    if (targetDoc) {
+      setViewingDoc(targetDoc)
+    }
+    setInitialDocPathHandled(true)
+  }, [initialDocPath, initialDocPathHandled, loading, documents])
 
   // Default select all documents when documents load (for notebook mode)
   useEffect(() => {
@@ -811,6 +872,11 @@ export function DocumentList({
         </div>
       )}
 
+      {/* Auto-open document from ?doc= URL parameter (wrapped in Suspense for useSearchParams) */}
+      <Suspense fallback={null}>
+        <DocAutoOpener documents={documents} loading={loading} onOpen={setViewingDoc} />
+      </Suspense>
+
       {/* Dialogs */}
       <DocumentDetailDialog
         open={!!viewingDoc}
@@ -819,8 +885,10 @@ export function DocumentList({
         knowledgeBaseId={knowledgeBase.id}
         kbType={knowledgeBase.kb_type}
         canEdit={viewingDoc ? canManageDocument(viewingDoc) : false}
+        knowledgeBaseName={knowledgeBase.name}
+        knowledgeBaseNamespace={knowledgeBase.namespace || 'default'}
+        isOrganization={isOrganization}
       />
-
       <DocumentUpload
         open={showUpload}
         onOpenChange={setShowUpload}

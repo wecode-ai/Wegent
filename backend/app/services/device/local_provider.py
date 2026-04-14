@@ -29,6 +29,10 @@ from app.schemas.device import (
     DeviceType,
 )
 from app.services.device.base_provider import BaseDeviceProvider
+from app.services.device.display_name import (
+    resolve_device_display_name,
+    set_device_display_name,
+)
 from app.services.device.version_service import executor_version_service
 
 logger = logging.getLogger(__name__)
@@ -108,7 +112,8 @@ class LocalDeviceProvider(BaseDeviceProvider):
         if device_kind:
             # Update existing device (reactivate if soft-deleted)
             device_json = device_kind.json.copy()
-            device_json["spec"]["displayName"] = name
+            persisted_display_name = resolve_device_display_name(device_json, name)
+            set_device_display_name(device_json, persisted_display_name)
             device_json["spec"]["deviceType"] = DeviceType.LOCAL.value
             device_json["spec"]["connectionMode"] = DeviceConnectionMode.WEBSOCKET.value
             if capabilities is not None:
@@ -151,11 +156,9 @@ class LocalDeviceProvider(BaseDeviceProvider):
                 "metadata": {
                     "name": device_id,
                     "namespace": "default",
-                    "displayName": name,
                 },
                 "spec": {
                     "deviceId": device_id,
-                    "displayName": name,
                     "deviceType": DeviceType.LOCAL.value,
                     "connectionMode": DeviceConnectionMode.WEBSOCKET.value,
                     "isDefault": is_first_device,
@@ -166,6 +169,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
                     "state": "Available",
                 },
             }
+            set_device_display_name(device_json, name)
 
             device_kind = Kind(
                 user_id=user_id,

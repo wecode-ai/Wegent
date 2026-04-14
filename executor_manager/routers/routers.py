@@ -1231,6 +1231,14 @@ async def prepare_executor(request: ExecutionRequest, http_request: Request):
         if not result:
             raise HTTPException(status_code=500, detail="No executor result returned")
         if result.get("status") != "success":
+            logger.error(
+                "[executors/prepare] Failed request: task_id=%s, subtask_id=%s, "
+                "executor_name=%s, error=%s",
+                request.task_id,
+                request.subtask_id,
+                result.get("executor_name"),
+                result.get("error_msg", "Failed to prepare executor"),
+            )
             raise HTTPException(
                 status_code=500,
                 detail=result.get("error_msg", "Failed to prepare executor"),

@@ -274,13 +274,21 @@ async def _recover_executor(
     from .recovery_service import recovery_service
 
     try:
-        success = await recovery_service.recover(
+        recovered_info = await recovery_service.recover(
             db=db,
             subtask=subtask,
             task=task,
             request=request,
         )
-        return success
+        if recovered_info:
+            # Update subtask with new executor info
+            subtask.executor_name = recovered_info["executor_name"]
+            subtask.executor_namespace = recovered_info["executor_namespace"]
+            subtask.executor_deleted_at = False
+            db.add(subtask)
+            db.commit()
+            return True
+        return False
     except RuntimeError:
         raise
     except Exception as e:

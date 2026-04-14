@@ -27,6 +27,7 @@ from app.services.chat.task_default_knowledge_bases import (
 )
 from app.services.readers import KindType, kindReader
 from app.services.task_skill_selection import build_task_skill_labels
+from app.services.task_status import mark_task_pending
 
 logger = logging.getLogger(__name__)
 
@@ -192,10 +193,10 @@ def check_task_status(db: Session, task: TaskResource) -> None:
         task: Task resource to check
 
     Raises:
-        HTTPException: If task is still running
+        HTTPException: If task is still running or pending
     """
     task_crd = Task.model_validate(task.json)
-    if task_crd.status and task_crd.status.status == "RUNNING":
+    if task_crd.status and task_crd.status.status in ("RUNNING", "PENDING"):
         raise HTTPException(status_code=400, detail="Task is still running")
 
 
@@ -462,7 +463,7 @@ def create_assistant_subtask(
     Returns:
         Created Subtask
     """
-    # Resolve executor_name from previous subtasks for container reuse
+    # Resolve executor metadata from previous subtasks for container reuse or recovery.
     executor_name = ""
     executor_namespace = ""
     executor_deleted_at = False
@@ -692,6 +693,8 @@ async def create_task_and_subtasks(
         task, subtask_user_id = get_task_with_access_check(db, task_id, user.id)
         if task:
             check_task_status(db, task)
+            if should_trigger_ai:
+                mark_task_pending(task)
             # Update modelId in existing task if provided
             if params.model_id:
                 from sqlalchemy.orm.attributes import flag_modified

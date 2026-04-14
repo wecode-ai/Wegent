@@ -471,6 +471,7 @@ export interface KBShareInfo {
 export interface PublicKnowledgeBaseResponse {
   id: number
   name: string
+  namespace: string
   description?: string
   creator_id: number
   creator_name: string

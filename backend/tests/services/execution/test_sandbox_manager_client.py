@@ -7,6 +7,7 @@
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
 from app.services.execution import get_executor_runtime_client
@@ -92,3 +93,46 @@ async def test_prepare_executor_uses_prepare_endpoint():
         client.post.await_args.args[0]
         == "http://localhost:8001/executor-manager/executors/prepare"
     )
+
+
+@pytest.mark.asyncio
+async def test_prepare_executor_returns_error_detail_from_http_response():
+    """Executor preparation should preserve structured failure details."""
+    request = ExecutionRequest(
+        task_id=22,
+        subtask_id=11,
+        user={"id": 2, "name": "user7"},
+        user_id=2,
+        user_name="user7",
+        bot=[{"shell_type": "ClaudeCode"}],
+    )
+    response = MagicMock()
+    response.status_code = 500
+    response.headers = {"X-Request-ID": "req-123"}
+    response.json.return_value = {
+        "detail": "Kubernetes API error: webhook refused",
+    }
+    response.raise_for_status.side_effect = httpx.HTTPStatusError(
+        "boom",
+        request=MagicMock(),
+        response=response,
+    )
+
+    client = AsyncMock()
+    client.__aenter__.return_value = client
+    client.__aexit__.return_value = None
+    client.post.return_value = response
+
+    with (
+        patch(
+            "app.core.config.settings",
+            SimpleNamespace(EXECUTOR_MANAGER_URL="http://localhost:8001"),
+        ),
+        patch("httpx.AsyncClient", return_value=client),
+    ):
+        executor, error = await get_executor_runtime_client().prepare_executor(request)
+
+    assert executor is None
+    assert error is not None
+    assert "Kubernetes API error: webhook refused" in error
+    assert "request_id=req-123" in error

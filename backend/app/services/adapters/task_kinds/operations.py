@@ -31,6 +31,7 @@ from app.services.adapters.executor_kinds import executor_kinds_service
 from app.services.adapters.pipeline_stage import pipeline_stage_service
 from app.services.readers.kinds import KindType, kindReader
 from app.services.task_skill_selection import build_task_skill_labels
+from app.services.task_status import mark_task_pending
 
 from .converters import convert_to_task_dict
 from .helpers import create_subtasks
@@ -188,12 +189,7 @@ class TaskOperationsMixin:
                 detail=f"Team '{team_name}' not found, it may be deleted or not shared",
             )
 
-        # Update existing task status to PENDING
-        if task_crd.status:
-            task_crd.status.status = "PENDING"
-            task_crd.status.progress = 0
-        existing_task.json = task_crd.model_dump(mode="json", exclude_none=True)
-        existing_task.updated_at = datetime.now()
+        mark_task_pending(existing_task)
 
         return existing_task, team
 

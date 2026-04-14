@@ -9,20 +9,21 @@ When a user sends a message to a task whose executor has been deleted
 (executor_deleted_at=True), this service:
 1. Recreates the Pod with skip_git_clone=true (to avoid git clone conflict)
 2. Restores workspace files from archive (if available)
-3. Resets executor_deleted_at=False
-4. Allows execution to proceed normally
+3. Returns new executor info to caller
+4. Caller should update current subtask with new executor info
 
 If archive is not available or expired, the Pod is created normally
 with git clone enabled.
 """
 
 import logging
-from typing import Optional
+from typing import Dict, Optional
 
 from sqlalchemy.orm import Session
 
-from app.models.subtask import Subtask
+from app.models.subtask import Subtask, SubtaskStatus
 from app.models.task import TaskResource
+from app.services.task_status import mark_task_failed
 from app.services.workspace_archive import archive_service
 from shared.models import ExecutionRequest
 
@@ -39,13 +40,13 @@ class ExecutorRecoveryService:
     1. Check if archive exists and is valid (not expired)
     2. Create Pod with skip_git_clone=true if archive exists
     3. Restore workspace from archive
-    4. Reset executor_deleted_at=False
-    5. Return success so execution can proceed
+    4. Return new executor info to caller
+    5. Caller updates current subtask with new executor info
 
     If archive is not available:
     1. Create Pod normally (with git clone)
-    2. Reset executor_deleted_at=False
-    3. Return success
+    2. Return new executor info to caller
+    3. Caller updates current subtask with new executor info
     """
 
     def _resolve_executor_namespace(
@@ -68,23 +69,40 @@ class ExecutorRecoveryService:
 
         return "default"
 
+    def _persist_prepare_failure(
+        self,
+        db: Session,
+        subtask: Subtask,
+        task: TaskResource,
+        error_message: str,
+    ) -> None:
+        """Persist executor prepare failures for later inspection and UI display."""
+        subtask.error_message = error_message
+        subtask.status = SubtaskStatus.FAILED
+        subtask.progress = 100
+        mark_task_failed(task, error_message)
+        db.add(subtask)
+        db.add(task)
+        db.commit()
+
     async def recover(
         self,
         db: Session,
         subtask: Subtask,
         task: TaskResource,
         request: ExecutionRequest,
-    ) -> bool:
+    ) -> Optional[Dict[str, str]]:
         """Recover executor Pod for a task.
 
         Args:
             db: Database session
-            subtask: Subtask with executor_deleted_at=True
+            subtask: Subtask with executor_deleted_at=True (used for workspace restore)
             task: Parent task
             request: Execution request carrying the normal executor config
 
         Returns:
-            True if recovery successful, False otherwise
+            Dict with executor_name and executor_namespace if successful,
+            None otherwise. Caller should use this info to update current subtask.
         """
         task_id = task.id
         logger.info(
@@ -115,23 +133,35 @@ class ExecutorRecoveryService:
                     f"[RecoveryService] Archive found for task {task_id}, "
                     f"will restore from archive"
                 )
-                return await self._recover_with_archive(
+                result = await self._recover_with_archive(
                     db=db,
                     subtask=subtask,
                     task=task,
                     request=request,
                 )
+                if result:
+                    return {
+                        "executor_name": request.executor_name,
+                        "executor_namespace": request.executor_namespace,
+                    }
+                return None
             else:
                 logger.info(
                     f"[RecoveryService] No archive for task {task_id}, "
                     "will create Pod with git clone"
                 )
-                return await self._recover_without_archive(
+                result = await self._recover_without_archive(
                     db=db,
                     subtask=subtask,
                     task=task,
                     request=request,
                 )
+                if result:
+                    return {
+                        "executor_name": request.executor_name,
+                        "executor_namespace": request.executor_namespace,
+                    }
+                return None
 
         except RuntimeError:
             raise
@@ -140,7 +170,7 @@ class ExecutorRecoveryService:
                 f"[RecoveryService] Error recovering task {task_id}: {e}",
                 exc_info=True,
             )
-            return False
+            return None
 
     async def _recover_with_archive(
         self,
@@ -177,6 +207,8 @@ class ExecutorRecoveryService:
                 logger.error(
                     f"[RecoveryService] Failed to prepare executor for task {task_id}: {error}"
                 )
+                if error:
+                    self._persist_prepare_failure(db, subtask, task, error)
                 return False
 
             executor_name = executor.container_name
@@ -199,14 +231,11 @@ class ExecutorRecoveryService:
                     "continuing with empty workspace"
                 )
 
-            # Update subtask with new executor info and reset deleted flag
-            subtask.executor_name = executor_name
-            subtask.executor_namespace = executor_namespace
-            subtask.executor_deleted_at = False
+            # Set executor info in request for caller to use
+            # Note: We do NOT update the subtask here - caller should update
+            # the current subtask with this info to preserve history
             request.executor_name = executor_name
             request.executor_namespace = executor_namespace
-            db.add(subtask)
-            db.commit()
 
             logger.info(
                 f"[RecoveryService] Successfully recovered task {task_id} with archive, "
@@ -256,6 +285,8 @@ class ExecutorRecoveryService:
                 logger.error(
                     f"[RecoveryService] Failed to prepare executor for task {task_id}: {error}"
                 )
+                if error:
+                    self._persist_prepare_failure(db, subtask, task, error)
                 return False
 
             executor_name = executor.container_name
@@ -264,14 +295,11 @@ class ExecutorRecoveryService:
                 previous_namespace=subtask.executor_namespace,
             )
 
-            # Update subtask with new executor info and reset deleted flag
-            subtask.executor_name = executor_name
-            subtask.executor_namespace = executor_namespace
-            subtask.executor_deleted_at = False
+            # Set executor info in request for caller to use
+            # Note: We do NOT update the subtask here - caller should update
+            # the current subtask with this info to preserve history
             request.executor_name = executor_name
             request.executor_namespace = executor_namespace
-            db.add(subtask)
-            db.commit()
 
             logger.info(
                 f"[RecoveryService] Successfully recovered task {task_id} without archive, "
