@@ -303,11 +303,12 @@ class DingTalkDocsService:
             }
 
         # Call MCP tool to get document info
+        # Note: DingTalk MCP get_document_info only requires nodeId parameter
         try:
             result = await self._call_dingtalk_mcp_tool(
                 mcp_config,
                 tool_name="get_document_info",
-                arguments={"doc_id": doc_id, "url": doc_url},
+                arguments={"nodeId": doc_id},
             )
 
             # Map MCP result to our format
@@ -344,6 +345,14 @@ class DingTalkDocsService:
     ) -> Dict[str, Any]:
         """Download DingTalk document content via MCP.
 
+        According to DingTalk MCP documentation:
+        1. First call get_document_info to get metadata (contentType, extension)
+        2. Then choose the appropriate tool based on contentType and extension:
+           - contentType=ALIDOC, extension=adoc → get_document_content(nodeId)
+           - contentType=ALIDOC, extension=axls → dingtalk_table MCP
+           - contentType=ALIDOC, extension=able → dingtalk_ai_table MCP
+           - contentType≠ALIDOC and nodeType=file → download_file(nodeId)
+
         Args:
             doc_url: DingTalk document URL
             user_preferences: User's preferences JSON string (for MCP config)
@@ -373,37 +382,92 @@ class DingTalkDocsService:
                 "Please configure DingTalk Docs MCP in user settings."
             )
 
-        # Call MCP tool to download document content
         try:
-            result = await self._call_dingtalk_mcp_tool(
+            # Step 1: Get document info to determine content type
+            doc_info = await self._call_dingtalk_mcp_tool(
                 mcp_config,
-                tool_name="download_document",
-                arguments={
-                    "doc_id": doc_id,
-                    "url": doc_url,
-                    "format": export_format,
-                },
+                tool_name="get_document_info",
+                arguments={"nodeId": doc_id},
             )
 
-            content = result.get("content", "")
+            title = doc_info.get("title", f"DingTalkDoc_{doc_id[:8]}")
+            content_type = doc_info.get("contentType", "")
+            extension = doc_info.get("extension", "")
+            node_type = doc_info.get("nodeType", "")
+            modified_time = doc_info.get("modifiedTime", datetime.now().isoformat())
+
+            logger.info(
+                f"Document info: contentType={content_type}, extension={extension}, nodeType={node_type}"
+            )
+
+            # Step 2: Choose appropriate tool based on contentType and extension
+            content = ""
+
+            if content_type == "ALIDOC" and extension == "adoc":
+                # DingTalk online document - use get_document_content
+                result = await self._call_dingtalk_mcp_tool(
+                    mcp_config,
+                    tool_name="get_document_content",
+                    arguments={"nodeId": doc_id},
+                )
+                content = result.get("content", "")
+
+            elif content_type == "ALIDOC" and extension == "axls":
+                # DingTalk spreadsheet - requires dingtalk_table MCP
+                raise ValueError(
+                    "DingTalk spreadsheet documents are not supported yet. "
+                    "Please use dingtalk_table MCP for spreadsheets."
+                )
+
+            elif content_type == "ALIDOC" and extension == "able":
+                # DingTalk AI table - requires dingtalk_ai_table MCP
+                raise ValueError(
+                    "DingTalk AI table documents are not supported yet. "
+                    "Please use dingtalk_ai_table MCP for AI tables."
+                )
+
+            elif content_type != "ALIDOC" and node_type == "file":
+                # Regular file - use download_file
+                result = await self._call_dingtalk_mcp_tool(
+                    mcp_config,
+                    tool_name="download_file",
+                    arguments={"nodeId": doc_id},
+                )
+                # download_file returns a download link
+                download_url = result.get("downloadUrl", "")
+                if download_url:
+                    # Fetch the file content from the download URL
+                    async with httpx.AsyncClient(timeout=60.0) as client:
+                        file_response = await client.get(download_url)
+                        file_response.raise_for_status()
+                        content = file_response.text
+                else:
+                    raise ValueError("No download URL returned from DingTalk")
+
+            else:
+                # Try get_document_content as fallback
+                logger.warning(
+                    f"Unknown content type: {content_type}/{extension}, trying get_document_content"
+                )
+                result = await self._call_dingtalk_mcp_tool(
+                    mcp_config,
+                    tool_name="get_document_content",
+                    arguments={"nodeId": doc_id},
+                )
+                content = result.get("content", "")
+
             if not content:
-                raise ValueError("Empty content returned from MCP")
-
-            title = result.get("title", f"DingTalkDoc_{doc_id[:8]}")
-            modified_time = result.get(
-                "modified_time",
-                result.get("last_modified", datetime.now().isoformat()),
-            )
+                raise ValueError("Empty content returned from DingTalk MCP")
 
             return {
                 "content": content,
                 "title": title,
                 "modified_time": modified_time,
                 "modified_time_formatted": self._format_modified_time(modified_time),
-                "file_extension": (
-                    "md" if export_format == "markdown" else export_format
-                ),
+                "file_extension": ("md" if extension == "adoc" else extension or "md"),
                 "doc_id": doc_id,
+                "content_type": content_type,
+                "extension": extension,
             }
 
         except httpx.HTTPStatusError as e:
