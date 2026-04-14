@@ -958,7 +958,7 @@ class KnowledgeService:
     # ============== Knowledge Document Operations ==============
 
     # Maximum number of documents allowed in notebook mode knowledge base
-    NOTEBOOK_MAX_DOCUMENTS = 50
+    NOTEBOOK_MAX_DOCUMENTS = 100
 
     @staticmethod
     def create_document(

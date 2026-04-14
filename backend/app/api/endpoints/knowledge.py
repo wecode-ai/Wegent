@@ -463,7 +463,7 @@ def update_knowledge_base_type(
     """
     Update the knowledge base type (notebook <-> classic conversion).
 
-    - Converting to 'notebook': Requires document count <= 50
+    - Converting to 'notebook': Requires document count <= 100
     - Converting to 'classic': No restrictions
     """
     try:

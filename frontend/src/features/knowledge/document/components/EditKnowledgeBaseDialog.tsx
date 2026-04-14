@@ -27,7 +27,7 @@ import type {
 import type { RetrievalConfig } from './RetrievalSettingsSection'
 
 // Maximum documents allowed for notebook type
-const NOTEBOOK_MAX_DOCUMENTS = 50
+const NOTEBOOK_MAX_DOCUMENTS = 100
 
 interface EditKnowledgeBaseDialogProps {
   open: boolean
@@ -203,7 +203,7 @@ export function EditKnowledgeBaseDialog({
   const kb = fullKnowledgeBase || knowledgeBase
   const kbType = kb?.kb_type || 'notebook'
   const isNotebook = kbType === 'notebook'
-  // Check if can convert to notebook (document count must be <= 50)
+  // Check if can convert to notebook (document count must be <= 100)
   const canConvertToNotebook =
     (fullKnowledgeBase?.document_count || knowledgeBase?.document_count || 0) <=
     NOTEBOOK_MAX_DOCUMENTS

@@ -86,7 +86,7 @@ export interface TableDocument {
 }
 
 // Maximum documents allowed in notebook mode
-export const NOTEBOOK_MAX_DOCUMENTS = 50
+export const NOTEBOOK_MAX_DOCUMENTS = 100
 
 interface DocumentUploadProps {
   open: boolean
