@@ -330,8 +330,9 @@ class DingTalkDocsService:
 
             # Map MCP result to our format
             # DingTalk MCP returns camelCase field names
-            title = result.get("title")
-            modified_time = result.get("modifiedTime")
+            # Note: 'name' is the document title, 'updateTime' is the modification time
+            title = result.get("name")
+            modified_time = result.get("updateTime")
             if not title or not modified_time:
                 logger.error(f"MCP response fields: {list(result.keys())}")
                 raise ValueError("MCP response missing required document metadata")
@@ -342,7 +343,7 @@ class DingTalkDocsService:
                 "modified_time": modified_time,
                 "modified_time_formatted": self._format_modified_time(modified_time),
                 "content_type": result.get("contentType", "markdown"),
-                "url": doc_url,
+                "url": result.get("docUrl", doc_url),
             }
 
         except Exception as e:
