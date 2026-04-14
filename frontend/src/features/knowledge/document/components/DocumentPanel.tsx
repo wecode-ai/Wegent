@@ -66,6 +66,8 @@ interface DocumentPanelProps {
   groupInfo?: KbGroupInfo
   /** Callback when group name is clicked */
   onGroupClick?: (groupId: string, groupType?: string) => void
+  /** Initial document path to auto-open (from virtual URL path segments) */
+  initialDocPath?: string
 }
 
 const MIN_WIDTH = 280
@@ -93,6 +95,7 @@ export function DocumentPanel({
   onCollapsedChange,
   groupInfo,
   onGroupClick,
+  initialDocPath,
 }: DocumentPanelProps) {
   const { t } = useTranslation('knowledge')
   const { t: tCommon } = useTranslation('common')
@@ -300,6 +303,7 @@ export function DocumentPanel({
               onSelectionChange={onDocumentSelectionChange}
               groupInfo={groupInfo}
               onGroupClick={onGroupClick}
+              initialDocPath={initialDocPath}
             />
           </TabsContent>
           <TabsContent value="permissions" className="flex-1 overflow-auto mt-0">
@@ -352,6 +356,7 @@ export function DocumentPanel({
               onSelectionChange={onDocumentSelectionChange}
               groupInfo={groupInfo}
               onGroupClick={onGroupClick}
+              initialDocPath={initialDocPath}
             />
           </div>
         </div>

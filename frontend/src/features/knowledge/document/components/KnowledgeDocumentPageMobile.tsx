@@ -15,6 +15,7 @@
 
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
+import { buildKbUrl } from '@/utils/knowledgeUrl'
 import { userApis } from '@/apis/user'
 import { teamService } from '@/features/tasks/service/teamService'
 import { saveGlobalModelPreference, type ModelPreference } from '@/utils/modelPreferences'
@@ -120,7 +121,9 @@ export function KnowledgeDocumentPageMobile() {
   const handleSelectKb = useCallback(
     (kb: KnowledgeBase) => {
       tree.selectKb(kb)
-      router.push(`/knowledge/document/${kb.id}`)
+      // Use buildKbUrl: personal KB (namespace="default") gets /knowledge/default/{name},
+      // team/org KBs get /knowledge/{namespace}/{name}
+      router.push(buildKbUrl(kb.namespace, kb.name, false))
     },
     [tree, router]
   )

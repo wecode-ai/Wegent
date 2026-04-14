@@ -78,7 +78,37 @@ Wegent 知识库文档支持**目录结构**（路径层级），每个文档有
 | 概念页 | `con/{concept-name}.md` | `con/rag.md` |
 | 综合分析 | `syn/{topic}.md` | `syn/rag-vs-wiki.md` |
 
+### 链接解析规则
+
+前端使用**虚拟路径层级**解析文档链接：`namespace/kb-name/doc-path`
+
+例如，元知识库（meta-wiki）中的 `ai-research/index.md` 文档，其虚拟完整路径为：
+```
+default/meta-wiki/ai-research/index.md
+```
+虚拟目录为 `default/meta-wiki/ai-research`。
+
+**相对路径解析示例（从 `ai-research/index.md` 出发）：**
+
+| 链接写法 | 解析结果 | 说明 |
+|---------|---------|------|
+| `src/rag.md` | `default/meta-wiki/ai-research/src/rag.md` | ❌ 错误：解析到 meta-wiki 自身 |
+| `../../ai-research-wiki/src/rag.md` | `default/ai-research-wiki/src/rag.md` | ✅ 正确：跨库相对路径 |
+| `/default/ai-research-wiki/src/rag.md` | `default/ai-research-wiki/src/rag.md` | ✅ 正确：绝对虚拟路径 |
+
+**结论：从元知识库 index 文档链接到子知识库文档，必须使用以下两种格式之一：**
+1. **相对路径**：`../../{sub-kb-name}/{doc-path}` （向上两级跳出 `meta-wiki/{kb-name}/`，再进入子库）
+2. **绝对虚拟路径**：`/{namespace}/{sub-kb-name}/{doc-path}` （推荐，更清晰）
+
+**子知识库内部文档互相引用**（如 `ent/anthropic.md` 引用 `con/rag.md`）：
+- 虚拟目录为 `default/ai-research-wiki/ent`
+- 相对路径 `../con/rag.md` 解析为 `default/ai-research-wiki/con/rag.md` ✅
+
 ### `{kb-name}/index.md` 格式
+
+index 文档存储在**元知识库（meta-wiki）**中，链接目标在**子知识库**中，必须使用绝对虚拟路径或跨库相对路径。
+
+**推荐使用绝对虚拟路径**（格式：`/{namespace}/{sub-kb-name}/{doc-path}`）：
 
 ```markdown
 # {KB Display Name} Index
@@ -87,20 +117,30 @@ Last updated: YYYY-MM-DD
 Total pages: N
 
 ## Sources（来源摘要）
-- src/rag-optimization-2024 | RAG 架构优化方法综述，来源：arXiv 论文，2024-04-01
-- src/karpathy-llm-wiki | LLM Wiki 模式介绍，来源：GitHub Gist，2026-04-10
+- [src/rag-optimization-2024.md](/default/ai-research-wiki/src/rag-optimization-2024.md) | RAG 架构优化方法综述，来源：arXiv 论文，2024-04-01
+- [src/karpathy-llm-wiki.md](/default/ai-research-wiki/src/karpathy-llm-wiki.md) | LLM Wiki 模式介绍，来源：GitHub Gist，2026-04-10
 
 ## Entities（实体）
-- ent/anthropic | Anthropic 公司，Claude 系列模型开发商
-- ent/claude-3-5 | Claude 3.5 Sonnet 模型，Anthropic 2024 年发布
+- [ent/anthropic.md](/default/ai-research-wiki/ent/anthropic.md) | Anthropic 公司，Claude 系列模型开发商
+- [ent/claude-3-5.md](/default/ai-research-wiki/ent/claude-3-5.md) | Claude 3.5 Sonnet 模型，Anthropic 2024 年发布
 
 ## Concepts（概念）
-- con/rag | Retrieval-Augmented Generation，检索增强生成
-- con/prompt-caching | 提示词缓存，减少重复 token 计算
+- [con/rag.md](/default/ai-research-wiki/con/rag.md) | Retrieval-Augmented Generation，检索增强生成
+- [con/prompt-caching.md](/default/ai-research-wiki/con/prompt-caching.md) | 提示词缓存，减少重复 token 计算
 
 ## Synthesis（综合分析）
-- syn/rag-vs-wiki | RAG 与 Wiki 模式对比分析
+- [syn/rag-vs-wiki.md](/default/ai-research-wiki/syn/rag-vs-wiki.md) | RAG 与 Wiki 模式对比分析
 ```
+
+> **注意**：`/default/ai-research-wiki/` 中的 `default` 是命名空间（namespace），`ai-research-wiki` 是子知识库名称。
+> 实际使用时，请将 `default` 替换为实际的命名空间（通过 `list_knowledge_bases` 返回的 `namespace` 字段获取）。
+>
+> **常见 namespace 值：**
+> - `personal`：个人知识库（界面显示为 `personal / 知识库名`）
+> - `default`：默认命名空间（部分部署环境）
+> - 组织/团队命名空间：由管理员配置
+>
+> 💡 **获取正确 namespace 的最简单方法**：在知识库文档详情页点击"复制链接"按钮，即可得到该文档的完整虚拟路径（格式：`/{namespace}/{kb-name}/{doc-path}`）。
 
 ### `{kb-name}/log.md` 格式
 
@@ -175,6 +215,10 @@ Total pages: N
 
 **第六步：更新元库索引**
 调用 `update_document_content` 更新元库中的 `{kb-name}/index.md`，在对应分类下追加新文档条目。
+条目格式必须使用绝对虚拟路径的 Markdown 链接（因为 index 在元库，目标文档在子库，必须跨库）：
+`- [src/article-title.md](/{namespace}/{sub-kb-name}/src/article-title.md) | 一句话描述`
+
+其中 `{namespace}` 和 `{sub-kb-name}` 从 `list_knowledge_bases` 返回的结果中获取。
 
 **第七步：追加操作日志**
 调用 `update_document_content` 在元库的 `{kb-name}/log.md` 末尾追加本次操作记录：
@@ -214,6 +258,21 @@ Total pages: N
 3. **所有文档必须有 `.md` 后缀**：`name` 字段必须以 `.md` 结尾，`file_extension` 填 `md`。
 
 4. **跳过无价值内容**：如果内容是纯问候语、无实质知识价值，返回 `skippedReason`，不执行任何写入。
+
+5. **链接必须使用正确的 Markdown 格式，且路径必须能正确解析**：
+
+   前端使用虚拟路径层级 `namespace/kb-name/doc-path` 解析链接。从元库 `{kb-name}/index.md`（虚拟目录：`{ns}/meta-wiki/{kb-name}`）出发，简单相对路径如 `src/rag.md` 会解析到 meta-wiki 自身，**不会**跳转到子库。
+
+   - **从元库 index 链接到子库文档**（最常见场景）：必须使用绝对虚拟路径
+     ```
+     [src/rag.md](/{namespace}/{sub-kb-name}/src/rag.md)
+     ```
+   - **子知识库内部文档互相引用**（如 `ent/` 引用 `con/`）：使用相对路径
+     ```
+     [con/rag.md](../con/rag.md)
+     ```
+   - **禁止**使用纯文本路径（如 `src/rag-optimization-2024`），必须是可点击的 Markdown 链接
+   - **禁止**从元库 index 使用简单相对路径（如 `[src/rag.md](src/rag.md)`），这会解析到错误的知识库
 
 ## 页面内容格式
 
@@ -487,7 +546,7 @@ curl -X POST "http://localhost:8000/api/work-queues/by-name/wiki-inbox/messages/
 
 1. **先读 index，再读内容**：不要盲目读取所有文档，先通过 index 定位相关文档，再精准读取。
 
-2. **引用来源**：回答中注明信息来自哪些文档（如"根据 `ent/anthropic.md`..."），让用户可以追溯。
+2. **引用来源**：回答中注明信息来自哪些文档，使用绝对虚拟路径的 Markdown 链接格式（如"根据 [`ent/anthropic.md`](/{namespace}/{sub-kb-name}/ent/anthropic.md)..."），让用户可以点击追溯。
 
 3. **诚实说明局限**：如果 wiki 中没有相关内容，直接告知用户，不要编造。可以建议用户通过 Inbox 摄取相关资料。
 
@@ -516,11 +575,11 @@ curl -X POST "http://localhost:8000/api/work-queues/by-name/wiki-inbox/messages/
 （展开内容，引用 wiki 文档中的具体信息）
 
 ## 来源
-- `ent/anthropic.md`
-- `con/rag.md`
+- [`ent/anthropic.md`](/default/ai-research-wiki/ent/anthropic.md)
+- [`con/rag.md`](/default/ai-research-wiki/con/rag.md)
 
 ## 相关页面
-- `syn/rag-vs-wiki.md` — RAG 与 Wiki 模式对比分析
+- [`syn/rag-vs-wiki.md`](/default/ai-research-wiki/syn/rag-vs-wiki.md) — RAG 与 Wiki 模式对比分析
 
 ---
 ```

@@ -7,6 +7,19 @@ import { render, screen } from '@testing-library/react'
 import { DocumentDetailDialog } from '@/features/knowledge/document/components/DocumentDetailDialog'
 import type { KnowledgeDocument } from '@/types/knowledge'
 
+jest.mock('next/navigation', () => ({
+  useRouter: () => ({
+    push: jest.fn(),
+    replace: jest.fn(),
+    back: jest.fn(),
+    forward: jest.fn(),
+    refresh: jest.fn(),
+    prefetch: jest.fn(),
+  }),
+  useSearchParams: () => new URLSearchParams(),
+  usePathname: () => '/',
+}))
+
 jest.mock('next/dynamic', () => () => {
   const MockDynamicComponent = () => <div data-testid="dynamic-component" />
   MockDynamicComponent.displayName = 'MockDynamicComponent'

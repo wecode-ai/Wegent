@@ -135,8 +135,10 @@ function SharedKnowledgeContent() {
       })
 
       if (response.status === 'approved') {
-        // User got immediate access, redirect to KB
-        router.push(`/knowledge/document/${kbData.id}`)
+        // User got immediate access, redirect to KB using virtual URL
+        router.push(
+          `/knowledge/${encodeURIComponent(kbData.namespace)}/${encodeURIComponent(kbData.name)}`
+        )
       } else if (response.status === 'pending') {
         setApplyStatus('pending')
       }
@@ -145,8 +147,10 @@ function SharedKnowledgeContent() {
       const errorMessage = (err as Error)?.message || ''
 
       if (errorMessage.includes('Already have access')) {
-        // User already has access, redirect to KB
-        router.push(`/knowledge/document/${kbData.id}`)
+        // User already has access, redirect to KB using virtual URL
+        router.push(
+          `/knowledge/${encodeURIComponent(kbData.namespace)}/${encodeURIComponent(kbData.name)}`
+        )
         return
       } else if (errorMessage.includes('already pending')) {
         setApplyStatus('pending')
@@ -164,7 +168,9 @@ function SharedKnowledgeContent() {
 
   const _handleEnterKnowledgeBase = () => {
     if (kbData) {
-      router.push(`/knowledge/document/${kbData.id}`)
+      router.push(
+        `/knowledge/${encodeURIComponent(kbData.namespace)}/${encodeURIComponent(kbData.name)}`
+      )
     }
   }
 
