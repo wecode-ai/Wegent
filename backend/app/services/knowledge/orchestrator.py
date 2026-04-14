@@ -27,6 +27,7 @@ from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.models.knowledge import KnowledgeDocument
+from app.models.subtask_context import SubtaskContext
 from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.knowledge import (
@@ -744,6 +745,8 @@ class KnowledgeOrchestrator:
             returned_length=result["returned_length"],
             has_more=result["has_more"],
             kb_id=result["kb_id"],
+            attachment_status=result.get("attachment_status"),
+            attachment_error_message=result.get("attachment_error_message"),
         )
 
     async def get_document_detail(
@@ -757,7 +760,7 @@ class KnowledgeOrchestrator:
         limit: int = MAX_DOCUMENT_READ_LIMIT,
     ) -> DocumentDetailResponse:
         """Aggregate optional document content and summary into a detail response."""
-        self._get_document_with_access_or_raise(
+        document = self._get_document_with_access_or_raise(
             db=db,
             user=user,
             document_id=document_id,
@@ -767,6 +770,8 @@ class KnowledgeOrchestrator:
         content_length = None
         truncated = None
         summary = None
+        attachment_status = None
+        attachment_error_message = None
 
         if include_content:
             paged = self.read_document_content(
@@ -779,6 +784,8 @@ class KnowledgeOrchestrator:
             content = paged.content
             content_length = paged.total_length
             truncated = (paged.offset > 0) or paged.has_more
+            attachment_status = paged.attachment_status
+            attachment_error_message = paged.attachment_error_message
 
         if include_summary:
             from app.services.knowledge.summary_service import get_summary_service
@@ -797,6 +804,8 @@ class KnowledgeOrchestrator:
             content_length=content_length,
             truncated=truncated,
             summary=summary,
+            attachment_status=attachment_status,
+            attachment_error_message=attachment_error_message,
         )
 
     def get_knowledge_base(

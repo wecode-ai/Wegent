@@ -357,11 +357,13 @@ export function getAttachmentPreviewUrl(attachmentId: number, shareToken?: strin
  *
  * @param file - File to upload
  * @param onProgress - Optional progress callback (0-100)
+ * @param parseAsync - If true, parse document asynchronously (useful for large files)
  * @returns Attachment response
  */
 export async function uploadAttachment(
   file: File,
-  onProgress?: (progress: number) => void
+  onProgress?: (progress: number) => void,
+  parseAsync?: boolean
 ): Promise<AttachmentResponse> {
   const token = getToken()
 
@@ -372,6 +374,12 @@ export async function uploadAttachment(
 
   const formData = new FormData()
   formData.append('file', file)
+
+  // Build URL with optional parse_async parameter
+  let url = `${API_BASE_URL}/api/attachments/upload`
+  if (parseAsync) {
+    url += '?parse_async=true'
+  }
 
   // Use XMLHttpRequest for progress tracking
   return new Promise((resolve, reject) => {
@@ -419,7 +427,7 @@ export async function uploadAttachment(
       reject(new Error('Upload cancelled'))
     })
 
-    xhr.open('POST', `${API_BASE_URL}/api/attachments/upload`)
+    xhr.open('POST', url)
     if (token) {
       xhr.setRequestHeader('Authorization', `Bearer ${token}`)
     }

@@ -360,6 +360,12 @@ class KnowledgeDocumentResponse(BaseModel):
     doc_ref: Optional[str] = Field(
         None, description="RAG storage document reference ID"
     )
+    attachment_status: Optional[str] = Field(
+        None, description="Attachment parsing status: uploading, parsing, ready, failed"
+    )
+    attachment_error_message: Optional[str] = Field(
+        None, description="Error message if attachment parsing failed"
+    )
     created_at: datetime
     updated_at: datetime
 
@@ -567,6 +573,12 @@ class DocumentDetailResponse(BaseModel):
     )
     truncated: Optional[bool] = Field(None, description="Whether content was truncated")
     summary: Optional[dict] = Field(None, description="Document summary object")
+    attachment_status: Optional[str] = Field(
+        None, description="Attachment parsing status if document has an attachment"
+    )
+    attachment_error_message: Optional[str] = Field(
+        None, description="Error message if attachment parsing failed"
+    )
 
 
 class DocumentContentReadResponse(BaseModel):
@@ -582,6 +594,12 @@ class DocumentContentReadResponse(BaseModel):
     returned_length: int = Field(..., ge=0, description="Number of characters returned")
     has_more: bool = Field(..., description="Whether more content is available")
     kb_id: int = Field(..., description="Knowledge base ID")
+    attachment_status: Optional[str] = Field(
+        None, description="Attachment parsing status if applicable"
+    )
+    attachment_error_message: Optional[str] = Field(
+        None, description="Error message if attachment parsing failed"
+    )
 
 
 class DocumentContentUpdate(BaseModel):

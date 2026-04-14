@@ -787,6 +787,61 @@ class TestContextServiceUpload:
             )
 
 
+class TestAsyncAttachmentParsing:
+    """Test background attachment parsing state transitions."""
+
+    def test_parse_attachment_background_marks_failed_status(self) -> None:
+        """Background parsing should persist FAILED status when parsing raises."""
+        from app.models.subtask_context import (
+            ContextStatus,
+            ContextType,
+            SubtaskContext,
+        )
+        from app.services.attachment.parser import DocumentParseError, DocumentParser
+        from app.services.context.context_service import _parse_attachment_background
+
+        mock_db = Mock()
+        context = SubtaskContext(
+            subtask_id=0,
+            user_id=1,
+            context_type=ContextType.ATTACHMENT.value,
+            name="report.pdf",
+            status=ContextStatus.PARSING.value,
+            type_data={},
+        )
+        context.id = 101
+
+        mock_query = Mock()
+        mock_db.query.return_value = mock_query
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = context
+
+        with (
+            patch.object(
+                DocumentParser,
+                "parse",
+                side_effect=DocumentParseError("parse exploded"),
+            ),
+            patch(
+                "app.services.context.context_service.SessionLocal",
+                return_value=mock_db,
+            ),
+        ):
+            _parse_attachment_background(
+                context_id=101,
+                user_id=1,
+                binary_data=b"binary-data",
+                extension=".pdf",
+            )
+
+        assert context.status == ContextStatus.FAILED.value
+        assert context.error_message == "parse exploded"
+        assert context.extracted_text == ""
+        assert context.text_length == 0
+        mock_db.commit.assert_called_once()
+        mock_db.close.assert_called_once()
+
+
 class TestContextServiceStorage:
     """Test storage backend operations"""
 

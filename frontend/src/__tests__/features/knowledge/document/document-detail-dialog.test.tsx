@@ -7,6 +7,26 @@ import { render, screen } from '@testing-library/react'
 import { DocumentDetailDialog } from '@/features/knowledge/document/components/DocumentDetailDialog'
 import type { KnowledgeDocument } from '@/types/knowledge'
 
+type MockDocumentDetail = {
+  content: string
+  content_length: number
+  truncated: boolean
+  summary: null
+  chunks: unknown[]
+  attachment_status: string | null
+  attachment_error_message: string | null
+}
+
+const mockDetail: MockDocumentDetail = {
+  content: 'plain text content',
+  content_length: 18,
+  truncated: false,
+  summary: null,
+  chunks: [],
+  attachment_status: null,
+  attachment_error_message: null,
+}
+
 jest.mock('next/dynamic', () => () => {
   const MockDynamicComponent = () => <div data-testid="dynamic-component" />
   MockDynamicComponent.displayName = 'MockDynamicComponent'
@@ -40,13 +60,7 @@ jest.mock('@/apis/knowledge-base', () => ({
 
 jest.mock('@/features/knowledge/document/hooks/useDocumentDetail', () => ({
   useDocumentDetail: () => ({
-    detail: {
-      content: 'plain text content',
-      content_length: 18,
-      truncated: false,
-      summary: null,
-      chunks: [],
-    },
+    detail: mockDetail,
     loading: false,
     error: null,
     refresh: jest.fn(),
@@ -110,6 +124,16 @@ const baseDocument: KnowledgeDocument = {
 }
 
 describe('DocumentDetailDialog permissions', () => {
+  beforeEach(() => {
+    mockDetail.content = 'plain text content'
+    mockDetail.content_length = 18
+    mockDetail.truncated = false
+    mockDetail.summary = null
+    mockDetail.chunks = []
+    mockDetail.attachment_status = null
+    mockDetail.attachment_error_message = null
+  })
+
   it('hides the edit button when the user cannot manage the document', () => {
     render(
       <DocumentDetailDialog
@@ -138,5 +162,47 @@ describe('DocumentDetailDialog permissions', () => {
     )
 
     expect(screen.getByText('document.document.detail.edit')).toBeInTheDocument()
+  })
+
+  it('shows parsing state when attachment is still parsing', () => {
+    mockDetail.content = ''
+    mockDetail.content_length = 0
+    mockDetail.attachment_status = 'parsing'
+
+    render(
+      <DocumentDetailDialog
+        open={true}
+        onOpenChange={jest.fn()}
+        document={baseDocument}
+        knowledgeBaseId={21}
+        kbType="notebook"
+        {...({ canEdit: true } as Record<string, unknown>)}
+      />
+    )
+
+    expect(screen.getByText('document.document.attachmentStatus.parsing')).toBeInTheDocument()
+    expect(screen.queryByText('document.document.detail.noContent')).not.toBeInTheDocument()
+  })
+
+  it('shows attachment error when parsing failed', () => {
+    mockDetail.content = ''
+    mockDetail.content_length = 0
+    mockDetail.attachment_status = 'failed'
+    mockDetail.attachment_error_message = 'parse exploded'
+
+    render(
+      <DocumentDetailDialog
+        open={true}
+        onOpenChange={jest.fn()}
+        document={baseDocument}
+        knowledgeBaseId={21}
+        kbType="notebook"
+        {...({ canEdit: true } as Record<string, unknown>)}
+      />
+    )
+
+    expect(screen.getByText('document.document.attachmentStatus.failed')).toBeInTheDocument()
+    expect(screen.getByText('parse exploded')).toBeInTheDocument()
+    expect(screen.queryByText('document.document.detail.noContent')).not.toBeInTheDocument()
   })
 })

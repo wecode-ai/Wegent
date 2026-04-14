@@ -63,8 +63,10 @@ def _get_attachment_binary_source(
     if not context:
         raise ValueError(f"Attachment context {attachment_id} not found")
     if context.status != ContextStatus.READY.value:
-        raise ValueError(
-            f"Attachment context {attachment_id} is not ready (status: {context.status})"
+        logger.info(
+            "Indexing attachment context %s with non-ready status %s because binary data is available",
+            attachment_id,
+            context.status,
         )
 
     binary_data = context_service.get_attachment_binary_data(

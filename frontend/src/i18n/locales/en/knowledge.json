@@ -187,6 +187,12 @@
         "indexing": "Indexing",
         "indexingHint": "Index is being generated. Refresh the page later to check the latest status."
       },
+      "attachmentStatus": {
+        "parsing": "Parsing",
+        "parsingHint": "Document is being parsed in the background. Refresh in a moment; if it stays like this for too long, parsing likely failed and you should re-upload it.",
+        "failed": "Parse Failed",
+        "failedHint": "Document parsing failed. Please delete and re-upload."
+      },
       "reindex": "Reindex",
       "index": "Start Indexing",
       "reindexing": "Reindexing...",
@@ -292,8 +298,13 @@
         "pending": "Pending",
         "uploading": "Uploading",
         "success": "Uploaded",
-        "error": "Failed"
+        "error": "Failed",
+        "parsing": "Parsing",
+        "parsingHint": "Document is being parsed in background and will update automatically"
       },
+      "retry": "Retry",
+      "asyncSubmit": "Async Submit",
+      "asyncSubmitHint": "File is large, use async submit to avoid timeout",
       "uploadFile": "Upload File",
       "pasteText": "Paste Text",
       "pasteTextHint": "Paste text content below to upload it as a document to the knowledge base.",

@@ -115,8 +115,18 @@ export function DocumentUpload({
 }: DocumentUploadProps) {
   const { t } = useTranslation('knowledge')
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const { state, addFiles, removeFile, clearFiles, startUpload, retryFile, renameFile, reset } =
-    useBatchAttachment()
+  const {
+    state,
+    addFiles,
+    removeFile,
+    clearFiles,
+    startUpload,
+    retryFile,
+    isTimeoutError,
+    retryFileAsync,
+    renameFile,
+    reset,
+  } = useBatchAttachment()
   const [splitterConfig, setSplitterConfig] = useState<Partial<SplitterConfig>>({
     type: 'sentence',
     separator: '\n\n',
@@ -584,13 +594,17 @@ export function DocumentUpload({
     }
   }
 
-  const getStatusText = (status: FileUploadStatus) => {
+  const getStatusText = (status: FileUploadStatus, attachmentStatus?: string) => {
     switch (status) {
       case 'pending':
         return t('knowledge:document.upload.status.pending')
       case 'uploading':
         return t('knowledge:document.upload.status.uploading')
       case 'success':
+        // Check if attachment is still parsing
+        if (attachmentStatus === 'parsing') {
+          return t('knowledge:document.upload.status.parsing')
+        }
         return t('knowledge:document.upload.status.success')
       case 'error':
         return t('knowledge:document.upload.status.error')
@@ -952,11 +966,17 @@ export function DocumentUpload({
                                 'text-primary'
                             )}
                           >
-                            {getStatusText(item.status)}
+                            {getStatusText(item.status, item.attachment?.status)}
                           </span>
                         </div>
                         {(item.status === 'uploading' || item.status === 'pending') && (
                           <Progress value={item.progress} className="mt-2 h-1.5" />
+                        )}
+                        {/* Show parsing hint for async uploads */}
+                        {item.status === 'success' && item.attachment?.status === 'parsing' && (
+                          <p className="text-xs text-primary mt-1">
+                            {t('knowledge:document.upload.status.parsingHint')}
+                          </p>
                         )}
                         {item.error && (
                           <p className="text-xs text-error mt-1 line-clamp-2">{item.error}</p>
@@ -964,15 +984,31 @@ export function DocumentUpload({
                       </div>
                       <div className="flex items-center gap-1">
                         {item.status === 'error' && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-7 w-7"
-                            onClick={() => handleRetryFile(item.id)}
-                            disabled={state.isUploading}
-                          >
-                            <RefreshCw className="w-3.5 h-3.5" />
-                          </Button>
+                          <>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7"
+                              onClick={() => handleRetryFile(item.id)}
+                              disabled={state.isUploading}
+                              title={t('document.upload.retry')}
+                            >
+                              <RefreshCw className="w-3.5 h-3.5" />
+                            </Button>
+                            {/* Show async submit button for timeout errors */}
+                            {isTimeoutError(item.error || '') && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-7 px-2 text-xs"
+                                onClick={() => retryFileAsync(item.id)}
+                                disabled={state.isUploading}
+                                title={t('document.upload.asyncSubmitHint')}
+                              >
+                                {t('document.upload.asyncSubmit')}
+                              </Button>
+                            )}
+                          </>
                         )}
                         {!state.isUploading && item.status !== 'uploading' && (
                           <Button
