@@ -205,17 +205,45 @@ class DingTalkDocsService:
 
         logger.info(f"Calling dingtalk_docs MCP tool: {tool_name}")
 
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.post(
-                url,
-                json=payload,
-                headers={"Content-Type": "application/json"},
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                response = await client.post(
+                    url,
+                    json=payload,
+                    headers={"Content-Type": "application/json"},
+                )
+                response.raise_for_status()
+                result = response.json()
+        except httpx.HTTPStatusError as e:
+            logger.error(f"HTTP error from DingTalk MCP: {e.response.status_code}")
+            if e.response.status_code in (401, 403):
+                raise ValueError(
+                    "DingTalk authentication failed. Please check your MCP configuration."
+                )
+            raise ValueError(
+                f"Failed to call DingTalk MCP: HTTP {e.response.status_code}"
             )
-            response.raise_for_status()
-            result = response.json()
 
         if "error" in result:
             error_msg = result["error"].get("message", "Unknown MCP error")
+            # Check for authentication-related errors
+            if error_msg and any(
+                keyword in error_msg.lower()
+                for keyword in [
+                    "auth",
+                    "authentication",
+                    "unauthorized",
+                    "permission",
+                    "access",
+                ]
+            ):
+                raise ValueError(
+                    f"DingTalk authentication required: {error_msg}\n"
+                    f"Please ensure:\n"
+                    f"1. You have access to this document in DingTalk\n"
+                    f"2. The document is shared with you or is public\n"
+                    f"3. Your DingTalk MCP configuration is correct"
+                )
             raise ValueError(f"MCP tool call failed: {error_msg}")
 
         # Extract tool result from content
@@ -378,8 +406,28 @@ class DingTalkDocsService:
                 "doc_id": doc_id,
             }
 
+        except httpx.HTTPStatusError as e:
+            logger.error(
+                f"HTTP error from DingTalk MCP: {e.response.status_code} - {e.response.text}"
+            )
+            if e.response.status_code == 401 or e.response.status_code == 403:
+                raise ValueError(
+                    f"DingTalk authentication required. Please ensure:\n"
+                    f"1. You have access to this document in DingTalk\n"
+                    f"2. The document is shared with you or is public\n"
+                    f"3. Your DingTalk MCP configuration is correct"
+                )
+            raise ValueError(
+                f"Failed to download document from DingTalk: HTTP {e.response.status_code}"
+            )
         except Exception as e:
             logger.error(f"Failed to download document from MCP: {e}")
+            error_msg = str(e)
+            if "authentication" in error_msg.lower() or "auth" in error_msg.lower():
+                raise ValueError(
+                    f"DingTalk authentication required: {error_msg}\n"
+                    f"Please ensure you have access to this document in DingTalk."
+                )
             raise ValueError(f"Failed to download document: {e}")
 
     def build_filename(self, title: str, modified_time_formatted: str) -> str:
