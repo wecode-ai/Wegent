@@ -4,11 +4,12 @@
 
 """DingTalk Document Service.
 
-This module provides services for interacting with DingTalk documents,
+This module provides services for interacting with DingTalk documents via MCP,
 including fetching document metadata, downloading document content,
 and managing document operations.
 """
 
+import json
 import logging
 import re
 from datetime import datetime
@@ -17,6 +18,8 @@ from typing import Any, Dict, Optional
 import httpx
 
 from app.core.config import settings
+from app.services.mcp_provider_registry import get_mcp_provider_service
+from app.services.user_mcp_service import UserMCPService
 
 logger = logging.getLogger(__name__)
 
@@ -60,21 +63,17 @@ def build_dingtalk_doc_filename(title: str, modified_time_formatted: str) -> str
 
 
 class DingTalkDocsService:
-    """Service for DingTalk document operations.
+    """Service for DingTalk document operations via MCP.
 
     Provides methods to:
     - Parse DingTalk document URLs
-    - Fetch document metadata (title, modification time, etc.)
-    - Download document content
+    - Fetch document metadata via dingtalk_docs MCP
+    - Download document content via dingtalk_docs MCP
     """
-
-    # DingTalk API endpoints
-    DINGTALK_API_BASE = "https://oapi.dingtalk.com"
 
     def __init__(self):
         """Initialize the DingTalk docs service."""
-        self.app_key = getattr(settings, "DINGTALK_APP_KEY", "")
-        self.app_secret = getattr(settings, "DINGTALK_APP_SECRET", "")
+        pass
 
     def _extract_doc_id_from_url(self, url: str) -> Optional[str]:
         """Extract document ID from DingTalk document URL.
@@ -152,14 +151,94 @@ class DingTalkDocsService:
         )
         return datetime.now().strftime("%Y%m%d%H%M%S")
 
-    async def get_document_info(
-        self, doc_url: str, access_token: Optional[str] = None
+    def _get_dingtalk_docs_mcp_config(
+        self, user_preferences: Optional[str]
+    ) -> Optional[Dict[str, Any]]:
+        """Get dingtalk_docs MCP server config for user.
+
+        Args:
+            user_preferences: User's preferences JSON string
+
+        Returns:
+            MCP server config dict with 'name', 'url', 'type' or None if not configured
+        """
+        return UserMCPService.get_enabled_mcp_server(
+            user_preferences,
+            provider_id="dingtalk",
+            service_id="docs",
+            server_name="dingtalk_docs",
+        )
+
+    async def _call_dingtalk_mcp_tool(
+        self,
+        mcp_config: Dict[str, Any],
+        tool_name: str,
+        arguments: Dict[str, Any],
     ) -> Dict[str, Any]:
-        """Get DingTalk document information.
+        """Call a tool on the dingtalk_docs MCP server.
+
+        Args:
+            mcp_config: MCP server config with 'url'
+            tool_name: Name of the tool to call
+            arguments: Tool arguments
+
+        Returns:
+            Tool result dict
+
+        Raises:
+            ValueError: If MCP call fails
+        """
+        url = mcp_config.get("url", "").rstrip("/")
+        if not url:
+            raise ValueError("dingtalk_docs MCP URL not configured")
+
+        # Build MCP tool call payload
+        payload = {
+            "jsonrpc": "2.0",
+            "method": "tools/call",
+            "params": {
+                "name": tool_name,
+                "arguments": arguments,
+            },
+            "id": 1,
+        }
+
+        logger.info(f"Calling dingtalk_docs MCP tool: {tool_name}")
+
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.post(
+                url,
+                json=payload,
+                headers={"Content-Type": "application/json"},
+            )
+            response.raise_for_status()
+            result = response.json()
+
+        if "error" in result:
+            error_msg = result["error"].get("message", "Unknown MCP error")
+            raise ValueError(f"MCP tool call failed: {error_msg}")
+
+        # Extract tool result from content
+        content = result.get("result", {}).get("content", [])
+        if content and len(content) > 0:
+            text_content = content[0].get("text", "{}")
+            try:
+                return json.loads(text_content)
+            except json.JSONDecodeError:
+                return {"content": text_content}
+
+        return {}
+
+    async def get_document_info(
+        self,
+        doc_url: str,
+        user_preferences: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Get DingTalk document information via MCP.
 
         Args:
             doc_url: DingTalk document URL
-            access_token: Optional access token for authenticated requests
+            user_preferences: User's preferences JSON string (for MCP config)
 
         Returns:
             Dict containing document info:
@@ -167,7 +246,7 @@ class DingTalkDocsService:
             - title: Document title
             - modified_time: ISO format modification time
             - modified_time_formatted: YYYYMMDDHHMMSS format
-            - content_type: Content type (markdown, html, etc.)
+            - content_type: Content type
 
         Raises:
             ValueError: If URL is invalid or document not found
@@ -178,38 +257,68 @@ class DingTalkDocsService:
 
         logger.info(f"Fetching document info for doc_id: {doc_id}")
 
-        # For now, return basic info extracted from URL
-        # In production, this would call DingTalk API to get actual metadata
-        # This is a placeholder implementation that can be extended
+        # Get MCP config
+        mcp_config = self._get_dingtalk_docs_mcp_config(user_preferences)
+        if not mcp_config:
+            logger.warning(
+                "dingtalk_docs MCP not configured, returning placeholder info"
+            )
+            # Fallback to placeholder if MCP not configured
+            now = datetime.now()
+            return {
+                "doc_id": doc_id,
+                "title": f"DingTalkDoc_{doc_id[:8]}",
+                "modified_time": now.isoformat(),
+                "modified_time_formatted": now.strftime("%Y%m%d%H%M%S"),
+                "content_type": "markdown",
+                "url": doc_url,
+            }
 
-        # Generate a title from the doc_id (in real implementation, fetch from API)
-        title = f"DingTalkDoc_{doc_id[:8]}"
+        # Call MCP tool to get document info
+        try:
+            result = await self._call_dingtalk_mcp_tool(
+                mcp_config,
+                tool_name="get_document_info",
+                arguments={"doc_id": doc_id, "url": doc_url},
+            )
 
-        # Use current time as modified time (in real implementation, fetch from API)
-        now = datetime.now()
-        modified_time = now.isoformat()
-        modified_time_formatted = now.strftime("%Y%m%d%H%M%S")
+            # Map MCP result to our format
+            title = result.get("title", f"DingTalkDoc_{doc_id[:8]}")
+            modified_time = result.get("modified_time", datetime.now().isoformat())
 
-        return {
-            "doc_id": doc_id,
-            "title": title,
-            "modified_time": modified_time,
-            "modified_time_formatted": modified_time_formatted,
-            "content_type": "markdown",
-            "url": doc_url,
-        }
+            return {
+                "doc_id": doc_id,
+                "title": title,
+                "modified_time": modified_time,
+                "modified_time_formatted": self._format_modified_time(modified_time),
+                "content_type": result.get("content_type", "markdown"),
+                "url": doc_url,
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to get document info from MCP: {e}")
+            # Fallback to placeholder on error
+            now = datetime.now()
+            return {
+                "doc_id": doc_id,
+                "title": f"DingTalkDoc_{doc_id[:8]}",
+                "modified_time": now.isoformat(),
+                "modified_time_formatted": now.strftime("%Y%m%d%H%M%S"),
+                "content_type": "markdown",
+                "url": doc_url,
+            }
 
     async def download_document_content(
         self,
         doc_url: str,
-        access_token: Optional[str] = None,
+        user_preferences: Optional[str] = None,
         export_format: str = "markdown",
     ) -> Dict[str, Any]:
-        """Download DingTalk document content.
+        """Download DingTalk document content via MCP.
 
         Args:
             doc_url: DingTalk document URL
-            access_token: Optional access token for authenticated requests
+            user_preferences: User's preferences JSON string (for MCP config)
             export_format: Export format (markdown, html, txt)
 
         Returns:
@@ -222,29 +331,56 @@ class DingTalkDocsService:
         Raises:
             ValueError: If download fails
         """
-        doc_info = await self.get_document_info(doc_url, access_token)
+        doc_id = self._extract_doc_id_from_url(doc_url)
+        if not doc_id:
+            raise ValueError(f"Invalid DingTalk document URL: {doc_url}")
 
-        logger.info(f"Downloading document content for: {doc_info['title']}")
+        logger.info(f"Downloading document content for doc_id: {doc_id}")
 
-        # Placeholder implementation
-        # In production, this would:
-        # 1. Call DingTalk API to export document
-        # 2. Download the exported content
-        # 3. Return the content
+        # Get MCP config
+        mcp_config = self._get_dingtalk_docs_mcp_config(user_preferences)
+        if not mcp_config:
+            raise ValueError(
+                "dingtalk_docs MCP not configured. "
+                "Please configure DingTalk Docs MCP in user settings."
+            )
 
-        # For now, return a placeholder content
-        content = f"# {doc_info['title']}\n\nThis is a placeholder content for the DingTalk document.\n\nDocument ID: {doc_info['doc_id']}\n"
+        # Call MCP tool to download document content
+        try:
+            result = await self._call_dingtalk_mcp_tool(
+                mcp_config,
+                tool_name="download_document",
+                arguments={
+                    "doc_id": doc_id,
+                    "url": doc_url,
+                    "format": export_format,
+                },
+            )
 
-        file_extension = "md" if export_format == "markdown" else export_format
+            content = result.get("content", "")
+            if not content:
+                raise ValueError("Empty content returned from MCP")
 
-        return {
-            "content": content,
-            "title": doc_info["title"],
-            "modified_time": doc_info["modified_time"],
-            "modified_time_formatted": doc_info["modified_time_formatted"],
-            "file_extension": file_extension,
-            "doc_id": doc_info["doc_id"],
-        }
+            title = result.get("title", f"DingTalkDoc_{doc_id[:8]}")
+            modified_time = result.get(
+                "modified_time",
+                result.get("last_modified", datetime.now().isoformat()),
+            )
+
+            return {
+                "content": content,
+                "title": title,
+                "modified_time": modified_time,
+                "modified_time_formatted": self._format_modified_time(modified_time),
+                "file_extension": (
+                    "md" if export_format == "markdown" else export_format
+                ),
+                "doc_id": doc_id,
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to download document from MCP: {e}")
+            raise ValueError(f"Failed to download document: {e}")
 
     def build_filename(self, title: str, modified_time_formatted: str) -> str:
         """Build filename according to naming convention.

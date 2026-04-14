@@ -23,16 +23,11 @@ from sqlalchemy.orm import Session
 from app.db.session import SessionLocal
 from app.mcp_server.auth import TaskTokenInfo
 from app.mcp_server.tools.decorator import build_mcp_tools_dict, mcp_tool
-from app.models.user import User
+from app.mcp_server.tools.knowledge import _get_user_from_token
 from app.services.dingtalk.docs_service import dingtalk_docs_service
 from app.services.knowledge.orchestrator import knowledge_orchestrator
 
 logger = logging.getLogger(__name__)
-
-
-def _get_user_from_token(db: Session, token_info: TaskTokenInfo) -> Optional[User]:
-    """Get user from token info."""
-    return db.query(User).filter(User.id == token_info.user_id).first()
 
 
 @mcp_tool(
@@ -64,7 +59,17 @@ async def get_dingtalk_document_info(
         - url: Original URL
     """
     try:
-        doc_info = await dingtalk_docs_service.get_document_info(doc_url)
+        # Get user preferences for MCP config
+        db = SessionLocal()
+        try:
+            user = _get_user_from_token(db, token_info)
+            user_preferences = user.preferences if user else None
+        finally:
+            db.close()
+
+        doc_info = await dingtalk_docs_service.get_document_info(
+            doc_url, user_preferences=user_preferences
+        )
         return {
             "success": True,
             "doc_id": doc_info["doc_id"],
@@ -144,8 +149,10 @@ async def add_dingtalk_doc_to_knowledge(
                 f"[MCP] Content not provided, fetching from DingTalk: {doc_url}"
             )
             try:
+                # Get user preferences for MCP config
+                user_preferences = user.preferences if user else None
                 doc_download = await dingtalk_docs_service.download_document_content(
-                    doc_url
+                    doc_url, user_preferences=user_preferences
                 )
                 doc_content = doc_download.get("content", "")
                 # Use fetched title if not provided
