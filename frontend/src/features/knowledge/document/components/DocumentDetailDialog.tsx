@@ -43,12 +43,14 @@ import { Spinner } from '@/components/ui/spinner'
 import { useDocumentDetail } from '../hooks/useDocumentDetail'
 import { ChunksSection } from './ChunksSection'
 import { knowledgeBaseApi } from '@/apis/knowledge-base'
-import { getKnowledgeConfig } from '@/apis/knowledge'
+import { getKnowledgeConfig, listKnowledgeBases } from '@/apis/knowledge'
+import { buildKbUrl } from '@/utils/knowledgeUrl'
 import type { KnowledgeDocument } from '@/types/knowledge'
 import { useTranslation } from '@/hooks/useTranslation'
 import { toast } from 'sonner'
 import dynamic from 'next/dynamic'
 import { useTheme } from '@/features/theme/ThemeProvider'
+import { useRouter } from 'next/navigation'
 // Dynamically import the WYSIWYG editor to avoid SSR issues
 const WysiwygEditor = dynamic(
   () => import('@/components/common/WysiwygEditor').then(mod => mod.WysiwygEditor),
@@ -119,10 +121,154 @@ interface DocumentDetailDialogProps {
   onOpenChange: (open: boolean) => void
   document: KnowledgeDocument | null
   knowledgeBaseId: number
-  /** Knowledge base type - edit is only available for 'notebook' type */
+  /** Knowledge base type (reserved for future use) */
   kbType?: 'notebook' | 'classic'
   /** Whether the current user can edit this document */
   canEdit?: boolean
+  /** Current knowledge base name - used for resolving cross-KB relative links */
+  knowledgeBaseName?: string
+  /** Current knowledge base namespace - used for resolving cross-namespace relative links */
+  knowledgeBaseNamespace?: string
+  /** Whether this KB belongs to an organization-level namespace (affects URL format) */
+  isOrganization?: boolean
+}
+
+/**
+ * Resolve a relative wiki document link to a knowledge base page URL.
+ *
+ * The virtual path hierarchy is: namespace/kb-name/doc-path/file.ext
+ * Resolution uses standard relative path semantics from the current document's
+ * virtual full path.
+ *
+ * Examples (current doc: "default/my-wiki/src/rag.md"):
+ *   - "sibling.md"                    → same KB (stays within "default/my-wiki/src/")
+ *   - "../other.md"                   → same KB parent dir ("default/my-wiki/")
+ *   - "../../other-kb/path.md"        → cross-KB, same namespace ("default/other-kb/")
+ *   - "../../../other-ns/kb/path.md"  → cross-namespace KB
+ *
+ * Returns null if the href is not a relative wiki link (e.g. absolute HTTP URL).
+ */
+async function resolveWikiLink(
+  href: string,
+  currentKbId: number,
+  currentDocName: string,
+  currentKbName: string,
+  currentNamespace: string,
+  currentIsOrganization: boolean
+): Promise<string | null> {
+  // Skip external URLs and anchor-only links
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(href) || href.startsWith('#')) {
+    return null
+  }
+
+  // Handle absolute virtual paths: /namespace/kb-name/optional/path/doc.md
+  if (href.startsWith('/')) {
+    const parts = href.slice(1).split('/').filter(Boolean)
+    if (parts.length < 2) return null
+    // Decode URI components to handle non-ASCII characters in namespace/kb-name
+    const targetNamespace = decodeURIComponent(parts[0])
+    const targetKbName = decodeURIComponent(parts[1])
+    // doc path is everything after namespace/kb-name (decode each segment)
+    const docPath = parts
+      .slice(2)
+      .map(p => decodeURIComponent(p))
+      .join('/')
+
+    // Same KB - no lookup needed
+    if (targetNamespace === currentNamespace && targetKbName === currentKbName) {
+      return buildKbUrl(
+        currentNamespace,
+        currentKbName,
+        currentIsOrganization,
+        docPath || undefined
+      )
+    }
+
+    // Different KB - verify it exists then construct virtual URL directly (no kbId lookup needed)
+    // For cross-KB links, we don't know isOrganization, so use namespace-based URL
+    const exists = await checkKnowledgeBaseExists(targetKbName, targetNamespace)
+    if (!exists) return null
+    return buildKbUrl(targetNamespace, targetKbName, false, docPath || undefined)
+  }
+
+  // Handle relative paths using virtual path hierarchy: namespace/kb-name/doc-path
+  // e.g. current doc "default/my-wiki/src/rag.md" → virtualDir = "default/my-wiki/src"
+  const virtualDocPath = `${currentNamespace}/${currentKbName}/${currentDocName}`
+  const virtualDir = virtualDocPath.slice(0, virtualDocPath.lastIndexOf('/'))
+
+  // Decode href in case the markdown renderer URL-encoded non-ASCII characters
+  const decodedHref = decodeURIComponent(href)
+  const resolved = resolveRelativePath(virtualDir, decodedHref)
+
+  // resolved is a normalized path like "default/other-kb/path.md" or "../escaped/path.md"
+  // Since the virtual base has at least 2 segments (ns/kb), any non-escaped result
+  // will have the first segment as namespace and second as kb-name.
+  const parts = resolved.split('/')
+
+  if (parts.length >= 2 && !parts[0].startsWith('..')) {
+    const targetNamespace = parts[0]
+    const targetKbName = parts[1]
+    // doc path is everything after namespace/kb-name
+    const docPath = parts.slice(2).join('/')
+
+    // Same KB - no lookup needed
+    if (targetNamespace === currentNamespace && targetKbName === currentKbName) {
+      return buildKbUrl(
+        currentNamespace,
+        currentKbName,
+        currentIsOrganization,
+        docPath || undefined
+      )
+    }
+
+    // Different KB - verify it exists then construct virtual URL directly (no kbId lookup needed)
+    // For cross-KB links, we don't know isOrganization, so use namespace-based URL
+    const exists = await checkKnowledgeBaseExists(targetKbName, targetNamespace)
+    if (!exists) return null
+    return buildKbUrl(targetNamespace, targetKbName, false, docPath || undefined)
+  }
+  // Resolved path escaped the virtual root entirely - treat as same KB fallback
+  return buildKbUrl(currentNamespace, currentKbName, currentIsOrganization)
+}
+
+/**
+ * Resolve a relative path against a base directory.
+ * Returns the normalized path (may start with "../" if it escapes the root).
+ */
+function resolveRelativePath(baseDir: string, relativePath: string): string {
+  // Split base dir into segments (filter empty strings)
+  const baseParts = baseDir ? baseDir.split('/').filter(Boolean) : []
+  const relParts = relativePath.split('/')
+
+  const stack = [...baseParts]
+  for (const part of relParts) {
+    if (part === '..') {
+      if (stack.length > 0) {
+        stack.pop()
+      } else {
+        // Escaping root - push sentinel to track depth
+        stack.push('..')
+      }
+    } else if (part !== '.') {
+      stack.push(part)
+    }
+  }
+
+  return stack.join('/')
+}
+
+/** Check if a knowledge base exists by name and namespace. Returns true if found. */
+async function checkKnowledgeBaseExists(name: string, namespace: string): Promise<boolean> {
+  try {
+    const response = await listKnowledgeBases('all')
+    return response.items.some(
+      item =>
+        item.name.toLowerCase() === name.toLowerCase() &&
+        item.namespace.toLowerCase() === namespace.toLowerCase()
+    )
+  } catch {
+    return false
+  }
 }
 
 export function DocumentDetailDialog({
@@ -130,12 +276,17 @@ export function DocumentDetailDialog({
   onOpenChange,
   document,
   knowledgeBaseId,
-  kbType,
+  kbType: _kbType,
   canEdit = false,
+  knowledgeBaseName = '',
+  knowledgeBaseNamespace = 'default',
+  isOrganization = false,
 }: DocumentDetailDialogProps) {
   const { t, getCurrentLanguage } = useTranslation('knowledge')
   const { theme } = useTheme()
+  const router = useRouter()
   const [copiedContent, setCopiedContent] = useState(false)
+  const [copiedLink, setCopiedLink] = useState(false)
   const [isEditing, setIsEditing] = useState(false)
   const [editedContent, setEditedContent] = useState('')
   const [isSaving, setIsSaving] = useState(false)
@@ -165,10 +316,9 @@ export function DocumentDetailDialog({
     enabled: open && !!document,
   })
 
-  // Check if document is editable (only for notebook type knowledge base, and TEXT type or plain text files)
+  // Check if document is editable (for both notebook and classic KB types, TEXT type or plain text files)
   const isEditable =
     canEdit &&
-    kbType === 'notebook' &&
     (document?.source_type === 'text' ||
       (document?.source_type === 'file' &&
         ['txt', 'md', 'markdown'].includes(document?.file_extension?.toLowerCase() || '')))
@@ -206,6 +356,28 @@ export function DocumentDetailDialog({
       setEditedContent(detail.content)
     }
   }, [isEditing, detail?.content])
+  // Build the full accessible URL using virtual path (no kbId):
+  // Uses buildKbUrl to generate the correct format based on KB type:
+  //   - personal (namespace="default"): /knowledge/default/{kbName}/{docPath}
+  //   - organization: /knowledge/public/{kbName}/{docPath}
+  //   - team: /knowledge/{namespace}/{kbName}/{docPath}
+  const documentFullUrl = document
+    ? `${typeof window !== 'undefined' ? window.location.origin : ''}${buildKbUrl(knowledgeBaseNamespace, knowledgeBaseName, isOrganization, document.name)}`
+    : null
+
+  const handleCopyLink = async () => {
+    if (!documentFullUrl) return
+    try {
+      await navigator.clipboard.writeText(documentFullUrl)
+      setCopiedLink(true)
+      toast.success(t('document.document.detail.copyLinkSuccess', { defaultValue: 'Link copied' }))
+      setTimeout(() => setCopiedLink(false), 2000)
+    } catch {
+      toast.error(
+        t('document.document.detail.copyLinkError', { defaultValue: 'Failed to copy link' })
+      )
+    }
+  }
 
   const handleCopyContent = async () => {
     if (!detail?.content) return
@@ -531,6 +703,43 @@ export function DocumentDetailDialog({
                                 </TooltipContent>
                               </Tooltip>
                             )}
+                            {/* Copy link button - always visible in preview mode */}
+                            {documentFullUrl && (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={handleCopyLink}
+                                    disabled={copiedLink}
+                                  >
+                                    {copiedLink ? (
+                                      <Check className="w-3.5 h-3.5" />
+                                    ) : (
+                                      <svg
+                                        className="w-3.5 h-3.5"
+                                        viewBox="0 0 24 24"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        strokeWidth="2"
+                                        strokeLinecap="round"
+                                        strokeLinejoin="round"
+                                      >
+                                        <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+                                        <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+                                      </svg>
+                                    )}
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  <p className="max-w-xs break-all">
+                                    {copiedLink
+                                      ? t('document.document.detail.copied')
+                                      : documentFullUrl}
+                                  </p>
+                                </TooltipContent>
+                              </Tooltip>
+                            )}
                             {isEditable && (
                               <Button variant="outline" size="sm" onClick={handleEdit}>
                                 <Pencil className="w-3.5 h-3.5 mr-1" />
@@ -580,7 +789,76 @@ export function DocumentDetailDialog({
                       <div className="p-4 bg-white rounded-lg border border-border">
                         {/* Use markdown preview if content is markdown and viewMode is preview */}
                         {isMarkdownContent && viewMode === 'preview' ? (
-                          <EnhancedMarkdown source={detail.content} theme={theme} />
+                          <EnhancedMarkdown
+                            source={detail.content}
+                            theme={theme}
+                            components={{
+                              a: ({
+                                href,
+                                children,
+                                ...props
+                              }: React.AnchorHTMLAttributes<HTMLAnchorElement> & {
+                                children?: React.ReactNode
+                              }) => {
+                                if (!href) {
+                                  return <a {...props}>{children}</a>
+                                }
+                                // Check if this is a wiki link (relative path or absolute virtual path)
+                                // Absolute virtual paths start with "/" but are NOT external URLs
+                                const isExternalUrl = /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(href)
+                                const isAnchor = href.startsWith('#')
+                                const isWikiLink = !isExternalUrl && !isAnchor
+                                if (!isWikiLink) {
+                                  // Absolute URL - open in new tab
+                                  return (
+                                    <a
+                                      href={href}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="text-primary hover:underline"
+                                      {...props}
+                                    >
+                                      {children}
+                                    </a>
+                                  )
+                                }
+                                // Relative wiki link - resolve and navigate
+                                const handleClick = async (
+                                  e: React.MouseEvent<HTMLButtonElement>
+                                ) => {
+                                  e.preventDefault()
+                                  const url = await resolveWikiLink(
+                                    href,
+                                    knowledgeBaseId,
+                                    document.name,
+                                    knowledgeBaseName,
+                                    knowledgeBaseNamespace,
+                                    isOrganization
+                                  )
+                                  if (url) {
+                                    router.push(url)
+                                    onOpenChange(false)
+                                  } else {
+                                    toast.error(
+                                      t('document.document.detail.linkNotFound', {
+                                        defaultValue: `Knowledge base not found: ${href}`,
+                                      })
+                                    )
+                                  }
+                                }
+                                return (
+                                  <button
+                                    type="button"
+                                    onClick={handleClick}
+                                    className="text-primary hover:underline cursor-pointer inline bg-transparent border-none p-0 font-inherit"
+                                    title={decodeURIComponent(href)}
+                                  >
+                                    {children}
+                                  </button>
+                                )
+                              },
+                            }}
+                          />
                         ) : (
                           <pre className="text-xs text-text-secondary whitespace-pre-wrap break-words font-mono leading-relaxed">
                             {detail.content}

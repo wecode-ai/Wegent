@@ -15,6 +15,7 @@
 
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
+import { buildKbUrl } from '@/utils/knowledgeUrl'
 import { userApis } from '@/apis/user'
 import { teamService } from '@/features/tasks/service/teamService'
 import { saveGlobalModelPreference, type ModelPreference } from '@/utils/modelPreferences'
@@ -32,7 +33,20 @@ import type {
 import type { DefaultTeamsResponse, Team } from '@/types/api'
 import type { Group } from '@/types/group'
 
-export function KnowledgeDocumentPageMobile() {
+interface KnowledgeDocumentPageMobileProps {
+  /** Initial KB namespace to auto-select (from virtual URL path) */
+  initialKbNamespace?: string
+  /** Initial KB name to auto-select (from virtual URL path) */
+  initialKbName?: string
+  /** Initial document path to auto-open (from virtual URL path segments) */
+  initialDocPath?: string
+}
+
+export function KnowledgeDocumentPageMobile({
+  initialKbNamespace: _initialKbNamespace,
+  initialKbName: _initialKbName,
+  initialDocPath: _initialDocPath,
+}: KnowledgeDocumentPageMobileProps = {}) {
   const router = useRouter()
 
   // Knowledge tree hook
@@ -120,7 +134,9 @@ export function KnowledgeDocumentPageMobile() {
   const handleSelectKb = useCallback(
     (kb: KnowledgeBase) => {
       tree.selectKb(kb)
-      router.push(`/knowledge/document/${kb.id}`)
+      // Use buildKbUrl: personal KB (namespace="default") gets /knowledge/default/{name},
+      // team/org KBs get /knowledge/{namespace}/{name}
+      router.push(buildKbUrl(kb.namespace, kb.name, false))
     },
     [tree, router]
   )
@@ -221,7 +237,6 @@ export function KnowledgeDocumentPageMobile() {
         canManageGroup={canManageGroup}
       />
 
-      {/* Dialogs */}
       {/* Dialogs */}
       <CreateKnowledgeBaseDialog
         open={showCreateDialog}

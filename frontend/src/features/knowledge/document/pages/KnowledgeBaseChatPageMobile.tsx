@@ -5,7 +5,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import { useParams, useRouter, useSearchParams } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { ArrowLeft, FileText, X } from 'lucide-react'
 import TopNavigation from '@/features/layout/TopNavigation'
 import { TaskSidebar, SearchDialog } from '@/features/tasks/components/sidebar'
@@ -47,16 +47,16 @@ import type { Team } from '@/types/api'
  * - Touch-friendly controls (min 44px targets)
  * - Full-screen chat area
  */
-export function KnowledgeBaseChatPageMobile() {
+interface Props {
+  knowledgeBaseId: number
+  /** Initial document path to auto-open (from virtual URL path segments) */
+  initialDocPath?: string
+}
+
+export function KnowledgeBaseChatPageMobile({ knowledgeBaseId, initialDocPath }: Props) {
   const { t } = useTranslation('knowledge')
   const router = useRouter()
-  const params = useParams()
   const searchParams = useSearchParams()
-
-  // Parse knowledge base ID from URL
-  const knowledgeBaseId = params.knowledgeBaseId
-    ? parseInt(params.knowledgeBaseId as string, 10)
-    : null
 
   // Fetch knowledge base details
   const {
@@ -64,19 +64,19 @@ export function KnowledgeBaseChatPageMobile() {
     loading: kbLoading,
     error: kbError,
   } = useKnowledgeBaseDetail({
-    knowledgeBaseId: knowledgeBaseId || 0,
-    autoLoad: !!knowledgeBaseId,
+    knowledgeBaseId,
+    autoLoad: true,
   })
 
   const { myPermission, fetchMyPermission } = useKnowledgePermissions({
-    kbId: knowledgeBaseId || 0,
+    kbId: knowledgeBaseId,
   })
 
   useEffect(() => {
-    if (knowledgeBase && knowledgeBaseId) {
+    if (knowledgeBase) {
       fetchMyPermission()
     }
-  }, [knowledgeBase, knowledgeBaseId, fetchMyPermission])
+  }, [knowledgeBase, fetchMyPermission])
 
   // Team state from context (centralized to avoid duplicate API calls)
   const { teams, isTeamsLoading, refreshTeams } = useTeamContext()
@@ -114,8 +114,8 @@ export function KnowledgeBaseChatPageMobile() {
   // Mobile sidebar state
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
 
-  // Document drawer state
-  const [isDocumentDrawerOpen, setIsDocumentDrawerOpen] = useState(false)
+  // Document drawer state - auto-open if initialDocPath is provided
+  const [isDocumentDrawerOpen, setIsDocumentDrawerOpen] = useState(!!initialDocPath)
 
   // Share button state
   const [shareButton, setShareButton] = useState<React.ReactNode>(null)
@@ -314,6 +314,7 @@ export function KnowledgeBaseChatPageMobile() {
               knowledgeBase={knowledgeBase}
               canUpload={canUploadDocuments}
               canManageAllDocuments={canManageKb}
+              initialDocPath={initialDocPath}
             />
           </div>
         </DrawerContent>

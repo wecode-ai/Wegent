@@ -12,7 +12,7 @@
 
 'use client'
 
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { FolderOpen } from 'lucide-react'
 import { userApis } from '@/apis/user'
@@ -36,6 +36,7 @@ import {
   canCreateKnowledgeBaseInNamespace,
   canManageKnowledgeBase,
 } from '@/utils/namespace-permissions'
+import { buildKbUrl } from '@/utils/knowledgeUrl'
 import { migrateKnowledgeBaseToGroup } from '@/apis/knowledge'
 import type {
   KnowledgeBase,
@@ -49,7 +50,20 @@ import type { DefaultTeamsResponse, Team } from '@/types/api'
 // Sidebar width constant
 const SIDEBAR_WIDTH = 280
 
-export function KnowledgeDocumentPageDesktop() {
+interface KnowledgeDocumentPageDesktopProps {
+  /** Initial KB namespace to auto-select (from virtual URL path) */
+  initialKbNamespace?: string
+  /** Initial KB name to auto-select (from virtual URL path) */
+  initialKbName?: string
+  /** Initial document path to auto-open (from virtual URL path segments) */
+  initialDocPath?: string
+}
+
+export function KnowledgeDocumentPageDesktop({
+  initialKbNamespace,
+  initialKbName,
+  initialDocPath,
+}: KnowledgeDocumentPageDesktopProps = {}) {
   const { t } = useTranslation('knowledge')
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -205,17 +219,49 @@ export function KnowledgeDocumentPageDesktop() {
     [knowledgeDefaultTeamId]
   )
 
-  // Track if initial URL sync has been done
-  const initialUrlSyncDone = useRef(false)
+  // Track if initial URL sync has been done (useState so re-render is triggered when done)
+  const [initialUrlSyncDone, setInitialUrlSyncDone] = useState(false)
 
   // Sync selected KB or group from URL parameter on initial load only
   // This effect only runs once when allKnowledgeBases is loaded
+  // Supports two modes:
+  //   1. Virtual URL mode: initialKbNamespace + initialKbName props (from /knowledge/[ns]/[name] route)
+  //   2. Query param mode: ?kb=<id> or ?group=<id> (from /knowledge page)
   useEffect(() => {
-    // Skip if already synced or no data loaded yet
-    if (initialUrlSyncDone.current || sidebar.allKnowledgeBases.length === 0) {
+    // Skip if already synced
+    if (initialUrlSyncDone) return
+
+    // Wait for data to finish loading before attempting to sync
+    if (sidebar.isGroupsLoading) return
+
+    // Mode 1: Virtual URL - select KB by namespace + name
+    if (initialKbName) {
+      let found: (typeof sidebar.allKnowledgeBases)[0] | undefined
+
+      if (initialKbNamespace) {
+        // Personal or team KB: match by both namespace and name
+        found = sidebar.allKnowledgeBases.find(
+          kb =>
+            kb.name.toLowerCase() === initialKbName.toLowerCase() &&
+            kb.namespace.toLowerCase() === initialKbNamespace.toLowerCase()
+        )
+      } else {
+        // Organization KB (URL uses "public"): match by name only
+        found = sidebar.allKnowledgeBases.find(
+          kb => kb.name.toLowerCase() === initialKbName.toLowerCase()
+        )
+      }
+
+      if (found) {
+        sidebar.selectKb(found)
+      }
+      // Mark sync as done regardless of whether KB was found
+      // (if not found, renderMainContent will show the not-found state)
+      setInitialUrlSyncDone(true)
       return
     }
 
+    // Mode 2: Query params - select KB by id or group
     const kbParam = searchParams.get('kb')
     const groupParam = searchParams.get('group')
 
@@ -225,34 +271,49 @@ export function KnowledgeDocumentPageDesktop() {
         const found = sidebar.allKnowledgeBases.find(kb => kb.id === kbId)
         if (found) {
           sidebar.selectKb(found)
-          initialUrlSyncDone.current = true
         }
       }
     } else if (groupParam) {
       // Restore group selection from URL
       sidebar.selectGroup(groupParam)
-      initialUrlSyncDone.current = true
-    } else {
-      // No URL params, mark as synced
-      initialUrlSyncDone.current = true
     }
-  }, [searchParams, sidebar.allKnowledgeBases, sidebar.selectKb, sidebar.selectGroup])
+    // Mark as synced (whether or not we found anything)
+    setInitialUrlSyncDone(true)
+  }, [
+    searchParams,
+    sidebar.allKnowledgeBases,
+    sidebar.isGroupsLoading,
+    sidebar.selectKb,
+    sidebar.selectGroup,
+    initialKbNamespace,
+    initialKbName,
+    initialUrlSyncDone,
+  ])
 
-  // Helper function to update URL parameters
+  // Helper function to update URL parameters for group/all navigation
   const updateUrlParams = useCallback(
     (params: { kb?: number | null; group?: string | null }) => {
+      // KB selection is handled by navigateToKb - skip here
+      if (params.kb !== undefined && params.kb !== null) return
+
+      // In virtual URL mode, navigating to group/all means going back to /knowledge
+      if (initialKbNamespace !== undefined) {
+        const newSearchParams = new URLSearchParams()
+        newSearchParams.set('type', 'document')
+        if (params.group !== undefined && params.group !== null) {
+          newSearchParams.set('group', params.group)
+        }
+        router.push(`/knowledge?${newSearchParams.toString()}`)
+        return
+      }
+
       const newSearchParams = new URLSearchParams(searchParams.toString())
 
       // Always preserve type=document
       newSearchParams.set('type', 'document')
 
-      if (params.kb !== undefined) {
-        if (params.kb === null) {
-          newSearchParams.delete('kb')
-        } else {
-          newSearchParams.set('kb', String(params.kb))
-        }
-      }
+      // Remove kb param when navigating away from a KB
+      newSearchParams.delete('kb')
 
       if (params.group !== undefined) {
         if (params.group === null) {
@@ -262,17 +323,23 @@ export function KnowledgeDocumentPageDesktop() {
         }
       }
 
-      // When selecting a KB, remove group param; when selecting a group, remove kb param
-      if (params.kb !== undefined && params.kb !== null) {
-        newSearchParams.delete('group')
-      }
-      if (params.group !== undefined && params.group !== null) {
-        newSearchParams.delete('kb')
-      }
-
       router.replace(`?${newSearchParams.toString()}`, { scroll: false })
     },
-    [router, searchParams]
+    [router, searchParams, initialKbNamespace]
+  )
+
+  // Navigate to KB detail page using canonical URL path
+  const navigateToKb = useCallback(
+    (kb: { name: string; namespace: string }) => {
+      // Determine isOrganization from allKnowledgeBasesWithGroupInfo group_type
+      const kbWithInfo = sidebar.allKnowledgeBasesWithGroupInfo.find(
+        k => k.name === kb.name && k.namespace === kb.namespace
+      )
+      const isOrganization = kbWithInfo?.group_type === 'organization'
+      const kbPath = buildKbUrl(kb.namespace, kb.name, isOrganization)
+      router.push(kbPath)
+    },
+    [router, sidebar.allKnowledgeBasesWithGroupInfo]
   )
 
   // Helper function to convert KnowledgeBaseWithGroupInfo to KnowledgeBase
@@ -420,11 +487,11 @@ export function KnowledgeDocumentPageDesktop() {
       const fullKb = sidebar.allKnowledgeBases.find(k => k.id === kb.id)
       if (fullKb) {
         sidebar.selectKb(fullKb)
-        // Update URL with kb parameter
-        updateUrlParams({ kb: fullKb.id, group: null })
+        // Navigate to canonical KB URL path: /knowledge/{namespace}/{kbName}
+        navigateToKb(fullKb)
       }
     },
-    [sidebar, updateUrlParams]
+    [sidebar, navigateToKb]
   )
 
   // Handle "All" selection
@@ -472,8 +539,6 @@ export function KnowledgeDocumentPageDesktop() {
     [selectedGroup]
   )
 
-  // Handle KB created
-  // Handle KB created
   // Handle KB created
   const handleCreate = useCallback(
     async (data: Omit<KnowledgeBaseCreate, 'namespace'> & { selectedGroupId?: string }) => {
@@ -758,7 +823,6 @@ export function KnowledgeDocumentPageDesktop() {
     [sidebar, updateUrlParams]
   )
 
-  // Render main content area
   const renderMainContent = () => {
     // If a KB is selected, show detail panel
     if (sidebar.selectedKb) {
@@ -770,6 +834,7 @@ export function KnowledgeDocumentPageDesktop() {
           onEditKb={setEditingKb}
           groupInfo={selectedKbGroupInfo}
           onGroupClick={handleGroupClick}
+          initialDocPath={initialDocPath}
         />
       )
     }
@@ -958,7 +1023,6 @@ export function KnowledgeDocumentPageDesktop() {
       {/* Right content area */}
       <div className="flex-1 min-w-0 flex flex-col bg-base relative">{renderMainContent()}</div>
 
-      {/* Dialogs */}
       {/* Dialogs */}
       <CreateKnowledgeBaseDialog
         open={showCreateDialog}

@@ -4,10 +4,26 @@
 
 'use client'
 
-import { Suspense, useState, useEffect, useCallback } from 'react'
-import { useRouter, useSearchParams } from 'next/navigation'
+/**
+ * Knowledge Base Virtual URL Page
+ *
+ * Renders the full /knowledge page layout (with KB tree sidebar) and auto-selects
+ * the KB identified by namespace + kbName from the URL path.
+ *
+ * Handles three URL formats:
+ *   /knowledge/default/{kbName}           → Personal KB (current user, namespace="default")
+ *   /knowledge/public/{kbName}            → Organization KB (globally unique)
+ *   /knowledge/{namespace}/{kbName}       → Team KB (namespace=team name)
+ *
+ * With optional document path:
+ *   /knowledge/default/{kbName}/path/doc.md
+ *   /knowledge/public/{kbName}/path/doc.md
+ *   /knowledge/{namespace}/{kbName}/path/doc.md
+ */
+
+import { Suspense, useState, useCallback, useEffect } from 'react'
+import { useParams, useRouter } from 'next/navigation'
 import TopNavigation from '@/features/layout/TopNavigation'
-import GreyTestButton from '@/features/layout/components/GreyTestButton'
 import {
   TaskSidebar,
   ResizableSidebar,
@@ -17,77 +33,59 @@ import '@/app/tasks/tasks.css'
 import '@/features/common/scrollbar.css'
 import { GithubStarButton } from '@/features/layout/GithubStarButton'
 import { ThemeToggle } from '@/features/theme/ThemeToggle'
-import { useTranslation } from '@/hooks/useTranslation'
 import { saveLastTab } from '@/utils/userPreferences'
-import { useUser } from '@/features/common/UserContext'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
 import { useTaskContext } from '@/features/tasks/contexts/taskContext'
 import { paths } from '@/config/paths'
 import { Spinner } from '@/components/ui/spinner'
 import {
-  WikiProjectList,
   AddRepoModal,
   useWikiProjects,
   CancelConfirmDialog,
-  SearchBox,
   KnowledgeTabs,
-  KnowledgeTabType,
   KnowledgeDocumentPage,
 } from '@/features/knowledge'
 
 // Storage key for knowledge sidebar collapsed state
 const KNOWLEDGE_SIDEBAR_COLLAPSED_KEY = 'knowledge-sidebar-collapsed'
 
-// Main knowledge page content with URL parameter support
-function KnowledgePageContent() {
-  const { t } = useTranslation()
+function KnowledgeVirtualPageContent() {
+  const params = useParams()
   const router = useRouter()
-  const searchParams = useSearchParams()
-  const { user } = useUser()
+  const isMobile = useIsMobile()
   const { clearAllStreams } = useChatStreamContext()
   const { setSelectedTask } = useTaskContext()
-  const isMobile = useIsMobile()
 
-  // Get initial knowledge type tab from URL parameter
-  const getInitialKnowledgeTab = useCallback((): KnowledgeTabType => {
-    const type = searchParams.get('type')
-    if (type === 'code') return 'code'
-    return 'document' // default
-  }, [searchParams])
+  // Decode URL params and resolve namespace/kbName
+  // URL formats:
+  //   /knowledge/default/{kbName}     → personal KB (namespace="default")
+  //   /knowledge/public/{kbName}      → organization KB (namespace="public" in URL, resolved below)
+  //   /knowledge/{namespace}/{kbName} → team KB
+  const rawNamespace = decodeURIComponent(params.namespace as string)
+  const kbName = decodeURIComponent(params.kbName as string)
+  const docPathSegments = params.docPath as string[] | undefined
+  const docPath = docPathSegments ? docPathSegments.map(decodeURIComponent).join('/') : undefined
 
-  // Use shared Hook to manage all state and logic
+  // For "public" namespace, pass undefined so KnowledgeDocumentPageDesktop searches by name only
+  // For all others, pass the actual namespace
+  const namespace = rawNamespace === 'public' ? undefined : rawNamespace
+
+  // Wiki projects hook (needed for AddRepoModal and CancelConfirmDialog)
   const {
-    projects,
-    loading,
-    loadingMore,
-    error,
-    cancellingIds,
-    hasMore,
     isModalOpen,
     formErrors,
     isSubmitting,
     confirmDialogOpen,
     selectedRepo,
-    // Wiki config state (system-level configuration)
     wikiConfig,
-    loadProjects,
-    loadMoreProjects,
-    handleAddRepo,
     handleCloseModal,
     handleRepoChange,
     handleSubmit,
-    handleCancelClick,
     confirmCancelGeneration,
     setConfirmDialogOpen,
     setPendingCancelProjectId,
   } = useWikiProjects()
-
-  // Active knowledge tab - initialized from URL
-  const [activeTab, setActiveTab] = useState<KnowledgeTabType>(getInitialKnowledgeTab)
-
-  // Search term for project list
-  const [mainSearchTerm, setMainSearchTerm] = useState('')
 
   // Mobile sidebar state
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
@@ -96,7 +94,6 @@ function KnowledgePageContent() {
   const [isCollapsed, setIsCollapsed] = useState(false)
 
   // Knowledge sidebar collapsed state (for document tab)
-  // This is synced with KnowledgeDocumentPageDesktop via localStorage and custom events
   const [isKnowledgeSidebarCollapsed, setIsKnowledgeSidebarCollapsed] = useState(() => {
     if (typeof window !== 'undefined') {
       return localStorage.getItem(KNOWLEDGE_SIDEBAR_COLLAPSED_KEY) === 'true'
@@ -127,49 +124,10 @@ function KnowledgePageContent() {
   const handleExpandKnowledgeSidebar = useCallback(() => {
     setIsKnowledgeSidebarCollapsed(false)
     localStorage.setItem(KNOWLEDGE_SIDEBAR_COLLAPSED_KEY, 'false')
-    // Dispatch event to notify KnowledgeDocumentPageDesktop
     window.dispatchEvent(
       new CustomEvent('knowledge-sidebar-collapse-change', { detail: { collapsed: false } })
     )
   }, [])
-
-  // Handle knowledge type tab change with URL update
-  const handleTabChange = useCallback(
-    (tab: KnowledgeTabType) => {
-      setActiveTab(tab)
-      // Update URL - preserve other params like tab and group for document type
-      if (tab === 'code') {
-        router.replace('?type=code')
-      } else {
-        // For document tab, just set type=document (sub-tab state is managed by KnowledgeDocumentPage)
-        router.replace('?type=document')
-      }
-    },
-    [router]
-  )
-
-  const navigateToKnowledgeDetail = (projectId: number) => {
-    router.push(`/knowledge/project/${projectId}?from=code`)
-  }
-
-  const navigateToTask = (taskId: number) => {
-    router.push(`/code?taskId=${taskId}`)
-  }
-
-  // Filter projects to show only those with user's generations
-  // This ensures the knowledge page only shows projects created by the current user
-  const userProjects = projects.filter(project => {
-    // Check if user has any generations for this project
-    return (
-      project.generations &&
-      project.generations.length > 0 &&
-      (project.generations[0].status === 'RUNNING' ||
-        project.generations[0].status === 'COMPLETED' ||
-        project.generations[0].status === 'PENDING' ||
-        project.generations[0].status === 'FAILED' ||
-        project.generations[0].status === 'CANCELLED')
-    )
-  })
 
   // Load collapsed state from localStorage
   useEffect(() => {
@@ -183,11 +141,6 @@ function KnowledgePageContent() {
     saveLastTab('wiki')
   }, [])
 
-  useEffect(() => {
-    if (!user) return
-    loadProjects()
-  }, [user, loadProjects])
-
   const handleToggleCollapsed = () => {
     setIsCollapsed(prev => {
       const newValue = !prev
@@ -198,8 +151,6 @@ function KnowledgePageContent() {
 
   // Handle new task from collapsed sidebar button
   const handleNewTask = () => {
-    // IMPORTANT: Clear selected task FIRST to ensure UI state is reset immediately
-    // This prevents the UI from being stuck showing the previous task's messages
     setSelectedTask(null)
     clearAllStreams()
     router.replace(paths.chat.getHref())
@@ -231,8 +182,12 @@ function KnowledgePageContent() {
           variant="with-sidebar"
           centerContent={
             <KnowledgeTabs
-              activeTab={activeTab}
-              onTabChange={handleTabChange}
+              activeTab="document"
+              onTabChange={tab => {
+                if (tab === 'code') {
+                  router.push('/knowledge?type=code')
+                }
+              }}
               isKnowledgeSidebarCollapsed={isKnowledgeSidebarCollapsed}
               onExpandClick={handleExpandKnowledgeSidebar}
             />
@@ -240,46 +195,17 @@ function KnowledgePageContent() {
           onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
           isSidebarCollapsed={isCollapsed}
         >
-          <GreyTestButton />
           {isMobile ? <ThemeToggle /> : <GithubStarButton />}
         </TopNavigation>
 
-        {/* Content area based on active tab */}
-        {activeTab === 'code' && (
-          <div className="flex-1 overflow-auto p-6">
-            {/* Center search box - using shared component */}
-            <SearchBox
-              value={mainSearchTerm}
-              onChange={setMainSearchTerm}
-              placeholder={t('knowledge:search_repositories')}
-              size="md"
-              className="mb-6 max-w-2xl mx-auto"
-            />
-            {/* Project list */}
-            <WikiProjectList
-              projects={userProjects}
-              loading={loading}
-              loadingMore={loadingMore}
-              error={error}
-              onAddRepo={handleAddRepo}
-              onProjectClick={navigateToKnowledgeDetail}
-              onTaskClick={navigateToTask}
-              onCancelClick={handleCancelClick}
-              cancellingIds={cancellingIds}
-              searchTerm={mainSearchTerm}
-              hasMore={hasMore}
-              onLoadMore={loadMoreProjects}
-              currentUserId={user?.id}
-            />
-          </div>
-        )}
-
         {/* Document knowledge - no padding, full height */}
-        {activeTab === 'document' && (
-          <div className="flex-1 flex flex-col min-h-0">
-            <KnowledgeDocumentPage />
-          </div>
-        )}
+        <div className="flex-1 flex flex-col min-h-0">
+          <KnowledgeDocumentPage
+            initialKbNamespace={namespace}
+            initialKbName={kbName}
+            initialDocPath={docPath}
+          />
+        </div>
       </div>
 
       {/* Add repository modal */}
@@ -306,8 +232,7 @@ function KnowledgePageContent() {
   )
 }
 
-// Page component with Suspense wrapper for useSearchParams
-export default function KnowledgePage() {
+export default function KnowledgeVirtualPage() {
   return (
     <Suspense
       fallback={
@@ -316,7 +241,7 @@ export default function KnowledgePage() {
         </div>
       }
     >
-      <KnowledgePageContent />
+      <KnowledgeVirtualPageContent />
     </Suspense>
   )
 }

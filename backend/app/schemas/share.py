@@ -423,6 +423,7 @@ class PublicKnowledgeBaseResponse(BaseModel):
 
     id: int = Field(..., description="Knowledge base ID")
     name: str = Field(..., description="Knowledge base name")
+    namespace: str = Field(..., description="Knowledge base namespace")
     description: Optional[str] = Field(None, description="Knowledge base description")
     creator_id: int = Field(..., description="Creator user ID")
     creator_name: str = Field(..., description="Creator username")
