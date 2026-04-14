@@ -16,6 +16,8 @@ export interface RepositorySelectorProps {
   fullWidth?: boolean
   /** When true, display only icon without text (for responsive collapse) */
   compact?: boolean
+  /** When false, disables auto-restoring the last selected repo from localStorage */
+  autoRestore?: boolean
 }
 
 /**

@@ -54,7 +54,8 @@
     "generating": "生成中...",
     "zoom_in": "放大",
     "zoom_out": "缩小",
-    "rotate": "旋转"
+    "rotate": "旋转",
+    "clear": "清除"
   },
   "errors": {
     "request_failed": "请求大模型接口失败，请点击重试"

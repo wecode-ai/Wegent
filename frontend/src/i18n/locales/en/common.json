@@ -54,7 +54,8 @@
     "generating": "Generating...",
     "zoom_in": "Zoom In",
     "zoom_out": "Zoom Out",
-    "rotate": "Rotate"
+    "rotate": "Rotate",
+    "clear": "Clear"
   },
   "errors": {
     "request_failed": "LLM API request failed, please click retry"

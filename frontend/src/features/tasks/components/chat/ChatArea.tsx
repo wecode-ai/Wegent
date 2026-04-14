@@ -178,10 +178,19 @@ function ChatAreaContent({
     maxAttachments: maxAttachmentsFromModel,
   })
 
+  // Compute initial selected skills from task detail (for page refresh recovery)
+  const initialSelectedSkills = useMemo(() => {
+    if (selectedTaskDetail?.requested_skills) {
+      return selectedTaskDetail.requested_skills.map(skill => skill.name)
+    }
+    return []
+  }, [selectedTaskDetail?.requested_skills])
+
   // Skill selector state - fetches available skills and manages selection
   const skillSelector = useSkillSelector({
     team: chatState.selectedTeam,
     enabled: true,
+    initialSelectedSkills,
   })
 
   // Video mode specific state - resolution, aspect ratio, and duration

@@ -18,6 +18,7 @@ export interface UseRepositorySearchOptions {
   handleRepoChange: (repo: GitRepoInfo | null) => void
   disabled: boolean
   selectedTaskDetail?: TaskDetail | null
+  autoRestore?: boolean // Whether to auto-restore last selected repo from localStorage
 }
 
 export interface UseRepositorySearchReturn {
@@ -49,6 +50,7 @@ export function useRepositorySearch({
   handleRepoChange,
   disabled,
   selectedTaskDetail,
+  autoRestore = true,
 }: UseRepositorySearchOptions): UseRepositorySearchReturn {
   const { toast } = useToast()
   const { t } = useTranslation()
@@ -339,8 +341,8 @@ export function useRepositorySearch({
         return
       }
 
-      // Scenario 2: No task selected and no repo selected - load repos and restore from localStorage
-      if (!selectedTaskDetail && !selectedRepo && !disabled) {
+      // Scenario 2: No task selected and no repo selected - load repos and restore from localStorage (if autoRestore enabled)
+      if (autoRestore && !selectedTaskDetail && !selectedRepo && !disabled) {
         let repoList = repos
         if (repoList.length === 0 && !hasInitiallyLoaded) {
           repoList = await loadRepositories()
@@ -369,7 +371,7 @@ export function useRepositorySearch({
       canceled = true
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedTaskDetail?.git_repo, disabled, user, hasInitiallyLoaded])
+  }, [selectedTaskDetail?.git_repo, disabled, user, hasInitiallyLoaded, autoRestore])
 
   return {
     repos,

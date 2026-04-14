@@ -31,6 +31,7 @@ from .task_detail_helpers import (
     add_group_chat_info_to_task,
     convert_subtasks_to_dict,
     get_bots_for_subtasks,
+    get_requested_skills_from_task,
 )
 from .task_skills_resolver import resolve_task_skills
 
@@ -268,6 +269,22 @@ class TaskQueryMixin:
         from app.services.task_member_service import task_member_service
 
         task_dict = self.get_task_by_id(db, task_id=task_id, user_id=user_id)
+
+        # Get the raw task resource to extract requested skills from labels
+        task_resource = (
+            db.query(TaskResource)
+            .filter(
+                TaskResource.id == task_id,
+                TaskResource.kind == "Task",
+            )
+            .first()
+        )
+        if task_resource and task_resource.json:
+            task_crd_for_skills = Task.model_validate(task_resource.json)
+            requested_skills = get_requested_skills_from_task(task_crd_for_skills)
+            if requested_skills:
+                task_dict["requested_skills"] = requested_skills
+
         user = userReader.get_by_id(db, user_id)
 
         team_id = task_dict.get("team_id")
