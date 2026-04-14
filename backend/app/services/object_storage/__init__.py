@@ -9,9 +9,9 @@ from app.services.object_storage.presign_service import (
     object_storage_presign_service,
 )
 from app.services.object_storage.upload_grant_service import (
-    ObjectStorageDownloadGrant,
     InvalidObjectNameError,
     InvalidSkillIdentityError,
+    ObjectStorageDownloadGrant,
     ObjectStoragePermissionError,
     ObjectStorageUploadGrant,
     TaskScopeNotFoundError,

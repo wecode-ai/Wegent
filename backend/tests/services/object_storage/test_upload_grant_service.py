@@ -78,7 +78,10 @@ def test_create_upload_grant_returns_presigned_upload(
     assert grant.upload_url == "https://minio.example.com/upload"
     assert grant.object_key == "publish/testuser/2468/demo.zip"
     assert grant.expires_at == expires_at
-    assert generate_upload_url.call_args.kwargs["bucket"] == settings.WORKSPACE_ARCHIVE_BUCKET
+    assert (
+        generate_upload_url.call_args.kwargs["bucket"]
+        == settings.WORKSPACE_ARCHIVE_BUCKET
+    )
 
 
 def test_create_download_grant_returns_presigned_download(

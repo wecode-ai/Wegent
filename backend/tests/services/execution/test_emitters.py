@@ -108,7 +108,6 @@ class TestWebSocketResultEmitter:
             # Should not raise exception
             await emitter.emit_start(task_id=1, subtask_id=1)
 
-
     @pytest.mark.asyncio
     async def test_emit_thinking_event(self):
         """Test emitting THINKING event sends reasoning_chunk via chat:chunk."""
@@ -138,7 +137,9 @@ class TestWebSocketResultEmitter:
             assert call_kwargs["subtask_id"] == 1
             assert call_kwargs["content"] == ""
             assert call_kwargs["offset"] == 0
-            assert call_kwargs["result"] == {"reasoning_chunk": "Let me reason about this..."}
+            assert call_kwargs["result"] == {
+                "reasoning_chunk": "Let me reason about this..."
+            }
 
 
 class TestSSEResultEmitter:

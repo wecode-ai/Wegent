@@ -109,7 +109,10 @@ class TestExtractDisplayPrompt:
         """Legacy selected_documents array: display prompt must be the user question, not system context."""
         prompt = json.dumps(
             [
-                {"type": "text", "text": "<selected_documents>docs</selected_documents>"},
+                {
+                    "type": "text",
+                    "text": "<selected_documents>docs</selected_documents>",
+                },
                 {"type": "text", "text": "real user question"},
             ]
         )
@@ -119,9 +122,15 @@ class TestExtractDisplayPrompt:
         """Legacy selected_documents + user question + system-reminder."""
         prompt = json.dumps(
             [
-                {"type": "text", "text": "<selected_documents>docs</selected_documents>"},
+                {
+                    "type": "text",
+                    "text": "<selected_documents>docs</selected_documents>",
+                },
                 {"type": "text", "text": "What does this mean?"},
-                {"type": "text", "text": "<system-reminder><CurrentTime>2025-01-01</CurrentTime></system-reminder>"},
+                {
+                    "type": "text",
+                    "text": "<system-reminder><CurrentTime>2025-01-01</CurrentTime></system-reminder>",
+                },
             ]
         )
         assert extract_display_prompt(prompt) == "What does this mean?"
@@ -169,7 +178,4 @@ class TestExtractDisplayPrompt:
                 },
             ]
         )
-        assert (
-            extract_display_prompt(prompt)
-            == "What is the weather today?"
-        )
+        assert extract_display_prompt(prompt) == "What is the weather today?"
