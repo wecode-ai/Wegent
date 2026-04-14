@@ -14,6 +14,7 @@ import logging
 import re
 from datetime import datetime
 from typing import Any, Dict, Optional
+from urllib.parse import urlparse
 
 import httpx
 
@@ -22,6 +23,11 @@ from app.services.mcp_provider_registry import get_mcp_provider_service
 from app.services.user_mcp_service import UserMCPService
 
 logger = logging.getLogger(__name__)
+
+# Constants
+HTTP_TIMEOUT_SECONDS = 60.0
+AUTH_ERROR_CODES = (401, 403)
+DOC_ID_PREVIEW_LENGTH = 8
 
 
 def sanitize_filename(title: str) -> str:
@@ -71,7 +77,7 @@ class DingTalkDocsService:
     - Download document content via dingtalk_docs MCP
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the DingTalk docs service."""
         pass
 
@@ -92,21 +98,32 @@ class DingTalkDocsService:
         if not url:
             return None
 
+        try:
+            parsed = urlparse(url)
+        except ValueError:
+            return None
+
+        # Validate hostname is alidocs.dingtalk.com
+        if parsed.hostname != "alidocs.dingtalk.com":
+            return None
+
+        path = parsed.path or ""
+
         # Pattern for /i/nodes/{doc_id}
-        node_pattern = r"alidocs\.dingtalk\.com/i/nodes/([a-zA-Z0-9_-]+)"
-        match = re.search(node_pattern, url)
+        node_pattern = r"^/i/nodes/([a-zA-Z0-9_-]+)"
+        match = re.search(node_pattern, path)
         if match:
             return match.group(1)
 
         # Pattern for /i/team/{team_id}/docs/{doc_id}
-        docs_pattern = r"alidocs\.dingtalk\.com/i/team/[^/]+/docs/([a-zA-Z0-9_-]+)"
-        match = re.search(docs_pattern, url)
+        docs_pattern = r"^/i/team/[^/]+/docs/([a-zA-Z0-9_-]+)"
+        match = re.search(docs_pattern, path)
         if match:
             return match.group(1)
 
         # Pattern for /i/team/{team_id}/wiki/{wiki_id}
-        wiki_pattern = r"alidocs\.dingtalk\.com/i/team/[^/]+/wiki/([a-zA-Z0-9_-]+)"
-        match = re.search(wiki_pattern, url)
+        wiki_pattern = r"^/i/team/[^/]+/wiki/([a-zA-Z0-9_-]+)"
+        match = re.search(wiki_pattern, path)
         if match:
             return match.group(1)
 
@@ -206,7 +223,7 @@ class DingTalkDocsService:
         logger.info(f"Calling dingtalk_docs MCP tool: {tool_name}")
 
         try:
-            async with httpx.AsyncClient(timeout=60.0) as client:
+            async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_SECONDS) as client:
                 response = await client.post(
                     url,
                     json=payload,
@@ -216,7 +233,7 @@ class DingTalkDocsService:
                 result = response.json()
         except httpx.HTTPStatusError as e:
             logger.error(f"HTTP error from DingTalk MCP: {e.response.status_code}")
-            if e.response.status_code in (401, 403):
+            if e.response.status_code in AUTH_ERROR_CODES:
                 raise ValueError(
                     "DingTalk authentication failed. Please check your MCP configuration."
                 )
@@ -288,19 +305,10 @@ class DingTalkDocsService:
         # Get MCP config
         mcp_config = self._get_dingtalk_docs_mcp_config(user_preferences)
         if not mcp_config:
-            logger.warning(
-                "dingtalk_docs MCP not configured, returning placeholder info"
+            raise ValueError(
+                "dingtalk_docs MCP not configured. "
+                "Please configure DingTalk Docs MCP in user settings."
             )
-            # Fallback to placeholder if MCP not configured
-            now = datetime.now()
-            return {
-                "doc_id": doc_id,
-                "title": f"DingTalkDoc_{doc_id[:8]}",
-                "modified_time": now.isoformat(),
-                "modified_time_formatted": now.strftime("%Y%m%d%H%M%S"),
-                "content_type": "markdown",
-                "url": doc_url,
-            }
 
         # Call MCP tool to get document info
         # Note: DingTalk MCP get_document_info only requires nodeId parameter
@@ -312,8 +320,10 @@ class DingTalkDocsService:
             )
 
             # Map MCP result to our format
-            title = result.get("title", f"DingTalkDoc_{doc_id[:8]}")
-            modified_time = result.get("modified_time", datetime.now().isoformat())
+            title = result.get("title")
+            modified_time = result.get("modified_time")
+            if not title or not modified_time:
+                raise ValueError("MCP response missing required document metadata")
 
             return {
                 "doc_id": doc_id,
@@ -326,16 +336,7 @@ class DingTalkDocsService:
 
         except Exception as e:
             logger.error(f"Failed to get document info from MCP: {e}")
-            # Fallback to placeholder on error
-            now = datetime.now()
-            return {
-                "doc_id": doc_id,
-                "title": f"DingTalkDoc_{doc_id[:8]}",
-                "modified_time": now.isoformat(),
-                "modified_time_formatted": now.strftime("%Y%m%d%H%M%S"),
-                "content_type": "markdown",
-                "url": doc_url,
-            }
+            raise ValueError(f"Failed to get document info: {e}") from e
 
     async def download_document_content(
         self,
@@ -390,7 +391,9 @@ class DingTalkDocsService:
                 arguments={"nodeId": doc_id},
             )
 
-            title = doc_info.get("title", f"DingTalkDoc_{doc_id[:8]}")
+            title = doc_info.get(
+                "title", f"DingTalkDoc_{doc_id[:DOC_ID_PREVIEW_LENGTH]}"
+            )
             content_type = doc_info.get("contentType", "")
             extension = doc_info.get("extension", "")
             node_type = doc_info.get("nodeType", "")
@@ -437,7 +440,9 @@ class DingTalkDocsService:
                 download_url = result.get("downloadUrl", "")
                 if download_url:
                     # Fetch the file content from the download URL
-                    async with httpx.AsyncClient(timeout=60.0) as client:
+                    async with httpx.AsyncClient(
+                        timeout=HTTP_TIMEOUT_SECONDS
+                    ) as client:
                         file_response = await client.get(download_url)
                         file_response.raise_for_status()
                         content = file_response.text
@@ -474,7 +479,7 @@ class DingTalkDocsService:
             logger.error(
                 f"HTTP error from DingTalk MCP: {e.response.status_code} - {e.response.text}"
             )
-            if e.response.status_code == 401 or e.response.status_code == 403:
+            if e.response.status_code in AUTH_ERROR_CODES:
                 raise ValueError(
                     f"DingTalk authentication required. Please ensure:\n"
                     f"1. You have access to this document in DingTalk\n"
