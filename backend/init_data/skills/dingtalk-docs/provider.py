@@ -300,7 +300,7 @@ Example:
                 f"Downloading document content: {title}...",
             )
 
-            doc_content_result = await self._download_document_content(
+            doc_content_result = await self._download_document_content_real(
                 sandbox, dingtalk_doc_url
             )
 
@@ -408,8 +408,7 @@ Example:
     async def _get_document_info_from_mcp(self, sandbox: Any, doc_url: str) -> dict:
         """Get document info from DingTalk via MCP.
 
-        For now, this is a placeholder that extracts info from URL.
-        In production, this would call the DingTalk MCP tool.
+        Calls the dingtalk_docs MCP to get real document metadata.
         """
         try:
             # Extract doc ID from URL
@@ -434,19 +433,114 @@ Example:
                     "error": f"Could not extract document ID from URL: {doc_url}",
                 }
 
-            # Generate title from doc_id
-            title = f"DingTalkDoc_{doc_id[:8]}"
+            # Call dingtalk_docs MCP via backend API
+            api_base_url = self.api_base_url or os.getenv(
+                "BACKEND_API_URL", DEFAULT_API_BASE_URL
+            )
+            api_base_url = api_base_url.rstrip("/")
 
-            # Get current timestamp
-            modified_time = datetime.now().strftime("%Y%m%d%H%M%S")
+            auth_token = self.auth_token
+            if not auth_token:
+                return {
+                    "success": False,
+                    "error": "No authentication token available",
+                }
 
-            return {
-                "success": True,
-                "doc_id": doc_id,
-                "title": title,
-                "modified_time": datetime.now().isoformat(),
-                "modified_time_formatted": modified_time,
+            mcp_url = f"{api_base_url}/mcp/knowledge/sse"
+
+            # Build MCP tool call payload
+            payload = {
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "params": {
+                    "name": "get_dingtalk_document_info",
+                    "arguments": {"doc_url": doc_url},
+                },
+                "id": 1,
             }
+
+            # Write payload to a temporary file with unique name
+            import uuid
+
+            payload_file = f"/tmp/mcp_payload_{uuid.uuid4().hex}.json"
+            payload_json = json.dumps(payload)
+            await sandbox.files.write(payload_file, payload_json)
+
+            try:
+                # Build curl command using array style
+                import shlex
+
+                curl_cmd = [
+                    "curl",
+                    "-s",
+                    "-X",
+                    "POST",
+                    "-H",
+                    f"Authorization: Bearer {auth_token}",
+                    "-H",
+                    "Content-Type: application/json",
+                    "-d",
+                    f"@{payload_file}",
+                    mcp_url,
+                ]
+
+                result_obj = await sandbox.commands.run(
+                    cmd=shlex.join(curl_cmd),
+                    cwd="/home/user",
+                    timeout=60,
+                )
+
+                if result_obj.exit_code != 0:
+                    return {
+                        "success": False,
+                        "error": f"MCP call failed: {result_obj.stderr or 'Unknown error'}",
+                    }
+
+                # Parse response
+                response = json.loads(result_obj.stdout)
+
+                if "error" in response:
+                    return {
+                        "success": False,
+                        "error": response["error"].get("message", "Unknown error"),
+                    }
+
+                result_content = response.get("result", {}).get("content", [])
+                if result_content:
+                    tool_result = json.loads(result_content[0].get("text", "{}"))
+                    if tool_result.get("success"):
+                        return {
+                            "success": True,
+                            "doc_id": tool_result.get("doc_id", doc_id),
+                            "title": tool_result.get(
+                                "title", f"DingTalkDoc_{doc_id[:8]}"
+                            ),
+                            "modified_time": tool_result.get(
+                                "modified_time", datetime.now().isoformat()
+                            ),
+                            "modified_time_formatted": tool_result.get(
+                                "modified_time_formatted",
+                                datetime.now().strftime("%Y%m%d%H%M%S"),
+                            ),
+                        }
+                    else:
+                        return {
+                            "success": False,
+                            "error": tool_result.get("error", "Unknown error"),
+                        }
+
+                return {"success": False, "error": "Empty response from MCP"}
+
+            finally:
+                # Clean up temp file
+                try:
+                    await sandbox.commands.run(
+                        cmd=f"rm -f {payload_file}",
+                        cwd="/home/user",
+                        timeout=10,
+                    )
+                except Exception:
+                    pass
 
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -492,6 +586,142 @@ This is a placeholder for the document content.
 """
 
             return {"success": True, "content": content}
+
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    async def _download_document_content_real(self, sandbox: Any, doc_url: str) -> dict:
+        """Download document content from DingTalk via MCP.
+
+        Calls the dingtalk_docs MCP to get real document content.
+        """
+        try:
+            # Extract doc ID from URL
+            import re
+
+            doc_id = None
+            patterns = [
+                r"alidocs\.dingtalk\.com/i/nodes/([a-zA-Z0-9_-]+)",
+                r"alidocs\.dingtalk\.com/i/team/[^/]+/docs/([a-zA-Z0-9_-]+)",
+            ]
+
+            for pattern in patterns:
+                match = re.search(pattern, doc_url)
+                if match:
+                    doc_id = match.group(1)
+                    break
+
+            if not doc_id:
+                return {
+                    "success": False,
+                    "error": f"Could not extract document ID from URL: {doc_url}",
+                }
+
+            # Call dingtalk_docs MCP via backend API
+            api_base_url = self.api_base_url or os.getenv(
+                "BACKEND_API_URL", DEFAULT_API_BASE_URL
+            )
+            api_base_url = api_base_url.rstrip("/")
+
+            auth_token = self.auth_token
+            if not auth_token:
+                return {
+                    "success": False,
+                    "error": "No authentication token available",
+                }
+
+            mcp_url = f"{api_base_url}/mcp/knowledge/sse"
+
+            # Build MCP tool call payload for download_document
+            payload = {
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "params": {
+                    "name": "download_document",
+                    "arguments": {
+                        "doc_id": doc_id,
+                        "url": doc_url,
+                        "format": "markdown",
+                    },
+                },
+                "id": 1,
+            }
+
+            # Write payload to a temporary file with unique name
+            import uuid
+
+            payload_file = f"/tmp/mcp_download_payload_{uuid.uuid4().hex}.json"
+            payload_json = json.dumps(payload)
+            await sandbox.files.write(payload_file, payload_json)
+
+            try:
+                # Build curl command using array style
+                import shlex
+
+                curl_cmd = [
+                    "curl",
+                    "-s",
+                    "-X",
+                    "POST",
+                    "-H",
+                    f"Authorization: Bearer {auth_token}",
+                    "-H",
+                    "Content-Type: application/json",
+                    "-d",
+                    f"@{payload_file}",
+                    mcp_url,
+                ]
+
+                result_obj = await sandbox.commands.run(
+                    cmd=shlex.join(curl_cmd),
+                    cwd="/home/user",
+                    timeout=120,  # Longer timeout for download
+                )
+
+                if result_obj.exit_code != 0:
+                    return {
+                        "success": False,
+                        "error": f"MCP download failed: {result_obj.stderr or 'Unknown error'}",
+                    }
+
+                # Parse response
+                response = json.loads(result_obj.stdout)
+
+                if "error" in response:
+                    return {
+                        "success": False,
+                        "error": response["error"].get("message", "Unknown error"),
+                    }
+
+                result_content = response.get("result", {}).get("content", [])
+                if result_content:
+                    tool_result = json.loads(result_content[0].get("text", "{}"))
+                    if tool_result.get("success"):
+                        content = tool_result.get("content", "")
+                        if not content:
+                            return {
+                                "success": False,
+                                "error": "Empty content returned from DingTalk",
+                            }
+                        return {"success": True, "content": content}
+                    else:
+                        return {
+                            "success": False,
+                            "error": tool_result.get("error", "Unknown error"),
+                        }
+
+                return {"success": False, "error": "Empty response from MCP"}
+
+            finally:
+                # Clean up temp file
+                try:
+                    await sandbox.commands.run(
+                        cmd=f"rm -f {payload_file}",
+                        cwd="/home/user",
+                        timeout=10,
+                    )
+                except Exception:
+                    pass
 
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -621,33 +851,58 @@ This is a placeholder for the document content.
                 "id": 1,
             }
 
-            # Write payload to a temporary file to avoid shell injection
-            payload_file = "/tmp/mcp_payload.json"
+            # Write payload to a temporary file with unique name to avoid race conditions
+            import uuid
+
+            payload_file = f"/tmp/mcp_payload_{uuid.uuid4().hex}.json"
             payload_json = json.dumps(payload)
             await sandbox.files.write(payload_file, payload_json)
 
-            # Build curl command using array style to prevent shell injection
-            import shlex
+            try:
+                # Build curl command using array style to prevent shell injection
+                import shlex
 
-            curl_cmd = [
-                "curl",
-                "-s",
-                "-X",
-                "POST",
-                "-H",
-                f"Authorization: Bearer {auth_token}",
-                "-H",
-                "Content-Type: application/json",
-                "-d",
-                f"@{payload_file}",
-                mcp_url,
-            ]
+                curl_cmd = [
+                    "curl",
+                    "-s",
+                    "-X",
+                    "POST",
+                    "-H",
+                    f"Authorization: Bearer {auth_token}",
+                    "-H",
+                    "Content-Type: application/json",
+                    "-d",
+                    f"@{payload_file}",
+                    mcp_url,
+                ]
 
-            result_obj = await sandbox.commands.run(
-                cmd=shlex.join(curl_cmd),
-                cwd="/home/user",
-                timeout=60,
-            )
+                result_obj = await sandbox.commands.run(
+                    cmd=shlex.join(curl_cmd),
+                    cwd="/home/user",
+                    timeout=60,
+                )
+
+                # Clean up temp file after use
+                try:
+                    await sandbox.commands.run(
+                        cmd=f"rm -f {payload_file}",
+                        cwd="/home/user",
+                        timeout=10,
+                    )
+                except Exception:
+                    pass
+
+            except Exception as e:
+                # Clean up temp file on error
+                try:
+                    await sandbox.commands.run(
+                        cmd=f"rm -f {payload_file}",
+                        cwd="/home/user",
+                        timeout=10,
+                    )
+                except Exception:
+                    pass
+                raise e
 
             if result_obj.exit_code != 0:
                 return {

@@ -200,9 +200,12 @@ async def add_dingtalk_doc_to_knowledge(
             f"title='{title}', filename='{filename}'"
         )
 
-        # Create document with text content
+        # Create document with text content (run in thread to avoid blocking)
         # The content is expected to be markdown from DingTalk
-        result = knowledge_orchestrator.create_document_with_content(
+        import asyncio
+
+        result = await asyncio.to_thread(
+            knowledge_orchestrator.create_document_with_content,
             db=db,
             user=user,
             knowledge_base_id=knowledge_base_id,
