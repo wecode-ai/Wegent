@@ -55,11 +55,11 @@ def build_dingtalk_doc_filename(title: str, modified_time_formatted: str) -> str
     """Build filename according to naming convention.
 
     Format: {title}_{modified_time}.md
-    Example: 产品需求文档_20260413170933.md
+    Example: 产品需求文档_1775705225000.md
 
     Args:
         title: Document title
-        modified_time_formatted: Formatted modification time (YYYYMMDDHHMMSS)
+        modified_time_formatted: Formatted modification time (Unix timestamp in ms)
 
     Returns:
         Safe filename
@@ -414,13 +414,15 @@ class DingTalkDocsService:
                 arguments={"nodeId": doc_id},
             )
 
+            # DingTalk MCP returns 'name' as the document title
             title = doc_info.get(
-                "title", f"DingTalkDoc_{doc_id[:DOC_ID_PREVIEW_LENGTH]}"
+                "name", f"DingTalkDoc_{doc_id[:DOC_ID_PREVIEW_LENGTH]}"
             )
             content_type = doc_info.get("contentType", "")
             extension = doc_info.get("extension", "")
             node_type = doc_info.get("nodeType", "")
-            modified_time = doc_info.get("modifiedTime", datetime.now().isoformat())
+            # DingTalk MCP returns 'updateTime' as the modification time (Unix timestamp in ms)
+            modified_time = doc_info.get("updateTime", datetime.now().isoformat())
 
             logger.info(
                 f"Document info: contentType={content_type}, extension={extension}, nodeType={node_type}"
