@@ -179,8 +179,8 @@ async def add_dingtalk_doc_to_knowledge(
 
         # Use provided modified_time or generate current time
         if modified_time:
-            # Validate format
-            if len(modified_time) != 14 or not modified_time.isdigit():
+            # Validate format - support both YYYYMMDDHHMMSS (14 digits) and Unix timestamp in ms (13 digits)
+            if not modified_time.isdigit() or len(modified_time) not in (13, 14):
                 logger.warning(
                     f"Invalid modified_time format: {modified_time}, using current time"
                 )
