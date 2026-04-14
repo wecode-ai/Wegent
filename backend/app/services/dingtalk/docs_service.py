@@ -329,9 +329,11 @@ class DingTalkDocsService:
             )
 
             # Map MCP result to our format
+            # DingTalk MCP returns camelCase field names
             title = result.get("title")
-            modified_time = result.get("modified_time")
+            modified_time = result.get("modifiedTime")
             if not title or not modified_time:
+                logger.error(f"MCP response fields: {list(result.keys())}")
                 raise ValueError("MCP response missing required document metadata")
 
             return {
@@ -339,7 +341,7 @@ class DingTalkDocsService:
                 "title": title,
                 "modified_time": modified_time,
                 "modified_time_formatted": self._format_modified_time(modified_time),
-                "content_type": result.get("content_type", "markdown"),
+                "content_type": result.get("contentType", "markdown"),
                 "url": doc_url,
             }
 
@@ -422,7 +424,11 @@ class DingTalkDocsService:
                     tool_name="get_document_content",
                     arguments={"nodeId": doc_id},
                 )
+                logger.info(f"get_document_content result keys: {list(result.keys())}")
                 content = result.get("content", "")
+                if not content:
+                    # Try other possible field names
+                    content = result.get("markdown", "") or result.get("text", "")
 
             elif content_type == "ALIDOC" and extension == "axls":
                 # DingTalk spreadsheet - requires dingtalk_table MCP
