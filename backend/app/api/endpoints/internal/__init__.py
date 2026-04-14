@@ -9,6 +9,7 @@ from app.core.config import settings
 from .bots import router as bots_router
 from .callback import router as callback_router
 from .chat_storage import router as chat_storage_router
+from .object_storage import router as object_storage_router
 from .rag_content import router as rag_content_router
 from .services import router as services_router
 from .skills import router as skills_router
@@ -25,6 +26,7 @@ __all__ = [
     "bots_router",
     "callback_router",
     "chat_storage_router",
+    "object_storage_router",
     "rag_content_router",
     "services_router",
     "skills_router",

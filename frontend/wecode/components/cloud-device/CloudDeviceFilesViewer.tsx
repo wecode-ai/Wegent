@@ -11,11 +11,16 @@ import '@wecode/i18n'
 interface CloudDeviceFilesViewerProps {
   readonly deviceId: string
   readonly isActive: boolean
+  readonly onFileConfigChange?: (config: CloudDeviceFileConfig | null) => void
 }
 
 type FileViewerStatus = 'idle' | 'loading' | 'ready'
 
-export function CloudDeviceFilesViewer({ deviceId, isActive }: CloudDeviceFilesViewerProps) {
+export function CloudDeviceFilesViewer({
+  deviceId,
+  isActive,
+  onFileConfigChange,
+}: CloudDeviceFilesViewerProps) {
   const { t } = useTranslation('devices')
   const [status, setStatus] = useState<FileViewerStatus>('idle')
   const [fileConfig, setFileConfig] = useState<CloudDeviceFileConfig | null>(null)
@@ -26,6 +31,10 @@ export function CloudDeviceFilesViewer({ deviceId, isActive }: CloudDeviceFilesV
     setStatus('idle')
     setFileConfig(null)
   }, [deviceId])
+
+  useEffect(() => {
+    onFileConfigChange?.(fileConfig)
+  }, [fileConfig, onFileConfigChange])
 
   useEffect(() => {
     if (!isActive || status !== 'idle') {

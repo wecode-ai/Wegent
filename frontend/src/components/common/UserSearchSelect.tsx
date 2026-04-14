@@ -64,16 +64,19 @@ export function UserSearchSelect<T extends SearchUser = SearchUser>({
 
   // Search users with 300ms debounce
   useEffect(() => {
-    if (!searchQuery.trim()) {
+    const trimmedQuery = searchQuery.trim()
+    if (!trimmedQuery) {
       setSearchResults([])
       setShowDropdown(false)
+      setIsSearching(false)
       return
     }
 
+    // Mark pending immediately so loading state is shown during debounce window
+    setIsSearching(true)
     const timeoutId = setTimeout(async () => {
-      setIsSearching(true)
       try {
-        const response = await userApis.searchUsers(searchQuery)
+        const response = await userApis.searchUsers(trimmedQuery)
         setSearchResults(response.users || [])
         setShowDropdown(true)
       } catch (error) {
@@ -148,7 +151,9 @@ export function UserSearchSelect<T extends SearchUser = SearchUser>({
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
             onFocus={() => {
-              if (searchResults.length > 0) {
+              // Show dropdown if there are search results or if user has typed something
+              // (to show "no results" or "loading" state)
+              if (searchResults.length > 0 || searchQuery.trim()) {
                 setShowDropdown(true)
               }
             }}

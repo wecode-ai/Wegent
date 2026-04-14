@@ -20,6 +20,7 @@ jest.mock('@/hooks/useTranslation', () => ({
           vnc_files_loading: 'Loading files service...',
           vnc_files_unavailable: 'Files service unavailable',
           vnc_files_credentials: `Login admin, password ${options?.password ?? ''}`,
+          vnc_files_open_in_new_window: 'Open in new window',
         }) as Record<string, string>
       )[key] ?? key,
   }),
@@ -89,5 +90,33 @@ describe('DeviceVncPanel', () => {
     expect(screen.getByTestId('cloud-device-files-credentials')).toBeInTheDocument()
     expect(screen.getByText('Login admin, password device-1')).toBeInTheDocument()
     expect(screen.queryByTitle('Files')).not.toBeInTheDocument()
+  })
+
+  test('opens the loaded file url in a new window from the files tab header', async () => {
+    const user = userEvent.setup()
+    const openSpy = jest.spyOn(window, 'open').mockImplementation(() => null)
+    ;(cloudDeviceApis.getFileConfig as jest.Mock).mockResolvedValue({
+      sandbox_id: 'sandbox-1',
+      ip_address: '10.2.247.79',
+      files_url: 'http://10.2.247.79:8080/files/',
+      available: true,
+    })
+
+    render(<DeviceVncPanel deviceId="device-1" onClose={jest.fn()} />)
+
+    await user.click(screen.getByRole('tab', { name: 'Files' }))
+    await waitFor(() => {
+      expect(cloudDeviceApis.getFileConfig).toHaveBeenCalledWith('device-1')
+    })
+
+    await user.click(await screen.findByTestId('cloud-device-files-open-button'))
+
+    expect(openSpy).toHaveBeenCalledWith(
+      'http://10.2.247.79:8080/files/',
+      '_blank',
+      'noopener,noreferrer'
+    )
+
+    openSpy.mockRestore()
   })
 })

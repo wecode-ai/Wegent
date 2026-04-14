@@ -7,7 +7,8 @@ API integration tests for OpenAPI v1/responses endpoints.
 """
 
 from datetime import datetime
-from unittest.mock import AsyncMock, patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -473,6 +474,153 @@ class TestOpenAPIResponsesCreate:
 
         # Should fail at team lookup, but header should be accepted
         assert response.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_non_streaming_build_request_passes_user_subtask_id(
+        self,
+        test_db: Session,
+        test_user: User,
+        test_team: Kind,
+    ):
+        """OpenAPI follow-up should propagate user_subtask_id like WebSocket chat."""
+        from app.api.endpoints.openapi_responses import (
+            _create_non_streaming_response_unified,
+        )
+        from app.schemas.openapi_response import ResponseCreateInput
+
+        setup = SimpleNamespace(
+            task=SimpleNamespace(id=101, json={"metadata": {"labels": {}}}),
+            task_id=101,
+            user_subtask=SimpleNamespace(id=321),
+            assistant_subtask=SimpleNamespace(id=654),
+        )
+        execution_request = SimpleNamespace(task_id=101, subtask_id=654)
+        query_db = MagicMock()
+        query_db.query.return_value.filter.return_value.order_by.return_value.all.return_value = (
+            []
+        )
+
+        with (
+            patch(
+                "app.services.openapi.chat_session.setup_chat_session",
+                return_value=setup,
+            ),
+            patch(
+                "app.services.chat.trigger.unified.build_execution_request",
+                new=AsyncMock(return_value=execution_request),
+            ) as mock_build_execution_request,
+            patch(
+                "app.services.execution.execution_dispatcher.supports_streaming",
+                return_value=False,
+            ),
+            patch(
+                "app.services.execution.execution_dispatcher.dispatch", new=AsyncMock()
+            ),
+            patch(
+                "app.db.session.SessionLocal",
+                return_value=query_db,
+            ),
+        ):
+            response = await _create_non_streaming_response_unified(
+                db=test_db,
+                user=test_user,
+                team=test_team,
+                model_info={"namespace": "default", "team_name": "test-team"},
+                request_body=ResponseCreateInput(
+                    model="default#test-team",
+                    input="follow-up question",
+                ),
+                input_text="follow-up question",
+                tool_settings={},
+            )
+
+        assert response.status == "queued"
+        query_db.close.assert_called()
+        assert mock_build_execution_request.await_args.kwargs["user_subtask_id"] == 321
+        assert mock_build_execution_request.await_args.kwargs["message"] == (
+            "follow-up question"
+        )
+
+    def test_setup_chat_session_reuses_previous_executor_for_follow_up(
+        self,
+        test_db: Session,
+        test_user: User,
+        test_team: Kind,
+        test_bot: Kind,
+        test_model: Kind,
+        test_public_shell: Kind,
+        test_task: TaskResource,
+    ):
+        """Follow-up assistant subtask should inherit previous executor metadata."""
+        from app.services.openapi.chat_session import setup_chat_session
+
+        mock_execution_request = SimpleNamespace(
+            model_config={},
+            system_prompt="",
+            preload_skills=[],
+            skill_names=[],
+            skill_configs=[],
+        )
+        previous_user = Subtask(
+            user_id=test_user.id,
+            task_id=test_task.id,
+            team_id=test_team.id,
+            title="Previous user message",
+            bot_ids=[test_bot.id],
+            role=SubtaskRole.USER,
+            executor_namespace="",
+            executor_name="",
+            prompt="Draw a cat",
+            status=SubtaskStatus.COMPLETED,
+            progress=100,
+            message_id=1,
+            parent_id=0,
+            error_message="",
+            completed_at=datetime.now(),
+            result=None,
+            sender_type=SenderType.USER,
+            sender_user_id=test_user.id,
+        )
+        previous_assistant = Subtask(
+            user_id=test_user.id,
+            task_id=test_task.id,
+            team_id=test_team.id,
+            title="Previous assistant response",
+            bot_ids=[test_bot.id],
+            role=SubtaskRole.ASSISTANT,
+            executor_namespace="default",
+            executor_name="executor-123",
+            prompt="",
+            status=SubtaskStatus.COMPLETED,
+            progress=100,
+            message_id=2,
+            parent_id=1,
+            error_message="",
+            completed_at=datetime.now(),
+            result={"value": "Here is the image"},
+            sender_type=SenderType.TEAM,
+            sender_user_id=0,
+        )
+        test_db.add(previous_user)
+        test_db.add(previous_assistant)
+        test_db.commit()
+
+        with patch(
+            "app.services.execution.TaskRequestBuilder.build",
+            return_value=mock_execution_request,
+        ):
+            setup = setup_chat_session(
+                db=test_db,
+                user=test_user,
+                team=test_team,
+                model_info={"namespace": "default", "team_name": "test-team"},
+                input_text="Make it blue",
+                tool_settings={},
+                task_id=test_task.id,
+            )
+
+        assert setup.assistant_subtask.executor_name == "executor-123"
+        assert setup.assistant_subtask.executor_namespace == "default"
 
 
 @pytest.mark.api

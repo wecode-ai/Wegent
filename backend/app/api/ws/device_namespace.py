@@ -166,7 +166,7 @@ def _register_device(
     client_ip: Optional[str] = None,
     device_type: Optional[str] = None,
     bind_shell: Optional[str] = None,
-) -> tuple[bool, Optional[str]]:
+) -> tuple[bool, Optional[str], Optional[str]]:
     """
     Register or update device CRD in database.
 
@@ -178,11 +178,11 @@ def _register_device(
         device_type: Device type ('local' or 'cloud')
         bind_shell: Shell runtime binding ('claudecode' or 'openclaw')
 
-    Returns (success, error_message).
+    Returns (success, persisted_display_name, error_message).
     """
     try:
         with _db_session() as db:
-            device_service.upsert_device_crd(
+            device_kind = device_service.upsert_device_crd(
                 db=db,
                 user_id=user_id,
                 device_id=device_id,
@@ -191,10 +191,13 @@ def _register_device(
                 device_type=device_type,
                 bind_shell=bind_shell,
             )
-        return True, None
+        persisted_display_name = (
+            device_kind.json.get("spec", {}).get("displayName") or name
+        )
+        return True, persisted_display_name, None
     except Exception as e:
         logger.error(f"[Device WS] Error registering device: {e}")
-        return False, str(e)
+        return False, None, str(e)
 
 
 def _update_device_heartbeat(user_id: int, device_id: str) -> None:
@@ -752,7 +755,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
         # Pass client_ip to _register_device for tracking
         # Run in executor to avoid blocking event loop
         if not is_cloud_device:
-            success, error = await run_sync_in_executor(
+            success, persisted_display_name, error = await run_sync_in_executor(
                 _register_device,
                 user_id,
                 payload.device_id,
@@ -763,19 +766,23 @@ class DeviceNamespace(socketio.AsyncNamespace):
             )
             if not success:
                 return {"error": f"Registration failed: {error}"}
+        else:
+            persisted_display_name = payload.name
+
+        effective_device_name = persisted_display_name or payload.name
 
         # Redis and session operations happen AFTER database connection is released
         await device_service.set_device_online(
             user_id=user_id,
             device_id=payload.device_id,
             socket_id=sid,
-            name=payload.name,
+            name=effective_device_name,
             executor_version=payload.executor_version,
         )
 
         # Update session with device_id and device_name
         session["device_id"] = payload.device_id
-        session["device_name"] = payload.name
+        session["device_name"] = effective_device_name
         session["registered"] = True
         await self.save_session(sid, session)
 
@@ -784,7 +791,9 @@ class DeviceNamespace(socketio.AsyncNamespace):
         await self.enter_room(sid, device_room)
 
         # Broadcast device online event to user room (via chat namespace)
-        await self._broadcast_device_online(user_id, payload.device_id, payload.name)
+        await self._broadcast_device_online(
+            user_id, payload.device_id, effective_device_name
+        )
 
         logger.info(
             f"[Device WS] Device registered: user={user_id}, device={payload.device_id}"

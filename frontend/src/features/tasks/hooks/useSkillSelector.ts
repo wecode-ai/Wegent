@@ -25,6 +25,8 @@ interface UseSkillSelectorOptions {
   team: Team | null
   /** Whether skills feature is enabled */
   enabled?: boolean
+  /** Initial selected skill names (e.g., from task metadata on page refresh) */
+  initialSelectedSkills?: string[]
 }
 
 interface UseSkillSelectorReturn {
@@ -69,13 +71,14 @@ interface UseSkillSelectorReturn {
 export function useSkillSelector({
   team,
   enabled = true,
+  initialSelectedSkills = [],
 }: UseSkillSelectorOptions): UseSkillSelectorReturn {
   // State for available skills from unified API
   const [availableSkills, setAvailableSkills] = useState<UnifiedSkill[]>([])
   // State for team-specific skills (from backend)
   const [teamSkillsData, setTeamSkillsData] = useState<TeamSkillsResponse | null>(null)
-  // User-selected skill names
-  const [selectedSkillNames, setSelectedSkillNames] = useState<string[]>([])
+  // User-selected skill names - initialize with initialSelectedSkills
+  const [selectedSkillNames, setSelectedSkillNames] = useState<string[]>(initialSelectedSkills)
   // Loading and error states
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<Error | null>(null)
@@ -143,10 +146,19 @@ export function useSkillSelector({
     fetchTeamSkillsData()
   }, [enabled, team?.id])
 
-  // Reset selected skills when team changes
+  // Update selected skills when initialSelectedSkills changes (e.g., task detail loaded)
   useEffect(() => {
-    setSelectedSkillNames([])
-  }, [team?.id])
+    if (initialSelectedSkills && initialSelectedSkills.length > 0) {
+      setSelectedSkillNames(initialSelectedSkills)
+    }
+  }, [initialSelectedSkills])
+
+  // Reset selected skills when team changes (only if no initialSelectedSkills provided)
+  useEffect(() => {
+    if (!initialSelectedSkills || initialSelectedSkills.length === 0) {
+      setSelectedSkillNames([])
+    }
+  }, [team?.id, initialSelectedSkills])
 
   // Skill management callbacks
   const addSkill = useCallback((skillName: string) => {

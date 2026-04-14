@@ -840,11 +840,18 @@ class DocumentParser:
         Raises:
             DocumentParseError: If all decoding attempts fail
         """
+        # Always try UTF-8 first - it's the most common encoding for modern text files.
+        # UTF-8 is self-validating: if decoding succeeds without errors, the data IS UTF-8.
+        # Only fall back to chardet-detected encoding when UTF-8 fails.
+        #
         # Order matters: GB18030 is a superset of GBK which is a superset of GB2312
-        # Try GB18030 first as it handles more characters
-        encodings_to_try = [
+        utf8_priority_encodings = [
             "utf-8",
             "utf-8-sig",
+        ]
+
+        # Fallback encodings tried after UTF-8 fails
+        fallback_encodings = [
             "gb18030",  # Superset of GBK/GB2312, handles more edge cases
             "gbk",
             "gb2312",
@@ -852,8 +859,18 @@ class DocumentParser:
             "latin-1",  # Fallback that accepts any byte
         ]
 
-        # First, try to detect encoding using chardet
+        # First, try UTF-8 (strict) - if it succeeds, we're done
+        for enc in utf8_priority_encodings:
+            try:
+                return binary_data.decode(enc)
+            except (UnicodeDecodeError, LookupError):
+                continue
+
+        # UTF-8 failed - use chardet to detect the actual encoding
+        # NOTE: chardet often misidentifies UTF-8 files with emoji/CJK as Windows-1252
+        # or ascii, so we only use it as a hint for non-UTF-8 content.
         detected_encoding = None
+        encodings_to_try = list(fallback_encodings)
         try:
             detected = chardet.detect(binary_data)
             detected_encoding = detected.get("encoding")
@@ -863,9 +880,12 @@ class DocumentParser:
                 # Normalize encoding name for comparison
                 normalized = detected_encoding.lower().replace("-", "").replace("_", "")
 
-                # Skip unreliable detection results
-                if normalized not in ["ascii", "charmap"] and confidence > 0.5:
-                    # Insert detected encoding at the beginning if not already present
+                # Skip unreliable or UTF-8-superset encodings that would corrupt CJK text
+                # windows-1252, ascii, charmap are supersets of latin-1 and will corrupt
+                # multi-byte CJK sequences
+                skip_encodings = {"ascii", "charmap", "windows-1252", "windows1252"}
+                if normalized not in skip_encodings and confidence > 0.5:
+                    # Insert detected encoding at the beginning of fallback list
                     if detected_encoding.lower() not in [
                         e.lower() for e in encodings_to_try
                     ]:

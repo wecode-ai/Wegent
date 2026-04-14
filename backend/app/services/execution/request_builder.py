@@ -204,10 +204,10 @@ class TaskRequestBuilder:
             preload_skills=effective_preload_skills,
         )
 
-        # Inject subscription-manager skill for scheduled task creation
+        # Get subscription-manager skill as available (non-preloaded) skill
         # This provides preview_subscription and create_subscription MCP tools
-        effective_preload_skills = self._inject_subscription_manager_skill(
-            effective_preload_skills,
+        # but does NOT inject it into the system prompt - model loads it on demand
+        extra_available_skills = self._inject_subscription_manager_skill(
             is_subscription=is_subscription,
         )
 
@@ -218,6 +218,12 @@ class TaskRequestBuilder:
                 for s in effective_preload_skills
             ]
 
+        user_available_skills = None
+        if extra_available_skills:
+            user_available_skills = [
+                {"name": s} if isinstance(s, str) else s for s in extra_available_skills
+            ]
+
         resolved_skills, resolved_preload_skills, resolved_user_selected, skill_refs = (
             self._get_bot_skills(
                 bot=bot,
@@ -225,6 +231,7 @@ class TaskRequestBuilder:
                 user=user,
                 user_id=user.id,
                 user_preload_skills=user_preload_skills,
+                user_available_skills=user_available_skills,
             )
         )
         preload_skill_refs = {
@@ -905,6 +912,7 @@ class TaskRequestBuilder:
         user: User,
         user_id: int,
         user_preload_skills: list | None = None,
+        user_available_skills: list | None = None,
     ) -> tuple[list[dict], list[str], list[str], dict[str, dict]]:
         """Get skills for the bot from Ghost, plus any additional skills from frontend.
 
@@ -923,6 +931,10 @@ class TaskRequestBuilder:
             user_id: User ID for skill lookup
             user_preload_skills: Optional list of user-selected skills to preload.
                 Each item can be a dict with {name, namespace, is_public} or a SkillRef object.
+            user_available_skills: Optional list of skills to make available (but NOT preload).
+                These skills appear in skill_names so the model can load them on demand,
+                but they are NOT injected into the system prompt automatically.
+                Each item can be a dict with {name, namespace, is_public}.
 
         Returns:
             Tuple of (skills, preload_skills, user_selected_skills, skill_refs)
@@ -999,15 +1011,18 @@ class TaskRequestBuilder:
                             "is_public": getattr(skill, "user_id", 1) == 0,
                         }
 
-                    # Add to preload if configured in Ghost
+                    # Add to preload and user_selected if configured in Ghost
+                    # All preloaded skills are treated as user-selected so the model
+                    # receives the "prioritize this skill" notice in the system prompt
                     if skill_name in ghost_preload_set:
                         preload_skills.append(skill_name)
+                        user_selected_skills.append(skill_name)
                         ghost_preload_ref = ghost_preload_skill_refs.get(skill_name)
                         if ghost_preload_ref:
                             # Preload explicit reference overrides same-name skill ref
                             skill_refs[skill_name] = ghost_preload_ref.model_dump()
                         logger.info(
-                            "[_get_bot_skills] Skill '%s' added to preload (from Ghost)",
+                            "[_get_bot_skills] Skill '%s' added to preload and user_selected (from Ghost)",
                             skill_name,
                         )
 
@@ -1101,6 +1116,57 @@ class TaskRequestBuilder:
                         skill_namespace,
                         is_public,
                         team_namespace,
+                    )
+
+        # Process user_available_skills: add to skills list but NOT to preload_skills
+        # These skills are available for on-demand loading via load_skill tool
+        if user_available_skills:
+            team_namespace = team.namespace if team.namespace else "default"
+            for avail_skill in user_available_skills:
+                if isinstance(avail_skill, BaseModel):
+                    skill_name = avail_skill.name
+                    skill_namespace = getattr(avail_skill, "namespace", "default")
+                    is_public = getattr(avail_skill, "is_public", False)
+                else:
+                    skill_name = avail_skill.get("name")
+                    skill_namespace = avail_skill.get("namespace", "default")
+                    is_public = avail_skill.get("is_public", False)
+
+                # Skip if already in skills list
+                if skill_name in existing_skill_names:
+                    logger.debug(
+                        "[_get_bot_skills] Available skill '%s' already in skills list, skipping",
+                        skill_name,
+                    )
+                    continue
+
+                # Find and add skill to available list only (no preload)
+                skill = self._find_skill_by_ref(
+                    skill_name,
+                    skill_namespace,
+                    is_public,
+                    user_id,
+                    team_namespace=team_namespace,
+                )
+                if skill:
+                    skill_data = self._build_skill_data(skill, user=user)
+                    skills.append(skill_data)
+                    existing_skill_names.add(skill_name)
+                    skill_refs[skill_name] = {
+                        "skill_id": getattr(skill, "id", None),
+                        "namespace": getattr(skill, "namespace", skill_namespace),
+                        "is_public": getattr(skill, "user_id", 1) == 0,
+                    }
+                    logger.info(
+                        "[_get_bot_skills] Added available skill '%s' (not preloaded)",
+                        skill_name,
+                    )
+                else:
+                    logger.warning(
+                        "[_get_bot_skills] Available skill not found: name=%s, namespace=%s, is_public=%s",
+                        skill_name,
+                        skill_namespace,
+                        is_public,
                     )
 
         logger.info(
@@ -1650,51 +1716,39 @@ Response template:
 
     @staticmethod
     def _inject_subscription_manager_skill(
-        preload_skills: list, is_subscription: bool = False
+        is_subscription: bool = False,
     ) -> list:
-        """Inject the subscription-manager skill for scheduled task creation.
+        """Get the subscription-manager skill as an available (non-preloaded) skill.
 
         The subscription-manager skill provides MCP tools (preview_subscription,
         create_subscription) for creating scheduled/recurring tasks. It is
-        auto-injected into all non-subscription tasks to prevent nested subscriptions.
+        made available (but NOT preloaded) in all non-subscription tasks so the
+        model can load it on demand via load_skill tool.
 
         Args:
-            preload_skills: Current list of preload skills
             is_subscription: Whether this is a subscription task (if True, skip injection)
 
         Returns:
-            Updated preload_skills list with subscription-manager skill injected
+            List of extra available skills to add (empty list if subscription task)
         """
         # Skip injection in subscription tasks to prevent nested subscriptions
         if is_subscription:
             logger.debug(
                 "[TaskRequestBuilder] Skipping subscription-manager injection in subscription task"
             )
-            return preload_skills
+            return []
 
         subscription_skill_name = "subscription-manager"
-
-        # Check if already present (avoid duplicates)
-        existing_names = {
-            skill if isinstance(skill, str) else skill.get("name", "")
-            for skill in preload_skills
-            if isinstance(skill, (str, dict))
-        }
-
-        if subscription_skill_name not in existing_names:
-            preload_skills = list(preload_skills)
-            preload_skills.append(
-                {
-                    "name": subscription_skill_name,
-                    "namespace": "default",
-                    "is_public": True,
-                }
-            )
-            logger.info(
-                "[TaskRequestBuilder] Injected subscription-manager skill into preload_skills"
-            )
-
-        return preload_skills
+        logger.info(
+            "[TaskRequestBuilder] Adding subscription-manager skill as available (non-preloaded)"
+        )
+        return [
+            {
+                "name": subscription_skill_name,
+                "namespace": "default",
+                "is_public": True,
+            }
+        ]
 
     def _inject_conditional_provider_skills(
         self,

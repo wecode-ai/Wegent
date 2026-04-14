@@ -47,6 +47,8 @@ interface KnowledgeDetailPanelProps {
   groupInfo?: KbGroupInfo
   /** Callback when group name is clicked */
   onGroupClick?: (groupId: string, groupType?: string) => void
+  /** Initial document path to auto-open (from virtual URL path segments) */
+  initialDocPath?: string
 }
 
 export function KnowledgeDetailPanel({
@@ -56,6 +58,7 @@ export function KnowledgeDetailPanel({
   onEditKb: _onEditKb,
   groupInfo,
   onGroupClick,
+  initialDocPath,
 }: KnowledgeDetailPanelProps) {
   const { t } = useTranslation('knowledge')
   const { user } = useUser()
@@ -193,6 +196,7 @@ export function KnowledgeDetailPanel({
           onCollapsedChange={setIsDocumentPanelCollapsed}
           groupInfo={groupInfo}
           onGroupClick={onGroupClick}
+          initialDocPath={initialDocPath}
         />
       </div>
     )
@@ -235,6 +239,7 @@ export function KnowledgeDetailPanel({
               headerActions={headerActions}
               groupInfo={groupInfo}
               onGroupClick={onGroupClick}
+              initialDocPath={initialDocPath}
             />
           ) : (
             <>

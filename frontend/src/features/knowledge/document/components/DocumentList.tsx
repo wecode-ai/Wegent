@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useState, useMemo, useEffect, useRef } from 'react'
+import { useState, useMemo, useEffect, useRef, Suspense } from 'react'
 import {
   ArrowLeft,
   Upload,
@@ -28,18 +28,60 @@ import { Spinner } from '@/components/ui/spinner'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { DocumentDetailDialog } from './DocumentDetailDialog'
-import { DocumentItem } from './DocumentItem'
 import { DocumentUpload, type TableDocument } from './DocumentUpload'
 import { DeleteDocumentDialog } from './DeleteDocumentDialog'
 import { EditDocumentDialog } from './EditDocumentDialog'
 import { RetrievalTestDialog } from './RetrievalTestDialog'
 import { useDocuments } from '../hooks/useDocuments'
+import { FolderTree } from './FolderTree'
 import { useColumnResize } from '../hooks/useColumnResize'
 import { refreshKnowledgeBaseSummary } from '@/apis/knowledge'
 import { toast } from '@/hooks/use-toast'
 import type { KnowledgeBase, KnowledgeDocument, SplitterConfig } from '@/types/knowledge'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useUser } from '@/features/common/UserContext'
+import { useSearchParams, useRouter, usePathname } from 'next/navigation'
+
+/**
+ * Inner component that uses useSearchParams (must be inside Suspense boundary).
+ * Reads the ?doc= URL parameter and auto-opens the matching document.
+ */
+function DocAutoOpener({
+  documents,
+  loading,
+  onOpen,
+}: {
+  documents: KnowledgeDocument[]
+  loading: boolean
+  onOpen: (doc: KnowledgeDocument) => void
+}) {
+  const searchParams = useSearchParams()
+  const router = useRouter()
+  const pathname = usePathname()
+  const [done, setDone] = useState(false)
+
+  useEffect(() => {
+    if (done || loading || documents.length === 0) return
+    const docParam = searchParams.get('doc')
+    if (!docParam) {
+      setDone(true)
+      return
+    }
+    // Find document by name (exact match)
+    const targetDoc = documents.find(doc => doc.name === docParam)
+    if (targetDoc) {
+      onOpen(targetDoc)
+      // Remove the ?doc= param from URL without triggering navigation
+      const params = new URLSearchParams(searchParams.toString())
+      params.delete('doc')
+      const newSearch = params.toString()
+      router.replace(pathname + (newSearch ? `?${newSearch}` : ''), { scroll: false })
+    }
+    setDone(true)
+  }, [done, loading, documents, searchParams, onOpen, router, pathname])
+
+  return null
+}
 
 /** Group info for breadcrumb display */
 export interface KbGroupInfo {
@@ -65,6 +107,10 @@ interface DocumentListProps {
   groupInfo?: KbGroupInfo
   /** Callback when group name is clicked */
   onGroupClick?: (groupId: string, groupType?: string) => void
+  /** Initial document path to auto-open (from virtual URL path segments) */
+  initialDocPath?: string
+  /** Whether this KB belongs to an organization-level namespace (affects URL format in DocumentDetailDialog) */
+  isOrganization?: boolean
 }
 
 type SortField = 'name' | 'size' | 'date'
@@ -81,6 +127,8 @@ export function DocumentList({
   headerActions,
   groupInfo,
   onGroupClick,
+  initialDocPath,
+  isOrganization = false,
 }: DocumentListProps) {
   const { t } = useTranslation('knowledge')
   const { user } = useUser()
@@ -105,6 +153,8 @@ export function DocumentList({
   const [showSearchPopover, setShowSearchPopover] = useState(false)
   // Track if initial selection has been done
   const [initialSelectionDone, setInitialSelectionDone] = useState(false)
+  // Track if initialDocPath has been handled
+  const [initialDocPathHandled, setInitialDocPathHandled] = useState(false)
   // Track which document is being refreshed
   const [refreshingDocId, setRefreshingDocId] = useState<number | null>(null)
   // Track which document is being reindexed
@@ -161,6 +211,17 @@ export function DocumentList({
       }
     }
   }
+
+  // Auto-open document from initialDocPath prop (from virtual URL path segments)
+  // This runs once when documents are loaded, without modifying the URL
+  useEffect(() => {
+    if (!initialDocPath || initialDocPathHandled || loading || documents.length === 0) return
+    const targetDoc = documents.find(doc => doc.name === initialDocPath)
+    if (targetDoc) {
+      setViewingDoc(targetDoc)
+    }
+    setInitialDocPathHandled(true)
+  }, [initialDocPath, initialDocPathHandled, loading, documents])
 
   // Default select all documents when documents load (for notebook mode)
   useEffect(() => {
@@ -688,32 +749,28 @@ export function DocumentList({
                   </span>
                 </div>
               )}
-              {filteredAndSortedDocuments.map(doc => (
-                <DocumentItem
-                  key={doc.id}
-                  document={doc}
-                  onViewDetail={setViewingDoc}
-                  onEdit={setEditingDoc}
-                  onDelete={setDeletingDoc}
-                  onRefresh={handleRefreshWebDocument}
-                  onReindex={handleReindexDocument}
-                  isRefreshing={refreshingDocId === doc.id}
-                  isReindexing={reindexingDocId === doc.id}
-                  canManage={canManageDocument(doc)}
-                  canSelect={canSelectDocument(doc)}
-                  showBorder={false}
-                  selected={selectedIds.has(doc.id)}
-                  onSelect={handleSelectDoc}
-                  compact={true}
-                  ragConfigured={ragConfigured}
-                />
-              ))}
+              <FolderTree
+                documents={filteredAndSortedDocuments}
+                compact={true}
+                onViewDetail={setViewingDoc}
+                onEdit={setEditingDoc}
+                onDelete={setDeletingDoc}
+                onRefresh={handleRefreshWebDocument}
+                onReindex={handleReindexDocument}
+                refreshingDocId={refreshingDocId}
+                reindexingDocId={reindexingDocId}
+                canManage={canManageDocument}
+                canSelect={canSelectDocument}
+                selectedIds={selectedIds}
+                onSelect={handleSelectDoc}
+                ragConfigured={ragConfigured}
+              />
             </div>
           ) : (
-            /* Normal mode: Table layout */
-            <div className="border border-border rounded-lg overflow-x-auto">
+            /* Normal mode: Table layout with folder tree - single bordered container */
+            <div className="border border-border rounded-lg overflow-hidden">
               {/* Table header */}
-              <div className="flex items-center gap-4 px-4 py-2.5 bg-surface text-xs text-text-muted font-medium min-w-[800px]">
+              <div className="flex items-center gap-4 px-4 py-2.5 bg-surface text-xs text-text-muted font-medium min-w-[800px] border-b border-border">
                 {/* Checkbox for select all */}
                 {canManageAllDocuments && (
                   <div className="flex-shrink-0">
@@ -772,27 +829,25 @@ export function DocumentList({
                   </div>
                 )}
               </div>
-              {/* Document rows */}
-              {filteredAndSortedDocuments.map((doc, index) => (
-                <DocumentItem
-                  key={doc.id}
-                  document={doc}
-                  onViewDetail={setViewingDoc}
-                  onEdit={setEditingDoc}
-                  onDelete={setDeletingDoc}
-                  onRefresh={handleRefreshWebDocument}
-                  onReindex={handleReindexDocument}
-                  isRefreshing={refreshingDocId === doc.id}
-                  isReindexing={reindexingDocId === doc.id}
-                  canManage={canManageDocument(doc)}
-                  canSelect={canSelectDocument(doc) && canManageAllDocuments}
-                  showBorder={index < filteredAndSortedDocuments.length - 1}
-                  selected={selectedIds.has(doc.id)}
-                  onSelect={handleSelectDoc}
-                  ragConfigured={ragConfigured}
-                  nameColumnWidth={nameColumnWidth ?? undefined}
-                />
-              ))}
+              {/* Document rows with folder tree - no extra border */}
+              <FolderTree
+                documents={filteredAndSortedDocuments}
+                compact={false}
+                withBorder={false}
+                onViewDetail={setViewingDoc}
+                onEdit={setEditingDoc}
+                onDelete={setDeletingDoc}
+                onRefresh={handleRefreshWebDocument}
+                onReindex={handleReindexDocument}
+                refreshingDocId={refreshingDocId}
+                reindexingDocId={reindexingDocId}
+                canManage={canManageDocument}
+                canSelect={doc => canSelectDocument(doc) && canManageAllDocuments}
+                selectedIds={selectedIds}
+                onSelect={handleSelectDoc}
+                ragConfigured={ragConfigured}
+                nameColumnWidth={nameColumnWidth ?? undefined}
+              />
             </div>
           )}
           {/* Overlay during column resize to prevent pointer event interference */}
@@ -817,6 +872,11 @@ export function DocumentList({
         </div>
       )}
 
+      {/* Auto-open document from ?doc= URL parameter (wrapped in Suspense for useSearchParams) */}
+      <Suspense fallback={null}>
+        <DocAutoOpener documents={documents} loading={loading} onOpen={setViewingDoc} />
+      </Suspense>
+
       {/* Dialogs */}
       <DocumentDetailDialog
         open={!!viewingDoc}
@@ -825,8 +885,10 @@ export function DocumentList({
         knowledgeBaseId={knowledgeBase.id}
         kbType={knowledgeBase.kb_type}
         canEdit={viewingDoc ? canManageDocument(viewingDoc) : false}
+        knowledgeBaseName={knowledgeBase.name}
+        knowledgeBaseNamespace={knowledgeBase.namespace || 'default'}
+        isOrganization={isOrganization}
       />
-
       <DocumentUpload
         open={showUpload}
         onOpenChange={setShowUpload}

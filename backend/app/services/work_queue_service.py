@@ -430,6 +430,21 @@ class WorkQueueService:
                 .first()
             )
 
+    def get_queue_by_name(self, user_id: int, queue_name: str) -> Optional[Kind]:
+        """Get a queue Kind by name for a specific user (internal use)."""
+        with self.get_db() as db:
+            return (
+                db.query(Kind)
+                .filter(
+                    Kind.user_id == user_id,
+                    Kind.name == queue_name,
+                    Kind.kind == self.WORK_QUEUE_KIND,
+                    Kind.namespace == "default",
+                    Kind.is_active == True,
+                )
+                .first()
+            )
+
     def create_queue(self, user_id: int, data: WorkQueueCreate) -> WorkQueueResponse:
         """Create a new work queue."""
         with self.get_db() as db:
@@ -465,6 +480,25 @@ class WorkQueueService:
 
             if data.autoProcess:
                 spec["autoProcess"] = data.autoProcess.model_dump()
+                # Validate subscriptionRef if auto-process is enabled
+                if data.autoProcess.enabled and data.autoProcess.subscriptionRef:
+                    ref = data.autoProcess.subscriptionRef
+                    # Resolve under authenticated user to prevent cross-tenant access
+                    subscription = (
+                        db.query(Kind)
+                        .filter(
+                            Kind.kind == "Subscription",
+                            Kind.namespace == ref.namespace,
+                            Kind.name == ref.name,
+                            Kind.user_id == user_id,
+                            Kind.is_active == True,
+                        )
+                        .first()
+                    )
+                    if not subscription:
+                        raise NotFoundException(
+                            "Referenced subscription not found or not accessible"
+                        )
             if data.resultFeedback:
                 spec["resultFeedback"] = data.resultFeedback.model_dump()
 
@@ -534,6 +568,25 @@ class WorkQueueService:
                 spec["visibleToGroups"] = data.visibleToGroups
             if data.autoProcess is not None:
                 spec["autoProcess"] = data.autoProcess.model_dump()
+                # Validate subscriptionRef if auto-process is enabled
+                if data.autoProcess.enabled and data.autoProcess.subscriptionRef:
+                    ref = data.autoProcess.subscriptionRef
+                    # Resolve under authenticated user to prevent cross-tenant access
+                    subscription = (
+                        db.query(Kind)
+                        .filter(
+                            Kind.kind == "Subscription",
+                            Kind.namespace == ref.namespace,
+                            Kind.name == ref.name,
+                            Kind.user_id == user_id,
+                            Kind.is_active == True,
+                        )
+                        .first()
+                    )
+                    if not subscription:
+                        raise NotFoundException(
+                            "Referenced subscription not found or not accessible"
+                        )
             if data.resultFeedback is not None:
                 spec["resultFeedback"] = data.resultFeedback.model_dump()
 
@@ -839,6 +892,7 @@ class QueueMessageService:
         self, db_message: QueueMessage, sender: User
     ) -> QueueMessageResponse:
         """Build QueueMessageResponse from QueueMessage model."""
+        content_snapshot = self._enrich_snapshot_with_attachments(db_message)
         return QueueMessageResponse(
             id=db_message.id,
             queueId=db_message.queue_id,
@@ -849,18 +903,86 @@ class QueueMessageService:
             ),
             sourceTaskId=db_message.source_task_id,
             sourceSubtaskIds=db_message.source_subtask_ids,
-            contentSnapshot=[
-                MessageContentSnapshot(**msg) for msg in db_message.content_snapshot
-            ],
+            contentSnapshot=content_snapshot,
             note=db_message.note,
             priority=db_message.priority,
             status=db_message.status,
             processResult=db_message.process_result,
             processTaskId=db_message.process_task_id,
+            processSubscriptionId=getattr(db_message, "process_subscription_id", None),
+            retryCount=(db_message.process_result or {}).get("retry_count", 0),
             createdAt=db_message.created_at,
             updatedAt=db_message.updated_at,
             processedAt=db_message.processed_at,
         )
+
+    def _enrich_snapshot_with_attachments(self, db_message: QueueMessage) -> list:
+        """Enrich content_snapshot with attachment info from attachmentContextIds.
+
+        When a message is ingested with file uploads, the files are stored as
+        SubtaskContext records and their IDs are saved in the USER message's
+        attachmentContextIds field inside content_snapshot.
+        This method queries the attachment metadata and injects it into the
+        USER message's attachments field so the frontend can display them.
+        """
+        raw_snapshot = db_message.content_snapshot or []
+
+        # Collect all attachment context IDs from USER messages in the snapshot
+        attachment_ids: list = []
+        for msg in raw_snapshot:
+            ids = msg.get("attachmentContextIds") or []
+            attachment_ids.extend(ids)
+
+        if not attachment_ids:
+            # No file attachments to enrich - return snapshot as-is
+            return [MessageContentSnapshot(**msg) for msg in raw_snapshot]
+
+        # Query attachment metadata from SubtaskContext
+        try:
+            from app.models.subtask_context import SubtaskContext
+            from app.schemas.subtask_context import SubtaskContextBrief
+
+            with self.get_db() as db:
+                contexts = (
+                    db.query(SubtaskContext)
+                    .filter(SubtaskContext.id.in_(attachment_ids))
+                    .all()
+                )
+                # Filter out system-generated inbox_message_*.md files
+                # These are created by auto_process_handler for LLM context injection
+                # and should not be shown to users as user-uploaded attachments
+                context_map = {
+                    ctx.id: SubtaskContextBrief.from_model(ctx).model_dump()
+                    for ctx in contexts
+                    if not (
+                        ctx.name.startswith("inbox_message_")
+                        and ctx.name.endswith(".md")
+                    )
+                }
+        except Exception as e:
+            logger.warning(
+                f"[_enrich_snapshot_with_attachments] Failed to query attachments "
+                f"for message {db_message.id}: {e}"
+            )
+            return [MessageContentSnapshot(**msg) for msg in raw_snapshot]
+
+        if not context_map:
+            return [MessageContentSnapshot(**msg) for msg in raw_snapshot]
+
+        # Inject attachment info into each USER message based on its own attachmentContextIds
+        enriched = []
+        for msg in raw_snapshot:
+            msg_copy = dict(msg)
+            msg_attachment_ids = msg_copy.get("attachmentContextIds") or []
+            if msg_attachment_ids and not msg_copy.get("attachments"):
+                briefs = [
+                    context_map[aid] for aid in msg_attachment_ids if aid in context_map
+                ]
+                if briefs:
+                    msg_copy["attachments"] = briefs
+            enriched.append(MessageContentSnapshot(**msg_copy))
+
+        return enriched
 
     def list_messages(
         self,
@@ -976,6 +1098,30 @@ class QueueMessageService:
             db.add(db_message)
             db.commit()
             db.refresh(db_message)
+
+            # Publish event for auto-processing
+            try:
+                from app.core.events import (
+                    QueueMessageCreatedEvent,
+                    get_event_bus,
+                )
+
+                event_bus = get_event_bus()
+                event_bus.publish_sync(
+                    QueueMessageCreatedEvent(
+                        message_id=db_message.id,
+                        queue_id=data.queue_id,
+                        recipient_user_id=data.recipient_user_id,
+                        sender_user_id=data.sender_user_id,
+                        priority=(
+                            data.priority.value
+                            if hasattr(data.priority, "value")
+                            else str(data.priority)
+                        ),
+                    )
+                )
+            except Exception as e:
+                logger.warning(f"Failed to publish QueueMessageCreatedEvent: {e}")
 
             logger.info(
                 f"Created queue message: id={db_message.id}, "
@@ -1160,6 +1306,187 @@ class QueueMessageService:
             )
 
             return success_count, failed_count, failed_ids
+
+    def ingest_message(
+        self,
+        user_id: int,
+        queue_id: int,
+        request: Any,
+    ) -> QueueMessageResponse:
+        """Ingest a message into a queue from external source.
+
+        Args:
+            user_id: Current user ID (queue owner)
+            queue_id: Target work queue ID
+            request: IngestMessageRequest with content, note, priority, etc.
+        """
+        with self.get_db() as db:
+            # Validate queue exists and belongs to user
+            queue = (
+                db.query(Kind)
+                .filter(
+                    Kind.id == queue_id,
+                    Kind.kind == "WorkQueue",
+                    Kind.user_id == user_id,
+                    Kind.is_active == True,
+                )
+                .first()
+            )
+            if not queue:
+                raise NotFoundException("Work queue not found")
+
+            # Build content snapshot from ingested content
+            snapshot_entry = {
+                "role": "USER",
+                "content": request.content or "",
+                "senderUserName": (
+                    request.sender.displayName if request.sender else None
+                ),
+                "createdAt": datetime.now(timezone.utc).isoformat(),
+            }
+            if request.attachments:
+                snapshot_entry["attachments"] = request.attachments
+            content_snapshot = [snapshot_entry]
+
+            # Embed pre-written attachment context IDs into the USER message snapshot
+            attachment_context_ids = list(request.attachmentContextIds or [])
+            if attachment_context_ids:
+                # Store IDs on the first (and only) snapshot entry so they travel
+                # with the message without requiring a separate DB column.
+                content_snapshot[0]["attachmentContextIds"] = attachment_context_ids
+
+            # Create message
+            db_message = QueueMessage(
+                queue_id=queue_id,
+                sender_user_id=user_id,
+                recipient_user_id=user_id,
+                source_task_id=0,
+                source_subtask_ids=[],
+                content_snapshot=content_snapshot,
+                note=request.note or "",
+                priority=request.priority,
+                process_result={},
+                process_task_id=0,
+            )
+            db.add(db_message)
+            db.commit()
+            db.refresh(db_message)
+
+            logger.info(f"Ingested message: id={db_message.id}, queue_id={queue_id}")
+
+            # Publish event for auto-processing
+            try:
+                from app.core.events import (
+                    QueueMessageCreatedEvent,
+                    get_event_bus,
+                )
+
+                event_bus = get_event_bus()
+                event_bus.publish_sync(
+                    QueueMessageCreatedEvent(
+                        message_id=db_message.id,
+                        queue_id=queue_id,
+                        recipient_user_id=user_id,
+                        sender_user_id=user_id,
+                        priority=(
+                            request.priority.value
+                            if hasattr(request.priority, "value")
+                            else str(request.priority)
+                        ),
+                    )
+                )
+            except Exception as e:
+                logger.warning(f"Failed to publish QueueMessageCreatedEvent: {e}")
+
+            sender = db.query(User).filter(User.id == user_id).first()
+            return self._build_message_response(db_message, sender)
+
+    def ingest_message_by_name(
+        self,
+        user_id: int,
+        queue_name: str,
+        request: Any,
+    ) -> QueueMessageResponse:
+        """Ingest a message into a queue identified by name.
+
+        Resolves the queue by (user_id, queue_name) then delegates to ingest_message.
+
+        Args:
+            user_id: Current user ID (queue owner)
+            queue_name: Target work queue name (e.g. "inbox")
+            request: IngestMessageRequest with content, note, priority, etc.
+        """
+        queue = work_queue_service.get_queue_by_name(user_id, queue_name)
+        if not queue:
+            raise NotFoundException(f"Work queue '{queue_name}' not found")
+        return self.ingest_message(user_id, queue.id, request)
+
+    def retry_message(self, user_id: int, message_id: int) -> QueueMessageResponse:
+        """Retry processing a failed message.
+
+        Only messages with status 'failed' can be retried.
+        Resets the message to 'unread' and re-triggers auto-processing.
+        """
+        with self.get_db() as db:
+            message = (
+                db.query(QueueMessage).filter(QueueMessage.id == message_id).first()
+            )
+            if not message:
+                raise NotFoundException("Message not found")
+
+            # Verify ownership
+            if message.recipient_user_id != user_id:
+                raise ForbiddenException("Not authorized to retry this message")
+
+            # Only failed messages can be retried
+            if message.status != QueueMessageStatus.FAILED:
+                raise ConflictException(
+                    f"Only failed messages can be retried, "
+                    f"current status: {message.status}"
+                )
+
+            # Reset message for re-processing
+            message.status = QueueMessageStatus.UNREAD
+            message.process_subscription_id = None
+            message.process_result = {}
+            message.processed_at = None
+            process_result = dict(message.process_result or {})
+            process_result["retry_count"] = process_result.get("retry_count", 0) + 1
+            message.process_result = process_result
+            db.commit()
+            db.refresh(message)
+
+            logger.info(
+                f"Retrying message: id={message_id}, "
+                f"retry_count={message.process_result.get('retry_count', 0)}"
+            )
+
+            # Re-publish event for auto-processing
+            try:
+                from app.core.events import (
+                    QueueMessageCreatedEvent,
+                    get_event_bus,
+                )
+
+                event_bus = get_event_bus()
+                event_bus.publish_sync(
+                    QueueMessageCreatedEvent(
+                        message_id=message.id,
+                        queue_id=message.queue_id,
+                        recipient_user_id=message.recipient_user_id,
+                        sender_user_id=message.sender_user_id,
+                        priority=(
+                            message.priority.value
+                            if hasattr(message.priority, "value")
+                            else str(message.priority)
+                        ),
+                    )
+                )
+            except Exception as e:
+                logger.warning(f"Failed to publish QueueMessageCreatedEvent: {e}")
+
+            sender = db.query(User).filter(User.id == message.sender_user_id).first()
+            return self._build_message_response(message, sender)
 
 
 class ContactService:

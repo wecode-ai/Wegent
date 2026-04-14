@@ -16,12 +16,37 @@ import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { KnowledgeDocumentPageDesktop } from './KnowledgeDocumentPageDesktop'
 import { KnowledgeDocumentPageMobile } from './KnowledgeDocumentPageMobile'
 
-export function KnowledgeDocumentPage() {
+interface KnowledgeDocumentPageProps {
+  /** Initial KB namespace to auto-select (from virtual URL path) */
+  initialKbNamespace?: string
+  /** Initial KB name to auto-select (from virtual URL path) */
+  initialKbName?: string
+  /** Initial document path to auto-open (from virtual URL path segments) */
+  initialDocPath?: string
+}
+
+export function KnowledgeDocumentPage({
+  initialKbNamespace,
+  initialKbName,
+  initialDocPath,
+}: KnowledgeDocumentPageProps = {}) {
   const isMobile = useIsMobile()
 
   if (isMobile) {
-    return <KnowledgeDocumentPageMobile />
+    return (
+      <KnowledgeDocumentPageMobile
+        initialKbNamespace={initialKbNamespace}
+        initialKbName={initialKbName}
+        initialDocPath={initialDocPath}
+      />
+    )
   }
 
-  return <KnowledgeDocumentPageDesktop />
+  return (
+    <KnowledgeDocumentPageDesktop
+      initialKbNamespace={initialKbNamespace}
+      initialKbName={initialKbName}
+      initialDocPath={initialDocPath}
+    />
+  )
 }

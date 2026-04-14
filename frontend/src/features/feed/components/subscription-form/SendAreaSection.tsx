@@ -74,6 +74,8 @@ export function SendAreaSection({
   devicesLoading,
   promptTemplate,
   setPromptTemplate,
+  triggerType,
+  triggerConfig,
   teamId,
   setTeamId,
   teams,
@@ -102,6 +104,11 @@ export function SendAreaSection({
   const [modelSearchValue, setModelSearchValue] = useState('')
   const [variablesPopoverOpen, setVariablesPopoverOpen] = useState(false)
 
+  // Build prompt variables list based on trigger type
+  const isInboxMessageTrigger =
+    triggerType === 'event' && triggerConfig?.event_type === 'inbox_message'
+  const isWebhookTrigger = triggerType === 'event' && triggerConfig?.event_type === 'webhook'
+
   const promptVariables = [
     { key: '{{date}}', description: t('variable_date_desc') || '当前日期' },
     { key: '{{time}}', description: t('variable_time_desc') || '当前时间' },
@@ -110,7 +117,24 @@ export function SendAreaSection({
       key: '{{subscription_name}}',
       description: t('variable_subscription_name_desc') || '订阅名称',
     },
-    { key: '{{webhook_data}}', description: t('variable_webhook_data_desc') || 'Webhook 数据' },
+    // Show {{inbox_message}} only for inbox_message event triggers
+    ...(isInboxMessageTrigger
+      ? [
+          {
+            key: '{{inbox_message}}',
+            description: t('variable_inbox_message_desc') || '收件箱消息内容（JSON 格式）',
+          },
+        ]
+      : []),
+    // Show {{webhook_data}} only for webhook event triggers
+    ...(isWebhookTrigger
+      ? [
+          {
+            key: '{{webhook_data}}',
+            description: t('variable_webhook_data_desc') || 'Webhook 数据',
+          },
+        ]
+      : []),
   ]
 
   const handleInsertPromptVariable = useCallback(

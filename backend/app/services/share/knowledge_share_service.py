@@ -732,6 +732,7 @@ class KnowledgeShareService(UnifiedShareService):
         return {
             "id": kb.id,
             "name": spec.get("name", ""),
+            "namespace": kb.namespace,
             "description": spec.get("description"),
             "creator_id": kb.user_id,
             "creator_name": creator_name,

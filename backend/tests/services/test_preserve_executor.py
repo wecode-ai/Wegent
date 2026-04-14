@@ -441,6 +441,78 @@ class TestCleanupStaleExecutorsWithPreserveFlag(CleanupExecutorTestHelpers):
         archive_mock.assert_not_called()
         mock_executor_service.delete_executor_task_sync.assert_not_called()
 
+    def test_cleanup_stale_executors_includes_subscription_tasks(
+        self, job_service, test_db
+    ):
+        """Test scheduled cleanup also deletes executors for subscription tasks."""
+        task = TaskResource(
+            user_id=1,
+            kind="Task",
+            name="subscription-task-100",
+            namespace="default",
+            is_active=TaskResource.STATE_SUBSCRIPTION,
+            json={
+                "kind": "Task",
+                "apiVersion": "agent.wecode.io/v1",
+                "metadata": {
+                    "name": "subscription-task-100",
+                    "namespace": "default",
+                    "labels": {"taskType": "chat", "type": "subscription"},
+                },
+                "spec": {
+                    "title": "Subscription Task",
+                    "prompt": "Run subscription",
+                    "teamRef": {"name": "team-1", "namespace": "default"},
+                    "workspaceRef": {"name": "workspace-1", "namespace": "default"},
+                },
+                "status": {
+                    "status": "COMPLETED",
+                    "progress": 100,
+                    "createdAt": datetime.now().isoformat(),
+                    "updatedAt": datetime.now().isoformat(),
+                },
+            },
+            updated_at=datetime.now() - timedelta(hours=48),
+        )
+        test_db.add(task)
+        test_db.commit()
+        test_db.refresh(task)
+
+        subtask = Subtask(
+            user_id=1,
+            task_id=task.id,
+            team_id=1,
+            title="assistant",
+            bot_ids=[1],
+            role=SubtaskRole.ASSISTANT,
+            status=SubtaskStatus.COMPLETED,
+            executor_name="executor-subscription-1",
+            executor_namespace="default",
+            executor_deleted_at=False,
+            updated_at=datetime.now() - timedelta(hours=48),
+            completed_at=datetime.now() - timedelta(hours=48),
+        )
+        test_db.add(subtask)
+        test_db.commit()
+
+        with (
+            patch.object(job_service, "_mark_executor_deleted") as mark_deleted,
+            patch(
+                "app.services.adapters.executor_job.executor_kinds_service"
+            ) as executor_service,
+            patch("app.services.adapters.executor_job.settings") as mock_settings,
+        ):
+            mock_settings.CHAT_TASK_EXECUTOR_DELETE_AFTER_HOURS = 24
+            mock_settings.CODE_TASK_EXECUTOR_DELETE_AFTER_HOURS = 48
+            executor_service.delete_executor_task_sync.return_value = {"success": True}
+
+            job_service.cleanup_stale_executors(test_db)
+
+        executor_service.delete_executor_task_sync.assert_called_once_with(
+            "executor-subscription-1", "default"
+        )
+        mark_deleted.assert_called_once_with([subtask.id])
+
 
 @pytest.mark.unit
 class TestCleanupTaskExecutorAPI(CleanupExecutorTestHelpers):
@@ -558,6 +630,79 @@ class TestCleanupTaskExecutorAPI(CleanupExecutorTestHelpers):
             "executor-1", "default"
         )
         mark_deleted.assert_called_once_with([1, 2])
+
+    def test_cleanup_task_executor_supports_subscription_tasks(
+        self, job_service, test_db
+    ):
+        """Test manual cleanup accepts subscription task state."""
+        task = TaskResource(
+            user_id=1,
+            kind="Task",
+            name="subscription-task-200",
+            namespace="default",
+            is_active=TaskResource.STATE_SUBSCRIPTION,
+            json={
+                "kind": "Task",
+                "apiVersion": "agent.wecode.io/v1",
+                "metadata": {
+                    "name": "subscription-task-200",
+                    "namespace": "default",
+                    "labels": {"taskType": "chat", "type": "subscription"},
+                },
+                "spec": {
+                    "title": "Subscription Task",
+                    "prompt": "Run subscription",
+                    "teamRef": {"name": "team-1", "namespace": "default"},
+                    "workspaceRef": {"name": "workspace-1", "namespace": "default"},
+                },
+                "status": {
+                    "status": "COMPLETED",
+                    "progress": 100,
+                    "createdAt": datetime.now().isoformat(),
+                    "updatedAt": datetime.now().isoformat(),
+                },
+            },
+        )
+        test_db.add(task)
+        test_db.commit()
+        test_db.refresh(task)
+
+        subtask = Subtask(
+            user_id=1,
+            task_id=task.id,
+            team_id=1,
+            title="assistant",
+            bot_ids=[1],
+            role=SubtaskRole.ASSISTANT,
+            status=SubtaskStatus.COMPLETED,
+            executor_name="executor-subscription-2",
+            executor_namespace="default",
+            executor_deleted_at=False,
+            completed_at=datetime.now(),
+        )
+        test_db.add(subtask)
+        test_db.commit()
+
+        with (
+            patch("app.services.task_member_service.task_member_service") as members,
+            patch.object(job_service, "_mark_executor_deleted") as mark_deleted,
+            patch(
+                "app.services.adapters.executor_job.executor_kinds_service"
+            ) as executor_service,
+        ):
+            members.is_member.return_value = True
+            executor_service.delete_executor_task_sync.return_value = {"success": True}
+
+            result = job_service.cleanup_task_executor(
+                test_db, task_id=task.id, user_id=1
+            )
+
+        assert result["deleted"] is True
+        assert result["reason"] == "executor_deleted"
+        executor_service.delete_executor_task_sync.assert_called_once_with(
+            "executor-subscription-2", "default"
+        )
+        mark_deleted.assert_called_once_with([subtask.id])
 
 
 @pytest.mark.unit

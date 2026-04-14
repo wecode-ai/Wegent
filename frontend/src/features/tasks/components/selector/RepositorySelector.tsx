@@ -7,8 +7,8 @@
 import * as React from 'react'
 import { useState, useMemo } from 'react'
 import { SearchableSelect, SearchableSelectItem } from '@/components/ui/searchable-select'
-import { FiGithub } from 'react-icons/fi'
-import { Loader2, Check } from 'lucide-react'
+import { Github } from 'lucide-react'
+import { Loader2, Check, X } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { paths } from '@/config/paths'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -42,6 +42,7 @@ export default function RepositorySelector({
   selectedTaskDetail,
   fullWidth = false,
   compact = false,
+  autoRestore = true,
 }: RepositorySelectorProps) {
   const { t } = useTranslation()
   const router = useRouter()
@@ -62,6 +63,7 @@ export default function RepositorySelector({
     handleRepoChange,
     disabled,
     selectedTaskDetail,
+    autoRestore,
   })
 
   // State for compact mode popover
@@ -123,7 +125,7 @@ export default function RepositorySelector({
                       'disabled:cursor-not-allowed disabled:opacity-50'
                     )}
                   >
-                    <FiGithub className="w-4 h-4 flex-shrink-0" />
+                    <Github className="w-4 h-4 flex-shrink-0" />
                   </button>
                 </PopoverTrigger>
               </TooltipTrigger>
@@ -217,6 +219,12 @@ export default function RepositorySelector({
     )
   }
 
+  // Handle clear selection
+  const handleClear = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    handleRepoChange(null)
+  }
+
   // Normal mode: use SearchableSelect
   return (
     <div
@@ -234,7 +242,7 @@ export default function RepositorySelector({
                 loading ? 'animate-pulse' : ''
               )}
             >
-              <FiGithub className="w-4 h-4 flex-shrink-0" />
+              <Github className="w-4 h-4 flex-shrink-0" />
             </div>
           </TooltipTrigger>
           <TooltipContent side="top">
@@ -273,6 +281,21 @@ export default function RepositorySelector({
         />
         {isSearching && (
           <Loader2 className="w-3 h-3 text-text-muted animate-spin flex-shrink-0 absolute right-0" />
+        )}
+        {/* Clear button - shown when a repo is selected and not disabled */}
+        {selectedRepo && !disabled && (
+          <button
+            type="button"
+            onClick={handleClear}
+            className={cn(
+              'flex-shrink-0 p-1 rounded-md',
+              'text-text-muted hover:text-text-primary hover:bg-muted',
+              'transition-colors focus:outline-none focus:ring-2 focus:ring-primary/20'
+            )}
+            title={t('common:actions.clear')}
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
         )}
       </div>
     </div>

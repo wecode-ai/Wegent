@@ -28,6 +28,10 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.kind import Kind
 from app.schemas.device import DeviceType
+from app.services.device.display_name import (
+    resolve_device_display_name,
+    set_device_display_name,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -326,7 +330,8 @@ class DeviceService:
             # Update existing device (reactivate if soft-deleted)
             # Use deepcopy to ensure SQLAlchemy detects nested JSON changes
             device_json = copy.deepcopy(device_kind.json)
-            device_json["spec"]["displayName"] = name
+            persisted_display_name = resolve_device_display_name(device_json, name)
+            set_device_display_name(device_json, persisted_display_name)
             # Update device type if provided, otherwise preserve existing value
             if device_type is not None:
                 device_json["spec"]["deviceType"] = device_type
@@ -382,11 +387,9 @@ class DeviceService:
                 "metadata": {
                     "name": device_id,
                     "namespace": "default",
-                    "displayName": name,
                 },
                 "spec": {
                     "deviceId": device_id,
-                    "displayName": name,
                     "deviceType": resolved_device_type,
                     "connectionMode": "websocket",
                     "bindShell": resolved_bind_shell,
@@ -398,6 +401,7 @@ class DeviceService:
                     "state": "Available",
                 },
             }
+            set_device_display_name(device_json, name)
 
             device_kind = Kind(
                 user_id=user_id,
@@ -624,10 +628,7 @@ class DeviceService:
 
         # Update displayName in spec
         device_json = copy.deepcopy(device_kind.json)
-        device_json["spec"]["displayName"] = alias
-        # Also update metadata displayName for consistency
-        if "metadata" in device_json:
-            device_json["metadata"]["displayName"] = alias
+        set_device_display_name(device_json, alias)
         device_kind.json = device_json
         flag_modified(device_kind, "json")
         device_kind.updated_at = datetime.now()

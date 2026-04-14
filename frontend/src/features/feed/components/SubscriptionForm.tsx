@@ -1002,6 +1002,8 @@ export function SubscriptionForm({
             <SendAreaSection
               promptTemplate={promptTemplate}
               setPromptTemplate={setPromptTemplate}
+              triggerType={triggerType}
+              triggerConfig={triggerConfig}
               teamId={teamId}
               setTeamId={handleTeamChange}
               teams={teams}
