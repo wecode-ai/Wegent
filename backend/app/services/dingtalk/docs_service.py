@@ -130,14 +130,25 @@ class DingTalkDocsService:
         return None
 
     def _format_modified_time(self, modified_time: str) -> str:
-        """Format modified time to YYYYMMDDHHMMSS format.
+        """Format modified time for filename.
 
         Args:
-            modified_time: ISO format datetime string or other formats
+            modified_time: ISO format datetime string, Unix timestamp (ms), or other formats
 
         Returns:
-            Formatted string in YYYYMMDDHHMMSS format
+            Formatted string - uses original timestamp if it's a millisecond timestamp,
+            otherwise converts to YYYYMMDDHHMMSS format
         """
+        # Check if it's a Unix timestamp in milliseconds (13 digits)
+        if isinstance(modified_time, (int, float)) or (
+            isinstance(modified_time, str)
+            and modified_time.isdigit()
+            and len(modified_time) == 13
+        ):
+            # Return the original timestamp as string for filename
+            # e.g., 产品需求文档_1775705225000
+            return str(modified_time)
+
         try:
             # Try ISO format first
             dt = datetime.fromisoformat(modified_time.replace("Z", "+00:00"))
