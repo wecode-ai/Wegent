@@ -6,47 +6,28 @@
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
+# Re-export shared enums so callers can import from this module without
+# knowing the internal package structure.  Using the shared definitions
+# ensures all modules compare against the same enum class, preventing
+# identity-check failures (e.g. TriggerMode.MANUAL != TriggerMode.MANUAL
+# when two different class objects exist).
+from shared.models.db.enums import (
+    QueueMessagePriority,
+    QueueMessageStatus,
+    QueueVisibility,
+    TriggerMode,
+)
 
-# Re-export enums for API use
-class QueueVisibility(str, Enum):
-    """Work queue visibility levels."""
-
-    PRIVATE = "private"
-    PUBLIC = "public"
-    GROUP_VISIBLE = "group_visible"
-    INVITE_ONLY = "invite_only"
-
-
-class QueueMessageStatus(str, Enum):
-    """Queue message processing status."""
-
-    UNREAD = "unread"
-    READ = "read"
-    PROCESSING = "processing"
-    PROCESSED = "processed"
-    ARCHIVED = "archived"
-    FAILED = "failed"
-
-
-class QueueMessagePriority(str, Enum):
-    """Queue message priority levels."""
-
-    LOW = "low"
-    NORMAL = "normal"
-    HIGH = "high"
-
-
-class TriggerMode(str, Enum):
-    """Auto-processing trigger mode."""
-
-    IMMEDIATE = "immediate"
-    MANUAL = "manual"
-    SCHEDULED = "scheduled"
-    CONDITION_BASED = "condition_based"
+__all_enums__ = [
+    "QueueVisibility",
+    "QueueMessageStatus",
+    "QueueMessagePriority",
+    "TriggerMode",
+]
 
 
 class ConditionAction(str, Enum):
@@ -91,9 +72,13 @@ class AutoProcessConfig(BaseModel):
     """Auto-processing configuration."""
 
     enabled: bool = False
+    # Processing mode: "subscription" uses linked Subscription CRD,
+    # "direct_agent" creates a Task directly via the chat interface.
+    # Defaults to "subscription" for backward compatibility with existing records.
+    mode: Literal["subscription", "direct_agent"] = "subscription"
     teamRef: Optional[TeamRef] = None
     subscriptionRef: Optional[SubscriptionRef] = None
-    triggerMode: TriggerMode = TriggerMode.MANUAL
+    triggerMode: TriggerMode = TriggerMode.IMMEDIATE
     scheduleInterval: Optional[int] = Field(
         None, ge=15, description="Schedule interval in minutes (min: 15)"
     )

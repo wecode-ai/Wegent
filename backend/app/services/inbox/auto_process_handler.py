@@ -28,7 +28,9 @@ class InboxAutoProcessHandler:
         """
         logger.info(
             f"[InboxAutoProcess] Received QueueMessageCreatedEvent: "
-            f"message_id={event.message_id}, queue_id={event.queue_id}"
+            f"message_id={event.message_id}, queue_id={event.queue_id}, "
+            f"recipient_user_id={event.recipient_user_id}, "
+            f"sender_user_id={event.sender_user_id}"
         )
 
         try:
@@ -45,15 +47,27 @@ class InboxAutoProcessHandler:
                 )
 
                 if not work_queue:
-                    logger.debug(
-                        f"[InboxAutoProcess] WorkQueue {event.queue_id} not found"
+                    logger.warning(
+                        f"[InboxAutoProcess] WorkQueue {event.queue_id} not found in DB"
                     )
                     return
+
+                logger.info(
+                    f"[InboxAutoProcess] Loaded WorkQueue: id={work_queue.id}, "
+                    f"name={work_queue.name}, user_id={work_queue.user_id}"
+                )
 
                 # Parse autoProcess config
                 spec = work_queue.json.get("spec", {})
                 auto_process_data = spec.get("autoProcess")
+                logger.info(
+                    f"[InboxAutoProcess] Queue spec auto_process_data: {auto_process_data}"
+                )
                 if not auto_process_data:
+                    logger.info(
+                        f"[InboxAutoProcess] No autoProcess config for queue "
+                        f"{event.queue_id}, skipping"
+                    )
                     return
 
                 try:
@@ -65,28 +79,50 @@ class InboxAutoProcessHandler:
                     )
                     return
 
+                logger.info(
+                    f"[InboxAutoProcess] AutoProcessConfig: enabled={auto_process.enabled}, "
+                    f"mode={auto_process.mode}, triggerMode={auto_process.triggerMode}, "
+                    f"teamRef={auto_process.teamRef}, "
+                    f"subscriptionRef={auto_process.subscriptionRef}"
+                )
+
                 # Check if enabled
                 if not auto_process.enabled:
-                    return
-
-                # Check trigger mode
-                if auto_process.triggerMode == TriggerMode.MANUAL:
-                    return
-
-                if auto_process.triggerMode != TriggerMode.IMMEDIATE:
-                    logger.debug(
-                        f"[InboxAutoProcess] Unsupported trigger mode "
-                        f"{auto_process.triggerMode} for queue {event.queue_id}"
+                    logger.info(
+                        f"[InboxAutoProcess] Auto-process disabled for queue "
+                        f"{event.queue_id}, skipping"
                     )
                     return
 
-                # Check subscriptionRef
-                if not auto_process.subscriptionRef:
-                    logger.warning(
-                        f"[InboxAutoProcess] Auto-process enabled but no "
-                        f"subscriptionRef for queue {event.queue_id}"
+                # Check trigger mode.
+                # direct_agent mode always runs immediately regardless of the stored
+                # triggerMode value - old records may have persisted "manual" due to
+                # a frontend serialization bug, so we normalise here.
+                if auto_process.mode == "direct_agent":
+                    logger.info(
+                        f"[InboxAutoProcess] direct_agent mode: treating as IMMEDIATE "
+                        f"regardless of stored triggerMode={auto_process.triggerMode} "
+                        f"for queue {event.queue_id}"
                     )
-                    return
+                else:
+                    if auto_process.triggerMode == TriggerMode.MANUAL:
+                        logger.info(
+                            f"[InboxAutoProcess] Trigger mode is MANUAL for queue "
+                            f"{event.queue_id}, skipping"
+                        )
+                        return
+
+                    if auto_process.triggerMode != TriggerMode.IMMEDIATE:
+                        logger.warning(
+                            f"[InboxAutoProcess] Unsupported trigger mode "
+                            f"{auto_process.triggerMode} for queue {event.queue_id}, skipping"
+                        )
+                        return
+
+                    logger.info(
+                        f"[InboxAutoProcess] Trigger mode is IMMEDIATE, proceeding with "
+                        f"mode={auto_process.mode} for queue {event.queue_id}"
+                    )
 
                 # Load the message
                 message = (
@@ -97,9 +133,16 @@ class InboxAutoProcessHandler:
 
                 if not message:
                     logger.warning(
-                        f"[InboxAutoProcess] Message {event.message_id} not found"
+                        f"[InboxAutoProcess] Message {event.message_id} not found in DB"
                     )
                     return
+
+                logger.info(
+                    f"[InboxAutoProcess] Loaded message: id={message.id}, "
+                    f"status={message.status}, priority={message.priority}, "
+                    f"queue_id={message.queue_id}, "
+                    f"content_snapshot_len={len(message.content_snapshot or [])}"
+                )
 
                 # Prevent re-processing of messages already being processed
                 if message.status in (
@@ -109,6 +152,39 @@ class InboxAutoProcessHandler:
                     logger.info(
                         f"[InboxAutoProcess] Message {event.message_id} already "
                         f"in status {message.status}, skipping"
+                    )
+                    return
+
+                # Branch on processing mode
+                if auto_process.mode == "direct_agent":
+                    logger.info(
+                        f"[InboxAutoProcess] Routing to direct_agent handler: "
+                        f"message_id={event.message_id}, "
+                        f"teamRef={auto_process.teamRef}"
+                    )
+                    from app.services.inbox.direct_agent_handler import (
+                        inbox_direct_agent_handler,
+                    )
+
+                    await inbox_direct_agent_handler.handle(
+                        event=event,
+                        auto_process=auto_process,
+                        message=message,
+                        work_queue=work_queue,
+                        db=db,
+                    )
+                    logger.info(
+                        f"[InboxAutoProcess] direct_agent handler completed for "
+                        f"message_id={event.message_id}"
+                    )
+                    return
+
+                # Default: subscription mode – existing path below
+                # Check subscriptionRef
+                if not auto_process.subscriptionRef:
+                    logger.warning(
+                        f"[InboxAutoProcess] Auto-process enabled but no "
+                        f"subscriptionRef for queue {event.queue_id}"
                     )
                     return
 

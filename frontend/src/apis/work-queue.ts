@@ -38,6 +38,7 @@ export interface ProcessCondition {
 
 export interface AutoProcessConfig {
   enabled: boolean
+  mode?: 'subscription' | 'direct_agent'
   teamRef?: TeamRef
   subscriptionRef?: SubscriptionRef
   triggerMode: TriggerMode
@@ -352,4 +353,8 @@ export async function ingestMessage(
 
 export async function retryMessage(messageId: number): Promise<QueueMessage> {
   return apiClient.post<QueueMessage>(`/queue-messages/${messageId}/retry`)
+}
+
+export async function processMessage(messageId: number): Promise<QueueMessage> {
+  return apiClient.post<QueueMessage>(`/queue-messages/${messageId}/process`)
 }
