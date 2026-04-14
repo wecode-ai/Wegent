@@ -72,14 +72,9 @@ except ImportError:
     if _base_module:
         BaseSandboxTool = _base_module.BaseSandboxTool
     else:
-        # Fallback: try to import from sandbox skill
-        try:
-            sys.path.insert(
-                0, "/workspace/1760905/Wegent/backend/init_data/skills/sandbox"
-            )
-            from _base import BaseSandboxTool
-        except ImportError:
-            raise ImportError(f"Cannot import BaseSandboxTool from any location")
+        raise ImportError(
+            "Cannot import BaseSandboxTool from chat_shell.tools.sandbox._base"
+        )
 
 
 class DingTalkDocsToolProvider:
@@ -530,17 +525,24 @@ This is a placeholder for the document content.
 
             upload_url = f"{api_base_url}/api/attachments/upload"
 
-            # Build curl command
-            curl_cmd = (
-                f"curl -s -X POST "
-                f'-H "Authorization: Bearer {auth_token}" '
-                f'-F "file=@{file_path}" '
-                f'"{upload_url}"'
-            )
+            # Build curl command with shlex.quote to prevent shell injection
+            import shlex
 
-            # Execute curl command
+            curl_cmd = [
+                "curl",
+                "-s",
+                "-X",
+                "POST",
+                "-H",
+                f"Authorization: Bearer {auth_token}",
+                "-F",
+                f"file=@{file_path}",
+                upload_url,
+            ]
+
+            # Execute curl command (pass as list to avoid shell interpretation)
             result_obj = await sandbox.commands.run(
-                cmd=curl_cmd,
+                cmd=shlex.join(curl_cmd),
                 cwd="/home/user",
                 timeout=300,
             )
@@ -619,16 +621,30 @@ This is a placeholder for the document content.
                 "id": 1,
             }
 
-            curl_cmd = (
-                f"curl -s -X POST "
-                f'-H "Authorization: Bearer {auth_token}" '
-                f'-H "Content-Type: application/json" '
-                f"-d '{json.dumps(payload)}' "
-                f'"{mcp_url}"'
-            )
+            # Write payload to a temporary file to avoid shell injection
+            payload_file = "/tmp/mcp_payload.json"
+            payload_json = json.dumps(payload)
+            await sandbox.files.write(payload_file, payload_json)
+
+            # Build curl command using array style to prevent shell injection
+            import shlex
+
+            curl_cmd = [
+                "curl",
+                "-s",
+                "-X",
+                "POST",
+                "-H",
+                f"Authorization: Bearer {auth_token}",
+                "-H",
+                "Content-Type: application/json",
+                "-d",
+                f"@{payload_file}",
+                mcp_url,
+            ]
 
             result_obj = await sandbox.commands.run(
-                cmd=curl_cmd,
+                cmd=shlex.join(curl_cmd),
                 cwd="/home/user",
                 timeout=60,
             )
@@ -675,14 +691,20 @@ This is a placeholder for the document content.
         Format: {title}_{timestamp}.md
         Example: 产品需求文档_20260413170933.md
         """
-        # Sanitize title for filename
-        safe_title = re.sub(r'[<>:"/\\|?*]', "_", title)
-        safe_title = safe_title.strip()
+        # Use shared utility function to avoid duplication
+        try:
+            from app.services.dingtalk import build_dingtalk_doc_filename
 
-        if not safe_title:
-            safe_title = "untitled"
+            return build_dingtalk_doc_filename(title, modified_time)
+        except ImportError:
+            # Fallback if import fails (e.g., during skill loading)
+            import re
 
-        return f"{safe_title}_{modified_time}.md"
+            safe_title = re.sub(r'[<>:"/\\|?*]', "_", title)
+            safe_title = safe_title.strip()
+            if not safe_title:
+                safe_title = "untitled"
+            return f"{safe_title}_{modified_time}.md"
 
     def _get_current_timestamp(self) -> str:
         """Get current timestamp in YYYYMMDDHHMMSS format."""

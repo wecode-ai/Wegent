@@ -21,6 +21,44 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 
+def sanitize_filename(title: str) -> str:
+    """Sanitize a title for use in a filename.
+
+    Removes or replaces characters that are invalid in filenames.
+
+    Args:
+        title: The title to sanitize
+
+    Returns:
+        Sanitized title safe for use in filenames
+    """
+    # Replace invalid filename characters with underscore
+    safe_title = re.sub(r'[<>:"/\\|?*]', "_", title)
+    safe_title = safe_title.strip()
+
+    if not safe_title:
+        safe_title = "untitled"
+
+    return safe_title
+
+
+def build_dingtalk_doc_filename(title: str, modified_time_formatted: str) -> str:
+    """Build filename according to naming convention.
+
+    Format: {title}_{modified_time}.md
+    Example: 产品需求文档_20260413170933.md
+
+    Args:
+        title: Document title
+        modified_time_formatted: Formatted modification time (YYYYMMDDHHMMSS)
+
+    Returns:
+        Safe filename
+    """
+    safe_title = sanitize_filename(title)
+    return f"{safe_title}_{modified_time_formatted}.md"
+
+
 class DingTalkDocsService:
     """Service for DingTalk document operations.
 
@@ -221,14 +259,7 @@ class DingTalkDocsService:
         Returns:
             Safe filename
         """
-        # Sanitize title for filename
-        safe_title = re.sub(r'[<>:"/\\|?*]', "_", title)
-        safe_title = safe_title.strip()
-
-        if not safe_title:
-            safe_title = "untitled"
-
-        return f"{safe_title}_{modified_time_formatted}.md"
+        return build_dingtalk_doc_filename(title, modified_time_formatted)
 
 
 # Singleton instance

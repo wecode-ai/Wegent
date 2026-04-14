@@ -43,7 +43,7 @@ def _get_user_from_token(db: Session, token_info: TaskTokenInfo) -> Optional[Use
         "doc_url": "DingTalk document URL (e.g., https://alidocs.dingtalk.com/i/nodes/xxx)",
     },
 )
-def get_dingtalk_document_info(
+async def get_dingtalk_document_info(
     token_info: TaskTokenInfo,
     doc_url: str,
 ) -> Dict[str, Any]:
@@ -64,9 +64,7 @@ def get_dingtalk_document_info(
         - url: Original URL
     """
     try:
-        import asyncio
-
-        doc_info = asyncio.run(dingtalk_docs_service.get_document_info(doc_url))
+        doc_info = await dingtalk_docs_service.get_document_info(doc_url)
         return {
             "success": True,
             "doc_id": doc_info["doc_id"],
@@ -98,7 +96,7 @@ def get_dingtalk_document_info(
         "trigger_summary": "Whether to trigger summary generation (default: True)",
     },
 )
-def add_dingtalk_doc_to_knowledge(
+async def add_dingtalk_doc_to_knowledge(
     token_info: TaskTokenInfo,
     knowledge_base_id: int,
     doc_url: str,
@@ -140,16 +138,33 @@ def add_dingtalk_doc_to_knowledge(
         if not user:
             return {"success": False, "error": "User not found"}
 
-        # If content not provided, we need to fetch from DingTalk
-        # Note: In the current architecture, this would be done in sandbox
-        # This tool accepts pre-fetched content from the skill
+        # If content not provided, fetch from DingTalk
+        if not doc_content:
+            logger.info(
+                f"[MCP] Content not provided, fetching from DingTalk: {doc_url}"
+            )
+            try:
+                doc_download = await dingtalk_docs_service.download_document_content(
+                    doc_url
+                )
+                doc_content = doc_download.get("content", "")
+                # Use fetched title if not provided
+                if not doc_title:
+                    doc_title = doc_download.get("title", "DingTalk Document")
+                # Use fetched modified_time if not provided
+                if not modified_time:
+                    modified_time = doc_download.get("modified_time_formatted")
+            except Exception as e:
+                logger.error(f"[MCP] Failed to fetch document from DingTalk: {e}")
+                return {
+                    "success": False,
+                    "error": f"Failed to fetch document from DingTalk: {e}",
+                }
+
         if not doc_content:
             return {
                 "success": False,
-                "error": (
-                    "Document content is required. "
-                    "Please use the dingtalk-docs skill to fetch content from DingTalk."
-                ),
+                "error": "Failed to get document content from DingTalk",
             }
 
         # Use provided title or extract from URL
