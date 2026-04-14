@@ -227,15 +227,24 @@ class DingTalkDocsService:
                 response = await client.post(
                     url,
                     json=payload,
-                    headers={"Content-Type": "application/json"},
+                    headers={
+                        "Content-Type": "application/json",
+                        "Accept": "application/json",
+                    },
                 )
                 response.raise_for_status()
                 result = response.json()
         except httpx.HTTPStatusError as e:
             logger.error(f"HTTP error from DingTalk MCP: {e.response.status_code}")
+            logger.error(f"Response body: {e.response.text}")
             if e.response.status_code in AUTH_ERROR_CODES:
                 raise ValueError(
                     "DingTalk authentication failed. Please check your MCP configuration."
+                )
+            if e.response.status_code == 406:
+                raise ValueError(
+                    f"DingTalk MCP request format not acceptable (HTTP 406). "
+                    f"Response: {e.response.text}"
                 )
             raise ValueError(
                 f"Failed to call DingTalk MCP: HTTP {e.response.status_code}"
