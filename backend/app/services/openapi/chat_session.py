@@ -20,6 +20,7 @@ from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.kind import Task, Team
 from app.services.adapters.task_kinds import task_kinds_service
+from app.services.chat.storage.task_manager import create_assistant_subtask
 from app.services.readers.kinds import KindType, kindReader
 
 logger = logging.getLogger(__name__)
@@ -289,28 +290,17 @@ def setup_chat_session(
     )
     db.add(user_subtask)
 
-    # Create ASSISTANT subtask
-    assistant_subtask = Subtask(
-        user_id=user.id,
+    # Reuse the shared assistant-subtask creation path so follow-up requests
+    # inherit executor/session metadata consistently with WebSocket chat.
+    assistant_subtask = create_assistant_subtask(
+        db=db,
+        subtask_user_id=user.id,
         task_id=task_id,
         team_id=team.id,
-        title="Assistant response",
         bot_ids=bot_ids,
-        role=SubtaskRole.ASSISTANT,
-        executor_namespace="",
-        executor_name="",
-        prompt="",
-        status=SubtaskStatus.PENDING,
-        progress=0,
-        message_id=next_message_id + 1,
+        next_message_id=next_message_id + 1,
         parent_id=next_message_id,
-        error_message="",
-        result=None,
-        completed_at=datetime.now(),
-        sender_type=SenderType.TEAM,
-        sender_user_id=0,
     )
-    db.add(assistant_subtask)
 
     db.commit()
     db.refresh(task)
