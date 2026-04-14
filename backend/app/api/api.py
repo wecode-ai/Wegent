@@ -60,6 +60,7 @@ from app.api.endpoints.internal import bots_router as internal_bots_router
 from app.api.endpoints.internal import (
     callback_router,
     chat_storage_router,
+    object_storage_router,
     rag_content_router,
     services_router,
     skills_router,
@@ -217,6 +218,11 @@ api_router.include_router(
 )
 api_router.include_router(
     services_router, prefix="/internal", tags=["internal-services"]
+)
+api_router.include_router(
+    object_storage_router,
+    prefix="/internal",
+    tags=["internal-object-storage"],
 )
 api_router.include_router(
     workspace_archives_router,

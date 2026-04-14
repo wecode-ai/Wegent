@@ -179,6 +179,9 @@ class Settings(BaseSettings):
     WORKSPACE_ARCHIVE_ENABLED: bool = True
     WORKSPACE_ARCHIVE_TIMEZONE: str = "Asia/Shanghai"
 
+    # Publish storage configuration
+    PUBLISH_PRESIGNED_UPLOAD_EXPIRE_SECONDS: int = 3600
+
     # Frontend URL configuration
     FRONTEND_URL: str = "http://localhost:3000"
 
