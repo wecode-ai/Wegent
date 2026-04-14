@@ -173,6 +173,9 @@ class TaskDetail(BaseModel):
     preserve_executor: bool = (
         False  # Whether to preserve executor pod after task completion
     )
+    requested_skills: Optional[List[SkillRef]] = (
+        None  # User-selected skills for this task
+    )
 
     class Config:
         from_attributes = True

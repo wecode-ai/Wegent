@@ -55,6 +55,7 @@ class BackgroundExecutionManager:
         trigger_type: str,
         trigger_reason: str,
         extra_variables: Optional[Dict[str, Any]] = None,
+        inbox_message_id: Optional[int] = None,
     ) -> BackgroundExecutionInDB:
         """
         Create a new BackgroundExecution record.
@@ -66,6 +67,7 @@ class BackgroundExecutionManager:
             trigger_type: Type of trigger (cron, interval, webhook, manual)
             trigger_reason: Human-readable trigger reason
             extra_variables: Optional extra variables for prompt template
+            inbox_message_id: Optional QueueMessage ID for inbox-triggered executions
 
         Returns:
             BackgroundExecutionInDB object
@@ -129,6 +131,8 @@ class BackgroundExecutionManager:
             status=BackgroundExecutionStatus.PENDING.value,
             result_summary="",
             error_message="",
+            # inbox_message_id: 0 means no inbox message, >0 means inbox-triggered
+            inbox_message_id=inbox_message_id if inbox_message_id is not None else 0,
             # started_at and completed_at use model defaults (datetime.utcnow)
         )
 

@@ -164,6 +164,9 @@
       "targetGroup": "Target Group",
       "selectGroup": "Select Group"
     },
+    "folder": {
+      "docCount": "{{count}} docs"
+    },
     "document": {
       "title": "Documents",
       "upload": "Add sources",

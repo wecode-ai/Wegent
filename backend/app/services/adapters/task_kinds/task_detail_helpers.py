@@ -4,11 +4,13 @@
 
 """Helper functions for task detail response assembly."""
 
-from typing import Any, Dict, List, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from sqlalchemy.orm import Session
 
 from app.schemas.kind import Bot, Shell
+from app.schemas.task import SkillRef
+from app.services.task_skill_selection import parse_requested_skill_refs_from_labels
 from app.utils.prompt_utils import extract_display_prompt
 
 
@@ -184,3 +186,31 @@ def add_group_chat_info_to_task(
     task_dict["is_group_chat"] = is_group_chat
     task_dict["is_group_owner"] = task_dict.get("user_id") == user_id
     task_dict["member_count"] = len(members) if is_group_chat else None
+
+
+def get_requested_skills_from_task(task_crd: Any) -> Optional[List[SkillRef]]:
+    """Extract requested skills from task CRD metadata labels.
+
+    Args:
+        task_crd: The Task CRD object
+
+    Returns:
+        List of SkillRef objects or None if no skills requested
+    """
+    if not task_crd or not task_crd.metadata:
+        return None
+
+    labels = task_crd.metadata.labels or {}
+    skill_refs = parse_requested_skill_refs_from_labels(labels)
+
+    if not skill_refs:
+        return None
+
+    return [
+        SkillRef(
+            name=ref["name"],
+            namespace=ref["namespace"],
+            is_public=ref["is_public"],
+        )
+        for ref in skill_refs
+    ]

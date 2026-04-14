@@ -118,6 +118,30 @@ class SubscriptionTaskCompletionHandler:
                     skip_notifications=True,  # We'll handle notifications separately
                 )
 
+                # Write back result to inbox message if this is an inbox-triggered execution
+                # inbox_message_id is NOT NULL DEFAULT 0; 0 means no inbox message
+                if getattr(execution, "inbox_message_id", 0) > 0:
+                    try:
+                        from app.services.inbox.result_writeback import (
+                            write_execution_result_to_message,
+                        )
+
+                        write_execution_result_to_message(
+                            db,
+                            inbox_message_id=execution.inbox_message_id,
+                            status=event.status,
+                            result_summary=result_summary,
+                            error_message=event.error,
+                            task_id=event.task_id,
+                        )
+                    except Exception as wb_err:
+                        logger.error(
+                            f"[TaskCompletionHandler] Failed to write back "
+                            f"inbox result for message {execution.inbox_message_id}: "
+                            f"{wb_err}",
+                            exc_info=True,
+                        )
+
                 # Skip notifications for silent exits
                 if is_silent_exit:
                     logger.info(

@@ -8,7 +8,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 # Re-export enums for API use
@@ -29,6 +29,7 @@ class QueueMessageStatus(str, Enum):
     PROCESSING = "processing"
     PROCESSED = "processed"
     ARCHIVED = "archived"
+    FAILED = "failed"
 
 
 class QueueMessagePriority(str, Enum):
@@ -70,6 +71,14 @@ class TeamRef(BaseModel):
     name: str
 
 
+class SubscriptionRef(BaseModel):
+    """Reference to a Subscription for auto-processing."""
+
+    namespace: str = "default"
+    name: str
+    userId: int
+
+
 class ProcessCondition(BaseModel):
     """Condition rule for auto-processing."""
 
@@ -83,6 +92,7 @@ class AutoProcessConfig(BaseModel):
 
     enabled: bool = False
     teamRef: Optional[TeamRef] = None
+    subscriptionRef: Optional[SubscriptionRef] = None
     triggerMode: TriggerMode = TriggerMode.MANUAL
     scheduleInterval: Optional[int] = Field(
         None, ge=15, description="Schedule interval in minutes (min: 15)"
@@ -195,6 +205,11 @@ class MessageContentSnapshot(BaseModel):
     senderUserName: Optional[str] = None
     createdAt: Optional[str] = None
     attachments: Optional[List[Dict[str, Any]]] = None
+    # IDs of subtask_contexts records pre-written from uploaded files/content.
+    # Stored on the USER message that owns the attachments so that
+    # _link_inbox_attachments_to_subtask() can retrieve them without a
+    # separate DB column.
+    attachmentContextIds: Optional[List[int]] = None
 
 
 class QueueMessageCreate(BaseModel):
@@ -232,6 +247,8 @@ class QueueMessageResponse(BaseModel):
     status: QueueMessageStatus
     processResult: Dict[str, Any] = Field(default_factory=dict)
     processTaskId: int = 0
+    processSubscriptionId: Optional[int] = None
+    retryCount: int = 0
     createdAt: datetime
     updatedAt: datetime
     processedAt: datetime
@@ -362,3 +379,46 @@ class UnreadCountResponse(BaseModel):
     byQueue: Dict[int, int] = Field(
         default_factory=dict, description="Unread count by queue ID"
     )
+
+
+class ExternalSender(BaseModel):
+    """External sender information for ingest API."""
+
+    externalId: Optional[str] = None
+    displayName: Optional[str] = None
+
+
+class IngestSource(BaseModel):
+    """Source information for ingested messages."""
+
+    type: str = "api"
+    name: Optional[str] = None
+
+
+class IngestMessageRequest(BaseModel):
+    """Request model for ingesting messages into a queue.
+
+    Either `content` or `attachmentContextIds` must be provided.
+    When files are uploaded via the multipart endpoint, the caller
+    pre-writes them to subtask_contexts and passes the resulting IDs
+    in `attachmentContextIds`, allowing `content` to be omitted.
+    """
+
+    content: Optional[str] = Field(None, max_length=50000)
+    title: Optional[str] = Field(None, max_length=200)
+    note: Optional[str] = Field(None, max_length=1000)
+    sender: Optional[ExternalSender] = None
+    attachments: Optional[List[Dict[str, Any]]] = None
+    # IDs of subtask_contexts records pre-written from uploaded files
+    attachmentContextIds: Optional[List[int]] = None
+    source: Optional[IngestSource] = None
+    priority: QueueMessagePriority = QueueMessagePriority.NORMAL
+
+    @model_validator(mode="after")
+    def validate_content_or_attachments(self) -> "IngestMessageRequest":
+        """Ensure at least one of content or attachmentContextIds is provided."""
+        if not self.content and not self.attachmentContextIds:
+            raise ValueError(
+                "Either 'content' or 'attachmentContextIds' must be provided"
+            )
+        return self

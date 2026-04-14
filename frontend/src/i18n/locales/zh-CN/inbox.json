@@ -25,6 +25,11 @@
     "auto_process": "自动处理",
     "auto_process_enabled": "启用自动处理",
     "auto_process_team": "处理智能体",
+    "auto_process_subscription": "关联订阅",
+    "select_subscription": "选择订阅",
+    "select_subscription_placeholder": "选择一个订阅...",
+    "no_inbox_subscriptions": "暂无收件箱类型的订阅",
+    "subscription_ref_label": "自动处理订阅",
     "trigger_mode": "处理模式",
     "trigger_immediate": "立即处理",
     "trigger_manual": "手动",
@@ -61,11 +66,18 @@
     "process": "处理",
     "view_original": "查看原始对话",
     "view_result": "查看处理结果",
+    "retry": "重试",
+    "retry_success": "已发起重试",
+    "processing_failed": "处理失败",
+    "process_error": "错误信息",
+    "view_processing_task": "查看处理任务",
+    "retry_count": "重试次数",
     "status": {
       "unread": "未读",
       "read": "已读",
       "processing": "处理中",
       "processed": "已处理",
+      "failed": "失败",
       "archived": "已归档"
     },
     "priority": {
@@ -85,6 +97,7 @@
       "read": "已读",
       "processing": "处理中",
       "processed": "已处理",
+      "failed": "失败",
       "archived": "已归档"
     },
     "sort": {

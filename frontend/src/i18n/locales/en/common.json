@@ -54,7 +54,8 @@
     "generating": "Generating...",
     "zoom_in": "Zoom In",
     "zoom_out": "Zoom Out",
-    "rotate": "Rotate"
+    "rotate": "Rotate",
+    "clear": "Clear"
   },
   "errors": {
     "request_failed": "LLM API request failed, please click retry"
@@ -911,6 +912,7 @@
     "preload_skills_section": "Preload Skills",
     "preload_skills_description": "Preloaded skills will be automatically injected into the system prompt",
     "preload_only_public_hint": "Note: Only public skills can be preloaded",
+    "preload_hint": "Check the checkbox to preload a skill (it will be injected into the system prompt automatically)",
     "no_skills_selected": "Please select skills first",
     "delete_success": "Skill deleted successfully",
     "delete_failed": "Failed to delete skill",

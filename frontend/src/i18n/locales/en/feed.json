@@ -55,6 +55,7 @@
   "variable_time_desc": "Current time (e.g., 14:30:00)",
   "variable_datetime_desc": "Current date and time (e.g., 2024-01-15 14:30:00)",
   "variable_subscription_name_desc": "Subscription name",
+  "variable_inbox_message_desc": "Inbox message content (JSON format)",
   "variable_webhook_data_desc": "Webhook request data (JSON format)",
   "retry_count": "Retry Count",
   "no_retry": "No retry",
