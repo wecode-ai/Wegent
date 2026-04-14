@@ -497,6 +497,7 @@ const { messages } = useUnifiedMessages({ team, isGroupChat });
    - From other namespace: `t('namespace:key.subkey')` (e.g., `t('common:actions.save')`, `t('chat:export.title')`)
 4. **Never use array with `common` first** - `useTranslation(['common', 'groups'])` will break feature-specific keys
 5. **Add new translation keys** to the appropriate namespace file in `src/i18n/locales/{lang}/`
+6. **Do NOT use common namespace unless this key is very universal
 
 **Examples:**
 ```typescript

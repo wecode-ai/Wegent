@@ -33,7 +33,20 @@ import type {
 import type { DefaultTeamsResponse, Team } from '@/types/api'
 import type { Group } from '@/types/group'
 
-export function KnowledgeDocumentPageMobile() {
+interface KnowledgeDocumentPageMobileProps {
+  /** Initial KB namespace to auto-select (from virtual URL path) */
+  initialKbNamespace?: string
+  /** Initial KB name to auto-select (from virtual URL path) */
+  initialKbName?: string
+  /** Initial document path to auto-open (from virtual URL path segments) */
+  initialDocPath?: string
+}
+
+export function KnowledgeDocumentPageMobile({
+  initialKbNamespace: _initialKbNamespace,
+  initialKbName: _initialKbName,
+  initialDocPath: _initialDocPath,
+}: KnowledgeDocumentPageMobileProps = {}) {
   const router = useRouter()
 
   // Knowledge tree hook
@@ -224,7 +237,6 @@ export function KnowledgeDocumentPageMobile() {
         canManageGroup={canManageGroup}
       />
 
-      {/* Dialogs */}
       {/* Dialogs */}
       <CreateKnowledgeBaseDialog
         open={showCreateDialog}

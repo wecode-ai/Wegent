@@ -331,11 +331,15 @@ export function KnowledgeDocumentPageDesktop({
   // Navigate to KB detail page using canonical URL path
   const navigateToKb = useCallback(
     (kb: { name: string; namespace: string }) => {
-      // buildKbUrl handles personal (default), organization (public), and team namespaces
-      const kbPath = buildKbUrl(kb.namespace, kb.name, false)
+      // Determine isOrganization from allKnowledgeBasesWithGroupInfo group_type
+      const kbWithInfo = sidebar.allKnowledgeBasesWithGroupInfo.find(
+        k => k.name === kb.name && k.namespace === kb.namespace
+      )
+      const isOrganization = kbWithInfo?.group_type === 'organization'
+      const kbPath = buildKbUrl(kb.namespace, kb.name, isOrganization)
       router.push(kbPath)
     },
-    [router]
+    [router, sidebar.allKnowledgeBasesWithGroupInfo]
   )
 
   // Helper function to convert KnowledgeBaseWithGroupInfo to KnowledgeBase
@@ -535,8 +539,6 @@ export function KnowledgeDocumentPageDesktop({
     [selectedGroup]
   )
 
-  // Handle KB created
-  // Handle KB created
   // Handle KB created
   const handleCreate = useCallback(
     async (data: Omit<KnowledgeBaseCreate, 'namespace'> & { selectedGroupId?: string }) => {
@@ -1021,7 +1023,6 @@ export function KnowledgeDocumentPageDesktop({
       {/* Right content area */}
       <div className="flex-1 min-w-0 flex flex-col bg-base relative">{renderMainContent()}</div>
 
-      {/* Dialogs */}
       {/* Dialogs */}
       <CreateKnowledgeBaseDialog
         open={showCreateDialog}

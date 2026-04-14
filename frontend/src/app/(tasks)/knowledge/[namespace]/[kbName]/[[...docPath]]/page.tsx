@@ -21,7 +21,7 @@
  *   /knowledge/{namespace}/{kbName}/path/doc.md
  */
 
-import { Suspense, useState, useCallback } from 'react'
+import { Suspense, useState, useCallback, useEffect } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import TopNavigation from '@/features/layout/TopNavigation'
 import {
@@ -34,7 +34,6 @@ import '@/features/common/scrollbar.css'
 import { GithubStarButton } from '@/features/layout/GithubStarButton'
 import { ThemeToggle } from '@/features/theme/ThemeToggle'
 import { saveLastTab } from '@/utils/userPreferences'
-import { useEffect } from 'react'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
 import { useTaskContext } from '@/features/tasks/contexts/taskContext'

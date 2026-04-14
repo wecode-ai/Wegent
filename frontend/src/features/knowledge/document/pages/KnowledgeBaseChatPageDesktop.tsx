@@ -62,7 +62,6 @@ export function KnowledgeBaseChatPageDesktop({ knowledgeBaseId, initialDocPath }
   const [selectedDocumentIds, setSelectedDocumentIds] = useState<number[]>([])
 
   // Fetch knowledge base details
-  // Fetch knowledge base details
   const {
     knowledgeBase,
     loading: kbLoading,
@@ -178,7 +177,6 @@ export function KnowledgeBaseChatPageDesktop({ knowledgeBaseId, initialDocPath }
     })
   }
 
-  // Handle new task from collapsed sidebar
   // Handle new task from collapsed sidebar
   const handleNewTask = () => {
     // Clear state and navigate immediately for responsive UI

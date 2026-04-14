@@ -33,7 +33,13 @@ export function KnowledgeDocumentPage({
   const isMobile = useIsMobile()
 
   if (isMobile) {
-    return <KnowledgeDocumentPageMobile />
+    return (
+      <KnowledgeDocumentPageMobile
+        initialKbNamespace={initialKbNamespace}
+        initialKbName={initialKbName}
+        initialDocPath={initialDocPath}
+      />
+    )
   }
 
   return (

@@ -824,7 +824,7 @@ export function DocumentDetailDialog({
                                 }
                                 // Relative wiki link - resolve and navigate
                                 const handleClick = async (
-                                  e: React.MouseEvent<HTMLAnchorElement>
+                                  e: React.MouseEvent<HTMLButtonElement>
                                 ) => {
                                   e.preventDefault()
                                   const url = await resolveWikiLink(
@@ -847,15 +847,14 @@ export function DocumentDetailDialog({
                                   }
                                 }
                                 return (
-                                  <a
-                                    href="javascript:void(0)"
+                                  <button
+                                    type="button"
                                     onClick={handleClick}
-                                    className="text-primary hover:underline cursor-pointer"
+                                    className="text-primary hover:underline cursor-pointer inline bg-transparent border-none p-0 font-inherit"
                                     title={decodeURIComponent(href)}
-                                    {...props}
                                   >
                                     {children}
-                                  </a>
+                                  </button>
                                 )
                               },
                             }}

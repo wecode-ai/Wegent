@@ -5,6 +5,7 @@
 'use client'
 
 import React, { useEffect, useState, Suspense } from 'react'
+import { buildKbUrl } from '@/utils/knowledgeUrl'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -136,9 +137,7 @@ function SharedKnowledgeContent() {
 
       if (response.status === 'approved') {
         // User got immediate access, redirect to KB using virtual URL
-        router.push(
-          `/knowledge/${encodeURIComponent(kbData.namespace)}/${encodeURIComponent(kbData.name)}`
-        )
+        router.push(buildKbUrl(kbData.namespace, kbData.name, false))
       } else if (response.status === 'pending') {
         setApplyStatus('pending')
       }
@@ -148,9 +147,7 @@ function SharedKnowledgeContent() {
 
       if (errorMessage.includes('Already have access')) {
         // User already has access, redirect to KB using virtual URL
-        router.push(
-          `/knowledge/${encodeURIComponent(kbData.namespace)}/${encodeURIComponent(kbData.name)}`
-        )
+        router.push(buildKbUrl(kbData.namespace, kbData.name, false))
         return
       } else if (errorMessage.includes('already pending')) {
         setApplyStatus('pending')
@@ -168,9 +165,7 @@ function SharedKnowledgeContent() {
 
   const _handleEnterKnowledgeBase = () => {
     if (kbData) {
-      router.push(
-        `/knowledge/${encodeURIComponent(kbData.namespace)}/${encodeURIComponent(kbData.name)}`
-      )
+      router.push(buildKbUrl(kbData.namespace, kbData.name, false))
     }
   }
 

@@ -878,7 +878,6 @@ export function DocumentList({
       </Suspense>
 
       {/* Dialogs */}
-      {/* Dialogs */}
       <DocumentDetailDialog
         open={!!viewingDoc}
         onOpenChange={open => !open && setViewingDoc(null)}
