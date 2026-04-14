@@ -9,7 +9,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.mcp_server.auth import TaskTokenInfo
-from app.mcp_server.tools.interactive_form_question import _generate_ask_id, interactive_form_question
+from app.mcp_server.tools.interactive_form_question import (
+    _generate_ask_id,
+    interactive_form_question,
+)
 
 
 class TestGenerateAskId:
@@ -46,7 +49,9 @@ class TestInteractiveFormTool:
             "app.mcp_server.tools.interactive_form_question._notify_frontend",
             new_callable=AsyncMock,
         ):
-            result = await interactive_form_question(token_info=token, question="Any question?")
+            result = await interactive_form_question(
+                token_info=token, question="Any question?"
+            )
 
         assert result["__silent_exit__"] is True
         assert "reason" in result
@@ -137,7 +142,8 @@ class TestInteractiveFormTool:
         mock_notify = AsyncMock()
 
         with patch(
-            "app.mcp_server.tools.interactive_form_question._notify_frontend", mock_notify
+            "app.mcp_server.tools.interactive_form_question._notify_frontend",
+            mock_notify,
         ):
             await interactive_form_question(token_info=token, question="Hello?")
 
