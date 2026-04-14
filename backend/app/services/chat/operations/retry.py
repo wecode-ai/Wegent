@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session, aliased, joinedload
 from app.models.kind import Kind
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
+from app.services.task_status import mark_task_pending
 
 logger = logging.getLogger(__name__)
 
@@ -131,8 +132,6 @@ def reset_subtask_for_retry(
     Raises:
         Exception: If database commit fails
     """
-    from sqlalchemy.orm.attributes import flag_modified
-
     # Reset subtask status
     subtask.status = SubtaskStatus.PENDING
     subtask.progress = 0
@@ -143,15 +142,7 @@ def reset_subtask_for_retry(
     # Also reset Task status to PENDING so executor_manager can fetch it
     # This is critical: executor_manager queries by Task.json.status.status = PENDING
     if task:
-        task_json = task.json or {}
-        if "status" not in task_json:
-            task_json["status"] = {}
-        task_json["status"]["status"] = "PENDING"
-        task_json["status"]["errorMessage"] = ""
-        task_json["status"]["updatedAt"] = datetime.now().isoformat()
-        task.json = task_json
-        task.updated_at = datetime.now()
-        flag_modified(task, "json")
+        mark_task_pending(task)
         logger.info(f"Reset task status to PENDING: task_id={task.id}")
 
     try:

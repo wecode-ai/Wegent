@@ -14,6 +14,8 @@ This module provides unified task dispatch functionality including:
 - ExecutorRecoveryService: Recovers executor Pods after deletion
 """
 
+import json
+
 from shared.models import ExecutionRequest
 
 from .dispatcher import ExecutionDispatcher, execution_dispatcher
@@ -44,6 +46,44 @@ def get_executor_runtime_client():
 
 class _ExecutorRuntimeClient:
     """Thin client for calling executor_manager runtime APIs."""
+
+    @staticmethod
+    def _format_http_error(error: Exception) -> str:
+        """Build a stable error string from executor-manager HTTP failures."""
+        try:
+            import httpx
+
+            if isinstance(error, httpx.HTTPStatusError):
+                response = error.response
+                detail = ""
+                try:
+                    payload = response.json()
+                except (ValueError, json.JSONDecodeError):
+                    payload = None
+
+                if isinstance(payload, dict):
+                    detail = (
+                        payload.get("detail")
+                        or payload.get("error_msg")
+                        or payload.get("message")
+                        or ""
+                    )
+
+                if not detail:
+                    detail = response.text or str(error)
+
+                request_id = response.headers.get("X-Request-ID")
+                error_message = (
+                    f"executor-manager prepare failed: status={response.status_code} "
+                    f"detail={detail}"
+                )
+                if request_id:
+                    error_message = f"{error_message} request_id={request_id}"
+                return error_message
+        except Exception:
+            pass
+
+        return str(error)
 
     async def create_sandbox(
         self,
@@ -127,7 +167,7 @@ class _ExecutorRuntimeClient:
 
                 return SimpleSandbox(data), None
         except Exception as e:
-            return None, str(e)
+            return None, self._format_http_error(e)
 
 
 __all__ = [

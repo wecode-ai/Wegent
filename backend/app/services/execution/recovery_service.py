@@ -21,8 +21,9 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from app.models.subtask import Subtask
+from app.models.subtask import Subtask, SubtaskStatus
 from app.models.task import TaskResource
+from app.services.task_status import mark_task_failed
 from app.services.workspace_archive import archive_service
 from shared.models import ExecutionRequest
 
@@ -67,6 +68,22 @@ class ExecutorRecoveryService:
             return previous_namespace.strip()
 
         return "default"
+
+    def _persist_prepare_failure(
+        self,
+        db: Session,
+        subtask: Subtask,
+        task: TaskResource,
+        error_message: str,
+    ) -> None:
+        """Persist executor prepare failures for later inspection and UI display."""
+        subtask.error_message = error_message
+        subtask.status = SubtaskStatus.FAILED
+        subtask.progress = 100
+        mark_task_failed(task, error_message)
+        db.add(subtask)
+        db.add(task)
+        db.commit()
 
     async def recover(
         self,
@@ -177,6 +194,8 @@ class ExecutorRecoveryService:
                 logger.error(
                     f"[RecoveryService] Failed to prepare executor for task {task_id}: {error}"
                 )
+                if error:
+                    self._persist_prepare_failure(db, subtask, task, error)
                 return False
 
             executor_name = executor.container_name
@@ -256,6 +275,8 @@ class ExecutorRecoveryService:
                 logger.error(
                     f"[RecoveryService] Failed to prepare executor for task {task_id}: {error}"
                 )
+                if error:
+                    self._persist_prepare_failure(db, subtask, task, error)
                 return False
 
             executor_name = executor.container_name

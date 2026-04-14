@@ -30,6 +30,7 @@ from app.core.async_utils import run_in_main_loop
 from app.db.session import SessionLocal
 from app.models.subtask import Subtask
 from app.models.task import TaskResource
+from app.services.task_status import extract_task_error
 from shared.models import (
     EventType,
     ExecutionEvent,
@@ -461,9 +462,17 @@ class ExecutionDispatcher:
                 request=request,
             )
             if not recovered:
-                raise RuntimeError(
-                    f"Failed to recover executor for subtask {request.subtask_id}"
+                subtask_error = getattr(subtask, "error_message", None)
+                error_message = (
+                    subtask_error
+                    if isinstance(subtask_error, str) and subtask_error.strip()
+                    else extract_task_error(task)
                 )
+                if not error_message:
+                    error_message = (
+                        f"Failed to recover executor for subtask {request.subtask_id}"
+                    )
+                raise RuntimeError(error_message)
 
             request.executor_name = subtask.executor_name
             request.executor_namespace = subtask.executor_namespace

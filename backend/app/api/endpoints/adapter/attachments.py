@@ -88,12 +88,55 @@ def _build_content_disposition(filename: str) -> str:
     return f'attachment; filename="{escaped}"'
 
 
+def _check_knowledge_base_access(
+    db: Session, attachment_id: int, user_id: int
+) -> bool | None:
+    """Check if a user has access to a knowledge base that contains this attachment.
+
+    This is used for attachments that are part of knowledge base documents
+    (subtask_id=0) rather than task attachments.
+
+    Args:
+        db: Database session
+        attachment_id: The attachment ID to check
+        user_id: User ID to check access for
+
+    Returns:
+        - True: if kb_doc exists and user has access to the knowledge base
+        - False: if kb_doc exists but user is denied access (hard deny)
+        - None: if no kb_doc found (not a KB attachment, should try other checks)
+    """
+    from app.models.knowledge import KnowledgeDocument
+    from app.services.knowledge import KnowledgeService
+
+    # Find knowledge base documents that reference this attachment
+    kb_doc = (
+        db.query(KnowledgeDocument)
+        .filter(
+            KnowledgeDocument.attachment_id == attachment_id,
+        )
+        .first()
+    )
+
+    if kb_doc:
+        # Check if user has access to this knowledge base
+        _, has_access = KnowledgeService.get_knowledge_base(
+            db=db,
+            knowledge_base_id=kb_doc.kind_id,
+            user_id=user_id,
+        )
+        return has_access
+
+    return None
+
+
 def _ensure_attachment_access(db: Session, context, current_user: User) -> None:
     """Ensure current user has access to the attachment context."""
     # Check access permission:
     # 1. User is the uploader
     # 2. User is the task owner (via subtask linkage)
     # 3. User is a member of the task that contains this attachment
+    # 4. User has access to the knowledge base containing this attachment
     has_access = context.user_id == current_user.id
 
     if not has_access:
@@ -110,19 +153,31 @@ def _ensure_attachment_access(db: Session, context, current_user: User) -> None:
             if subtask:
                 task_id = subtask.task_id
         else:
-            # Unlinked attachment (subtask_id=0): find task via the uploader's
-            # subtasks. This handles executor-uploaded files that weren't linked
-            # to a subtask at upload time (legacy data).
-            subtask = (
-                db.query(Subtask)
-                .filter(
-                    Subtask.user_id == context.user_id,
+            # Unlinked attachment (subtask_id=0): check if it's part of a knowledge base
+            # This handles knowledge base document attachments
+            kb_access = _check_knowledge_base_access(db, context.id, current_user.id)
+
+            if kb_access is True:
+                # Attachment is in a knowledge base and user has access
+                has_access = True
+            elif kb_access is False:
+                # Attachment is in a knowledge base but user is DENIED access
+                # This is a hard deny - do NOT fall back to task checks
+                has_access = False
+            else:
+                # kb_access is None: not a KB attachment, try task-based fallback
+                # This handles executor-uploaded files that weren't linked
+                # to a subtask at upload time (legacy data).
+                subtask = (
+                    db.query(Subtask)
+                    .filter(
+                        Subtask.user_id == context.user_id,
+                    )
+                    .order_by(Subtask.id.desc())
+                    .first()
                 )
-                .order_by(Subtask.id.desc())
-                .first()
-            )
-            if subtask:
-                task_id = subtask.task_id
+                if subtask:
+                    task_id = subtask.task_id
 
         if task_id:
             has_access = _check_task_access(db, task_id, current_user.id)
