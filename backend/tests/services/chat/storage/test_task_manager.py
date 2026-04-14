@@ -21,15 +21,11 @@ from app.services.chat.storage.task_manager import (
 )
 
 
-def test_create_assistant_subtask_resets_deleted_executor_state(
+def test_create_assistant_subtask_inherits_deleted_executor_state_for_recovery(
     test_db: Session,
     test_user: User,
 ):
-    """When previous executor was deleted, new subtask should have empty executor fields.
-
-    This ensures that the recovery service will create a new executor instead of
-    trying to reuse the deleted one.
-    """
+    """When previous executor was deleted, new subtask should carry recovery metadata."""
     previous_subtask = Subtask(
         user_id=test_user.id,
         task_id=1385,
@@ -63,11 +59,11 @@ def test_create_assistant_subtask_resets_deleted_executor_state(
     )
     test_db.flush()
 
-    # When previous executor was deleted, new subtask should have empty fields
-    # to allow recovery service to create a new executor
-    assert assistant_subtask.executor_name == ""
-    assert assistant_subtask.executor_namespace == ""
-    assert assistant_subtask.executor_deleted_at is False
+    # Preserve the deleted executor metadata on the current subtask so
+    # dispatcher recovery can restore the workspace without scanning history.
+    assert assistant_subtask.executor_name == previous_subtask.executor_name
+    assert assistant_subtask.executor_namespace == previous_subtask.executor_namespace
+    assert assistant_subtask.executor_deleted_at is True
 
 
 def test_create_assistant_subtask_inherits_active_executor_state(

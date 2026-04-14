@@ -60,12 +60,13 @@ async def test_dispatch_recovers_deleted_executor_before_http_callback():
     db.query.side_effect = query_side_effect
 
     async def recover_side_effect(*, db, subtask, task, request):
-        subtask.executor_name = "recovered-executor"
-        subtask.executor_namespace = "default"
-        subtask.executor_deleted_at = False
+        # Recovery service now returns executor info instead of updating subtask
         request.executor_name = "recovered-executor"
         request.executor_namespace = "default"
-        return True
+        return {
+            "executor_name": "recovered-executor",
+            "executor_namespace": "default",
+        }
 
     recovery_service = MagicMock()
     recovery_service.recover = AsyncMock(side_effect=recover_side_effect)
@@ -145,7 +146,9 @@ async def test_dispatch_raises_when_recovery_returns_false_and_emits_error():
     db.query.side_effect = query_side_effect
 
     recovery_service = MagicMock()
-    recovery_service.recover = AsyncMock(return_value=False)
+    recovery_service.recover = AsyncMock(
+        return_value=None
+    )  # Failed recovery returns None
 
     with (
         patch(
@@ -196,6 +199,67 @@ async def test_dispatch_skips_recovery_for_chat_shell():
     )
 
     with (
+        patch(
+            "app.services.execution.dispatcher.recovery_service",
+            recovery_service,
+            create=True,
+        ),
+        patch.object(dispatcher.router, "route", return_value=target),
+        patch.object(dispatcher, "_update_subtask_to_running", AsyncMock()),
+        patch.object(
+            dispatcher, "_dispatch_http_callback", AsyncMock()
+        ) as dispatch_mock,
+    ):
+        await dispatcher.dispatch(request, emitter=emitter)
+
+    recovery_service.recover.assert_not_awaited()
+    dispatch_mock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_does_not_scan_historical_deleted_subtasks():
+    """Dispatch should only recover when the current subtask is marked deleted."""
+    dispatcher = ExecutionDispatcher()
+    request = ExecutionRequest(
+        task_id=1385,
+        subtask_id=1861,
+        message_id=3,
+        user={"id": 7, "name": "user7"},
+        user_id=7,
+        user_name="user7",
+        bot=[{"shell_type": "ClaudeCode"}],
+        executor_name="active-executor",
+        executor_namespace="default",
+    )
+    emitter = AsyncMock()
+
+    subtask = MagicMock(spec=Subtask)
+    subtask.id = 1861
+    subtask.executor_deleted_at = False
+    subtask.executor_name = "active-executor"
+    subtask.executor_namespace = "default"
+
+    subtask_query = MagicMock()
+    subtask_query.filter.return_value = subtask_query
+    subtask_query.first.return_value = subtask
+
+    db = MagicMock()
+    db.query.return_value = subtask_query
+
+    recovery_service = MagicMock()
+    recovery_service.recover = AsyncMock()
+
+    target = ExecutionTarget(
+        mode=CommunicationMode.HTTP_CALLBACK,
+        url="http://executor-manager/executor-manager",
+    )
+
+    with (
+        patch(
+            "app.services.execution.dispatcher.SessionLocal",
+            return_value=db,
+            create=True,
+        ),
         patch(
             "app.services.execution.dispatcher.recovery_service",
             recovery_service,

@@ -431,7 +431,13 @@ class ExecutionDispatcher:
         db = SessionLocal()
         try:
             subtask = db.query(Subtask).filter(Subtask.id == request.subtask_id).first()
-            if not subtask or not subtask.executor_deleted_at:
+            if not subtask:
+                return
+
+            # Save reference to current subtask for later update
+            current_subtask = subtask
+
+            if not subtask.executor_deleted_at:
                 return
 
             task = (
@@ -455,13 +461,13 @@ class ExecutionDispatcher:
                 subtask.executor_name,
             )
 
-            recovered = await recovery_service.recover(
+            recovered_info = await recovery_service.recover(
                 db=db,
                 subtask=subtask,
                 task=task,
                 request=request,
             )
-            if not recovered:
+            if not recovered_info:
                 subtask_error = getattr(subtask, "error_message", None)
                 error_message = (
                     subtask_error
@@ -474,13 +480,21 @@ class ExecutionDispatcher:
                     )
                 raise RuntimeError(error_message)
 
-            request.executor_name = subtask.executor_name
-            request.executor_namespace = subtask.executor_namespace
+            # Update the current subtask to reflect the recovered executor.
+            current_subtask.executor_name = recovered_info["executor_name"]
+            current_subtask.executor_namespace = recovered_info["executor_namespace"]
+            current_subtask.executor_deleted_at = False
+            db.add(current_subtask)
+            db.commit()
+
+            request.executor_name = recovered_info["executor_name"]
+            request.executor_namespace = recovered_info["executor_namespace"]
             logger.info(
                 "[ExecutionDispatcher] Recovered executor: "
-                "task_id=%s, subtask_id=%s, executor=%s",
+                "task_id=%s, current_subtask_id=%s, executor=%s/%s",
                 request.task_id,
-                request.subtask_id,
+                current_subtask.id,
+                request.executor_namespace,
                 request.executor_name,
             )
         finally:

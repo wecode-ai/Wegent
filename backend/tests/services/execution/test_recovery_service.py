@@ -97,10 +97,15 @@ async def test_recover_without_archive_uses_normal_clone():
             request=request,
         )
 
-    assert result is True
-    assert subtask.executor_name == "new-executor"
-    assert subtask.executor_namespace == "wegent-pod"
-    assert subtask.executor_deleted_at is False
+    assert result == {
+        "executor_name": "new-executor",
+        "executor_namespace": "wegent-pod",
+    }
+    # Service no longer updates subtask - caller should update current subtask
+    # Historical subtask should keep original values
+    assert subtask.executor_name == "old"  # Unchanged
+    assert subtask.executor_namespace == ""  # Unchanged
+    assert subtask.executor_deleted_at is True  # Unchanged
     assert request.executor_name == "new-executor"
     assert request.executor_namespace == "wegent-pod"
     assert request.skip_git_clone is False
@@ -174,10 +179,15 @@ async def test_recover_with_archive_continues_when_restore_fails():
             request=request,
         )
 
-    assert result is True
-    assert subtask.executor_name == "new-executor"
-    assert subtask.executor_namespace == "wegent-pod"
-    assert subtask.executor_deleted_at is False
+    assert result == {
+        "executor_name": "new-executor",
+        "executor_namespace": "wegent-pod",
+    }
+    # Service no longer updates subtask - caller should update current subtask
+    # Historical subtask should keep original values
+    assert subtask.executor_name == "old"  # Unchanged
+    assert subtask.executor_namespace == ""  # Unchanged
+    assert subtask.executor_deleted_at is True  # Unchanged
     assert request.executor_name == "new-executor"
     assert request.executor_namespace == "wegent-pod"
     assert request.skip_git_clone is True
@@ -238,7 +248,8 @@ async def test_recover_with_archive_persists_prepare_failure_detail():
             request=request,
         )
 
-    assert result is False
+    assert result is None  # Failed recovery returns None
+    # Service still updates subtask on failure via _persist_prepare_failure
     assert (
         subtask.error_message
         == "executor-manager prepare failed: Kubernetes API error: webhook refused request_id=req-123"

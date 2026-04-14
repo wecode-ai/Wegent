@@ -463,8 +463,7 @@ def create_assistant_subtask(
     Returns:
         Created Subtask
     """
-    # Resolve executor_name from previous subtasks for container reuse
-    # Only reuse executor if it was not deleted - otherwise let recovery create new one
+    # Resolve executor metadata from previous subtasks for container reuse or recovery.
     executor_name = ""
     executor_namespace = ""
     executor_deleted_at = False
@@ -484,16 +483,9 @@ def create_assistant_subtask(
         .first()
     )
     if previous:
-        # If previous executor was deleted, don't copy its name
-        # Let the recovery service create a new executor
-        if previous.executor_deleted_at:
-            executor_name = ""
-            executor_namespace = ""
-            executor_deleted_at = False
-        else:
-            executor_name = previous.executor_name or ""
-            executor_namespace = previous.executor_namespace or ""
-            executor_deleted_at = bool(previous.executor_deleted_at)
+        executor_name = previous.executor_name or ""
+        executor_namespace = previous.executor_namespace or ""
+        executor_deleted_at = bool(previous.executor_deleted_at)
 
     # Note: completed_at is set to a placeholder value because the DB column doesn't allow NULL
     # It will be updated when the stream completes

@@ -98,6 +98,7 @@ export interface ChatInputControlsProps {
   // State flags
   isLoading: boolean
   isStreaming: boolean
+  isAwaitingResponseStart?: boolean
   isStopping: boolean
   hasMessages: boolean
   shouldCollapseSelectors: boolean
@@ -205,6 +206,7 @@ export function ChatInputControls({
   onAttachmentRemove: _onAttachmentRemove,
   isLoading,
   isStreaming,
+  isAwaitingResponseStart = false,
   isStopping,
   hasMessages,
   shouldCollapseSelectors,
@@ -268,7 +270,7 @@ export function ChatInputControls({
       hasNoTeams ||
       (shouldHideChatInput ? false : !taskInputMessage.trim())
 
-    if (isStreaming || isStopping) {
+    if (isStreaming || isAwaitingResponseStart || isStopping) {
       if (isStopping) {
         return (
           <ActionButton
