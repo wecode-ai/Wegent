@@ -1614,4 +1614,3 @@ def get_document_chunk(
         document_id=document.id,
         kb_id=document.kind_id,
     )
-

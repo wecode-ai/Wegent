@@ -229,7 +229,7 @@ class TestRetrieveForChatShell:
         )
         assert result["mode"] == "direct_injection"
         assert result["total"] == 1
-        assert result["records"][0]["score"] is None
+        assert result["records"][0]["score"] == 1.0
         assert result["records"][0]["knowledge_base_id"] == 123
 
     @pytest.mark.asyncio

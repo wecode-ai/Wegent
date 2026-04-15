@@ -21,7 +21,7 @@ Architecture:
 
 import base64
 import logging
-from typing import Any, Dict, List, Optional, Literal
+from typing import Any, Dict, List, Literal, Optional
 
 from sqlalchemy.orm import Session
 
@@ -2179,7 +2179,9 @@ class KnowledgeOrchestrator:
             raise ValueError(f"Access denied to knowledge base {knowledge_base_id}")
 
         # Check RAG configuration
-        spec = (knowledge_base.json or {}).get("spec", {}) if knowledge_base.json else {}
+        spec = (
+            (knowledge_base.json or {}).get("spec", {}) if knowledge_base.json else {}
+        )
         retrieval_config = spec.get("retrievalConfig")
         if not retrieval_config:
             raise ValueError(
@@ -2209,7 +2211,10 @@ class KnowledgeOrchestrator:
         # Use runtime resolver and gateway for retrieval (supports remote fallback)
         from app.services.rag.gateway_factory import get_query_gateway
         from app.services.rag.local_gateway import LocalRagGateway
-        from app.services.rag.remote_gateway import RemoteRagGatewayError, should_fallback_to_local
+        from app.services.rag.remote_gateway import (
+            RemoteRagGatewayError,
+            should_fallback_to_local,
+        )
         from app.services.rag.retrieval_service import RetrievalService
         from app.services.rag.runtime_resolver import RagRuntimeResolver
 
@@ -2248,7 +2253,9 @@ class KnowledgeOrchestrator:
             context_buffer_ratio=context_buffer_ratio,
             max_direct_chunks=max_direct_chunks,
         )
-        runtime_spec = runtime_spec.model_copy(update={"route_mode": resolved_route_mode})
+        runtime_spec = runtime_spec.model_copy(
+            update={"route_mode": resolved_route_mode}
+        )
 
         # Build KB configs for remote gateway if needed
         if resolved_route_mode == "rag_retrieval":
@@ -2257,7 +2264,9 @@ class KnowledgeOrchestrator:
                 knowledge_base_ids=[knowledge_base_id],
                 user_name=user.user_name,
             )
-            runtime_spec = runtime_spec.model_copy(update={"knowledge_base_configs": kb_configs})
+            runtime_spec = runtime_spec.model_copy(
+                update={"knowledge_base_configs": kb_configs}
+            )
 
         # Execute query with remote fallback support
         rag_gateway = get_query_gateway()
