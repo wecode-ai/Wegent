@@ -8,7 +8,7 @@ DingTalk Document MCP tools for knowledge base integration.
 This module provides MCP tool implementations for adding DingTalk documents
 to Wegent knowledge bases. The tools coordinate with sandbox execution to:
 1. Download DingTalk document content
-2. Save with proper naming convention ({title}_{timestamp}.md)
+2. Save with name {title}.{file_extension}
 3. Upload as attachment
 4. Create knowledge base document
 
@@ -17,8 +17,6 @@ These tools are registered with the MCP server and exposed to AI agents.
 
 import logging
 from typing import Any, Dict, Optional
-
-from sqlalchemy.orm import Session
 
 from app.db.session import SessionLocal
 from app.mcp_server.auth import TaskTokenInfo
@@ -54,7 +52,6 @@ async def get_dingtalk_document_info(
         - doc_id: Document ID
         - title: Document title
         - modified_time: ISO format modification time
-        - modified_time_formatted: YYYYMMDDHHMMSS format for filename
         - content_type: Content type
         - url: Original URL
     """
@@ -75,7 +72,6 @@ async def get_dingtalk_document_info(
             "doc_id": doc_info["doc_id"],
             "title": doc_info["title"],
             "modified_time": doc_info["modified_time"],
-            "modified_time_formatted": doc_info["modified_time_formatted"],
             "content_type": doc_info["content_type"],
             "url": doc_info["url"],
         }
@@ -89,7 +85,7 @@ async def get_dingtalk_document_info(
 
 @mcp_tool(
     name="add_dingtalk_doc_to_knowledge",
-    description="Add a DingTalk document to Wegent knowledge base. Downloads the document, saves it with naming convention {title}_{timestamp}.md, and creates a knowledge base document.",
+    description="Add a DingTalk document to Wegent knowledge base. Downloads the document, saves it with naming {title}.{file_extension}, and creates a knowledge base document.",
     server="knowledge",
     param_descriptions={
         "knowledge_base_id": "Target knowledge base ID",
@@ -117,8 +113,8 @@ async def add_dingtalk_doc_to_knowledge(
     This tool creates a knowledge base document from a DingTalk document.
     The document can be provided directly via parameters or fetched from DingTalk.
 
-    File naming convention: {title}_{modified_time}.md
-    Example: 产品需求文档_20260413170933.md
+    File name: {title}.{file_extension}
+    Example: 产品需求文档.md
 
     Args:
         token_info: Task token information containing user context
@@ -186,7 +182,9 @@ async def add_dingtalk_doc_to_knowledge(
         title = doc_title or "DingTalk Document"
 
         # Build filename: {title}.{file_extension}
-        filename = f"{title}.{file_extension}"
+        from app.services.knowledge.orchestrator import _build_filename
+
+        filename = _build_filename(title, file_extension)
 
         logger.info(
             f"[MCP] Adding DingTalk doc to KB {knowledge_base_id}: "
@@ -261,7 +259,7 @@ def add_dingtalk_doc_with_attachment(
 
     This tool is designed to work with the dingtalk-connector skill which:
     1. Downloads the DingTalk document in sandbox
-    2. Saves it as {title}_{timestamp}.md
+    2. Saves it as {title}.{file_extension}
     3. Uploads it as an attachment
     4. Calls this tool to create the knowledge base document
 

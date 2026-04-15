@@ -9,7 +9,7 @@ tools for adding DingTalk documents to Wegent knowledge bases.
 
 The tool executes in a sandbox environment to:
 1. Download DingTalk document content via MCP
-2. Save with naming convention: {title}_{timestamp}.md
+2. Save with name: {title}.{file_extension}
 3. Upload as attachment
 4. Create knowledge base document
 """
@@ -17,7 +17,6 @@ The tool executes in a sandbox environment to:
 import json
 import logging
 import os
-import re
 from datetime import datetime
 from typing import Any, Optional
 
@@ -163,7 +162,7 @@ class DingTalkDocToKBTool(BaseSandboxTool):
     This tool performs the complete workflow:
     1. Starts a sandbox environment
     2. Calls MCP to get document info and content
-    3. Saves the document as {title}_{timestamp}.md
+    3. Saves the document as {title}.{file_extension}
     4. Uploads the file as an attachment
     5. Creates a knowledge base document
     """
@@ -177,7 +176,7 @@ This tool downloads a DingTalk document and adds it to a knowledge base.
 Workflow:
 1. Fetches document info from DingTalk (title, modification time)
 2. Downloads document content
-3. Saves as {title}_{timestamp}.md (e.g., "产品需求文档_20260413170933.md")
+3. Saves as {title}.{file_extension}
 4. Uploads as attachment to Wegent
 5. Creates knowledge base document
 
@@ -290,9 +289,6 @@ Example:
 
             # Use provided title or fetched title
             title = doc_title or doc_info.get("title", "DingTalk Document")
-            modified_time = doc_info.get(
-                "modified_time_formatted", self._get_current_timestamp()
-            )
 
             # Step 3: Download document content
             await self._emit_tool_status(
@@ -314,9 +310,13 @@ Example:
                 return result
 
             content = doc_content_result.get("content", "")
+            file_extension = doc_content_result.get("file_extension", "md")
 
             # Step 4: Save document to sandbox
-            filename = self._build_filename(title, modified_time)
+            # Build filename
+            from app.services.knowledge.orchestrator import _build_filename
+
+            filename = _build_filename(title, file_extension)
             file_path = f"/home/user/{filename}"
 
             await self._emit_tool_status(
@@ -517,10 +517,6 @@ Example:
                             ),
                             "modified_time": tool_result.get(
                                 "modified_time", datetime.now().isoformat()
-                            ),
-                            "modified_time_formatted": tool_result.get(
-                                "modified_time_formatted",
-                                datetime.now().strftime("%Y%m%d%H%M%S"),
                             ),
                         }
                     else:
@@ -939,28 +935,3 @@ This is a placeholder for the document content.
             return {"success": False, "error": f"Failed to parse MCP response: {e}"}
         except Exception as e:
             return {"success": False, "error": f"Failed to create document: {e}"}
-
-    def _build_filename(self, title: str, modified_time: str) -> str:
-        """Build filename according to naming convention.
-
-        Format: {title}_{timestamp}.md
-        Example: 产品需求文档_20260413170933.md
-        """
-        # Use shared utility function to avoid duplication
-        try:
-            from app.services.dingtalk import build_dingtalk_doc_filename
-
-            return build_dingtalk_doc_filename(title, modified_time)
-        except ImportError:
-            # Fallback if import fails (e.g., during skill loading)
-            import re
-
-            safe_title = re.sub(r'[<>:"/\\|?*]', "_", title)
-            safe_title = safe_title.strip()
-            if not safe_title:
-                safe_title = "untitled"
-            return f"{safe_title}_{modified_time}.md"
-
-    def _get_current_timestamp(self) -> str:
-        """Get current timestamp in YYYYMMDDHHMMSS format."""
-        return datetime.now().strftime("%Y%m%d%H%M%S")

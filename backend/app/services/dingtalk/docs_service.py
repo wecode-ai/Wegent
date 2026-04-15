@@ -18,8 +18,6 @@ from urllib.parse import urlparse
 
 import httpx
 
-from app.core.config import settings
-from app.services.mcp_provider_registry import get_mcp_provider_service
 from app.services.user_mcp_service import UserMCPService
 
 logger = logging.getLogger(__name__)
@@ -28,44 +26,6 @@ logger = logging.getLogger(__name__)
 HTTP_TIMEOUT_SECONDS = 60.0
 AUTH_ERROR_CODES = (401, 403)
 DOC_ID_PREVIEW_LENGTH = 8
-
-
-def sanitize_filename(title: str) -> str:
-    """Sanitize a title for use in a filename.
-
-    Removes or replaces characters that are invalid in filenames.
-
-    Args:
-        title: The title to sanitize
-
-    Returns:
-        Sanitized title safe for use in filenames
-    """
-    # Replace invalid filename characters with underscore
-    safe_title = re.sub(r'[<>:"/\\|?*]', "_", title)
-    safe_title = safe_title.strip()
-
-    if not safe_title:
-        safe_title = "untitled"
-
-    return safe_title
-
-
-def build_dingtalk_doc_filename(title: str, modified_time_formatted: str) -> str:
-    """Build filename according to naming convention.
-
-    Format: {title}_{modified_time}.md
-    Example: 产品需求文档_1775705225000.md
-
-    Args:
-        title: Document title
-        modified_time_formatted: Formatted modification time (Unix timestamp in ms)
-
-    Returns:
-        Safe filename
-    """
-    safe_title = sanitize_filename(title)
-    return f"{safe_title}_{modified_time_formatted}.md"
 
 
 class DingTalkDocsService:
@@ -128,56 +88,6 @@ class DingTalkDocsService:
             return match.group(1)
 
         return None
-
-    def _format_modified_time(self, modified_time: str) -> str:
-        """Format modified time for filename.
-
-        Args:
-            modified_time: ISO format datetime string, Unix timestamp (ms), or other formats
-
-        Returns:
-            Formatted string - uses original timestamp if it's a millisecond timestamp,
-            otherwise converts to YYYYMMDDHHMMSS format
-        """
-        # Check if it's a Unix timestamp in milliseconds (13 digits)
-        if isinstance(modified_time, (int, float)) or (
-            isinstance(modified_time, str)
-            and modified_time.isdigit()
-            and len(modified_time) == 13
-        ):
-            # Return the original timestamp as string for filename
-            # e.g., 产品需求文档_1775705225000
-            return str(modified_time)
-
-        try:
-            # Try ISO format first
-            dt = datetime.fromisoformat(modified_time.replace("Z", "+00:00"))
-            return dt.strftime("%Y%m%d%H%M%S")
-        except (ValueError, AttributeError):
-            pass
-
-        try:
-            # Try common formats
-            for fmt in [
-                "%Y-%m-%d %H:%M:%S",
-                "%Y/%m/%d %H:%M:%S",
-                "%Y-%m-%dT%H:%M:%S",
-                "%Y-%m-%dT%H:%M:%S.%f",
-                "%Y-%m-%dT%H:%M:%S.%fZ",
-            ]:
-                try:
-                    dt = datetime.strptime(modified_time, fmt)
-                    return dt.strftime("%Y%m%d%H%M%S")
-                except ValueError:
-                    continue
-        except Exception:
-            pass
-
-        # Return current time as fallback
-        logger.warning(
-            f"Could not parse modified_time: {modified_time}, using current time"
-        )
-        return datetime.now().strftime("%Y%m%d%H%M%S")
 
     def _get_dingtalk_docs_mcp_config(
         self, user_preferences: Optional[str]
@@ -310,7 +220,6 @@ class DingTalkDocsService:
             - doc_id: Document ID
             - title: Document title
             - modified_time: ISO format modification time
-            - modified_time_formatted: YYYYMMDDHHMMSS format
             - content_type: Content type
 
         Raises:
@@ -352,7 +261,6 @@ class DingTalkDocsService:
                 "doc_id": doc_id,
                 "title": title,
                 "modified_time": modified_time,
-                "modified_time_formatted": self._format_modified_time(modified_time),
                 "content_type": result.get("contentType", "markdown"),
                 "url": result.get("docUrl", doc_url),
             }
@@ -497,7 +405,6 @@ class DingTalkDocsService:
                 "content": content,
                 "title": title,
                 "modified_time": modified_time,
-                "modified_time_formatted": self._format_modified_time(modified_time),
                 "file_extension": ("md" if extension == "adoc" else extension or "md"),
                 "doc_id": doc_id,
                 "content_type": content_type,
@@ -510,10 +417,10 @@ class DingTalkDocsService:
             )
             if e.response.status_code in AUTH_ERROR_CODES:
                 raise ValueError(
-                    f"DingTalk authentication required. Please ensure:\n"
-                    f"1. You have access to this document in DingTalk\n"
-                    f"2. The document is shared with you or is public\n"
-                    f"3. Your DingTalk MCP configuration is correct"
+                    "DingTalk authentication required. Please ensure:\n"
+                    "1. You have access to this document in DingTalk\n"
+                    "2. The document is shared with you or is public\n"
+                    "3. Your DingTalk MCP configuration is correct"
                 )
             raise ValueError(
                 f"Failed to download document from DingTalk: HTTP {e.response.status_code}"
@@ -527,21 +434,6 @@ class DingTalkDocsService:
                     f"Please ensure you have access to this document in DingTalk."
                 )
             raise ValueError(f"Failed to download document: {e}")
-
-    def build_filename(self, title: str, modified_time_formatted: str) -> str:
-        """Build filename according to naming convention.
-
-        Format: {title}_{modified_time}.md
-        Example: 产品需求文档_20260413170933.md
-
-        Args:
-            title: Document title
-            modified_time_formatted: Formatted modification time (YYYYMMDDHHMMSS)
-
-        Returns:
-            Safe filename
-        """
-        return build_dingtalk_doc_filename(title, modified_time_formatted)
 
 
 # Singleton instance

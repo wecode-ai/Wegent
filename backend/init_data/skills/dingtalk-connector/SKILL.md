@@ -8,7 +8,7 @@ description: |
 
   This skill provides tools to:
   1. Download DingTalk documents via MCP
-  2. Save documents with naming convention: {title}_{timestamp}.md
+  2. Save documents with name: {title}.{file_extension}
   3. Upload as attachments to Wegent
   4. Create knowledge base documents
 
@@ -36,7 +36,7 @@ tools:
       This tool performs the complete workflow:
       1. Starts a sandbox environment
       2. Downloads the DingTalk document content via MCP
-      3. Saves the document as {title}_{timestamp}.md
+      3. Saves the document as {title}.{file_extension}
       4. Uploads the file as an attachment
       5. Creates a knowledge base document
 
