@@ -14,7 +14,7 @@ Supported retrieval modes:
 import logging
 from typing import Any, ClassVar, Dict, List, Optional
 
-from elasticsearch import Elasticsearch
+from elasticsearch import Elasticsearch, helpers
 from elasticsearch.helpers.vectorstore._async.strategies import (
     AsyncBM25Strategy,
     AsyncDenseVectorStrategy,
@@ -377,13 +377,142 @@ class ElasticsearchBackend(BaseStorageBackend):
 
         # Delete nodes using LlamaIndex API
         vector_store.delete_nodes(filters=filters)
+        deleted_parent_nodes = self.delete_parent_nodes(knowledge_id, doc_ref, **kwargs)
+        logger.info(
+            "Deleted Elasticsearch document chunks: knowledge_id=%s doc_ref=%s "
+            "index_name=%s user_id=%s deleted_chunks=%s deleted_parent_nodes=%s",
+            knowledge_id,
+            doc_ref,
+            index_name,
+            kwargs.get("user_id"),
+            deleted_count,
+            deleted_parent_nodes,
+        )
 
         return {
             "doc_ref": doc_ref,
             "knowledge_id": knowledge_id,
+            "index_name": index_name,
             "deleted_chunks": deleted_count,
+            "deleted_parent_nodes": deleted_parent_nodes,
             "status": "deleted",
         }
+
+    def delete_knowledge(self, knowledge_id: str, **kwargs) -> Dict:
+        """Delete all chunks and parent nodes for a knowledge base."""
+        index_name = self.get_index_name(knowledge_id, **kwargs)
+        parent_index_name = self.get_parent_store_name(knowledge_id, **kwargs)
+        es_client = Elasticsearch(self.url, **self.es_kwargs)
+
+        deleted_chunks = 0
+        deleted_parent_nodes = 0
+
+        if es_client.indices.exists(index=index_name):
+            deleted_chunks = self._delete_by_knowledge_id(
+                es_client,
+                index_name=index_name,
+                knowledge_id=knowledge_id,
+                knowledge_field="metadata.knowledge_id.keyword",
+            )
+
+        if es_client.indices.exists(index=parent_index_name):
+            deleted_parent_nodes = self._delete_by_knowledge_id(
+                es_client,
+                index_name=parent_index_name,
+                knowledge_id=knowledge_id,
+                knowledge_field="knowledge_id.keyword",
+            )
+
+        return {
+            "knowledge_id": knowledge_id,
+            "deleted_chunks": deleted_chunks,
+            "deleted_parent_nodes": deleted_parent_nodes,
+            "status": "deleted",
+        }
+
+    def drop_knowledge_index(self, knowledge_id: str, **kwargs) -> Dict:
+        """Physically drop the backing index for a dedicated KB strategy."""
+        self._ensure_can_drop_physical_index()
+        index_name = self.get_index_name(knowledge_id, **kwargs)
+        parent_index_name = self.get_parent_store_name(knowledge_id, **kwargs)
+        es_client = Elasticsearch(self.url, **self.es_kwargs)
+
+        if es_client.indices.exists(index=index_name):
+            es_client.indices.delete(index=index_name)
+
+        dropped_parent_index = False
+        if es_client.indices.exists(index=parent_index_name):
+            es_client.indices.delete(index=parent_index_name)
+            dropped_parent_index = True
+
+        return {
+            "knowledge_id": knowledge_id,
+            "index_name": index_name,
+            "dropped_parent_index": dropped_parent_index,
+            "status": "dropped",
+        }
+
+    def delete_parent_nodes(self, knowledge_id: str, doc_ref: str, **kwargs) -> int:
+        index_name = self.get_parent_store_name(knowledge_id, **kwargs)
+        es_client = Elasticsearch(self.url, **self.es_kwargs)
+
+        if not es_client.indices.exists(index=index_name):
+            return 0
+
+        response = es_client.delete_by_query(
+            index=index_name,
+            query={
+                "bool": {
+                    "filter": [
+                        {"term": {"knowledge_id.keyword": knowledge_id}},
+                        {"term": {"doc_ref.keyword": doc_ref}},
+                    ]
+                }
+            },
+            refresh=True,
+        )
+        return int(response.get("deleted", 0))
+
+    def _delete_by_knowledge_id(
+        self,
+        es_client: Elasticsearch,
+        *,
+        index_name: str,
+        knowledge_id: str,
+        knowledge_field: str,
+    ) -> int:
+        response = es_client.search(
+            index=index_name,
+            body={
+                "size": 0,
+                "track_total_hits": True,
+                "query": {
+                    "bool": {
+                        "filter": [
+                            {"term": {knowledge_field: knowledge_id}},
+                        ]
+                    }
+                },
+            },
+        )
+        total_hits = response.get("hits", {}).get("total", 0)
+        deleted_count = (
+            total_hits.get("value", 0)
+            if isinstance(total_hits, dict)
+            else int(total_hits)
+        )
+        es_client.delete_by_query(
+            index=index_name,
+            query={
+                "bool": {
+                    "filter": [
+                        {"term": {knowledge_field: knowledge_id}},
+                    ]
+                }
+            },
+            refresh=True,
+        )
+        return int(deleted_count)
 
     def get_document(self, knowledge_id: str, doc_ref: str, **kwargs) -> Dict:
         """
@@ -629,3 +758,86 @@ class ElasticsearchBackend(BaseStorageBackend):
                 e,
             )
             return []
+
+    def save_parent_nodes(
+        self,
+        knowledge_id: str,
+        parent_nodes: List[BaseNode],
+        **kwargs,
+    ) -> Dict[str, Any]:
+        if not parent_nodes:
+            return {"stored_count": 0}
+
+        index_name = self.get_parent_store_name(knowledge_id, **kwargs)
+        es_client = Elasticsearch(self.url, **self.es_kwargs)
+        doc_ref = parent_nodes[0].metadata.get("doc_ref")
+
+        if es_client.indices.exists(index=index_name) and doc_ref:
+            self.delete_parent_nodes(
+                knowledge_id=knowledge_id,
+                doc_ref=doc_ref,
+                **kwargs,
+            )
+
+        actions = [
+            {
+                "_op_type": "index",
+                "_index": index_name,
+                "_id": node.node_id,
+                "_source": {
+                    "parent_node_id": node.node_id,
+                    "knowledge_id": knowledge_id,
+                    "doc_ref": node.metadata.get("doc_ref"),
+                    "source_file": node.metadata.get("source_file"),
+                    "content": node.text,
+                    "title": node.metadata.get("source_file", ""),
+                    "metadata": node.metadata,
+                },
+            }
+            for node in parent_nodes
+        ]
+
+        helpers.bulk(es_client, actions, refresh="wait_for")
+
+        return {"stored_count": len(parent_nodes)}
+
+    def get_parent_nodes(
+        self,
+        knowledge_id: str,
+        parent_node_ids: List[str],
+        **kwargs,
+    ) -> Dict[str, Dict[str, Any]]:
+        if not parent_node_ids:
+            return {}
+
+        index_name = self.get_parent_store_name(knowledge_id, **kwargs)
+        es_client = Elasticsearch(self.url, **self.es_kwargs)
+        if not es_client.indices.exists(index=index_name):
+            return {}
+
+        response = es_client.search(
+            index=index_name,
+            query={
+                "bool": {
+                    "filter": [
+                        {"term": {"knowledge_id.keyword": knowledge_id}},
+                        {"terms": {"parent_node_id.keyword": parent_node_ids}},
+                    ]
+                }
+            },
+            size=len(parent_node_ids),
+        )
+
+        parent_records: Dict[str, Dict[str, Any]] = {}
+        for hit in response["hits"]["hits"]:
+            source = hit.get("_source", {})
+            parent_node_id = source.get("parent_node_id")
+            if not parent_node_id:
+                continue
+            parent_records[parent_node_id] = {
+                "content": source.get("content", ""),
+                "title": source.get("title", ""),
+                "metadata": source.get("metadata", {}),
+            }
+
+        return parent_records

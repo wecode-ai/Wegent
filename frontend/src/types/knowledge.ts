@@ -38,15 +38,50 @@ export interface RetrievalConfig {
 }
 
 // Splitter Config types
-export type SplitterType = 'sentence' | 'semantic' | 'smart'
+export type ChunkStrategy = 'flat' | 'hierarchical' | 'semantic'
+export type FormatEnhancement = 'none' | 'file_aware'
+export type LegacySplitterType = 'sentence' | 'semantic' | 'smart'
+export type SplitterType = ChunkStrategy | LegacySplitterType
+
+export interface FlatChunkConfig {
+  separator?: string
+  chunk_size?: number
+  chunk_overlap?: number
+}
+
+export interface HierarchicalChunkConfig {
+  parent_chunk_size?: number
+  child_chunk_size?: number
+  child_chunk_overlap?: number
+  parent_separator?: string
+  child_separator?: string
+}
+
+export interface SemanticChunkConfig {
+  buffer_size?: number
+  breakpoint_percentile_threshold?: number
+}
+
+export interface MarkdownEnhancementConfig {
+  enabled?: boolean
+}
+
+export interface NormalizedSplitterConfig {
+  chunk_strategy: ChunkStrategy
+  format_enhancement?: FormatEnhancement
+  flat_config?: FlatChunkConfig
+  hierarchical_config?: HierarchicalChunkConfig
+  semantic_config?: SemanticChunkConfig
+  markdown_enhancement?: MarkdownEnhancementConfig
+}
 
 // Base splitter config
-export interface BaseSplitterConfig {
-  type: SplitterType
+export interface BaseLegacySplitterConfig {
+  type: LegacySplitterType
 }
 
 // Sentence splitter config
-export interface SentenceSplitterConfig extends BaseSplitterConfig {
+export interface SentenceSplitterConfig extends BaseLegacySplitterConfig {
   type: 'sentence'
   separator?: string
   chunk_size?: number
@@ -54,14 +89,14 @@ export interface SentenceSplitterConfig extends BaseSplitterConfig {
 }
 
 // Semantic splitter config
-export interface SemanticSplitterConfig extends BaseSplitterConfig {
+export interface LegacySemanticSplitterConfig extends BaseLegacySplitterConfig {
   type: 'semantic'
   buffer_size?: number // 1-10, default 1
   breakpoint_percentile_threshold?: number // 50-100, default 95
 }
 
 // Smart splitter config (file-type aware)
-export interface SmartSplitterConfig extends BaseSplitterConfig {
+export interface SmartSplitterConfig extends BaseLegacySplitterConfig {
   type: 'smart'
   chunk_size?: number // 128-8192, default 1024
   chunk_overlap?: number // 0-2048, default 50
@@ -69,8 +104,169 @@ export interface SmartSplitterConfig extends BaseSplitterConfig {
   subtype?: string // markdown_sentence, sentence, recursive_character
 }
 
+export type LegacySplitterConfig =
+  | SentenceSplitterConfig
+  | LegacySemanticSplitterConfig
+  | SmartSplitterConfig
+
 // Union type for splitter config
-export type SplitterConfig = SentenceSplitterConfig | SemanticSplitterConfig | SmartSplitterConfig
+export type SplitterConfig = NormalizedSplitterConfig | LegacySplitterConfig
+
+export const DEFAULT_FLAT_CHUNK_CONFIG: FlatChunkConfig = {
+  separator: '\n\n',
+  chunk_size: 1024,
+  chunk_overlap: 50,
+}
+
+export const DEFAULT_HIERARCHICAL_CHUNK_CONFIG: HierarchicalChunkConfig = {
+  parent_chunk_size: 2048,
+  child_chunk_size: 512,
+  child_chunk_overlap: 64,
+  parent_separator: '\n\n',
+  child_separator: '\n',
+}
+
+export const DEFAULT_SEMANTIC_CHUNK_CONFIG: SemanticChunkConfig = {
+  buffer_size: 1,
+  breakpoint_percentile_threshold: 95,
+}
+
+export const DEFAULT_SPLITTER_CONFIG: NormalizedSplitterConfig = {
+  chunk_strategy: 'flat',
+  format_enhancement: 'file_aware',
+  flat_config: { ...DEFAULT_FLAT_CHUNK_CONFIG },
+  markdown_enhancement: {
+    enabled: true,
+  },
+}
+
+function isNormalizedSplitterConfig(
+  config: Partial<SplitterConfig>
+): config is Partial<NormalizedSplitterConfig> {
+  return 'chunk_strategy' in config
+}
+
+function isLegacySplitterConfig(
+  config: Partial<SplitterConfig>
+): config is Partial<LegacySplitterConfig> {
+  return 'type' in config
+}
+
+export function normalizeSplitterConfigForDisplay(
+  config?: Partial<SplitterConfig> | null
+): NormalizedSplitterConfig {
+  if (!config) {
+    return {
+      ...DEFAULT_SPLITTER_CONFIG,
+      flat_config: { ...DEFAULT_FLAT_CHUNK_CONFIG },
+      markdown_enhancement: {
+        enabled: DEFAULT_SPLITTER_CONFIG.markdown_enhancement?.enabled ?? true,
+      },
+    }
+  }
+
+  if (isNormalizedSplitterConfig(config) && config.chunk_strategy) {
+    const formatEnhancement =
+      config.format_enhancement ?? DEFAULT_SPLITTER_CONFIG.format_enhancement ?? 'file_aware'
+    const markdownEnhancementEnabled =
+      formatEnhancement === 'file_aware' ? (config.markdown_enhancement?.enabled ?? true) : false
+
+    const normalizedBase = {
+      chunk_strategy: config.chunk_strategy,
+      format_enhancement: formatEnhancement,
+      markdown_enhancement: {
+        enabled: markdownEnhancementEnabled,
+      },
+    }
+
+    if (config.chunk_strategy === 'hierarchical') {
+      return {
+        ...normalizedBase,
+        chunk_strategy: 'hierarchical',
+        hierarchical_config: {
+          ...DEFAULT_HIERARCHICAL_CHUNK_CONFIG,
+          ...config.hierarchical_config,
+        },
+      }
+    }
+
+    if (config.chunk_strategy === 'semantic') {
+      return {
+        ...normalizedBase,
+        chunk_strategy: 'semantic',
+        semantic_config: {
+          ...DEFAULT_SEMANTIC_CHUNK_CONFIG,
+          ...config.semantic_config,
+        },
+      }
+    }
+
+    return {
+      ...normalizedBase,
+      chunk_strategy: 'flat',
+      flat_config: {
+        ...DEFAULT_FLAT_CHUNK_CONFIG,
+        ...config.flat_config,
+      },
+    }
+  }
+
+  if (isLegacySplitterConfig(config) && config.type === 'semantic') {
+    return {
+      chunk_strategy: 'semantic',
+      format_enhancement: 'none',
+      semantic_config: {
+        ...DEFAULT_SEMANTIC_CHUNK_CONFIG,
+        buffer_size: config.buffer_size ?? DEFAULT_SEMANTIC_CHUNK_CONFIG.buffer_size,
+        breakpoint_percentile_threshold:
+          config.breakpoint_percentile_threshold ??
+          DEFAULT_SEMANTIC_CHUNK_CONFIG.breakpoint_percentile_threshold,
+      },
+      markdown_enhancement: {
+        enabled: false,
+      },
+    }
+  }
+
+  if (isLegacySplitterConfig(config) && config.type === 'smart') {
+    return {
+      chunk_strategy: 'flat',
+      format_enhancement: 'file_aware',
+      flat_config: {
+        ...DEFAULT_FLAT_CHUNK_CONFIG,
+        chunk_size: config.chunk_size ?? DEFAULT_FLAT_CHUNK_CONFIG.chunk_size,
+        chunk_overlap: config.chunk_overlap ?? DEFAULT_FLAT_CHUNK_CONFIG.chunk_overlap,
+      },
+      markdown_enhancement: {
+        enabled: true,
+      },
+    }
+  }
+
+  if (isLegacySplitterConfig(config) && config.type === 'sentence') {
+    return {
+      chunk_strategy: 'flat',
+      format_enhancement: 'none',
+      flat_config: {
+        ...DEFAULT_FLAT_CHUNK_CONFIG,
+        separator: config.separator ?? DEFAULT_FLAT_CHUNK_CONFIG.separator,
+        chunk_size: config.chunk_size ?? DEFAULT_FLAT_CHUNK_CONFIG.chunk_size,
+        chunk_overlap: config.chunk_overlap ?? DEFAULT_FLAT_CHUNK_CONFIG.chunk_overlap,
+      },
+      markdown_enhancement: {
+        enabled: false,
+      },
+    }
+  }
+
+  return {
+    ...DEFAULT_SPLITTER_CONFIG,
+    flat_config: { ...DEFAULT_FLAT_CHUNK_CONFIG },
+    markdown_enhancement: {
+      enabled: DEFAULT_SPLITTER_CONFIG.markdown_enhancement?.enabled ?? true,
+    },
+  }
+}
 
 // Summary Model Reference types
 export interface SummaryModelRef {

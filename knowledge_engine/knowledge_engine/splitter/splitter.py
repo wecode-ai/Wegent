@@ -39,14 +39,17 @@ class SentenceSplitter:
         chunk_size: int = 1024,
         chunk_overlap: int = 200,
         separator: str = " ",
+        paragraph_separator: str | None = None,
     ):
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
         self.separator = separator
+        self.paragraph_separator = paragraph_separator or separator
         self.splitter = LlamaIndexSentenceSplitter(
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
             separator=separator,
+            paragraph_separator=self.paragraph_separator,
         )
 
     def split_documents(self, documents: List[Document]) -> List[BaseNode]:

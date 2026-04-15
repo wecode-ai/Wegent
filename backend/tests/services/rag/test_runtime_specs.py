@@ -1,6 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
+from app.services.knowledge.splitter_config import normalize_splitter_config
 from app.services.rag.runtime_specs import (
     DeleteRuntimeSpec,
     DirectInjectionBudget,
@@ -45,6 +46,97 @@ def test_index_runtime_spec_keeps_control_plane_free_fields():
     assert spec.source.attachment_id == 123
     assert spec.index_families == ["chunk_vector"]
     assert spec.retriever_config.storage_config["type"] == "qdrant"
+    assert spec.splitter_config.chunk_strategy == "flat"
+    assert spec.splitter_config.format_enhancement == "file_aware"
+
+
+def test_index_runtime_spec_keeps_normalized_splitter_config_shape():
+    normalized = normalize_splitter_config({"type": "smart"})
+
+    spec = IndexRuntimeSpec(
+        knowledge_base_id=7,
+        document_id=8,
+        index_owner_user_id=9,
+        retriever_name="retriever-a",
+        retriever_namespace="default",
+        embedding_model_name="embed-a",
+        embedding_model_namespace="default",
+        source=IndexSource(attachment_id=123, source_type="attachment"),
+        splitter_config=normalized.model_dump(exclude_none=True),
+    )
+
+    assert spec.splitter_config.model_dump(exclude_none=True) == {
+        "chunk_strategy": "flat",
+        "format_enhancement": "file_aware",
+        "flat_config": {
+            "chunk_size": 1024,
+            "chunk_overlap": 50,
+            "separator": "\n\n",
+        },
+        "markdown_enhancement": {"enabled": True},
+        "legacy_type": "smart",
+    }
+
+
+def test_index_runtime_spec_defaults_missing_splitter_config_to_runtime_default():
+    spec = IndexRuntimeSpec(
+        knowledge_base_id=7,
+        document_id=8,
+        index_owner_user_id=9,
+        retriever_name="retriever-a",
+        retriever_namespace="default",
+        embedding_model_name="embed-a",
+        embedding_model_namespace="default",
+        source=IndexSource(attachment_id=123, source_type="attachment"),
+    )
+
+    assert spec.splitter_config.model_dump(exclude_none=True) == {
+        "chunk_strategy": "flat",
+        "format_enhancement": "file_aware",
+        "flat_config": {
+            "chunk_size": 1024,
+            "chunk_overlap": 50,
+            "separator": "\n\n",
+        },
+        "markdown_enhancement": {"enabled": True},
+    }
+
+
+def test_index_runtime_spec_accepts_hierarchical_splitter_config():
+    spec = IndexRuntimeSpec(
+        knowledge_base_id=7,
+        document_id=8,
+        index_owner_user_id=9,
+        retriever_name="retriever-a",
+        retriever_namespace="default",
+        embedding_model_name="embed-a",
+        embedding_model_namespace="default",
+        source=IndexSource(attachment_id=123, source_type="attachment"),
+        splitter_config={
+            "chunk_strategy": "hierarchical",
+            "format_enhancement": "file_aware",
+            "hierarchical_config": {
+                "parent_chunk_size": 2048,
+                "child_chunk_size": 512,
+                "child_chunk_overlap": 64,
+                "parent_separator": "\n\n",
+                "child_separator": "\n",
+            },
+        },
+    )
+
+    assert spec.splitter_config.model_dump(exclude_none=True) == {
+        "chunk_strategy": "hierarchical",
+        "format_enhancement": "file_aware",
+        "hierarchical_config": {
+            "parent_chunk_size": 2048,
+            "child_chunk_size": 512,
+            "child_chunk_overlap": 64,
+            "parent_separator": "\n\n",
+            "child_separator": "\n",
+        },
+        "markdown_enhancement": {"enabled": False},
+    }
 
 
 def test_query_runtime_spec_keeps_direct_injection_budget():

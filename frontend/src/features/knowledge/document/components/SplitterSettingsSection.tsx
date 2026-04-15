@@ -4,12 +4,20 @@
 
 'use client'
 
-import { useState, useEffect } from 'react'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
 import { SearchableSelect } from '@/components/ui/searchable-select'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { SplitterConfig, SplitterType } from '@/types/knowledge'
+import {
+  DEFAULT_FLAT_CHUNK_CONFIG,
+  DEFAULT_HIERARCHICAL_CHUNK_CONFIG,
+  DEFAULT_SEMANTIC_CHUNK_CONFIG,
+  normalizeSplitterConfigForDisplay,
+  type ChunkStrategy,
+  type FormatEnhancement,
+  type SplitterConfig,
+} from '@/types/knowledge'
 
 // Re-export SplitterConfig for backward compatibility
 export type { SplitterConfig }
@@ -20,186 +28,254 @@ interface SplitterSettingsSectionProps {
   readOnly?: boolean
 }
 
+function encodeSeparatorForDisplay(value: string | undefined): string {
+  return (value ?? '').replace(/\r/g, '\\r').replace(/\n/g, '\\n').replace(/\t/g, '\\t')
+}
+
+function decodeSeparatorFromDisplay(value: string): string {
+  return value.replace(/\\r/g, '\r').replace(/\\n/g, '\n').replace(/\\t/g, '\t')
+}
+
 export function SplitterSettingsSection({
   config,
   onChange,
   readOnly = false,
 }: SplitterSettingsSectionProps) {
   const { t } = useTranslation()
-  const [overlapError, setOverlapError] = useState('')
 
-  const splitterType = (config.type as SplitterType) || 'sentence'
+  const normalizedConfig = normalizeSplitterConfigForDisplay(config)
+  const chunkStrategy = normalizedConfig.chunk_strategy
+  const formatEnhancement =
+    normalizedConfig.format_enhancement ?? (chunkStrategy === 'flat' ? 'file_aware' : 'none')
+  const fileAwareEnabled = formatEnhancement === 'file_aware'
+  const titleEnhancementEnabled =
+    fileAwareEnabled && (normalizedConfig.markdown_enhancement?.enabled ?? true)
+  const hierarchicalConfig = {
+    ...DEFAULT_HIERARCHICAL_CHUNK_CONFIG,
+    ...normalizedConfig.hierarchical_config,
+  }
+  const flatConfig = {
+    ...DEFAULT_FLAT_CHUNK_CONFIG,
+    ...normalizedConfig.flat_config,
+  }
+  const semanticConfig = {
+    ...DEFAULT_SEMANTIC_CHUNK_CONFIG,
+    ...normalizedConfig.semantic_config,
+  }
 
-  // Smart splitter config (also uses chunk_size and chunk_overlap)
-  const smartChunkSize = config.type === 'smart' ? (config.chunk_size ?? 1024) : 1024
-  const smartChunkOverlap = config.type === 'smart' ? (config.chunk_overlap ?? 50) : 50
+  const updateConfig = (next: Partial<SplitterConfig>) => {
+    onChange(next)
+  }
 
-  // Sentence splitter config
-  const chunkSize = config.type === 'sentence' ? (config.chunk_size ?? 1024) : 1024
-  const chunkOverlap = config.type === 'sentence' ? (config.chunk_overlap ?? 50) : 50
-  const separator = config.type === 'sentence' ? (config.separator ?? '\n\n') : '\n\n'
-
-  // Semantic splitter config
-  const bufferSize = config.type === 'semantic' ? (config.buffer_size ?? 1) : 1
-  const breakpointThreshold =
-    config.type === 'semantic' ? (config.breakpoint_percentile_threshold ?? 95) : 95
-
-  useEffect(() => {
-    if (splitterType === 'sentence' && chunkOverlap >= chunkSize) {
-      setOverlapError(t('knowledge:document.splitter.overlapError'))
-    } else {
-      setOverlapError('')
+  const buildStrategyConfig = (
+    strategy: ChunkStrategy,
+    overrides?: {
+      formatEnhancement?: FormatEnhancement
+      titleEnhancementEnabled?: boolean
     }
-  }, [chunkSize, chunkOverlap, splitterType, t])
+  ) => {
+    const nextFormatEnhancement = overrides?.formatEnhancement ?? formatEnhancement
+    const nextTitleEnhancementEnabled =
+      overrides?.titleEnhancementEnabled ?? titleEnhancementEnabled
+    const baseConfig = {
+      chunk_strategy: strategy,
+      format_enhancement: nextFormatEnhancement,
+      markdown_enhancement: {
+        enabled: nextFormatEnhancement === 'file_aware' ? nextTitleEnhancementEnabled : false,
+      },
+    }
 
-  const handleTypeChange = (newType: string) => {
-    if (newType === 'smart') {
-      onChange({
-        type: 'smart',
-        chunk_size: 1024,
-        chunk_overlap: 50,
-      })
-    } else if (newType === 'sentence') {
-      onChange({
-        type: 'sentence',
-        separator: '\n\n',
-        chunk_size: 1024,
-        chunk_overlap: 50,
-      })
-    } else if (newType === 'semantic') {
-      onChange({
-        type: 'semantic',
-        buffer_size: 1,
-        breakpoint_percentile_threshold: 95,
-      })
+    if (strategy === 'hierarchical') {
+      return {
+        ...baseConfig,
+        hierarchical_config: {
+          ...DEFAULT_HIERARCHICAL_CHUNK_CONFIG,
+          ...normalizedConfig.hierarchical_config,
+        },
+      }
+    }
+
+    if (strategy === 'semantic') {
+      return {
+        ...baseConfig,
+        semantic_config: {
+          ...DEFAULT_SEMANTIC_CHUNK_CONFIG,
+          ...normalizedConfig.semantic_config,
+        },
+      }
+    }
+
+    return {
+      ...baseConfig,
+      flat_config: {
+        ...DEFAULT_FLAT_CHUNK_CONFIG,
+        ...normalizedConfig.flat_config,
+      },
     }
   }
 
-  const handleSmartChunkSizeChange = (value: number) => {
+  const handleStrategyChange = (value: string) => {
+    updateConfig(buildStrategyConfig(value as ChunkStrategy))
+  }
+
+  const handleFileAwareChange = (checked: boolean) => {
+    updateConfig(
+      buildStrategyConfig(chunkStrategy, {
+        formatEnhancement: checked ? 'file_aware' : 'none',
+        titleEnhancementEnabled: checked ? titleEnhancementEnabled : false,
+      })
+    )
+  }
+
+  const handleTitleEnhancementChange = (checked: boolean) => {
+    updateConfig(
+      buildStrategyConfig(chunkStrategy, {
+        titleEnhancementEnabled: checked,
+      })
+    )
+  }
+
+  const handleFlatChunkSizeChange = (value: number) => {
     const newValue = Math.max(128, Math.min(8192, value))
-    onChange({ ...config, type: 'smart', chunk_size: newValue })
+    const currentChunkOverlap =
+      flatConfig.chunk_overlap ?? DEFAULT_FLAT_CHUNK_CONFIG.chunk_overlap ?? 50
+    updateConfig({
+      ...buildStrategyConfig('flat'),
+      flat_config: {
+        ...flatConfig,
+        chunk_size: newValue,
+        chunk_overlap: Math.min(currentChunkOverlap, newValue - 1),
+      },
+    })
   }
 
-  const handleSmartChunkOverlapChange = (value: number) => {
-    const newValue = Math.max(0, Math.min(smartChunkSize - 1, value))
-    onChange({ ...config, type: 'smart', chunk_overlap: newValue })
-  }
-
-  const handleChunkSizeChange = (value: number) => {
-    const newValue = Math.max(128, Math.min(8192, value))
-    onChange({ ...config, type: 'sentence', chunk_size: newValue })
-  }
-
-  const handleChunkOverlapChange = (value: number) => {
+  const handleFlatChunkOverlapChange = (value: number) => {
+    const chunkSize = flatConfig.chunk_size ?? DEFAULT_FLAT_CHUNK_CONFIG.chunk_size ?? 1024
     const newValue = Math.max(0, Math.min(chunkSize - 1, value))
-    onChange({ ...config, type: 'sentence', chunk_overlap: newValue })
+    updateConfig({
+      ...buildStrategyConfig('flat'),
+      flat_config: {
+        ...flatConfig,
+        chunk_overlap: newValue,
+      },
+    })
+  }
+
+  const handleSeparatorChange = (value: string) => {
+    updateConfig({
+      ...buildStrategyConfig('flat'),
+      flat_config: {
+        ...flatConfig,
+        separator: value,
+      },
+    })
+  }
+
+  const handleParentSeparatorChange = (value: string) => {
+    updateConfig({
+      ...buildStrategyConfig('hierarchical'),
+      hierarchical_config: {
+        ...hierarchicalConfig,
+        parent_separator: value,
+      },
+    })
+  }
+
+  const handleChildSeparatorChange = (value: string) => {
+    updateConfig({
+      ...buildStrategyConfig('hierarchical'),
+      hierarchical_config: {
+        ...hierarchicalConfig,
+        child_separator: value,
+      },
+    })
+  }
+
+  const handleParentChunkSizeChange = (value: number) => {
+    const newValue = Math.max(256, Math.min(16384, value))
+    updateConfig({
+      ...buildStrategyConfig('hierarchical'),
+      hierarchical_config: {
+        ...hierarchicalConfig,
+        parent_chunk_size: newValue,
+      },
+    })
+  }
+
+  const handleChildChunkSizeChange = (value: number) => {
+    const newValue = Math.max(128, Math.min(8192, value))
+    updateConfig({
+      ...buildStrategyConfig('hierarchical'),
+      hierarchical_config: {
+        ...hierarchicalConfig,
+        child_chunk_size: newValue,
+        child_chunk_overlap: Math.min(
+          hierarchicalConfig.child_chunk_overlap ??
+            DEFAULT_HIERARCHICAL_CHUNK_CONFIG.child_chunk_overlap ??
+            64,
+          newValue - 1
+        ),
+      },
+    })
+  }
+
+  const handleChildChunkOverlapChange = (value: number) => {
+    const childChunkSize =
+      hierarchicalConfig.child_chunk_size ??
+      DEFAULT_HIERARCHICAL_CHUNK_CONFIG.child_chunk_size ??
+      512
+    const newValue = Math.max(0, Math.min(childChunkSize - 1, value))
+    updateConfig({
+      ...buildStrategyConfig('hierarchical'),
+      hierarchical_config: {
+        ...hierarchicalConfig,
+        child_chunk_overlap: newValue,
+      },
+    })
   }
 
   const handleBufferSizeChange = (value: number) => {
     const newValue = Math.max(1, Math.min(10, value))
-    onChange({ ...config, type: 'semantic', buffer_size: newValue })
+    updateConfig({
+      ...buildStrategyConfig('semantic'),
+      semantic_config: {
+        ...semanticConfig,
+        buffer_size: newValue,
+      },
+    })
   }
 
   const handleBreakpointThresholdChange = (value: number) => {
     const newValue = Math.max(50, Math.min(100, value))
-    onChange({ ...config, type: 'semantic', breakpoint_percentile_threshold: newValue })
+    updateConfig({
+      ...buildStrategyConfig('semantic'),
+      semantic_config: {
+        ...semanticConfig,
+        breakpoint_percentile_threshold: newValue,
+      },
+    })
   }
 
-  const splitterTypeItems = [
-    { value: 'smart', label: t('knowledge:document.splitter.smart') },
-    { value: 'sentence', label: t('knowledge:document.splitter.sentence') },
+  const chunkStrategyItems = [
+    { value: 'flat', label: t('knowledge:document.splitter.flat') },
+    { value: 'hierarchical', label: t('knowledge:document.splitter.hierarchical') },
     { value: 'semantic', label: t('knowledge:document.splitter.semantic') },
   ]
 
   return (
     <div className="space-y-4">
-      {/* Chunking Type */}
       <div className="space-y-2">
         <Label htmlFor="splitter-type">{t('knowledge:document.splitter.type')}</Label>
         <SearchableSelect
-          value={splitterType}
-          onValueChange={handleTypeChange}
+          value={chunkStrategy}
+          onValueChange={handleStrategyChange}
           disabled={readOnly}
-          items={splitterTypeItems}
+          items={chunkStrategyItems}
         />
       </div>
 
-      {/* Smart Splitter Settings */}
-      {splitterType === 'smart' && (
+      {chunkStrategy === 'flat' && (
         <>
-          {/* Smart splitter hint */}
-          <p className="text-xs text-text-muted">{t('knowledge:document.splitter.smartHint')}</p>
-
-          {/* Chunk Size */}
-          <div className="space-y-2">
-            <Label htmlFor="smart-chunk-size">{t('knowledge:document.splitter.chunkSize')}</Label>
-            <div className="flex items-center gap-2">
-              <Input
-                id="smart-chunk-size"
-                type="number"
-                min={128}
-                max={8192}
-                value={smartChunkSize}
-                onChange={e => handleSmartChunkSizeChange(parseInt(e.target.value) || 128)}
-                disabled={readOnly}
-                className="flex-1"
-              />
-              <span className="text-sm text-text-secondary whitespace-nowrap">
-                {t('knowledge:document.splitter.characters')}
-              </span>
-            </div>
-            <p className="text-xs text-text-muted">
-              {t('knowledge:document.splitter.chunkSizeHint')}
-            </p>
-          </div>
-
-          {/* Chunk Overlap */}
-          <div className="space-y-2">
-            <Label htmlFor="smart-chunk-overlap">
-              {t('knowledge:document.splitter.chunkOverlap')}
-            </Label>
-            <div className="flex items-center gap-2">
-              <Input
-                id="smart-chunk-overlap"
-                type="number"
-                min={0}
-                max={smartChunkSize - 1}
-                value={smartChunkOverlap}
-                onChange={e => handleSmartChunkOverlapChange(parseInt(e.target.value) || 0)}
-                disabled={readOnly}
-                className="flex-1"
-              />
-              <span className="text-sm text-text-secondary whitespace-nowrap">
-                {t('knowledge:document.splitter.characters')}
-              </span>
-            </div>
-            <p className="text-xs text-text-muted">
-              {t('knowledge:document.splitter.chunkOverlapHint')}
-            </p>
-          </div>
-        </>
-      )}
-
-      {/* Sentence Splitter Settings */}
-      {splitterType === 'sentence' && (
-        <>
-          {/* Separator */}
-          <div className="space-y-2">
-            <Label htmlFor="separator">{t('knowledge:document.splitter.separator')}</Label>
-            <Input
-              id="separator"
-              type="text"
-              value={separator}
-              onChange={e => onChange({ ...config, type: 'sentence', separator: e.target.value })}
-              disabled={readOnly}
-              placeholder="\n\n"
-            />
-            <p className="text-xs text-text-muted">
-              {t('knowledge:document.splitter.separatorHint')}
-            </p>
-          </div>
-
-          {/* Chunk Size */}
           <div className="space-y-2">
             <Label htmlFor="chunk-size">{t('knowledge:document.splitter.chunkSize')}</Label>
             <div className="flex items-center gap-2">
@@ -208,8 +284,8 @@ export function SplitterSettingsSection({
                 type="number"
                 min={128}
                 max={8192}
-                value={chunkSize}
-                onChange={e => handleChunkSizeChange(parseInt(e.target.value) || 128)}
+                value={flatConfig.chunk_size ?? DEFAULT_FLAT_CHUNK_CONFIG.chunk_size}
+                onChange={e => handleFlatChunkSizeChange(parseInt(e.target.value) || 1024)}
                 disabled={readOnly}
                 className="flex-1"
               />
@@ -222,7 +298,6 @@ export function SplitterSettingsSection({
             </p>
           </div>
 
-          {/* Chunk Overlap */}
           <div className="space-y-2">
             <Label htmlFor="chunk-overlap">{t('knowledge:document.splitter.chunkOverlap')}</Label>
             <div className="flex items-center gap-2">
@@ -230,9 +305,9 @@ export function SplitterSettingsSection({
                 id="chunk-overlap"
                 type="number"
                 min={0}
-                max={chunkSize - 1}
-                value={chunkOverlap}
-                onChange={e => handleChunkOverlapChange(parseInt(e.target.value) || 0)}
+                max={(flatConfig.chunk_size ?? DEFAULT_FLAT_CHUNK_CONFIG.chunk_size ?? 1024) - 1}
+                value={flatConfig.chunk_overlap ?? DEFAULT_FLAT_CHUNK_CONFIG.chunk_overlap}
+                onChange={e => handleFlatChunkOverlapChange(parseInt(e.target.value) || 0)}
                 disabled={readOnly}
                 className="flex-1"
               />
@@ -243,15 +318,151 @@ export function SplitterSettingsSection({
             <p className="text-xs text-text-muted">
               {t('knowledge:document.splitter.chunkOverlapHint')}
             </p>
-            {overlapError && <p className="text-sm text-error">{overlapError}</p>}
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="separator">{t('knowledge:document.splitter.separator')}</Label>
+            <Input
+              id="separator"
+              value={encodeSeparatorForDisplay(
+                flatConfig.separator ?? DEFAULT_FLAT_CHUNK_CONFIG.separator
+              )}
+              onChange={e => handleSeparatorChange(decodeSeparatorFromDisplay(e.target.value))}
+              disabled={readOnly}
+              data-testid="flat-separator-input"
+              className="font-mono text-sm"
+            />
+            <p className="text-xs text-text-muted">
+              {t('knowledge:document.splitter.separatorHint')}
+            </p>
           </div>
         </>
       )}
 
-      {/* Semantic Splitter Settings */}
-      {splitterType === 'semantic' && (
+      {chunkStrategy === 'hierarchical' && (
         <>
-          {/* Buffer Size */}
+          <div className="space-y-2">
+            <Label htmlFor="parent-chunk-size">
+              {t('knowledge:document.splitter.parentChunkSize')}
+            </Label>
+            <div className="flex items-center gap-2">
+              <Input
+                id="parent-chunk-size"
+                type="number"
+                min={256}
+                max={16384}
+                value={
+                  hierarchicalConfig.parent_chunk_size ??
+                  DEFAULT_HIERARCHICAL_CHUNK_CONFIG.parent_chunk_size
+                }
+                onChange={e => handleParentChunkSizeChange(parseInt(e.target.value) || 256)}
+                disabled={readOnly}
+                className="flex-1"
+              />
+              <span className="text-sm text-text-secondary whitespace-nowrap">
+                {t('knowledge:document.splitter.characters')}
+              </span>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="child-chunk-size">
+              {t('knowledge:document.splitter.childChunkSize')}
+            </Label>
+            <div className="flex items-center gap-2">
+              <Input
+                id="child-chunk-size"
+                type="number"
+                min={128}
+                max={8192}
+                value={
+                  hierarchicalConfig.child_chunk_size ??
+                  DEFAULT_HIERARCHICAL_CHUNK_CONFIG.child_chunk_size
+                }
+                onChange={e => handleChildChunkSizeChange(parseInt(e.target.value) || 128)}
+                disabled={readOnly}
+                className="flex-1"
+              />
+              <span className="text-sm text-text-secondary whitespace-nowrap">
+                {t('knowledge:document.splitter.characters')}
+              </span>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="child-chunk-overlap">
+              {t('knowledge:document.splitter.childChunkOverlap')}
+            </Label>
+            <div className="flex items-center gap-2">
+              <Input
+                id="child-chunk-overlap"
+                type="number"
+                min={0}
+                max={
+                  (hierarchicalConfig.child_chunk_size ??
+                    DEFAULT_HIERARCHICAL_CHUNK_CONFIG.child_chunk_size ??
+                    512) - 1
+                }
+                value={
+                  hierarchicalConfig.child_chunk_overlap ??
+                  DEFAULT_HIERARCHICAL_CHUNK_CONFIG.child_chunk_overlap
+                }
+                onChange={e => handleChildChunkOverlapChange(parseInt(e.target.value) || 0)}
+                disabled={readOnly}
+                className="flex-1"
+              />
+              <span className="text-sm text-text-secondary whitespace-nowrap">
+                {t('knowledge:document.splitter.characters')}
+              </span>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="parent-separator">
+              {t('knowledge:document.splitter.parentSeparator')}
+            </Label>
+            <Input
+              id="parent-separator"
+              value={encodeSeparatorForDisplay(
+                hierarchicalConfig.parent_separator ??
+                  DEFAULT_HIERARCHICAL_CHUNK_CONFIG.parent_separator
+              )}
+              onChange={e =>
+                handleParentSeparatorChange(decodeSeparatorFromDisplay(e.target.value))
+              }
+              disabled={readOnly}
+              data-testid="parent-separator-input"
+              className="font-mono text-sm"
+            />
+            <p className="text-xs text-text-muted">
+              {t('knowledge:document.splitter.parentSeparatorHint')}
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="child-separator">
+              {t('knowledge:document.splitter.childSeparator')}
+            </Label>
+            <Input
+              id="child-separator"
+              value={encodeSeparatorForDisplay(
+                hierarchicalConfig.child_separator ??
+                  DEFAULT_HIERARCHICAL_CHUNK_CONFIG.child_separator
+              )}
+              onChange={e => handleChildSeparatorChange(decodeSeparatorFromDisplay(e.target.value))}
+              disabled={readOnly}
+              data-testid="child-separator-input"
+              className="font-mono text-sm"
+            />
+            <p className="text-xs text-text-muted">
+              {t('knowledge:document.splitter.childSeparatorHint')}
+            </p>
+          </div>
+        </>
+      )}
+
+      {chunkStrategy === 'semantic' && (
+        <>
           <div className="space-y-2">
             <Label htmlFor="buffer-size">{t('knowledge:document.splitter.bufferSize')}</Label>
             <div className="flex items-center gap-2">
@@ -260,7 +471,7 @@ export function SplitterSettingsSection({
                 type="number"
                 min={1}
                 max={10}
-                value={bufferSize}
+                value={semanticConfig.buffer_size ?? DEFAULT_SEMANTIC_CHUNK_CONFIG.buffer_size}
                 onChange={e => handleBufferSizeChange(parseInt(e.target.value) || 1)}
                 disabled={readOnly}
                 className="flex-1"
@@ -271,7 +482,6 @@ export function SplitterSettingsSection({
             </p>
           </div>
 
-          {/* Breakpoint Percentile Threshold */}
           <div className="space-y-2">
             <Label htmlFor="breakpoint-threshold">
               {t('knowledge:document.splitter.breakpointThreshold')}
@@ -282,7 +492,10 @@ export function SplitterSettingsSection({
                 type="number"
                 min={50}
                 max={100}
-                value={breakpointThreshold}
+                value={
+                  semanticConfig.breakpoint_percentile_threshold ??
+                  DEFAULT_SEMANTIC_CHUNK_CONFIG.breakpoint_percentile_threshold
+                }
                 onChange={e => handleBreakpointThresholdChange(parseInt(e.target.value) || 95)}
                 disabled={readOnly}
                 className="flex-1"
@@ -295,6 +508,30 @@ export function SplitterSettingsSection({
           </div>
         </>
       )}
+
+      <div className="flex items-center gap-3">
+        <Checkbox
+          id="file-aware"
+          checked={fileAwareEnabled}
+          onCheckedChange={checked => handleFileAwareChange(Boolean(checked))}
+          disabled={readOnly}
+          data-testid="file-aware-checkbox"
+        />
+        <Label htmlFor="file-aware">{t('knowledge:document.splitter.fileAware')}</Label>
+      </div>
+
+      <div className="flex items-center gap-3">
+        <Checkbox
+          id="title-enhancement"
+          checked={titleEnhancementEnabled}
+          onCheckedChange={checked => handleTitleEnhancementChange(Boolean(checked))}
+          disabled={readOnly || !fileAwareEnabled}
+          data-testid="title-enhancement-checkbox"
+        />
+        <Label htmlFor="title-enhancement">
+          {t('knowledge:document.splitter.titleEnhancement')}
+        </Label>
+      </div>
     </div>
   )
 }

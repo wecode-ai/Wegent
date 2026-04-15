@@ -51,27 +51,30 @@ describe('AskUserForm', () => {
     ask_id: 'ask_test123',
     task_id: 1,
     subtask_id: 2,
-    question: 'Which programming language do you prefer?',
-    description: 'Please select your preferred language',
-    options: [
-      { label: 'Python', value: 'python', recommended: true },
-      { label: 'JavaScript', value: 'javascript' },
-      { label: 'Go', value: 'go' },
+    questions: [
+      {
+        id: 'ask_test123',
+        question: 'Which programming language do you prefer?',
+        options: [
+          { label: 'Python', value: 'python', recommended: true },
+          { label: 'JavaScript', value: 'javascript' },
+          { label: 'Go', value: 'go' },
+        ],
+        multi_select: false,
+        input_type: 'choice',
+        placeholder: null,
+        required: true,
+        default: null,
+      },
     ],
-    multi_select: false,
-    input_type: 'choice',
-    placeholder: null,
-    required: true,
-    default: null,
     ...overrides,
   })
 
-  it('renders question and description', () => {
+  it('renders question', () => {
     const data = createMockData()
     render(<AskUserForm data={data} taskId={1} currentMessageIndex={0} />)
 
     expect(screen.getByText('Which programming language do you prefer?')).toBeInTheDocument()
-    expect(screen.getByText('Please select your preferred language')).toBeInTheDocument()
   })
 
   it('renders single choice options with radio buttons', () => {
@@ -85,7 +88,14 @@ describe('AskUserForm', () => {
   })
 
   it('renders multiple choice options with checkboxes', () => {
-    const data = createMockData({ multi_select: true })
+    const data = createMockData({
+      questions: [
+        {
+          ...createMockData().questions[0],
+          multi_select: true,
+        },
+      ],
+    })
     render(<AskUserForm data={data} taskId={1} currentMessageIndex={0} />)
 
     const checkboxes = screen.getAllByRole('checkbox')
@@ -94,9 +104,14 @@ describe('AskUserForm', () => {
 
   it('renders text input when input_type is text', () => {
     const data = createMockData({
-      input_type: 'text',
-      options: null,
-      placeholder: 'Enter your name...',
+      questions: [
+        {
+          ...createMockData().questions[0],
+          input_type: 'text',
+          options: null,
+          placeholder: 'Enter your name...',
+        },
+      ],
     })
     render(<AskUserForm data={data} taskId={1} currentMessageIndex={0} />)
 
@@ -136,12 +151,17 @@ describe('AskUserForm', () => {
   it('calls onSubmit with formatted labels for multiple choice', async () => {
     const mockOnSubmit = jest.fn()
     const data = createMockData({
-      multi_select: true,
-      default: null,
-      options: [
-        { label: 'Python', value: 'python' },
-        { label: 'JavaScript', value: 'javascript' },
-        { label: 'Go', value: 'go' },
+      questions: [
+        {
+          ...createMockData().questions[0],
+          multi_select: true,
+          default: null,
+          options: [
+            { label: 'Python', value: 'python' },
+            { label: 'JavaScript', value: 'javascript' },
+            { label: 'Go', value: 'go' },
+          ],
+        },
       ],
     })
     render(<AskUserForm data={data} taskId={1} currentMessageIndex={0} onSubmit={mockOnSubmit} />)
@@ -171,8 +191,13 @@ describe('AskUserForm', () => {
   it('calls onSubmit with text value for text input', async () => {
     const mockOnSubmit = jest.fn()
     const data = createMockData({
-      input_type: 'text',
-      options: null,
+      questions: [
+        {
+          ...createMockData().questions[0],
+          input_type: 'text',
+          options: null,
+        },
+      ],
     })
     render(<AskUserForm data={data} taskId={1} currentMessageIndex={0} onSubmit={mockOnSubmit} />)
 
@@ -196,9 +221,14 @@ describe('AskUserForm', () => {
   it('shows inline validation error when required field is empty', async () => {
     const mockOnSubmit = jest.fn()
     const data = createMockData({
-      input_type: 'text',
-      options: null,
-      required: true,
+      questions: [
+        {
+          ...createMockData().questions[0],
+          input_type: 'text',
+          options: null,
+          required: true,
+        },
+      ],
     })
     render(<AskUserForm data={data} taskId={1} currentMessageIndex={0} onSubmit={mockOnSubmit} />)
 
@@ -215,8 +245,13 @@ describe('AskUserForm', () => {
 
   it('renders with default values pre-selected', () => {
     const data = createMockData({
-      multi_select: true,
-      default: ['python', 'go'],
+      questions: [
+        {
+          ...createMockData().questions[0],
+          multi_select: true,
+          default: ['python', 'go'],
+        },
+      ],
     })
     render(<AskUserForm data={data} taskId={1} currentMessageIndex={0} />)
 

@@ -171,29 +171,8 @@ export default function AskUserForm({
   // Use reactive hook to get messages from TaskStateMachine (same as ClarificationForm)
   const { messages: messagesMap } = useTaskStateMachine(taskId)
 
-  // Determine if this is multi-question mode
-  const isMultiQuestion = Boolean(data.questions && data.questions.length > 0)
-
-  // Normalize to a unified list of questions for rendering
-  const normalizedQuestions: AskUserQuestion[] = useMemo(() => {
-    if (isMultiQuestion && data.questions) {
-      return data.questions
-    }
-    // Single-question mode: wrap into a single-element array
-    return [
-      {
-        id: data.ask_id,
-        question: data.question,
-        description: data.description ?? null,
-        input_type: data.input_type ?? 'choice',
-        options: data.options ?? null,
-        multi_select: data.multi_select ?? false,
-        required: data.required,
-        default: data.default ?? null,
-        placeholder: data.placeholder ?? null,
-      },
-    ]
-  }, [isMultiQuestion, data])
+  const normalizedQuestions: AskUserQuestion[] = useMemo(() => data.questions, [data.questions])
+  const isMultiQuestion = normalizedQuestions.length > 1
 
   // Per-question selected values (choice): { [qId]: string[] }
   const [selectedValues, setSelectedValues] = useState<Record<string, string[]>>(() => {
@@ -399,28 +378,29 @@ export default function AskUserForm({
         </h3>
       </div>
 
-      {/* Top-level question / description (used as form header in multi-question mode) */}
-      {data.question && (
-        <div className="space-y-1">
-          <div className="flex items-start justify-between">
-            <div className="text-sm font-medium text-text-primary">
-              {data.question}
-              {!isMultiQuestion && data.required && (
-                <span className="ml-1 text-red-500" aria-hidden="true">
-                  *
-                </span>
-              )}
-            </div>
-            {/* Single-question mode: toggle button next to the question title */}
-            {!isMultiQuestion &&
-              !isReadOnly &&
-              (() => {
-                const q = normalizedQuestions[0]
-                const isChoiceQuestion =
-                  q?.input_type === 'choice' && q?.options && q.options.length > 0
-                if (!isChoiceQuestion) return null
-                const isInCustomMode = customModes[q.id] ?? false
-                return (
+      {/* Question list */}
+      <div className={isMultiQuestion ? 'space-y-4' : 'space-y-2'}>
+        {normalizedQuestions.map(q => {
+          const isChoiceQuestion = q.input_type === 'choice' && q.options && q.options.length > 0
+          const isInCustomMode = customModes[q.id] ?? false
+
+          return (
+            <div
+              key={q.id}
+              className={
+                isMultiQuestion ? 'p-3 rounded bg-surface/50 border border-border' : 'space-y-2'
+              }
+            >
+              <div className="flex items-start justify-between">
+                <div className="text-sm font-medium text-text-primary">
+                  {q.question}
+                  {q.required && (
+                    <span className="ml-1 text-red-500" aria-hidden="true">
+                      *
+                    </span>
+                  )}
+                </div>
+                {isChoiceQuestion && !isReadOnly && (
                   <Button
                     type="button"
                     variant="ghost"
@@ -434,59 +414,8 @@ export default function AskUserForm({
                       ? t('clarification.back_to_choices') || 'Back to choices'
                       : t('ask_user_question.custom_input') || 'Custom Input'}
                   </Button>
-                )
-              })()}
-          </div>
-          {data.description && !isMultiQuestion && (
-            <div className="text-xs text-text-secondary">{data.description}</div>
-          )}
-        </div>
-      )}
-
-      {/* Question list */}
-      <div className={isMultiQuestion ? 'space-y-4' : 'space-y-2'}>
-        {normalizedQuestions.map(q => {
-          const isChoiceQuestion = q.input_type === 'choice' && q.options && q.options.length > 0
-          const isInCustomMode = customModes[q.id] ?? false
-
-          return (
-            <div
-              key={q.id}
-              className={isMultiQuestion ? 'p-3 rounded bg-surface/50 border border-border' : ''}
-            >
-              {/* Per-question label in multi-question mode */}
-              {isMultiQuestion && (
-                <div className="mb-2">
-                  <div className="flex items-start justify-between">
-                    <div className="text-sm font-medium text-text-primary">
-                      {q.question}
-                      {q.required && (
-                        <span className="ml-1 text-red-500" aria-hidden="true">
-                          *
-                        </span>
-                      )}
-                    </div>
-                    {isChoiceQuestion && !isReadOnly && (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => handleToggleCustom(q.id)}
-                        className="text-xs text-text-muted hover:text-text-primary shrink-0"
-                        data-testid={`ask-user-toggle-custom-${q.id}`}
-                      >
-                        <FiEdit3 className="w-3 h-3" />
-                        {isInCustomMode
-                          ? t('clarification.back_to_choices') || 'Back to choices'
-                          : t('ask_user_question.custom_input') || 'Custom Input'}
-                      </Button>
-                    )}
-                  </div>
-                  {q.description && (
-                    <div className="text-xs text-text-secondary">{q.description}</div>
-                  )}
-                </div>
-              )}
+                )}
+              </div>
 
               {/* Input widget */}
               <div

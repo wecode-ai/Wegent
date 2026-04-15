@@ -2,7 +2,7 @@
 name: "interactive-form-question"
 description: "Ask the user questions or present choices via an interactive form. Use when you need to gather preferences, clarify ambiguous instructions, get decisions on implementation choices, or present a list of options for the user to select from. Never write options or questions as plain text — always use this tool."
 displayName: "交互式表单提问"
-version: "1.0.0"
+version: "2.0.0"
 author: "Wegent Team"
 tags: ["interaction", "user-input", "form", "clarification"]
 bindShells:
@@ -37,7 +37,7 @@ You now have access to the `interactive_form_question` tool. Use it to ask the u
 - Users can always select **"Other"** to provide custom text input, even on choice questions — you don't need to add it manually
 - Use `multi_select: true` to allow multiple answers to be selected
 - If you recommend a specific option, set `"recommended": true` on that option — the frontend will display the recommended badge automatically. **NEVER add "(Recommended)", "(推荐)" or any similar text to the `label` field** — the badge is rendered by the frontend, not by text in the label
-- Use multi-question mode (`questions=[...]`) to batch related questions into one form and avoid multiple round-trips
+- Always pass questions via `questions=[...]`. A single-question form is just a one-item `questions` array.
 - After receiving answers, call `interactive_form_question` again if follow-up questions arise — never ask in plain text
 
 ## Behavior
@@ -46,20 +46,16 @@ You now have access to the `interactive_form_question` tool. Use it to ask the u
 
 ## Tool Parameters
 
-**Single-question mode:**
-- `question` (string): The question text
-- `description` (string, optional): Additional context
-- `input_type`: `"choice"` or `"text"`
-- `options` (list, optional): `[{label, value, recommended?}]`
-- `multi_select` (bool): Allow multiple selections; default `false`
-- `placeholder` (string, optional): Placeholder for text input
-- `required` (bool): Default `true`
-- `default` (list, optional): Pre-selected values
-
-**Multi-question mode:**
-- `question` (string, optional): Form header
-- `description` (string, optional): Form description
-- `questions` (list): Each item has `id`, `question`, `input_type`, `options`, `multi_select`, `required`, `default`, `placeholder`
+- `questions` (list, required): The full list of questions to render
+- Each item in `questions` has:
+  - `id`: Unique identifier
+  - `question`: Question text shown to the user
+  - `input_type`: `"choice"` or `"text"`
+  - `options` (optional): `[{label, value, recommended?}]` for choice questions
+  - `multi_select` (optional): Allow multiple selections; default `false`
+  - `required` (optional): Whether the question must be answered; default `true`
+  - `default` (optional): Pre-selected values
+  - `placeholder` (optional): Placeholder for text input
 
 ## Examples
 
@@ -67,11 +63,17 @@ You now have access to the `interactive_form_question` tool. Use it to ask the u
 
 ```
 interactive_form_question(
-  question="Which environment should I deploy to?",
-  options=[
-    {"label": "Development", "value": "dev", "recommended": true},
-    {"label": "Staging", "value": "staging"},
-    {"label": "Production", "value": "prod"}
+  questions=[
+    {
+      "id": "environment",
+      "question": "Which environment should I deploy to?",
+      "input_type": "choice",
+      "options": [
+        {"label": "Development", "value": "dev", "recommended": true},
+        {"label": "Staging", "value": "staging"},
+        {"label": "Production", "value": "prod"}
+      ]
+    }
   ]
 )
 ```
@@ -80,11 +82,16 @@ interactive_form_question(
 
 ```
 interactive_form_question(
-  question="I found two approaches for the caching layer. Which do you prefer?",
-  description="Option A is simpler but less flexible. Option B handles edge cases but adds complexity.",
-  options=[
-    {"label": "Option A — simple in-memory cache", "value": "simple", "recommended": true},
-    {"label": "Option B — Redis with TTL control", "value": "redis"}
+  questions=[
+    {
+      "id": "cache_strategy",
+      "question": "I found two approaches for the caching layer. Which do you prefer?",
+      "input_type": "choice",
+      "options": [
+        {"label": "Option A — simple in-memory cache", "value": "simple", "recommended": true},
+        {"label": "Option B — Redis with TTL control", "value": "redis"}
+      ]
+    }
   ]
 )
 ```
@@ -93,7 +100,6 @@ interactive_form_question(
 
 ```
 interactive_form_question(
-  question="A few things before I start",
   questions=[
     {
       "id": "language",
@@ -131,10 +137,16 @@ interactive_form_question(
 
 ```
 interactive_form_question(
-  question="This will overwrite the existing file. Proceed?",
-  options=[
-    {"label": "Yes, overwrite", "value": "yes"},
-    {"label": "No, keep existing", "value": "no", "recommended": true}
+  questions=[
+    {
+      "id": "overwrite_confirmation",
+      "question": "This will overwrite the existing file. Proceed?",
+      "input_type": "choice",
+      "options": [
+        {"label": "Yes, overwrite", "value": "yes"},
+        {"label": "No, keep existing", "value": "no", "recommended": true}
+      ]
+    }
   ]
 )
 ```

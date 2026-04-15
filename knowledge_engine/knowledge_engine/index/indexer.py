@@ -10,9 +10,10 @@ from typing import Any, Dict, List
 
 from llama_index.core import Document, SimpleDirectoryReader
 
-from knowledge_engine.splitter import SmartSplitter, create_splitter
-from knowledge_engine.splitter.config import parse_splitter_config
-from knowledge_engine.splitter.splitter import SentenceSplitter
+from knowledge_engine.ingestion.pipeline import (
+    build_ingestion_result,
+    prepare_ingestion,
+)
 from knowledge_engine.storage.base import BaseStorageBackend
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
 from shared.telemetry.decorators import add_span_event
@@ -53,11 +54,11 @@ class DocumentIndexer:
         self.storage_backend = storage_backend
         self.embed_model = embed_model
         self.file_extension = file_extension
-        self.splitter = create_splitter(
-            parse_splitter_config(splitter_config),
-            embed_model,
-            file_extension,
+        ingestion_preparation = prepare_ingestion(
+            splitter_config,
+            file_extension=file_extension,
         )
+        self.splitter_config = ingestion_preparation.normalized_splitter_config
 
     def index_document(
         self,
@@ -126,7 +127,24 @@ class DocumentIndexer:
         for doc in documents:
             doc.metadata = sanitize_metadata(doc.metadata)
 
-        nodes = self.splitter.split_documents(documents)
+        ingestion_result = build_ingestion_result(
+            documents=documents,
+            splitter_config=self.splitter_config,
+            file_extension=self.file_extension,
+            embed_model=self.embed_model,
+        )
+        parser_subtype = ingestion_result.parser_subtype
+
+        if ingestion_result.parent_nodes is not None:
+            chunk_metadata.apply_to_nodes(ingestion_result.parent_nodes)
+            self.storage_backend.save_parent_nodes(
+                knowledge_id=chunk_metadata.knowledge_id,
+                parent_nodes=ingestion_result.parent_nodes,
+                **kwargs,
+            )
+
+        nodes = ingestion_result.index_nodes
+
         chunk_metadata.apply_to_nodes(nodes)
 
         add_span_event(
@@ -135,11 +153,14 @@ class DocumentIndexer:
                 "knowledge_id": chunk_metadata.knowledge_id,
                 "doc_ref": chunk_metadata.doc_ref,
                 "node_count": str(len(nodes)),
-                "splitter_type": type(self.splitter).__name__,
+                "splitter_type": self.splitter_config.chunk_strategy,
             },
         )
 
-        chunks_data = self._build_chunks_metadata(nodes)
+        chunks_data = self._build_chunks_metadata(
+            nodes,
+            parser_subtype=parser_subtype,
+        )
         result = self.storage_backend.index_with_metadata(
             nodes=nodes,
             chunk_metadata=chunk_metadata,
@@ -159,7 +180,12 @@ class DocumentIndexer:
         )
         return result
 
-    def _build_chunks_metadata(self, nodes: List) -> Dict[str, Any]:
+    def _build_chunks_metadata(
+        self,
+        nodes: List,
+        *,
+        parser_subtype: str | None = None,
+    ) -> Dict[str, Any]:
         items = []
         current_position = 0
 
@@ -178,18 +204,10 @@ class DocumentIndexer:
             )
             current_position += text_length
 
-        splitter_type = "semantic"
-        splitter_subtype = None
-        if isinstance(self.splitter, SmartSplitter):
-            splitter_type = "smart"
-            splitter_subtype = self.splitter._get_subtype()
-        elif isinstance(self.splitter, SentenceSplitter):
-            splitter_type = "sentence"
-
         return {
             "items": items,
             "total_count": len(items),
-            "splitter_type": splitter_type,
-            "splitter_subtype": splitter_subtype,
+            "splitter_type": self.splitter_config.chunk_strategy,
+            "splitter_subtype": parser_subtype,
             "created_at": datetime.now(timezone.utc).isoformat(),
         }

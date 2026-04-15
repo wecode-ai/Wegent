@@ -11,6 +11,7 @@ import pytest
 from app.mcp_server.auth import TaskTokenInfo
 from app.mcp_server.tools.interactive_form_question import (
     _generate_ask_id,
+    _notify_frontend,
     interactive_form_question,
 )
 
@@ -50,7 +51,8 @@ class TestInteractiveFormTool:
             new_callable=AsyncMock,
         ):
             result = await interactive_form_question(
-                token_info=token, question="Any question?"
+                token_info=token,
+                questions=[{"id": "q1", "question": "Any question?"}],
             )
 
         assert result["__silent_exit__"] is True
@@ -58,7 +60,7 @@ class TestInteractiveFormTool:
 
     @pytest.mark.asyncio
     async def test_single_question_choice_mode(self):
-        """Single-question mode with options keeps input_type='choice'."""
+        """A single-item questions list keeps input_type='choice' when options exist."""
         token = self._make_token()
         captured = {}
 
@@ -71,20 +73,26 @@ class TestInteractiveFormTool:
         ):
             await interactive_form_question(
                 token_info=token,
-                question="Pick one",
-                options=[{"label": "A", "value": "a"}],
-                input_type="choice",
+                questions=[
+                    {
+                        "id": "pick_one",
+                        "question": "Pick one",
+                        "options": [{"label": "A", "value": "a"}],
+                        "input_type": "choice",
+                    }
+                ],
             )
 
-        assert captured["input_type"] == "choice"
-        assert captured["question"] == "Pick one"
+        assert len(captured["questions"]) == 1
+        assert captured["questions"][0]["input_type"] == "choice"
+        assert captured["questions"][0]["question"] == "Pick one"
         assert captured["task_id"] == token.task_id
         assert captured["subtask_id"] == token.subtask_id
         assert captured["type"] == "interactive_form_question"
 
     @pytest.mark.asyncio
-    async def test_single_question_no_options_becomes_text(self):
-        """input_type is forced to 'text' when no options provided."""
+    async def test_question_without_options_becomes_text(self):
+        """A question without options is normalized to text input."""
         token = self._make_token()
         captured = {}
 
@@ -97,12 +105,16 @@ class TestInteractiveFormTool:
         ):
             await interactive_form_question(
                 token_info=token,
-                question="Enter anything",
-                input_type="choice",  # overridden to 'text'
-                options=None,
+                questions=[
+                    {
+                        "id": "free_text",
+                        "question": "Enter anything",
+                        "input_type": "choice",
+                    }
+                ],
             )
 
-        assert captured["input_type"] == "text"
+        assert captured["questions"][0]["input_type"] == "text"
 
     @pytest.mark.asyncio
     async def test_multi_question_mode(self):
@@ -145,13 +157,18 @@ class TestInteractiveFormTool:
             "app.mcp_server.tools.interactive_form_question._notify_frontend",
             mock_notify,
         ):
-            await interactive_form_question(token_info=token, question="Hello?")
+            await interactive_form_question(
+                token_info=token,
+                questions=[{"id": "hello", "question": "Hello?"}],
+            )
 
         mock_notify.assert_awaited_once()
         call_kwargs = mock_notify.call_args
         assert call_kwargs.kwargs["task_id"] == 10
         assert call_kwargs.kwargs["subtask_id"] == 20
-        assert call_kwargs.kwargs["question_data"]["question"] == "Hello?"
+        assert (
+            call_kwargs.kwargs["question_data"]["questions"][0]["question"] == "Hello?"
+        )
 
     @pytest.mark.asyncio
     async def test_ask_id_in_question_data(self):
@@ -166,6 +183,72 @@ class TestInteractiveFormTool:
             "app.mcp_server.tools.interactive_form_question._notify_frontend",
             side_effect=capture,
         ):
-            await interactive_form_question(token_info=token, question="Q?")
+            await interactive_form_question(
+                token_info=token,
+                questions=[{"id": "q1", "question": "Q?"}],
+            )
 
         assert captured["ask_id"] == "ask_99"
+
+    @pytest.mark.asyncio
+    async def test_requires_at_least_one_question(self):
+        """The tool rejects empty question lists."""
+        token = self._make_token()
+
+        with pytest.raises(
+            ValueError, match="questions must contain at least one item"
+        ):
+            await interactive_form_question(token_info=token, questions=[])
+
+
+class TestNotifyFrontendFallback:
+    """Tests for synthetic block fallback when tool block is missing."""
+
+    @pytest.mark.asyncio
+    async def test_creates_synthetic_block_when_tool_block_missing(self):
+        mock_session_manager = MagicMock()
+        mock_session_manager.get_blocks = AsyncMock(return_value=[])
+        mock_session_manager.add_tool_block = AsyncMock()
+
+        mock_ws_emitter = MagicMock()
+        mock_ws_emitter.emit_block_created = AsyncMock()
+
+        question_data = {
+            "type": "interactive_form_question",
+            "ask_id": "ask_123",
+            "task_id": 1,
+            "subtask_id": 2,
+            "questions": [
+                {
+                    "id": "q1",
+                    "question": "Hello?",
+                    "input_type": "text",
+                    "options": None,
+                    "multi_select": False,
+                    "required": True,
+                    "default": None,
+                    "placeholder": None,
+                }
+            ],
+        }
+
+        with (
+            patch(
+                "app.services.chat.storage.session.session_manager",
+                mock_session_manager,
+            ),
+            patch(
+                "app.services.chat.webpage_ws_chat_emitter.get_webpage_ws_emitter",
+                return_value=mock_ws_emitter,
+            ),
+        ):
+            await _notify_frontend(task_id=1, subtask_id=2, question_data=question_data)
+
+        mock_session_manager.add_tool_block.assert_awaited_once_with(
+            subtask_id=2,
+            tool_use_id="ask_123",
+            tool_name="interactive_form_question",
+            tool_input=question_data,
+            display_name="interactive_form_question",
+        )
+        mock_ws_emitter.emit_block_created.assert_awaited_once()

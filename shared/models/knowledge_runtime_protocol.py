@@ -12,6 +12,11 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from .splitter_config import (
+    NormalizedSplitterConfig,
+    build_runtime_default_splitter_config,
+)
+
 
 class KnowledgeRuntimeProtocolModel(BaseModel):
     """Base protocol model with strict field validation."""
@@ -111,7 +116,9 @@ class RemoteIndexRequest(KnowledgeRuntimeProtocolModel):
     index_owner_user_id: int
     retriever_config: RuntimeRetrieverConfig
     embedding_model_config: RuntimeEmbeddingModelConfig
-    splitter_config: dict[str, Any] | None = None
+    splitter_config: NormalizedSplitterConfig = Field(
+        default_factory=build_runtime_default_splitter_config
+    )
     source_file: str | None = None
     file_extension: str | None = None
     index_families: list[str] = Field(default_factory=lambda: ["chunk_vector"])
@@ -129,6 +136,24 @@ class RemoteDeleteDocumentIndexRequest(KnowledgeRuntimeProtocolModel):
     index_owner_user_id: int | None = None
     retriever_config: RuntimeRetrieverConfig
     enabled_index_families: list[str] = Field(default_factory=lambda: ["chunk_vector"])
+    extensions: dict[str, Any] | None = None
+
+
+class RemotePurgeKnowledgeIndexRequest(KnowledgeRuntimeProtocolModel):
+    """Delete-all-chunks request sent from Backend to knowledge_runtime."""
+
+    knowledge_base_id: int
+    index_owner_user_id: int
+    retriever_config: RuntimeRetrieverConfig
+    extensions: dict[str, Any] | None = None
+
+
+class RemoteDropKnowledgeIndexRequest(KnowledgeRuntimeProtocolModel):
+    """Drop-physical-index request sent from Backend to knowledge_runtime."""
+
+    knowledge_base_id: int
+    index_owner_user_id: int
+    retriever_config: RuntimeRetrieverConfig
     extensions: dict[str, Any] | None = None
 
 

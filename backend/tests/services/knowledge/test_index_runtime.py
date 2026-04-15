@@ -1,14 +1,16 @@
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from app.services.knowledge.index_runtime import (
     KnowledgeBaseIndexInfo,
     build_kb_index_info,
     get_kb_index_info,
+    get_kb_index_info_by_record,
 )
 
 
-def test_build_kb_index_info_uses_current_user_for_default_namespace() -> None:
+def test_build_kb_index_info_uses_creator_for_default_namespace() -> None:
+    # Even in the personal namespace, runtime ownership follows the KB record.
     db = MagicMock()
     knowledge_base = SimpleNamespace(
         namespace="default",
@@ -23,12 +25,13 @@ def test_build_kb_index_info_uses_current_user_for_default_namespace() -> None:
     )
 
     assert kb_info == KnowledgeBaseIndexInfo(
-        index_owner_user_id=7,
+        index_owner_user_id=42,
         summary_enabled=True,
     )
 
 
 def test_build_kb_index_info_uses_creator_for_group_namespace() -> None:
+    # Group collaborators can trigger indexing, but storage ownership stays with the KB creator.
     db = MagicMock()
     knowledge_base = SimpleNamespace(
         namespace="team-a",
@@ -36,24 +39,20 @@ def test_build_kb_index_info_uses_creator_for_group_namespace() -> None:
         json={"spec": {"summaryEnabled": False}},
     )
 
-    with patch(
-        "app.services.knowledge.index_runtime.is_organization_namespace",
-        return_value=False,
-    ) as is_org_namespace:
-        kb_info = build_kb_index_info(
-            db=db,
-            knowledge_base=knowledge_base,
-            current_user_id=7,
-        )
+    kb_info = build_kb_index_info(
+        db=db,
+        knowledge_base=knowledge_base,
+        current_user_id=7,
+    )
 
-    is_org_namespace.assert_called_once_with(db, "team-a")
     assert kb_info == KnowledgeBaseIndexInfo(
         index_owner_user_id=42,
         summary_enabled=False,
     )
 
 
-def test_build_kb_index_info_uses_current_user_for_organization_namespace() -> None:
+def test_build_kb_index_info_uses_creator_for_organization_namespace() -> None:
+    # Organization-scoped KBs keep the same invariant: runtime uses the persisted owner scope.
     db = MagicMock()
     knowledge_base = SimpleNamespace(
         namespace="org-a",
@@ -61,19 +60,34 @@ def test_build_kb_index_info_uses_current_user_for_organization_namespace() -> N
         json={"spec": {"summaryEnabled": True}},
     )
 
-    with patch(
-        "app.services.knowledge.index_runtime.is_organization_namespace",
-        return_value=True,
-    ) as is_org_namespace:
-        kb_info = build_kb_index_info(
-            db=db,
-            knowledge_base=knowledge_base,
-            current_user_id=7,
-        )
+    kb_info = build_kb_index_info(
+        db=db,
+        knowledge_base=knowledge_base,
+        current_user_id=7,
+    )
 
-    is_org_namespace.assert_called_once_with(db, "org-a")
     assert kb_info == KnowledgeBaseIndexInfo(
-        index_owner_user_id=7,
+        index_owner_user_id=42,
+        summary_enabled=True,
+    )
+
+
+def test_get_kb_index_info_by_record_delegates_to_index_resolution() -> None:
+    db = MagicMock()
+    knowledge_base = SimpleNamespace(
+        namespace="default",
+        user_id=42,
+        json={"spec": {"summaryEnabled": True}},
+    )
+
+    kb_info = get_kb_index_info_by_record(
+        db=db,
+        knowledge_base=knowledge_base,
+        current_user_id=7,
+    )
+
+    assert kb_info == KnowledgeBaseIndexInfo(
+        index_owner_user_id=42,
         summary_enabled=True,
     )
 

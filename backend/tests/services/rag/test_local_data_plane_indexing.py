@@ -3,18 +3,22 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
 from app.services.rag.local_data_plane.indexing import (
     delete_document_index_local,
+    drop_knowledge_index_local,
     index_document_local,
+    purge_knowledge_index_local,
 )
 from app.services.rag.runtime_specs import (
     DeleteRuntimeSpec,
+    DropKnowledgeIndexRuntimeSpec,
     IndexRuntimeSpec,
     IndexSource,
+    PurgeKnowledgeRuntimeSpec,
 )
 from shared.models import RuntimeRetrieverConfig
 
@@ -95,7 +99,7 @@ async def test_index_document_local_delegates_to_engine_document_service() -> No
         patch(
             "app.services.rag.local_data_plane.indexing.retriever_kinds_service.get_retriever",
             return_value=retriever,
-        ),
+        ) as mock_get_retriever,
         patch(
             "app.services.rag.local_data_plane.indexing.create_storage_backend_from_runtime_config",
             return_value=storage_backend,
@@ -127,6 +131,14 @@ async def test_index_document_local_delegates_to_engine_document_service() -> No
         result = await index_document_local(spec, db=MagicMock())
 
     assert result["status"] == "success"
+    # Local execution must resolve the retriever in the index-owner scope, not the caller scope.
+    # This is the contract that keeps cross-namespace KB access using the correct storage owner.
+    mock_get_retriever.assert_called_once_with(
+        db=ANY,
+        user_id=3,
+        name="retriever-a",
+        namespace="default",
+    )
     mock_index_document.assert_awaited_once_with(
         knowledge_id="1",
         binary_data=b"hello world",
@@ -134,9 +146,129 @@ async def test_index_document_local_delegates_to_engine_document_service() -> No
         file_extension=".pdf",
         embed_model=embed_model,
         user_id=3,
-        splitter_config={"type": "sentence", "chunk_size": 256, "chunk_overlap": 32},
+        splitter_config={
+            "chunk_strategy": "flat",
+            "format_enhancement": "none",
+            "flat_config": {
+                "chunk_size": 256,
+                "chunk_overlap": 32,
+                "separator": "\n\n",
+            },
+            "markdown_enhancement": {"enabled": False},
+            "legacy_type": "sentence",
+        },
         document_id=2,
     )
+
+
+@pytest.mark.asyncio
+async def test_index_document_local_applies_runtime_default_when_splitter_config_missing() -> (
+    None
+):
+    spec = IndexRuntimeSpec(
+        knowledge_base_id=1,
+        document_id=2,
+        index_owner_user_id=3,
+        retriever_name="retriever-a",
+        retriever_namespace="default",
+        embedding_model_name="embed-a",
+        embedding_model_namespace="default",
+        source=IndexSource(source_type="attachment", attachment_id=9),
+    )
+
+    with (
+        patch(
+            "app.services.rag.local_data_plane.indexing._build_index_storage_backend",
+            return_value=MagicMock(),
+        ),
+        patch(
+            "app.services.rag.local_data_plane.indexing._build_index_embed_model",
+            return_value=object(),
+        ),
+        patch(
+            "app.services.rag.local_data_plane.indexing._get_attachment_binary_source",
+            return_value=(b"hello world", "notes.md", ".md"),
+        ),
+        patch(
+            "app.services.rag.local_data_plane.indexing.EngineDocumentService.index_document_from_binary",
+            new_callable=AsyncMock,
+            return_value={"status": "success"},
+        ) as mock_index_document,
+    ):
+        await index_document_local(spec, db=MagicMock())
+
+    assert mock_index_document.await_args.kwargs["splitter_config"] == {
+        "chunk_strategy": "flat",
+        "format_enhancement": "file_aware",
+        "flat_config": {
+            "chunk_size": 1024,
+            "chunk_overlap": 50,
+            "separator": "\n\n",
+        },
+        "markdown_enhancement": {"enabled": True},
+    }
+
+
+@pytest.mark.asyncio
+async def test_index_document_local_accepts_hierarchical_splitter_config() -> None:
+    spec = IndexRuntimeSpec(
+        knowledge_base_id=1,
+        document_id=2,
+        index_owner_user_id=3,
+        retriever_name="retriever-a",
+        retriever_namespace="default",
+        embedding_model_name="embed-a",
+        embedding_model_namespace="default",
+        retriever_config=RuntimeRetrieverConfig(
+            name="retriever-a",
+            namespace="default",
+            storage_config={"type": "qdrant"},
+        ),
+        source=IndexSource(source_type="attachment", attachment_id=9),
+        splitter_config={
+            "chunk_strategy": "hierarchical",
+            "format_enhancement": "file_aware",
+            "hierarchical_config": {
+                "parent_chunk_size": 1024,
+                "child_chunk_size": 256,
+                "child_chunk_overlap": 32,
+            },
+        },
+    )
+
+    with (
+        patch(
+            "app.services.rag.local_data_plane.indexing.create_storage_backend_from_runtime_config",
+            return_value=MagicMock(),
+        ),
+        patch(
+            "app.services.rag.local_data_plane.indexing.create_embedding_model_from_crd",
+            return_value=object(),
+        ),
+        patch(
+            "app.services.rag.local_data_plane.indexing._get_attachment_binary_source",
+            return_value=(b"hello world", "notes.md", ".md"),
+        ),
+        patch(
+            "app.services.rag.local_data_plane.indexing.EngineDocumentService.index_document_from_binary",
+            new_callable=AsyncMock,
+            return_value={"status": "success"},
+        ) as mock_index_document,
+    ):
+        await index_document_local(spec, db=MagicMock())
+
+    assert mock_index_document.await_args.kwargs["splitter_config"] == {
+        "chunk_strategy": "hierarchical",
+        "format_enhancement": "file_aware",
+        "hierarchical_config": {
+            "parent_chunk_size": 1024,
+            "child_chunk_size": 256,
+            "child_chunk_overlap": 32,
+            "parent_separator": "\n\n",
+            "child_separator": "\n",
+        },
+        "markdown_enhancement": {"enabled": False},
+    }
 
 
 @pytest.mark.asyncio
@@ -197,3 +329,75 @@ async def test_delete_document_index_local_rejects_unsupported_index_families() 
             await delete_document_index_local(spec, db=MagicMock())
 
     mock_delete_document.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_purge_knowledge_index_local_delegates_to_storage_backend() -> None:
+    spec = PurgeKnowledgeRuntimeSpec(
+        knowledge_base_id=1,
+        index_owner_user_id=7,
+        retriever_config=RuntimeRetrieverConfig(
+            name="retriever-a",
+            namespace="default",
+            storage_config={"type": "qdrant"},
+        ),
+    )
+
+    storage_backend = MagicMock()
+    storage_backend.delete_knowledge.return_value = {
+        "knowledge_id": "1",
+        "deleted_chunks": 4,
+        "status": "deleted",
+    }
+
+    with patch(
+        "app.services.rag.local_data_plane.indexing.create_storage_backend_from_runtime_config",
+        return_value=storage_backend,
+    ):
+        result = await purge_knowledge_index_local(spec, db=MagicMock())
+
+    assert result == {
+        "knowledge_id": "1",
+        "deleted_chunks": 4,
+        "status": "deleted",
+    }
+    storage_backend.delete_knowledge.assert_called_once_with(
+        knowledge_id="1",
+        user_id=7,
+    )
+
+
+@pytest.mark.asyncio
+async def test_drop_knowledge_index_local_delegates_to_storage_backend() -> None:
+    spec = DropKnowledgeIndexRuntimeSpec(
+        knowledge_base_id=1,
+        index_owner_user_id=7,
+        retriever_config=RuntimeRetrieverConfig(
+            name="retriever-a",
+            namespace="default",
+            storage_config={"type": "qdrant"},
+        ),
+    )
+
+    storage_backend = MagicMock()
+    storage_backend.drop_knowledge_index.return_value = {
+        "knowledge_id": "1",
+        "collection_name": "test_kb_1",
+        "status": "dropped",
+    }
+
+    with patch(
+        "app.services.rag.local_data_plane.indexing.create_storage_backend_from_runtime_config",
+        return_value=storage_backend,
+    ):
+        result = await drop_knowledge_index_local(spec, db=MagicMock())
+
+    assert result == {
+        "knowledge_id": "1",
+        "collection_name": "test_kb_1",
+        "status": "dropped",
+    }
+    storage_backend.drop_knowledge_index.assert_called_once_with(
+        knowledge_id="1",
+        user_id=7,
+    )

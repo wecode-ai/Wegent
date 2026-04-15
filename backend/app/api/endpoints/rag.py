@@ -16,7 +16,7 @@ from app.schemas.rag import (
     RetrieveRequest,
     RetrieveResponse,
 )
-from app.services.rag.gateway_factory import get_query_gateway
+from app.services.rag.gateway_factory import get_delete_gateway, get_query_gateway
 from app.services.rag.local_gateway import LocalRagGateway
 from app.services.rag.remote_gateway import (
     RemoteRagGatewayError,
@@ -27,6 +27,13 @@ from app.services.rag.runtime_resolver import RagRuntimeResolver
 router = APIRouter()
 runtime_resolver = RagRuntimeResolver()
 INDEX_CHUNK_LIST_MAX_CHUNKS = 10000
+
+
+def _map_public_admin_value_error(error: ValueError) -> HTTPException:
+    detail = str(error)
+    if "Physical index drop is only allowed" in detail:
+        return HTTPException(status_code=409, detail=detail)
+    return HTTPException(status_code=400, detail=detail)
 
 
 @router.post("/retrieve", response_model=RetrieveResponse)
@@ -183,5 +190,67 @@ async def list_index_chunks(
         raise HTTPException(status_code=e.status_code or 502, detail=str(e)) from e
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.delete("/index-contents")
+async def purge_index_contents(
+    knowledge_id: int = Query(..., description="Knowledge base ID"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Delete all indexed chunks stored for a knowledge base while keeping documents."""
+    try:
+        runtime_spec = runtime_resolver.build_public_purge_index_runtime_spec(
+            db=db,
+            knowledge_base_id=knowledge_id,
+            user_id=current_user.id,
+            user_name=current_user.user_name,
+        )
+        gateway = get_delete_gateway()
+        try:
+            return await gateway.purge_knowledge_index(runtime_spec, db=db)
+        except RemoteRagGatewayError as exc:
+            if not should_fallback_to_local(exc):
+                raise
+            return await LocalRagGateway().purge_knowledge_index(runtime_spec, db=db)
+    except HTTPException:
+        raise
+    except RemoteRagGatewayError as e:
+        raise HTTPException(status_code=e.status_code or 502, detail=str(e)) from e
+    except ValueError as e:
+        raise _map_public_admin_value_error(e) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.delete("/index")
+async def drop_index(
+    knowledge_id: int = Query(..., description="Knowledge base ID"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Physically drop the dedicated index/collection for a knowledge base."""
+    try:
+        runtime_spec = runtime_resolver.build_public_drop_index_runtime_spec(
+            db=db,
+            knowledge_base_id=knowledge_id,
+            user_id=current_user.id,
+            user_name=current_user.user_name,
+        )
+        gateway = get_delete_gateway()
+        try:
+            return await gateway.drop_knowledge_index(runtime_spec, db=db)
+        except RemoteRagGatewayError as exc:
+            if not should_fallback_to_local(exc):
+                raise
+            return await LocalRagGateway().drop_knowledge_index(runtime_spec, db=db)
+    except HTTPException:
+        raise
+    except RemoteRagGatewayError as e:
+        raise HTTPException(status_code=e.status_code or 502, detail=str(e)) from e
+    except ValueError as e:
+        raise _map_public_admin_value_error(e) from e
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e

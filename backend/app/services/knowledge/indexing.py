@@ -39,6 +39,11 @@ from app.services.knowledge.index_runtime import (
     get_kb_index_info,
     resolve_kb_index_info,
 )
+from app.services.knowledge.splitter_config import (
+    SplitterConfigModel,
+    normalize_runtime_splitter_config,
+    serialize_splitter_config,
+)
 from app.services.rag.gateway_factory import get_index_gateway
 from app.services.rag.runtime_resolver import RagRuntimeResolver
 from shared.telemetry import add_span_event
@@ -118,11 +123,14 @@ def _serialize_splitter_config(
     splitter_config_dict: Optional[dict],
 ) -> Optional[dict]:
     """Normalize splitter config to a plain dict for runtime spec transport."""
-    if splitter_config_dict:
-        return splitter_config_dict
-    if splitter_config is None:
-        return None
-    return splitter_config.model_dump(exclude_none=True)
+    raw_config: dict | SplitterConfigModel | None
+    if splitter_config_dict is not None:
+        raw_config = splitter_config_dict
+    else:
+        raw_config = splitter_config
+
+    normalized = normalize_runtime_splitter_config(raw_config)
+    return serialize_splitter_config(normalized)
 
 
 def extract_rag_config_from_knowledge_base(

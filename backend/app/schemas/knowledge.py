@@ -23,6 +23,7 @@ from app.schemas.kind import (
 
 # Import SplitterConfig from rag.py to use unified splitter configuration
 from app.schemas.rag import SplitterConfig
+from app.services.knowledge.splitter_config import normalize_splitter_config
 
 
 class DocumentStatus(str, Enum):
@@ -382,6 +383,14 @@ class KnowledgeDocumentResponse(BaseModel):
             return {}
         return v
 
+    @field_validator("splitter_config", mode="before")
+    @classmethod
+    def normalize_splitter_config_for_response(cls, v):
+        """Return normalized splitter config payloads in API responses."""
+        if v is None:
+            return v
+        return normalize_splitter_config(v)
+
     class Config:
         from_attributes = True
 
@@ -640,10 +649,13 @@ class ChunkMetadata(BaseModel):
         default_factory=list, description="List of chunk items"
     )
     total_count: int = Field(0, ge=0, description="Total number of chunks")
-    splitter_type: str = Field("semantic", description="Type of splitter used")
+    splitter_type: str = Field(
+        "flat",
+        description="Normalized chunk strategy used for indexing (flat|hierarchical|semantic)",
+    )
     splitter_subtype: Optional[str] = Field(
         None,
-        description="Subtype for smart splitter (markdown_sentence|sentence|recursive_character)",
+        description="Optional parser subtype resolved during format enhancement",
     )
     created_at: str = Field(..., description="Chunk creation timestamp (ISO format)")
 
@@ -666,8 +678,14 @@ class ChunkListResponse(BaseModel):
     page: int = Field(1, ge=1, description="Current page number")
     page_size: int = Field(20, ge=1, le=100, description="Page size")
     items: list[ChunkItem] = Field(default_factory=list, description="Chunk items")
-    splitter_type: Optional[str] = Field(None, description="Type of splitter used")
-    splitter_subtype: Optional[str] = Field(None, description="Splitter subtype")
+    splitter_type: Optional[str] = Field(
+        None,
+        description="Normalized chunk strategy used for indexing (flat|hierarchical|semantic)",
+    )
+    splitter_subtype: Optional[str] = Field(
+        None,
+        description="Optional parser subtype resolved during format enhancement",
+    )
 
 
 # ============== Citation Schemas ==============

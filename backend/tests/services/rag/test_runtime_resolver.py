@@ -191,6 +191,7 @@ def test_build_public_list_chunks_runtime_spec_carries_metadata_condition() -> N
     kb = SimpleNamespace(
         id=7,
         user_id=42,
+        namespace="default",
         json={
             "spec": {
                 "retrievalConfig": {
@@ -437,15 +438,20 @@ def test_build_public_query_runtime_spec_requires_kb_access():
             )
 
 
-def test_build_public_query_runtime_spec_resolves_configs_in_kb_owner_scope():
+def test_build_public_query_runtime_spec_uses_resolved_owner_scope():
     resolver = RagRuntimeResolver()
     db = MagicMock()
+    kb = SimpleNamespace(id=7, user_id=42, namespace="default")
 
     with (
         patch(
             "app.services.knowledge.knowledge_service.KnowledgeService.get_knowledge_base",
-            return_value=(SimpleNamespace(id=7, user_id=42), True),
+            return_value=(kb, True),
         ),
+        patch(
+            "app.services.knowledge.index_runtime.build_kb_index_info",
+            return_value=SimpleNamespace(index_owner_user_id=7, summary_enabled=False),
+        ) as build_kb_index_info,
         patch.object(
             resolver,
             "_build_resolved_retriever_config",
@@ -454,7 +460,7 @@ def test_build_public_query_runtime_spec_resolves_configs_in_kb_owner_scope():
                 namespace="default",
                 storage_config={"type": "qdrant"},
             ),
-        ) as mock_retriever_config,
+        ),
         patch.object(
             resolver,
             "_build_resolved_embedding_model_config",
@@ -463,7 +469,7 @@ def test_build_public_query_runtime_spec_resolves_configs_in_kb_owner_scope():
                 model_namespace="default",
                 resolved_config={"protocol": "openai"},
             ),
-        ) as mock_embedding_config,
+        ),
     ):
         spec = resolver.build_public_query_runtime_spec(
             db=db,
@@ -480,17 +486,140 @@ def test_build_public_query_runtime_spec_resolves_configs_in_kb_owner_scope():
             retrieval_mode="vector",
         )
 
-    assert spec.knowledge_base_configs[0].index_owner_user_id == 42
-    mock_retriever_config.assert_called_once_with(
+    build_kb_index_info.assert_called_once_with(
+        db=db,
+        knowledge_base=kb,
+        current_user_id=9,
+    )
+    assert spec.knowledge_base_configs[0].index_owner_user_id == 7
+
+
+def test_build_query_runtime_spec_uses_resolved_owner_scope_for_rag_route() -> None:
+    resolver = RagRuntimeResolver()
+    db = MagicMock()
+    kb = SimpleNamespace(
+        id=7,
+        user_id=42,
+        namespace="default",
+        json={
+            "spec": {
+                "retrievalConfig": {
+                    "retriever_name": "retriever-a",
+                    "retriever_namespace": "default",
+                    "embedding_config": {
+                        "model_name": "embed-a",
+                        "model_namespace": "default",
+                    },
+                }
+            }
+        },
+    )
+
+    with (
+        patch.object(resolver, "_get_knowledge_base_record", return_value=kb),
+        patch(
+            "app.services.knowledge.index_runtime.build_kb_index_info",
+            return_value=SimpleNamespace(index_owner_user_id=42, summary_enabled=False),
+        ) as build_kb_index_info,
+        patch.object(
+            resolver,
+            "_build_resolved_retriever_config",
+            return_value=RuntimeRetrieverConfig(
+                name="retriever-a",
+                namespace="default",
+                storage_config={"type": "qdrant"},
+            ),
+        ) as build_retriever,
+        patch.object(
+            resolver,
+            "_build_resolved_embedding_model_config",
+            return_value=RuntimeEmbeddingModelConfig(
+                model_name="embed-a",
+                model_namespace="default",
+                resolved_config={"protocol": "openai"},
+            ),
+        ) as build_embedding,
+    ):
+        spec = resolver.build_query_runtime_spec(
+            db=db,
+            knowledge_base_ids=[7],
+            query="release checklist",
+            max_results=5,
+            route_mode="rag_retrieval",
+            user_id=9,
+            user_name="alice",
+        )
+
+    build_kb_index_info.assert_called_once_with(
+        db=db,
+        knowledge_base=kb,
+        current_user_id=9,
+    )
+    build_retriever.assert_called_once_with(
         db=db,
         user_id=42,
         name="retriever-a",
         namespace="default",
     )
-    mock_embedding_config.assert_called_once_with(
+    build_embedding.assert_called_once_with(
         db=db,
         user_id=42,
         model_name="embed-a",
         model_namespace="default",
         user_name="alice",
     )
+    assert spec.knowledge_base_configs[0].index_owner_user_id == 42
+
+
+def test_build_public_list_chunks_runtime_spec_uses_resolved_owner_scope() -> None:
+    resolver = RagRuntimeResolver()
+    db = MagicMock()
+    kb = SimpleNamespace(
+        id=7,
+        user_id=42,
+        namespace="default",
+        json={
+            "spec": {
+                "retrievalConfig": {
+                    "retriever_name": "retriever-a",
+                    "retriever_namespace": "default",
+                }
+            }
+        },
+    )
+
+    with (
+        patch(
+            "app.services.knowledge.knowledge_service.KnowledgeService.get_knowledge_base",
+            return_value=(kb, True),
+        ),
+        patch(
+            "app.services.knowledge.index_runtime.build_kb_index_info",
+            return_value=SimpleNamespace(index_owner_user_id=7, summary_enabled=False),
+        ) as build_kb_index_info,
+        patch.object(
+            resolver,
+            "_build_resolved_retriever_config",
+            return_value=RuntimeRetrieverConfig(
+                name="retriever-a",
+                namespace="default",
+                storage_config={"type": "qdrant"},
+            ),
+        ),
+    ):
+        spec = resolver.build_public_list_chunks_runtime_spec(
+            db=db,
+            knowledge_base_id=7,
+            user_id=9,
+            user_name="alice",
+            max_chunks=500,
+            query="list_index_chunks",
+            metadata_condition={"operator": "and"},
+        )
+
+    build_kb_index_info.assert_called_once_with(
+        db=db,
+        knowledge_base=kb,
+        current_user_id=9,
+    )
+    assert spec.index_owner_user_id == 7

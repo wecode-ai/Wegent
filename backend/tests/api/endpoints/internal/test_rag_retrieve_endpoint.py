@@ -183,6 +183,109 @@ def test_internal_all_chunks_routes_protocol_request_through_local_gateway(test_
     mock_list_chunks.assert_awaited_once_with(runtime_spec, db=ANY)
 
 
+def test_internal_purge_index_routes_protocol_request_through_local_gateway(
+    test_client,
+):
+    payload = {
+        "knowledge_base_id": 7,
+        "index_owner_user_id": 9,
+        "retriever_config": {
+            "name": "retriever-a",
+            "namespace": "default",
+            "storage_config": {
+                "type": "qdrant",
+                "url": "http://qdrant:6333",
+            },
+        },
+    }
+    runtime_spec = object()
+    with (
+        patch(
+            "app.api.endpoints.internal.rag.runtime_resolver.build_internal_purge_index_runtime_spec",
+            return_value=runtime_spec,
+        ) as mock_build_spec,
+        patch(
+            "app.api.endpoints.internal.rag.LocalRagGateway.purge_knowledge_index",
+            new_callable=AsyncMock,
+            return_value={
+                "status": "deleted",
+                "knowledge_id": "7",
+                "deleted_chunks": 12,
+            },
+        ) as mock_purge,
+    ):
+        response = test_client.post(
+            "/api/internal/rag/purge-knowledge-index",
+            json=payload,
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "deleted",
+        "knowledge_id": "7",
+        "deleted_chunks": 12,
+    }
+    mock_build_spec.assert_called_once_with(
+        db=ANY,
+        knowledge_base_id=7,
+        index_owner_user_id=9,
+        retriever_config=payload["retriever_config"],
+    )
+    mock_purge.assert_awaited_once_with(runtime_spec, db=ANY)
+
+
+def test_internal_drop_index_routes_protocol_request_through_local_gateway(
+    test_client,
+):
+    payload = {
+        "knowledge_base_id": 7,
+        "index_owner_user_id": 9,
+        "retriever_config": {
+            "name": "retriever-a",
+            "namespace": "default",
+            "storage_config": {
+                "type": "qdrant",
+                "url": "http://qdrant:6333",
+                "indexStrategy": {"mode": "per_dataset"},
+            },
+        },
+    }
+    runtime_spec = object()
+    with (
+        patch(
+            "app.api.endpoints.internal.rag.runtime_resolver.build_internal_drop_index_runtime_spec",
+            return_value=runtime_spec,
+        ) as mock_build_spec,
+        patch(
+            "app.api.endpoints.internal.rag.LocalRagGateway.drop_knowledge_index",
+            new_callable=AsyncMock,
+            return_value={
+                "status": "dropped",
+                "knowledge_id": "7",
+                "index_name": "wegent_kb_7",
+            },
+        ) as mock_drop,
+    ):
+        response = test_client.post(
+            "/api/internal/rag/drop-knowledge-index",
+            json=payload,
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "dropped",
+        "knowledge_id": "7",
+        "index_name": "wegent_kb_7",
+    }
+    mock_build_spec.assert_called_once_with(
+        db=ANY,
+        knowledge_base_id=7,
+        index_owner_user_id=9,
+        retriever_config=payload["retriever_config"],
+    )
+    mock_drop.assert_awaited_once_with(runtime_spec, db=ANY)
+
+
 def test_internal_retrieve_keeps_user_subtask_id_out_of_gateway(test_client):
     payload = {
         "query": "How should we proceed?",
