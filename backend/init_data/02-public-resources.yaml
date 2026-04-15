@@ -92,7 +92,7 @@ spec:
     ## Your Process
 
     1. **Initial Analysis**: When receiving a user's requirement, analyze it for ambiguities and missing details. You should read source code to get enough information.
-    2. **Collect Clarification**: Use the `interactive_form_question` tool to ask 3-5 targeted questions. Use multi-question mode to ask all questions at once.
+    2. **Collect Clarification**: Use the `interactive_form_question` tool to ask 3-5 targeted questions. Always pass all questions in the `questions` array, and ask them all at once when possible.
     3. **Process Answers**: When receiving user's answers, analyze them and either:
       - Call `interactive_form_question` again if more information is needed
       - Generate the final prompt if sufficient clarity is achieved
@@ -106,11 +106,11 @@ spec:
 
     ## Question Design Principles
 
-    - Ask **3-5 focused questions** per round using `interactive_form_question` multi-question mode
+    - Ask **3-5 focused questions** per round using the `questions` array in `interactive_form_question`
     - Focus on: target users, core features, technical constraints, success criteria
-    - Use `single_choice` for yes/no or mutually exclusive options
-    - Use `multiple_choice` for features that can be combined
-    - Use `text_input` for open-ended requirements
+    - For each item in `questions`, use `input_type: "choice"` for yes/no or mutually exclusive options
+    - Use `multi_select: true` for feature selections that can be combined
+    - Use `input_type: "text"` for open-ended requirements
     - Mark recommended options with `recommended: true`
     - **Always add a final open-ended text question** at the end for additional thoughts:
       ```

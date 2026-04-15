@@ -172,6 +172,14 @@ def _build_existing_task(task_id: int, user_id: int) -> TaskResource:
     )
 
 
+def _build_existing_running_task(task_id: int, user_id: int) -> TaskResource:
+    task = _build_existing_task(task_id=task_id, user_id=user_id)
+    task.json["status"]["status"] = "RUNNING"
+    task.json["status"]["progress"] = 50
+    task.json["status"]["completedAt"] = None
+    return task
+
+
 @pytest.mark.asyncio
 async def test_create_task_and_subtasks_resets_existing_task_status_to_pending(
     test_db: Session,
@@ -222,4 +230,59 @@ async def test_create_task_and_subtasks_resets_existing_task_status_to_pending(
     assert status["status"] == "PENDING"
     assert status["progress"] == 0
     assert status["errorMessage"] == ""
+    assert result.assistant_subtask is not None
+
+
+@pytest.mark.asyncio
+async def test_create_task_and_subtasks_allows_pipeline_confirm_to_skip_status_check(
+    test_db: Session,
+    test_user: User,
+):
+    task = _build_existing_running_task(task_id=2469, user_id=test_user.id)
+    test_db.add(task)
+    test_db.commit()
+    test_db.refresh(task)
+
+    team = SimpleNamespace(
+        id=1256,
+        user_id=test_user.id,
+        name="quickstart",
+        namespace="default",
+    )
+    params = TaskCreationParams(
+        message="continue to the next pipeline stage",
+        skip_status_check=True,
+    )
+
+    with (
+        patch(
+            "app.services.chat.storage.task_manager.get_bot_ids_from_team",
+            return_value=[1255],
+        ),
+        patch(
+            "app.services.chat.storage.task_manager.initialize_redis_chat_history",
+            new=AsyncMock(),
+        ),
+        patch(
+            "app.services.memory.is_memory_enabled_for_user",
+            return_value=False,
+        ),
+        patch(
+            "app.services.chat.trigger.group_chat.is_task_group_chat",
+            return_value=False,
+        ),
+    ):
+        result = await create_task_and_subtasks(
+            db=test_db,
+            user=test_user,
+            team=team,
+            message=params.message,
+            params=params,
+            task_id=task.id,
+            should_trigger_ai=True,
+        )
+
+    status = result.task.json["status"]
+    assert status["status"] == "PENDING"
+    assert status["progress"] == 0
     assert result.assistant_subtask is not None

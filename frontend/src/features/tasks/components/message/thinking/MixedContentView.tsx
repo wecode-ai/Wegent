@@ -25,6 +25,30 @@ import {
 // Import to register prompt optimization block renderer
 import '@/features/prompt-optimization/block-renderer'
 
+const normalizeForComparison = (value: string): string =>
+  value.toLowerCase().replace(/[\s\p{P}\p{S}]+/gu, '')
+
+const isInteractiveFormDuplicateContent = (text: string, forms: AskUserFormData[]): boolean => {
+  if (!text.trim()) return false
+
+  const normalizedText = normalizeForComparison(text)
+  return forms.some(form => {
+    const matchedQuestions = form.questions.filter(question => {
+      const normalizedQuestion = normalizeForComparison(question.question)
+      return normalizedQuestion && normalizedText.includes(normalizedQuestion)
+    }).length
+
+    if (matchedQuestions === 0) return false
+    if (form.questions.length === 1) return true
+    return matchedQuestions >= 2
+  })
+}
+
+const isRenderableInteractiveQuestion = (question: Record<string, unknown>): boolean => {
+  const questionText = typeof question.question === 'string' ? question.question.trim() : ''
+  return questionText.length > 0
+}
+
 interface MixedContentViewProps {
   thinking: ThinkingStep[] | null
   content: string
@@ -144,10 +168,21 @@ const MixedContentView = memo(function MixedContentView({
               status: block.status,
             }
           } else if (block.type === 'tool') {
-            // Check if this is an ask_user_question tool - render as interactive form
-            if (block.tool_name?.includes('interactive_form_question') && block.tool_input) {
-              const input = block.tool_input as Record<string, unknown>
+            const input =
+              block.tool_input && typeof block.tool_input === 'object'
+                ? (block.tool_input as Record<string, unknown>)
+                : null
+            const rawQuestions = Array.isArray(input?.questions)
+              ? (input.questions as Array<Record<string, unknown>>).filter(
+                  isRenderableInteractiveQuestion
+                )
+              : []
+            const hasRenderableQuestions = rawQuestions.length > 0
 
+            // Only render an interactive form when the block carries actual questions.
+            // The raw MCP tool block may exist with empty `{}` input while a synthetic
+            // fallback block already contains the complete question payload.
+            if (block.tool_name?.includes('interactive_form_question') && hasRenderableQuestions) {
               // Helper function to parse boolean values (handles string "True"/"False" from AI)
               const parseBoolean = (value: unknown, defaultValue: boolean): boolean => {
                 if (typeof value === 'boolean') return value
@@ -158,11 +193,6 @@ const MixedContentView = memo(function MixedContentView({
                 }
                 return defaultValue
               }
-
-              // Determine input_type: if options are provided, it's choice; otherwise text
-              const hasOptions =
-                Array.isArray(input.options) && (input.options as unknown[]).length > 0
-              const inputType = hasOptions ? 'choice' : 'text'
 
               // Try to extract ask_id from tool_output first (server-generated),
               // then from tool_input.ask_id, finally fallback to tool_use_id
@@ -183,54 +213,36 @@ const MixedContentView = memo(function MixedContentView({
                 }
               }
               // Also check if ask_id is in the input (for some implementations)
-              if (input.ask_id && typeof input.ask_id === 'string') {
+              if (input?.ask_id && typeof input.ask_id === 'string') {
                 askId = input.ask_id
               }
 
-              // Parse options and handle recommended field (may be string "True"/"False")
-              const parsedOptions = hasOptions
-                ? (
-                    input.options as Array<{ label: string; value: string; recommended?: unknown }>
-                  ).map(opt => ({
-                    label: opt.label,
-                    value: opt.value,
-                    recommended: parseBoolean(opt.recommended, false),
-                  }))
-                : null
-
-              // Parse multi-question mode: questions array
-              const rawQuestions = input.questions
-              const parsedQuestions =
-                Array.isArray(rawQuestions) && rawQuestions.length > 0
-                  ? (rawQuestions as Array<Record<string, unknown>>).map(q => {
-                      const qHasOptions =
-                        Array.isArray(q.options) && (q.options as unknown[]).length > 0
-                      const qInputType = qHasOptions ? 'choice' : 'text'
-                      return {
-                        id: (q.id as string) || '',
-                        question: (q.question as string) || '',
-                        description: (q.description as string) || null,
-                        input_type: (q.input_type as 'choice' | 'text') || qInputType,
-                        options: qHasOptions
-                          ? (
-                              q.options as Array<{
-                                label: string
-                                value: string
-                                recommended?: unknown
-                              }>
-                            ).map(opt => ({
-                              label: opt.label,
-                              value: opt.value,
-                              recommended: parseBoolean(opt.recommended, false),
-                            }))
-                          : null,
-                        multi_select: parseBoolean(q.multi_select, false),
-                        required: parseBoolean(q.required, true),
-                        default: (q.default as string[]) || null,
-                        placeholder: (q.placeholder as string) || null,
-                      }
-                    })
-                  : null
+              const parsedQuestions = rawQuestions.map(q => {
+                const qHasOptions = Array.isArray(q.options) && (q.options as unknown[]).length > 0
+                const qInputType = qHasOptions ? 'choice' : 'text'
+                return {
+                  id: (q.id as string) || '',
+                  question: (q.question as string) || '',
+                  input_type: (q.input_type as 'choice' | 'text') || qInputType,
+                  options: qHasOptions
+                    ? (
+                        q.options as Array<{
+                          label: string
+                          value: string
+                          recommended?: unknown
+                        }>
+                      ).map(opt => ({
+                        label: opt.label,
+                        value: opt.value,
+                        recommended: parseBoolean(opt.recommended, false),
+                      }))
+                    : null,
+                  multi_select: parseBoolean(q.multi_select, false),
+                  required: parseBoolean(q.required, true),
+                  default: (q.default as string[]) || null,
+                  placeholder: (q.placeholder as string) || null,
+                }
+              })
 
               // Parse tool_output for timeout detection
               const parsedToolOutput = block.tool_output
@@ -251,17 +263,7 @@ const MixedContentView = memo(function MixedContentView({
                 tool_use_id: block.tool_use_id || null, // Pass tool_use_id for fallback lookup
                 task_id: taskId || 0,
                 subtask_id: subtaskId || 0,
-                question: (input.question as string) || '',
-                description: (input.description as string) || null,
-                // Multi-question mode
                 questions: parsedQuestions,
-                // Single-question mode fields (used when questions is null)
-                options: parsedOptions,
-                multi_select: parseBoolean(input.multi_select, false),
-                input_type: (input.input_type as 'choice' | 'text') || inputType,
-                placeholder: (input.placeholder as string) || null,
-                required: parseBoolean(input.required, true),
-                default: (input.default as string[]) || null,
                 // Pass tool_output so AskUserForm can detect timeout vs normal completion
                 tool_output: parsedToolOutput,
               }
@@ -271,6 +273,9 @@ const MixedContentView = memo(function MixedContentView({
                 blockId: block.id,
                 status: block.status,
               }
+            }
+            if (block.tool_name?.includes('interactive_form_question')) {
+              return null
             }
             // Check for custom block renderers first (e.g., prompt optimization)
             // This allows feature modules to register their own block renderers
@@ -352,6 +357,18 @@ const MixedContentView = memo(function MixedContentView({
             blockId: 'main-content',
           })
         }
+      }
+
+      const interactiveForms = mapped
+        .filter(item => item?.type === 'interactive_form_question')
+        .map(item => item.data)
+
+      if (interactiveForms.length > 0) {
+        return mapped.filter(item => {
+          if (!item) return false
+          if (item.type !== 'content') return true
+          return !isInteractiveFormDuplicateContent(item.content, interactiveForms)
+        })
       }
 
       return mapped

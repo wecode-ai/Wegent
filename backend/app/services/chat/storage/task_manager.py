@@ -73,6 +73,10 @@ class TaskCreationParams:
     # When set and different from current bot_id, a new session will be created
     # This ensures each pipeline stage has independent context
     previous_bot_id: Optional[int] = None
+    # Skip the normal running/pending status guard for controlled transitions
+    # such as pipeline stage confirmation. The caller must guarantee the task
+    # state has already been validated.
+    skip_status_check: bool = False
     # Device ID for local device execution (saved at task creation to avoid race condition)
     device_id: Optional[str] = None
     # Video generation parameters (user-selected at generation time)
@@ -692,7 +696,8 @@ async def create_task_and_subtasks(
         # Get existing task with access check
         task, subtask_user_id = get_task_with_access_check(db, task_id, user.id)
         if task:
-            check_task_status(db, task)
+            if not params.skip_status_check:
+                check_task_status(db, task)
             if should_trigger_ai:
                 mark_task_pending(task)
             # Update modelId in existing task if provided

@@ -27,12 +27,35 @@ WebSocket notification design:
 """
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal
+
+from pydantic import BaseModel
 
 from app.mcp_server.auth import TaskTokenInfo
 from app.mcp_server.tools.decorator import mcp_tool
 
 logger = logging.getLogger(__name__)
+
+
+class InteractiveFormOption(BaseModel):
+    """A single selectable option in an interactive form question."""
+
+    label: str
+    value: str
+    recommended: bool = False
+
+
+class InteractiveFormQuestionItem(BaseModel):
+    """A normalized question payload for the interactive form."""
+
+    id: str
+    question: str
+    input_type: Literal["choice", "text"] = "choice"
+    options: List[InteractiveFormOption] | None = None
+    multi_select: bool = False
+    required: bool = True
+    default: List[str] | None = None
+    placeholder: str | None = None
 
 
 def _generate_ask_id(subtask_id: int) -> str:
@@ -80,9 +103,42 @@ async def _notify_frontend(
                 break
 
         if not tool_use_id:
+            synthetic_tool_use_id = question_data.get("ask_id") or (
+                f"interactive_form_question_{subtask_id}"
+            )
             logger.warning(
-                f"[InteractiveForm] No interactive_form_question tool block found in session for subtask {subtask_id}, "
-                "cannot notify frontend"
+                f"[InteractiveForm] No interactive_form_question tool block found in session for subtask {subtask_id}. "
+                f"Creating synthetic tool block with tool_use_id={synthetic_tool_use_id}"
+            )
+
+            await session_manager.add_tool_block(
+                subtask_id=subtask_id,
+                tool_use_id=synthetic_tool_use_id,
+                tool_name="interactive_form_question",
+                tool_input=question_data,
+                display_name="interactive_form_question",
+            )
+
+            ws_emitter = get_webpage_ws_emitter()
+            if not ws_emitter:
+                logger.warning(
+                    "[InteractiveForm] WebSocket emitter not available after synthetic block creation"
+                )
+                return
+
+            synthetic_block = {
+                "id": synthetic_tool_use_id,
+                "type": "tool",
+                "tool_use_id": synthetic_tool_use_id,
+                "tool_name": "interactive_form_question",
+                "tool_input": question_data,
+                "display_name": "interactive_form_question",
+                "status": BlockStatus.PENDING.value,
+            }
+            await ws_emitter.emit_block_created(
+                task_id=task_id,
+                subtask_id=subtask_id,
+                block=synthetic_block,
             )
             return
 
@@ -108,10 +164,6 @@ async def _notify_frontend(
             tool_input=question_data,
             status=BlockStatus.PENDING.value,
         )
-        logger.info(
-            f"[InteractiveForm] Notified frontend: task_id={task_id}, subtask_id={subtask_id}, "
-            f"tool_use_id={tool_use_id}"
-        )
     except Exception as e:
         logger.error(
             f"[InteractiveForm] Failed to notify frontend: task_id={task_id}, "
@@ -124,62 +176,27 @@ async def _notify_frontend(
     name="interactive_form_question",
     description=(
         "Ask the user one or more questions and display an interactive form. "
-        "The tool returns immediately after showing the form - the user fills it in "
-        "and submits their answer as a new conversation message. "
-        "Use this tool when you need user input before proceeding with a task. "
-        "Supports single choice, multiple choice, free text input, "
-        "and multi-question forms (multiple questions in one call)."
+        "Pass all questions via the 'questions' array. "
+        "A single-question form is represented by one item in that array. "
+        "The tool returns immediately after showing the form and waits for the user's "
+        "answer in a new conversation message."
     ),
     server="interactive_form_question",
     param_descriptions={
-        "question": (
-            "The question to ask (used in single-question mode). "
-            "Ignored when 'questions' is provided."
-        ),
-        "description": "Optional additional context or explanation for the question",
-        "options": (
-            "List of options for choice questions (single-question mode). "
-            "Each option should have 'label' (display text), 'value' (return value), "
-            "and optionally 'recommended' (boolean to mark as recommended choice). "
-            "Ignored when 'questions' is provided."
-        ),
-        "multi_select": (
-            "Allow multiple selections in single-question mode (default: false). "
-            "Ignored when 'questions' is provided."
-        ),
-        "input_type": (
-            "Type of input in single-question mode: 'choice' (with options) or 'text' (free input). "
-            "Ignored when 'questions' is provided."
-        ),
-        "placeholder": "Placeholder text for text input (single-question mode)",
-        "required": "Whether an answer is required (default: true)",
-        "default": "Default selected values (list of value strings, single-question mode)",
         "questions": (
-            "List of questions for multi-question mode. "
+            "List of questions to render in the form. "
+            "Use a single item for a single-question form. "
             "Each question is an object with fields: "
-            "'id' (unique identifier, e.g. 'q1'), "
-            "'question' (question text), "
-            "'description' (optional context), "
-            "'input_type' ('choice' or 'text'), "
-            "'options' (list of {label, value, recommended?} for choice type), "
-            "'multi_select' (bool, default false), "
-            "'required' (bool, default true), "
-            "'default' (list of default value strings). "
-            "When provided, the single-question fields (question, options, etc.) are ignored."
+            "'id', 'question', 'input_type', 'options', 'multi_select', "
+            "'required', 'default', and 'placeholder'. "
+            "For choice questions, 'options' should be a list of "
+            "{label, value, recommended?} objects."
         ),
     },
 )
 async def interactive_form_question(
     token_info: TaskTokenInfo,
-    question: str = "",
-    description: Optional[str] = None,
-    options: Optional[List[Dict[str, Any]]] = None,
-    multi_select: bool = False,
-    input_type: str = "choice",
-    placeholder: Optional[str] = None,
-    required: bool = True,
-    default: Optional[List[str]] = None,
-    questions: Optional[List[Dict[str, Any]]] = None,
+    questions: List[InteractiveFormQuestionItem],
 ) -> Dict[str, Any]:
     """Ask the user one or more questions via an interactive form.
 
@@ -188,94 +205,56 @@ async def interactive_form_question(
     fills in the form at their own pace. Their answer arrives as a new
     conversation message, which the AI can then process.
 
-    Single-question mode (when 'questions' is not provided):
-    - Single choice (radio buttons): options provided, multi_select=false
-    - Multiple choice (checkboxes): options provided, multi_select=true
-    - Free text input: input_type='text' or no options provided
-
-    Multi-question mode (when 'questions' list is provided):
-    - Each question can independently be single/multi choice or text
-
     Args:
         token_info: Task token information (auto-injected)
-        question: The question to ask (single-question mode)
-        description: Optional additional context (single-question mode)
-        options: List of choice options (single-question mode)
-        multi_select: Allow multiple selections (single-question mode)
-        input_type: "choice" or "text" (single-question mode)
-        placeholder: Placeholder for text input (single-question mode)
-        required: Whether answer is required
-        default: Default selected values (single-question mode)
-        questions: List of question objects for multi-question mode
+        questions: List of normalized question objects. Use a single-item list
+            for a single-question form.
 
     Returns:
         Always returns {"__silent_exit__": True, "reason": "..."} to end the
         current task silently. The user's answer arrives as a new conversation.
     """
+    if not questions:
+        logger.error(
+            "[InteractiveForm] Invalid input: task_id=%s, subtask_id=%s, questions is empty",
+            token_info.task_id,
+            token_info.subtask_id,
+        )
+        raise ValueError("questions must contain at least one item")
+
     ask_id = _generate_ask_id(token_info.subtask_id)
-
-    if questions:
-        # Multi-question mode: normalize each question's input_type
-        normalized_questions = []
-        for q in questions:
-            q_options = q.get("options")
-            q_input_type = q.get("input_type", "choice")
-            if not q_options or len(q_options) == 0:
-                q_input_type = "text"
-            normalized_questions.append(
-                {
-                    "id": q.get("id", ""),
-                    "question": q.get("question", ""),
-                    "description": q.get("description"),
-                    "input_type": q_input_type,
-                    "options": q_options,
-                    "multi_select": q.get("multi_select", False),
-                    "required": q.get("required", True),
-                    "default": q.get("default"),
-                    "placeholder": q.get("placeholder"),
-                }
-            )
-
-        question_data = {
-            "type": "interactive_form_question",
-            "ask_id": ask_id,
-            "task_id": token_info.task_id,
-            "subtask_id": token_info.subtask_id,
-            # Multi-question mode marker
-            "questions": normalized_questions,
-            # Top-level question/description for the form header (optional)
-            "question": question or "",
-            "description": description,
-            "required": required,
-        }
-        logger.info(
-            f"[InteractiveForm] Multi-question tool called: ask_id={ask_id}, "
-            f"task={token_info.task_id}, num_questions={len(normalized_questions)}"
+    normalized_questions = []
+    for raw_question in questions:
+        parsed_question = (
+            raw_question
+            if isinstance(raw_question, InteractiveFormQuestionItem)
+            else InteractiveFormQuestionItem.model_validate(raw_question)
         )
-    else:
-        # Single-question mode
-        actual_input_type = input_type
-        if not options or len(options) == 0:
-            actual_input_type = "text"
-
-        question_data = {
-            "type": "interactive_form_question",
-            "ask_id": ask_id,
-            "task_id": token_info.task_id,
-            "subtask_id": token_info.subtask_id,
-            "question": question,
-            "description": description,
-            "options": options,
-            "multi_select": multi_select,
-            "input_type": actual_input_type,
-            "placeholder": placeholder,
-            "required": required,
-            "default": default,
-        }
-        logger.info(
-            f"[InteractiveForm] Single-question tool called: ask_id={ask_id}, "
-            f"task={token_info.task_id}, question={question[:50]}..."
+        has_options = bool(parsed_question.options)
+        normalized_questions.append(
+            {
+                "id": parsed_question.id,
+                "question": parsed_question.question,
+                "input_type": parsed_question.input_type if has_options else "text",
+                "options": (
+                    [option.model_dump() for option in parsed_question.options]
+                    if parsed_question.options
+                    else None
+                ),
+                "multi_select": parsed_question.multi_select,
+                "required": parsed_question.required,
+                "default": parsed_question.default,
+                "placeholder": parsed_question.placeholder,
+            }
         )
+
+    question_data = {
+        "type": "interactive_form_question",
+        "ask_id": ask_id,
+        "task_id": token_info.task_id,
+        "subtask_id": token_info.subtask_id,
+        "questions": normalized_questions,
+    }
 
     # Notify frontend directly via WebSocket to render the form card
     await _notify_frontend(
@@ -286,10 +265,6 @@ async def interactive_form_question(
 
     # Return immediately - the user will answer via a new conversation message.
     # The __silent_exit__ marker causes the current task to end silently.
-    logger.info(
-        f"[InteractiveForm] Returning silent exit: ask_id={ask_id}, "
-        f"task={token_info.task_id}, subtask={token_info.subtask_id}"
-    )
     return {
         "__silent_exit__": True,
         "reason": "interactive_form_question form displayed; waiting for user response via new conversation",

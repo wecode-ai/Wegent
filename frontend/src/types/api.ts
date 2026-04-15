@@ -506,7 +506,6 @@ export interface AskUserQuestion {
   /** Unique identifier for this question within the form (e.g. 'q1', 'destination') */
   id: string
   question: string
-  description?: string | null
   input_type: 'choice' | 'text'
   options?: AskUserOption[] | null
   multi_select: boolean
@@ -522,18 +521,8 @@ export interface AskUserFormData {
   tool_use_id?: string | null
   task_id: number
   subtask_id: number
-  /** Top-level question text (used as form header in multi-question mode, or the question in single mode) */
-  question: string
-  description?: string | null
-  /** Multi-question mode: list of questions, each with independent type/options */
-  questions?: AskUserQuestion[] | null
-  /** Single-question mode fields (ignored when questions is provided) */
-  options?: AskUserOption[] | null
-  multi_select?: boolean
-  input_type?: 'choice' | 'text'
-  placeholder?: string | null
-  required: boolean
-  default?: string[] | null
+  /** All questions to render. A single-question form uses a one-item array. */
+  questions: AskUserQuestion[]
   /**
    * Tool output from the backend after the tool completes.
    * Used to detect timeout: {"error": "Timeout waiting for user response", "answer": null}

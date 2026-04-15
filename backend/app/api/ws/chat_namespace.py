@@ -669,6 +669,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                 # TaskRequestBuilder will compare this with current bot_id to determine
                 # if a new session is needed (different bot = new session)
                 previous_bot_id=previous_bot_id,
+                skip_status_check=payload.action == "pipeline:confirm",
                 device_id=payload.device_id,
                 generate_params=generate_params_dict,
             )
