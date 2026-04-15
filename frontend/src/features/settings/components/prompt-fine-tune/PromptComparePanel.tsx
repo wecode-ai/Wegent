@@ -126,7 +126,6 @@ export default function PromptComparePanel({
   setUserFeedback,
   isIteratingPrompt = false,
   onIteratePrompt,
-  hasAiResponse = false,
 }: PromptComparePanelProps) {
   const { t } = useTranslation('wizard')
   const [activeTab, setActiveTab] = useState<'current' | 'original' | 'diff'>('current')
@@ -277,8 +276,7 @@ export default function PromptComparePanel({
             <Button
               variant="primary"
               onClick={handleIterateSubmit}
-              disabled={isIteratingPrompt || !userFeedback?.trim() || !hasAiResponse}
-              title={!hasAiResponse ? t('wizard:iterate_need_test_first') : ''}
+              disabled={isIteratingPrompt || !userFeedback?.trim()}
               className="self-end"
             >
               {isIteratingPrompt ? (
