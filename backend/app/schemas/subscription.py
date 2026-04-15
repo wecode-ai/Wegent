@@ -362,7 +362,7 @@ class SubscriptionList(BaseModel):
 class SubscriptionBase(BaseModel):
     """Base Subscription model for API."""
 
-    name: str = Field(..., description="Subscription unique identifier")
+    name: Optional[str] = Field(None, description="Subscription unique identifier")
     display_name: str = Field(..., description="Display name")
     description: Optional[str] = Field(None, description="Subscription description")
     task_type: SubscriptionTaskType = Field(

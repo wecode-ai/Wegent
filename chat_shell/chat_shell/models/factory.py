@@ -225,7 +225,8 @@ class LangChainModelFactory:
             ),
         }
         model_type = model_config.get("model", "openai")
-        think_config = model_config.get("think_config")
+        # Support both think_config (legacy) and reasoning (OpenAI Responses API format)
+        think_config = model_config.get("think_config") or model_config.get("reasoning")
 
         # User-configured temperature from model env takes priority over kwargs
         config_temperature = model_config.get("temperature")

@@ -116,6 +116,41 @@ class InputItem(BaseModel):
     content: Union[str, List[InputTextContent]]
 
 
+class ReasoningConfig(BaseModel):
+    """Configuration for model reasoning/thinking.
+
+    Compatible with OpenAI's reasoning configuration for o-series and gpt-5 models.
+
+    Examples:
+        # High reasoning effort (more thorough thinking)
+        {"effort": "high"}
+
+        # Medium reasoning effort (default for most reasoning models)
+        {"effort": "medium"}
+
+        # Low reasoning effort (faster responses)
+        {"effort": "low"}
+
+        # Disable reasoning for gpt-5.1 models
+        {"effort": "none"}
+
+        # With summary output
+        {"effort": "medium", "summary": "concise"}
+    """
+
+    effort: Literal["none", "minimal", "low", "medium", "high", "xhigh"] = Field(
+        default="medium",
+        description="Constrains effort on reasoning. Supported values: 'none', 'minimal', 'low', 'medium', 'high', 'xhigh'. "
+        "Reducing reasoning effort can result in faster responses and fewer tokens used on reasoning. "
+        "gpt-5.1 defaults to 'none'. Models before gpt-5.1 default to 'medium'.",
+    )
+    summary: Literal["auto", "concise", "detailed"] = Field(
+        default="auto",
+        description="A summary of the reasoning performed by the model. "
+        "One of 'auto', 'concise', or 'detailed'.",
+    )
+
+
 class ResponseCreateInput(BaseModel):
     """Request schema for creating a response."""
 
@@ -139,12 +174,17 @@ class ResponseCreateInput(BaseModel):
         default=False,
         description="If True, return immediately with 'in_progress' status and run task in background",
     )
+    reasoning: Optional[ReasoningConfig] = Field(
+        default=None,
+        description="Configuration for model reasoning/thinking. Supported for gpt-5 and o-series models. "
+        "Controls reasoning effort and summary output.",
+    )
 
 
 class OutputTextContent(BaseModel):
     """Text content in output message."""
 
-    type: Literal["output_text"] = "output_text"
+    type: Literal["output_text", "reasoning"] = "output_text"
     text: str
     annotations: List[Any] = Field(default_factory=list)
 

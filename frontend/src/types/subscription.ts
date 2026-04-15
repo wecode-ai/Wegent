@@ -166,7 +166,7 @@ export interface Subscription {
 
 // Subscription creation request
 export interface SubscriptionCreateRequest {
-  name: string
+  name?: string
   namespace?: string
   display_name: string
   description?: string

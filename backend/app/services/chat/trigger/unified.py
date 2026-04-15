@@ -186,6 +186,7 @@ async def build_execution_request(
     preload_skills: Optional[list] = None,
     previous_bot_id: Optional[int] = None,
     knowledge_base_names: Optional[List[Dict[str, str]]] = None,
+    reasoning_config: Optional[Dict[str, Any]] = None,
 ):
     """Build ExecutionRequest without dispatching.
 
@@ -209,6 +210,7 @@ async def build_execution_request(
         enable_clarification: Whether to enable clarification mode (default: False)
         preload_skills: Optional list of skills to preload
         knowledge_base_names: Optional list of KB names in {'namespace': str, 'name': str} format
+        reasoning_config: Optional reasoning config dict with 'effort' and 'summary' keys
 
     Returns:
         ExecutionRequest ready for dispatch
@@ -270,6 +272,27 @@ async def build_execution_request(
             override_model_name=override_model_name,
             force_override=force_override,
             previous_bot_id=previous_bot_id,
+        )
+
+        # Merge reasoning_config from API request into model_config
+        # Priority: API request reasoning_config > model's think_config
+        if reasoning_config:
+            request.model_config["reasoning"] = reasoning_config
+            logger.info(
+                "[build_execution_request] Applied reasoning config from API request: %s",
+                reasoning_config,
+            )
+        elif request.model_config.get("think_config"):
+            # If no API reasoning_config but model has think_config, use it
+            request.model_config["reasoning"] = request.model_config["think_config"]
+            logger.info(
+                "[build_execution_request] Applied reasoning config from model think_config: %s",
+                request.model_config["think_config"],
+            )
+
+        # Store reasoning_config in ExecutionRequest for downstream access
+        request.reasoning_config = reasoning_config or request.model_config.get(
+            "reasoning"
         )
 
         # Merge user-selected generate_params into videoConfig for video models

@@ -11,6 +11,7 @@ on Subscription resources stored in the kinds table.
 
 import logging
 import secrets
+import string
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -53,6 +54,56 @@ from app.services.subscription.market_access import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def generate_unique_subscription_name(
+    db: Session,
+    user_id: int,
+    namespace: str = "default",
+    max_retries: int = 3,
+) -> str:
+    """Generate a unique subscription name.
+
+    Format: sub-{random_suffix} where random_suffix is 8 chars [a-z0-9]
+
+    Args:
+        db: Database session
+        user_id: User ID for uniqueness check
+        namespace: Resource namespace
+        max_retries: Maximum attempts to generate unique name
+
+    Returns:
+        Unique subscription name
+
+    Raises:
+        RuntimeError: If unable to generate unique name after max_retries
+    """
+    alphabet = string.ascii_lowercase + string.digits
+
+    for attempt in range(max_retries):
+        # Generate random 8-character suffix
+        suffix = "".join(secrets.choice(alphabet) for _ in range(8))
+        name = f"sub-{suffix}"
+
+        # Check if name already exists
+        existing = (
+            db.query(Kind)
+            .filter(
+                Kind.user_id == user_id,
+                Kind.kind == "Subscription",
+                Kind.name == name,
+                Kind.namespace == namespace,
+                Kind.is_active == True,
+            )
+            .first()
+        )
+
+        if not existing:
+            return name
+
+    raise RuntimeError(
+        f"Failed to generate unique subscription name after {max_retries} attempts"
+    )
 
 
 def _validate_execution_target(
@@ -170,24 +221,30 @@ class SubscriptionService:
             subscription_in.trigger_config,
         )
 
-        # Validate subscription name uniqueness
-        existing = (
-            db.query(Kind)
-            .filter(
-                Kind.user_id == user_id,
-                Kind.kind == "Subscription",
-                Kind.name == subscription_in.name,
-                Kind.namespace == subscription_in.namespace,
-                Kind.is_active == True,
+        # Auto-generate name if not provided, otherwise validate uniqueness
+        if subscription_in.name is None:
+            subscription_in.name = generate_unique_subscription_name(
+                db, user_id, subscription_in.namespace
             )
-            .first()
-        )
+        else:
+            # Validate subscription name uniqueness for user-provided names
+            existing = (
+                db.query(Kind)
+                .filter(
+                    Kind.user_id == user_id,
+                    Kind.kind == "Subscription",
+                    Kind.name == subscription_in.name,
+                    Kind.namespace == subscription_in.namespace,
+                    Kind.is_active == True,
+                )
+                .first()
+            )
 
-        if existing:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Subscription with name '{subscription_in.name}' already exists",
-            )
+            if existing:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Subscription with name '{subscription_in.name}' already exists",
+                )
 
         # Validate team exists
         team = (
