@@ -341,9 +341,9 @@ class TestPrepareMcpForClaudeCode:
         }
         skill_configs = [
             {
-                "name": "dingtalk-connector",
+                "name": "dingtalk-docs",
                 "mcpServers": {
-                    "dingtalk-connector": {
+                    "dingtalk-docs": {
                         "type": "streamable-http",
                         "url": "${{task_data.user_mcps.dingtalk.services.docs.credentials.url}}",
                     },
@@ -355,7 +355,7 @@ class TestPrepareMcpForClaudeCode:
 
         assert bot_config["mcp_servers"] == [
             {
-                "name": "dingtalk-connector",
+                "name": "dingtalk-docs",
                 "type": "http",
                 "url": "${{task_data.user_mcps.dingtalk.services.docs.credentials.url}}",
             }

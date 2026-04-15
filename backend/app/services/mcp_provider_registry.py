@@ -37,7 +37,7 @@ MCP_PROVIDER_REGISTRY: dict[str, MCPProviderDefinition] = {
                 "service_id": "docs",
                 "server_name": "dingtalk_docs",
                 "detail_url": "https://mcp.dingtalk.com/#/detail?mcpId=9629",
-                "skill_name": "dingtalk-connector",
+                "skill_name": "dingtalk-docs",
                 "display_name": "钉钉文档",
                 "message_keywords": ("文档", "docs", "document"),
             },

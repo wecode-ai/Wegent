@@ -92,7 +92,7 @@ class TestUserScopedMcpInjection:
 
         assert preload_skills == [
             {
-                "name": "dingtalk-connector",
+                "name": "dingtalk-docs",
                 "namespace": "default",
                 "is_public": True,
             }
@@ -112,7 +112,7 @@ class TestUserScopedMcpInjection:
 
         assert preload_skills == [
             {
-                "name": "dingtalk-connector",
+                "name": "dingtalk-docs",
                 "namespace": "default",
                 "is_public": True,
             },
@@ -185,7 +185,7 @@ class TestUserScopedMcpInjection:
 
         assert preload_skills == [
             {
-                "name": "dingtalk-connector",
+                "name": "dingtalk-docs",
                 "namespace": "default",
                 "is_public": True,
             }
@@ -212,7 +212,7 @@ class TestUserScopedMcpInjection:
 
         assert preload_skills == [
             {
-                "name": "dingtalk-connector",
+                "name": "dingtalk-docs",
                 "namespace": "default",
                 "is_public": True,
             }
@@ -237,7 +237,7 @@ class TestUserScopedMcpInjection:
             user_id=0,
             json={
                 "kind": "Skill",
-                "metadata": {"name": "dingtalk-connector", "namespace": "default"},
+                "metadata": {"name": "dingtalk-docs", "namespace": "default"},
                 "spec": {
                     "description": "DingTalk docs runtime skill",
                     "bindShells": ["Chat"],
@@ -269,7 +269,7 @@ class TestUserScopedMcpInjection:
             user_id=0,
             json={
                 "kind": "Skill",
-                "metadata": {"name": "dingtalk-connector", "namespace": "default"},
+                "metadata": {"name": "dingtalk-docs", "namespace": "default"},
                 "spec": {
                     "description": "DingTalk docs runtime skill",
                     "prompt": "Use DingTalk docs MCP.",
@@ -303,7 +303,7 @@ class TestUserScopedMcpInjection:
             user_id=7,
             json={
                 "kind": "Skill",
-                "metadata": {"name": "dingtalk-connector", "namespace": "workspace-team"},
+                "metadata": {"name": "dingtalk-docs", "namespace": "workspace-team"},
                 "spec": {
                     "description": "Custom skill",
                     "prompt": "Custom prompt.",
@@ -356,7 +356,7 @@ class TestUserScopedMcpInjection:
                 },
             },
         )
-        skill = SimpleNamespace(name="dingtalk-connector", user_id=0, namespace="default")
+        skill = SimpleNamespace(name="dingtalk-docs", user_id=0, namespace="default")
 
         mock_query = mocker.Mock()
         mock_query.filter.return_value.first.return_value = ghost
@@ -367,7 +367,7 @@ class TestUserScopedMcpInjection:
         mocker.patch.object(
             builder,
             "_build_skill_data",
-            return_value={"name": "dingtalk-connector"},
+            return_value={"name": "dingtalk-docs"},
         )
 
         (
@@ -382,7 +382,7 @@ class TestUserScopedMcpInjection:
             user_id=2,
             user_preload_skills=[
                 {
-                    "name": "dingtalk-connector",
+                    "name": "dingtalk-docs",
                     "namespace": "default",
                     "is_public": True,
                 }
@@ -390,17 +390,17 @@ class TestUserScopedMcpInjection:
         )
 
         find_skill_by_ref.assert_called_once_with(
-            "dingtalk-connector",
+            "dingtalk-docs",
             "default",
             True,
             2,
             team_namespace="default",
         )
-        assert skills == [{"name": "dingtalk-connector"}]
-        assert preload_skills == ["dingtalk-connector"]
-        assert user_selected_skills == ["dingtalk-connector"]
+        assert skills == [{"name": "dingtalk-docs"}]
+        assert preload_skills == ["dingtalk-docs"]
+        assert user_selected_skills == ["dingtalk-docs"]
         assert skill_refs == {
-            "dingtalk-connector": {
+            "dingtalk-docs": {
                 "skill_id": None,
                 "namespace": "default",
                 "is_public": True,
