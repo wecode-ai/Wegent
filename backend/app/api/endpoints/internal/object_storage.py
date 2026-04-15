@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core import security
+from app.models.user import User
 from app.services.object_storage import (
     InvalidObjectNameError,
     InvalidSkillIdentityError,
@@ -60,9 +61,10 @@ class DownloadURLResponse(BaseModel):
 def create_upload_url(
     request: UploadURLRequest,
     db: Session = Depends(get_db),
-    auth_context: security.AuthContext = Depends(security.get_auth_context),
+    current_user: User = Depends(security.get_current_user_jwt_apikey_tasktoken),
 ) -> UploadURLResponse:
     """Issue a presigned upload URL scoped to one object."""
+    auth_context = security.AuthContext(user=current_user)
     try:
         grant = object_storage_upload_grant_service.create_upload_grant(
             db=db,
@@ -91,9 +93,10 @@ def create_upload_url(
 def create_download_url(
     request: DownloadURLRequest,
     db: Session = Depends(get_db),
-    auth_context: security.AuthContext = Depends(security.get_auth_context),
+    current_user: User = Depends(security.get_current_user_jwt_apikey_tasktoken),
 ) -> DownloadURLResponse:
     """Issue a presigned download URL scoped to one object."""
+    auth_context = security.AuthContext(user=current_user)
     try:
         grant: ObjectStorageDownloadGrant = (
             object_storage_upload_grant_service.create_download_grant(
