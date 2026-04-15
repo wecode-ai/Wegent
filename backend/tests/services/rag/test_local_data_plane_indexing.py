@@ -9,12 +9,16 @@ import pytest
 
 from app.services.rag.local_data_plane.indexing import (
     delete_document_index_local,
+    drop_knowledge_index_local,
     index_document_local,
+    purge_knowledge_index_local,
 )
 from app.services.rag.runtime_specs import (
     DeleteRuntimeSpec,
+    DropKnowledgeIndexRuntimeSpec,
     IndexRuntimeSpec,
     IndexSource,
+    PurgeKnowledgeRuntimeSpec,
 )
 from shared.models import RuntimeRetrieverConfig
 
@@ -252,6 +256,8 @@ async def test_index_document_local_accepts_hierarchical_splitter_config() -> No
             "parent_chunk_size": 1024,
             "child_chunk_size": 256,
             "child_chunk_overlap": 32,
+            "parent_separator": "\n\n",
+            "child_separator": "\n",
         },
         "markdown_enhancement": {"enabled": False},
     }
@@ -315,3 +321,75 @@ async def test_delete_document_index_local_rejects_unsupported_index_families() 
             await delete_document_index_local(spec, db=MagicMock())
 
     mock_delete_document.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_purge_knowledge_index_local_delegates_to_storage_backend() -> None:
+    spec = PurgeKnowledgeRuntimeSpec(
+        knowledge_base_id=1,
+        index_owner_user_id=7,
+        retriever_config=RuntimeRetrieverConfig(
+            name="retriever-a",
+            namespace="default",
+            storage_config={"type": "qdrant"},
+        ),
+    )
+
+    storage_backend = MagicMock()
+    storage_backend.delete_knowledge.return_value = {
+        "knowledge_id": "1",
+        "deleted_chunks": 4,
+        "status": "deleted",
+    }
+
+    with patch(
+        "app.services.rag.local_data_plane.indexing.create_storage_backend_from_runtime_config",
+        return_value=storage_backend,
+    ):
+        result = await purge_knowledge_index_local(spec, db=MagicMock())
+
+    assert result == {
+        "knowledge_id": "1",
+        "deleted_chunks": 4,
+        "status": "deleted",
+    }
+    storage_backend.delete_knowledge.assert_called_once_with(
+        knowledge_id="1",
+        user_id=7,
+    )
+
+
+@pytest.mark.asyncio
+async def test_drop_knowledge_index_local_delegates_to_storage_backend() -> None:
+    spec = DropKnowledgeIndexRuntimeSpec(
+        knowledge_base_id=1,
+        index_owner_user_id=7,
+        retriever_config=RuntimeRetrieverConfig(
+            name="retriever-a",
+            namespace="default",
+            storage_config={"type": "qdrant"},
+        ),
+    )
+
+    storage_backend = MagicMock()
+    storage_backend.drop_knowledge_index.return_value = {
+        "knowledge_id": "1",
+        "collection_name": "test_kb_1",
+        "status": "dropped",
+    }
+
+    with patch(
+        "app.services.rag.local_data_plane.indexing.create_storage_backend_from_runtime_config",
+        return_value=storage_backend,
+    ):
+        result = await drop_knowledge_index_local(spec, db=MagicMock())
+
+    assert result == {
+        "knowledge_id": "1",
+        "collection_name": "test_kb_1",
+        "status": "dropped",
+    }
+    storage_backend.drop_knowledge_index.assert_called_once_with(
+        knowledge_id="1",
+        user_id=7,
+    )

@@ -218,6 +218,16 @@ class BaseStorageBackend(ABC):
         """
         return cls.SUPPORTED_RETRIEVAL_METHODS.copy()
 
+    def can_drop_physical_index(self) -> bool:
+        """Return True when the storage backend owns a dedicated KB index."""
+        return self.index_strategy.get("mode", "per_dataset") == "per_dataset"
+
+    def _ensure_can_drop_physical_index(self) -> None:
+        if not self.can_drop_physical_index():
+            raise ValueError(
+                "Physical index drop is only allowed for 'per_dataset' index strategy"
+            )
+
     @abstractmethod
     def create_vector_store(self, index_name: str):
         """
@@ -318,6 +328,34 @@ class BaseStorageBackend(ABC):
 
         Returns:
             Deletion result dict
+        """
+        pass
+
+    @abstractmethod
+    def delete_knowledge(self, knowledge_id: str, **kwargs) -> Dict:
+        """
+        Delete all chunks for a knowledge base from storage.
+
+        Args:
+            knowledge_id: Knowledge base ID
+            **kwargs: Additional parameters
+
+        Returns:
+            Deletion result dict
+        """
+        pass
+
+    @abstractmethod
+    def drop_knowledge_index(self, knowledge_id: str, **kwargs) -> Dict:
+        """
+        Physically drop the backing index/collection for a knowledge base.
+
+        Args:
+            knowledge_id: Knowledge base ID
+            **kwargs: Additional parameters
+
+        Returns:
+            Drop result dict
         """
         pass
 

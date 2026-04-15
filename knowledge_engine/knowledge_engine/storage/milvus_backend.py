@@ -584,6 +584,68 @@ class MilvusBackend(BaseStorageBackend):
             "status": "deleted",
         }
 
+    def delete_knowledge(self, knowledge_id: str, **kwargs) -> Dict:
+        """Delete all chunks and parent nodes for a knowledge base."""
+        collection_name = self.get_index_name(knowledge_id, **kwargs)
+        parent_collection_name = self.get_parent_store_name(knowledge_id, **kwargs)
+        client = None
+
+        try:
+            client = self._get_client()
+            deleted_chunks = self._delete_collection_by_knowledge_id(
+                client,
+                collection_name,
+                knowledge_id,
+            )
+            deleted_parent_nodes = self._delete_collection_by_knowledge_id(
+                client,
+                parent_collection_name,
+                knowledge_id,
+            )
+            return {
+                "knowledge_id": knowledge_id,
+                "deleted_chunks": deleted_chunks,
+                "deleted_parent_nodes": deleted_parent_nodes,
+                "status": "deleted",
+            }
+        finally:
+            if client:
+                try:
+                    client.close()
+                except Exception:
+                    pass
+
+    def drop_knowledge_index(self, knowledge_id: str, **kwargs) -> Dict:
+        """Physically drop the backing collection for a dedicated KB strategy."""
+        self._ensure_can_drop_physical_index()
+        collection_name = self.get_index_name(knowledge_id, **kwargs)
+        parent_collection_name = self.get_parent_store_name(knowledge_id, **kwargs)
+        client = None
+
+        try:
+            client = self._get_client()
+            dropped_parent_collection = False
+
+            if client.has_collection(collection_name):
+                client.drop_collection(collection_name=collection_name)
+
+            if client.has_collection(parent_collection_name):
+                client.drop_collection(collection_name=parent_collection_name)
+                dropped_parent_collection = True
+
+            return {
+                "knowledge_id": knowledge_id,
+                "collection_name": collection_name,
+                "dropped_parent_collection": dropped_parent_collection,
+                "status": "dropped",
+            }
+        finally:
+            if client:
+                try:
+                    client.close()
+                except Exception:
+                    pass
+
     def get_document(self, knowledge_id: str, doc_ref: str, **kwargs) -> Dict:
         """
         Get document details from Milvus using LlamaIndex API.
@@ -820,6 +882,28 @@ class MilvusBackend(BaseStorageBackend):
                 client.close()
             except Exception:
                 pass
+
+    def _delete_collection_by_knowledge_id(
+        self,
+        client: MilvusClient,
+        collection_name: str,
+        knowledge_id: str,
+    ) -> int:
+        if not client.has_collection(collection_name):
+            return 0
+
+        safe_knowledge_id = self._sanitize_filter_value(knowledge_id)
+        results = client.query(
+            collection_name=collection_name,
+            filter=f'knowledge_id == "{safe_knowledge_id}"',
+            output_fields=["doc_ref"],
+            limit=MAX_QUERY_LIMIT,
+        )
+        client.delete(
+            collection_name=collection_name,
+            filter=f'knowledge_id == "{safe_knowledge_id}"',
+        )
+        return len(results)
 
     def get_parent_nodes(
         self,

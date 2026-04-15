@@ -377,13 +377,79 @@ class ElasticsearchBackend(BaseStorageBackend):
 
         # Delete nodes using LlamaIndex API
         vector_store.delete_nodes(filters=filters)
-        self.delete_parent_nodes(knowledge_id, doc_ref, **kwargs)
+        deleted_parent_nodes = self.delete_parent_nodes(knowledge_id, doc_ref, **kwargs)
+        logger.info(
+            "Deleted Elasticsearch document chunks: knowledge_id=%s doc_ref=%s "
+            "index_name=%s user_id=%s deleted_chunks=%s deleted_parent_nodes=%s",
+            knowledge_id,
+            doc_ref,
+            index_name,
+            kwargs.get("user_id"),
+            deleted_count,
+            deleted_parent_nodes,
+        )
 
         return {
             "doc_ref": doc_ref,
             "knowledge_id": knowledge_id,
+            "index_name": index_name,
             "deleted_chunks": deleted_count,
+            "deleted_parent_nodes": deleted_parent_nodes,
             "status": "deleted",
+        }
+
+    def delete_knowledge(self, knowledge_id: str, **kwargs) -> Dict:
+        """Delete all chunks and parent nodes for a knowledge base."""
+        index_name = self.get_index_name(knowledge_id, **kwargs)
+        parent_index_name = self.get_parent_store_name(knowledge_id, **kwargs)
+        es_client = Elasticsearch(self.url, **self.es_kwargs)
+
+        deleted_chunks = 0
+        deleted_parent_nodes = 0
+
+        if es_client.indices.exists(index=index_name):
+            deleted_chunks = self._delete_by_knowledge_id(
+                es_client,
+                index_name=index_name,
+                knowledge_id=knowledge_id,
+                knowledge_field="metadata.knowledge_id.keyword",
+            )
+
+        if es_client.indices.exists(index=parent_index_name):
+            deleted_parent_nodes = self._delete_by_knowledge_id(
+                es_client,
+                index_name=parent_index_name,
+                knowledge_id=knowledge_id,
+                knowledge_field="knowledge_id.keyword",
+            )
+
+        return {
+            "knowledge_id": knowledge_id,
+            "deleted_chunks": deleted_chunks,
+            "deleted_parent_nodes": deleted_parent_nodes,
+            "status": "deleted",
+        }
+
+    def drop_knowledge_index(self, knowledge_id: str, **kwargs) -> Dict:
+        """Physically drop the backing index for a dedicated KB strategy."""
+        self._ensure_can_drop_physical_index()
+        index_name = self.get_index_name(knowledge_id, **kwargs)
+        parent_index_name = self.get_parent_store_name(knowledge_id, **kwargs)
+        es_client = Elasticsearch(self.url, **self.es_kwargs)
+
+        if es_client.indices.exists(index=index_name):
+            es_client.indices.delete(index=index_name)
+
+        dropped_parent_index = False
+        if es_client.indices.exists(index=parent_index_name):
+            es_client.indices.delete(index=parent_index_name)
+            dropped_parent_index = True
+
+        return {
+            "knowledge_id": knowledge_id,
+            "index_name": index_name,
+            "dropped_parent_index": dropped_parent_index,
+            "status": "dropped",
         }
 
     def delete_parent_nodes(self, knowledge_id: str, doc_ref: str, **kwargs) -> int:
@@ -406,6 +472,47 @@ class ElasticsearchBackend(BaseStorageBackend):
             refresh=True,
         )
         return int(response.get("deleted", 0))
+
+    def _delete_by_knowledge_id(
+        self,
+        es_client: Elasticsearch,
+        *,
+        index_name: str,
+        knowledge_id: str,
+        knowledge_field: str,
+    ) -> int:
+        response = es_client.search(
+            index=index_name,
+            body={
+                "size": 0,
+                "track_total_hits": True,
+                "query": {
+                    "bool": {
+                        "filter": [
+                            {"term": {knowledge_field: knowledge_id}},
+                        ]
+                    }
+                },
+            },
+        )
+        total_hits = response.get("hits", {}).get("total", 0)
+        deleted_count = (
+            total_hits.get("value", 0)
+            if isinstance(total_hits, dict)
+            else int(total_hits)
+        )
+        es_client.delete_by_query(
+            index=index_name,
+            query={
+                "bool": {
+                    "filter": [
+                        {"term": {knowledge_field: knowledge_id}},
+                    ]
+                }
+            },
+            refresh=True,
+        )
+        return int(deleted_count)
 
     def get_document(self, knowledge_id: str, doc_ref: str, **kwargs) -> Dict:
         """

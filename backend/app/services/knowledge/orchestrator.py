@@ -1529,11 +1529,11 @@ class KnowledgeOrchestrator:
             allow_if_success: Whether to re-queue a document that already succeeded
             replace_active: Whether to supersede an in-flight indexing generation
         """
+        from app.services.knowledge.index_runtime import get_kb_index_info_by_record
         from app.services.knowledge.index_state_machine import (
             mark_document_index_enqueue_failed,
             prepare_document_index_enqueue,
         )
-        from app.services.knowledge.namespace_utils import is_organization_namespace
         from app.tasks.knowledge_tasks import index_document_task
 
         spec = (knowledge_base.json or {}).get("spec", {})
@@ -1574,14 +1574,12 @@ class KnowledgeOrchestrator:
                 "reason": "missing_embedding_model",
             }
 
-        # Determine index owner user_id
-        if knowledge_base.namespace == "default":
-            index_owner_user_id = user.id
-        elif is_organization_namespace(db, knowledge_base.namespace):
-            index_owner_user_id = user.id
-        else:
-            # Group KB - use creator's user_id for shared index
-            index_owner_user_id = knowledge_base.user_id
+        kb_index_info = get_kb_index_info_by_record(
+            db=db,
+            knowledge_base=knowledge_base,
+            current_user_id=user.id,
+        )
+        index_owner_user_id = kb_index_info.index_owner_user_id
 
         logger.info(
             f"[Orchestrator] Scheduling RAG indexing via Celery for document {document.id}: "

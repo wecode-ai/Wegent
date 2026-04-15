@@ -5,7 +5,11 @@
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 from app.services.rag.remote_gateway import RemoteRagGatewayError
-from app.services.rag.runtime_specs import QueryRuntimeSpec
+from app.services.rag.runtime_specs import (
+    DropKnowledgeIndexRuntimeSpec,
+    PurgeKnowledgeRuntimeSpec,
+    QueryRuntimeSpec,
+)
 
 
 def _auth_header(token: str) -> dict[str, str]:
@@ -185,6 +189,127 @@ def test_public_rag_chunks_returns_paginated_index_chunks(
     )
     mock_get_gateway.assert_called_once()
     gateway.list_chunks.assert_awaited_once_with(runtime_spec, db=ANY)
+
+
+def test_public_rag_index_contents_delete_routes_runtime_spec(
+    test_client,
+    test_token: str,
+):
+    runtime_spec = PurgeKnowledgeRuntimeSpec(
+        knowledge_base_id=7,
+        index_owner_user_id=9,
+        retriever_config={
+            "name": "retriever-a",
+            "namespace": "default",
+            "storage_config": {"type": "qdrant", "url": "http://qdrant:6333"},
+        },
+    )
+    gateway = AsyncMock()
+    gateway.purge_knowledge_index.return_value = {
+        "status": "deleted",
+        "knowledge_id": "7",
+        "deleted_chunks": 3,
+    }
+
+    with (
+        patch(
+            "app.api.endpoints.rag.runtime_resolver.build_public_purge_index_runtime_spec",
+            return_value=runtime_spec,
+        ) as mock_build_spec,
+        patch(
+            "app.api.endpoints.rag.get_delete_gateway",
+            return_value=gateway,
+        ) as mock_get_gateway,
+    ):
+        response = test_client.delete(
+            "/api/rag/index-contents?knowledge_id=7",
+            headers=_auth_header(test_token),
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "deleted",
+        "knowledge_id": "7",
+        "deleted_chunks": 3,
+    }
+    mock_build_spec.assert_called_once_with(
+        db=ANY,
+        knowledge_base_id=7,
+        user_id=ANY,
+        user_name=ANY,
+    )
+    mock_get_gateway.assert_called_once()
+    gateway.purge_knowledge_index.assert_awaited_once_with(runtime_spec, db=ANY)
+
+
+def test_public_rag_index_delete_routes_runtime_spec(
+    test_client,
+    test_token: str,
+):
+    runtime_spec = DropKnowledgeIndexRuntimeSpec(
+        knowledge_base_id=7,
+        index_owner_user_id=9,
+        retriever_config={
+            "name": "retriever-a",
+            "namespace": "default",
+            "storage_config": {"type": "qdrant", "url": "http://qdrant:6333"},
+        },
+    )
+    gateway = AsyncMock()
+    gateway.drop_knowledge_index.return_value = {
+        "status": "dropped",
+        "knowledge_id": "7",
+        "index_name": "wegent_kb_7",
+    }
+
+    with (
+        patch(
+            "app.api.endpoints.rag.runtime_resolver.build_public_drop_index_runtime_spec",
+            return_value=runtime_spec,
+        ) as mock_build_spec,
+        patch(
+            "app.api.endpoints.rag.get_delete_gateway",
+            return_value=gateway,
+        ) as mock_get_gateway,
+    ):
+        response = test_client.delete(
+            "/api/rag/index?knowledge_id=7",
+            headers=_auth_header(test_token),
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "dropped",
+        "knowledge_id": "7",
+        "index_name": "wegent_kb_7",
+    }
+    mock_build_spec.assert_called_once_with(
+        db=ANY,
+        knowledge_base_id=7,
+        user_id=ANY,
+        user_name=ANY,
+    )
+    mock_get_gateway.assert_called_once()
+    gateway.drop_knowledge_index.assert_awaited_once_with(runtime_spec, db=ANY)
+
+
+def test_public_rag_index_delete_returns_conflict_for_shared_strategy(
+    test_client,
+    test_token: str,
+):
+    with patch(
+        "app.api.endpoints.rag.runtime_resolver.build_public_drop_index_runtime_spec",
+        side_effect=ValueError(
+            "Physical index drop is only allowed for per_dataset index strategy"
+        ),
+    ):
+        response = test_client.delete(
+            "/api/rag/index?knowledge_id=7",
+            headers=_auth_header(test_token),
+        )
+
+    assert response.status_code == 409
+    assert "only allowed" in response.json()["detail"]
 
 
 def test_public_rag_retrieve_returns_non_retryable_remote_error(

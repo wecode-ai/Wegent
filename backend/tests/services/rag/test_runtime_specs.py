@@ -116,9 +116,11 @@ def test_index_runtime_spec_accepts_hierarchical_splitter_config():
             "chunk_strategy": "hierarchical",
             "format_enhancement": "file_aware",
             "hierarchical_config": {
-                "parent_chunk_size": 1024,
-                "child_chunk_size": 256,
-                "child_chunk_overlap": 32,
+                "parent_chunk_size": 1536,
+                "child_chunk_size": 384,
+                "child_chunk_overlap": 48,
+                "parent_separator": "\n\n",
+                "child_separator": "\n",
             },
         },
     )
@@ -127,9 +129,11 @@ def test_index_runtime_spec_accepts_hierarchical_splitter_config():
         "chunk_strategy": "hierarchical",
         "format_enhancement": "file_aware",
         "hierarchical_config": {
-            "parent_chunk_size": 1024,
-            "child_chunk_size": 256,
-            "child_chunk_overlap": 32,
+            "parent_chunk_size": 1536,
+            "child_chunk_size": 384,
+            "child_chunk_overlap": 48,
+            "parent_separator": "\n\n",
+            "child_separator": "\n",
         },
         "markdown_enhancement": {"enabled": False},
     }

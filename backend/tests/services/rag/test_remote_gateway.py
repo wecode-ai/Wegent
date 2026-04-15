@@ -20,9 +20,11 @@ from app.services.rag.remote_gateway import RemoteRagGateway, RemoteRagGatewayEr
 from app.services.rag.runtime_specs import (
     ConnectionTestRuntimeSpec,
     DeleteRuntimeSpec,
+    DropKnowledgeIndexRuntimeSpec,
     IndexRuntimeSpec,
     IndexSource,
     ListChunksRuntimeSpec,
+    PurgeKnowledgeRuntimeSpec,
     QueryKnowledgeBaseRuntimeConfig,
     QueryRuntimeSpec,
     RuntimeEmbeddingModelConfig,
@@ -435,6 +437,102 @@ async def test_remote_gateway_delete_posts_resolved_retriever_config(mocker) -> 
             },
         },
         "enabled_index_families": ["chunk_vector"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_remote_gateway_purge_index_posts_runtime_request(mocker) -> None:
+    post_mock = mocker.patch(
+        "httpx.AsyncClient.post",
+        return_value=_build_response(
+            url="http://knowledge-runtime/internal/rag/purge-knowledge-index",
+            status_code=200,
+            json_body={"status": "deleted", "knowledge_id": "1", "deleted_chunks": 8},
+        ),
+    )
+    gateway = RemoteRagGateway(
+        base_url="http://knowledge-runtime",
+        token="runtime-token",
+    )
+    spec = PurgeKnowledgeRuntimeSpec(
+        knowledge_base_id=1,
+        index_owner_user_id=7,
+        retriever_config=RuntimeRetrieverConfig(
+            name="retriever-a",
+            namespace="default",
+            storage_config={
+                "type": "elasticsearch",
+                "url": "http://es:9200",
+                "indexStrategy": {"mode": "per_user"},
+            },
+        ),
+    )
+
+    result = await gateway.purge_knowledge_index(spec, db=MagicMock())
+
+    assert result == {"status": "deleted", "knowledge_id": "1", "deleted_chunks": 8}
+    args, kwargs = post_mock.await_args
+    assert args[0] == "http://knowledge-runtime/internal/rag/purge-knowledge-index"
+    assert kwargs["json"] == {
+        "knowledge_base_id": 1,
+        "index_owner_user_id": 7,
+        "retriever_config": {
+            "name": "retriever-a",
+            "namespace": "default",
+            "storage_config": {
+                "type": "elasticsearch",
+                "url": "http://es:9200",
+                "indexStrategy": {"mode": "per_user"},
+            },
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_remote_gateway_drop_index_posts_runtime_request(mocker) -> None:
+    post_mock = mocker.patch(
+        "httpx.AsyncClient.post",
+        return_value=_build_response(
+            url="http://knowledge-runtime/internal/rag/drop-knowledge-index",
+            status_code=200,
+            json_body={"status": "dropped", "knowledge_id": "1", "index_name": "kb_1"},
+        ),
+    )
+    gateway = RemoteRagGateway(
+        base_url="http://knowledge-runtime",
+        token="runtime-token",
+    )
+    spec = DropKnowledgeIndexRuntimeSpec(
+        knowledge_base_id=1,
+        index_owner_user_id=7,
+        retriever_config=RuntimeRetrieverConfig(
+            name="retriever-a",
+            namespace="default",
+            storage_config={
+                "type": "elasticsearch",
+                "url": "http://es:9200",
+                "indexStrategy": {"mode": "per_dataset"},
+            },
+        ),
+    )
+
+    result = await gateway.drop_knowledge_index(spec, db=MagicMock())
+
+    assert result == {"status": "dropped", "knowledge_id": "1", "index_name": "kb_1"}
+    args, kwargs = post_mock.await_args
+    assert args[0] == "http://knowledge-runtime/internal/rag/drop-knowledge-index"
+    assert kwargs["json"] == {
+        "knowledge_base_id": 1,
+        "index_owner_user_id": 7,
+        "retriever_config": {
+            "name": "retriever-a",
+            "namespace": "default",
+            "storage_config": {
+                "type": "elasticsearch",
+                "url": "http://es:9200",
+                "indexStrategy": {"mode": "per_dataset"},
+            },
+        },
     }
 
 
