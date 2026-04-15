@@ -153,7 +153,7 @@ class GetDingtalkMcpConfig(BaseTool):
                     f"[DingTalkMcpConfig] User not found: user_id={self.user_id}"
                 )
                 return {
-                    "error": "User not found",
+                    "error": "User not found in database",
                     "enabled": False,
                 }
 
@@ -232,12 +232,49 @@ class GetDingtalkMcpConfig(BaseTool):
                 f"service_type={service_type}, enabled={enabled}"
             )
 
+            # Get available tools for this service type
+            from app.services.mcp_provider_registry import list_mcp_provider_services
+
+            available_tools = []
+            try:
+                provider_services = list_mcp_provider_services(service_info["provider_id"])
+                for service in provider_services:
+                    if service.get("service_id") == service_info["service_id"]:
+                        # Get MCP server definition
+                        mcp_server_def = service.get("server_name", "")
+                        if mcp_server_def:
+                            # Define available tools based on server type
+                            if mcp_server_def == "dingtalk_docs":
+                                available_tools = [
+                                    "get_document_info",
+                                    "download_file",
+                                    "list_nodes",
+                                    "get_document_content",
+                                ]
+                            elif mcp_server_def == "dingtalk_table":
+                                available_tools = [
+                                    "get_all_sheets",
+                                    "get_sheet",
+                                    "get_range",
+                                ]
+                            elif mcp_server_def == "dingtalk_ai_table":
+                                available_tools = [
+                                    "get_tables",
+                                    "query_records",
+                                ]
+                            break
+            except Exception as e:
+                logger.warning(
+                    f"[DingTalkMcpConfig] Failed to get tool list: {str(e)}"
+                )
+
             return {
                 "enabled": True,
                 "url": url,
                 "service_id": service_info["service_id"],
                 "server_name": service_info["server_name"],
                 "provider_id": service_info["provider_id"],
+                "available_tools": available_tools,
             }
 
         except Exception as e:
