@@ -108,6 +108,8 @@ services:
       CHAT_SHELL_URL: ${CHAT_SHELL_URL:-http://chat_shell:8100}
       # CHAT_SHELL_TOKEN: ${INTERNAL_SERVICE_TOKEN:-chat-shell-token}
       # INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-chat-shell-token}
+      # Internal URL for MCP and other internal service calls (use container name in Docker)
+      BACKEND_INTERNAL_URL: http://backend:8000
       # Task Dispatch Configuration
       # Mode: 'push' (default) or 'pull' (deprecated, executor_manager polls)
       TASK_DISPATCH_MODE: ${TASK_DISPATCH_MODE:-push}

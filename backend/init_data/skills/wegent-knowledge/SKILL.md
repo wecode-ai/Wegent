@@ -1,5 +1,5 @@
 ---
-description: "Knowledge base management tools for Wegent. Provides capabilities to list, create, and update knowledge bases and documents. Use this skill when the user wants to manage knowledge bases or documents programmatically."
+description: "Knowledge base management and search tools for Wegent. Provides capabilities to list, create, update, and search knowledge bases and documents using RAG retrieval. Use this skill when the user wants to manage knowledge bases, documents, or search for information programmatically."
 displayName: "知识库工具"
 version: "1.0.0"
 author: "Wegent Team"
@@ -61,6 +61,12 @@ You now have access to Wegent Knowledge Base management tools.
   - content: New content (replaces existing content)
   - trigger_reindex: Whether to trigger RAG re-indexing (default: true)
 
+- **search_knowledge_base**: Search documents using RAG retrieval
+  - knowledge_base_id: Knowledge base ID to search
+  - query: Search query text
+  - max_results: Maximum results to return (default: 10, max: 50)
+  - document_ids: Optional list of document IDs to filter search scope
+
 ## Usage Notes
 
 - All operations inherit the current user's permissions
@@ -118,5 +124,24 @@ You now have access to Wegent Knowledge Base management tools.
    read_document_content(
      document_id=456,
      offset=0
+   )
+   ```
+
+7. Search knowledge base using RAG retrieval:
+   ```text
+   search_knowledge_base(
+     knowledge_base_id=123,
+     query="How to configure the system?",
+     max_results=10
+   )
+   ```
+
+8. Search within specific documents:
+   ```text
+   search_knowledge_base(
+     knowledge_base_id=123,
+     query="deployment steps",
+     max_results=5,
+     document_ids=[456, 789]
    )
    ```

@@ -42,6 +42,125 @@ def _get_user_from_token(db: Session, token_info: TaskTokenInfo) -> Optional[Use
 
 
 @mcp_tool(
+    name="search_knowledge_base",
+    description="Search documents in a knowledge base using RAG retrieval. Returns relevant chunks with source references. The knowledge base must have a retriever configured.",
+    server="knowledge",
+    param_descriptions={
+        "knowledge_base_id": "Knowledge base ID to search",
+        "query": "Search query text",
+        "max_results": "Maximum number of results to return (default: 10, max: 50)",
+        "document_ids": "Optional list of document IDs to restrict search scope",
+    },
+)
+async def search_knowledge_base(
+    token_info: TaskTokenInfo,
+    knowledge_base_id: int,
+    query: str,
+    max_results: int = 10,
+    document_ids: Optional[list[int]] = None,
+) -> Dict[str, Any]:
+    """
+    Search knowledge base using RAG retrieval.
+
+    Args:
+        token_info: Task token information containing user context
+        knowledge_base_id: Knowledge base ID to search
+        query: Search query text
+        max_results: Maximum number of results (default: 10, max: 50)
+        document_ids: Optional document IDs to filter search scope
+
+    Returns:
+        Dict with search results including chunks and sources
+    """
+
+    # Validate knowledge_base_id is a positive integer
+    if not isinstance(knowledge_base_id, int) or knowledge_base_id <= 0:
+        return {
+            "error": f"Invalid knowledge_base_id: {knowledge_base_id}. Must be a positive integer.",
+            "query": query,
+            "chunks": [],
+            "sources": [],
+            "total": 0,
+        }
+
+    db = SessionLocal()
+    try:
+        user = _get_user_from_token(db, token_info)
+        if not user:
+            return {
+                "error": "User not found",
+                "query": query,
+                "chunks": [],
+                "sources": [],
+                "total": 0,
+            }
+
+        result = await knowledge_orchestrator.retrieve_knowledge(
+            db=db,
+            user=user,
+            knowledge_base_id=knowledge_base_id,
+            query=query,
+            max_results=max_results,
+            document_ids=document_ids,
+            route_mode="rag_retrieval",
+        )
+
+        # Convert retrieve_knowledge format to MCP expected format
+        # retrieve_knowledge returns: records, total, mode, query, knowledge_base_id, total_estimated_tokens
+        # MCP expects: chunks, sources, total, mode, query
+        chunks = result.get("records", [])
+
+        # Build sources from chunks
+        sources = []
+        seen_docs = set()
+        for chunk in chunks:
+            doc_key = (chunk.get("knowledge_base_id"), chunk.get("document_id"))
+            if doc_key not in seen_docs:
+                seen_docs.add(doc_key)
+                sources.append(
+                    {
+                        "document_id": chunk.get("document_id"),
+                        "document_name": chunk.get("document_name", "Unknown"),
+                        "knowledge_base_id": chunk.get("knowledge_base_id"),
+                        "knowledge_base_name": chunk.get(
+                            "knowledge_base_name", "Unknown"
+                        ),
+                    }
+                )
+
+        return {
+            "query": result.get("query", query),
+            "chunks": chunks,
+            "sources": sources,
+            "total": result.get("total", 0),
+            "mode": result.get("mode", "rag_retrieval"),
+        }
+
+    except ValueError as e:
+        logger.warning(f"[MCP] search_knowledge_base validation error: {e}")
+        return {
+            "error": str(e),
+            "query": query,
+            "chunks": [],
+            "sources": [],
+            "total": 0,
+        }
+
+    except Exception as e:
+        logger.error(f"[MCP] search_knowledge_base error: {e}", exc_info=True)
+        return {
+            "error": str(e),
+            "query": query,
+            "chunks": [],
+            "sources": [],
+            "total": 0,
+        }
+
+    finally:
+        db.close()
+
+
+@mcp_tool(
     name="list_knowledge_bases",
     description="List all knowledge bases accessible to the current user.",
     server="knowledge",
