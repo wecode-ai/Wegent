@@ -1105,6 +1105,7 @@ class KnowledgeOrchestrator:
         trigger_indexing: bool = True,
         trigger_summary: bool = True,
         splitter_config: Optional[Dict[str, Any]] = None,
+        source_config: Optional[Dict[str, Any]] = None,
     ) -> KnowledgeDocumentResponse:
         """
         Create a document with complete workflow.
@@ -1125,6 +1126,7 @@ class KnowledgeOrchestrator:
             trigger_indexing: Whether to trigger RAG indexing
             trigger_summary: Whether to trigger summary generation
             splitter_config: Optional splitter configuration dict
+            source_config: Optional source configuration dict (e.g., {'url': '...', 'source': '...'})
 
         Returns:
             KnowledgeDocumentResponse
@@ -1261,6 +1263,7 @@ class KnowledgeOrchestrator:
             attachment_id=attachment.id,
             file_extension=normalized_ext,
             file_size=len(binary_data),
+            source_config=source_config or {},
         )
 
         return self._create_and_index_document(

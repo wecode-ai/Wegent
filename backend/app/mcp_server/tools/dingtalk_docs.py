@@ -143,6 +143,10 @@ async def add_dingtalk_doc_to_knowledge(
         if not user:
             return {"success": False, "error": "User not found"}
 
+        # Variables to store document metadata from DingTalk
+        file_extension = "md"
+        update_time = None
+
         # If content not provided, fetch from DingTalk
         if not doc_content:
             logger.info(
@@ -161,6 +165,10 @@ async def add_dingtalk_doc_to_knowledge(
                 # Use fetched modified_time if not provided
                 if not modified_time:
                     modified_time = doc_download.get("modified_time_formatted")
+                # Get file_extension from DingTalk response
+                file_extension = doc_download.get("file_extension", "md")
+                # Get original updateTime for source_config
+                update_time = doc_download.get("modified_time")
             except Exception as e:
                 logger.error(f"[MCP] Failed to fetch document from DingTalk: {e}")
                 return {
@@ -204,6 +212,13 @@ async def add_dingtalk_doc_to_knowledge(
         # The content is expected to be markdown from DingTalk
         import asyncio
 
+        # Build source_config with DingTalk document metadata
+        source_config = {
+            "url": doc_url,
+            "source": "dingtalk-connector",
+            "updated_at": update_time or modified_time,
+        }
+
         result = await asyncio.to_thread(
             knowledge_orchestrator.create_document_with_content,
             db=db,
@@ -212,8 +227,10 @@ async def add_dingtalk_doc_to_knowledge(
             name=title,
             source_type="text",
             content=doc_content,
+            file_extension=file_extension,
             trigger_indexing=trigger_indexing,
             trigger_summary=trigger_summary,
+            source_config=source_config,
         )
 
         return {
