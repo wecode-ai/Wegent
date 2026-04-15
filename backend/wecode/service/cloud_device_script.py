@@ -13,6 +13,7 @@ configuration, and executor startup.
 
 import base64
 import logging
+import shlex
 
 logger = logging.getLogger(__name__)
 
@@ -185,7 +186,9 @@ def _generate_user_data_script(
     # Build install script arguments
     install_args = f'-t "{auth_token}"'
     if mail_email and mail_password:
-        install_args += f" -m -e '{mail_email}' -p '{mail_password}'"
+        install_args += (
+            f" -m -e {shlex.quote(mail_email)} -p {shlex.quote(mail_password)}"
+        )
 
     # Build openclaw curl command and install arguments
     openclaw_section = ""

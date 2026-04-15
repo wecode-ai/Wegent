@@ -29,6 +29,7 @@ import wecode.api.user_service_patch  # noqa: F401  patch app.services.user with
 import wecode.api.users_endpoint_patch  # noqa: F401  patch app.api.endpoints.users without modifying source
 import wecode.service.cloud_device_monitor_patch  # noqa: F401  register cloud device monitor background worker
 import wecode.service.cloud_device_patch  # noqa: F401  register CloudDeviceProvider with factory
+import wecode.service.openclaw_token_monitor_patch  # noqa: F401  register OpenClaw token monitor background worker
 import wecode.service.dispatch_tasks_patch  # noqa: F401  patch executor_kinds_service.dispatch_tasks to replace API key placeholders (push mode)
 import wecode.service.local_device_patch  # noqa: F401  register LocalDeviceProvider with factory
 import wecode.service.request_builder_patch  # noqa: F401  patch TaskRequestBuilder.build to replace ${WECODE_USER_API_KEY} (new dispatcher flow)
