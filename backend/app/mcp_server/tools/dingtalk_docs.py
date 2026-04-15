@@ -207,10 +207,6 @@ async def add_dingtalk_doc_to_knowledge(
             f"title='{title}', filename='{filename}'"
         )
 
-        # Create document with text content (run in thread to avoid blocking)
-        # The content is expected to be markdown from DingTalk
-        import asyncio
-
         # Build source_config with DingTalk document metadata
         source_config = {
             "url": doc_url,
@@ -218,8 +214,12 @@ async def add_dingtalk_doc_to_knowledge(
             "updated_at": update_time or modified_time,
         }
 
-        result = await asyncio.to_thread(
-            knowledge_orchestrator.create_document_with_content,
+        # Create document with text content
+        # The content is expected to be markdown from DingTalk
+        # Note: create_document_with_content is a sync function, call directly
+        # instead of using asyncio.to_thread to avoid passing Session/User across
+        # thread boundaries (SQLAlchemy objects are not thread-safe)
+        result = knowledge_orchestrator.create_document_with_content(
             db=db,
             user=user,
             knowledge_base_id=knowledge_base_id,
