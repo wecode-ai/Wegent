@@ -185,23 +185,8 @@ async def add_dingtalk_doc_to_knowledge(
         # Use provided title or extract from URL
         title = doc_title or "DingTalk Document"
 
-        # Use provided modified_time or generate current time
-        if modified_time:
-            # Validate format - support both YYYYMMDDHHMMSS (14 digits) and Unix timestamp in ms (13 digits)
-            if not modified_time.isdigit() or len(modified_time) not in (13, 14):
-                logger.warning(
-                    f"Invalid modified_time format: {modified_time}, using current time"
-                )
-                from datetime import datetime
-
-                modified_time = datetime.now().strftime("%Y%m%d%H%M%S")
-        else:
-            from datetime import datetime
-
-            modified_time = datetime.now().strftime("%Y%m%d%H%M%S")
-
-        # Build filename according to naming convention
-        filename = dingtalk_docs_service.build_filename(title, modified_time)
+        # Build filename: {title}.{file_extension}
+        filename = f"{title}.{file_extension}"
 
         logger.info(
             f"[MCP] Adding DingTalk doc to KB {knowledge_base_id}: "
