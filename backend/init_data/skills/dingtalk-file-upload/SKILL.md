@@ -1,12 +1,18 @@
 ---
 description: "Upload DingTalk documents, spreadsheets, and AI tables to Wegent knowledge bases. Use this skill when the user wants to add DingTalk files to a knowledge base by providing DingTalk document URLs."
 displayName: "钉钉文件上传到知识库"
-version: "1.0.0"
+version: "1.1.0"
 author: "Wegent Team"
 tags: ["dingtalk", "knowledge-base", "upload", "document", "spreadsheet"]
 bindShells:
   - Chat
   - ClaudeCode
+provider:
+  module: provider
+  class: DingtalkFileUploadProvider
+tools:
+  - name: get_dingtalk_mcp_config
+    provider: dingtalk_file_upload
 ---
 
 # DingTalk File Upload to Knowledge Base
@@ -20,11 +26,73 @@ Use this skill when:
 - User provides a DingTalk document URL (e.g., `https://alidocs.dingtalk.com/i/nodes/...`)
 - User mentions "adding to knowledge base" with DingTalk file references
 
+## Available Tools
+
+### get_dingtalk_mcp_config
+
+Get current user's DingTalk MCP configuration for the specified service type.
+
+**Parameters:**
+- `service_type` (required): The DingTalk service type
+  - `"docs"`: DingTalk Documents
+  - `"table"`: DingTalk Spreadsheets
+  - `"ai_table"`: DingTalk AI Tables
+
+**Returns:**
+Dictionary with MCP configuration for the requested service type:
+```json
+{
+  "enabled": true,
+  "url": "https://mcp.dingtalk.com/sse",
+  "service_id": "docs",
+  "server_name": "dingtalk_docs",
+  "provider_id": "dingtalk"
+}
+```
+
+**Usage Example:**
+```json
+{
+  "name": "get_dingtalk_mcp_config",
+  "arguments": {
+    "service_type": "docs"
+  }
+}
+```
+
+**Note:** This tool accesses the current user's DingTalk MCP configuration from the database. If the service is not configured or not enabled, it will return `{"enabled": false}` with an error message.
+
 ## Workflow
 
 When a user requests to upload a DingTalk file to a knowledge base, follow these steps:
 
-### Step 1: Parse the Request
+### Step 1: Check DingTalk MCP Configuration
+
+Before attempting to download DingTalk files, check if the required MCP service is configured:
+
+1. **Get DingTalk MCP config**:
+   - Use the `get_dingtalk_mcp_config` tool to check configuration
+   - Specify the service type based on the file:
+     - `"docs"` for DingTalk Documents
+     - `"table"` for DingTalk Spreadsheets
+     - `"ai_table"` for DingTalk AI Tables
+
+2. **Verify configuration**:
+   - If `enabled` is `false`, inform the user that the service is not configured
+   - Provide guidance: "Please enable DingTalk MCP in your MCP settings"
+   - If enabled, use the returned `url` and `server_name` for MCP operations
+
+Example:
+```json
+{
+  "name": "get_dingtalk_mcp_config",
+  "arguments": {
+    "service_type": "docs"
+  }
+}
+```
+
+### Step 2: Parse the Request
 
 Extract the following from the user's request:
 - DingTalk file URL (required): The URL of the DingTalk document/spreadsheet
@@ -37,14 +105,14 @@ Example user input:
 将钉钉文档 https://alidocs.dingtalk.com/i/nodes/nYMoO1rWx23xv0mxSQN4qbNdJ47Z3je9 添加到当前知识库
 ```
 
-### Step 2: Ensure Sandbox Environment
+### Step 3: Ensure Sandbox Environment
 
 Load the `sandbox` skill first if not already loaded. The sandbox provides:
 - File system for temporary storage
 - Command execution for file operations
 - Attachment upload capability
 
-### Step 3: Download DingTalk File
+### Step 4: Download DingTalk File
 
 Use the DingTalk MCP tools to download the file:
 
@@ -60,7 +128,7 @@ Use the DingTalk MCP tools to download the file:
    - Use `exec` in sandbox to download the file using curl
    - Store temporarily (e.g., `/tmp/dingtalk_file.{extension}`)
 
-### Step 4: Upload to Knowledge Base
+### Step 5: Upload to Knowledge Base
 
 Use the Wegent Knowledge skill tools:
 
@@ -79,7 +147,7 @@ Use the Wegent Knowledge skill tools:
    )
    ```
 
-### Step 5: Confirm Success
+### Step 6: Confirm Success
 
 Report the upload result to the user with:
 - File name uploaded
@@ -114,6 +182,7 @@ This skill requires the following MCP servers to be available:
 1. **Missing DingTalk MCP configuration**:
    - Inform user that DingTalk MCP is not configured
    - Provide instructions: "Please configure DingTalk MCP in your preferences"
+   - Use `get_dingtalk_mcp_config` to check configuration before attempting file operations
 
 2. **File not accessible**:
    - Check if user has permission to access the DingTalk file
@@ -133,17 +202,19 @@ This skill requires the following MCP servers to be available:
 **User**: 将钉钉文档 https://alidocs.dingtalk.com/i/nodes/nYMoO1rWx23xv0mxSQN4qbNdJ47Z3je9 添加到当前知识库
 
 **AI Response**:
-1. Parse URL to extract nodeId: `nYMoO1rWx23xv0mxSQN4qbNdJ47Z3je9`
-2. Call `get_document_info(nodeId)` to get file metadata
-3. Call `download_file(nodeId)` to get download URL
-4. Use sandbox `exec` to download file: `curl -o /tmp/file.xlsx "<download_url>"`
-5. Read file and encode to base64
-6. Call `create_document(knowledge_base_id=..., name="...", file_base64=..., file_extension="xlsx")`
-7. Report success: "已成功将 'Document.xlsx' 上传到知识库 '我的知识库'"
+1. Call `get_dingtalk_mcp_config(service_type="docs")` to verify configuration
+2. Parse URL to extract nodeId: `nYMoO1rWx23xv0mxSQN4qbNdJ47Z3je9`
+3. Call `get_document_info(nodeId)` to get file metadata
+4. Call `download_file(nodeId)` to get download URL
+5. Use sandbox `exec` to download file: `curl -o /tmp/file.xlsx "<download_url>"`
+6. Read file and encode to base64
+7. Call `create_document(knowledge_base_id=..., name="...", file_base64=..., file_extension="xlsx")`
+8. Report success: "已成功将 'Document.xlsx' 上传到知识库 '我的知识库'"
 
 ## Notes
 
 - This skill requires DingTalk MCP to be properly configured in user preferences
+- Use `get_dingtalk_mcp_config` to verify configuration before attempting file operations
 - The user must have access to the source DingTalk file
 - The user must have write permission to the target knowledge base
 - File size limits apply based on system configuration
