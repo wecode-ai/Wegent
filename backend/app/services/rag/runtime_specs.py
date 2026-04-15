@@ -1,7 +1,12 @@
 from typing import Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.services.knowledge.splitter_config import (
+    NormalizedSplitterConfig,
+    build_runtime_default_splitter_config,
+    normalize_runtime_splitter_config,
+)
 from shared.models import (
     RemoteKnowledgeBaseQueryConfig,
     RuntimeEmbeddingModelConfig,
@@ -46,8 +51,18 @@ class IndexRuntimeSpec(RuntimeSpecModel):
     retriever_config: RuntimeRetrieverConfig | None = None
     embedding_model_config: RuntimeEmbeddingModelConfig | None = None
     index_families: list[str] = Field(default_factory=lambda: ["chunk_vector"])
-    splitter_config: Optional[dict] = None
+    splitter_config: NormalizedSplitterConfig = Field(
+        default_factory=build_runtime_default_splitter_config
+    )
     user_name: Optional[str] = None
+
+    @field_validator("splitter_config", mode="before")
+    @classmethod
+    def normalize_splitter_config_for_runtime(
+        cls,
+        value: dict | BaseModel | None,
+    ) -> NormalizedSplitterConfig:
+        return normalize_runtime_splitter_config(value)
 
 
 QueryKnowledgeBaseRuntimeConfig = RemoteKnowledgeBaseQueryConfig
@@ -77,6 +92,18 @@ class DeleteRuntimeSpec(RuntimeSpecModel):
     index_owner_user_id: int
     retriever_config: RuntimeRetrieverConfig
     enabled_index_families: list[str] = Field(default_factory=lambda: ["chunk_vector"])
+
+
+class PurgeKnowledgeRuntimeSpec(RuntimeSpecModel):
+    knowledge_base_id: int
+    index_owner_user_id: int
+    retriever_config: RuntimeRetrieverConfig
+
+
+class DropKnowledgeIndexRuntimeSpec(RuntimeSpecModel):
+    knowledge_base_id: int
+    index_owner_user_id: int
+    retriever_config: RuntimeRetrieverConfig
 
 
 class ListChunksRuntimeSpec(RuntimeSpecModel):

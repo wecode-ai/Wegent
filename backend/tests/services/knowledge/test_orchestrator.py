@@ -956,6 +956,61 @@ class TestKnowledgeOrchestrator:
         mock_delay.assert_called_once()
         assert mock_delay.call_args.kwargs["index_generation"] == 7
 
+    def test_schedule_indexing_celery_preserves_legacy_splitter_config(
+        self, orchestrator, mock_db, mock_user
+    ):
+        """Test enqueueing keeps the raw legacy splitter config payload unchanged."""
+        mock_kb = MagicMock()
+        mock_kb.id = 1
+        mock_kb.namespace = "default"
+        mock_kb.json = {
+            "spec": {
+                "retrievalConfig": {
+                    "retriever_name": "retriever-1",
+                    "retriever_namespace": "default",
+                    "embedding_config": {
+                        "model_name": "embedding-1",
+                        "model_namespace": "default",
+                    },
+                }
+            }
+        }
+
+        mock_document = MagicMock()
+        mock_document.id = 10
+        mock_document.attachment_id = 20
+
+        legacy_splitter_config = {"type": "smart", "chunk_size": 1536}
+
+        with patch(
+            "app.services.knowledge.index_state_machine.prepare_document_index_enqueue"
+        ) as mock_prepare:
+            mock_prepare.return_value = SimpleNamespace(
+                should_enqueue=True,
+                generation=7,
+                reason="scheduled",
+                previous_status="failed",
+            )
+
+            with patch(
+                "app.tasks.knowledge_tasks.index_document_task.delay"
+            ) as mock_delay:
+                mock_delay.return_value = SimpleNamespace(id="celery-task-1")
+
+                result = orchestrator._schedule_indexing_celery(
+                    db=mock_db,
+                    knowledge_base=mock_kb,
+                    document=mock_document,
+                    user=mock_user,
+                    splitter_config=legacy_splitter_config,
+                )
+
+        assert result["scheduled"] is True
+        assert (
+            mock_delay.call_args.kwargs["splitter_config_dict"]
+            == legacy_splitter_config
+        )
+
     def test_schedule_indexing_celery_raises_when_generation_missing(
         self, orchestrator, mock_db, mock_user
     ):
@@ -1096,6 +1151,58 @@ class TestKnowledgeOrchestrator:
         assert result["message"] == "Reindex started"
         assert result["index_generation"] == 8
         assert mock_schedule.call_args.kwargs["allow_if_success"] is True
+
+    def test_reindex_document_preserves_raw_splitter_config_when_rescheduling(
+        self, orchestrator, mock_db, mock_user
+    ):
+        """Test reindex scheduling keeps persisted legacy splitter config unchanged."""
+        raw_splitter_config = {
+            "type": "smart",
+            "chunk_size": 1536,
+        }
+        mock_document = MagicMock()
+        mock_document.id = 1
+        mock_document.kind_id = 2
+        mock_document.source_type = DocumentSourceType.FILE.value
+        mock_document.file_extension = "md"
+        mock_document.file_size = 1024
+        mock_document.splitter_config = raw_splitter_config
+
+        mock_kb = MagicMock()
+
+        with patch.object(mock_db, "query") as mock_query:
+            mock_query.return_value.filter.return_value.first.return_value = (
+                mock_document
+            )
+            with patch(
+                "app.services.knowledge.orchestrator.KnowledgeService.get_knowledge_base",
+                return_value=(mock_kb, True),
+            ):
+                with patch(
+                    "app.services.knowledge.orchestrator.KnowledgeService.can_manage_knowledge_document",
+                    return_value=True,
+                ):
+                    with patch(
+                        "app.services.knowledge.indexing.extract_rag_config_from_knowledge_base",
+                        return_value=MagicMock(),
+                    ):
+                        with patch.object(
+                            orchestrator,
+                            "_schedule_indexing_celery",
+                            return_value={
+                                "scheduled": True,
+                                "reason": "scheduled",
+                                "task_id": "task-1",
+                                "index_generation": 8,
+                            },
+                        ) as mock_schedule:
+                            orchestrator.reindex_document(
+                                db=mock_db,
+                                user=mock_user,
+                                document_id=1,
+                            )
+
+        assert mock_schedule.call_args.kwargs["splitter_config"] == raw_splitter_config
 
 
 class TestIndexingPolicy:

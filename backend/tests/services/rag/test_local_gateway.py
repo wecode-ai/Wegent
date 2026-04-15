@@ -10,9 +10,11 @@ from app.services.rag.local_gateway import LocalRagGateway
 from app.services.rag.runtime_specs import (
     ConnectionTestRuntimeSpec,
     DeleteRuntimeSpec,
+    DropKnowledgeIndexRuntimeSpec,
     IndexRuntimeSpec,
     IndexSource,
     ListChunksRuntimeSpec,
+    PurgeKnowledgeRuntimeSpec,
     QueryRuntimeSpec,
 )
 from shared.models import RuntimeRetrieverConfig
@@ -77,6 +79,48 @@ async def test_local_gateway_delete_document_index_delegates_to_delete_executor(
 
     assert result == {"deleted": True}
     gateway._delete_executor.assert_awaited_once_with(spec, db=db)
+
+
+@pytest.mark.asyncio
+async def test_local_gateway_purge_knowledge_index_delegates_to_purge_executor():
+    gateway = LocalRagGateway()
+    gateway._purge_executor = AsyncMock(return_value={"status": "deleted", "total": 5})
+    db = MagicMock()
+    spec = PurgeKnowledgeRuntimeSpec(
+        knowledge_base_id=1,
+        index_owner_user_id=7,
+        retriever_config=RuntimeRetrieverConfig(
+            name="retriever-a",
+            namespace="default",
+            storage_config={"type": "qdrant"},
+        ),
+    )
+
+    result = await gateway.purge_knowledge_index(spec, db=db)
+
+    assert result == {"status": "deleted", "total": 5}
+    gateway._purge_executor.assert_awaited_once_with(spec, db=db)
+
+
+@pytest.mark.asyncio
+async def test_local_gateway_drop_knowledge_index_delegates_to_drop_executor():
+    gateway = LocalRagGateway()
+    gateway._drop_executor = AsyncMock(return_value={"status": "dropped"})
+    db = MagicMock()
+    spec = DropKnowledgeIndexRuntimeSpec(
+        knowledge_base_id=1,
+        index_owner_user_id=7,
+        retriever_config=RuntimeRetrieverConfig(
+            name="retriever-a",
+            namespace="default",
+            storage_config={"type": "qdrant"},
+        ),
+    )
+
+    result = await gateway.drop_knowledge_index(spec, db=db)
+
+    assert result == {"status": "dropped"}
+    gateway._drop_executor.assert_awaited_once_with(spec, db=db)
 
 
 @pytest.mark.asyncio

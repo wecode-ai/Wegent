@@ -17,15 +17,19 @@ from app.services.rag.content_refs import build_content_ref_for_attachment
 from app.services.rag.runtime_specs import (
     ConnectionTestRuntimeSpec,
     DeleteRuntimeSpec,
+    DropKnowledgeIndexRuntimeSpec,
     IndexRuntimeSpec,
     ListChunksRuntimeSpec,
+    PurgeKnowledgeRuntimeSpec,
     QueryRuntimeSpec,
 )
 from shared.models import (
     RemoteDeleteDocumentIndexRequest,
+    RemoteDropKnowledgeIndexRequest,
     RemoteIndexRequest,
     RemoteListChunksRequest,
     RemoteListChunksResponse,
+    RemotePurgeKnowledgeIndexRequest,
     RemoteQueryRequest,
     RemoteQueryResponse,
     RemoteRagError,
@@ -206,6 +210,34 @@ class RemoteRagGateway:
             enabled_index_families=spec.enabled_index_families,
         )
         return await self._post_model("/internal/rag/delete-document-index", payload)
+
+    async def purge_knowledge_index(
+        self,
+        spec: PurgeKnowledgeRuntimeSpec,
+        *,
+        db: Session,
+    ) -> dict[str, Any]:
+        del db
+        payload = RemotePurgeKnowledgeIndexRequest(
+            knowledge_base_id=spec.knowledge_base_id,
+            index_owner_user_id=spec.index_owner_user_id,
+            retriever_config=spec.retriever_config,
+        )
+        return await self._post_model("/internal/rag/purge-knowledge-index", payload)
+
+    async def drop_knowledge_index(
+        self,
+        spec: DropKnowledgeIndexRuntimeSpec,
+        *,
+        db: Session,
+    ) -> dict[str, Any]:
+        del db
+        payload = RemoteDropKnowledgeIndexRequest(
+            knowledge_base_id=spec.knowledge_base_id,
+            index_owner_user_id=spec.index_owner_user_id,
+            retriever_config=spec.retriever_config,
+        )
+        return await self._post_model("/internal/rag/drop-knowledge-index", payload)
 
     async def list_chunks(
         self,

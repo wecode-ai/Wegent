@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
 import logging
 
 from sqlalchemy.orm import Session
@@ -13,10 +14,15 @@ from app.services.rag.embedding.factory import (
     create_embedding_model_from_crd,
     create_embedding_model_from_runtime_config,
 )
-from app.services.rag.runtime_specs import DeleteRuntimeSpec, IndexRuntimeSpec
+from app.services.rag.runtime_specs import (
+    DeleteRuntimeSpec,
+    DropKnowledgeIndexRuntimeSpec,
+    IndexRuntimeSpec,
+    PurgeKnowledgeRuntimeSpec,
+)
 from knowledge_engine.services import DocumentService as EngineDocumentService
 from knowledge_engine.storage.factory import create_storage_backend_from_runtime_config
-from shared.models import RuntimeRetrieverConfig
+from shared.models import RuntimeRetrieverConfig, serialize_splitter_config
 from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
@@ -44,6 +50,17 @@ def _extract_delete_document_attributes(
     return {
         "rag.knowledge_base_id": spec.knowledge_base_id,
         "rag.document_ref": spec.document_ref,
+        "rag.index_owner_user_id": spec.index_owner_user_id,
+    }
+
+
+def _extract_knowledge_index_attributes(
+    spec: PurgeKnowledgeRuntimeSpec | DropKnowledgeIndexRuntimeSpec,
+    *,
+    db: Session | None = None,
+) -> dict[str, str | int]:
+    return {
+        "rag.knowledge_base_id": spec.knowledge_base_id,
         "rag.index_owner_user_id": spec.index_owner_user_id,
     }
 
@@ -124,7 +141,7 @@ async def index_document_local(
             file_extension=file_extension,
             embed_model=embed_model,
             user_id=spec.index_owner_user_id,
-            splitter_config=spec.splitter_config,
+            splitter_config=serialize_splitter_config(spec.splitter_config),
             document_id=spec.document_id,
         )
 
@@ -159,6 +176,44 @@ async def delete_document_index_local(
     return await service.delete_document(
         knowledge_id=str(spec.knowledge_base_id),
         doc_ref=spec.document_ref,
+        user_id=spec.index_owner_user_id,
+    )
+
+
+@trace_async(
+    span_name="rag.purge_knowledge_index_local",
+    tracer_name="backend.services.rag",
+    extract_attributes=_extract_knowledge_index_attributes,
+)
+async def purge_knowledge_index_local(
+    spec: PurgeKnowledgeRuntimeSpec,
+    *,
+    db: Session,
+) -> dict:
+    del db
+    storage_backend = create_storage_backend_from_runtime_config(spec.retriever_config)
+    return await asyncio.to_thread(
+        storage_backend.delete_knowledge,
+        knowledge_id=str(spec.knowledge_base_id),
+        user_id=spec.index_owner_user_id,
+    )
+
+
+@trace_async(
+    span_name="rag.drop_knowledge_index_local",
+    tracer_name="backend.services.rag",
+    extract_attributes=_extract_knowledge_index_attributes,
+)
+async def drop_knowledge_index_local(
+    spec: DropKnowledgeIndexRuntimeSpec,
+    *,
+    db: Session,
+) -> dict:
+    del db
+    storage_backend = create_storage_backend_from_runtime_config(spec.retriever_config)
+    return await asyncio.to_thread(
+        storage_backend.drop_knowledge_index,
+        knowledge_id=str(spec.knowledge_base_id),
         user_id=spec.index_owner_user_id,
     )
 

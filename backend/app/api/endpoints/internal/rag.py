@@ -34,9 +34,11 @@ from app.services.rag.remote_gateway import (
 from app.services.rag.retrieval_service import RetrievalService
 from app.services.rag.runtime_resolver import RagRuntimeResolver
 from shared.models import (
+    RemoteDropKnowledgeIndexRequest,
     RemoteListChunkRecord,
     RemoteListChunksRequest,
     RemoteListChunksResponse,
+    RemotePurgeKnowledgeIndexRequest,
 )
 
 # Constants for document reading pagination
@@ -250,6 +252,7 @@ async def _execute_query_with_remote_fallback(runtime_spec, db: Session):
                 "knowledge_base_configs": runtime_resolver.build_query_knowledge_base_configs(
                     db=db,
                     knowledge_base_ids=runtime_spec.knowledge_base_ids,
+                    current_user_id=runtime_spec.user_id,
                     user_name=runtime_spec.user_name,
                 )
             }
@@ -687,6 +690,58 @@ async def get_all_chunks(
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error("[internal_rag] All chunks failed: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/purge-knowledge-index")
+async def purge_knowledge_index(
+    request: RemotePurgeKnowledgeIndexRequest,
+    db: Session = Depends(get_db),
+):
+    """Delete all indexed chunks for one knowledge base from the local runtime."""
+    try:
+        runtime_spec = runtime_resolver.build_internal_purge_index_runtime_spec(
+            db=db,
+            knowledge_base_id=request.knowledge_base_id,
+            index_owner_user_id=request.index_owner_user_id,
+            retriever_config=request.retriever_config.model_dump(mode="python"),
+        )
+        return await LocalRagGateway().purge_knowledge_index(runtime_spec, db=db)
+    except ValueError as e:
+        logger.warning("[internal_rag] Purge knowledge index error: %s", e)
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(
+            "[internal_rag] Purge knowledge index failed: %s",
+            e,
+            exc_info=True,
+        )
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/drop-knowledge-index")
+async def drop_knowledge_index(
+    request: RemoteDropKnowledgeIndexRequest,
+    db: Session = Depends(get_db),
+):
+    """Physically drop the dedicated index/collection for one knowledge base."""
+    try:
+        runtime_spec = runtime_resolver.build_internal_drop_index_runtime_spec(
+            db=db,
+            knowledge_base_id=request.knowledge_base_id,
+            index_owner_user_id=request.index_owner_user_id,
+            retriever_config=request.retriever_config.model_dump(mode="python"),
+        )
+        return await LocalRagGateway().drop_knowledge_index(runtime_spec, db=db)
+    except ValueError as e:
+        logger.warning("[internal_rag] Drop knowledge index error: %s", e)
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(
+            "[internal_rag] Drop knowledge index failed: %s",
+            e,
+            exc_info=True,
+        )
         raise HTTPException(status_code=500, detail=str(e))
 
 

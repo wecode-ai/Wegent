@@ -17,34 +17,40 @@ class KnowledgeBaseIndexInfo:
     summary_enabled: bool = False
 
 
-def is_organization_namespace(db: Session, namespace: str) -> bool:
-    """Check if a namespace is an organization namespace."""
-    from app.services.knowledge.namespace_utils import (
-        is_organization_namespace as namespace_helper,
-    )
-
-    return namespace_helper(db, namespace)
-
-
 def build_kb_index_info(
     db: Session,
     knowledge_base: Kind,
     current_user_id: int,
 ) -> KnowledgeBaseIndexInfo:
-    """Build KB index runtime info from a loaded knowledge base."""
+    """Build KB index runtime info from a loaded knowledge base.
+
+    Index ownership is intentionally bound to the persisted knowledge-base owner,
+    not to the current caller. This keeps storage resolution stable across
+    personal, group, and organization namespaces: collaborators may trigger
+    indexing or retrieval, but the runtime still resolves retriever / embedding /
+    storage credentials under the knowledge base's owner scope.
+    """
+    del db
+    del current_user_id
     spec = (knowledge_base.json or {}).get("spec", {})
     summary_enabled = spec.get("summaryEnabled", False)
 
-    if knowledge_base.namespace == "default":
-        index_owner_user_id = current_user_id
-    elif is_organization_namespace(db, knowledge_base.namespace):
-        index_owner_user_id = current_user_id
-    else:
-        index_owner_user_id = knowledge_base.user_id
-
     return KnowledgeBaseIndexInfo(
-        index_owner_user_id=index_owner_user_id,
+        index_owner_user_id=knowledge_base.user_id,
         summary_enabled=summary_enabled,
+    )
+
+
+def get_kb_index_info_by_record(
+    db: Session,
+    knowledge_base: Kind,
+    current_user_id: int,
+) -> KnowledgeBaseIndexInfo:
+    """Return KB index runtime info for an already loaded knowledge base record."""
+    return build_kb_index_info(
+        db=db,
+        knowledge_base=knowledge_base,
+        current_user_id=current_user_id,
     )
 
 

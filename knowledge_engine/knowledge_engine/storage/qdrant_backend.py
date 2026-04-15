@@ -304,6 +304,7 @@ class QdrantBackend(BaseStorageBackend):
 
         # Delete nodes using LlamaIndex API
         vector_store.delete_nodes(filters=filters)
+        self.delete_parent_nodes(knowledge_id, doc_ref, **kwargs)
 
         return {
             "doc_ref": doc_ref,
@@ -311,6 +312,111 @@ class QdrantBackend(BaseStorageBackend):
             "deleted_chunks": deleted_count,
             "status": "deleted",
         }
+
+    def delete_knowledge(self, knowledge_id: str, **kwargs) -> Dict:
+        """Delete all chunks and parent nodes for a knowledge base."""
+        collection_name = self.get_index_name(knowledge_id, **kwargs)
+        parent_collection_name = self.get_parent_store_name(knowledge_id, **kwargs)
+
+        deleted_chunks = self._delete_collection_by_knowledge_id(
+            collection_name,
+            knowledge_id,
+        )
+        deleted_parent_nodes = self._delete_collection_by_knowledge_id(
+            parent_collection_name,
+            knowledge_id,
+        )
+
+        return {
+            "knowledge_id": knowledge_id,
+            "deleted_chunks": deleted_chunks,
+            "deleted_parent_nodes": deleted_parent_nodes,
+            "status": "deleted",
+        }
+
+    def drop_knowledge_index(self, knowledge_id: str, **kwargs) -> Dict:
+        """Physically drop the backing collection for a dedicated KB strategy."""
+        self._ensure_can_drop_physical_index()
+        collection_name = self.get_index_name(knowledge_id, **kwargs)
+        parent_collection_name = self.get_parent_store_name(knowledge_id, **kwargs)
+
+        if self.client.collection_exists(collection_name):
+            self.client.delete_collection(collection_name=collection_name)
+
+        dropped_parent_collection = False
+        if self.client.collection_exists(parent_collection_name):
+            self.client.delete_collection(collection_name=parent_collection_name)
+            dropped_parent_collection = True
+
+        return {
+            "knowledge_id": knowledge_id,
+            "collection_name": collection_name,
+            "dropped_parent_collection": dropped_parent_collection,
+            "status": "dropped",
+        }
+
+    def delete_parent_nodes(self, knowledge_id: str, doc_ref: str, **kwargs) -> int:
+        collection_name = self.get_parent_store_name(knowledge_id, **kwargs)
+        if not self.client.collection_exists(collection_name):
+            return 0
+
+        scroll_filter = qdrant_models.Filter(
+            must=[
+                qdrant_models.FieldCondition(
+                    key="knowledge_id",
+                    match=qdrant_models.MatchValue(value=knowledge_id),
+                ),
+                qdrant_models.FieldCondition(
+                    key="doc_ref",
+                    match=qdrant_models.MatchValue(value=doc_ref),
+                ),
+            ]
+        )
+        self.client.delete(
+            collection_name=collection_name,
+            points_selector=qdrant_models.FilterSelector(filter=scroll_filter),
+            wait=True,
+        )
+        return 0
+
+    def _delete_collection_by_knowledge_id(
+        self,
+        collection_name: str,
+        knowledge_id: str,
+    ) -> int:
+        if not self.client.collection_exists(collection_name):
+            return 0
+
+        scroll_filter = qdrant_models.Filter(
+            must=[
+                qdrant_models.FieldCondition(
+                    key="knowledge_id",
+                    match=qdrant_models.MatchValue(value=knowledge_id),
+                )
+            ]
+        )
+
+        all_points = []
+        offset = None
+        while True:
+            results, offset = self.client.scroll(
+                collection_name=collection_name,
+                scroll_filter=scroll_filter,
+                limit=1000,
+                offset=offset,
+                with_payload=True,
+                with_vectors=False,
+            )
+            all_points.extend(results)
+            if offset is None or len(results) == 0:
+                break
+
+        self.client.delete(
+            collection_name=collection_name,
+            points_selector=qdrant_models.FilterSelector(filter=scroll_filter),
+            wait=True,
+        )
+        return len(all_points)
 
     def get_document(self, knowledge_id: str, doc_ref: str, **kwargs) -> Dict:
         """
@@ -576,3 +682,91 @@ class QdrantBackend(BaseStorageBackend):
                 f"[Qdrant] Failed to get all chunks for KB {knowledge_id}: {e}"
             )
             return []
+
+    def save_parent_nodes(
+        self,
+        knowledge_id: str,
+        parent_nodes: List[BaseNode],
+        **kwargs,
+    ) -> Dict[str, Any]:
+        if not parent_nodes:
+            return {"stored_count": 0}
+
+        collection_name = self.get_parent_store_name(knowledge_id, **kwargs)
+        if not self.client.collection_exists(collection_name):
+            self.client.create_collection(
+                collection_name=collection_name,
+                vectors_config=qdrant_models.VectorParams(
+                    size=1,
+                    distance=qdrant_models.Distance.COSINE,
+                ),
+            )
+        else:
+            doc_ref = parent_nodes[0].metadata.get("doc_ref")
+            if doc_ref:
+                self.delete_parent_nodes(
+                    knowledge_id=knowledge_id,
+                    doc_ref=doc_ref,
+                    **kwargs,
+                )
+
+        points = [
+            qdrant_models.PointStruct(
+                id=node.node_id,
+                vector=[0.0],
+                payload={
+                    "parent_node_id": node.node_id,
+                    "knowledge_id": knowledge_id,
+                    "doc_ref": node.metadata.get("doc_ref"),
+                    "source_file": node.metadata.get("source_file"),
+                    "content": node.text,
+                    "title": node.metadata.get("source_file", ""),
+                    "metadata": node.metadata,
+                },
+            )
+            for node in parent_nodes
+        ]
+        self.client.upsert(collection_name=collection_name, points=points, wait=True)
+        return {"stored_count": len(parent_nodes)}
+
+    def get_parent_nodes(
+        self,
+        knowledge_id: str,
+        parent_node_ids: List[str],
+        **kwargs,
+    ) -> Dict[str, Dict[str, Any]]:
+        collection_name = self.get_parent_store_name(knowledge_id, **kwargs)
+        if not parent_node_ids or not self.client.collection_exists(collection_name):
+            return {}
+
+        parent_records: Dict[str, Dict[str, Any]] = {}
+        for parent_node_id in parent_node_ids:
+            scroll_filter = qdrant_models.Filter(
+                must=[
+                    qdrant_models.FieldCondition(
+                        key="knowledge_id",
+                        match=qdrant_models.MatchValue(value=knowledge_id),
+                    ),
+                    qdrant_models.FieldCondition(
+                        key="parent_node_id",
+                        match=qdrant_models.MatchValue(value=parent_node_id),
+                    ),
+                ]
+            )
+            records, _ = self.client.scroll(
+                collection_name=collection_name,
+                scroll_filter=scroll_filter,
+                limit=1,
+                with_payload=True,
+                with_vectors=False,
+            )
+            if not records:
+                continue
+            payload = records[0].payload or {}
+            parent_records[parent_node_id] = {
+                "content": payload.get("content", ""),
+                "title": payload.get("title", ""),
+                "metadata": payload.get("metadata", {}),
+            }
+
+        return parent_records

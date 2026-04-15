@@ -16,8 +16,23 @@ import {
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
 import { updateDocument } from '@/apis/knowledge'
-import type { KnowledgeDocument, SplitterConfig } from '@/types/knowledge'
+import {
+  DEFAULT_FLAT_CHUNK_CONFIG,
+  DEFAULT_SPLITTER_CONFIG,
+  normalizeSplitterConfigForDisplay,
+  type KnowledgeDocument,
+  type SplitterConfig,
+} from '@/types/knowledge'
 import { SplitterSettingsSection } from './SplitterSettingsSection'
+
+function buildDefaultSplitterConfig(): Partial<SplitterConfig> {
+  return {
+    ...DEFAULT_SPLITTER_CONFIG,
+    flat_config: {
+      ...DEFAULT_FLAT_CHUNK_CONFIG,
+    },
+  }
+}
 
 interface EditDocumentDialogProps {
   open: boolean
@@ -34,12 +49,9 @@ export function EditDocumentDialog({
 }: EditDocumentDialogProps) {
   const { t } = useTranslation()
   const [name, setName] = useState('')
-  const [splitterConfig, setSplitterConfig] = useState<Partial<SplitterConfig>>({
-    type: 'sentence',
-    separator: '\n\n',
-    chunk_size: 1024,
-    chunk_overlap: 50,
-  })
+  const [splitterConfig, setSplitterConfig] = useState<Partial<SplitterConfig>>(
+    buildDefaultSplitterConfig
+  )
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [showAdvanced, setShowAdvanced] = useState(false)
@@ -53,39 +65,11 @@ export function EditDocumentDialog({
   useEffect(() => {
     if (document) {
       setName(document.name)
-      // Load existing splitter_config or use defaults
-      if (document.splitter_config) {
-        const config = document.splitter_config
-        if (config.type === 'semantic') {
-          setSplitterConfig({
-            type: 'semantic',
-            buffer_size: config.buffer_size ?? 1,
-            breakpoint_percentile_threshold: config.breakpoint_percentile_threshold ?? 95,
-          })
-        } else if (config.type === 'smart') {
-          // Smart splitter - no additional config needed
-          setSplitterConfig({
-            type: 'smart',
-          })
-        } else {
-          // Default to sentence splitter
-          setSplitterConfig({
-            type: 'sentence',
-            separator: config.type === 'sentence' ? (config.separator ?? '\n\n') : '\n\n',
-            chunk_size: config.type === 'sentence' ? (config.chunk_size ?? 1024) : 1024,
-            chunk_overlap: config.type === 'sentence' ? (config.chunk_overlap ?? 50) : 50,
-          })
-        }
-      } else {
-        setSplitterConfig({
-          type: 'sentence',
-          separator: '\n\n',
-          chunk_size: 1024,
-          chunk_overlap: 50,
-        })
-      }
+      setSplitterConfig(normalizeSplitterConfigForDisplay(document.splitter_config))
       setError('')
       setShowAdvanced(false) // Reset to collapsed state
+    } else {
+      setSplitterConfig(buildDefaultSplitterConfig())
     }
   }, [document])
   const handleSubmit = async (e: React.FormEvent) => {

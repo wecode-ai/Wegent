@@ -69,6 +69,13 @@ def _build_attachment_filename(name: str, file_extension: str) -> str:
     return f"{name}{suffix}"
 
 
+def _get_delete_gateway():
+    """Load the delete gateway lazily to avoid import-time coupling."""
+    from app.services.rag.gateway_factory import get_delete_gateway
+
+    return get_delete_gateway()
+
+
 @dataclass
 class DocumentDeleteResult:
     """Result of a document deletion operation.
@@ -1022,7 +1029,9 @@ class KnowledgeService:
             file_size=data.file_size,
             user_id=user_id,
             splitter_config=(
-                data.splitter_config.model_dump() if data.splitter_config else {}
+                data.splitter_config.model_dump(exclude_none=True)
+                if data.splitter_config
+                else {}
             ),  # Save splitter_config with default {}
             source_type=data.source_type.value if data.source_type else "file",
             source_config=data.source_config if data.source_config else {},
@@ -1173,7 +1182,7 @@ class KnowledgeService:
             doc.status = DocumentStatus(data.status.value)
 
         if data.splitter_config is not None:
-            doc.splitter_config = data.splitter_config.model_dump()
+            doc.splitter_config = data.splitter_config.model_dump(exclude_none=True)
 
         db.commit()
         db.refresh(doc)
@@ -1203,10 +1212,10 @@ class KnowledgeService:
         import logging
 
         from app.services.context import context_service
-        from app.services.rag.gateway_factory import get_delete_gateway
+        from app.services.knowledge.index_runtime import get_kb_index_info_by_record
 
         logger = logging.getLogger(__name__)
-        rag_gateway = get_delete_gateway()
+        rag_gateway = _get_delete_gateway()
 
         doc = KnowledgeService.get_document(db, document_id, user_id)
         if not doc:
@@ -1244,7 +1253,11 @@ class KnowledgeService:
 
                 if retriever_name:
                     try:
-                        index_owner_user_id = kb.user_id
+                        kb_info = get_kb_index_info_by_record(
+                            db=db,
+                            knowledge_base=kb,
+                            current_user_id=user_id,
+                        )
 
                         from app.services.rag.runtime_resolver import RagRuntimeResolver
 
@@ -1253,7 +1266,7 @@ class KnowledgeService:
                                 db=db,
                                 knowledge_base_id=kind_id,
                                 document_ref=doc_ref,
-                                index_owner_user_id=index_owner_user_id,
+                                index_owner_user_id=kb_info.index_owner_user_id,
                             )
                         )
                         result = asyncio.run(
@@ -1261,17 +1274,26 @@ class KnowledgeService:
                                 delete_runtime_spec, db=db
                             )
                         )
-                        if result.get("status") == "success":
+                        delete_status = result.get("status")
+                        if delete_status in {"success", "deleted"}:
                             logger.info(
-                                f"Deleted RAG index for doc_ref '{doc_ref}' in knowledge base {kind_id} "
-                                f"(index_owner_user_id={index_owner_user_id})"
+                                "Deleted RAG index for doc_ref '%s' in knowledge base %s "
+                                "(index_owner_user_id=%s, status=%s, deleted_chunks=%s, "
+                                "deleted_parent_nodes=%s, index_name=%s)",
+                                doc_ref,
+                                kind_id,
+                                kb_info.index_owner_user_id,
+                                delete_status,
+                                result.get("deleted_chunks"),
+                                result.get("deleted_parent_nodes"),
+                                result.get("index_name"),
                             )
                         else:
                             logger.warning(
                                 "Skipped RAG index deletion for doc_ref '%s' in knowledge base %s: %s",
                                 doc_ref,
                                 kind_id,
-                                result.get("reason", result.get("status", "unknown")),
+                                result.get("reason", delete_status or "unknown"),
                             )
                     except Exception as e:
                         # Log error but don't fail the document deletion

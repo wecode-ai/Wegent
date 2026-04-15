@@ -5,8 +5,10 @@ from sqlalchemy.orm import Session
 from app.services.rag.runtime_specs import (
     ConnectionTestRuntimeSpec,
     DeleteRuntimeSpec,
+    DropKnowledgeIndexRuntimeSpec,
     IndexRuntimeSpec,
     ListChunksRuntimeSpec,
+    PurgeKnowledgeRuntimeSpec,
     QueryRuntimeSpec,
 )
 
@@ -29,6 +31,20 @@ class RagGateway(Protocol):
     async def delete_document_index(
         self,
         spec: DeleteRuntimeSpec,
+        *,
+        db: Session,
+    ) -> dict: ...
+
+    async def purge_knowledge_index(
+        self,
+        spec: PurgeKnowledgeRuntimeSpec,
+        *,
+        db: Session,
+    ) -> dict: ...
+
+    async def drop_knowledge_index(
+        self,
+        spec: DropKnowledgeIndexRuntimeSpec,
         *,
         db: Session,
     ) -> dict: ...
