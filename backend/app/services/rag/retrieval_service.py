@@ -302,10 +302,10 @@ class RetrievalService:
         return "rag_retrieval"
 
     @trace_async(
-        span_name="rag.retrieve_for_chat_shell",
+        span_name="rag.retrieve_with_routing",
         tracer_name="backend.services.rag",
     )
-    async def retrieve_for_chat_shell(
+    async def retrieve_with_routing(
         self,
         query: str,
         knowledge_base_ids: list[int],
@@ -324,11 +324,32 @@ class RetrievalService:
         max_direct_chunks: int = CHAT_SHELL_DEFAULT_MAX_DIRECT_CHUNKS,
         restricted_mode: bool = False,
     ) -> Dict[str, Any]:
-        """Retrieve KB data for chat_shell with Backend-side routing.
+        """Retrieve knowledge with automatic routing between direct injection and RAG.
 
-        This method centralizes the coarse routing decision that was previously made
-        in chat_shell: whether to fetch all chunks for direct injection, or perform
-        regular RAG retrieval.
+        This method centralizes the routing decision: whether to fetch all chunks
+        for direct injection, or perform regular RAG retrieval based on context
+        window capacity and content size.
+
+        Args:
+            query: Search query text.
+            knowledge_base_ids: List of knowledge base IDs to search.
+            db: Database session.
+            max_results: Maximum number of results to return per KB.
+            document_ids: Optional list of document IDs to filter.
+            metadata_condition: Optional metadata filtering conditions.
+            knowledge_base_configs: Optional pre-built KB runtime configs.
+            user_name: User name for embedding API headers.
+            context_window: Model context window size for routing decision.
+            route_mode: Routing strategy - "auto", "direct_injection", or "rag_retrieval".
+            user_id: User ID for restricted mode checks.
+            used_context_tokens: Tokens already used in conversation.
+            reserved_output_tokens: Tokens reserved for model output.
+            context_buffer_ratio: Safety buffer ratio for context.
+            max_direct_chunks: Maximum chunks allowed for direct injection.
+            restricted_mode: Whether to apply restricted search policies.
+
+        Returns:
+            Dict with mode, records, total count, and estimated tokens.
         """
         set_span_attribute("rag.route_mode", route_mode)
         set_span_attribute("rag.kb_count", len(knowledge_base_ids))
@@ -439,7 +460,7 @@ class RetrievalService:
                     direct_records.append(
                         {
                             "content": chunk.get("content", ""),
-                            "score": None,
+                            "score": 1.0,  # Direct injection returns all chunks, use max score
                             "title": chunk.get("title", "Unknown"),
                             "metadata": chunk.get("metadata"),
                             "knowledge_base_id": kb_id,
@@ -814,3 +835,7 @@ class RetrievalService:
             )
 
         return chunks
+
+
+# Backward compatibility alias
+retrieve_for_chat_shell = RetrievalService.retrieve_with_routing

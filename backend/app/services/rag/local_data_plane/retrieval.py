@@ -43,7 +43,7 @@ async def query_local(
 ) -> dict:
     service = RetrievalService()
     budget = spec.direct_injection_budget or DEFAULT_DIRECT_INJECTION_BUDGET
-    return await service.retrieve_for_chat_shell(
+    return await service.retrieve_with_routing(
         query=spec.query,
         knowledge_base_ids=spec.knowledge_base_ids,
         db=db,

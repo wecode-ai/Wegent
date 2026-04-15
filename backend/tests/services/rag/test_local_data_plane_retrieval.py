@@ -45,7 +45,7 @@ async def test_query_local_uses_shared_default_budget() -> None:
     db = MagicMock()
 
     with patch(
-        "app.services.rag.local_data_plane.retrieval.RetrievalService.retrieve_for_chat_shell",
+        "app.services.rag.local_data_plane.retrieval.RetrievalService.retrieve_with_routing",
         new_callable=AsyncMock,
         return_value={"mode": "rag_retrieval", "records": [], "total": 0},
     ) as mock_retrieve:
