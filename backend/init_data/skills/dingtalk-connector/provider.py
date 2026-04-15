@@ -23,6 +23,8 @@ from typing import Any, Optional
 from langchain_core.callbacks import CallbackManagerForToolRun
 from pydantic import BaseModel, Field
 
+from shared.telemetry.decorators import trace_async
+
 logger = logging.getLogger(__name__)
 
 # Default API base URL for attachment uploads
@@ -220,6 +222,14 @@ Example:
         """Synchronous run - not implemented."""
         raise NotImplementedError("DingTalkDocToKBTool only supports async execution")
 
+    @trace_async(
+        span_name="dingtalk.import",
+        tracer_name="dingtalk-connector",
+        extract_attributes=lambda self, dingtalk_doc_url, knowledge_base_id, **kwargs: {
+            "dingtalk_doc_url": dingtalk_doc_url,
+            "knowledge_base_id": knowledge_base_id,
+        },
+    )
     async def _arun(
         self,
         dingtalk_doc_url: str,
@@ -599,6 +609,7 @@ This is a placeholder for the document content.
             patterns = [
                 r"alidocs\.dingtalk\.com/i/nodes/([a-zA-Z0-9_-]+)",
                 r"alidocs\.dingtalk\.com/i/team/[^/]+/docs/([a-zA-Z0-9_-]+)",
+                r"alidocs\.dingtalk\.com/i/team/[^/]+/wiki/([a-zA-Z0-9_-]+)",
             ]
 
             for pattern in patterns:
@@ -628,16 +639,14 @@ This is a placeholder for the document content.
 
             mcp_url = f"{api_base_url}/mcp/knowledge/sse"
 
-            # Build MCP tool call payload for download_document
+            # Build MCP tool call payload for download_dingtalk_document
             payload = {
                 "jsonrpc": "2.0",
                 "method": "tools/call",
                 "params": {
-                    "name": "download_document",
+                    "name": "download_dingtalk_document",
                     "arguments": {
-                        "doc_id": doc_id,
-                        "url": doc_url,
-                        "format": "markdown",
+                        "doc_url": doc_url,
                     },
                 },
                 "id": 1,

@@ -24,6 +24,7 @@ from app.mcp_server.tools.decorator import build_mcp_tools_dict, mcp_tool
 from app.mcp_server.tools.knowledge import _get_user_from_token
 from app.services.dingtalk.docs_service import dingtalk_docs_service
 from app.services.knowledge.orchestrator import knowledge_orchestrator
+from shared.telemetry.decorators import trace_async, trace_sync
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,13 @@ logger = logging.getLogger(__name__)
     server="knowledge",
     param_descriptions={
         "doc_url": "DingTalk document URL (e.g., https://alidocs.dingtalk.com/i/nodes/xxx)",
+    },
+)
+@trace_async(
+    span_name="mcp.get_dingtalk_document_info",
+    tracer_name="mcp",
+    extract_attributes=lambda token_info, doc_url: {
+        "doc_url": doc_url,
     },
 )
 async def get_dingtalk_document_info(
@@ -97,6 +105,15 @@ async def get_dingtalk_document_info(
         "trigger_summary": "Whether to trigger summary generation (default: True)",
     },
 )
+@trace_async(
+    span_name="mcp.add_dingtalk_doc_to_knowledge",
+    tracer_name="mcp",
+    extract_attributes=lambda token_info, knowledge_base_id, doc_url, **kwargs: {
+        "knowledge_base_id": knowledge_base_id,
+        "doc_url": doc_url,
+        "doc_title": kwargs.get("doc_title"),
+    },
+)
 async def add_dingtalk_doc_to_knowledge(
     token_info: TaskTokenInfo,
     knowledge_base_id: int,
@@ -114,7 +131,6 @@ async def add_dingtalk_doc_to_knowledge(
     The document can be provided directly via parameters or fetched from DingTalk.
 
     File name: {title}.{file_extension}
-    Example: 产品需求文档.md
 
     Args:
         token_info: Task token information containing user context
@@ -140,7 +156,7 @@ async def add_dingtalk_doc_to_knowledge(
             return {"success": False, "error": "User not found"}
 
         # Variables to store document metadata from DingTalk
-        file_extension = "md"
+        file_extension = ""
         update_time = None
 
         # If content not provided, fetch from DingTalk
@@ -162,7 +178,7 @@ async def add_dingtalk_doc_to_knowledge(
                 if not modified_time:
                     modified_time = doc_download.get("modified_time_formatted")
                 # Get file_extension from DingTalk response
-                file_extension = doc_download.get("file_extension", "md")
+                file_extension = doc_download.get("file_extension", "")
                 # Get original updateTime for source_config
                 update_time = doc_download.get("modified_time")
             except Exception as e:
@@ -207,7 +223,7 @@ async def add_dingtalk_doc_to_knowledge(
             db=db,
             user=user,
             knowledge_base_id=knowledge_base_id,
-            name=title,
+            name=filename,
             source_type="text",
             content=doc_content,
             file_extension=file_extension,
@@ -235,6 +251,76 @@ async def add_dingtalk_doc_to_knowledge(
 
 
 @mcp_tool(
+    name="download_dingtalk_document",
+    description="Download a DingTalk document's content from its URL. Returns the document content, title, and metadata without creating a knowledge base document.",
+    server="knowledge",
+    param_descriptions={
+        "doc_url": "DingTalk document URL (e.g., https://alidocs.dingtalk.com/i/nodes/xxx)",
+    },
+)
+@trace_async(
+    span_name="mcp.download_dingtalk_document",
+    tracer_name="mcp",
+    extract_attributes=lambda token_info, doc_url: {
+        "doc_url": doc_url,
+    },
+)
+async def download_dingtalk_document(
+    token_info: TaskTokenInfo,
+    doc_url: str,
+) -> Dict[str, Any]:
+    """
+    Download a DingTalk document's content from its URL.
+
+    This tool downloads the document content from DingTalk and returns it
+    without creating a knowledge base document. Useful for skills that need
+    to process the content before adding it to a knowledge base.
+
+    Args:
+        token_info: Task token information containing user context
+        doc_url: DingTalk document URL
+
+    Returns:
+        Dict with document content and metadata:
+        - success: Whether the operation succeeded
+        - doc_id: Document ID
+        - title: Document title
+        - content: Document content (markdown format)
+        - file_extension: File extension (e.g., "md")
+        - modified_time: ISO format modification time
+        - error: Error message if failed
+    """
+    try:
+        # Get user preferences for MCP config
+        db = SessionLocal()
+        try:
+            user = _get_user_from_token(db, token_info)
+            user_preferences = user.preferences if user else None
+        finally:
+            db.close()
+
+        # Download document content
+        doc_download = await dingtalk_docs_service.download_document_content(
+            doc_url, user_preferences=user_preferences
+        )
+
+        return {
+            "success": True,
+            "doc_id": doc_download.get("doc_id"),
+            "title": doc_download.get("title", "DingTalk Document"),
+            "content": doc_download.get("content", ""),
+            "file_extension": doc_download.get("file_extension", ""),
+            "modified_time": doc_download.get("modified_time"),
+        }
+    except ValueError as e:
+        logger.warning(f"[MCP] download_dingtalk_document validation error: {e}")
+        return {"success": False, "error": str(e)}
+    except Exception as e:
+        logger.error(f"[MCP] download_dingtalk_document error: {e}", exc_info=True)
+        return {"success": False, "error": f"Failed to download document: {e}"}
+
+
+@mcp_tool(
     name="add_dingtalk_doc_with_attachment",
     description="Add a DingTalk document to knowledge base using an existing attachment. This is used after the skill uploads the document as an attachment.",
     server="knowledge",
@@ -244,6 +330,15 @@ async def add_dingtalk_doc_to_knowledge(
         "attachment_id": "Existing attachment ID from upload_attachment tool",
         "trigger_indexing": "Whether to trigger RAG indexing (default: True)",
         "trigger_summary": "Whether to trigger summary generation (default: True)",
+    },
+)
+@trace_sync(
+    span_name="mcp.add_dingtalk_doc_with_attachment",
+    tracer_name="mcp",
+    extract_attributes=lambda token_info, knowledge_base_id, doc_title, attachment_id, **kwargs: {
+        "knowledge_base_id": knowledge_base_id,
+        "doc_title": doc_title,
+        "attachment_id": attachment_id,
     },
 )
 def add_dingtalk_doc_with_attachment(
