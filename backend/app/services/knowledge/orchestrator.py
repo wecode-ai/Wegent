@@ -21,7 +21,7 @@ Architecture:
 
 import base64
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from sqlalchemy.orm import Session
 
@@ -744,6 +744,7 @@ class KnowledgeOrchestrator:
             returned_length=result["returned_length"],
             has_more=result["has_more"],
             kb_id=result["kb_id"],
+            index_status=document.index_status,
         )
 
     async def get_document_detail(
@@ -2111,6 +2112,188 @@ class KnowledgeOrchestrator:
                 "error_code": "REFRESH_FAILED",
                 "error_message": str(e),
             }
+
+    async def retrieve_knowledge(
+        self,
+        *,
+        db: Session,
+        user: User,
+        knowledge_base_id: int,
+        query: str,
+        max_results: int = 10,
+        document_ids: Optional[List[int]] = None,
+        route_mode: Literal["auto", "direct_injection", "rag_retrieval"] = "auto",
+        context_window: int = 128000,
+        used_context_tokens: int = 0,
+        reserved_output_tokens: int = 4096,
+        context_buffer_ratio: float = 0.1,
+        max_direct_chunks: int = 500,
+    ) -> Dict[str, Any]:
+        """Retrieve knowledge with automatic routing and gateway support.
+
+        Unified entry point for MCP tools and Open API. Supports both local and
+        remote RAG gateways with automatic fallback.
+
+        Args:
+            db: Database session.
+            user: Current user (for access control).
+            knowledge_base_id: Target knowledge base ID.
+            query: Search query text.
+            max_results: Maximum number of results to return (default: 10, max: 50).
+            document_ids: Optional list of document IDs to restrict search scope.
+            route_mode: Routing strategy:
+                - "auto": Let Backend decide based on token budget (default).
+                - "direct_injection": Fetch all chunks for direct context injection.
+                - "rag_retrieval": Standard RAG search.
+            context_window: Model context window size in tokens (default: 100000).
+            used_context_tokens: Tokens already consumed in conversation.
+            reserved_output_tokens: Tokens reserved for model output.
+            context_buffer_ratio: Safety buffer ratio for context window.
+            max_direct_chunks: Maximum chunks allowed for direct injection.
+
+        Returns:
+            Dict with keys:
+                - mode: "rag_retrieval" | "direct_injection"
+                - records: List of matching chunks with content, score, title, metadata
+                - total: Total number of records returned
+                - total_estimated_tokens: Estimated token count
+
+        Raises:
+            ValueError: If knowledge base not found, access denied, or config invalid.
+        """
+        # Validate and normalize parameters
+        if max_results < 1:
+            max_results = 10
+        if max_results > 50:
+            max_results = 50
+
+        # Verify knowledge base access (single point of permission check)
+        knowledge_base, has_access = KnowledgeService.get_knowledge_base(
+            db=db,
+            knowledge_base_id=knowledge_base_id,
+            user_id=user.id,
+        )
+        if knowledge_base is None:
+            raise ValueError(f"Knowledge base {knowledge_base_id} not found")
+        if not has_access:
+            raise ValueError(f"Access denied to knowledge base {knowledge_base_id}")
+
+        # Check RAG configuration
+        spec = (
+            (knowledge_base.json or {}).get("spec", {}) if knowledge_base.json else {}
+        )
+        retrieval_config = spec.get("retrievalConfig")
+        if not retrieval_config:
+            raise ValueError(
+                f"Knowledge base {knowledge_base_id} has no RAG configuration"
+            )
+        retriever_name = retrieval_config.get("retriever_name")
+        embedding_config = retrieval_config.get("embedding_config")
+        if not retriever_name or not embedding_config:
+            raise ValueError(
+                f"Knowledge base {knowledge_base_id} has incomplete RAG configuration"
+            )
+
+        # Build metadata condition for document_ids filter
+        metadata_condition = None
+        if document_ids:
+            metadata_condition = {
+                "operator": "and",
+                "conditions": [
+                    {
+                        "key": "doc_ref",
+                        "operator": "in",
+                        "value": [str(doc_id) for doc_id in document_ids],
+                    }
+                ],
+            }
+
+        # Use runtime resolver and gateway for retrieval (supports remote fallback)
+        from app.services.rag.gateway_factory import get_query_gateway
+        from app.services.rag.local_gateway import LocalRagGateway
+        from app.services.rag.remote_gateway import (
+            RemoteRagGatewayError,
+            should_fallback_to_local,
+        )
+        from app.services.rag.retrieval_service import RetrievalService
+        from app.services.rag.runtime_resolver import RagRuntimeResolver
+
+        runtime_resolver = RagRuntimeResolver()
+        retrieval_service = RetrievalService()
+
+        # Build runtime spec for gateway routing
+        runtime_spec = runtime_resolver.build_query_runtime_spec(
+            db=db,
+            knowledge_base_ids=[knowledge_base_id],
+            query=query,
+            max_results=max_results,
+            document_ids=document_ids,
+            route_mode=route_mode,
+            user_id=user.id,
+            user_name=user.user_name,
+            context_window=context_window,
+            used_context_tokens=used_context_tokens,
+            reserved_output_tokens=reserved_output_tokens,
+            context_buffer_ratio=context_buffer_ratio,
+            max_direct_chunks=max_direct_chunks,
+            restricted_mode=False,
+        )
+
+        # Finalize route mode based on context budget
+        resolved_route_mode = retrieval_service.decide_route_mode_for_chat_shell(
+            query=query,
+            knowledge_base_ids=[knowledge_base_id],
+            db=db,
+            route_mode=route_mode,
+            document_ids=document_ids,
+            metadata_condition=metadata_condition,
+            context_window=context_window,
+            used_context_tokens=used_context_tokens,
+            reserved_output_tokens=reserved_output_tokens,
+            context_buffer_ratio=context_buffer_ratio,
+            max_direct_chunks=max_direct_chunks,
+        )
+        runtime_spec = runtime_spec.model_copy(
+            update={"route_mode": resolved_route_mode}
+        )
+
+        # Build KB configs for remote gateway if needed
+        if resolved_route_mode == "rag_retrieval":
+            kb_configs = runtime_resolver.build_query_knowledge_base_configs(
+                db=db,
+                knowledge_base_ids=[knowledge_base_id],
+                user_name=user.user_name,
+            )
+            runtime_spec = runtime_spec.model_copy(
+                update={"knowledge_base_configs": kb_configs}
+            )
+
+        # Execute query with remote fallback support
+        rag_gateway = get_query_gateway()
+        try:
+            result = await rag_gateway.query(runtime_spec, db=db)
+        except RemoteRagGatewayError as exc:
+            if should_fallback_to_local(exc):
+                logger.warning(
+                    f"[Orchestrator] Remote query failed for KB {knowledge_base_id}, "
+                    f"falling back to local gateway: {exc}"
+                )
+                result = await LocalRagGateway().query(runtime_spec, db=db)
+            else:
+                raise
+
+        # Normalize result format for API consumers
+        return {
+            "query": query,
+            "knowledge_base_id": knowledge_base_id,
+            "mode": result.get("mode", "rag_retrieval"),
+            "records": result.get("records", []),
+            "total": result.get("total", 0),
+            "total_estimated_tokens": result.get("total_estimated_tokens", 0),
+        }
+
+    # Backward compatibility alias
+    search_knowledge_base = retrieve_knowledge
 
 
 # Singleton instance

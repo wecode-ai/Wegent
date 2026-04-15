@@ -887,7 +887,7 @@ class KnowledgeBaseTool(BaseTool):
                 from app.services.rag.retrieval_service import RetrievalService
 
                 retrieval_service = RetrievalService()
-                result = await retrieval_service.retrieve_for_chat_shell(
+                result = await retrieval_service.retrieve_with_routing(
                     query=query,
                     knowledge_base_ids=self.knowledge_base_ids,
                     db=self.db_session,

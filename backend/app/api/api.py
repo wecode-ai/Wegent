@@ -18,6 +18,7 @@ from app.api.endpoints import (
     groups,
     health,
     knowledge,
+    knowledge_open,
     mcp_providers,
     oidc,
     openapi_responses,
@@ -166,9 +167,9 @@ api_router.include_router(
     tags=["knowledge-summary"],
 )
 api_router.include_router(
-    knowledge.knowledge_router,
+    knowledge_open.router,
     prefix="/knowledge",
-    tags=["knowledge"],
+    tags=["knowledge-open"],
 )
 # Unified share endpoints (Team, Task, KnowledgeBase)
 api_router.include_router(share.router, prefix="/share", tags=["share"])

@@ -236,7 +236,9 @@ class TestKnowledgeOrchestrator:
         self, orchestrator, mock_db, mock_user
     ):
         """Test read_document_content returns the paginated raw content payload."""
-        document = SimpleNamespace(id=9, name="roadmap", kind_id=77)
+        document = SimpleNamespace(
+            id=9, name="roadmap", kind_id=77, index_status="success"
+        )
         mock_db.query.return_value.filter.return_value.first.return_value = document
 
         with patch(

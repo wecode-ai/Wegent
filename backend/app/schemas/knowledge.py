@@ -582,6 +582,9 @@ class DocumentContentReadResponse(BaseModel):
     returned_length: int = Field(..., ge=0, description="Number of characters returned")
     has_more: bool = Field(..., description="Whether more content is available")
     kb_id: int = Field(..., description="Knowledge base ID")
+    index_status: DocumentIndexStatus = Field(
+        ..., description="Document indexing status"
+    )
 
 
 class DocumentContentUpdate(BaseModel):
@@ -721,3 +724,112 @@ class KnowledgeBaseMigrateResponse(BaseModel):
     knowledge_base_id: int = Field(..., description="Knowledge base ID")
     old_namespace: str = Field(..., description="Original namespace")
     new_namespace: str = Field(..., description="New namespace after migration")
+
+
+# ============== v1 API Schemas ==============
+
+# Maximum allowed binary size for base64-encoded file uploads (10 MiB)
+_MAX_FILE_DECODED_BYTES = 10 * 1024 * 1024
+_MAX_FILE_BASE64_LEN = ((_MAX_FILE_DECODED_BYTES + 2) // 3) * 4  # 13_981_016
+
+
+class KnowledgeDocumentCreateV1(BaseModel):
+    """Request schema for v1 document creation endpoint.
+
+    Accepts all source types; unsupported types are rejected at the
+    handler level with a descriptive error.
+    """
+
+    knowledge_base_id: int = Field(..., description="Target knowledge base ID")
+    name: str = Field(..., min_length=1, max_length=255, description="Document name")
+    source_type: DocumentSourceType = Field(
+        DocumentSourceType.TEXT,
+        description=(
+            "Document source type: 'text' (inline content), 'file' (base64 binary), "
+            "'web' (URL scraping)"
+        ),
+    )
+    # source_type=text
+    content: Optional[str] = Field(
+        None,
+        min_length=1,
+        max_length=500_000,
+        description="Text content (required for source_type='text')",
+    )
+    file_extension: Optional[str] = Field(
+        None,
+        max_length=50,
+        description="File extension without leading dot, e.g. 'md' (optional for source_type='text')",
+    )
+    # source_type=file
+    file_base64: Optional[str] = Field(
+        None,
+        max_length=_MAX_FILE_BASE64_LEN,
+        description="Base64-encoded file binary (required for source_type='file', max 10 MB decoded)",
+    )
+    # source_type=web
+    url: Optional[str] = Field(
+        None,
+        description="URL to scrape (required for source_type='web')",
+    )
+    # common optional
+    splitter_config: Optional[SplitterConfig] = Field(
+        None,
+        description="Custom text splitter configuration",
+    )
+
+
+class DocumentContentUpdateResponse(BaseModel):
+    """Response schema for the v1 document content update endpoint."""
+
+    success: bool = Field(..., description="Whether the update succeeded")
+    document_id: int = Field(..., description="ID of the updated document")
+    message: str = Field(..., description="Human-readable result message")
+
+
+class KnowledgeSearchRequest(BaseModel):
+    """Request schema for v1 knowledge base search endpoint.
+
+    Resolves retriever and embedding model automatically from KB config,
+    so callers only need to specify what to search, not how.
+    """
+
+    knowledge_base_id: int = Field(..., description="Knowledge base ID to search in")
+    query: str = Field(
+        ..., min_length=1, max_length=2000, description="Search query text"
+    )
+    top_k: int = Field(5, ge=1, le=100, description="Number of results to return")
+    score_threshold: float = Field(
+        0.7, ge=0.0, le=1.0, description="Minimum similarity score threshold"
+    )
+    route_mode: str = Field(
+        "auto",
+        description="Retrieval mode: 'auto', 'direct_injection', or 'rag_retrieval'",
+    )
+    context_window: int = Field(
+        128000,
+        ge=1,
+        description="Context window size for direct injection mode",
+    )
+    used_context_tokens: int = Field(
+        0,
+        ge=0,
+        description="Already used context tokens",
+    )
+    reserved_output_tokens: int = Field(
+        4096,
+        ge=0,
+        description="Reserved output tokens",
+    )
+    context_buffer_ratio: float = Field(
+        0.1,
+        ge=0.0,
+        le=1.0,
+        description="Context buffer ratio for safety margin",
+    )
+    max_direct_chunks: int = Field(
+        500,
+        ge=1,
+        le=10000,
+        description="Maximum chunks for direct injection",
+    )
