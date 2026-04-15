@@ -191,9 +191,9 @@ def _register_device(
                 device_type=device_type,
                 bind_shell=bind_shell,
             )
-        persisted_display_name = (
-            device_kind.json.get("spec", {}).get("displayName") or name
-        )
+            persisted_display_name = (
+                device_kind.json.get("spec", {}).get("displayName") or name
+            )
         return True, persisted_display_name, None
     except Exception as e:
         logger.error(f"[Device WS] Error registering device: {e}")
