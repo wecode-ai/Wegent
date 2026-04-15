@@ -793,15 +793,7 @@ export function SubscriptionForm({
 
         toast.success(t('update_success'))
       } else {
-        const generatedName =
-          displayName
-            .toLowerCase()
-            .replace(/[^a-z0-9]+/g, '-')
-            .replace(/^-|-$/g, '')
-            .slice(0, 50) || `subscription-${Date.now()}`
-
         const createData: SubscriptionCreateRequest = {
-          name: generatedName,
           display_name: displayName,
           description: description || undefined,
           task_type: taskType,

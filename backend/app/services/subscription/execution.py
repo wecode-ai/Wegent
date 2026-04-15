@@ -235,6 +235,23 @@ class BackgroundExecutionManager:
             f"previous_status={current_status.value}{running_info}"
         )
 
+        # Cancel associated task if exists (task_id > 0)
+        if execution.task_id and execution.task_id > 0:
+            # Run async cancel in background to not block the response
+            # This ensures executor is notified to stop the actual execution
+            import asyncio
+
+            try:
+                # Try to get running loop (Python 3.10+ recommended way)
+                loop = asyncio.get_running_loop()
+                # Schedule as background task
+                asyncio.create_task(
+                    self.cancel_task_by_id(db, execution.task_id, user_id)
+                )
+            except RuntimeError:
+                # No event loop running, use asyncio.run
+                asyncio.run(self.cancel_task_by_id(db, execution.task_id, user_id))
+
         # Emit WebSocket event
         emit_background_execution_update(
             db=db,
@@ -277,6 +294,180 @@ class BackgroundExecutionManager:
                     exec_dict["team_name"] = team.name
 
         return BackgroundExecutionInDB(**exec_dict)
+
+    async def cancel_task_by_id(
+        self,
+        db: Session,
+        task_id: int,
+        user_id: int,
+    ) -> bool:
+        """Cancel a task by its ID.
+
+        This method cancels a task and its subtasks, and notifies the executor to stop.
+        It is used both when cancelling a subscription execution and when cleaning up
+        stuck tasks before reusing them.
+
+        Args:
+            db: Database session
+            task_id: ID of the task to cancel
+            user_id: ID of the user requesting cancellation
+
+        Returns:
+            True if cancellation was successful, False otherwise
+        """
+        return await self._cancel_task_internal(db, task_id, user_id)
+
+    async def _cancel_task_internal(
+        self,
+        db: Session,
+        task_id: int,
+        user_id: int,
+    ) -> bool:
+        """Internal method to cancel a task and its subtasks.
+
+        Args:
+            db: Database session
+            task_id: ID of the task to cancel
+            user_id: ID of the user requesting cancellation
+
+        Returns:
+            True if cancellation was successful, False otherwise
+        """
+        from datetime import datetime
+
+        from app.models.subtask import Subtask, SubtaskStatus
+        from app.models.task import TaskResource
+        from app.schemas.kind import Task
+        from app.services.execution import execution_dispatcher
+        from shared.models import ExecutionRequest
+
+        try:
+            # Get the task
+            task = (
+                db.query(TaskResource)
+                .filter(
+                    TaskResource.id == task_id,
+                    TaskResource.kind == "Task",
+                    TaskResource.is_active.in_(TaskResource.is_active_query()),
+                )
+                .first()
+            )
+
+            if not task:
+                logger.warning(
+                    f"[Subscription] Cannot cancel associated task: task {task_id} not found"
+                )
+                return False
+
+            # Get shell_type from task labels
+            task_crd = Task.model_validate(task.json)
+            shell_type = "Chat"  # Default to Chat
+            if task_crd.metadata.labels:
+                source = task_crd.metadata.labels.get("source", "")
+                if source == "chat_shell":
+                    shell_type = "Chat"
+                # Add more shell type mappings as needed
+
+            # Find running subtask to cancel
+            running_subtask = (
+                db.query(Subtask)
+                .filter(
+                    Subtask.task_id == task_id,
+                    Subtask.status.in_([SubtaskStatus.PENDING, SubtaskStatus.RUNNING]),
+                )
+                .first()
+            )
+
+            if running_subtask:
+                # Build ExecutionRequest for cancel
+                cancel_request = ExecutionRequest(
+                    task_id=task_id,
+                    subtask_id=running_subtask.id,
+                    bot=[{"shell_type": shell_type}],
+                    user={"id": user_id},
+                )
+
+                # Determine device_id if this is a device task
+                device_id = None
+                executor_name = running_subtask.executor_name
+                if executor_name and executor_name.startswith("device-"):
+                    device_id = executor_name[7:]  # Remove "device-" prefix
+
+                logger.info(
+                    f"[Subscription] Cancelling task via ExecutionDispatcher: "
+                    f"task_id={task_id}, subtask_id={running_subtask.id}, "
+                    f"shell_type={shell_type}, device_id={device_id}"
+                )
+
+                # Call execution_dispatcher to notify executor to stop
+                try:
+                    cancel_success = await execution_dispatcher.cancel(
+                        cancel_request, device_id
+                    )
+                    if cancel_success:
+                        logger.info(
+                            f"[Subscription] Cancel request sent successfully for task {task_id}"
+                        )
+                    else:
+                        logger.warning(
+                            f"[Subscription] Cancel request failed for task {task_id}, "
+                            "executor may have already completed"
+                        )
+                except Exception as cancel_err:
+                    logger.error(
+                        f"[Subscription] Error calling execution_dispatcher.cancel: {cancel_err}",
+                        exc_info=True,
+                    )
+                    # Continue to update database state even if cancel request fails
+
+            # Update task status to CANCELLED if not already in terminal state
+            current_task_status = task_crd.status.status if task_crd.status else None
+            final_states = ["COMPLETED", "FAILED", "CANCELLED", "DELETE"]
+
+            if current_task_status not in final_states:
+                if task_crd.status:
+                    task_crd.status.status = "CANCELLED"
+                    task_crd.status.updatedAt = datetime.now().isoformat()
+                    task_crd.status.completedAt = datetime.now().isoformat()
+                task.json = task_crd.model_dump(mode="json", exclude_none=True)
+                flag_modified(task, "json")
+                logger.info(
+                    f"[Subscription] Updated task {task_id} status to CANCELLED"
+                )
+
+            # Cancel all running subtasks in database
+            running_subtasks = (
+                db.query(Subtask)
+                .filter(
+                    Subtask.task_id == task_id,
+                    Subtask.status.in_([SubtaskStatus.PENDING, SubtaskStatus.RUNNING]),
+                )
+                .all()
+            )
+
+            for subtask in running_subtasks:
+                subtask.status = SubtaskStatus.CANCELLED
+                subtask.progress = 100
+                subtask.completed_at = datetime.now()
+                subtask.updated_at = datetime.now()
+                logger.info(
+                    f"[Subscription] Updated subtask {subtask.id} status to CANCELLED"
+                )
+
+            db.commit()
+            logger.info(
+                f"[Subscription] Successfully cancelled task {task_id} and its subtasks"
+            )
+            return True
+
+        except Exception as e:
+            logger.error(
+                f"[Subscription] Failed to cancel associated task {task_id}: {e}",
+                exc_info=True,
+            )
+            # Don't re-raise - we don't want to fail the execution cancellation
+            # if the task cancellation fails
+            return False
 
     def delete_execution(
         self,

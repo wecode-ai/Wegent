@@ -190,6 +190,11 @@ class ExecutionRequest:
     validation_params: Optional[dict] = None  # Validation task parameters
     sandbox_metadata: Optional[dict] = None  # Sandbox task metadata
 
+    # === Reasoning Configuration ===
+    reasoning_config: Optional[dict] = (
+        None  # Reasoning/thinking config: {effort, summary}
+    )
+
     # === Workspace Recovery ===
     skip_git_clone: bool = False  # Skip git clone for workspace recovery from archive
 

@@ -104,3 +104,4 @@ executor/build/
 executor/dist/
 .worktrees/
 docs/superpowers/
+.worktrees/

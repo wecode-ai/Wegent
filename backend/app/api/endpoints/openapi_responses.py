@@ -393,6 +393,11 @@ async def _create_non_streaming_response_unified(
     # This ensures KB tools and skill tools are actually added to the agent
     enable_tools = enable_chat_bot or bool(knowledge_base_names)
 
+    # Convert reasoning config from Pydantic model to dict
+    reasoning_config = None
+    if request_body.reasoning:
+        reasoning_config = request_body.reasoning.model_dump()
+
     # Build execution request
     try:
         execution_request = await build_execution_request(
@@ -407,6 +412,7 @@ async def _create_non_streaming_response_unified(
             enable_web_search=enable_chat_bot and settings.WEB_SEARCH_ENABLED,
             preload_skills=preload_skills,
             knowledge_base_names=knowledge_base_names,
+            reasoning_config=reasoning_config,
         )
     except Exception as e:
         logger.error(f"Failed to build execution request: {e}")
@@ -680,6 +686,11 @@ async def _create_streaming_response_unified(
     # This ensures KB tools and skill tools are actually added to the agent
     enable_tools = enable_chat_bot or bool(knowledge_base_names)
 
+    # Convert reasoning config from Pydantic model to dict
+    reasoning_config = None
+    if request_body.reasoning:
+        reasoning_config = request_body.reasoning.model_dump()
+
     # Build execution request using unified builder
     try:
         execution_request = await build_execution_request(
@@ -694,6 +705,7 @@ async def _create_streaming_response_unified(
             enable_web_search=enable_chat_bot and settings.WEB_SEARCH_ENABLED,
             preload_skills=preload_skills,
             knowledge_base_names=knowledge_base_names,
+            reasoning_config=reasoning_config,
         )
     finally:
         # Close the database session before streaming starts
@@ -704,12 +716,14 @@ async def _create_streaming_response_unified(
         db.close()
 
     async def raw_chat_stream():
-        """Generate raw text chunks from ExecutionDispatcher."""
+        """Generate raw text and reasoning chunks from ExecutionDispatcher."""
         import asyncio
 
         from app.services.execution.emitters import SSEResultEmitter
+        from app.services.openapi.streaming import StreamingChunk
 
         accumulated_content = ""
+        accumulated_reasoning = ""
 
         try:
             cancel_event = await session_manager.register_stream(assistant_subtask_id)
@@ -740,7 +754,13 @@ async def _create_streaming_response_unified(
                         content = event.content or ""
                         if content:
                             accumulated_content += content
-                            yield content
+                            yield StreamingChunk(type="text", content=content)
+                    elif event.type == EventType.THINKING.value:
+                        # Handle reasoning/thinking content
+                        reasoning = event.content or ""
+                        if reasoning:
+                            accumulated_reasoning += reasoning
+                            yield StreamingChunk(type="reasoning", content=reasoning)
                     elif event.type == EventType.ERROR.value:
                         error_msg = event.error or "Unknown error"
                         logger.error(f"[OPENAPI] Error from execution: {error_msg}")
@@ -760,7 +780,11 @@ async def _create_streaming_response_unified(
             if not cancel_event.is_set() and not await session_manager.is_cancelled(
                 assistant_subtask_id
             ):
+                # Include reasoning in result if present
                 result = {"value": accumulated_content}
+                if accumulated_reasoning:
+                    result["reasoning"] = accumulated_reasoning
+
                 await session_manager.save_streaming_content(
                     assistant_subtask_id, accumulated_content
                 )

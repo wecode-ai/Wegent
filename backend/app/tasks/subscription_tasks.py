@@ -537,6 +537,7 @@ async def _create_subscription_task(
         SubscriptionExecutionTargetType,
     )
     from app.services.chat.storage import TaskCreationParams, create_chat_task
+    from app.services.subscription.execution import background_execution_manager
 
     ws = ctx.workspace_info
 
@@ -587,11 +588,43 @@ async def _create_subscription_task(
         )
 
         if bound_task:
-            reuse_task_id = ctx.bound_task_id
-            logger.info(
-                f"[subscription_tasks] Reusing bound task {ctx.bound_task_id} for subscription {ctx.subscription.id} "
-                f"(preserve_history=True)"
-            )
+            # Check if bound task is still RUNNING, cancel it before reuse
+            from app.schemas.kind import Task
+
+            bound_task_crd = Task.model_validate(bound_task.json)
+            if bound_task_crd.status and bound_task_crd.status.status == "RUNNING":
+                logger.warning(
+                    f"[subscription_tasks] Bound task {ctx.bound_task_id} is still RUNNING, "
+                    f"cancelling it before reuse for subscription {ctx.subscription.id}"
+                )
+                # Cancel the running task using the same method as subscription cancel
+                cancel_success = await background_execution_manager.cancel_task_by_id(
+                    db=db,
+                    task_id=ctx.bound_task_id,
+                    user_id=ctx.user.id,
+                )
+                if cancel_success:
+                    logger.info(
+                        f"[subscription_tasks] Successfully cancelled bound task {ctx.bound_task_id}"
+                    )
+                    # Refresh bound_task to get updated status
+                    db.refresh(bound_task)
+                    # Set reuse_task_id to reuse the cancelled task
+                    reuse_task_id = ctx.bound_task_id
+                else:
+                    logger.error(
+                        f"[subscription_tasks] Failed to cancel bound task {ctx.bound_task_id}, "
+                        f"will create new task for subscription {ctx.subscription.id}"
+                    )
+                    # Don't reuse this task since we couldn't cancel it
+                    reuse_task_id = None
+            else:
+                # Task is not RUNNING, safe to reuse
+                reuse_task_id = ctx.bound_task_id
+                logger.info(
+                    f"[subscription_tasks] Reusing bound task {ctx.bound_task_id} for subscription {ctx.subscription.id} "
+                    f"(preserve_history=True)"
+                )
         else:
             logger.warning(
                 f"[subscription_tasks] Bound task {ctx.bound_task_id} not found or inactive, "
