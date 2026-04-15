@@ -635,6 +635,16 @@ class Settings(BaseSettings):
     # Enable/disable cloud device offline alert (default: False)
     CLOUD_DEVICE_OFFLINE_ALERT_ENABLED: bool = False
 
+    # OpenClaw token usage alert configuration
+    # Base URL for OpenClaw stats API
+    OPENCLAW_STATS_BASE_URL: str = "https://copilot.weibo.com"
+    # Enable/disable OpenClaw token usage monitoring and alerts (default: False)
+    OPENCLAW_TOKEN_ALERT_ENABLED: bool = False
+    # Daily token usage threshold for alerts (default: 1 million tokens)
+    OPENCLAW_TOKEN_DAILY_THRESHOLD: int = 1_000_000
+    # Number of top users to include in daily report
+    OPENCLAW_TOP_N_USERS: int = 10
+
     def get_rag_runtime_mode(self, operation: str) -> str:
         """Resolve the effective RAG runtime mode for an operation."""
         config = self.RAG_RUNTIME_MODE
