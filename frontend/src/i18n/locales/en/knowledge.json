@@ -304,7 +304,7 @@
       "textRequired": "Please enter text content",
       "insert": "Insert",
       "clickToRename": "Click to rename",
-      "unsupportedFileType": "Image files are not supported yet. Support will be added in future versions.",
+      "unsupportedFileType": "File type not supported. Supported formats: PDF, Word, PPT, Excel, TXT, MD",
       "addTable": "Add Data Table",
       "tableHint": "Enter the table link and name to add it to your knowledge base.",
       "tableUrlHint": "Please enter a valid table URL. Ensure the link is accessible and you have read permission. Currently supports DingTalk tables.",

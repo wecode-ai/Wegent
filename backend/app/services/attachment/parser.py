@@ -287,11 +287,6 @@ class DocumentParser:
         return settings.MAX_EXTRACTED_TEXT_LENGTH
 
     @classmethod
-    def is_supported_extension(cls, extension: str) -> bool:
-        """Check if the file extension is supported."""
-        return extension.lower() in cls.SUPPORTED_EXTENSIONS
-
-    @classmethod
     def get_mime_type(cls, extension: str) -> str:
         """Get MIME type for a file extension."""
         return cls.SUPPORTED_EXTENSIONS.get(

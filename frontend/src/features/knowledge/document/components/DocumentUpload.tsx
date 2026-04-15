@@ -45,15 +45,28 @@ import type { Attachment } from '@/types/api'
 import { cn } from '@/lib/utils'
 import { validateTableUrl } from '@/apis/knowledge'
 
-// Unsupported file extensions that need friendly error message (images are not supported for RAG)
-const KB_UNSUPPORTED_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp']
+// Supported file extensions for knowledge base RAG indexing
+const KB_SUPPORTED_EXTENSIONS = [
+  '.pdf',
+  '.doc',
+  '.docx',
+  '.ppt',
+  '.pptx',
+  '.xls',
+  '.xlsx',
+  '.csv',
+  '.txt',
+  '.md',
+]
 
 /**
- * Check if a file extension is in the unsupported list (images)
+ * Check if a file extension is supported by the knowledge base
  */
-function isKBUnsupportedExtension(filename: string): boolean {
-  const ext = filename.toLowerCase().slice(filename.lastIndexOf('.'))
-  return KB_UNSUPPORTED_EXTENSIONS.includes(ext)
+function isKBSupportedExtension(filename: string): boolean {
+  const lastDot = filename.lastIndexOf('.')
+  if (lastDot === -1) return false
+  const ext = filename.toLowerCase().slice(lastDot)
+  return KB_SUPPORTED_EXTENSIONS.includes(ext)
 }
 
 // Smart splitter supported file extensions
@@ -172,9 +185,9 @@ export function DocumentUpload({
     (files: File[]) => {
       if (files.length === 0) return
 
-      // Filter out unsupported files (images) with friendly error message
-      const unsupportedFiles = files.filter(f => isKBUnsupportedExtension(f.name))
-      const supportedFiles = files.filter(f => !isKBUnsupportedExtension(f.name))
+      // Filter out unsupported files with friendly error message
+      const unsupportedFiles = files.filter(f => !isKBSupportedExtension(f.name))
+      const supportedFiles = files.filter(f => isKBSupportedExtension(f.name))
 
       // Show friendly error if any unsupported files were selected
       if (unsupportedFiles.length > 0) {

@@ -1190,6 +1190,54 @@ class TestContextServiceFormatting:
         assert "URL: /api/attachments/12345/download" in prefix
         assert "File Path(already in sandbox)" in prefix
 
+    def test_build_document_text_prefix_no_extracted_text(self):
+        """Test that build_document_text_prefix returns metadata even when extracted_text is empty.
+
+        For binary/unrecognized file types, the file is stored but cannot be parsed.
+        The model should still receive attachment metadata (filename, size, sandbox path)
+        so it knows the file exists and can access it in the sandbox.
+        """
+        from app.models.subtask_context import (
+            ContextStatus,
+            ContextType,
+            SubtaskContext,
+        )
+        from app.services.context import context_service
+
+        # Arrange - binary file with no extracted text (e.g., .exe, .bin)
+        context = SubtaskContext(
+            subtask_id=0,
+            user_id=1,
+            context_type=ContextType.ATTACHMENT.value,
+            name="program.exe",
+            status=ContextStatus.READY.value,
+            extracted_text="",  # No text extraction for binary files
+            text_length=0,
+            type_data={
+                "original_filename": "program.exe",
+                "file_extension": ".exe",
+                "mime_type": "application/octet-stream",
+                "file_size": 1048576,  # 1 MB
+            },
+        )
+        context.id = 99999
+
+        # Act
+        prefix = context_service.build_document_text_prefix(
+            context, task_id=100, subtask_id=200
+        )
+
+        # Assert - should return metadata even without extracted text
+        assert prefix is not None
+        assert "[Attachment: program.exe |" in prefix
+        assert "ID: 99999" in prefix
+        assert "Type: application/octet-stream" in prefix
+        assert "Size: 1.0 MB" in prefix
+        assert "URL: /api/attachments/99999/download" in prefix
+        assert "File Path(already in sandbox)" in prefix
+        # Should include a notice that no text preview is available
+        assert "No text preview available" in prefix
+
     def test_build_document_text_prefix_with_truncation(self):
         """Test building document text prefix with truncation notice"""
         from app.models.subtask_context import (

@@ -137,17 +137,15 @@ class ContextService:
         """
         Validate attachment input and return basic metadata.
 
+        All file types are accepted. The parser will attempt text extraction
+        and gracefully handle unsupported formats by storing the file without
+        extracted text (status=READY, extracted_text="").
+
         Returns:
             Tuple of (extension, file_size, mime_type)
         """
         _, extension = os.path.splitext(filename)
         extension = extension.lower()
-
-        if not self.parser.is_supported_extension(extension):
-            raise ValueError(
-                f"Unsupported file type: {extension}. "
-                f"Supported types: {', '.join(self.parser.SUPPORTED_EXTENSIONS.keys())}"
-            )
 
         file_size = len(binary_data)
         if not self.parser.validate_file_size(file_size):
@@ -280,7 +278,12 @@ class ContextService:
         binary_data: bytes,
         extension: str,
     ) -> Optional[TruncationInfo]:
-        """Parse attachment data and update context fields."""
+        """Parse attachment data and update context fields.
+
+        For files that cannot be parsed (e.g., binary files with unrecognized MIME types),
+        the context is set to READY with empty extracted_text. The file is still stored
+        and accessible in the sandbox - it just won't have a text preview for the model.
+        """
         truncation_info = None
         try:
             parse_result: ParseResult = self.parser.parse(binary_data, extension)
@@ -301,10 +304,18 @@ class ContextService:
                     truncated_length=parse_result.truncation_info.truncated_length,
                 )
         except DocumentParseError as e:
-            logger.exception(f"Document parsing failed for context {context.id}: {e}")
-            context.status = ContextStatus.FAILED.value
-            context.error_message = str(e)
-            raise
+            # File is stored but cannot be parsed for text extraction.
+            # Set to READY with empty text so the file is still accessible in sandbox.
+            # The model will receive an attachment notice without preview content.
+            logger.warning(
+                f"Document parsing skipped for context {context.id} "
+                f"(extension={extension}, error_code={e.error_code}): {e}"
+            )
+            context.extracted_text = ""
+            context.text_length = 0
+            context.image_base64 = ""
+            context.status = ContextStatus.READY.value
+            context.error_message = ""
 
         return truncation_info
 
@@ -378,16 +389,12 @@ class ContextService:
         context.status = ContextStatus.PARSING.value
         db.flush()
 
-        # Parse document
-        try:
-            truncation_info = self._parse_and_update_context(
-                context=context,
-                binary_data=binary_data,
-                extension=extension,
-            )
-        except DocumentParseError as e:
-            db.commit()
-            raise
+        # Parse document - errors are handled gracefully inside _parse_and_update_context
+        truncation_info = self._parse_and_update_context(
+            context=context,
+            binary_data=binary_data,
+            extension=extension,
+        )
 
         db.commit()
         db.refresh(context)
@@ -463,15 +470,12 @@ class ContextService:
         context.status = ContextStatus.PARSING.value
         db.flush()
 
-        try:
-            truncation_info = self._parse_and_update_context(
-                context=context,
-                binary_data=binary_data,
-                extension=extension,
-            )
-        except DocumentParseError:
-            db.commit()
-            raise
+        # Parse document - errors are handled gracefully inside _parse_and_update_context
+        truncation_info = self._parse_and_update_context(
+            context=context,
+            binary_data=binary_data,
+            extension=extension,
+        )
 
         db.commit()
         db.refresh(context)
@@ -608,20 +612,19 @@ class ContextService:
         Build a text prefix containing document content for prepending to messages.
 
         Includes attachment metadata (id, filename, mime_type, file_size, url, sandbox_path).
+        For files that cannot be parsed (binary/unknown formats), only metadata is included
+        without content preview - the file is still accessible in the sandbox.
 
         Args:
             context: SubtaskContext record with extracted_text
             task_id: Optional task ID for building sandbox path
             subtask_id: Optional subtask ID for building sandbox path
         Returns:
-            Formatted text prefix without XML tags, or None if no extracted text
+            Formatted text prefix with metadata (and content if available),
+            or None if context is not an attachment type
         """
-        if not context.extracted_text:
+        if context.context_type != ContextType.ATTACHMENT.value:
             return None
-
-        # Check if text was truncated by comparing text_length with max limit
-        max_text_length = DocumentParser.get_max_text_length()
-        is_truncated = context.text_length >= max_text_length
 
         # Build attachment metadata header
         attachment_id = context.id
@@ -634,7 +637,7 @@ class ContextService:
         # Build sandbox path if task_id and subtask_id are provided
         sandbox_path = self.build_sandbox_path(task_id, subtask_id, filename)
 
-        # Build the prefix with metadata and optional truncation notice
+        # Build the prefix with metadata
         if sandbox_path:
             prefix = (
                 f"[Attachment: {filename} | ID: {attachment_id} | "
@@ -647,15 +650,24 @@ class ContextService:
                 f"Type: {mime_type} | Size: {formatted_size} | URL: {url}]\n"
             )
 
-        if is_truncated:
-            prefix += (
-                f"(Note: The file content is too long and has been truncated to "
-                f"{max_text_length} characters. The following is only partial content.)\n"
-            )
+        # Append content preview if available
+        if context.extracted_text:
+            # Check if text was truncated by comparing text_length with max limit
+            max_text_length = DocumentParser.get_max_text_length()
+            is_truncated = context.text_length >= max_text_length
 
-        prefix += f"{context.extracted_text}\n\n"
+            if is_truncated:
+                prefix += (
+                    f"(Note: The file content is too long and has been truncated to "
+                    f"{max_text_length} characters. The following is only partial content.)\n"
+                )
 
-        # Wrap in <attachment> XML tags
+            prefix += f"{context.extracted_text}\n\n"
+        else:
+            # No text preview available (binary or unrecognized format)
+            # The file is still stored and accessible in the sandbox
+            prefix += "(No text preview available for this file type. The file is accessible in the sandbox.)\n\n"
+
         return prefix
 
     # ==================== Knowledge Base Operations ====================
