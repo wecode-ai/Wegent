@@ -257,7 +257,7 @@ def add_dingtalk_doc_with_attachment(
     """
     Add a DingTalk document to knowledge base using an existing attachment.
 
-    This tool is designed to work with the dingtalk-docs skill which:
+    This tool is designed to work with the dingtalk-connector skill which:
     1. Downloads the DingTalk document in sandbox
     2. Saves it as {title}_{timestamp}.md
     3. Uploads it as an attachment

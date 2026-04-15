@@ -87,7 +87,7 @@ class DingTalkDocsToolProvider:
     @property
     def provider_name(self) -> str:
         """Return the provider name used in SKILL.md."""
-        return "dingtalk-docs"
+        return "dingtalk-connector"
 
     @property
     def supported_tools(self) -> list[str]:
@@ -260,7 +260,7 @@ Example:
             sandbox, error = await sandbox_manager.get_or_create_sandbox(
                 shell_type=self.default_shell_type,
                 workspace_ref=None,
-                task_type="dingtalk-docs",
+                task_type="dingtalk-connector",
             )
 
             if error:

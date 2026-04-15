@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-name: dingtalk-docs
+name: dingtalk-connector
 description: |
   Skill for adding DingTalk documents to Wegent knowledge bases.
 
@@ -29,7 +29,7 @@ mcp_servers:
 
 tools:
   - name: dingtalk_doc_to_kb
-    provider: dingtalk-docs
+    provider: dingtalk-connector
     description: |
       Add a DingTalk document to Wegent knowledge base.
 
