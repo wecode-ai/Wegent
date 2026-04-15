@@ -257,6 +257,53 @@ class TestDeleteKnowledge:
         )
 
 
+class TestSaveParentNodes:
+    @patch("knowledge_engine.storage.elasticsearch_backend.Elasticsearch")
+    def test_save_parent_nodes_replaces_existing_rows_for_same_document(
+        self, mock_es_class
+    ):
+        from knowledge_engine.storage.elasticsearch_backend import ElasticsearchBackend
+
+        mock_client = MagicMock()
+        mock_es_class.return_value = mock_client
+        mock_client.delete_by_query.return_value = {"deleted": 2}
+
+        parent_node = MagicMock()
+        parent_node.node_id = "parent-1"
+        parent_node.text = "parent content"
+        parent_node.metadata = {
+            "doc_ref": "doc_123",
+            "source_file": "test.md",
+            "chunk_strategy": "hierarchical",
+        }
+
+        backend = ElasticsearchBackend(
+            {
+                "url": "http://localhost:9200",
+                "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
+            }
+        )
+
+        result = backend.save_parent_nodes(
+            knowledge_id="kb_1",
+            parent_nodes=[parent_node],
+        )
+
+        assert result == {"stored_count": 1}
+        mock_client.delete_by_query.assert_called_once_with(
+            index="test_kb_kb_1__parents",
+            query={
+                "bool": {
+                    "filter": [
+                        {"term": {"knowledge_id.keyword": "kb_1"}},
+                        {"term": {"doc_ref.keyword": "doc_123"}},
+                    ]
+                }
+            },
+            refresh=True,
+        )
+
+
 class TestDropKnowledgeIndex:
     def test_drop_knowledge_index_rejects_shared_index_strategy(self) -> None:
         from knowledge_engine.storage.elasticsearch_backend import ElasticsearchBackend

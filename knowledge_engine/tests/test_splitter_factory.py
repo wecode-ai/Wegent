@@ -28,4 +28,5 @@ def test_create_splitter_uses_default_hierarchical_config_when_missing() -> None
     assert isinstance(splitter, SentenceSplitter)
     assert splitter.chunk_size == 512
     assert splitter.chunk_overlap == 64
-    assert splitter.separator == "\n\n"
+    assert splitter.separator == "\n"
+    assert splitter.paragraph_separator == "\n"

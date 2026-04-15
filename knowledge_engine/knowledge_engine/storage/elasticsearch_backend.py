@@ -14,7 +14,7 @@ Supported retrieval modes:
 import logging
 from typing import Any, ClassVar, Dict, List, Optional
 
-from elasticsearch import Elasticsearch
+from elasticsearch import Elasticsearch, helpers
 from elasticsearch.helpers.vectorstore._async.strategies import (
     AsyncBM25Strategy,
     AsyncDenseVectorStrategy,
@@ -770,12 +770,21 @@ class ElasticsearchBackend(BaseStorageBackend):
 
         index_name = self.get_parent_store_name(knowledge_id, **kwargs)
         es_client = Elasticsearch(self.url, **self.es_kwargs)
+        doc_ref = parent_nodes[0].metadata.get("doc_ref")
 
-        for node in parent_nodes:
-            es_client.index(
-                index=index_name,
-                id=node.node_id,
-                document={
+        if es_client.indices.exists(index=index_name) and doc_ref:
+            self.delete_parent_nodes(
+                knowledge_id=knowledge_id,
+                doc_ref=doc_ref,
+                **kwargs,
+            )
+
+        actions = [
+            {
+                "_op_type": "index",
+                "_index": index_name,
+                "_id": node.node_id,
+                "_source": {
                     "parent_node_id": node.node_id,
                     "knowledge_id": knowledge_id,
                     "doc_ref": node.metadata.get("doc_ref"),
@@ -784,8 +793,11 @@ class ElasticsearchBackend(BaseStorageBackend):
                     "title": node.metadata.get("source_file", ""),
                     "metadata": node.metadata,
                 },
-                refresh="wait_for",
-            )
+            }
+            for node in parent_nodes
+        ]
+
+        helpers.bulk(es_client, actions, refresh="wait_for")
 
         return {"stored_count": len(parent_nodes)}
 

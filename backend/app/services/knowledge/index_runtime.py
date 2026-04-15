@@ -22,7 +22,14 @@ def build_kb_index_info(
     knowledge_base: Kind,
     current_user_id: int,
 ) -> KnowledgeBaseIndexInfo:
-    """Build KB index runtime info from a loaded knowledge base."""
+    """Build KB index runtime info from a loaded knowledge base.
+
+    Index ownership is intentionally bound to the persisted knowledge-base owner,
+    not to the current caller. This keeps storage resolution stable across
+    personal, group, and organization namespaces: collaborators may trigger
+    indexing or retrieval, but the runtime still resolves retriever / embedding /
+    storage credentials under the knowledge base's owner scope.
+    """
     del db
     del current_user_id
     spec = (knowledge_base.json or {}).get("spec", {})

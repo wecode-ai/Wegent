@@ -139,6 +139,24 @@ class RemoteDeleteDocumentIndexRequest(KnowledgeRuntimeProtocolModel):
     extensions: dict[str, Any] | None = None
 
 
+class RemotePurgeKnowledgeIndexRequest(KnowledgeRuntimeProtocolModel):
+    """Delete-all-chunks request sent from Backend to knowledge_runtime."""
+
+    knowledge_base_id: int
+    index_owner_user_id: int
+    retriever_config: RuntimeRetrieverConfig
+    extensions: dict[str, Any] | None = None
+
+
+class RemoteDropKnowledgeIndexRequest(KnowledgeRuntimeProtocolModel):
+    """Drop-physical-index request sent from Backend to knowledge_runtime."""
+
+    knowledge_base_id: int
+    index_owner_user_id: int
+    retriever_config: RuntimeRetrieverConfig
+    extensions: dict[str, Any] | None = None
+
+
 class RemoteListChunksRequest(KnowledgeRuntimeProtocolModel):
     """List-chunks request sent from Backend to knowledge_runtime."""
 

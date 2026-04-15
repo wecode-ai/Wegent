@@ -45,7 +45,8 @@ def create_splitter(
             return SentenceSplitter(
                 chunk_size=hierarchical_config.child_chunk_size,
                 chunk_overlap=hierarchical_config.child_chunk_overlap,
-                separator="\n\n",
+                separator=hierarchical_config.child_separator,
+                paragraph_separator=hierarchical_config.child_separator,
             )
 
         flat_config = config.flat_config or FlatChunkConfig()
@@ -61,6 +62,7 @@ def create_splitter(
             chunk_size=flat_config.chunk_size,
             chunk_overlap=flat_config.chunk_overlap,
             separator=flat_config.separator,
+            paragraph_separator=flat_config.separator,
         )
 
     if isinstance(config, SemanticSplitterConfig):

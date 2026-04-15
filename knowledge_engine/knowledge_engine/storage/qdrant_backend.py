@@ -701,6 +701,14 @@ class QdrantBackend(BaseStorageBackend):
                     distance=qdrant_models.Distance.COSINE,
                 ),
             )
+        else:
+            doc_ref = parent_nodes[0].metadata.get("doc_ref")
+            if doc_ref:
+                self.delete_parent_nodes(
+                    knowledge_id=knowledge_id,
+                    doc_ref=doc_ref,
+                    **kwargs,
+                )
 
         points = [
             qdrant_models.PointStruct(

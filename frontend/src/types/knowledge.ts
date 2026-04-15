@@ -53,6 +53,8 @@ export interface HierarchicalChunkConfig {
   parent_chunk_size?: number
   child_chunk_size?: number
   child_chunk_overlap?: number
+  parent_separator?: string
+  child_separator?: string
 }
 
 export interface SemanticChunkConfig {
@@ -120,6 +122,8 @@ export const DEFAULT_HIERARCHICAL_CHUNK_CONFIG: HierarchicalChunkConfig = {
   parent_chunk_size: 2048,
   child_chunk_size: 512,
   child_chunk_overlap: 64,
+  parent_separator: '\n\n',
+  child_separator: '\n',
 }
 
 export const DEFAULT_SEMANTIC_CHUNK_CONFIG: SemanticChunkConfig = {
@@ -162,12 +166,16 @@ export function normalizeSplitterConfigForDisplay(
   }
 
   if (isNormalizedSplitterConfig(config) && config.chunk_strategy) {
+    const formatEnhancement =
+      config.format_enhancement ?? DEFAULT_SPLITTER_CONFIG.format_enhancement ?? 'file_aware'
+    const markdownEnhancementEnabled =
+      formatEnhancement === 'file_aware' ? (config.markdown_enhancement?.enabled ?? true) : false
+
     const normalizedBase = {
       chunk_strategy: config.chunk_strategy,
-      format_enhancement:
-        config.format_enhancement ?? DEFAULT_SPLITTER_CONFIG.format_enhancement ?? 'file_aware',
+      format_enhancement: formatEnhancement,
       markdown_enhancement: {
-        enabled: config.markdown_enhancement?.enabled ?? true,
+        enabled: markdownEnhancementEnabled,
       },
     }
 

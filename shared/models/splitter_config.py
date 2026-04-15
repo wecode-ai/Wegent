@@ -138,6 +138,14 @@ class HierarchicalChunkConfig(SplitterConfigModel):
         le=2048,
         description="Number of characters to overlap between child chunks",
     )
+    parent_separator: str = Field(
+        "\n\n",
+        description="Separator used when splitting parent chunks",
+    )
+    child_separator: str = Field(
+        "\n",
+        description="Separator used when splitting child chunks",
+    )
 
     @field_validator("child_chunk_overlap")
     @classmethod

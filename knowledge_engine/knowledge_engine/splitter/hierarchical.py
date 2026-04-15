@@ -23,17 +23,21 @@ def build_hierarchical_nodes(
     parent_chunk_size: int,
     child_chunk_size: int,
     child_chunk_overlap: int,
+    parent_separator: str,
+    child_separator: str,
 ) -> HierarchicalNodes:
     """Build parent and child nodes for hierarchical indexing from prepared documents."""
     parent_splitter = SentenceSplitter(
         chunk_size=parent_chunk_size,
         chunk_overlap=0,
-        separator="\n\n",
+        separator=parent_separator,
+        paragraph_separator=parent_separator,
     )
     child_splitter = SentenceSplitter(
         chunk_size=child_chunk_size,
         chunk_overlap=child_chunk_overlap,
-        separator="\n\n",
+        separator=child_separator,
+        paragraph_separator=child_separator,
     )
 
     raw_parent_nodes = parent_splitter.get_nodes_from_documents(documents)

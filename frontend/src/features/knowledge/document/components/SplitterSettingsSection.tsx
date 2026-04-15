@@ -7,7 +7,6 @@
 import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
-import { Textarea } from '@/components/ui/textarea'
 import { SearchableSelect } from '@/components/ui/searchable-select'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
@@ -29,6 +28,14 @@ interface SplitterSettingsSectionProps {
   readOnly?: boolean
 }
 
+function encodeSeparatorForDisplay(value: string | undefined): string {
+  return (value ?? '').replace(/\r/g, '\\r').replace(/\n/g, '\\n').replace(/\t/g, '\\t')
+}
+
+function decodeSeparatorFromDisplay(value: string): string {
+  return value.replace(/\\r/g, '\r').replace(/\\n/g, '\n').replace(/\\t/g, '\t')
+}
+
 export function SplitterSettingsSection({
   config,
   onChange,
@@ -40,7 +47,9 @@ export function SplitterSettingsSection({
   const chunkStrategy = normalizedConfig.chunk_strategy
   const formatEnhancement =
     normalizedConfig.format_enhancement ?? (chunkStrategy === 'flat' ? 'file_aware' : 'none')
-  const titleEnhancementEnabled = normalizedConfig.markdown_enhancement?.enabled ?? true
+  const fileAwareEnabled = formatEnhancement === 'file_aware'
+  const titleEnhancementEnabled =
+    fileAwareEnabled && (normalizedConfig.markdown_enhancement?.enabled ?? true)
   const hierarchicalConfig = {
     ...DEFAULT_HIERARCHICAL_CHUNK_CONFIG,
     ...normalizedConfig.hierarchical_config,
@@ -58,12 +67,21 @@ export function SplitterSettingsSection({
     onChange(next)
   }
 
-  const buildStrategyConfig = (strategy: ChunkStrategy) => {
+  const buildStrategyConfig = (
+    strategy: ChunkStrategy,
+    overrides?: {
+      formatEnhancement?: FormatEnhancement
+      titleEnhancementEnabled?: boolean
+    }
+  ) => {
+    const nextFormatEnhancement = overrides?.formatEnhancement ?? formatEnhancement
+    const nextTitleEnhancementEnabled =
+      overrides?.titleEnhancementEnabled ?? titleEnhancementEnabled
     const baseConfig = {
       chunk_strategy: strategy,
-      format_enhancement: formatEnhancement,
+      format_enhancement: nextFormatEnhancement,
       markdown_enhancement: {
-        enabled: titleEnhancementEnabled,
+        enabled: nextFormatEnhancement === 'file_aware' ? nextTitleEnhancementEnabled : false,
       },
     }
 
@@ -100,20 +118,21 @@ export function SplitterSettingsSection({
     updateConfig(buildStrategyConfig(value as ChunkStrategy))
   }
 
-  const handleFormatEnhancementChange = (value: string) => {
-    updateConfig({
-      ...buildStrategyConfig(chunkStrategy),
-      format_enhancement: value as FormatEnhancement,
-    })
+  const handleFileAwareChange = (checked: boolean) => {
+    updateConfig(
+      buildStrategyConfig(chunkStrategy, {
+        formatEnhancement: checked ? 'file_aware' : 'none',
+        titleEnhancementEnabled: checked ? titleEnhancementEnabled : false,
+      })
+    )
   }
 
   const handleTitleEnhancementChange = (checked: boolean) => {
-    updateConfig({
-      ...buildStrategyConfig(chunkStrategy),
-      markdown_enhancement: {
-        enabled: checked,
-      },
-    })
+    updateConfig(
+      buildStrategyConfig(chunkStrategy, {
+        titleEnhancementEnabled: checked,
+      })
+    )
   }
 
   const handleFlatChunkSizeChange = (value: number) => {
@@ -148,6 +167,26 @@ export function SplitterSettingsSection({
       flat_config: {
         ...flatConfig,
         separator: value,
+      },
+    })
+  }
+
+  const handleParentSeparatorChange = (value: string) => {
+    updateConfig({
+      ...buildStrategyConfig('hierarchical'),
+      hierarchical_config: {
+        ...hierarchicalConfig,
+        parent_separator: value,
+      },
+    })
+  }
+
+  const handleChildSeparatorChange = (value: string) => {
+    updateConfig({
+      ...buildStrategyConfig('hierarchical'),
+      hierarchical_config: {
+        ...hierarchicalConfig,
+        child_separator: value,
       },
     })
   }
@@ -223,11 +262,6 @@ export function SplitterSettingsSection({
     { value: 'semantic', label: t('knowledge:document.splitter.semantic') },
   ]
 
-  const formatEnhancementItems = [
-    { value: 'none', label: t('knowledge:document.splitter.none') },
-    { value: 'file_aware', label: t('knowledge:document.splitter.fileAware') },
-  ]
-
   return (
     <div className="space-y-4">
       <div className="space-y-2">
@@ -238,30 +272,6 @@ export function SplitterSettingsSection({
           disabled={readOnly}
           items={chunkStrategyItems}
         />
-      </div>
-
-      <div className="space-y-2">
-        <Label htmlFor="format-enhancement">
-          {t('knowledge:document.splitter.formatEnhancement')}
-        </Label>
-        <SearchableSelect
-          value={formatEnhancement}
-          onValueChange={handleFormatEnhancementChange}
-          disabled={readOnly}
-          items={formatEnhancementItems}
-        />
-      </div>
-
-      <div className="flex items-center gap-3">
-        <Checkbox
-          id="title-enhancement"
-          checked={titleEnhancementEnabled}
-          onCheckedChange={checked => handleTitleEnhancementChange(Boolean(checked))}
-          disabled={readOnly}
-        />
-        <Label htmlFor="title-enhancement">
-          {t('knowledge:document.splitter.titleEnhancement')}
-        </Label>
       </div>
 
       {chunkStrategy === 'flat' && (
@@ -312,12 +322,15 @@ export function SplitterSettingsSection({
 
           <div className="space-y-2">
             <Label htmlFor="separator">{t('knowledge:document.splitter.separator')}</Label>
-            <Textarea
+            <Input
               id="separator"
-              value={flatConfig.separator ?? DEFAULT_FLAT_CHUNK_CONFIG.separator}
-              onChange={e => handleSeparatorChange(e.target.value)}
+              value={encodeSeparatorForDisplay(
+                flatConfig.separator ?? DEFAULT_FLAT_CHUNK_CONFIG.separator
+              )}
+              onChange={e => handleSeparatorChange(decodeSeparatorFromDisplay(e.target.value))}
               disabled={readOnly}
-              className="min-h-20 font-mono"
+              data-testid="flat-separator-input"
+              className="font-mono text-sm"
             />
             <p className="text-xs text-text-muted">
               {t('knowledge:document.splitter.separatorHint')}
@@ -403,6 +416,48 @@ export function SplitterSettingsSection({
               </span>
             </div>
           </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="parent-separator">
+              {t('knowledge:document.splitter.parentSeparator')}
+            </Label>
+            <Input
+              id="parent-separator"
+              value={encodeSeparatorForDisplay(
+                hierarchicalConfig.parent_separator ??
+                  DEFAULT_HIERARCHICAL_CHUNK_CONFIG.parent_separator
+              )}
+              onChange={e =>
+                handleParentSeparatorChange(decodeSeparatorFromDisplay(e.target.value))
+              }
+              disabled={readOnly}
+              data-testid="parent-separator-input"
+              className="font-mono text-sm"
+            />
+            <p className="text-xs text-text-muted">
+              {t('knowledge:document.splitter.parentSeparatorHint')}
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="child-separator">
+              {t('knowledge:document.splitter.childSeparator')}
+            </Label>
+            <Input
+              id="child-separator"
+              value={encodeSeparatorForDisplay(
+                hierarchicalConfig.child_separator ??
+                  DEFAULT_HIERARCHICAL_CHUNK_CONFIG.child_separator
+              )}
+              onChange={e => handleChildSeparatorChange(decodeSeparatorFromDisplay(e.target.value))}
+              disabled={readOnly}
+              data-testid="child-separator-input"
+              className="font-mono text-sm"
+            />
+            <p className="text-xs text-text-muted">
+              {t('knowledge:document.splitter.childSeparatorHint')}
+            </p>
+          </div>
         </>
       )}
 
@@ -453,6 +508,30 @@ export function SplitterSettingsSection({
           </div>
         </>
       )}
+
+      <div className="flex items-center gap-3">
+        <Checkbox
+          id="file-aware"
+          checked={fileAwareEnabled}
+          onCheckedChange={checked => handleFileAwareChange(Boolean(checked))}
+          disabled={readOnly}
+          data-testid="file-aware-checkbox"
+        />
+        <Label htmlFor="file-aware">{t('knowledge:document.splitter.fileAware')}</Label>
+      </div>
+
+      <div className="flex items-center gap-3">
+        <Checkbox
+          id="title-enhancement"
+          checked={titleEnhancementEnabled}
+          onCheckedChange={checked => handleTitleEnhancementChange(Boolean(checked))}
+          disabled={readOnly || !fileAwareEnabled}
+          data-testid="title-enhancement-checkbox"
+        />
+        <Label htmlFor="title-enhancement">
+          {t('knowledge:document.splitter.titleEnhancement')}
+        </Label>
+      </div>
     </div>
   )
 }

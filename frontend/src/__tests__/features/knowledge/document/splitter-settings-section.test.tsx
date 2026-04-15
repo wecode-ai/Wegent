@@ -17,8 +17,6 @@ jest.mock('@/hooks/useTranslation', () => ({
         'knowledge:document.splitter.flat': 'Flat',
         'knowledge:document.splitter.hierarchical': 'Hierarchical',
         'knowledge:document.splitter.semantic': 'Semantic',
-        'knowledge:document.splitter.formatEnhancement': 'Format enhancement',
-        'knowledge:document.splitter.none': 'None',
         'knowledge:document.splitter.fileAware': 'File-aware',
         'knowledge:document.splitter.titleEnhancement': 'Title enhancement',
         'knowledge:document.splitter.separator': 'Separator',
@@ -30,6 +28,11 @@ jest.mock('@/hooks/useTranslation', () => ({
         'knowledge:document.splitter.parentChunkSize': 'Parent chunk size',
         'knowledge:document.splitter.childChunkSize': 'Child chunk size',
         'knowledge:document.splitter.childChunkOverlap': 'Child chunk overlap',
+        'knowledge:document.splitter.parentSeparator': 'Parent separator',
+        'knowledge:document.splitter.parentSeparatorHint':
+          'Character(s) used to split parent chunks',
+        'knowledge:document.splitter.childSeparator': 'Child separator',
+        'knowledge:document.splitter.childSeparatorHint': 'Character(s) used to split child chunks',
         'knowledge:document.splitter.characters': 'characters',
         'knowledge:document.splitter.bufferSize': 'Buffer size',
         'knowledge:document.splitter.breakpointThreshold': 'Breakpoint threshold',
@@ -81,21 +84,28 @@ jest.mock('@/components/ui/checkbox', () => ({
     checked,
     onCheckedChange,
     disabled,
+    ...props
   }: {
     id?: string
     checked?: boolean
     onCheckedChange?: (checked: boolean) => void
     disabled?: boolean
+    [key: string]: unknown
   }) => (
     <input
       id={id}
       type="checkbox"
       checked={checked}
       disabled={disabled}
+      {...props}
       onChange={event => onCheckedChange?.(event.target.checked)}
     />
   ),
 }))
+
+function expectBefore(before: HTMLElement, after: HTMLElement) {
+  expect(before.compareDocumentPosition(after) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+}
 
 function StatefulSplitterSettingsSection({
   initialConfig,
@@ -112,8 +122,8 @@ describe('SplitterSettingsSection', () => {
     render(<SplitterSettingsSection config={{}} onChange={jest.fn()} />)
 
     expect(screen.getByTestId('chunk-strategy-select')).toHaveValue('flat')
-    expect(screen.getByTestId('format-enhancement-select')).toHaveValue('file_aware')
-    expect(screen.getByLabelText('Title enhancement')).toBeChecked()
+    expect(screen.getByTestId('file-aware-checkbox')).toBeChecked()
+    expect(screen.getByTestId('title-enhancement-checkbox')).toBeChecked()
   })
 
   it('maps legacy smart config to the new display model', () => {
@@ -122,8 +132,8 @@ describe('SplitterSettingsSection', () => {
     )
 
     expect(screen.getByTestId('chunk-strategy-select')).toHaveValue('flat')
-    expect(screen.getByTestId('format-enhancement-select')).toHaveValue('file_aware')
-    expect(screen.getByLabelText('Title enhancement')).toBeChecked()
+    expect(screen.getByTestId('file-aware-checkbox')).toBeChecked()
+    expect(screen.getByTestId('title-enhancement-checkbox')).toBeChecked()
   })
 
   it.each([
@@ -139,24 +149,62 @@ describe('SplitterSettingsSection', () => {
     }
   )
 
+  it('normalizes hierarchical defaults with parent and child separators', () => {
+    const normalized = normalizeSplitterConfigForDisplay({
+      chunk_strategy: 'hierarchical',
+    } as SplitterConfig)
+
+    expect(normalized.hierarchical_config).toEqual({
+      parent_chunk_size: 2048,
+      child_chunk_size: 512,
+      child_chunk_overlap: 64,
+      parent_separator: '\n\n',
+      child_separator: '\n',
+    })
+  })
+
   it('renders and wires flat controls', () => {
     render(<StatefulSplitterSettingsSection initialConfig={{}} />)
 
     const chunkSizeInput = screen.getByLabelText('Max Chunk Size')
     const chunkOverlapInput = screen.getByLabelText('Chunk Overlap')
-    const separatorInput = screen.getByLabelText('Separator')
+    const separatorInput = screen.getByTestId('flat-separator-input')
+    const fileAwareCheckbox = screen.getByTestId('file-aware-checkbox')
+    const titleEnhancementCheckbox = screen.getByTestId('title-enhancement-checkbox')
 
     expect(chunkSizeInput).toHaveValue(1024)
     expect(chunkOverlapInput).toHaveValue(50)
-    expect(separatorInput).toHaveValue('\n\n')
+    expect(separatorInput).toHaveValue('\\n\\n')
+    expect(separatorInput).toHaveClass('font-mono', 'text-sm')
+    expectBefore(chunkSizeInput, chunkOverlapInput)
+    expectBefore(chunkOverlapInput, separatorInput)
+    expectBefore(separatorInput, fileAwareCheckbox)
+    expectBefore(fileAwareCheckbox, titleEnhancementCheckbox)
 
     fireEvent.change(chunkSizeInput, { target: { value: '2048' } })
     fireEvent.change(chunkOverlapInput, { target: { value: '100' } })
-    fireEvent.change(separatorInput, { target: { value: '\n' } })
+    fireEvent.change(separatorInput, { target: { value: '\\n' } })
 
     expect(chunkSizeInput).toHaveValue(2048)
     expect(chunkOverlapInput).toHaveValue(100)
-    expect(separatorInput).toHaveValue('\n')
+    expect(separatorInput).toHaveValue('\\n')
+  })
+
+  it('disables title enhancement when file-aware is turned off', () => {
+    render(<StatefulSplitterSettingsSection initialConfig={{}} />)
+
+    const fileAwareCheckbox = screen.getByTestId('file-aware-checkbox')
+    const titleEnhancementCheckbox = screen.getByTestId('title-enhancement-checkbox')
+
+    expect(fileAwareCheckbox).toBeChecked()
+    expect(titleEnhancementCheckbox).toBeChecked()
+    expect(titleEnhancementCheckbox).not.toBeDisabled()
+
+    fireEvent.click(fileAwareCheckbox)
+
+    expect(fileAwareCheckbox).not.toBeChecked()
+    expect(titleEnhancementCheckbox).not.toBeChecked()
+    expect(titleEnhancementCheckbox).toBeDisabled()
   })
 
   it('disables flat controls in read only mode', () => {
@@ -173,13 +221,36 @@ describe('SplitterSettingsSection', () => {
     expect(screen.queryByLabelText('Parent chunk size')).not.toBeInTheDocument()
     expect(screen.queryByLabelText('Child chunk size')).not.toBeInTheDocument()
     expect(screen.queryByLabelText('Child chunk overlap')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Parent separator')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Child separator')).not.toBeInTheDocument()
 
     fireEvent.change(screen.getByTestId('chunk-strategy-select'), {
       target: { value: 'hierarchical' },
     })
 
-    expect(screen.getByLabelText('Parent chunk size')).toBeInTheDocument()
-    expect(screen.getByLabelText('Child chunk size')).toBeInTheDocument()
-    expect(screen.getByLabelText('Child chunk overlap')).toBeInTheDocument()
+    expect(screen.getByLabelText('Parent chunk size')).toHaveValue(2048)
+    expect(screen.getByLabelText('Child chunk size')).toHaveValue(512)
+    expect(screen.getByLabelText('Child chunk overlap')).toHaveValue(64)
+    const parentSeparatorInput = screen.getByTestId('parent-separator-input')
+    const childSeparatorInput = screen.getByTestId('child-separator-input')
+    const fileAwareCheckbox = screen.getByTestId('file-aware-checkbox')
+    const titleEnhancementCheckbox = screen.getByTestId('title-enhancement-checkbox')
+
+    expect(parentSeparatorInput).toHaveValue('\\n\\n')
+    expect(childSeparatorInput).toHaveValue('\\n')
+    expect(parentSeparatorInput).toHaveClass('font-mono', 'text-sm')
+    expect(childSeparatorInput).toHaveClass('font-mono', 'text-sm')
+    expectBefore(
+      screen.getByLabelText('Parent chunk size'),
+      screen.getByLabelText('Child chunk size')
+    )
+    expectBefore(
+      screen.getByLabelText('Child chunk size'),
+      screen.getByLabelText('Child chunk overlap')
+    )
+    expectBefore(screen.getByLabelText('Child chunk overlap'), parentSeparatorInput)
+    expectBefore(parentSeparatorInput, childSeparatorInput)
+    expectBefore(childSeparatorInput, fileAwareCheckbox)
+    expectBefore(fileAwareCheckbox, titleEnhancementCheckbox)
   })
 })

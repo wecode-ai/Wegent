@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -99,7 +99,7 @@ async def test_index_document_local_delegates_to_engine_document_service() -> No
         patch(
             "app.services.rag.local_data_plane.indexing.retriever_kinds_service.get_retriever",
             return_value=retriever,
-        ),
+        ) as mock_get_retriever,
         patch(
             "app.services.rag.local_data_plane.indexing.create_storage_backend_from_runtime_config",
             return_value=storage_backend,
@@ -131,6 +131,14 @@ async def test_index_document_local_delegates_to_engine_document_service() -> No
         result = await index_document_local(spec, db=MagicMock())
 
     assert result["status"] == "success"
+    # Local execution must resolve the retriever in the index-owner scope, not the caller scope.
+    # This is the contract that keeps cross-namespace KB access using the correct storage owner.
+    mock_get_retriever.assert_called_once_with(
+        db=ANY,
+        user_id=3,
+        name="retriever-a",
+        namespace="default",
+    )
     mock_index_document.assert_awaited_once_with(
         knowledge_id="1",
         binary_data=b"hello world",

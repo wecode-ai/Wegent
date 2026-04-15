@@ -10,6 +10,7 @@ from app.services.knowledge.index_runtime import (
 
 
 def test_build_kb_index_info_uses_creator_for_default_namespace() -> None:
+    # Even in the personal namespace, runtime ownership follows the KB record.
     db = MagicMock()
     knowledge_base = SimpleNamespace(
         namespace="default",
@@ -30,6 +31,7 @@ def test_build_kb_index_info_uses_creator_for_default_namespace() -> None:
 
 
 def test_build_kb_index_info_uses_creator_for_group_namespace() -> None:
+    # Group collaborators can trigger indexing, but storage ownership stays with the KB creator.
     db = MagicMock()
     knowledge_base = SimpleNamespace(
         namespace="team-a",
@@ -50,6 +52,7 @@ def test_build_kb_index_info_uses_creator_for_group_namespace() -> None:
 
 
 def test_build_kb_index_info_uses_creator_for_organization_namespace() -> None:
+    # Organization-scoped KBs keep the same invariant: runtime uses the persisted owner scope.
     db = MagicMock()
     knowledge_base = SimpleNamespace(
         namespace="org-a",

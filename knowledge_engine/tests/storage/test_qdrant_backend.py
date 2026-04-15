@@ -117,6 +117,59 @@ class TestDeleteKnowledge:
         )
 
 
+class TestSaveParentNodes:
+    @patch("knowledge_engine.storage.qdrant_backend.QdrantClient")
+    def test_save_parent_nodes_replaces_existing_rows_for_same_document(
+        self, mock_client_class
+    ):
+        from knowledge_engine.storage.qdrant_backend import QdrantBackend
+
+        mock_client = MagicMock()
+        mock_client_class.return_value = mock_client
+        mock_client.collection_exists.return_value = True
+
+        parent_node = MagicMock()
+        parent_node.node_id = "parent-1"
+        parent_node.text = "parent content"
+        parent_node.metadata = {
+            "doc_ref": "doc_123",
+            "source_file": "test.md",
+            "chunk_strategy": "hierarchical",
+        }
+
+        backend = QdrantBackend(
+            {
+                "url": "http://localhost:6333",
+                "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
+            }
+        )
+
+        result = backend.save_parent_nodes(
+            knowledge_id="kb_1",
+            parent_nodes=[parent_node],
+        )
+
+        assert result == {"stored_count": 1}
+        mock_client.delete.assert_called_once_with(
+            collection_name="test_kb_kb_1__parents",
+            points_selector=qdrant_models.FilterSelector(
+                filter=qdrant_models.Filter(
+                    must=[
+                        qdrant_models.FieldCondition(
+                            key="knowledge_id",
+                            match=qdrant_models.MatchValue(value="kb_1"),
+                        ),
+                        qdrant_models.FieldCondition(
+                            key="doc_ref",
+                            match=qdrant_models.MatchValue(value="doc_123"),
+                        ),
+                    ]
+                )
+            ),
+            wait=True,
+        )
+
+
 class TestDropKnowledgeIndex:
     def test_drop_knowledge_index_rejects_shared_index_strategy(self) -> None:
         from knowledge_engine.storage.qdrant_backend import QdrantBackend

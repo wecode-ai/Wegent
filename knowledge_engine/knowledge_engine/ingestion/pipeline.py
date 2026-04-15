@@ -174,6 +174,8 @@ def build_ingestion_result(
             parent_chunk_size=hierarchical_config.parent_chunk_size,
             child_chunk_size=hierarchical_config.child_chunk_size,
             child_chunk_overlap=hierarchical_config.child_chunk_overlap,
+            parent_separator=hierarchical_config.parent_separator,
+            child_separator=hierarchical_config.child_separator,
         )
         parent_nodes = enrich_nodes_metadata(
             hierarchical_nodes.parent_nodes,
@@ -266,6 +268,7 @@ def _build_transformations(
                 chunk_size=flat_config.chunk_size,
                 chunk_overlap=flat_config.chunk_overlap,
                 separator=flat_config.separator,
+                paragraph_separator=flat_config.separator,
             )
         )
 
@@ -290,6 +293,7 @@ def _build_file_aware_transformations(
                 chunk_size=flat_config.chunk_size,
                 chunk_overlap=flat_config.chunk_overlap,
                 separator=flat_config.separator,
+                paragraph_separator=flat_config.separator,
             )
         )
         return transformations
@@ -300,6 +304,7 @@ def _build_file_aware_transformations(
                 chunk_size=flat_config.chunk_size,
                 chunk_overlap=flat_config.chunk_overlap,
                 separator=flat_config.separator,
+                paragraph_separator=flat_config.separator,
             )
         ]
 

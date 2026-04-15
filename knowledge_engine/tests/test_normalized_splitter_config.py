@@ -63,9 +63,11 @@ def test_normalize_splitter_config_clears_semantic_config_for_hierarchical_strat
         {
             "chunk_strategy": "hierarchical",
             "hierarchical_config": {
-                "parent_chunk_size": 1024,
-                "child_chunk_size": 256,
-                "child_chunk_overlap": 32,
+                "parent_chunk_size": 2048,
+                "child_chunk_size": 512,
+                "child_chunk_overlap": 64,
+                "parent_separator": "\n\n",
+                "child_separator": "\n",
             },
             "semantic_config": {
                 "buffer_size": 2,
@@ -75,3 +77,9 @@ def test_normalize_splitter_config_clears_semantic_config_for_hierarchical_strat
     )
 
     assert normalized.semantic_config is None
+    assert normalized.hierarchical_config is not None
+    assert normalized.hierarchical_config.parent_chunk_size == 2048
+    assert normalized.hierarchical_config.child_chunk_size == 512
+    assert normalized.hierarchical_config.child_chunk_overlap == 64
+    assert normalized.hierarchical_config.parent_separator == "\n\n"
+    assert normalized.hierarchical_config.child_separator == "\n"
