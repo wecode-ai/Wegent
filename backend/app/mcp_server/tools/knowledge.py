@@ -365,6 +365,10 @@ def create_knowledge_base(
             "This is the PREFERRED method - content is read directly from storage without "
             "passing through the model output window."
         ),
+        "source_config": (
+            "Optional source configuration dict for tracking document origin. "
+            "Example: {'url': 'https://...', 'source': 'dingtalk', 'updated_at': '2026-04-16T10:00:00Z', 'scraped_at': '2026-04-16T11:00:00Z'}"
+        ),
         "trigger_indexing": "Whether to trigger RAG indexing (default: True)",
         "trigger_summary": "Whether to trigger summary generation (default: True)",
     },
@@ -379,6 +383,7 @@ def create_document(
     file_extension: Optional[str] = None,
     url: Optional[str] = None,
     attachment_id: Optional[int] = None,
+    source_config: Optional[Dict[str, Any]] = None,
     trigger_indexing: bool = True,
     trigger_summary: bool = True,
 ) -> Dict[str, Any]:
@@ -404,6 +409,7 @@ def create_document(
         file_extension: File extension (for source_type="file", e.g., "txt", "md", "pdf")
         url: URL to scrape (for source_type="web")
         attachment_id: Existing attachment ID (for source_type="attachment")
+        source_config: Optional source configuration dict for tracking document origin
         trigger_indexing: Whether to trigger RAG indexing (default: True)
         trigger_summary: Whether to trigger summary generation (default: True)
 
@@ -428,6 +434,7 @@ def create_document(
             file_extension=file_extension,
             url=url,
             attachment_id=attachment_id,
+            source_config=source_config,
             trigger_indexing=trigger_indexing,
             trigger_summary=trigger_summary,
         )

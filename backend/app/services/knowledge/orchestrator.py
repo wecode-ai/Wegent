@@ -1103,6 +1103,7 @@ class KnowledgeOrchestrator:
         file_extension: Optional[str] = None,
         url: Optional[str] = None,
         attachment_id: Optional[int] = None,
+        source_config: Optional[Dict[str, Any]] = None,
         trigger_indexing: bool = True,
         trigger_summary: bool = True,
         splitter_config: Optional[Dict[str, Any]] = None,
@@ -1123,6 +1124,7 @@ class KnowledgeOrchestrator:
             file_extension: File extension for source_type="file"
             url: URL for source_type="web"
             attachment_id: Existing attachment ID for source_type="attachment"
+            source_config: Optional source configuration dict for tracking document origin
             trigger_indexing: Whether to trigger RAG indexing
             trigger_summary: Whether to trigger summary generation
             splitter_config: Optional splitter configuration dict
@@ -1229,6 +1231,7 @@ class KnowledgeOrchestrator:
                 attachment_id=attachment.id,
                 file_extension=normalized_ext,
                 file_size=len(binary_data),
+                source_config=source_config,
             )
 
             return self._create_and_index_document(
@@ -1262,6 +1265,7 @@ class KnowledgeOrchestrator:
             attachment_id=attachment.id,
             file_extension=normalized_ext,
             file_size=len(binary_data),
+            source_config=source_config,
         )
 
         return self._create_and_index_document(
