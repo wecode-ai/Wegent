@@ -16,6 +16,7 @@ from knowledge_engine.ingestion.pipeline import (
 )
 from knowledge_engine.storage.base import BaseStorageBackend
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
+from knowledge_engine.text_sanitizer import sanitize_text_for_indexing
 from shared.telemetry.decorators import add_span_event
 
 logger = logging.getLogger(__name__)
@@ -41,6 +42,29 @@ def sanitize_metadata(metadata: Dict[str, Any]) -> Dict[str, Any]:
             if value is not None:
                 sanitized[key] = str(value) if not isinstance(value, str) else value
     return sanitized
+
+
+def sanitize_documents(documents: List[Document]) -> List[Document]:
+    """Sanitize document text before chunking."""
+    sanitized_documents: List[Document] = []
+    for doc in documents:
+        result = sanitize_text_for_indexing(doc.text)
+        if result.replacements_count > 0:
+            add_span_event(
+                "rag.indexer.documents.sanitized",
+                {
+                    "replacements_count": str(result.replacements_count),
+                    "replacement_summary": str(result.replacement_summary),
+                },
+            )
+
+        payload = doc.model_dump()
+        payload["text"] = result.text
+        if payload.get("text_resource"):
+            payload["text_resource"]["text"] = result.text
+        sanitized_documents.append(Document(**payload))
+
+    return sanitized_documents
 
 
 class DocumentIndexer:
@@ -126,6 +150,8 @@ class DocumentIndexer:
 
         for doc in documents:
             doc.metadata = sanitize_metadata(doc.metadata)
+
+        documents = sanitize_documents(documents)
 
         ingestion_result = build_ingestion_result(
             documents=documents,

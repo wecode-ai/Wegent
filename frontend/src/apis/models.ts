@@ -22,6 +22,9 @@ export interface STTConfig {
 export interface EmbeddingConfig {
   dimensions?: number
   encoding_format?: 'float' | 'base64'
+  // Additional modalities beyond the implicit text default. Omit or use []
+  // for text-only models.
+  additional_input_modalities?: string[]
 }
 
 export interface RerankConfig {

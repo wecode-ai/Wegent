@@ -1069,6 +1069,8 @@
     "embedding_dimensions": "向量维度",
     "embedding_dimensions_hint": "输出维度（例如 1536）",
     "embedding_encoding_format": "编码格式",
+    "embedding_supports_image_input": "支持图像输入",
+    "embedding_supports_image_input_hint": "声明该 embedding 模型除文本外还支持图像输入。当前知识库索引仍然使用纯文本管线。",
     "rerank_top_n": "返回结果数",
     "rerank_top_n_hint": "返回前 N 个结果",
     "rerank_return_documents": "返回文档内容",

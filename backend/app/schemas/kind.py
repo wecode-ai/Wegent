@@ -91,6 +91,11 @@ class EmbeddingConfig(BaseModel):
     encoding_format: Optional[str] = Field(
         "float", description="Encoding format (float, base64)"
     )
+    additional_input_modalities: Optional[List[str]] = Field(
+        None,
+        description="Additional supported input modalities beyond the implicit "
+        "text default (e.g., ['image']). Do not include 'text' in this list.",
+    )
 
 
 class RerankConfig(BaseModel):
