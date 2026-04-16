@@ -8,6 +8,7 @@ import { useState, useCallback, useMemo } from 'react'
 import {
   CheckCircle2,
   Circle,
+  ExternalLink,
   Loader2,
   Archive,
   MoreHorizontal,
@@ -564,6 +565,23 @@ export function MessageList({
                           <span>
                             {t('messages.processed_at')}: {formatUTCDate(message.processedAt)}
                           </span>
+                        </>
+                      )}
+                      {/* View Conversation link for direct_agent processed messages */}
+                      {message.processTaskId != null && message.processTaskId > 0 && (
+                        <>
+                          <span>·</span>
+                          <a
+                            href={`/chat?task_id=${message.processTaskId}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex items-center gap-0.5 text-primary hover:underline"
+                            onClick={e => e.stopPropagation()}
+                            data-testid={`view-task-link-${message.id}`}
+                          >
+                            <ExternalLink className="h-3 w-3" />
+                            {t('messages.view_task')}
+                          </a>
                         </>
                       )}
                     </div>

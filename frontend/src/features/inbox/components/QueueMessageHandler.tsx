@@ -8,7 +8,7 @@ import { useEffect, useRef, useCallback } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { getQueueMessage, updateMessageStatus, type QueueMessage } from '@/apis/work-queue'
 import { subtaskApis } from '@/apis/subtasks'
-import type { QueueMessageContext } from '@/types/context'
+import type { QueueMessageContext, InboxAttachment } from '@/types/context'
 import type { TaskDetailSubtask } from '@/types/api'
 
 interface QueueMessageHandlerProps {
@@ -41,6 +41,12 @@ function buildQueueMessageContext(message: QueueMessage): QueueMessageContext {
       const isUserRole = snapshot.role?.toUpperCase() === 'USER'
       const role = isUserRole ? '用户' : 'AI'
       const sender = snapshot.senderUserName ? ` (${snapshot.senderUserName})` : ''
+
+      // Skip messages with no text content
+      // Attachments are now passed as attachment_ids and displayed as badges, not as text
+      const hasContent = snapshot.content && snapshot.content.trim()
+      if (!hasContent) continue
+
       fullContent += `[${role}${sender}]:\n${snapshot.content}\n\n`
     }
   }
@@ -48,19 +54,39 @@ function buildQueueMessageContext(message: QueueMessage): QueueMessageContext {
   // Build content preview (truncated)
   let contentPreview = ''
   if (message.contentSnapshot && message.contentSnapshot.length > 0) {
-    const firstMessage = message.contentSnapshot[0]
-    contentPreview = firstMessage.content.slice(0, 100)
-    if (firstMessage.content.length > 100) {
-      contentPreview += '...'
+    // Find first snapshot with content or attachments
+    for (const snap of message.contentSnapshot) {
+      if (snap.content && snap.content.trim()) {
+        contentPreview = snap.content.slice(0, 100)
+        if (snap.content.length > 100) {
+          contentPreview += '...'
+        }
+        break
+      } else if (snap.attachments && snap.attachments.length > 0) {
+        contentPreview = `[附件: ${snap.attachments.map(a => a.name).join(', ')}]`
+        break
+      }
     }
   }
 
-  // Collect attachment context IDs from all snapshot messages so the AI
-  // can access uploaded file content when the user processes this message.
+  // Collect attachment context IDs and metadata from all snapshot messages.
+  // These are passed as attachment_ids when sending to AI and displayed as badges in the chat input.
   const attachmentContextIds: number[] = []
+  const inboxAttachments: InboxAttachment[] = []
   for (const snapshot of message.contentSnapshot ?? []) {
     if (snapshot.attachmentContextIds) {
       attachmentContextIds.push(...snapshot.attachmentContextIds)
+    }
+    if (snapshot.attachments) {
+      for (const att of snapshot.attachments) {
+        inboxAttachments.push({
+          id: att.id,
+          name: att.name,
+          file_extension: att.file_extension,
+          file_size: att.file_size,
+          mime_type: undefined, // Not available in snapshot, will be shown without mime type
+        })
+      }
     }
   }
 
@@ -75,6 +101,7 @@ function buildQueueMessageContext(message: QueueMessage): QueueMessageContext {
     messageCount: message.contentSnapshot?.length || 0,
     sourceTaskId: message.sourceTaskId,
     attachmentContextIds: attachmentContextIds.length > 0 ? attachmentContextIds : undefined,
+    inboxAttachments: inboxAttachments.length > 0 ? inboxAttachments : undefined,
   }
 }
 

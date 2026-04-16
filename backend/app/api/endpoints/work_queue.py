@@ -425,6 +425,31 @@ async def retry_message(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
 
 
+@messages_router.post("/{message_id}/process", response_model=QueueMessageResponse)
+async def process_message(
+    message_id: int,
+    current_user: User = Depends(security.get_current_user),
+):
+    """Manually trigger processing of an inbox message.
+
+    Dispatches the message through the configured auto-process pipeline
+    (subscription mode or direct_agent mode) regardless of the queue's
+    triggerMode setting.  Messages that are already processing or processed
+    are rejected with 409.
+    """
+    try:
+        return await queue_message_service.process_message(
+            user_id=current_user.id,
+            message_id=message_id,
+        )
+    except NotFoundException as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except ForbiddenException as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except ConflictException as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+
+
 # ==================== Batch Operations ====================
 
 

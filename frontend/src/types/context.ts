@@ -44,6 +44,20 @@ export interface TableContext extends BaseContextItem {
   }
 }
 
+/** Inbox attachment metadata for display as badge in chat input */
+export interface InboxAttachment {
+  /** SubtaskContext ID (used as attachment_id when sending to AI) */
+  id: number
+  /** File name for display */
+  name: string
+  /** File extension (e.g. 'pdf', 'md') */
+  file_extension?: string
+  /** File size in bytes */
+  file_size?: number
+  /** MIME type */
+  mime_type?: string
+}
+
 /**
  * Queue message context item (for processing inbox messages)
  */
@@ -65,6 +79,9 @@ export interface QueueMessageContext extends BaseContextItem {
    * These are passed as attachment_ids when sending to AI so the LLM
    * can access the file content via context injection. */
   attachmentContextIds?: number[]
+  /** Attachment metadata for displaying as badge in chat input and message bubble.
+   * Built from snapshot.attachments when processing inbox messages. */
+  inboxAttachments?: InboxAttachment[]
 }
 
 /**

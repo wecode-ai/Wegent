@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
+from app.core.security import create_access_token
 from app.models.task import TaskResource
 from app.models.user import User
 from app.services.auth import create_skill_identity_token
@@ -74,7 +75,7 @@ def object_storage_test_client(test_db: Session) -> TestClient:
     return TestClient(app)
 
 
-def test_object_storage_upload_url_requires_developer_token(
+def test_object_storage_upload_url_requires_auth_token(
     object_storage_test_client: TestClient,
     test_user: User,
 ):
@@ -134,6 +135,45 @@ def test_object_storage_upload_url_returns_presigned_upload(
         "upload_url": "https://minio.example.com/upload",
         "object_key": f"publish/{test_user.user_name}/{task.id}/demo.zip",
         "expires_at": "2026-04-10T08:00:00Z",
+    }
+
+
+def test_object_storage_upload_url_accepts_jwt_token(
+    object_storage_test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    mocker,
+):
+    task = _create_task(test_db, task_id=9756, user_id=test_user.id)
+    token = create_skill_identity_token(
+        user_id=test_user.id,
+        user_name=test_user.user_name,
+        runtime_type="executor",
+        runtime_name="executor-1",
+    )
+    auth_token = create_access_token(data={"sub": test_user.user_name})
+    expires_at = datetime(2026, 4, 10, 8, 30, tzinfo=timezone.utc)
+    mocker.patch.object(
+        object_storage_presign_service,
+        "generate_upload_url",
+        return_value=("https://minio.example.com/upload-jwt", expires_at),
+    )
+
+    response = object_storage_test_client.post(
+        "/api/internal/object-storage/upload-url",
+        headers={"Authorization": f"Bearer {auth_token}"},
+        json={
+            "task_id": task.id,
+            "object_name": "demo.zip",
+            "skill_identity_token": token,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "upload_url": "https://minio.example.com/upload-jwt",
+        "object_key": f"publish/{test_user.user_name}/{task.id}/demo.zip",
+        "expires_at": "2026-04-10T08:30:00Z",
     }
 
 
