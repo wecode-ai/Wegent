@@ -778,9 +778,11 @@
   },
   "quota": {
     "load_failed": "Failed to fetch quota info",
-    "brief": "AIGC Quota {{usage}} / {{quota}} Yuan ({{usage_rate}}%)",
+    "brief": "Model Quota {{usage}} / {{quota}} Yuan ({{usage_rate}}%)",
     "detail_total": "Total quota: {{quota}} Yuan, used {{usage}} Yuan, remaining {{remaining}} Yuan.",
-    "detail_rate": "Usage rate: {{rate}}%"
+    "detail_rate": "Usage rate: {{rate}}%",
+    "billing_prefix": "For details on model quota and billing, please refer to: ",
+    "billing_link": "Quota & Billing Details"
   },
   "github": {
     "error": {

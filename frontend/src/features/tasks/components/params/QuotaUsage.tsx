@@ -96,6 +96,8 @@ export default function QuotaUsage({ className, compact = false }: QuotaUsagePro
     usage_rate: usageRate,
   })
 
+  const BILLING_URL = 'https://space.intra.weibo.com/develop/aigc-quota'
+
   const detail = (
     <div>
       <div>
@@ -106,6 +108,18 @@ export default function QuotaUsage({ className, compact = false }: QuotaUsagePro
         })}
       </div>
       <div>{t('common:quota.detail_rate', { rate: usageRate })}</div>
+      <div className="mt-1">
+        <span>{t('common:quota.billing_prefix')}</span>
+        <a
+          href={BILLING_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-primary hover:underline"
+          onClick={e => e.stopPropagation()}
+        >
+          {t('common:quota.billing_link')}
+        </a>
+      </div>
     </div>
   )
   // Compact mode: show only icon

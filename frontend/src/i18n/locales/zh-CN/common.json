@@ -778,9 +778,11 @@
   },
   "quota": {
     "load_failed": "额度信息获取失败",
-    "brief": "AIGC 额度 {{usage}} / {{quota}} 元 ({{usage_rate}}%)",
+    "brief": "模型额度 {{usage}} / {{quota}} 元 ({{usage_rate}}%)",
     "detail_total": "总额度 {{quota}} 元，已用 {{usage}} 元，剩余 {{remaining}} 元。",
-    "detail_rate": "使用率：{{rate}}%"
+    "detail_rate": "使用率：{{rate}}%",
+    "billing_prefix": "关于模型额度的规则与计费方式，可参考：",
+    "billing_link": "额度与计费说明"
   },
   "github": {
     "error": {
