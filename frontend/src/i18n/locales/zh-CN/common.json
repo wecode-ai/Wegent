@@ -777,11 +777,10 @@
     "noResults": "未找到用户"
   },
   "quota": {
-    "load_failed": "积分信息获取失败",
-    "brief": "微积分 {{monthly_usage}} / {{monthly_quota}} (+{{permanent_quota}})",
-    "detail_monthly": "你的当月积分为 {{monthly_quota}}，已经使用 {{monthly_usage}}，剩余 {{monthly_left}}。",
-    "detail_permanent": "永久积分为 {{permanent_quota}}，已经使用 {{permanent_usage}}，剩余 {{permanent_left}}。",
-    "detail_tip": "当月积分每月月初重置，永久积分可参与活动获取。"
+    "load_failed": "额度信息获取失败",
+    "brief": "AIGC 额度 {{usage}} / {{quota}} 元 ({{usage_rate}}%)",
+    "detail_total": "总额度 {{quota}} 元，已用 {{usage}} 元，剩余 {{remaining}} 元。",
+    "detail_rate": "使用率：{{rate}}%"
   },
   "github": {
     "error": {

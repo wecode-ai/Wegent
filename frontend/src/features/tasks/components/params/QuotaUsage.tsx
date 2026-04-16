@@ -88,31 +88,24 @@ export default function QuotaUsage({ className, compact = false }: QuotaUsagePro
     )
   }
 
-  const { monthly_quota, monthly_usage, permanent_quota, permanent_usage } = quota.user_quota_detail
+  const usageRate = (quota.usage_rate * 100).toFixed(2)
 
   const brief = t('common:quota.brief', {
-    quota_source: quota.quota_source,
-    monthly_usage,
-    monthly_quota: monthly_quota.toLocaleString(),
-    permanent_quota: (permanent_quota - permanent_usage).toLocaleString(),
+    usage: quota.usage.toFixed(2),
+    quota: quota.quota.toLocaleString(),
+    usage_rate: usageRate,
   })
 
   const detail = (
     <div>
       <div>
-        {t('common:quota.detail_monthly', {
-          monthly_quota,
-          monthly_usage,
-          monthly_left: monthly_quota - monthly_usage,
+        {t('common:quota.detail_total', {
+          quota: quota.quota.toLocaleString(),
+          usage: quota.usage.toFixed(2),
+          remaining: quota.remaining.toFixed(2),
         })}
       </div>
-      <div>
-        {t('common:quota.detail_permanent', {
-          permanent_quota,
-          permanent_usage,
-          permanent_left: permanent_quota - permanent_usage,
-        })}
-      </div>
+      <div>{t('common:quota.detail_rate', { rate: usageRate })}</div>
     </div>
   )
   // Compact mode: show only icon
