@@ -29,7 +29,7 @@ class ModelKeyResponse(BaseModel):
 
 @router.post("/wegent-model-key", response_model=ModelKeyResponse)
 async def get_wegent_model_key(
-    current_user: User = Depends(security.get_current_user),
+    current_user: User = Depends(security.get_current_user_jwt_apikey_tasktoken),
 ) -> ModelKeyResponse:
     """
     Get or create a wegent-model-key for the current authenticated user.
