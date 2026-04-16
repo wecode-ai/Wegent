@@ -4,7 +4,7 @@
 
 'use client'
 
-import { User, Clock, MessageSquare, FileText, Paperclip } from 'lucide-react'
+import { ExternalLink, User, Clock, MessageSquare, FileText, Paperclip } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -173,8 +173,22 @@ export function MessageDetailDialog({
           </div>
 
           {/* Actions */}
-          {canProcess && (
-            <div className="flex items-center justify-end pt-2">
+          <div className="flex items-center justify-between pt-2">
+            {/* View Conversation link – shown when the message was processed via direct_agent mode */}
+            {message.processTaskId != null && message.processTaskId > 0 && (
+              <a
+                href={`/chat?task_id=${message.processTaskId}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-1 text-sm text-primary hover:underline"
+                data-testid="view-task-link"
+              >
+                <ExternalLink className="h-3.5 w-3.5" />
+                {t('messages.view_task')}
+              </a>
+            )}
+            {!message.processTaskId && <div />}
+            {canProcess && (
               <Button
                 variant="primary"
                 size="sm"
@@ -185,8 +199,8 @@ export function MessageDetailDialog({
               >
                 {t('messages.process')}
               </Button>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       </DialogContent>
     </Dialog>

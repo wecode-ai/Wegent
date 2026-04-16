@@ -2290,9 +2290,6 @@ class KnowledgeOrchestrator:
             "total_estimated_tokens": result.get("total_estimated_tokens", 0),
         }
 
-    # Backward compatibility alias
-    search_knowledge_base = retrieve_knowledge
-
 
 # Singleton instance
 knowledge_orchestrator = KnowledgeOrchestrator()

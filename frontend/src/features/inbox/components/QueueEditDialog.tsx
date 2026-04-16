@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -25,6 +25,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { SearchableSelect, type SearchableSelectItem } from '@/components/ui/searchable-select'
+import { Tag } from '@/components/ui/tag'
+import { TeamIconDisplay } from '@/features/settings/components/teams/TeamIconDisplay'
 import { toast } from 'sonner'
 import {
   createWorkQueue,
@@ -33,11 +36,16 @@ import {
   type WorkQueueCreateRequest,
   type WorkQueueUpdateRequest,
   type QueueVisibility,
-  type TriggerMode,
   type SubscriptionRef,
+  type TeamRef,
 } from '@/apis/work-queue'
 import { subscriptionApis } from '@/apis/subscription'
+import { userApis } from '@/apis/user'
+import { useTeamContext } from '@/contexts/TeamContext'
+import { getSharedTagStyle as getSharedBadgeStyle } from '@/utils/styles'
 import { useInboxContext } from '../contexts/inboxContext'
+
+type ProcessMode = 'subscription' | 'direct_agent'
 
 interface QueueEditDialogProps {
   queue?: WorkQueue | null
@@ -56,19 +64,26 @@ export function QueueEditDialog({ queue, open, onOpenChange }: QueueEditDialogPr
   const [displayName, setDisplayName] = useState('')
   const [description, setDescription] = useState('')
   const [visibility, setVisibility] = useState<QueueVisibility>('private')
-  const [triggerMode, setTriggerMode] = useState<TriggerMode>('manual')
 
   // Auto-process state
   const [autoProcessEnabled, setAutoProcessEnabled] = useState(false)
+  const [processMode, setProcessMode] = useState<ProcessMode>('direct_agent')
+
+  // Subscription mode state
   const [selectedSubscriptionId, setSelectedSubscriptionId] = useState<string>('')
   const [subscriptions, setSubscriptions] = useState<
     Array<{ id: number; name: string; namespace: string; displayName: string; userId: number }>
   >([])
   const [loadingSubscriptions, setLoadingSubscriptions] = useState(false)
 
+  // Direct agent mode state - use shared TeamContext instead of local fetch
+  const [selectedTeamId, setSelectedTeamId] = useState<string>('')
+  const { teams, isTeamsLoading: loadingTeams } = useTeamContext()
+  const sharedBadgeStyle = getSharedBadgeStyle()
+
   const [loading, setLoading] = useState(false)
 
-  // Fetch subscriptions when auto-process is enabled
+  // Fetch subscriptions for subscription mode
   const fetchSubscriptions = useCallback(async () => {
     setLoadingSubscriptions(true)
     try {
@@ -78,7 +93,6 @@ export function QueueEditDialog({ queue, open, onOpenChange }: QueueEditDialogPr
         'event'
       )
       // Filter to inbox_message event type subscriptions
-      // API returns flat SubscriptionInDB objects where trigger_config is { event_type: 'inbox_message' }
       const items = response.items || []
       const inboxSubscriptions = items
         .filter(sub => {
@@ -100,6 +114,7 @@ export function QueueEditDialog({ queue, open, onOpenChange }: QueueEditDialogPr
       setLoadingSubscriptions(false)
     }
   }, [])
+
   // Reset form when dialog opens/closes or queue changes
   useEffect(() => {
     if (open && queue) {
@@ -107,33 +122,29 @@ export function QueueEditDialog({ queue, open, onOpenChange }: QueueEditDialogPr
       setDisplayName(queue.displayName)
       setDescription(queue.description || '')
       setVisibility(queue.visibility)
-      setTriggerMode(queue.autoProcess?.triggerMode || 'manual')
+      const mode = (queue.autoProcess?.mode as ProcessMode) || 'subscription'
+      setProcessMode(mode)
       setAutoProcessEnabled(queue.autoProcess?.enabled || false)
-      // Try to find the subscription by ref
-      if (queue.autoProcess?.subscriptionRef) {
-        // Will be matched after subscriptions are loaded
-        setSelectedSubscriptionId('')
-      } else {
-        setSelectedSubscriptionId('')
-      }
+      setSelectedSubscriptionId('')
+      setSelectedTeamId('')
     } else if (open && !queue) {
-      // Reset to defaults for new queue
       setName('')
       setDisplayName('')
       setDescription('')
       setVisibility('private')
-      setTriggerMode('manual')
       setAutoProcessEnabled(false)
+      setProcessMode('direct_agent')
       setSelectedSubscriptionId('')
+      setSelectedTeamId('')
     }
   }, [open, queue])
 
-  // Fetch subscriptions when dialog opens or auto-process is toggled on
+  // Fetch subscriptions when auto-process is enabled in subscription mode
   useEffect(() => {
-    if (open && autoProcessEnabled) {
+    if (open && autoProcessEnabled && processMode === 'subscription') {
       fetchSubscriptions()
     }
-  }, [open, autoProcessEnabled, fetchSubscriptions])
+  }, [open, autoProcessEnabled, processMode, fetchSubscriptions])
 
   // Match subscription after both queue data and subscriptions are loaded
   useEffect(() => {
@@ -148,6 +159,99 @@ export function QueueEditDialog({ queue, open, onOpenChange }: QueueEditDialogPr
     }
   }, [queue, subscriptions])
 
+  // Match team after both queue data and teams are loaded
+  useEffect(() => {
+    if (queue?.autoProcess?.teamRef && teams.length > 0) {
+      const ref = queue.autoProcess.teamRef
+      const match = teams.find(
+        t => t.name === ref.name && (t.namespace || 'default') === ref.namespace
+      )
+      if (match) {
+        setSelectedTeamId(String(match.id))
+      }
+    }
+  }, [queue, teams])
+
+  // Auto-select system default chat team when switching to direct_agent mode with no selection
+  useEffect(() => {
+    if (processMode !== 'direct_agent' || teams.length === 0 || selectedTeamId) return
+
+    // Skip if editing an existing queue that already has a teamRef (handled by the effect above)
+    if (queue?.autoProcess?.teamRef) return
+
+    // Fetch system default chat team and select it
+    userApis
+      .getDefaultTeams()
+      .then(defaults => {
+        const defaultChatTeamName = defaults.chat?.name
+        if (defaultChatTeamName) {
+          const defaultTeam = teams.find(t => t.name === defaultChatTeamName)
+          if (defaultTeam) {
+            setSelectedTeamId(String(defaultTeam.id))
+            return
+          }
+        }
+        // Fallback: select the first chat-compatible team
+        const chatTeam = teams.find(
+          t => !t.bind_mode || t.bind_mode.length === 0 || t.bind_mode.includes('chat')
+        )
+        if (chatTeam) {
+          setSelectedTeamId(String(chatTeam.id))
+        }
+      })
+      .catch(() => {
+        // Fallback on error: select the first chat-compatible team
+        const chatTeam = teams.find(
+          t => !t.bind_mode || t.bind_mode.length === 0 || t.bind_mode.includes('chat')
+        )
+        if (chatTeam) {
+          setSelectedTeamId(String(chatTeam.id))
+        }
+      })
+  }, [processMode, teams, selectedTeamId, queue])
+
+  // Build SearchableSelectItem list for team selector
+  const teamSelectItems: SearchableSelectItem[] = useMemo(() => {
+    return teams.map(team => {
+      const isSharedTeam = team.share_status === 2 && team.user?.user_name
+      const isGroupTeam = team.namespace && team.namespace !== 'default'
+      return {
+        value: String(team.id),
+        label: team.name,
+        searchText: team.name,
+        content: (
+          <div className="flex items-center gap-2 min-w-0" data-testid={`team-option-${team.name}`}>
+            <TeamIconDisplay
+              iconId={team.icon}
+              size="sm"
+              className="flex-shrink-0 text-text-muted"
+            />
+            <span
+              className="font-medium text-xs text-text-secondary truncate flex-1 min-w-0"
+              title={team.name}
+            >
+              {team.name}
+            </span>
+            {isGroupTeam && (
+              <Tag className="ml-2 text-xs !m-0 flex-shrink-0" variant="info">
+                {team.namespace}
+              </Tag>
+            )}
+            {isSharedTeam && (
+              <Tag
+                className="ml-2 text-xs !m-0 flex-shrink-0"
+                variant="default"
+                style={sharedBadgeStyle}
+              >
+                {team.user?.user_name}
+              </Tag>
+            )}
+          </div>
+        ),
+      }
+    })
+  }, [teams, sharedBadgeStyle])
+
   const handleSubmit = async () => {
     if (!displayName.trim()) {
       toast.error(t('queues.display_name_placeholder'))
@@ -159,19 +263,32 @@ export function QueueEditDialog({ queue, open, onOpenChange }: QueueEditDialogPr
       return
     }
 
-    // Build subscriptionRef from selected subscription
+    // Build subscriptionRef / teamRef from selected values
     let subscriptionRef: SubscriptionRef | undefined
-    if (autoProcessEnabled && selectedSubscriptionId) {
-      const sub = subscriptions.find(s => String(s.id) === selectedSubscriptionId)
-      if (sub) {
-        subscriptionRef = {
-          namespace: sub.namespace,
-          name: sub.name,
-          userId: sub.userId,
+    let teamRef: TeamRef | undefined
+
+    if (autoProcessEnabled) {
+      if (processMode === 'subscription' && selectedSubscriptionId) {
+        const sub = subscriptions.find(s => String(s.id) === selectedSubscriptionId)
+        if (sub) {
+          subscriptionRef = {
+            namespace: sub.namespace,
+            name: sub.name,
+            userId: sub.userId,
+          }
+        }
+      } else if (processMode === 'direct_agent' && selectedTeamId) {
+        const team = teams.find(t => String(t.id) === selectedTeamId)
+        if (team) {
+          teamRef = {
+            namespace: team.namespace || 'default',
+            name: team.name,
+          }
         }
       }
     }
 
+    setLoading(true)
     setLoading(true)
     try {
       if (isEditing && queue) {
@@ -181,8 +298,10 @@ export function QueueEditDialog({ queue, open, onOpenChange }: QueueEditDialogPr
           visibility,
           autoProcess: {
             enabled: autoProcessEnabled,
-            triggerMode,
+            mode: processMode,
+            triggerMode: 'immediate',
             subscriptionRef,
+            teamRef,
           },
         }
         await updateWorkQueue(queue.id, updateData)
@@ -195,14 +314,15 @@ export function QueueEditDialog({ queue, open, onOpenChange }: QueueEditDialogPr
           visibility,
           autoProcess: {
             enabled: autoProcessEnabled,
-            triggerMode,
+            mode: processMode,
+            triggerMode: 'immediate',
             subscriptionRef,
+            teamRef,
           },
         }
         await createWorkQueue(createData)
         toast.success(t('queues.create_success'))
       }
-
       await refreshQueues()
       onOpenChange(false)
     } catch (error) {
@@ -288,44 +408,76 @@ export function QueueEditDialog({ queue, open, onOpenChange }: QueueEditDialogPr
           {/* Auto-Process Configuration (shown when enabled) */}
           {autoProcessEnabled && (
             <>
-              {/* Trigger Mode */}
+              {/* Processing Mode */}
               <div className="space-y-2">
-                <Label>{t('queues.trigger_mode')}</Label>
-                <Select value={triggerMode} onValueChange={v => setTriggerMode(v as TriggerMode)}>
-                  <SelectTrigger data-testid="queue-trigger-mode-select">
+                <Label>{t('queues.auto_process_mode_label')}</Label>
+                <Select
+                  value={processMode}
+                  onValueChange={v => setProcessMode(v as ProcessMode)}
+                  data-testid="process-mode-select"
+                >
+                  <SelectTrigger data-testid="queue-process-mode-select">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="immediate">{t('queues.trigger_immediate')}</SelectItem>
-                    <SelectItem value="manual">{t('queues.trigger_manual')}</SelectItem>
+                    <SelectItem value="direct_agent">
+                      {t('queues.auto_process_mode_direct_agent')}
+                    </SelectItem>
+                    <SelectItem value="subscription">
+                      {t('queues.auto_process_mode_subscription')}
+                    </SelectItem>
                   </SelectContent>
                 </Select>
               </div>
 
-              {/* Subscription Selector */}
-              <div className="space-y-2">
-                <Label>{t('queues.auto_process_subscription')}</Label>
-                {loadingSubscriptions ? (
-                  <div className="text-sm text-text-secondary">{t('common:actions.loading')}</div>
-                ) : subscriptions.length === 0 ? (
-                  <div className="text-sm text-text-secondary">
-                    {t('queues.no_inbox_subscriptions')}
-                  </div>
-                ) : (
-                  <Select value={selectedSubscriptionId} onValueChange={setSelectedSubscriptionId}>
-                    <SelectTrigger data-testid="subscription-select">
-                      <SelectValue placeholder={t('queues.select_subscription_placeholder')} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {subscriptions.map(sub => (
-                        <SelectItem key={sub.id} value={String(sub.id)}>
-                          {sub.displayName}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                )}
-              </div>
+              {/* Subscription Selector – shown only in subscription mode */}
+              {processMode === 'subscription' && (
+                <div className="space-y-2">
+                  <Label>{t('queues.auto_process_subscription')}</Label>
+                  {loadingSubscriptions ? (
+                    <div className="text-sm text-text-secondary">{t('common:actions.loading')}</div>
+                  ) : subscriptions.length === 0 ? (
+                    <div className="text-sm text-text-secondary">
+                      {t('queues.no_inbox_subscriptions')}
+                    </div>
+                  ) : (
+                    <Select
+                      value={selectedSubscriptionId}
+                      onValueChange={setSelectedSubscriptionId}
+                    >
+                      <SelectTrigger data-testid="subscription-select">
+                        <SelectValue placeholder={t('queues.select_subscription_placeholder')} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {subscriptions.map(sub => (
+                          <SelectItem key={sub.id} value={String(sub.id)}>
+                            {sub.displayName}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                </div>
+              )}
+
+              {/* Team Selector – shown only in direct_agent mode, uses shared TeamContext */}
+              {processMode === 'direct_agent' && (
+                <div className="space-y-2">
+                  <Label>{t('queues.auto_process_team')}</Label>
+                  <SearchableSelect
+                    value={selectedTeamId}
+                    onValueChange={setSelectedTeamId}
+                    items={teamSelectItems}
+                    loading={loadingTeams}
+                    placeholder={t('queues.select_team_placeholder')}
+                    searchPlaceholder={t('common:teams.search_team')}
+                    emptyText={t('queues.no_teams_available')}
+                    noMatchText={t('common:teams.no_match')}
+                    triggerClassName="w-full"
+                    contentClassName="max-w-[320px]"
+                  />
+                </div>
+              )}
             </>
           )}
         </div>

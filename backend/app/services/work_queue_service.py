@@ -278,10 +278,10 @@ class WorkQueueService:
                         }
                         q.updated_at = datetime.now()
 
-                spec = existing_inbox.json.get("spec", {})
+                spec = dict(existing_inbox.json.get("spec", {}))
                 spec["visibility"] = QueueVisibility.PUBLIC.value
                 spec["isDefault"] = True
-                existing_inbox.json["spec"] = spec
+                existing_inbox.json = {**existing_inbox.json, "spec": spec}
                 existing_inbox.updated_at = datetime.now()
                 db.commit()
                 logger.info(
@@ -479,7 +479,7 @@ class WorkQueueService:
             }
 
             if data.autoProcess:
-                spec["autoProcess"] = data.autoProcess.model_dump()
+                spec["autoProcess"] = data.autoProcess.model_dump(mode="json")
                 # Validate subscriptionRef if auto-process is enabled
                 if data.autoProcess.enabled and data.autoProcess.subscriptionRef:
                     ref = data.autoProcess.subscriptionRef
@@ -550,8 +550,10 @@ class WorkQueueService:
             if not queue:
                 raise NotFoundException(f"Work queue not found")
 
-            # Update spec
-            spec = queue.json.get("spec", {})
+            # Update spec - build a new dict to ensure SQLAlchemy detects the change.
+            # Mutating queue.json in-place does not trigger dirty tracking on the JSON
+            # column, so we must replace the entire json object with a new dict.
+            spec = dict(queue.json.get("spec", {}))
 
             if data.displayName is not None:
                 spec["displayName"] = data.displayName
@@ -567,7 +569,7 @@ class WorkQueueService:
             if data.visibleToGroups is not None:
                 spec["visibleToGroups"] = data.visibleToGroups
             if data.autoProcess is not None:
-                spec["autoProcess"] = data.autoProcess.model_dump()
+                spec["autoProcess"] = data.autoProcess.model_dump(mode="json")
                 # Validate subscriptionRef if auto-process is enabled
                 if data.autoProcess.enabled and data.autoProcess.subscriptionRef:
                     ref = data.autoProcess.subscriptionRef
@@ -590,7 +592,8 @@ class WorkQueueService:
             if data.resultFeedback is not None:
                 spec["resultFeedback"] = data.resultFeedback.model_dump()
 
-            queue.json["spec"] = spec
+            # Replace the entire json object so SQLAlchemy detects the mutation
+            queue.json = {**queue.json, "spec": spec}
             queue.updated_at = datetime.now()
             db.commit()
             db.refresh(queue)
@@ -658,9 +661,9 @@ class WorkQueueService:
             if not queue:
                 raise NotFoundException(f"Work queue not found")
 
-            spec = queue.json.get("spec", {})
+            spec = dict(queue.json.get("spec", {}))
             spec["isDefault"] = True
-            queue.json["spec"] = spec
+            queue.json = {**queue.json, "spec": spec}
             queue.updated_at = datetime.now()
             db.commit()
             db.refresh(queue)
@@ -685,14 +688,14 @@ class WorkQueueService:
             if not queue:
                 raise NotFoundException(f"Work queue not found")
 
-            spec = queue.json.get("spec", {})
+            spec = dict(queue.json.get("spec", {}))
             if spec.get("visibility") != QueueVisibility.INVITE_ONLY.value:
                 raise ConflictException(
                     "Cannot regenerate invite code for non-invite-only queue"
                 )
 
             spec["inviteCode"] = self._generate_invite_code()
-            queue.json["spec"] = spec
+            queue.json = {**queue.json, "spec": spec}
             queue.updated_at = datetime.now()
             db.commit()
             db.refresh(queue)
@@ -854,9 +857,9 @@ class WorkQueueService:
 
             if existing_inbox:
                 # Update existing inbox to be public
-                spec = existing_inbox.json.get("spec", {})
+                spec = dict(existing_inbox.json.get("spec", {}))
                 spec["visibility"] = QueueVisibility.PUBLIC.value
-                existing_inbox.json["spec"] = spec
+                existing_inbox.json = {**existing_inbox.json, "spec": spec}
                 existing_inbox.updated_at = datetime.now()
                 db.commit()
                 db.refresh(existing_inbox)
@@ -1372,7 +1375,21 @@ class QueueMessageService:
             db.commit()
             db.refresh(db_message)
 
-            logger.info(f"Ingested message: id={db_message.id}, queue_id={queue_id}")
+            logger.info(
+                f"[ingest_message] DB INSERT: message_id={db_message.id}, "
+                f"queue_id={queue_id}, user_id={user_id}, "
+                f"status={db_message.status}, priority={db_message.priority}, "
+                f"content_snapshot_len={len(content_snapshot)}, "
+                f"attachment_context_ids={attachment_context_ids}"
+            )
+
+            # Read back queue spec to confirm auto-process config
+            queue_spec = queue.json.get("spec", {})
+            auto_process_data = queue_spec.get("autoProcess")
+            logger.info(
+                f"[ingest_message] Queue spec auto_process config: "
+                f"queue_id={queue_id}, auto_process={auto_process_data}"
+            )
 
             # Publish event for auto-processing
             try:
@@ -1382,21 +1399,38 @@ class QueueMessageService:
                 )
 
                 event_bus = get_event_bus()
+                event_priority = (
+                    request.priority.value
+                    if hasattr(request.priority, "value")
+                    else str(request.priority)
+                )
+                logger.info(
+                    f"[ingest_message] Publishing QueueMessageCreatedEvent: "
+                    f"message_id={db_message.id}, queue_id={queue_id}, "
+                    f"recipient_user_id={user_id}, sender_user_id={user_id}, "
+                    f"priority={event_priority}, "
+                    f"event_bus_main_loop={event_bus._main_loop is not None}, "
+                    f"event_bus_main_loop_running={event_bus._main_loop.is_running() if event_bus._main_loop else False}"
+                )
                 event_bus.publish_sync(
                     QueueMessageCreatedEvent(
                         message_id=db_message.id,
                         queue_id=queue_id,
                         recipient_user_id=user_id,
                         sender_user_id=user_id,
-                        priority=(
-                            request.priority.value
-                            if hasattr(request.priority, "value")
-                            else str(request.priority)
-                        ),
+                        priority=event_priority,
                     )
                 )
+                logger.info(
+                    f"[ingest_message] QueueMessageCreatedEvent published successfully: "
+                    f"message_id={db_message.id}"
+                )
             except Exception as e:
-                logger.warning(f"Failed to publish QueueMessageCreatedEvent: {e}")
+                logger.warning(
+                    f"[ingest_message] Failed to publish QueueMessageCreatedEvent "
+                    f"for message_id={db_message.id}: {e}",
+                    exc_info=True,
+                )
 
             sender = db.query(User).filter(User.id == user_id).first()
             return self._build_message_response(db_message, sender)
@@ -1487,6 +1521,138 @@ class QueueMessageService:
 
             sender = db.query(User).filter(User.id == message.sender_user_id).first()
             return self._build_message_response(message, sender)
+
+    async def process_message(
+        self, user_id: int, message_id: int
+    ) -> QueueMessageResponse:
+        """Manually trigger direct-agent processing of an inbox message.
+
+        Dispatches the message through the queue's configured auto-process
+        pipeline.  For direct_agent mode this creates a new Task directly;
+        for subscription mode it re-uses the existing dispatch path.
+
+        Only messages that are not already processing or processed can be
+        triggered.
+        """
+        from app.core.events import QueueMessageCreatedEvent, get_event_bus
+        from app.db.session import get_db_session
+        from app.models.kind import Kind
+        from app.schemas.work_queue import AutoProcessConfig
+
+        with self.get_db() as db:
+            message = (
+                db.query(QueueMessage).filter(QueueMessage.id == message_id).first()
+            )
+            if not message:
+                raise NotFoundException("Message not found")
+
+            if message.recipient_user_id != user_id:
+                raise ForbiddenException("Not authorized to process this message")
+
+            if message.status in (
+                QueueMessageStatus.PROCESSING,
+                QueueMessageStatus.PROCESSED,
+            ):
+                raise ConflictException(
+                    f"Message is already in status {message.status}"
+                )
+
+            # Load the queue to determine processing mode
+            work_queue = (
+                db.query(Kind)
+                .filter(
+                    Kind.id == message.queue_id,
+                    Kind.kind == "WorkQueue",
+                    Kind.is_active == True,
+                )
+                .first()
+            )
+            if not work_queue:
+                raise NotFoundException("Work queue not found")
+
+            spec = work_queue.json.get("spec", {})
+            auto_process_data = spec.get("autoProcess")
+            if not auto_process_data:
+                raise ConflictException("Queue has no auto-process configuration")
+
+            try:
+                auto_process = AutoProcessConfig.model_validate(auto_process_data)
+            except Exception as exc:
+                raise ConflictException(f"Invalid auto-process configuration: {exc}")
+
+            if not auto_process.enabled:
+                raise ConflictException("Auto-process is not enabled for this queue")
+
+            sender = db.query(User).filter(User.id == message.sender_user_id).first()
+
+        # Dispatch via the auto-process handler for the correct mode
+        if auto_process.mode == "direct_agent":
+            from app.services.inbox.direct_agent_handler import (
+                inbox_direct_agent_handler,
+            )
+
+            # Re-open a fresh session for the handler (it may commit internally)
+            with get_db_session() as handler_db:
+                msg = (
+                    handler_db.query(QueueMessage)
+                    .filter(QueueMessage.id == message_id)
+                    .first()
+                )
+                wq = (
+                    handler_db.query(Kind)
+                    .filter(Kind.id == msg.queue_id, Kind.kind == "WorkQueue")
+                    .first()
+                )
+                fake_event = QueueMessageCreatedEvent(
+                    message_id=msg.id,
+                    queue_id=msg.queue_id,
+                    recipient_user_id=msg.recipient_user_id,
+                    sender_user_id=msg.sender_user_id,
+                    priority=(
+                        msg.priority.value
+                        if hasattr(msg.priority, "value")
+                        else str(msg.priority)
+                    ),
+                )
+                await inbox_direct_agent_handler.handle(
+                    event=fake_event,
+                    auto_process=auto_process,
+                    message=msg,
+                    work_queue=wq,
+                    db=handler_db,
+                )
+                handler_db.refresh(msg)
+                return self._build_message_response(msg, sender)
+        else:
+            # Subscription mode: re-publish the event so the existing handler fires
+            event_bus = get_event_bus()
+            with self.get_db() as db:
+                message = (
+                    db.query(QueueMessage).filter(QueueMessage.id == message_id).first()
+                )
+                # Reset to UNREAD so the handler won't skip it
+                message.status = QueueMessageStatus.UNREAD
+                db.commit()
+                db.refresh(message)
+
+            event_bus.publish_sync(
+                QueueMessageCreatedEvent(
+                    message_id=message_id,
+                    queue_id=message.queue_id,
+                    recipient_user_id=message.recipient_user_id,
+                    sender_user_id=message.sender_user_id,
+                    priority=(
+                        message.priority.value
+                        if hasattr(message.priority, "value")
+                        else str(message.priority)
+                    ),
+                )
+            )
+            with self.get_db() as db:
+                message = (
+                    db.query(QueueMessage).filter(QueueMessage.id == message_id).first()
+                )
+                return self._build_message_response(message, sender)
 
 
 class ContactService:
