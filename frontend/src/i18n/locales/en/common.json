@@ -219,13 +219,7 @@
     "default_knowledge_bases_select_to_add": "Select a knowledge base to add...",
     "default_knowledge_bases_selected_count": "{{count}} selected",
     "default_knowledge_bases_selected_count_one": "{{count}} selected",
-    "default_knowledge_bases_selected_count_other": "{{count}} selected",
-    "allowed_models": {
-      "label": "Restrict Available Models",
-      "description": "When enabled, users can only select from the following models",
-      "placeholder": "Select allowed models",
-      "empty": "No restriction, all models allowed"
-    }
+    "default_knowledge_bases_selected_count_other": "{{count}} selected"
   },
   "bots": {
     "title": "AI Assistant",

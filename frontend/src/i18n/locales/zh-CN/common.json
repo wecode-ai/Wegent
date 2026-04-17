@@ -242,13 +242,7 @@
     "default_knowledge_bases_select_to_add": "选择要添加的知识库...",
     "default_knowledge_bases_selected_count": "已选 {{count}} 个",
     "default_knowledge_bases_selected_count_one": "已选 {{count}} 个",
-    "default_knowledge_bases_selected_count_other": "已选 {{count}} 个",
-    "allowed_models": {
-      "label": "限制可用模型",
-      "description": "开启后，用户只能从以下模型中选择",
-      "placeholder": "选择允许使用的模型",
-      "empty": "未限制，允许所有模型"
-    }
+    "default_knowledge_bases_selected_count_other": "已选 {{count}} 个"
   },
   "messages": {
     "copy_markdown": "复制 Markdown 内容",
@@ -1372,7 +1366,7 @@
       "copy_failed_title": "复制到剪贴板失败",
       "link_copied_description": "链接有效期7天，可粘贴发送给他人",
       "link_copied_with_expiry": "链接有效期至 {{date}}，可粘贴发送给他人",
-      "generate_failed_title": "生成��享链接失败",
+      "generate_failed_title": "生成����享链接失败",
       "retry": "请稍后重试",
       "expiry": {
         "label": "选择链接有效期",
