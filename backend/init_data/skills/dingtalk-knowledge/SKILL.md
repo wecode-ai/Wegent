@@ -168,10 +168,10 @@ This tool internally:
 **DO NOT** create the attachment directly - you must use the provider tool which handles sandbox file operations including the upload.
 
 ### Step 5: Create Document in Wegent Knowledge Base
-Use the **wegent-knowledge** MCP server's `create_document` tool to create the document in **Wegent's** knowledge base:
+Use the **wegent-knowledge** MCP server's `wegent_kb_create_document` tool to create the document in **Wegent's** knowledge base:
 
 ```python
-wegent-knowledge.create_document(
+wegent_kb_create_document(
     knowledge_base_id=123,  # REQUIRED: The target Wegent knowledge base ID
     name="Document Name",   # Use the document name from get_document_info
     source_type="attachment",  # REQUIRED: Must be "attachment" since we have attachment_id
@@ -180,10 +180,13 @@ wegent-knowledge.create_document(
 )
 ```
 
-**⚠️ CRITICAL:**
-- Use **`wegent-knowledge.create_document`** (NOT `dingtalk-docs.create_document` or any other tool)
-- This creates the document in **Wegent's** knowledge base, NOT in DingTalk
-- The `dingtalk-docs` MCP is only for reading from DingTalk, never for creating documents in Wegent
+**⚠️ CRITICAL - DO NOT MAKE THIS MISTAKE:**
+- **CORRECT:** `wegent_kb_create_document` - Creates document in Wegent KB ✓
+- **WRONG:** `dingtalk-docs.create_document` or `create_document` - Creates document in DingTalk KB ✗
+
+**NEVER** call `dingtalk-docs.create_document` or plain `create_document` - this would create the document in DingTalk's knowledge base, which is NOT what the user wants. The user wants to add the DingTalk document to Wegent's knowledge base.
+
+The `dingtalk-docs` MCP server is **ONLY** for reading documents from DingTalk. The `wegent-knowledge` MCP server's `wegent_kb_*` tools are for managing Wegent's knowledge base.
 
 Parameters:
 - `knowledge_base_id`: **Required.** The target Wegent knowledge base ID (integer). Get this from user input or by listing knowledge bases.
@@ -222,9 +225,9 @@ Steps:
    )
    ```
    - Returns: `{success: true, attachment_id: 123, filename: "产品需求.docx", ...}`
-5. Call **wegent-knowledge.create_document** to create document in Wegent knowledge base:
+5. Call **wegent_kb_create_document** to create document in Wegent knowledge base:
    ```python
-   wegent-knowledge.create_document(
+   wegent_kb_create_document(
        knowledge_base_id=1,  # Target Wegent knowledge base ID
        name="产品需求",  # From get_document_info
        source_type="attachment",
@@ -253,9 +256,9 @@ Steps:
    )
    ```
    - Returns: `{success: true, attachment_id: 456, filename: "产品需求.md", ...}`
-5. Call **wegent-knowledge.create_document** to create document in Wegent knowledge base:
+5. Call **wegent_kb_create_document** to create document in Wegent knowledge base:
    ```python
-   wegent-knowledge.create_document(
+   wegent_kb_create_document(
        knowledge_base_id=1,  # Target Wegent knowledge base ID
        name="产品需求",  # From get_document_info
        source_type="attachment",
