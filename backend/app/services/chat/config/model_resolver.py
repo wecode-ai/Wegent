@@ -376,6 +376,9 @@ def _resolve_model_for_bot(
     Returns:
         Tuple of (model_kind, model_spec, model_name, raw_agent_config).
         model_kind/model_spec/model_name may be None if no model is found.
+
+    Raises:
+        ValueError: If override_model_name is not in the bot's allowed_models whitelist.
     """
     bot_crd = Bot.model_validate(bot.json)
     bot_json = bot.json or {}
@@ -407,6 +410,29 @@ def _resolve_model_for_bot(
 
     if not model_name:
         return None, None, None, raw_agent_config
+
+    # Validate against allowed_models whitelist when an override model is used.
+    # This is the single validation point covering all call paths (chat, task creation,
+    # subscription, retry, etc.).
+    allowed_models = raw_agent_config.get("allowed_models")
+    if (
+        allowed_models
+        and override_model_name
+        and (force_override or override_model_name)
+    ):
+        if isinstance(allowed_models, list) and len(allowed_models) > 0:
+            allowed_names = {
+                m.get("name")
+                for m in allowed_models
+                if isinstance(m, dict) and m.get("name")
+            }
+            if model_name not in allowed_names:
+                raise ValueError(
+                    f"Model '{model_name}' is not in the allowed models list for bot '{bot.name}'"
+                )
+            logger.info(
+                f"Model '{model_name}' passed allowed_models whitelist check for bot '{bot.name}'"
+            )
 
     # Find the model Kind object
     model_kind, model_spec = _find_model_with_namespace(db, model_name, user_id)

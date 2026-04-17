@@ -142,7 +142,7 @@
     "agent_select": "选择执行器",
     "prompt": "提示词",
     "prompt_placeholder": "你是一个 [身份/角色定位] 助手。\n你的角色是 [能力/专长/风格]。\n你的任务是 [要完成的具体目标]。",
-    "agent_config": "绑定模型",
+    "agent_config": "默认模型",
     "mcp_config": "MCP配置",
     "save_prompt": "保存提示词",
     "use_custom_model": "自定义配置",
@@ -1383,7 +1383,7 @@
       "copy_failed_title": "复制到剪贴板失败",
       "link_copied_description": "链接有效期7天，可粘贴发送给他人",
       "link_copied_with_expiry": "链接有效期至 {{date}}，可粘贴发送给他人",
-      "generate_failed_title": "生成分享链接失败",
+      "generate_failed_title": "生成����享链接失败",
       "retry": "请稍后重试",
       "expiry": {
         "label": "选择链接有效期",
