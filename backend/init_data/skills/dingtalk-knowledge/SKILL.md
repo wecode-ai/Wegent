@@ -38,7 +38,9 @@ mcpServers:
 
 # DingTalk Knowledge Upload Skill
 
-Upload DingTalk documents, spreadsheets, and AI tables to Wegent knowledge bases.
+Upload DingTalk documents, spreadsheets, and AI tables to **Wegent** knowledge bases.
+
+**Important:** This skill reads documents FROM DingTalk and uploads them TO Wegent's knowledge base. The final document will be stored in Wegent, not in DingTalk.
 
 ## When To Use
 
@@ -59,7 +61,7 @@ Identify document type from the DingTalk URL:
 - AI Table: `https://alidocs.dingtalk.com/i/ai/{doc_id}`
 
 ### Step 2: Get Document Info
-**IMPORTANT: Always call get_document_info first!** This returns document metadata including `contentType` and `extension` fields which determine which tool to use next.
+**IMPORTANT: Always call get_document_info first!** This returns document metadata including `contentType` and `file_extension` fields which determine which tool to use next.
 
 For docs (dingtalk-docs MCP):
 ```
@@ -69,15 +71,15 @@ dingtalk-docs.get_document_info(document_id="xxx")
 Returns key fields:
 - `name`: Document title
 - `contentType`: Document content type (ALIDOC or other)
-- `extension`: File extension (adoc, axls, able, docx, xlsx, etc.)
+- `file_extension`: File extension (adoc, axls, able, docx, xlsx, etc.)
 - `nodeType`: Node type (file, folder, etc.)
 
 ### Step 3: Route Based on contentType and extension
 
 Based on `get_document_info` response, choose the appropriate tool:
 
-| contentType | extension | Tool to Use |
-|-------------|-----------|-------------|
+| contentType | file_extension | Tool to Use |
+|-------------|----------------|-------------|
 | ALIDOC | adoc | `get_document_content(nodeId)` - Returns Markdown content |
 | ALIDOC | axls | Use dingtalk-table MCP: `get_all_sheets(nodeId)` then `get_range(nodeId, sheetId, range)` |
 | ALIDOC | able | Use dingtalk-ai-table MCP: `get_tables(nodeId)` then `query_records(nodeId, tableId)` |
@@ -124,28 +126,31 @@ Returns: `{"download_url": "https://...", "download_token": "..."}`
 Then proceed to Step 4A.
 
 ### Step 4A: Download and Upload via Sandbox (for file-based documents)
-**CRITICAL: You MUST use the dingtalk_knowledge provider tool to download the file in sandbox.**
+**CRITICAL: You MUST use the dingtalk_knowledge provider tool to download and upload the file in sandbox.**
 
 If you got a `download_url` from Option D:
 1. Start a sandbox environment
-2. Use the dingtalk_knowledge provider tool to download the file in sandbox:
+2. Use the dingtalk_knowledge provider tool to download the file in sandbox and upload it to Wegent:
 ```python
 dingtalk_knowledge.download_dingtalk_document(
     download_url="{download_url_from_step_3}",
-    file_extension="{extension_from_get_document_info}",  # e.g., "docx", "xlsx", "pdf"
-    filename="{document_name}.{extension}"  # Optional, will auto-generate if not provided
+    file_extension="{file_extension_from_get_document_info}",  # e.g., "docx", "xlsx", "pdf"
+    filename="{document_name}.{file_extension}"  # Optional, will auto-generate if not provided
 )
 ```
-This returns an `attachment_id` that was created by uploading the file from sandbox to Wegent.
+This tool internally:
+- Downloads the file from the provided URL within the sandbox
+- Calls the `upload_file` tool to upload the file from sandbox to Wegent
+- Returns an `attachment_id` for the uploaded file
 
-**DO NOT** call `wegent-knowledge.create_document` directly with a URL - you must first download the file in sandbox using the provider tool.
+**DO NOT** call `wegent-knowledge.create_document` directly with a URL - you must first download and upload the file in sandbox using the provider tool.
 
 ### Step 4B: Save Content and Upload via Sandbox (for online documents)
-**CRITICAL: You MUST use the dingtalk_knowledge provider tool to save content in sandbox.**
+**CRITICAL: You MUST use the dingtalk_knowledge provider tool to save content and upload in sandbox.**
 
 If you got content from Option A (adoc):
 1. Start a sandbox environment
-2. Use the dingtalk_knowledge provider tool to save the content to a file in sandbox:
+2. Use the dingtalk_knowledge provider tool to save the content to a file in sandbox and upload it to Wegent:
 ```python
 dingtalk_knowledge.save_dingtalk_content(
     content="{markdown_content_from_get_document_content}",
@@ -153,18 +158,21 @@ dingtalk_knowledge.save_dingtalk_content(
     filename="{document_name}.md"  # Optional, will auto-generate if not provided
 )
 ```
-This returns an `attachment_id` that was created by uploading the file from sandbox to Wegent.
+This tool internally:
+- Saves the content to a file within the sandbox
+- Calls the `upload_file` tool to upload the file from sandbox to Wegent
+- Returns an `attachment_id` for the uploaded file
 
 **Important:** The content from `get_document_content` is always in markdown format, so you MUST use `file_extension="md"`.
 
-**DO NOT** create the attachment directly - you must use the provider tool which handles sandbox file operations.
+**DO NOT** create the attachment directly - you must use the provider tool which handles sandbox file operations including the upload.
 
-### Step 5: Create Knowledge Base Document
-Use the wegent-knowledge MCP server's `create_document` tool to create the document in knowledge base with source attribution:
+### Step 5: Create Document in Wegent Knowledge Base
+Use the **wegent-knowledge** MCP server's `create_document` tool to create the document in **Wegent's** knowledge base:
 
 ```python
 wegent-knowledge.create_document(
-    knowledge_base_id=123,  # REQUIRED: The target knowledge base ID
+    knowledge_base_id=123,  # REQUIRED: The target Wegent knowledge base ID
     name="Document Name",   # Use the document name from get_document_info
     source_type="attachment",  # REQUIRED: Must be "attachment" since we have attachment_id
     attachment_id=456,      # REQUIRED: From Step 4A or 4B
@@ -172,10 +180,13 @@ wegent-knowledge.create_document(
 )
 ```
 
-**Important:** This calls the Wegent knowledge MCP tool (defined in `backend/app/mcp_server/tools/knowledge.py`), NOT a provider tool.
+**⚠️ CRITICAL:**
+- Use **`wegent-knowledge.create_document`** (NOT `dingtalk-docs.create_document` or any other tool)
+- This creates the document in **Wegent's** knowledge base, NOT in DingTalk
+- The `dingtalk-docs` MCP is only for reading from DingTalk, never for creating documents in Wegent
 
 Parameters:
-- `knowledge_base_id`: **Required.** The target knowledge base ID (integer). Get this from user input or by listing knowledge bases.
+- `knowledge_base_id`: **Required.** The target Wegent knowledge base ID (integer). Get this from user input or by listing knowledge bases.
 - `name`: **Required.** Document name (use the document name from get_document_info)
 - `source_type`: **Required.** Use "attachment" since we have an attachment_id
 - `attachment_id`: **Required.** The attachment ID returned from Step 4A or 4B
@@ -199,28 +210,29 @@ User: "将钉钉文档 https://alidocs.dingtalk.com/i/nodes/nYMoOje9 添加到�
 Steps:
 1. Parse URL → node_id="nYMoOje9"
 2. Call dingtalk-docs.get_document_info(document_id="nYMoOje9")
-   - Returns: `{"name": "产品需求", "contentType": "FILE", "extension": "docx", "nodeType": "file", ...}`
+   - Returns: `{"name": "产品需求", "contentType": "FILE", "file_extension": "docx", "nodeType": "file", ...}`
 3. Since contentType≠ALIDOC and nodeType=file, call dingtalk-docs.download_file(nodeId="nYMoOje9")
    - Returns: `{"download_url": "https://...", "download_token": "..."}`
 4. Call dingtalk_knowledge.download_dingtalk_document in sandbox:
    ```python
    dingtalk_knowledge.download_dingtalk_document(
        download_url="https://alidocs.dingtalk.com/...",
-       file_extension="docx",  # From get_document_info extension field
+       file_extension="docx",  # From get_document_info file_extension field
        filename="产品需求.docx"
    )
    ```
    - Returns: `{success: true, attachment_id: 123, filename: "产品需求.docx", ...}`
-5. Call wegent-knowledge.create_document:
+5. Call **wegent-knowledge.create_document** to create document in Wegent knowledge base:
    ```python
    wegent-knowledge.create_document(
-       knowledge_base_id=1,  # Target knowledge base ID
+       knowledge_base_id=1,  # Target Wegent knowledge base ID
        name="产品需求",  # From get_document_info
        source_type="attachment",
        attachment_id=123,  # From step 4
        trigger_indexing=True
    )
    ```
+   **Result:** Document is now available in Wegent's knowledge base (NOT in DingTalk).
 
 ### Example 2: Online Document (adoc)
 
@@ -229,7 +241,7 @@ User: "将钉钉文档 https://alidocs.dingtalk.com/i/nodes/AbCdEfGh 添加到�
 Steps:
 1. Parse URL → node_id="AbCdEfGh"
 2. Call dingtalk-docs.get_document_info(document_id="AbCdEfGh")
-   - Returns: `{"name": "产品需求", "contentType": "ALIDOC", "extension": "adoc", ...}`
+   - Returns: `{"name": "产品需求", "contentType": "ALIDOC", "file_extension": "adoc", ...}`
 3. Since contentType=ALIDOC and extension=adoc, call dingtalk-docs.get_document_content(nodeId="AbCdEfGh")
    - Returns: `{"markdown": "# Title\n\nContent...", ...}`
 4. Call dingtalk_knowledge.save_dingtalk_content in sandbox:
@@ -241,13 +253,14 @@ Steps:
    )
    ```
    - Returns: `{success: true, attachment_id: 456, filename: "产品需求.md", ...}`
-5. Call wegent-knowledge.create_document:
+5. Call **wegent-knowledge.create_document** to create document in Wegent knowledge base:
    ```python
    wegent-knowledge.create_document(
-       knowledge_base_id=1,  # Target knowledge base ID
+       knowledge_base_id=1,  # Target Wegent knowledge base ID
        name="产品需求",  # From get_document_info
        source_type="attachment",
        attachment_id=456,  # From step 4
        trigger_indexing=True
    )
    ```
+   **Result:** Document is now available in Wegent's knowledge base (NOT in DingTalk).
