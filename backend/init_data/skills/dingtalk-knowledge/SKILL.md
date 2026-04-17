@@ -100,12 +100,12 @@ This returns the document content that needs to be saved to a file in sandbox.
 ### Step 4A: Download and Upload via Sandbox (for file-based documents)
 **CRITICAL: You MUST use the dingtalk_knowledge provider tool to download the file in sandbox.**
 
-If you got a `download_url` from Step 3A:
+If you got a `download_url` from Option A:
 1. Start a sandbox environment
 2. Use the dingtalk_knowledge provider tool to download the file in sandbox:
-```
+```python
 download_dingtalk_document(
-    download_url="{download_url_from_step_3}",
+    download_url="{download_url_from_option_a}",
     filename="document.docx"
 )
 ```
@@ -116,12 +116,12 @@ This returns an `attachment_id` that was created by uploading the file from sand
 ### Step 4B: Save Content and Upload via Sandbox (for online documents)
 **CRITICAL: You MUST use the dingtalk_knowledge provider tool to save content in sandbox.**
 
-If you got content from Step 3B:
+If you got content from Option B:
 1. Start a sandbox environment
 2. Use the dingtalk_knowledge provider tool to save the content to a file in sandbox:
-```
+```python
 save_dingtalk_content(
-    content="{content_from_step_3b}",
+    content="{content_from_option_b}",
     filename="document.md"
 )
 ```
@@ -132,7 +132,7 @@ This returns an `attachment_id` that was created by uploading the file from sand
 ### Step 5: Create Knowledge Base Document
 Use the wegent-knowledge MCP server's `create_document` tool to create the document in knowledge base with source attribution:
 
-```
+```python
 wegent-knowledge.create_document(
     knowledge_base_id=123,
     name="Document Name",
@@ -144,7 +144,7 @@ wegent-knowledge.create_document(
         "updated_at": "2026-04-16T10:00:00Z",
         "scraped_at": "2026-04-16T11:00:00Z"
     },
-    trigger_indexing=true
+    trigger_indexing=True
 )
 ```
 

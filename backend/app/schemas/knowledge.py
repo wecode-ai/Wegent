@@ -330,6 +330,14 @@ class KnowledgeDocumentCreate(BaseModel):
         description="Source configuration (e.g., {'url': '...'} for table)",
     )
 
+    @field_validator("source_config", mode="before")
+    @classmethod
+    def ensure_source_config_dict(cls, v):
+        """Convert None to empty dict for backward compatibility."""
+        if v is None:
+            return {}
+        return v
+
 
 class KnowledgeDocumentUpdate(BaseModel):
     """Schema for updating a knowledge document."""

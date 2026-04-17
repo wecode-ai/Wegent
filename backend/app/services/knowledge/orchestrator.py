@@ -1231,7 +1231,7 @@ class KnowledgeOrchestrator:
                 attachment_id=attachment.id,
                 file_extension=normalized_ext,
                 file_size=len(binary_data),
-                source_config=source_config,
+                source_config=source_config or {},
             )
 
             return self._create_and_index_document(
@@ -1265,7 +1265,7 @@ class KnowledgeOrchestrator:
             attachment_id=attachment.id,
             file_extension=normalized_ext,
             file_size=len(binary_data),
-            source_config=source_config,
+            source_config=source_config or {},
         )
 
         return self._create_and_index_document(
