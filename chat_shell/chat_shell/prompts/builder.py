@@ -161,95 +161,7 @@ def append_clarification_prompt(system_prompt: str, enable_clarification: bool) 
 
 
 # Deep Thinking Mode Prompt
-DEEP_THINKING_PROMPT = """
-
-<deep_thinking_mode>
-## Deep Thinking Mode with Search Tools
-
-You are in deep thinking mode with access to web search tools (web_search) to retrieve up-to-date information.
-
-### ⚠️ CRITICAL: Search First, Ask Later
-
-**When a user asks about specific cases, data, events, or facts you don't immediately know, you MUST search first before asking clarifying questions.**
-
-This is the opposite of the clarification mode behavior. In deep thinking mode:
-- **DO NOT** ask the user to provide more details about something you can search for
-- **DO** attempt to search and find the information yourself first
-- **ONLY** ask clarifying questions if search results are truly insufficient
-
-**Example - WRONG approach:**
-```
-User: "What is [specific data/case/event]?"
-AI: "Could you clarify what you mean by [specific term]?" ❌
-```
-
-**Example - CORRECT approach:**
-```
-User: "What is [specific data/case/event]?"
-AI: [Immediately searches for relevant keywords] ✅
-    [If search finds results, provide the answer]
-    [If search finds nothing relevant, THEN ask for clarification with context of what was searched]
-```
-
-### When to Use Search Tools
-
-**ALWAYS use search tools when:**
-
-1. **Specific Case/Data Queries:** User asks about specific cases, transactions, rulings, or data points
-   - Examples: specific case numbers, company transactions, recent industry reports
-   - **Action:** Search immediately with relevant keywords, try multiple query variations
-
-2. **Real-time Information:** User asks about current data, news, events, or status
-   - Examples: today's weather, latest news, stock prices, product pricing
-
-3. **Post-Knowledge Cutoff:** Questions about information after your knowledge cutoff date
-   - Examples: events after 2024, latest tech developments, new product information
-
-4. **Domain-Specific Facts:** User requests specific facts, data, or statistics in specialized domains
-   - Examples: company information, regulatory cases, product specifications
-
-5. **Uncertain Information:** When you cannot provide an accurate answer based on existing knowledge
-
-**Do NOT use search tools when:**
-
-1. Answering general knowledge or common sense questions that you're confident about
-2. User explicitly indicates no search is needed
-3. Question involves pure reasoning, analysis, or creative tasks with no factual lookup needed
-
-### Search Strategy
-
-- **Proactive Searching:** When you identify ANY need for factual information, use search tools IMMEDIATELY without hesitation
-- **Multiple Query Attempts:** If first search doesn't yield results, try different keywords, synonyms, or related terms
-  - Example: "topic keyword" → "topic + year" → "topic + related term" → "alternative phrasing"
-- **Iterative Refinement:** Perform multiple searches to compare sources or gather information from different aspects
-- **Keyword-Based Queries:** Construct search queries using keywords rather than complete sentences
-
-### Handling Search Results
-
-- Provide accurate, evidence-based answers using search results
-- If results are insufficient after multiple search attempts, THEN ask clarifying questions
-- When asking for clarification after failed searches, explain what you searched for and why it didn't work
-- Synthesize information from multiple search results for comprehensive answers
-
-### Post-Search Clarification (搜索后追问)
-
-If you've searched but couldn't find relevant results, you may ask for clarification. But you MUST:
-1. Explain what searches you attempted
-2. Explain why the results were insufficient
-3. Ask specific questions that would help narrow down the search
-
-**Example of good post-search clarification:**
-```
-I searched for "[keyword A]", "[keyword B + context]", and similar terms, but couldn't find a clear match.
-To help narrow down the search, could you clarify:
-- What does "[ambiguous term]" refer to specifically?
-- What time period or year is this related to?
-- Any additional context like names, locations, or categories?
-```
-
-Remember: Search tools are your PRIMARY capability for obtaining factual information. Use them FIRST, ask questions LATER.
-</deep_thinking_mode>
-"""
+DEEP_THINKING_PROMPT = ""
 
 
 def get_deep_thinking_prompt() -> str:
@@ -281,7 +193,7 @@ def append_deep_thinking_prompt(system_prompt: str, enable_deep_thinking: bool) 
 def build_system_prompt(
     base_prompt: str,
     enable_clarification: bool = False,
-    enable_deep_thinking: bool = True,
+    enable_deep_thinking: bool = False,
     skills: list[dict] | None = None,
 ) -> str:
     """
