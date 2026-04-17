@@ -78,8 +78,8 @@ class TestKbMetaFormatter:
         assert "KB Name: 222" in prompt
         assert "KB ID: 1408" in prompt
         assert "request-scoped metadata only" in prompt
-        assert "create_document" not in prompt
-        assert "list_knowledge_bases" not in prompt
+        assert "wegent_kb_create_document" not in prompt
+        assert "wegent_kb_list_knowledge_bases" not in prompt
         assert "clarifying questions" not in prompt
 
     def test_format_kb_meta_prompt_includes_runtime_retrieval_fields(self):

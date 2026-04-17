@@ -123,9 +123,32 @@ class TestKnowledgeTool:
         """Test that the backward-compatible tool registry is built for the knowledge server."""
         module = get_knowledge_module()
 
+        assert "wegent_kb_list_knowledge_bases" in module.KNOWLEDGE_MCP_TOOLS
+        assert "wegent_kb_list_documents" in module.KNOWLEDGE_MCP_TOOLS
+        assert "wegent_kb_read_document_content" in module.KNOWLEDGE_MCP_TOOLS
+
+    def test_knowledge_mcp_tools_aliases_exist(self):
+        """Test that backward-compatible aliases are registered for renamed tools."""
+        module = get_knowledge_module()
+
+        # Aliases for old tool names should exist
         assert "list_knowledge_bases" in module.KNOWLEDGE_MCP_TOOLS
         assert "list_documents" in module.KNOWLEDGE_MCP_TOOLS
         assert "read_document_content" in module.KNOWLEDGE_MCP_TOOLS
+        assert "create_knowledge_base" in module.KNOWLEDGE_MCP_TOOLS
+        assert "create_document" in module.KNOWLEDGE_MCP_TOOLS
+        assert "update_document_content" in module.KNOWLEDGE_MCP_TOOLS
+        assert "search_knowledge_base" in module.KNOWLEDGE_MCP_TOOLS
+
+        # Aliases should point to the same function as the new names
+        assert (
+            module.KNOWLEDGE_MCP_TOOLS["list_knowledge_bases"]["func"]
+            == module.KNOWLEDGE_MCP_TOOLS["wegent_kb_list_knowledge_bases"]["func"]
+        )
+        assert (
+            module.KNOWLEDGE_MCP_TOOLS["list_documents"]["func"]
+            == module.KNOWLEDGE_MCP_TOOLS["wegent_kb_list_documents"]["func"]
+        )
 
     def test_read_document_content_returns_orchestrator_payload(self):
         """Test that read_document_content returns the orchestrator payload."""
