@@ -22,6 +22,7 @@ import TeamEditDrawer from './TeamEditDrawer'
 import { useTranslation } from '@/hooks/useTranslation'
 import { shellApis, UnifiedShell } from '@/apis/shells'
 import { BotEditRef } from './BotEdit'
+import { useTeamContext } from '@/contexts/TeamContext'
 
 // Import sub-components
 import TeamBasicInfoForm from './team-edit/TeamBasicInfoForm'
@@ -59,6 +60,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
   } = props
 
   const { t } = useTranslation()
+  const { refreshTeams } = useTeamContext()
 
   // Current editing object (0 means create new)
   const editingTeam: Team | null =
@@ -428,6 +430,9 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
             setTeams(prev => [created, ...prev])
           }
 
+          // Refresh TeamContext so Chat page gets updated bot agent_config
+          refreshTeams().catch(err => console.error('Failed to refresh teams after save:', err))
+
           setUnsavedPrompts({})
           onClose()
         } catch (error) {
@@ -510,6 +515,8 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
         })
         setTeams(prev => [created, ...prev])
       }
+      // Refresh TeamContext so Chat page gets updated bot agent_config
+      refreshTeams().catch(err => console.error('Failed to refresh teams after save:', err))
       setUnsavedPrompts({})
       onClose()
     } catch (error) {

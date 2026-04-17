@@ -19,7 +19,11 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { modelApis, UnifiedModel, ModelTypeEnum, ModelCategoryType } from '@/apis/models'
 import { useTranslation } from '@/hooks/useTranslation'
-import { isPredefinedModel, getModelFromConfig } from '@/features/settings/services/bots'
+import {
+  isPredefinedModel,
+  getModelFromConfig,
+  getAllowedModelsFromConfig,
+} from '@/features/settings/services/bots'
 import { getCompatibleProviderFromAgentType } from '@/utils/modelCompatibility'
 import {
   saveGlobalModelPreference,
@@ -197,6 +201,13 @@ export function useModelSelection({
     return getCompatibleProviderFromAgentType(selectedTeam?.agent_type)
   }, [selectedTeam?.agent_type])
 
+  /** Get allowed_models whitelist from the first bot's agent_config */
+  const allowedModels = useMemo(() => {
+    const firstBot = selectedTeam?.bots?.[0]?.bot
+    if (!firstBot?.agent_config) return []
+    return getAllowedModelsFromConfig(firstBot.agent_config as Record<string, unknown>)
+  }, [selectedTeam])
+
   /** Check if there are any advanced models (after provider filtering) */
   const hasAdvancedModels = useMemo(() => {
     let result = models
@@ -206,7 +217,7 @@ export function useModelSelection({
     return result.some(model => model.isAdvanced === true)
   }, [models, compatibleProvider])
 
-  /** Filter models by compatible provider, advanced flag, and sort by display name */
+  /** Filter models by compatible provider, advanced flag, allowed_models whitelist, and sort by display name */
   const filteredModels = useMemo(() => {
     let result = models
     if (compatibleProvider) {
@@ -215,12 +226,17 @@ export function useModelSelection({
     if (!showAdvancedModels) {
       result = result.filter(model => !model.isAdvanced)
     }
+    // Apply allowed_models whitelist filter if configured
+    if (allowedModels.length > 0) {
+      const allowedNames = new Set(allowedModels.map(m => m.name))
+      result = result.filter(m => allowedNames.has(m.name))
+    }
     return result.slice().sort((a, b) => {
       const displayA = getModelDisplayTextHelper(a).toLowerCase()
       const displayB = getModelDisplayTextHelper(b).toLowerCase()
       return displayA.localeCompare(displayB)
     })
-  }, [models, compatibleProvider, showAdvancedModels])
+  }, [models, compatibleProvider, showAdvancedModels, allowedModels])
 
   /** Check if model selection is required */
   const isModelRequired = !showDefaultOption && !selectedModel
