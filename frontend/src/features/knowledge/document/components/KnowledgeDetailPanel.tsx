@@ -13,6 +13,7 @@
 'use client'
 
 import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { Library, FileText, Shield } from 'lucide-react'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -138,11 +139,18 @@ export function KnowledgeDetailPanel({
     })
   }, [selectedKb, user, myPermission?.role, namespaceRoleMap])
 
+  // Get search params to check for taskId in URL
+  // Support multiple parameter formats for compatibility
+  const searchParams = useSearchParams()
+  const taskIdFromUrl =
+    searchParams.get('taskId') || searchParams.get('task_id') || searchParams.get('taskid')
+
   // Determine KB type
   const isNotebook = selectedKb?.kb_type === 'notebook'
 
   // Reset state when KB changes
   // For notebook mode, also clear the selected task to show a fresh chat interface
+  // BUT only if there's no taskId in URL - preserve task when navigating from history
   useEffect(() => {
     setActiveTab('documents')
     setSelectedDocumentIds([])
@@ -150,10 +158,11 @@ export function KnowledgeDetailPanel({
 
     // Clear selected task when entering notebook mode to prevent showing
     // a previously selected task from the tasks page
-    if (selectedKb?.kb_type === 'notebook') {
+    // Skip if URL contains taskId (user navigating from history/conversation)
+    if (selectedKb?.kb_type === 'notebook' && !taskIdFromUrl) {
       setSelectedTask(null)
     }
-  }, [selectedKb?.id, selectedKb?.kb_type, setSelectedTask])
+  }, [selectedKb?.id, selectedKb?.kb_type, setSelectedTask, taskIdFromUrl])
 
   // When a notebook KB is selected, show chat interface with document panel
   // Simplified layout: direct left-right split without extra header bars

@@ -204,15 +204,20 @@ export default function TeamSelectorButton({
                           {team.name}
                         </span>
                         {isGroupTeam && (
-                          <Tag className="text-xs !m-0 flex-shrink-0" variant="info">
+                          <Tag
+                            className="text-xs !m-0 flex-shrink-0 max-w-[120px] truncate"
+                            variant="info"
+                            title={team.namespace}
+                          >
                             {team.namespace}
                           </Tag>
                         )}
                         {isSharedTeam && (
                           <Tag
-                            className="text-xs !m-0 flex-shrink-0"
+                            className="text-xs !m-0 flex-shrink-0 max-w-[120px] truncate"
                             variant="default"
                             style={sharedBadgeStyle}
+                            title={t('common:teams.shared_by', { author: team.user?.user_name })}
                           >
                             {t('common:teams.shared_by', { author: team.user?.user_name })}
                           </Tag>
