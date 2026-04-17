@@ -75,5 +75,17 @@
     "search_failed": "Search failed",
     "request_permission": "Request Permission",
     "go_to_market": "Go to Market"
+  },
+  "bot": {
+    "allowed_models": {
+      "label": "Restrict Available Models",
+      "description": "When enabled, users can only select from the models listed below",
+      "placeholder": "Select allowed models",
+      "empty": "No restriction, all models allowed"
+    },
+    "errors": {
+      "default_model_required_when_restrict": "A default model must be selected when model restriction is enabled",
+      "default_model_must_be_in_allowed": "The default model must be in the allowed models list"
+    }
   }
 }

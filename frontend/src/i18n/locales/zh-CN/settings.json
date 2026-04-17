@@ -75,5 +75,17 @@
     "search_failed": "搜索失败",
     "request_permission": "申请权限",
     "go_to_market": "去市场看看"
+  },
+  "bot": {
+    "allowed_models": {
+      "label": "限制可用模型",
+      "description": "开启后，用户只能从以下模型中选择",
+      "placeholder": "选择允许使用的模型",
+      "empty": "未限制，允许所有模型"
+    },
+    "errors": {
+      "default_model_required_when_restrict": "开启限制模型时，必须选择一个默认模型",
+      "default_model_must_be_in_allowed": "默认模型必须在限制模型列表中"
+    }
   }
 }

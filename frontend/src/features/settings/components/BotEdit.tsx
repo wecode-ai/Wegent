@@ -547,8 +547,37 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
       }
     }
 
+    // Rule C: If restrictModels is on with a non-empty whitelist, selectedModel must be set and in the list
+    if (!isDifyAgent && !isCustomModel && restrictModels && allowedModels.length > 0) {
+      if (!selectedModel) {
+        return {
+          isValid: false,
+          error: t('settings:bot.errors.default_model_required_when_restrict'),
+        }
+      }
+      const isInAllowed = allowedModels.some(m => m.name === selectedModel)
+      if (!isInAllowed) {
+        return {
+          isValid: false,
+          error: t('settings:bot.errors.default_model_must_be_in_allowed'),
+        }
+      }
+    }
+
     return { isValid: true }
-  }, [botName, agentName, isDifyAgent, agentConfig, isCustomModel, selectedProtocol, mcpConfig, t])
+  }, [
+    botName,
+    agentName,
+    isDifyAgent,
+    agentConfig,
+    isCustomModel,
+    selectedProtocol,
+    mcpConfig,
+    t,
+    restrictModels,
+    allowedModels,
+    selectedModel,
+  ])
 
   // Get bot form data for external use
   const getBotData = useCallback((): BotFormData | null => {
@@ -722,10 +751,12 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
 
   // Save logic
   const handleSave = async () => {
-    if (!botName.trim() || !agentName.trim()) {
+    // Use validateBot() as single source of truth for all validation rules
+    const validation = validateBot()
+    if (!validation.isValid) {
       toast({
         variant: 'destructive',
-        title: t('common:bot.errors.required'),
+        title: validation.error,
       })
       return
     }
@@ -735,29 +766,9 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     // For Dify agent, always use custom model configuration
     if (isDifyAgent) {
       const trimmedConfig = agentConfig.trim()
-      if (!trimmedConfig) {
-        setAgentConfigError(true)
-        toast({
-          variant: 'destructive',
-          title: t('common:bot.errors.agent_config_json'),
-        })
-        return
-      }
       try {
         parsedAgentConfig = JSON.parse(trimmedConfig)
         setAgentConfigError(false)
-
-        // Validate Dify required fields
-        const env = (parsedAgentConfig as Record<string, unknown>)?.env as
-          | Record<string, unknown>
-          | undefined
-        if (!env?.DIFY_API_KEY || !env?.DIFY_BASE_URL) {
-          toast({
-            variant: 'destructive',
-            title: t('common:bot.errors.dify_required_fields'),
-          })
-          return
-        }
       } catch {
         setAgentConfigError(true)
         toast({
@@ -768,24 +779,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
       }
     } else if (isCustomModel) {
       // Non-Dify custom model configuration
-      // Validate protocol is selected
-      if (!selectedProtocol) {
-        toast({
-          variant: 'destructive',
-          title: t('common:bot.errors.protocol_required'),
-        })
-        return
-      }
-
       const trimmedConfig = agentConfig.trim()
-      if (!trimmedConfig) {
-        setAgentConfigError(true)
-        toast({
-          variant: 'destructive',
-          title: t('common:bot.errors.agent_config_json'),
-        })
-        return
-      }
       try {
         const configObj = JSON.parse(trimmedConfig)
         // Add protocol to the config
@@ -1165,7 +1159,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                   {/* Restrict Models Switch */}
                   <div className="flex items-center gap-1.5 flex-shrink-0">
                     <span className="text-sm text-text-secondary whitespace-nowrap">
-                      {t('common:bot.allowed_models.label')}
+                      {t('settings:bot.allowed_models.label')}
                     </span>
                     <Switch
                       checked={restrictModels}
@@ -1175,6 +1169,16 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                         setRestrictModels(checked)
                         if (!checked) {
                           setAllowedModels([])
+                        } else {
+                          // Rule A: When enabling restrict, clear selectedModel if not in allowedModels
+                          if (selectedModel && allowedModels.length > 0) {
+                            const isInAllowed = allowedModels.some(m => m.name === selectedModel)
+                            if (!isInAllowed) {
+                              setSelectedModel('')
+                              setSelectedModelType(undefined)
+                              setSelectedModelNamespace(undefined)
+                            }
+                          }
                         }
                       }}
                     />
@@ -1185,7 +1189,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                 {restrictModels && (
                   <div className="mt-1">
                     <p className="text-xs text-text-muted mb-2">
-                      {t('common:bot.allowed_models.description')}
+                      {t('settings:bot.allowed_models.description')}
                     </p>
                     <Select
                       value=""
@@ -1207,7 +1211,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                       disabled={readOnly || loadingModels || !agentName}
                     >
                       <SelectTrigger className="w-full">
-                        <SelectValue placeholder={t('common:bot.allowed_models.placeholder')} />
+                        <SelectValue placeholder={t('settings:bot.allowed_models.placeholder')} />
                       </SelectTrigger>
                       <SelectContent>
                         {models.map(model => {
@@ -1242,9 +1246,15 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                               <span>{modelInfo?.displayName || m.name}</span>
                               {!readOnly && (
                                 <button
-                                  onClick={() =>
+                                  onClick={() => {
                                     setAllowedModels(allowedModels.filter(x => x.name !== m.name))
-                                  }
+                                    // Rule B: If removed model is the current default, clear selectedModel
+                                    if (selectedModel === m.name) {
+                                      setSelectedModel('')
+                                      setSelectedModelType(undefined)
+                                      setSelectedModelNamespace(undefined)
+                                    }
+                                  }}
                                   className="text-text-muted hover:text-text-primary"
                                 >
                                   <XIcon className="w-3 h-3" />
@@ -1256,7 +1266,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                       </div>
                     ) : (
                       <p className="text-xs text-text-muted mt-2">
-                        {t('common:bot.allowed_models.empty')}
+                        {t('settings:bot.allowed_models.empty')}
                       </p>
                     )}
                   </div>
