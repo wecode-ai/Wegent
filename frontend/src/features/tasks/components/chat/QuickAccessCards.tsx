@@ -215,6 +215,8 @@ export function QuickAccessCards({
     const isSelected = selectedTeam?.id === team.id
     const isClicked = clickedTeamId === team.id
     const description = team.description || t('common:teams.no_description')
+    const isGroupTeam =
+      team.namespace && team.namespace !== 'default' && team.namespace !== 'community'
 
     return (
       <div
@@ -241,17 +243,33 @@ export function QuickAccessCards({
           flexGrow: 0,
         }}
       >
+        {/* Group namespace badge in top-right corner */}
+        {isGroupTeam && (
+          <span
+            className="absolute top-2 right-2 text-[9px] text-primary/60 leading-none max-w-[60px] truncate"
+            title={team.namespace ?? undefined}
+          >
+            {team.namespace}
+          </span>
+        )}
+
         <div className="mb-1 w-full">
           <span
             className={`block text-[15px] font-semibold leading-5 truncate ${
               isSelected ? 'text-primary' : 'text-text-primary'
             }`}
+            title={team.name}
           >
             {team.name}
           </span>
         </div>
 
-        <p className="text-xs text-text-muted leading-[18px] line-clamp-1 w-full">{description}</p>
+        <p
+          className="text-xs text-text-muted leading-[18px] line-clamp-1 w-full truncate"
+          title={description}
+        >
+          {description}
+        </p>
       </div>
     )
   }
@@ -373,15 +391,20 @@ export function QuickAccessCards({
                           {team.name}
                         </span>
                         {isGroupTeam && (
-                          <Tag className="text-xs !m-0 flex-shrink-0" variant="info">
+                          <Tag
+                            className="text-xs !m-0 flex-shrink-0 max-w-[120px] truncate"
+                            variant="info"
+                            title={team.namespace}
+                          >
                             {team.namespace}
                           </Tag>
                         )}
                         {isSharedTeam && (
                           <Tag
-                            className="text-xs !m-0 flex-shrink-0"
+                            className="text-xs !m-0 flex-shrink-0 max-w-[120px] truncate"
                             variant="default"
                             style={sharedBadgeStyle}
+                            title={t('common:teams.shared_by', { author: team.user?.user_name })}
                           >
                             {t('common:teams.shared_by', { author: team.user?.user_name })}
                           </Tag>
