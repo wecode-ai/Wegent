@@ -43,6 +43,8 @@ import {
   getModelTypeFromConfig,
   getModelNamespaceFromConfig,
   createPredefinedModelConfig,
+  getAllowedModelsFromConfig,
+  AllowedModelRef,
 } from '@/features/settings/services/bots'
 import { modelApis, UnifiedModel, ModelTypeEnum } from '@/apis/models'
 import { shellApis, UnifiedShell } from '@/apis/shells'
@@ -142,6 +144,9 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     undefined
   )
   const [selectedProtocol, setSelectedProtocol] = useState('')
+  // Whether to restrict available models (allowed_models whitelist)
+  const [restrictModels, setRestrictModels] = useState(false)
+  const [allowedModels, setAllowedModels] = useState<AllowedModelRef[]>([])
 
   // Current editing object
   const editingBot = editingBotId > 0 ? bots.find(b => b.id === editingBotId) || null : null
@@ -185,9 +190,8 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
   const [allSkills, setAllSkills] = useState<UnifiedSkill[]>([])
   const [availableSkills, setAvailableSkills] = useState<UnifiedSkill[]>([])
   const [loadingSkills, setLoadingSkills] = useState(false)
-  const [agentConfigError, setAgentConfigError] = useState(false)
+  const [_agentConfigError, setAgentConfigError] = useState(false)
 
-  const [templateSectionExpanded, setTemplateSectionExpanded] = useState(false)
   const [skillManagementModalOpen, setSkillManagementModalOpen] = useState(false)
   const [promptFineTuneOpen, setPromptFineTuneOpen] = useState(false)
 
@@ -197,63 +201,6 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     () => (isValidAgentType(agentName) ? agentName : undefined),
     [agentName]
   )
-
-  const prettifyAgentConfig = useCallback(() => {
-    setAgentConfig(prev => {
-      const trimmed = prev.trim()
-      if (!trimmed) {
-        setAgentConfigError(false)
-        return ''
-      }
-      try {
-        const parsed = JSON.parse(trimmed)
-        setAgentConfigError(false)
-        return JSON.stringify(parsed, null, 2)
-      } catch {
-        toast({
-          variant: 'destructive',
-          title: t('common:bot.errors.agent_config_json'),
-        })
-        setAgentConfigError(true)
-        return prev
-      }
-    })
-  }, [toast, t])
-
-  // Template handlers
-  const handleApplyClaudeSonnetTemplate = useCallback(() => {
-    const template = {
-      env: {
-        ANTHROPIC_MODEL: 'anthropic/claude-sonnet-4',
-        ANTHROPIC_AUTH_TOKEN: 'sk-ant-your-api-key-here',
-        ANTHROPIC_API_KEY: 'sk-ant-your-api-key-here',
-        ANTHROPIC_BASE_URL: 'https://api.anthropic.com',
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: 'anthropic/claude-haiku-4.5',
-      },
-    }
-    setAgentConfig(JSON.stringify(template, null, 2))
-    setAgentConfigError(false)
-    toast({
-      title: t('common:bot.template_applied'),
-      description: t('common:bot.please_update_api_key'),
-    })
-  }, [toast, t])
-
-  const handleApplyOpenAIGPT4Template = useCallback(() => {
-    const template = {
-      env: {
-        OPENAI_API_KEY: 'sk-your-openai-api-key-here',
-        OPENAI_MODEL: 'gpt-4',
-        OPENAI_BASE_URL: 'https://api.openai.com/v1',
-      },
-    }
-    setAgentConfig(JSON.stringify(template, null, 2))
-    setAgentConfigError(false)
-    toast({
-      title: t('common:bot.template_applied'),
-      description: t('common:bot.please_update_api_key'),
-    })
-  }, [toast, t])
 
   // Documentation handlers
   const handleOpenModelDocs = useCallback(() => {
@@ -268,7 +215,6 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     window.open(docsUrl, '_blank')
   }, [i18n.language])
 
-  // Get shells list (including both public and user-defined shells)
   // Get shells list (including both public and user-defined shells)
   useEffect(() => {
     // Wait for scope to be defined before fetching
@@ -311,6 +257,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
 
     fetchShells()
   }, [toast, t, allowedAgents, scope, groupName])
+
   // Check if current agent supports skills (ClaudeCode and Chat shell types)
   const supportsSkills = useMemo(() => {
     // Get shell type from the selected shell
@@ -460,6 +407,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
 
     fetchModels()
   }, [agentName, shells, toast, t, baseBot, scope, groupName])
+
   // Reset base form when switching editing object
   useEffect(() => {
     setBotName(baseBot?.name || '')
@@ -508,6 +456,8 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
       setSelectedModel('')
       setSelectedModelNamespace(undefined)
       setSelectedProtocol('')
+      setRestrictModels(false)
+      setAllowedModels([])
       return
     }
 
@@ -520,12 +470,20 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
       setSelectedModel(modelName)
       setSelectedModelNamespace(modelNamespace)
       setSelectedProtocol('')
+      // Restore allowed_models whitelist
+      const savedAllowedModels = getAllowedModelsFromConfig(
+        baseBot.agent_config as Record<string, unknown>
+      )
+      setAllowedModels(savedAllowedModels)
+      setRestrictModels(savedAllowedModels.length > 0)
     } else {
       setSelectedModel('')
       setSelectedModelNamespace(undefined)
       // Extract protocol from agent_config for custom configs
       const protocol = ((baseBot.agent_config as Record<string, unknown>).protocol as string) || ''
       setSelectedProtocol(protocol)
+      setRestrictModels(false)
+      setAllowedModels([])
     }
   }, [baseBot])
 
@@ -611,7 +569,8 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
       const modelConfig = createPredefinedModelConfig(
         selectedModel,
         selectedModelType,
-        selectedModelNamespace
+        selectedModelNamespace,
+        restrictModels ? allowedModels : undefined
       )
       parsedAgentConfig = modelConfig ?? {}
     }
@@ -668,6 +627,8 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     scope,
     groupName,
     selectedModelNamespace,
+    restrictModels,
+    allowedModels,
   ])
 
   // Save bot and return the bot id
@@ -844,7 +805,8 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
       const modelConfig = createPredefinedModelConfig(
         selectedModel,
         selectedModelType,
-        selectedModelNamespace
+        selectedModelNamespace,
+        restrictModels ? allowedModels : undefined
       )
       parsedAgentConfig = modelConfig ?? {}
     }
@@ -1110,235 +1072,194 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
           ) : (
             /* Normal Mode: Show standard configuration options */
             <>
-              {/* Agent Config */}
+              {/* Agent Config - Default Model label row, then selector + switch row */}
               <div className="flex flex-col">
-                <div className="flex items-center justify-between mb-1">
-                  <div className="flex items-center gap-2">
-                    <label className="block text-base font-medium text-text-primary">
-                      {t('common:bot.agent_config')}
-                    </label>
-                    {/* Help Icon */}
-                    <button
-                      type="button"
-                      onClick={() => handleOpenModelDocs()}
-                      className="text-text-muted hover:text-primary transition-colors"
-                      title={t('common:bot.view_model_config_guide')}
+                {/* Label row */}
+                <div className="flex items-center mb-1">
+                  <label className="block text-lg font-semibold text-text-primary">
+                    {t('common:bot.agent_config')}
+                  </label>
+                  {/* Help Icon */}
+                  <button
+                    type="button"
+                    onClick={() => handleOpenModelDocs()}
+                    className="ml-2 text-text-muted hover:text-primary transition-colors"
+                    title={t('common:bot.view_model_config_guide')}
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      className="h-5 w-5"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
                     >
-                      <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        className="h-5 w-5"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke="currentColor"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                      />
+                    </svg>
+                  </button>
+                </div>
+                {/* Model selector + Restrict Models switch on same row */}
+                <div className="flex items-center gap-2">
+                  <div className="flex-1">
+                    <Select
+                      value={
+                        selectedModel
+                          ? `${selectedModel}:${selectedModelType || ''}:${selectedModelNamespace || 'default'}`
+                          : '__none__'
+                      }
+                      onValueChange={value => {
+                        if (value === '__none__') {
+                          setSelectedModel('')
+                          setSelectedModelType(undefined)
+                          setSelectedModelNamespace(undefined)
+                          return
+                        }
+                        const [modelName, modelType, modelNamespace] = value.split(':')
+                        setSelectedModel(modelName)
+                        setSelectedModelType((modelType as ModelTypeEnum) || undefined)
+                        setSelectedModelNamespace(modelNamespace || 'default')
+                      }}
+                      disabled={loadingModels || !agentName || readOnly}
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue
+                          placeholder={
+                            !agentName
+                              ? t('common:bot.select_executor_first')
+                              : t('common:bot.model_select')
+                          }
                         />
-                      </svg>
-                    </button>
-                    {/* Template Button - Only show when Custom Model is enabled */}
-                    {isCustomModel && (
-                      <button
-                        type="button"
-                        onClick={() => setTemplateSectionExpanded(!templateSectionExpanded)}
-                        className="flex items-center gap-1 text-xs text-text-muted hover:text-primary transition-colors"
-                        title={t('common:bot.quick_templates')}
-                      >
-                        <span className="text-sm">📋</span>
-                        <span>{t('common:bot.template')}</span>
-                      </button>
-                    )}
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__none__">
+                          <span className="text-text-muted">
+                            {t('common:bot.no_model_binding')}
+                          </span>
+                        </SelectItem>
+                        {models.length === 0 ? (
+                          <div className="py-2 px-3 text-sm text-text-muted text-center">
+                            {t('common:bot.no_available_models')}
+                          </div>
+                        ) : (
+                          models.map(model => (
+                            <SelectItem
+                              key={`${model.name}:${model.type}:${model.namespace || 'default'}`}
+                              value={`${model.name}:${model.type}:${model.namespace || 'default'}`}
+                            >
+                              {model.displayName || model.name}
+                              {model.type === 'public' && (
+                                <span className="ml-1 text-xs text-text-muted">
+                                  [{t('common:bot.public_model', '公共')}]
+                                </span>
+                              )}
+                            </SelectItem>
+                          ))
+                        )}
+                      </SelectContent>
+                    </Select>
                   </div>
-                  <div className="flex items-center">
-                    <span className="text-xs text-text-muted mr-2">
-                      {t('common:bot.advanced_mode')}
+                  {/* Restrict Models Switch */}
+                  <div className="flex items-center gap-1.5 flex-shrink-0">
+                    <span className="text-sm text-text-secondary whitespace-nowrap">
+                      {t('common:bot.allowed_models.label')}
                     </span>
                     <Switch
-                      checked={isCustomModel}
+                      checked={restrictModels}
                       disabled={readOnly}
                       onCheckedChange={(checked: boolean) => {
                         if (readOnly) return
-                        setIsCustomModel(checked)
-                        if (checked) {
-                          // Clear data when switching to advanced mode
-                          setAgentConfig('')
-                          setSelectedModel('')
-                          setSelectedProtocol('')
-                          setAgentConfigError(false)
-                        }
+                        setRestrictModels(checked)
                         if (!checked) {
-                          setAgentConfigError(false)
-                          setTemplateSectionExpanded(false)
-                          setSelectedProtocol('')
+                          setAllowedModels([])
                         }
                       }}
                     />
                   </div>
                 </div>
 
-                {/* Template Expanded Content - Only show when expanded */}
-                {isCustomModel && templateSectionExpanded && (
-                  <div className="mb-3 bg-base-secondary rounded-md p-3">
-                    <div className="flex gap-2 flex-wrap mb-2">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => handleApplyClaudeSonnetTemplate()}
-                        className="text-xs"
-                        type="button"
-                      >
-                        Claude Sonnet 4 {t('common:bot.template')}
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => handleApplyOpenAIGPT4Template()}
-                        className="text-xs"
-                        type="button"
-                      >
-                        OpenAI GPT-4 {t('common:bot.template')}
-                      </Button>
-                    </div>
-                    <p className="text-xs text-text-muted">⚠️ {t('common:bot.template_hint')}</p>
-                  </div>
-                )}
-
-                {isCustomModel && (
-                  <div className="mb-3">
-                    <label className="block text-sm font-medium text-text-primary mb-1">
-                      {t('common:bot.protocol')} <span className="text-red-400">*</span>
-                    </label>
+                {/* Allowed Models multi-select - shown when restrictModels is on */}
+                {restrictModels && (
+                  <div className="mt-1">
+                    <p className="text-xs text-text-muted mb-2">
+                      {t('common:bot.allowed_models.description')}
+                    </p>
                     <Select
-                      value={selectedProtocol}
-                      onValueChange={setSelectedProtocol}
-                      disabled={readOnly}
+                      value=""
+                      onValueChange={value => {
+                        if (!value || value === '__none__') return
+                        const [modelName, modelType, modelNamespace] = value.split(':')
+                        const alreadyAdded = allowedModels.some(m => m.name === modelName)
+                        if (!alreadyAdded) {
+                          setAllowedModels([
+                            ...allowedModels,
+                            {
+                              name: modelName,
+                              type: (modelType as AllowedModelRef['type']) || 'public',
+                              namespace: modelNamespace || 'default',
+                            },
+                          ])
+                        }
+                      }}
+                      disabled={readOnly || loadingModels || !agentName}
                     >
                       <SelectTrigger className="w-full">
-                        <SelectValue placeholder={t('common:bot.protocol_select')} />
+                        <SelectValue placeholder={t('common:bot.allowed_models.placeholder')} />
                       </SelectTrigger>
                       <SelectContent>
-                        {/* Filter protocol options based on agent type */}
-                        {agentName === 'ClaudeCode' && (
-                          <SelectItem value="claude">Claude (Anthropic)</SelectItem>
-                        )}
-                        {agentName === 'Agno' && (
-                          <>
-                            <SelectItem value="openai">OpenAI</SelectItem>
-                            <SelectItem value="claude">Claude (Anthropic)</SelectItem>
-                            <SelectItem value="gemini">Gemini (Google)</SelectItem>
-                          </>
-                        )}
-                        {/* Show all options if agent type is unknown or not selected */}
-                        {agentName !== 'ClaudeCode' && agentName !== 'Agno' && (
-                          <>
-                            <SelectItem value="openai">OpenAI</SelectItem>
-                            <SelectItem value="claude">Claude (Anthropic)</SelectItem>
-                          </>
-                        )}
+                        {models.map(model => {
+                          const isAdded = allowedModels.some(m => m.name === model.name)
+                          return (
+                            <SelectItem
+                              key={`${model.name}:${model.type}:${model.namespace || 'default'}`}
+                              value={`${model.name}:${model.type}:${model.namespace || 'default'}`}
+                              disabled={isAdded}
+                            >
+                              {model.displayName || model.name}
+                              {model.type === 'public' && (
+                                <span className="ml-1 text-xs text-text-muted">
+                                  [{t('common:bot.public_model', '公共')}]
+                                </span>
+                              )}
+                              {isAdded && <span className="ml-1 text-xs text-text-muted">✓</span>}
+                            </SelectItem>
+                          )
+                        })}
                       </SelectContent>
                     </Select>
-                    <p className="text-xs text-text-muted mt-1">{t('common:bot.protocol_hint')}</p>
+                    {allowedModels.length > 0 ? (
+                      <div className="flex flex-wrap gap-1.5 mt-2">
+                        {allowedModels.map(m => {
+                          const modelInfo = models.find(model => model.name === m.name)
+                          return (
+                            <div
+                              key={m.name}
+                              className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-sm bg-muted"
+                            >
+                              <span>{modelInfo?.displayName || m.name}</span>
+                              {!readOnly && (
+                                <button
+                                  onClick={() =>
+                                    setAllowedModels(allowedModels.filter(x => x.name !== m.name))
+                                  }
+                                  className="text-text-muted hover:text-text-primary"
+                                >
+                                  <XIcon className="w-3 h-3" />
+                                </button>
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-text-muted mt-2">
+                        {t('common:bot.allowed_models.empty')}
+                      </p>
+                    )}
                   </div>
-                )}
-
-                {isCustomModel ? (
-                  <Textarea
-                    value={agentConfig}
-                    onChange={e => {
-                      if (readOnly) return
-                      const value = e.target.value
-                      setAgentConfig(value)
-                      if (!value.trim()) {
-                        setAgentConfigError(false)
-                      }
-                    }}
-                    onBlur={prettifyAgentConfig}
-                    rows={4}
-                    disabled={readOnly}
-                    placeholder={
-                      agentName === 'ClaudeCode'
-                        ? `{
-  "env": {
-    "model": "claude",
-    "model_id": "xxxxx",
-    "api_key": "xxxxxx",
-    "base_url": "xxxxxx"
-  }
-}`
-                        : agentName === 'Agno'
-                          ? `{
-  "env": {
-    "model": "openai or claude",
-    "model_id": "xxxxxx",
-    "api_key": "xxxxxx",
-    "base_url": "xxxxxx"
-  }
-}`
-                          : ''
-                    }
-                    className={`font-mono text-base h-[150px] custom-scrollbar ${agentConfigError ? 'border-red-400 focus-visible:ring-red-300' : ''} ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
-                  />
-                ) : (
-                  <Select
-                    value={
-                      selectedModel
-                        ? `${selectedModel}:${selectedModelType || ''}:${selectedModelNamespace || 'default'}`
-                        : '__none__'
-                    }
-                    onValueChange={value => {
-                      if (value === '__none__') {
-                        // Clear model selection
-                        setSelectedModel('')
-                        setSelectedModelType(undefined)
-                        setSelectedModelNamespace(undefined)
-                        return
-                      }
-                      // Value format: "modelName:modelType:namespace"
-                      const [modelName, modelType, modelNamespace] = value.split(':')
-                      setSelectedModel(modelName)
-                      setSelectedModelType((modelType as ModelTypeEnum) || undefined)
-                      setSelectedModelNamespace(modelNamespace || 'default')
-                    }}
-                    disabled={loadingModels || !agentName || readOnly}
-                  >
-                    <SelectTrigger className="w-full">
-                      <SelectValue
-                        placeholder={
-                          !agentName
-                            ? t('common:bot.select_executor_first')
-                            : t('common:bot.model_select')
-                        }
-                      />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {/* Option to unbind model */}
-                      <SelectItem value="__none__">
-                        <span className="text-text-muted">{t('common:bot.no_model_binding')}</span>
-                      </SelectItem>
-                      {models.length === 0 ? (
-                        <div className="py-2 px-3 text-sm text-text-muted text-center">
-                          {t('common:bot.no_available_models')}
-                        </div>
-                      ) : (
-                        models.map(model => (
-                          <SelectItem
-                            key={`${model.name}:${model.type}:${model.namespace || 'default'}`}
-                            value={`${model.name}:${model.type}:${model.namespace || 'default'}`}
-                          >
-                            {model.displayName || model.name}
-                            {model.type === 'public' && (
-                              <span className="ml-1 text-xs text-text-muted">
-                                [{t('common:bot.public_model', '公共')}]
-                              </span>
-                            )}
-                          </SelectItem>
-                        ))
-                      )}
-                    </SelectContent>
-                  </Select>
                 )}
               </div>
 

@@ -112,7 +112,7 @@
     "agent_select": "choose an agent",
     "prompt": "Prompt",
     "prompt_placeholder": "AI-powered code review and assistance",
-    "agent_config": "Bind Model",
+    "agent_config": "Default Model",
     "mcp_config": "Mcp Config",
     "save_prompt": "Save Prompt",
     "use_custom_model": "Use Custom Model",
@@ -219,7 +219,13 @@
     "default_knowledge_bases_select_to_add": "Select a knowledge base to add...",
     "default_knowledge_bases_selected_count": "{{count}} selected",
     "default_knowledge_bases_selected_count_one": "{{count}} selected",
-    "default_knowledge_bases_selected_count_other": "{{count}} selected"
+    "default_knowledge_bases_selected_count_other": "{{count}} selected",
+    "allowed_models": {
+      "label": "Restrict Available Models",
+      "description": "When enabled, users can only select from the following models",
+      "placeholder": "Select allowed models",
+      "empty": "No restriction, all models allowed"
+    }
   },
   "bots": {
     "title": "AI Assistant",
