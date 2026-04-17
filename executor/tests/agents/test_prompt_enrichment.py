@@ -81,11 +81,11 @@ class TestInjectKbMetaPrompt:
             is_user_selected_kb=True,
         )
 
-        assert "read_document_content" in result
+        assert "wegent_kb_read_document_content" in result
         assert "document_id" in result
         assert "offset" in result
         assert "limit" in result
-        assert "list_documents" in result
+        assert "wegent_kb_list_documents" in result
         assert "do not construct mcp resource uris manually" in result.lower()
 
     def test_local_mode_tells_executor_to_list_documents_before_reading(
@@ -101,5 +101,5 @@ class TestInjectKbMetaPrompt:
             is_user_selected_kb=True,
         )
 
-        assert "list_documents" in result
+        assert "wegent_kb_list_documents" in result
         assert "identify which document matters" in result.lower()
