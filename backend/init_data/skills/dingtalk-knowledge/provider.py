@@ -251,13 +251,13 @@ class _DingTalkSandboxUploadTool(BaseTool):
         logger.info("[_prepare_sandbox] Got SandboxManager instance")
 
         # Get or create sandbox - use ClaudeCode as default shell type
+        # Note: timeout is passed via SandboxManager.get_instance(), not get_or_create_sandbox()
         logger.info(
             "[_prepare_sandbox] Calling get_or_create_sandbox with shell_type=ClaudeCode"
         )
         sandbox, error = await sandbox_manager.get_or_create_sandbox(
             shell_type="ClaudeCode",
             workspace_ref=None,
-            timeout=effective_timeout,
         )
 
         if error:
@@ -405,6 +405,11 @@ class _DingTalkSandboxUploadTool(BaseTool):
             else:
                 # Non-2xx status code - extract error detail
                 error_detail = api_response.get("detail") or upload_result.stderr
+                # Handle case where error_detail is a dict
+                if isinstance(error_detail, dict):
+                    error_detail = error_detail.get("message") or json.dumps(
+                        error_detail
+                    )
                 if not error_detail:
                     error_detail = f"HTTP {http_status}: Unknown error"
                 raise RuntimeError(f"Upload API error: {error_detail}")
@@ -781,14 +786,6 @@ Note: This tool requires sandbox access. Make sure the sandbox skill is loaded.
         except ValueError as e:
             return await self._handle_error(filename, e)
 
-        # Fail-fast size check before writing
-        content_bytes = content.encode("utf-8")
-        if len(content_bytes) > ATTACHMENT_MAX_BYTES:
-            raise RuntimeError(
-                f"Content size ({len(content_bytes)} bytes) exceeds maximum allowed size "
-                f"({ATTACHMENT_MAX_BYTES} bytes)"
-            )
-
         # Emit status update
         if self.ws_emitter:
             try:
@@ -803,6 +800,15 @@ Note: This tool requires sandbox access. Make sure the sandbox skill is loaded.
 
         try:
             logger.info("[SaveDingTalkContentTool._arun] Preparing to start sandbox...")
+
+            # Fail-fast size check before writing
+            content_bytes = content.encode("utf-8")
+            if len(content_bytes) > ATTACHMENT_MAX_BYTES:
+                raise RuntimeError(
+                    f"Content size ({len(content_bytes)} bytes) exceeds maximum allowed size "
+                    f"({ATTACHMENT_MAX_BYTES} bytes)"
+                )
+
             # Prepare sandbox
             sandbox, temp_dir = await self._prepare_sandbox(effective_timeout)
             logger.info(
@@ -814,7 +820,7 @@ Note: This tool requires sandbox access. Make sure the sandbox skill is loaded.
             # Write content directly using sandbox.files.write
             logger.info("[SaveDingTalkContentTool] Writing content to file")
             try:
-                await sandbox.files.write(save_path, content_bytes, mode="wb")
+                await sandbox.files.write(save_path, content_bytes)
             except Exception as e:
                 raise RuntimeError(f"Failed to write content: {e}") from e
 
