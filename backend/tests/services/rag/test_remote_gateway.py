@@ -69,7 +69,6 @@ async def test_remote_gateway_index_document_posts_runtime_request(mocker) -> No
     )
     gateway = RemoteRagGateway(
         base_url="http://knowledge-runtime",
-        token="runtime-token",
     )
     spec = IndexRuntimeSpec(
         knowledge_base_id=1,
@@ -109,7 +108,6 @@ async def test_remote_gateway_index_document_posts_runtime_request(mocker) -> No
     post_mock.assert_awaited_once()
     args, kwargs = post_mock.await_args
     assert args[0] == "http://knowledge-runtime/internal/rag/index"
-    assert kwargs["headers"] == {"Authorization": "Bearer runtime-token"}
     assert kwargs["json"] == {
         "knowledge_base_id": 1,
         "document_id": 2,
@@ -177,7 +175,6 @@ async def test_remote_gateway_query_omits_backend_only_route_fields(mocker) -> N
     )
     gateway = RemoteRagGateway(
         base_url="http://knowledge-runtime",
-        token="runtime-token",
     )
     spec = QueryRuntimeSpec(
         knowledge_base_ids=[1],
@@ -288,7 +285,6 @@ async def test_remote_gateway_translates_structured_remote_errors(mocker) -> Non
     )
     gateway = RemoteRagGateway(
         base_url="http://knowledge-runtime",
-        token="runtime-token",
     )
 
     with pytest.raises(
@@ -346,7 +342,6 @@ async def test_remote_gateway_wraps_transport_errors(mocker) -> None:
     )
     gateway = RemoteRagGateway(
         base_url="http://knowledge-runtime",
-        token="runtime-token",
     )
 
     with pytest.raises(RemoteRagGatewayError, match="transport error") as exc:
@@ -401,7 +396,6 @@ async def test_remote_gateway_delete_posts_resolved_retriever_config(mocker) -> 
     )
     gateway = RemoteRagGateway(
         base_url="http://knowledge-runtime",
-        token="runtime-token",
     )
     spec = DeleteRuntimeSpec(
         knowledge_base_id=1,
@@ -452,7 +446,6 @@ async def test_remote_gateway_purge_index_posts_runtime_request(mocker) -> None:
     )
     gateway = RemoteRagGateway(
         base_url="http://knowledge-runtime",
-        token="runtime-token",
     )
     spec = PurgeKnowledgeRuntimeSpec(
         knowledge_base_id=1,
@@ -500,7 +493,6 @@ async def test_remote_gateway_drop_index_posts_runtime_request(mocker) -> None:
     )
     gateway = RemoteRagGateway(
         base_url="http://knowledge-runtime",
-        token="runtime-token",
     )
     spec = DropKnowledgeIndexRuntimeSpec(
         knowledge_base_id=1,
@@ -550,7 +542,6 @@ async def test_remote_gateway_test_connection_posts_resolved_retriever_config(
     )
     gateway = RemoteRagGateway(
         base_url="http://knowledge-runtime",
-        token="runtime-token",
     )
     spec = ConnectionTestRuntimeSpec(
         retriever_config=RuntimeRetrieverConfig(
@@ -600,7 +591,6 @@ async def test_remote_gateway_list_chunks_posts_runtime_request(mocker) -> None:
     )
     gateway = RemoteRagGateway(
         base_url="http://knowledge-runtime",
-        token="runtime-token",
     )
     spec = ListChunksRuntimeSpec(
         knowledge_base_id=1,
