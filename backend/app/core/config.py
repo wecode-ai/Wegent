@@ -461,8 +461,6 @@ class Settings(BaseSettings):
     EXECUTOR_MANAGER_URL: str = "http://localhost:8001"
     # Chat Shell service authentication token (only used when CHAT_SHELL_MODE="http")
     CHAT_SHELL_TOKEN: str = ""
-    # Internal service authentication token (for HTTP mode communication)
-    INTERNAL_SERVICE_TOKEN: str = ""
     # Backend internal URL (for service-to-service communication)
     # Used by chat_shell to download skill binaries
     BACKEND_INTERNAL_URL: str = "http://localhost:8000"

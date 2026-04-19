@@ -27,3 +27,7 @@ def get_query_gateway() -> RagGateway:
 
 def get_delete_gateway() -> RagGateway:
     return _build_gateway(settings.get_rag_runtime_mode("delete"))
+
+
+def get_list_chunks_gateway() -> RagGateway:
+    return _build_gateway(settings.get_rag_runtime_mode("list_chunks"))
