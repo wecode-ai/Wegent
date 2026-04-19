@@ -289,6 +289,13 @@ Thanks to the following developers for their contributions and efforts to make t
     </td></tr>
 <tr>
     <td align="center">
+        <a href="https://github.com/icycrystal4">
+            <img src="https://avatars.githubusercontent.com/u/946207?v=4" width="80;" alt="icycrystal4"/>
+            <br />
+            <sub><b>Icycrystal4</b></sub>
+        </a>
+    </td>
+    <td align="center">
         <a href="https://github.com/yixiangxx">
             <img src="https://avatars.githubusercontent.com/u/3120662?v=4" width="80;" alt="yixiangxx"/>
             <br />
@@ -300,13 +307,6 @@ Thanks to the following developers for their contributions and efforts to make t
             <img src="https://avatars.githubusercontent.com/u/184585080?v=4" width="80;" alt="joyway1978"/>
             <br />
             <sub><b>Joyway78</b></sub>
-        </a>
-    </td>
-    <td align="center">
-        <a href="https://github.com/icycrystal4">
-            <img src="https://avatars.githubusercontent.com/u/946207?v=4" width="80;" alt="icycrystal4"/>
-            <br />
-            <sub><b>Icycrystal4</b></sub>
         </a>
     </td>
     <td align="center">
@@ -381,6 +381,13 @@ Thanks to the following developers for their contributions and efforts to make t
         </a>
     </td>
     <td align="center">
+        <a href="https://github.com/cocowh">
+            <img src="https://avatars.githubusercontent.com/u/17496282?v=4" width="80;" alt="cocowh"/>
+            <br />
+            <sub><b>Birch</b></sub>
+        </a>
+    </td>
+    <td align="center">
         <a href="https://github.com/haosenwang1018">
             <img src="https://avatars.githubusercontent.com/u/167664334?v=4" width="80;" alt="haosenwang1018"/>
             <br />
@@ -393,13 +400,6 @@ Thanks to the following developers for their contributions and efforts to make t
             <br />
             <sub><b>Li Daiyan</b></sub>
         </a>
-    </td>
-    <td align="center">
-        <a href="https://github.com/qwertyerge">
-            <img src="https://avatars.githubusercontent.com/u/13088125?v=4" width="80;" alt="qwertyerge"/>
-            <br />
-            <sub><b>Erdawang</b></sub>
-        </a>
     </td></tr>
 <tr>
     <td align="center">
@@ -407,6 +407,13 @@ Thanks to the following developers for their contributions and efforts to make t
             <img src="https://avatars.githubusercontent.com/u/1886887?v=4" width="80;" alt="sunnights"/>
             <br />
             <sub><b>Jake Zhang</b></sub>
+        </a>
+    </td>
+    <td align="center">
+        <a href="https://github.com/qwertyerge">
+            <img src="https://avatars.githubusercontent.com/u/13088125?v=4" width="80;" alt="qwertyerge"/>
+            <br />
+            <sub><b>Erdawang</b></sub>
         </a>
     </td>
     <td align="center">
@@ -450,15 +457,15 @@ Thanks to the following developers for their contributions and efforts to make t
             <br />
             <sub><b>Graindt</b></sub>
         </a>
-    </td>
+    </td></tr>
+<tr>
     <td align="center">
         <a href="https://github.com/qingchengliu">
             <img src="https://avatars.githubusercontent.com/u/20255838?v=4" width="80;" alt="qingchengliu"/>
             <br />
             <sub><b>Qingcheng</b></sub>
         </a>
-    </td></tr>
-<tr>
+    </td>
     <td align="center">
         <a href="https://github.com/salt-hai">
             <img src="https://avatars.githubusercontent.com/u/43851000?v=4" width="80;" alt="salt-hai"/>
