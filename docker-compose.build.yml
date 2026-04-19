@@ -25,3 +25,8 @@ services:
     build:
       dockerfile: docker/executor_manager/Dockerfile
     pull_policy: build
+
+  knowledge_runtime:
+    build:
+      dockerfile: docker/knowledge_runtime/Dockerfile
+    pull_policy: build

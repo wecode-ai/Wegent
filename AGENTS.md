@@ -12,6 +12,7 @@ Wegent is an open-source AI-native operating system for defining, organizing, an
 - **Executor**: Task execution engine (Claude Code, Agno, Dify, ImageValidator)
 - **Executor Manager**: Task orchestration via Docker
 - **Chat Shell**: Lightweight AI chat engine for Chat Shell type (LangGraph + multi-LLM)
+- **Knowledge Runtime**: Standalone RAG HTTP service called by Backend (reuses knowledge_engine)
 - **Shared**: Common utilities, models, and cryptography
 
 **Core principles:**
@@ -542,6 +543,24 @@ t('actions.save')             // Ambiguous - which namespace?
 - `package` - Python package imported by Backend
 - `cli` - Command-line interface for interactive chat
 
+### Knowledge Runtime
+
+**Tech:** FastAPI, HTTP client, reuses knowledge_engine
+
+**Purpose:** Standalone HTTP service for RAG operations. Backend calls this service instead of using knowledge_engine directly.
+
+**Endpoints:**
+- `GET /internal/rag/health` - Health check
+- `POST /internal/rag/index` - Index document
+- `POST /internal/rag/query` - Query documents
+- `POST /internal/rag/delete-document-index` - Delete document index
+- `POST /internal/rag/purge-knowledge-index` - Purge knowledge base
+- `POST /internal/rag/drop-knowledge-index` - Drop physical index
+- `POST /internal/rag/all-chunks` - List all chunks
+- `POST /internal/rag/test-connection` - Test storage connection
+
+**Port:** 8200 (default)
+
 
 ---
 
@@ -579,6 +598,7 @@ cd backend && uv run pytest
 cd executor && uv run pytest
 cd executor_manager && uv run pytest
 cd chat_shell && uv run pytest
+cd knowledge_runtime && uv run pytest
 cd shared && uv run pytest
 cd frontend && npm test
 
