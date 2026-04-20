@@ -947,7 +947,9 @@ class K8sExecutor(Executor):
             logger.debug(f"Service health check failed for {host}:{port}: {e}")
             return False
 
-    def delete_executor(self, pod_name: str) -> Dict[str, Any]:
+    def delete_executor(
+        self, pod_name: str, executor_namespace: Optional[str] = None
+    ) -> Dict[str, Any]:
         try:
             core_v1 = self._get_core_v1_api()
             if core_v1 is None:
@@ -956,16 +958,21 @@ class K8sExecutor(Executor):
                     "error_msg": "Failed to get Kubernetes API client",
                 }
 
+            namespace = executor_namespace or K8S_NAMESPACE
             delete_options = client.V1DeleteOptions(propagation_policy="Background")
             core_v1.delete_namespaced_pod(
-                name=pod_name, namespace=K8S_NAMESPACE, body=delete_options
+                name=pod_name, namespace=namespace, body=delete_options
             )
-            logger.info(f"Deleted Kubernetes pod '{pod_name}'")
+            logger.info(
+                "Deleted Kubernetes pod '%s' in namespace '%s'", pod_name, namespace
+            )
             return {"status": "success"}
         except ApiException as e:
             if e.status == 404:
                 logger.warning(
-                    f"Pod '{pod_name}' not found in namespace {K8S_NAMESPACE}"
+                    "Pod '%s' not found in namespace %s",
+                    pod_name,
+                    executor_namespace or K8S_NAMESPACE,
                 )
                 return {
                     "status": "not_found",

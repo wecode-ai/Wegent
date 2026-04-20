@@ -75,6 +75,20 @@ def test_get_container_address_forwards_executor_namespace(mocker):
     )
 
 
+def test_delete_executor_prefers_explicit_executor_namespace(mocker):
+    executor = object.__new__(K8sExecutor)
+    core_v1 = mocker.MagicMock()
+    mocker.patch.object(executor, "_get_core_v1_api", return_value=core_v1)
+
+    result = executor.delete_executor("executor-1", executor_namespace="custom-ns")
+
+    assert result == {"status": "success"}
+    core_v1.delete_namespaced_pod.assert_called_once()
+    _, kwargs = core_v1.delete_namespaced_pod.call_args
+    assert kwargs["name"] == "executor-1"
+    assert kwargs["namespace"] == "custom-ns"
+
+
 def test_submit_executor_prepare_only_skips_initial_dispatch(mocker):
     executor = object.__new__(K8sExecutor)
     prepare_task = {
