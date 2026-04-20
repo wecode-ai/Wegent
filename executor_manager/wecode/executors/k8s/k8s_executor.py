@@ -958,7 +958,7 @@ class K8sExecutor(Executor):
                     "error_msg": "Failed to get Kubernetes API client",
                 }
 
-            namespace = executor_namespace or K8S_NAMESPACE
+            namespace = K8S_NAMESPACE or executor_namespace
             delete_options = client.V1DeleteOptions(propagation_policy="Background")
             core_v1.delete_namespaced_pod(
                 name=pod_name, namespace=namespace, body=delete_options
