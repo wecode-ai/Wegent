@@ -29,7 +29,12 @@ from app.core.events import TaskCompletedEvent
 from app.db.session import get_db_session
 from app.models.kind import Kind
 from app.models.subscription import BackgroundExecution
-from app.schemas.subscription import BackgroundExecutionStatus
+from app.models.subtask import Subtask
+from app.schemas.subscription import (
+    BackgroundExecutionStatus,
+)
+from app.services.adapters.executor_kinds import executor_kinds_service
+from app.services.execution import get_executor_runtime_client
 from app.services.subscription.execution import background_execution_manager
 from app.services.subscription.helpers import validate_subscription_for_read
 from app.services.subscription.notification_dispatcher import (
@@ -141,6 +146,14 @@ class SubscriptionTaskCompletionHandler:
                             f"{wb_err}",
                             exc_info=True,
                         )
+
+                if status in (
+                    BackgroundExecutionStatus.COMPLETED,
+                    BackgroundExecutionStatus.COMPLETED_SILENT,
+                ):
+                    await self._cleanup_completed_managed_subscription_executor(
+                        db, execution, event.task_id
+                    )
 
                 # Skip notifications for silent exits
                 if is_silent_exit:
@@ -257,6 +270,149 @@ class SubscriptionTaskCompletionHandler:
             return False
 
         return event.result.get("silent_exit", False) is True
+
+    async def _cleanup_completed_managed_subscription_executor(
+        self,
+        db: Session,
+        execution: BackgroundExecution,
+        task_id: int,
+    ) -> None:
+        """Delete executors immediately for completed subscription tasks."""
+        subscription = (
+            db.query(Kind)
+            .filter(
+                Kind.id == execution.subscription_id,
+                Kind.kind == "Subscription",
+            )
+            .first()
+        )
+
+        if not subscription:
+            logger.warning(
+                "[TaskCompletionHandler] Cannot clean executor: subscription %s not found",
+                execution.subscription_id,
+            )
+            return
+
+        subscription_crd = validate_subscription_for_read(subscription.json)
+        execution_target = getattr(subscription_crd.spec, "executionTarget", None)
+        logger.info(
+            "[TaskCompletionHandler] Cleaning executors for subscription %s task_id=%s execution_target=%s",
+            execution.subscription_id,
+            task_id,
+            getattr(execution_target, "type", None),
+        )
+
+        subtasks = (
+            db.query(Subtask)
+            .filter(
+                Subtask.task_id == task_id,
+                Subtask.executor_deleted_at == False,
+            )
+            .all()
+        )
+        if not subtasks:
+            logger.info(
+                "[TaskCompletionHandler] No undeleted subtasks found for subscription %s task_id=%s",
+                execution.subscription_id,
+                task_id,
+            )
+            return
+
+        executor_subtasks = [subtask for subtask in subtasks if subtask.executor_name]
+        successful_keys = set()
+        unique_executors = {
+            ((subtask.executor_namespace or ""), subtask.executor_name)
+            for subtask in executor_subtasks
+            if subtask.executor_name
+        }
+
+        runtime_client = get_executor_runtime_client()
+        sandbox_payload, sandbox_lookup_error = await runtime_client.get_sandbox(
+            str(task_id)
+        )
+        cleanup_mode = "sandbox" if sandbox_payload is not None else "executor"
+        if sandbox_lookup_error:
+            cleanup_mode = "fallback"
+        logger.info(
+            "[TaskCompletionHandler] Immediate runtime cleanup mode resolved for subscription %s task_id=%s mode=%s sandbox_lookup_error=%s",
+            execution.subscription_id,
+            task_id,
+            cleanup_mode,
+            sandbox_lookup_error,
+        )
+
+        sandbox_deleted = False
+        if cleanup_mode in {"sandbox", "fallback"}:
+            sandbox_deleted, sandbox_error = await runtime_client.delete_sandbox(
+                str(task_id)
+            )
+            if sandbox_deleted:
+                logger.info(
+                    "[TaskCompletionHandler] Immediate sandbox cleanup succeeded for subscription %s task_id=%s",
+                    execution.subscription_id,
+                    task_id,
+                )
+            else:
+                logger.info(
+                    "[TaskCompletionHandler] Immediate sandbox cleanup skipped or failed for subscription %s task_id=%s error=%s",
+                    execution.subscription_id,
+                    task_id,
+                    sandbox_error,
+                )
+
+        if cleanup_mode in {"executor", "fallback"}:
+            if not unique_executors:
+                logger.info(
+                    "[TaskCompletionHandler] No executor-backed subtasks found for subscription %s task_id=%s",
+                    execution.subscription_id,
+                    task_id,
+                )
+            else:
+                logger.info(
+                    "[TaskCompletionHandler] Attempting immediate executor cleanup for subscription %s task_id=%s executors=%s",
+                    execution.subscription_id,
+                    task_id,
+                    sorted(unique_executors),
+                )
+
+                for executor_namespace, executor_name in unique_executors:
+                    try:
+                        await executor_kinds_service.delete_executor_task_async(
+                            executor_name,
+                            executor_namespace,
+                        )
+                        successful_keys.add((executor_namespace, executor_name))
+                    except Exception as exc:
+                        logger.warning(
+                            "[TaskCompletionHandler] Failed to delete executor for subscription %s: %s/%s: %s",
+                            execution.subscription_id,
+                            executor_namespace,
+                            executor_name,
+                            exc,
+                        )
+
+        if not successful_keys and not sandbox_deleted:
+            logger.warning(
+                "[TaskCompletionHandler] Immediate runtime cleanup finished without successful deletions for subscription %s task_id=%s mode=%s",
+                execution.subscription_id,
+                task_id,
+                cleanup_mode,
+            )
+            return
+
+        for subtask in subtasks:
+            executor_key = ((subtask.executor_namespace or ""), subtask.executor_name)
+            if sandbox_deleted or executor_key in successful_keys:
+                subtask.executor_deleted_at = True
+
+        db.commit()
+        logger.info(
+            "[TaskCompletionHandler] Immediate executor cleanup succeeded for subscription %s task_id=%s deleted_executors=%s",
+            execution.subscription_id,
+            task_id,
+            sorted(successful_keys),
+        )
 
     async def _dispatch_notifications(
         self,
