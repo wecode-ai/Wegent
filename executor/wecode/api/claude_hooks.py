@@ -79,7 +79,7 @@ def post_create_claude_model_hook(
                     "hooks": [
                         {
                             "type": "command",
-                            "command": 'echo \'{"decision": "block", "reason": "Interactive questions disabled. You can use the interactive-form-question skill to ask the user questions instead."}\'',
+                            "command": 'echo \'{"decision": "block", "reason": "The AskUserQuestion tool is disabled. Use the interactive-form-question skill to ask the user questions instead."}\'',
                         }
                     ],
                 }
