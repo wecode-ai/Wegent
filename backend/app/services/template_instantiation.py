@@ -38,7 +38,7 @@ class BaseTemplateInstantiator(ABC):
         pass
 
     @staticmethod
-    def _generate_suffix(length: int = 4) -> str:
+    def _generate_suffix(length: int = 8) -> str:
         """Generate a random alphanumeric suffix."""
         return secrets.token_hex(length // 2 + 1)[:length]
 

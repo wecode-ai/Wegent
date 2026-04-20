@@ -39,6 +39,7 @@ export function TemplateSelectDialog({
   const [importingId, setImportingId] = useState<number | null>(null)
 
   const handleImport = async (template: Template) => {
+    if (importingId !== null) return
     setImportingId(template.id)
     try {
       const result = await instantiateTemplate(template.id)
@@ -80,7 +81,7 @@ export function TemplateSelectDialog({
                   key={template.id}
                   template={template}
                   onImport={handleImport}
-                  importing={importingId === template.id}
+                  importing={importingId !== null}
                 />
               ))}
             </div>

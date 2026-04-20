@@ -217,6 +217,7 @@ def seed_templates(db: Session) -> int:
                 Kind.kind == TEMPLATE_KIND,
                 Kind.name == name,
                 Kind.namespace == TEMPLATE_NAMESPACE,
+                Kind.user_id == TEMPLATE_USER_ID,
                 Kind.is_active == True,
             )
             .first()
