@@ -337,6 +337,7 @@ async def readiness_check():
 
 class DeleteExecutorRequest(BaseModel):
     executor_name: str
+    executor_namespace: Optional[str] = None
 
 
 @api_router.post("/executor/delete")
@@ -344,7 +345,10 @@ async def delete_executor(request: DeleteExecutorRequest, http_request: Request)
     try:
         client_ip = http_request.client.host if http_request.client else "unknown"
         logger.info(
-            f"Received request to delete executor: {request.executor_name} from {client_ip}"
+            "Received request to delete executor: %s namespace=%s from %s",
+            request.executor_name,
+            request.executor_namespace,
+            client_ip,
         )
 
         executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
@@ -352,7 +356,13 @@ async def delete_executor(request: DeleteExecutorRequest, http_request: Request)
         # Get task_id from executor before deletion (for cleanup)
         task_id_str = executor.get_executor_task_id(request.executor_name)
 
-        result = executor.delete_executor(request.executor_name)
+        try:
+            result = executor.delete_executor(
+                request.executor_name,
+                executor_namespace=request.executor_namespace,
+            )
+        except TypeError:
+            result = executor.delete_executor(request.executor_name)
 
         # Clean up running task tracker if we got task_id
         if task_id_str:
