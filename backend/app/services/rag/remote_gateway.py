@@ -70,16 +70,23 @@ class RemoteRagGateway:
         *,
         base_url: str | None = None,
         timeout: float = 30.0,
+        auth_token: str | None = None,
     ) -> None:
         self._base_url = (base_url or settings.KNOWLEDGE_RUNTIME_URL).rstrip("/")
         self._timeout = timeout
+        self._auth_token = auth_token or settings.KNOWLEDGE_RUNTIME_TOKEN
 
     async def _post_model(self, path: str, payload: Any) -> dict[str, Any]:
+        headers = {}
+        if self._auth_token:
+            headers["Authorization"] = f"Bearer {self._auth_token}"
+
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
                 response = await client.post(
                     f"{self._base_url}{path}",
                     json=payload.model_dump(mode="json", exclude_none=True),
+                    headers=headers,
                 )
         except httpx.RequestError as exc:
             raise RemoteRagGatewayError(

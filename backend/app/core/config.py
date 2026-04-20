@@ -466,6 +466,10 @@ class Settings(BaseSettings):
     BACKEND_INTERNAL_URL: str = "http://localhost:8000"
     # Knowledge runtime service URL for remote RAG execution
     KNOWLEDGE_RUNTIME_URL: str = "http://localhost:8200"
+    # Knowledge runtime service authentication token
+    # When set, all requests to knowledge_runtime include Authorization header
+    # Generate using: openssl rand -hex 32
+    KNOWLEDGE_RUNTIME_TOKEN: str = ""
     # RAG data-plane execution mode
     # "local" keeps execution in Backend, "remote" forwards to knowledge_runtime
     # Accepts either a global mode string or a JSON object with per-operation overrides:

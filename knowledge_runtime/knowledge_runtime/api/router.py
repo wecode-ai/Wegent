@@ -6,9 +6,10 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
 from knowledge_runtime.api.endpoints import admin, health, index, query
+from knowledge_runtime.middleware.auth import verify_internal_token
 
 router = APIRouter()
 
@@ -16,6 +17,21 @@ router = APIRouter()
 router.include_router(health.router, tags=["health"])
 
 # RAG operation endpoints (auth required)
-router.include_router(index.router, prefix="/internal/rag", tags=["index"])
-router.include_router(query.router, prefix="/internal/rag", tags=["query"])
-router.include_router(admin.router, prefix="/internal/rag", tags=["admin"])
+router.include_router(
+    index.router,
+    prefix="/internal/rag",
+    tags=["index"],
+    dependencies=[Depends(verify_internal_token)],
+)
+router.include_router(
+    query.router,
+    prefix="/internal/rag",
+    tags=["query"],
+    dependencies=[Depends(verify_internal_token)],
+)
+router.include_router(
+    admin.router,
+    prefix="/internal/rag",
+    tags=["admin"],
+    dependencies=[Depends(verify_internal_token)],
+)

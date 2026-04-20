@@ -33,6 +33,15 @@ class Settings(BaseSettings):
     log_dir: str = "./logs"  # Directory for log files
     log_level: str = "INFO"  # Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
 
+    # Internal service authentication token
+    # When set, all /internal/rag/* endpoints (except health) require this token
+    # Generate using: openssl rand -hex 32
+    internal_service_token: str = ""
+
+    # Token for knowledge_runtime to call Backend (for content fetching)
+    # Should match Backend's INTERNAL_SERVICE_TOKEN if configured
+    backend_auth_token: str = ""
+
 
 # Global settings instance
 _settings: Settings | None = None
