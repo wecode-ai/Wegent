@@ -21,6 +21,7 @@ from app.api.endpoints.admin import (
     subscription_monitor,
     system_config,
     tasks,
+    templates,
     users,
 )
 
@@ -42,3 +43,4 @@ router.include_router(subscription_monitor.router, tags=["admin-subscription-mon
 router.include_router(tasks.router, tags=["admin-tasks"])
 router.include_router(im_channels.router, tags=["admin-im-channels"])
 router.include_router(device_monitor.router, tags=["admin-device-monitor"])
+router.include_router(templates.router, tags=["admin-templates"])

@@ -5,7 +5,7 @@
 'use client'
 
 import { useState } from 'react'
-import { Inbox, Plus, Star, MoreHorizontal, Edit, Trash2, CheckCircle } from 'lucide-react'
+import { Inbox, Plus, Star, MoreHorizontal, Edit, Trash2, CheckCircle, LayoutTemplate } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -18,6 +18,7 @@ import {
 } from '@/components/ui/dropdown'
 import { cn } from '@/lib/utils'
 import { useInboxContext } from '../contexts/inboxContext'
+import { TemplateSelectDialog } from '@/features/templates'
 import type { WorkQueue } from '@/apis/work-queue'
 
 interface QueueSidebarProps {
@@ -34,9 +35,10 @@ export function QueueSidebar({
   onSetDefault,
 }: QueueSidebarProps) {
   const { t } = useTranslation('inbox')
-  const { queues, queuesLoading, selectedQueueId, setSelectedQueueId, unreadCount } =
+  const { queues, queuesLoading, selectedQueueId, setSelectedQueueId, unreadCount, refreshQueues } =
     useInboxContext()
   const [hoveredQueueId, setHoveredQueueId] = useState<number | null>(null)
+  const [templateDialogOpen, setTemplateDialogOpen] = useState(false)
 
   const totalUnread = unreadCount?.total || 0
 
@@ -53,15 +55,27 @@ export function QueueSidebar({
             </Badge>
           )}
         </div>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8"
-          onClick={onCreateQueue}
-          data-testid="create-queue-button"
-        >
-          <Plus className="h-4 w-4" />
-        </Button>
+        <div className="flex items-center gap-1">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8"
+            onClick={() => setTemplateDialogOpen(true)}
+            data-testid="import-template-button"
+            title={t('templates.title')}
+          >
+            <LayoutTemplate className="h-4 w-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8"
+            onClick={onCreateQueue}
+            data-testid="create-queue-button"
+          >
+            <Plus className="h-4 w-4" />
+          </Button>
+        </div>
       </div>
 
       {/* Queue List */}
@@ -163,6 +177,16 @@ export function QueueSidebar({
           </div>
         )}
       </div>
+
+      {/* Template import dialog */}
+      <TemplateSelectDialog
+        open={templateDialogOpen}
+        onOpenChange={setTemplateDialogOpen}
+        category="inbox"
+        onImported={() => {
+          refreshQueues()
+        }}
+      />
     </div>
   )
 }
