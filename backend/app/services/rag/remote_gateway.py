@@ -74,7 +74,8 @@ class RemoteRagGateway:
     ) -> None:
         self._base_url = (base_url or settings.KNOWLEDGE_RUNTIME_URL).rstrip("/")
         self._timeout = timeout
-        self._auth_token = auth_token or settings.KNOWLEDGE_RUNTIME_TOKEN
+        # Priority: 1. explicit auth_token, 2. INTERNAL_SERVICE_TOKEN
+        self._auth_token = auth_token or settings.INTERNAL_SERVICE_TOKEN
 
     async def _post_model(self, path: str, payload: Any) -> dict[str, Any]:
         headers = {}

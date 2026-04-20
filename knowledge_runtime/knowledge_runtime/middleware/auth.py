@@ -9,7 +9,7 @@ from __future__ import annotations
 import secrets
 from typing import Optional
 
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from knowledge_runtime.config import get_settings
@@ -19,7 +19,6 @@ security = HTTPBearer(auto_error=False)
 
 
 def verify_internal_token(
-    request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
 ) -> None:
     """Verify internal service authentication token.
@@ -28,7 +27,6 @@ def verify_internal_token(
     If INTERNAL_SERVICE_TOKEN is not configured, authentication is skipped (dev mode).
 
     Args:
-        request: The FastAPI request object.
         credentials: The Bearer token credentials from the Authorization header.
 
     Raises:

@@ -115,8 +115,6 @@ services:
       BACKEND_INTERNAL_URL: http://backend:8000
       # Knowledge Runtime URL for RAG operations
       KNOWLEDGE_RUNTIME_URL: ${KNOWLEDGE_RUNTIME_URL:-http://knowledge_runtime:8200}
-      # Knowledge Runtime authentication token (uncomment to enable)
-      # KNOWLEDGE_RUNTIME_TOKEN: ${INTERNAL_SERVICE_TOKEN:-knowledge-runtime-token}
       # RAG Runtime Mode: "local" (default) or "remote" to use knowledge_runtime
       # For remote mode, set to: {"default":"remote"}
       RAG_RUNTIME_MODE: ${RAG_RUNTIME_MODE:-local}
@@ -282,9 +280,8 @@ services:
       - LOG_FILE_ENABLED=${LOG_FILE_ENABLED:-true}
       - LOG_DIR=${LOG_DIR:-/app/logs}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      # Authentication tokens (uncomment to enable)
-      # - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:-knowledge-runtime-token}
-      # - BACKEND_AUTH_TOKEN=${INTERNAL_SERVICE_TOKEN:-knowledge-runtime-token}
+      # Internal service token (uncomment to enable, must match Backend's INTERNAL_SERVICE_TOKEN)
+      # - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:-your-secure-token-here}
       # OpenTelemetry Configuration (uncomment to enable)
       # - OTEL_ENABLED=true
       # - OTEL_SERVICE_NAME=wegent-knowledge-runtime
