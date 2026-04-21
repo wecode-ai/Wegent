@@ -16,7 +16,7 @@ Usage:
     from app.mcp_server.tools.decorator import mcp_tool
 
     @mcp_tool(
-        name="list_knowledge_bases",
+        name="wegent_kb_list_knowledge_bases",
         description="List all accessible knowledge bases",
         server="knowledge",
         exclude_params=["token_info"],  # Hidden from MCP schema
@@ -201,7 +201,7 @@ def mcp_tool(
 
     Example:
         @mcp_tool(
-            name="list_knowledge_bases",
+            name="wegent_kb_list_knowledge_bases",
             description="List all accessible knowledge bases",
             server="knowledge",
             exclude_params=["token_info"],

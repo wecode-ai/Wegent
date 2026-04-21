@@ -6,8 +6,10 @@
 
 Contains tools for:
 - System MCP (silent_exit)
-- Knowledge MCP (list_knowledge_bases, list_documents, create_knowledge_base,
-  create_document, update_document_content)
+- Knowledge MCP (wegent_kb_search_knowledge_base, wegent_kb_list_knowledge_bases,
+  wegent_kb_list_documents, wegent_kb_create_knowledge_base,
+  wegent_kb_create_document, wegent_kb_read_document_content,
+  wegent_kb_update_document_content)
 
 Knowledge MCP tools are implemented independently using the KnowledgeOrchestrator
 service layer, with Celery-based async task scheduling for indexing and summary.
