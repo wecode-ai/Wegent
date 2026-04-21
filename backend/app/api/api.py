@@ -36,7 +36,7 @@ from app.api.endpoints import (
 )
 from app.core.config import settings
 
-# RAG module is heavy (llama_index, scipy, pandas, grpc) - skip in standalone mode
+# RAG requires knowledge_runtime service - skip in standalone mode
 if not settings.STANDALONE_MODE:
     from app.api.endpoints import rag
 

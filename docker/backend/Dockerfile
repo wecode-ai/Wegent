@@ -11,10 +11,8 @@ WORKDIR /app
 # `pyproject.toml` [tool.uv.sources] relative paths from /app/backend:
 # - wegent-shared = { path = "../shared" } -> /app/shared
 # - wegent-chat-shell = { path = "../chat_shell" } -> /app/chat_shell
-# - wegent-knowledge-engine = { path = "../knowledge_engine" } -> /app/knowledge_engine
 COPY shared /app/shared
 COPY chat_shell /app/chat_shell
-COPY knowledge_engine /app/knowledge_engine
 
 # Copy pyproject.toml and install dependencies
 COPY backend/pyproject.toml /app/backend/pyproject.toml

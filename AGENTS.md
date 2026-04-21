@@ -551,6 +551,7 @@ t('actions.save')             // Ambiguous - which namespace?
 
 **Endpoints:**
 - `GET /internal/rag/health` - Health check
+- `GET /internal/rag/storage-types` - List available storage types
 - `POST /internal/rag/index` - Index document
 - `POST /internal/rag/query` - Query documents
 - `POST /internal/rag/delete-document-index` - Delete document index

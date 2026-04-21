@@ -19,7 +19,7 @@ from app.services.rag.remote_gateway import RemoteRagGateway, RemoteRagGatewayEr
 from app.services.rag.runtime_specs import ConnectionTestRuntimeSpec
 from shared.models import RuntimeRetrieverConfig
 
-# RAG module is heavy (llama_index, scipy, pandas, grpc) - skip in standalone mode
+# RAG requires knowledge_runtime service - skip in standalone mode
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
