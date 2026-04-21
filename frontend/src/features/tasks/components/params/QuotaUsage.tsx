@@ -96,7 +96,7 @@ export default function QuotaUsage({ className, compact = false }: QuotaUsagePro
     usage_rate: usageRate,
   })
 
-  const BILLING_URL = 'https://space.intra.weibo.com/develop/aigc-quota'
+  const BILLING_URL = 'https://space.intra.weibo.com/develop/model-quota'
 
   const detail = (
     <div>
