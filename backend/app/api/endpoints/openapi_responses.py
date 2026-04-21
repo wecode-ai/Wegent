@@ -38,6 +38,7 @@ from app.schemas.openapi_response import (
     ResponseObject,
 )
 from app.services.adapters.task_kinds import task_kinds_service
+from app.services.chat.preprocessing.contexts import link_contexts_to_subtask
 from app.services.openapi.helpers import (
     extract_input_text,
     parse_model_string,
@@ -393,6 +394,20 @@ async def _create_non_streaming_response_unified(
     # This ensures KB tools and skill tools are actually added to the agent
     enable_tools = enable_chat_bot or bool(knowledge_base_names)
 
+    # Link attachments to user subtask if provided
+    if request_body.attachment_ids:
+        link_contexts_to_subtask(
+            db=db,
+            subtask_id=setup.user_subtask.id,
+            user_id=user.id,
+            attachment_ids=request_body.attachment_ids,
+            task=setup.task,
+        )
+        logger.info(
+            f"[OPENAPI] Linked {len(request_body.attachment_ids)} attachments "
+            f"to subtask {setup.user_subtask.id}"
+        )
+
     # Convert reasoning config from Pydantic model to dict
     reasoning_config = None
     if request_body.reasoning:
@@ -685,6 +700,20 @@ async def _create_streaming_response_unified(
     # Auto-enable tools when knowledge_base is specified
     # This ensures KB tools and skill tools are actually added to the agent
     enable_tools = enable_chat_bot or bool(knowledge_base_names)
+
+    # Link attachments to user subtask if provided
+    if request_body.attachment_ids:
+        link_contexts_to_subtask(
+            db=db,
+            subtask_id=setup.user_subtask.id,
+            user_id=user.id,
+            attachment_ids=request_body.attachment_ids,
+            task=setup.task,
+        )
+        logger.info(
+            f"[OPENAPI] Linked {len(request_body.attachment_ids)} attachments "
+            f"to subtask {setup.user_subtask.id}"
+        )
 
     # Convert reasoning config from Pydantic model to dict
     reasoning_config = None
