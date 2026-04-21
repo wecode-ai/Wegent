@@ -206,12 +206,14 @@ def apply_public_resources(
     db: Session, resources: List[Dict[str, Any]], force: bool = False
 ) -> List[Dict[str, Any]]:
     """
-    Apply public resources (Shell, Ghost, Bot, Team) to the kinds table (user_id=0).
+    Apply public resources (Shell, Ghost, Bot, Team, Template) to the kinds table (user_id=0).
     Only creates new resources, skips existing ones (create-only mode).
+
+    Template resources use namespace='system' while other resources use namespace from metadata.
 
     Args:
         db: Database session
-        resources: List of resource documents (Shell, Ghost, Bot, Team)
+        resources: List of resource documents (Shell, Ghost, Bot, Team, Template)
         force: If True, delete existing resources and recreate them
 
     Returns:
@@ -224,7 +226,7 @@ def apply_public_resources(
     from app.models.kind import Kind
 
     # Supported public resource kinds
-    supported_kinds = {"Shell", "Ghost", "Bot", "Team"}
+    supported_kinds = {"Shell", "Ghost", "Bot", "Team", "Template"}
 
     results = []
     created_count = 0
@@ -577,10 +579,10 @@ def scan_and_apply_yaml_directory(
         )
         logger.info(f"Skills applied: {len(skill_results)} results")
 
-    # Apply all public resources (Shell, Ghost, Bot, Team)
-    # Order matters: Shell -> Ghost -> Bot -> Team (due to references)
+    # Apply all public resources (Shell, Ghost, Bot, Team, Template)
+    # Order matters: Shell -> Ghost -> Bot -> Team -> Template (due to references)
     # Sort resources by kind to ensure correct order
-    kind_order = {"Shell": 0, "Ghost": 1, "Bot": 2, "Team": 3}
+    kind_order = {"Shell": 0, "Ghost": 1, "Bot": 2, "Team": 3, "Template": 4}
     sorted_resources = sorted(
         public_resources, key=lambda r: kind_order.get(r.get("kind"), 99)
     )
