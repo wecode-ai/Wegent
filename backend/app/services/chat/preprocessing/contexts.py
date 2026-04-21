@@ -18,12 +18,16 @@ eliminating the need to pass separate attachment_ids and knowledge_base_ids.
 import logging
 from typing import Any, List, Optional, Tuple
 
+from fastapi import HTTPException, status
 from langchain_core.tools import BaseTool
+from sqlalchemy import or_, select, update
 from sqlalchemy.orm import Session
 
 from app.models.knowledge import KnowledgeDocument
+from app.models.subtask import Subtask
 from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
 from app.services.context import context_service
+from shared.models.db import ContextStatus as DBContextStatus
 from shared.models.knowledge import (
     ChatContextsResult,
     KnowledgeBaseToolAccessMode,
@@ -373,6 +377,75 @@ def extract_knowledge_base_ids(
     return [c.knowledge_id for c in contexts if c.knowledge_id]
 
 
+def _validate_attachment_ownership(
+    db: Session,
+    attachment_ids: List[int],
+    user_id: int,
+    task_id: Optional[int] = None,
+) -> List[int]:
+    """Validate attachment ownership and state.
+
+    Validates that:
+    - Attachments belong to the current user
+    - Attachments are of type ATTACHMENT
+    - Attachments are in READY status
+    - Attachments are either unlinked or already linked to the same task
+
+    This prevents attachments from being "stolen" from other active conversations
+    while still allowing retry scenarios within the same task.
+
+    Args:
+        db: Database session
+        attachment_ids: List of attachment IDs to validate
+        user_id: User ID for ownership check
+        task_id: Optional task ID for cross-subtask validation
+
+    Returns:
+        List of valid attachment IDs
+
+    Raises:
+        HTTPException: 403 if any attachment IDs are invalid or unauthorized
+    """
+    # Build base filters
+    filters = [
+        SubtaskContext.id.in_(attachment_ids),
+        SubtaskContext.user_id == user_id,
+        SubtaskContext.context_type == ContextType.ATTACHMENT.value,
+        SubtaskContext.status == ContextStatus.READY.value,
+    ]
+
+    # Add cross-subtask validation if task_id is provided
+    if task_id:
+        task_subtask_ids = (
+            select(Subtask.id)
+            .filter(Subtask.task_id == task_id, Subtask.user_id == user_id)
+            .scalar_subquery()
+        )
+        filters.append(
+            or_(
+                SubtaskContext.subtask_id == 0,  # Unlinked
+                SubtaskContext.subtask_id.in_(task_subtask_ids),  # Same task
+            )
+        )
+    else:
+        # Without task_id, only allow unlinked attachments
+        filters.append(SubtaskContext.subtask_id == 0)
+
+    # Query with row locking
+    valid_rows = db.query(SubtaskContext.id).filter(*filters).with_for_update().all()
+    valid_ids = [row[0] for row in valid_rows]
+
+    # Check for invalid IDs
+    invalid_ids = set(attachment_ids) - set(valid_ids)
+    if invalid_ids:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Invalid or unauthorized attachment IDs: {sorted(invalid_ids)}",
+        )
+
+    return valid_ids
+
+
 def link_contexts_to_subtask(
     db: Session,
     subtask_id: int,
@@ -395,6 +468,9 @@ def link_contexts_to_subtask(
     When knowledge bases are created, they are automatically synced to the task-level
     knowledgeBaseRefs for future use across all subtasks.
 
+    SECURITY NOTE: When attachment_ids is provided, ownership validation is ALWAYS
+    performed to prevent attachment hijacking across users/tasks.
+
     Args:
         db: Database session
         subtask_id: Subtask ID to link contexts to
@@ -412,9 +488,17 @@ def link_contexts_to_subtask(
 
     linked_context_ids = []
 
-    # Collect attachment IDs to link
+    # Step 1: Validate and collect attachment IDs
     if attachment_ids:
-        linked_context_ids.extend(attachment_ids)
+        valid_attachment_ids = _validate_attachment_ownership(
+            db=db,
+            attachment_ids=attachment_ids,
+            user_id=user_id,
+            task_id=task.id if task else None,
+        )
+        linked_context_ids.extend(valid_attachment_ids)
+    else:
+        valid_attachment_ids = None
 
     # Prepare knowledge base, table, and selected_documents contexts for batch creation
     (
@@ -433,7 +517,11 @@ def link_contexts_to_subtask(
     # Execute all database operations in a single transaction
     try:
         created_context_ids = _batch_update_and_insert_contexts(
-            db, attachment_ids, all_contexts_to_create, subtask_id
+            db=db,
+            attachment_ids=valid_attachment_ids,
+            contexts_to_create=all_contexts_to_create,
+            subtask_id=subtask_id,
+            task_id=task.id if task else None,
         )
         linked_context_ids.extend(created_context_ids)
 
@@ -444,12 +532,12 @@ def link_contexts_to_subtask(
             )
 
         # Sync attachments to running sandbox (if sandbox is healthy)
-        if attachment_ids and task:
+        if valid_attachment_ids and task:
             _schedule_attachment_sync_to_sandbox(
                 db=db,
                 task_id=task.id,
                 subtask_id=subtask_id,
-                attachment_ids=attachment_ids,
+                attachment_ids=valid_attachment_ids,
             )
 
     except Exception as e:
@@ -755,27 +843,55 @@ def _batch_update_and_insert_contexts(
     attachment_ids: List[int] | None,
     contexts_to_create: List[SubtaskContext],
     subtask_id: int,
+    task_id: Optional[int] = None,
 ) -> List[int]:
     """
     Execute batch update and insert operations for contexts.
 
     Args:
         db: Database session
-        attachment_ids: List of attachment context IDs to update
+        attachment_ids: List of validated attachment context IDs to update
         contexts_to_create: List of contexts (KB or table) to insert
         subtask_id: Subtask ID for logging
+        task_id: Optional task ID for additional validation in update
 
     Returns:
         List of created context IDs
+
+    Raises:
+        HTTPException: 409 if attachment update count mismatch (concurrent modification)
     """
     created_context_ids = []
 
-    # Batch update existing attachments' subtask_id
+    # Batch update existing attachments' subtask_id with conditional validation
     if attachment_ids:
-        db.query(SubtaskContext).filter(SubtaskContext.id.in_(attachment_ids)).update(
-            {"subtask_id": subtask_id},
-            synchronize_session=False,
+        # Build update conditions
+        update_filters = [SubtaskContext.id.in_(attachment_ids)]
+
+        # Add task-level validation if task_id is provided
+        if task_id:
+            task_subtask_ids = (
+                select(Subtask.id).filter(Subtask.task_id == task_id).scalar_subquery()
+            )
+            update_filters.append(
+                or_(
+                    SubtaskContext.subtask_id == 0,
+                    SubtaskContext.subtask_id.in_(task_subtask_ids),
+                )
+            )
+
+        # Execute conditional update
+        update_stmt = (
+            update(SubtaskContext).where(*update_filters).values(subtask_id=subtask_id)
         )
+        result = db.execute(update_stmt)
+
+        # Verify all expected rows were updated
+        if result.rowcount != len(attachment_ids):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Some attachments could not be linked. Please retry.",
+            )
 
     # Batch add new contexts (KB and table)
     if contexts_to_create:

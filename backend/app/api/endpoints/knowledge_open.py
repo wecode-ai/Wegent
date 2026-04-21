@@ -230,19 +230,22 @@ async def create_document_open(
       extension via `file_extension` (required). Maximum decoded size: 10 MB.
     - **web**: Provide a URL via the `url` field. The page is scraped and
       converted to Markdown automatically.
+    - **attachment**: Provide an existing attachment ID via `attachment_id`.
+      The attachment must be uploaded via POST /v1/attachments/upload and belong
+      to the current user.
 
-    The `attachment` and `table` source types are not supported via this endpoint;
-    they are reserved for internal use and real-time external table integrations.
+    The `table` source type is not supported via this endpoint;
+    it is reserved for internal use and real-time external table integrations.
 
     Authentication:
         - Personal API key: Creates the document under the key owner's account
         - Service API key: Requires wegent-username header to specify the target user
     """
     current_user = auth_context.user
-    source_type = data.source_type.value  # e.g. "text", "file", "web", "table"
+    source_type = data.source_type.value  # e.g. "text", "file", "web", "attachment"
 
     # Reject unsupported source types early with a clear message
-    _SUPPORTED_SOURCE_TYPES = {"text", "file", "web"}
+    _SUPPORTED_SOURCE_TYPES = {"text", "file", "web", "attachment"}
     if source_type not in _SUPPORTED_SOURCE_TYPES:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -303,7 +306,7 @@ async def create_document_open(
                 detail="Web document creation succeeded but response is incomplete",
             )
         add_span_event(
-            "knowledge.document.created.web",
+            "knowledge.document.created",
             {
                 "document_id": str(document.id),
                 "knowledge_base_id": str(data.knowledge_base_id),
@@ -312,25 +315,50 @@ async def create_document_open(
         )
         return document
 
-    # text / file — all handled by create_document_with_content (sync)
+    # Prepare splitter config for text/file/attachment types
     splitter_config_dict = (
         data.splitter_config.model_dump(exclude_none=True)
         if data.splitter_config
         else None
     )
+
+    # attachment — requires attachment_id and validates ownership
+    if source_type == "attachment":
+        if not data.attachment_id:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="attachment_id is required when source_type is 'attachment'",
+            )
+
+    # Build common parameters for create_document_with_content
+    create_doc_params = {
+        "db": db,
+        "user": current_user,
+        "knowledge_base_id": data.knowledge_base_id,
+        "name": data.name,
+        "source_type": source_type,
+        "trigger_indexing": True,
+        "trigger_summary": True,
+        "splitter_config": splitter_config_dict,
+    }
+
+    # Add source-specific parameters
+    if source_type == "attachment":
+        create_doc_params["attachment_id"] = data.attachment_id
+    else:
+        # text / file
+        create_doc_params.update(
+            {
+                "content": data.content,
+                "file_base64": data.file_base64,
+                "file_extension": data.file_extension,
+            }
+        )
+
+    # Unified document creation with shared error handling
     try:
         document = knowledge_orchestrator.create_document_with_content(
-            db=db,
-            user=current_user,
-            knowledge_base_id=data.knowledge_base_id,
-            name=data.name,
-            source_type=source_type,
-            content=data.content,
-            file_base64=data.file_base64,
-            file_extension=data.file_extension,
-            trigger_indexing=True,
-            trigger_summary=True,
-            splitter_config=splitter_config_dict,
+            **create_doc_params
         )
     except ValueError as exc:
         error_msg = str(exc).lower()
@@ -354,7 +382,6 @@ async def create_document_open(
         {
             "document_id": str(document.id),
             "knowledge_base_id": str(data.knowledge_base_id),
-            "source_type": source_type,
             "user_id": str(current_user.id),
         },
     )
