@@ -312,7 +312,7 @@ def test_public_rag_index_delete_returns_conflict_for_shared_strategy(
     assert "only allowed" in response.json()["detail"]
 
 
-def test_public_rag_retrieve_returns_non_retryable_remote_error(
+def test_public_rag_retrieve_returns_remote_error(
     test_client,
     test_token: str,
 ):
@@ -338,10 +338,6 @@ def test_public_rag_retrieve_returns_non_retryable_remote_error(
             "app.api.endpoints.rag.get_query_gateway",
             return_value=gateway,
         ),
-        patch(
-            "app.api.endpoints.rag.LocalRagGateway.query",
-            new_callable=AsyncMock,
-        ) as mock_local_query,
     ):
         response = test_client.post(
             "/api/rag/retrieve",
@@ -362,7 +358,6 @@ def test_public_rag_retrieve_returns_non_retryable_remote_error(
 
     assert response.status_code == 400
     assert response.json()["detail"] == "remote validation failed"
-    mock_local_query.assert_not_called()
 
 
 def test_public_rag_chunks_rejects_pages_beyond_scan_limit(

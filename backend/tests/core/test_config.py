@@ -196,66 +196,6 @@ class TestSettings:
         assert s.ACCESS_TOKEN_EXPIRE_MINUTES == 60
         assert s.MAX_RUNNING_TASKS_PER_USER == 5
 
-    def test_rag_runtime_mode_defaults_to_local_for_all_operations(self):
-        """Test RAG runtime mode defaults to local across operations."""
-        s = build_settings()
-
-        assert s.RAG_RUNTIME_MODE == "local"
-        assert s.get_rag_runtime_mode("index") == "local"
-        assert s.get_rag_runtime_mode("query") == "local"
-        assert s.get_rag_runtime_mode("delete") == "local"
-
-    def test_rag_runtime_mode_accepts_global_env_value(self, monkeypatch):
-        """Test RAG runtime mode accepts a single global env value."""
-        monkeypatch.setenv("RAG_RUNTIME_MODE", "remote")
-
-        s = build_settings_from_env()
-
-        assert s.RAG_RUNTIME_MODE == "remote"
-        assert s.get_rag_runtime_mode("index") == "remote"
-        assert s.get_rag_runtime_mode("query") == "remote"
-        assert s.get_rag_runtime_mode("delete") == "remote"
-
-    def test_rag_runtime_mode_accepts_operation_override_map(self, monkeypatch):
-        """Test RAG runtime mode accepts per-operation overrides."""
-        monkeypatch.setenv(
-            "RAG_RUNTIME_MODE",
-            '{"default":"remote","query":"local"}',
-        )
-
-        s = build_settings_from_env()
-
-        assert s.RAG_RUNTIME_MODE == {"default": "remote", "query": "local"}
-        assert s.get_rag_runtime_mode("index") == "remote"
-        assert s.get_rag_runtime_mode("query") == "local"
-        assert s.get_rag_runtime_mode("delete") == "remote"
-
-    def test_rag_runtime_mode_rejects_unknown_global_value(self, monkeypatch):
-        """Test invalid global RAG runtime modes fail fast."""
-        monkeypatch.setenv("RAG_RUNTIME_MODE", "edge")
-
-        with pytest.raises(ValidationError, match="Invalid RAG runtime mode"):
-            build_settings_from_env()
-
-    def test_rag_runtime_mode_rejects_invalid_operation_override_value(
-        self, monkeypatch
-    ):
-        """Test invalid per-operation runtime modes fail fast."""
-        monkeypatch.setenv(
-            "RAG_RUNTIME_MODE",
-            '{"default":"remote","query":"edge"}',
-        )
-
-        with pytest.raises(ValidationError, match="Invalid RAG runtime mode"):
-            build_settings_from_env()
-
-    def test_rag_runtime_mode_rejects_malformed_json_override(self, monkeypatch):
-        """Test malformed JSON override maps are rejected."""
-        monkeypatch.setenv("RAG_RUNTIME_MODE", '{"default":"remote",')
-
-        with pytest.raises(ValidationError, match="malformed"):
-            build_settings_from_env()
-
     def test_rag_auto_disable_direct_injection_defaults_to_false(self):
         """Test the auto-routing direct injection kill switch defaults to disabled."""
         s = build_settings()

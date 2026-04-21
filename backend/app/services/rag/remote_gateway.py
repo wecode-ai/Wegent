@@ -56,14 +56,6 @@ class RemoteRagGatewayError(RuntimeError):
         self.details = details
 
 
-def should_fallback_to_local(error: RemoteRagGatewayError) -> bool:
-    """Return whether a remote error is safe to retry locally."""
-
-    return error.retryable or (
-        error.status_code is not None and error.status_code >= 500
-    )
-
-
 class RemoteRagGateway:
     def __init__(
         self,

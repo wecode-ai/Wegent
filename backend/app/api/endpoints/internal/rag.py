@@ -24,13 +24,12 @@ from app.services.knowledge.protected_mediation import (
 from app.services.knowledge.retrieval_persistence import (
     retrieval_persistence_service,
 )
-from app.services.rag.gateway_factory import get_query_gateway
-from app.services.rag.local_gateway import LocalRagGateway
-from app.services.rag.remote_gateway import (
-    RemoteRagGateway,
-    RemoteRagGatewayError,
-    should_fallback_to_local,
+from app.services.rag.gateway_factory import (
+    get_delete_gateway,
+    get_list_chunks_gateway,
+    get_query_gateway,
 )
+from app.services.rag.remote_gateway import RemoteRagGatewayError
 from app.services.rag.retrieval_service import RetrievalService
 from app.services.rag.runtime_resolver import RagRuntimeResolver
 from shared.models import (
@@ -198,13 +197,6 @@ def _resolve_document_names(
     )
 
 
-def _resolve_query_gateway(runtime_spec):
-    route_mode = getattr(runtime_spec, "route_mode", "auto")
-    if route_mode == "rag_retrieval":
-        return get_query_gateway()
-    return LocalRagGateway()
-
-
 def _finalize_query_runtime_spec(
     runtime_spec,
     db: Session,
@@ -240,12 +232,11 @@ def _finalize_query_runtime_spec(
     return runtime_spec.model_copy(update={"route_mode": resolved_route_mode})
 
 
-async def _execute_query_with_remote_fallback(runtime_spec, db: Session):
-    rag_gateway = _resolve_query_gateway(runtime_spec)
-    if (
-        isinstance(rag_gateway, RemoteRagGateway)
-        and getattr(runtime_spec, "route_mode", None) == "rag_retrieval"
-        and not getattr(runtime_spec, "knowledge_base_configs", None)
+async def _execute_query(runtime_spec, db: Session):
+    """Execute query using the gateway."""
+    rag_gateway = get_query_gateway()
+    if getattr(runtime_spec, "route_mode", None) == "rag_retrieval" and not getattr(
+        runtime_spec, "knowledge_base_configs", None
     ):
         runtime_spec = runtime_spec.model_copy(
             update={
@@ -257,17 +248,7 @@ async def _execute_query_with_remote_fallback(runtime_spec, db: Session):
                 )
             }
         )
-    try:
-        return await rag_gateway.query(runtime_spec, db=db)
-    except RemoteRagGatewayError as exc:
-        if not should_fallback_to_local(exc):
-            raise
-        logger.warning(
-            "[internal_rag] Remote query failed for KBs %s, falling back to local gateway: %s",
-            getattr(runtime_spec, "knowledge_base_ids", []),
-            exc,
-        )
-        return await LocalRagGateway().query(runtime_spec, db=db)
+    return await rag_gateway.query(runtime_spec, db=db)
 
 
 @router.post(
@@ -351,7 +332,7 @@ async def internal_retrieve(
             restricted_mode=restricted_mode,
         )
         runtime_spec = _finalize_query_runtime_spec(runtime_spec, db, runtime_context)
-        result = await _execute_query_with_remote_fallback(runtime_spec, db)
+        result = await _execute_query(runtime_spec, db)
 
         records = result.get("records", [])
 
@@ -654,7 +635,7 @@ async def get_all_chunks(
             query=request.query,
             metadata_condition=request.metadata_condition,
         )
-        result = await LocalRagGateway().list_chunks(
+        result = await get_list_chunks_gateway().list_chunks(
             runtime_spec,
             db=db,
         )
@@ -706,7 +687,7 @@ async def purge_knowledge_index(
             index_owner_user_id=request.index_owner_user_id,
             retriever_config=request.retriever_config.model_dump(mode="python"),
         )
-        return await LocalRagGateway().purge_knowledge_index(runtime_spec, db=db)
+        return await get_delete_gateway().purge_knowledge_index(runtime_spec, db=db)
     except ValueError as e:
         logger.warning("[internal_rag] Purge knowledge index error: %s", e)
         raise HTTPException(status_code=400, detail=str(e))
@@ -732,7 +713,7 @@ async def drop_knowledge_index(
             index_owner_user_id=request.index_owner_user_id,
             retriever_config=request.retriever_config.model_dump(mode="python"),
         )
-        return await LocalRagGateway().drop_knowledge_index(runtime_spec, db=db)
+        return await get_delete_gateway().drop_knowledge_index(runtime_spec, db=db)
     except ValueError as e:
         logger.warning("[internal_rag] Drop knowledge index error: %s", e)
         raise HTTPException(status_code=400, detail=str(e))

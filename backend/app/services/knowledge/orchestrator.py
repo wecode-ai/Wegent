@@ -2206,13 +2206,9 @@ class KnowledgeOrchestrator:
                 ],
             }
 
-        # Use runtime resolver and gateway for retrieval (supports remote fallback)
+        # Use runtime resolver and gateway for retrieval
         from app.services.rag.gateway_factory import get_query_gateway
-        from app.services.rag.local_gateway import LocalRagGateway
-        from app.services.rag.remote_gateway import (
-            RemoteRagGatewayError,
-            should_fallback_to_local,
-        )
+        from app.services.rag.remote_gateway import RemoteRagGatewayError
         from app.services.rag.retrieval_service import RetrievalService
         from app.services.rag.runtime_resolver import RagRuntimeResolver
 
@@ -2266,19 +2262,9 @@ class KnowledgeOrchestrator:
                 update={"knowledge_base_configs": kb_configs}
             )
 
-        # Execute query with remote fallback support
+        # Execute query using gateway
         rag_gateway = get_query_gateway()
-        try:
-            result = await rag_gateway.query(runtime_spec, db=db)
-        except RemoteRagGatewayError as exc:
-            if should_fallback_to_local(exc):
-                logger.warning(
-                    f"[Orchestrator] Remote query failed for KB {knowledge_base_id}, "
-                    f"falling back to local gateway: {exc}"
-                )
-                result = await LocalRagGateway().query(runtime_spec, db=db)
-            else:
-                raise
+        result = await rag_gateway.query(runtime_spec, db=db)
 
         # Normalize result format for API consumers
         return {

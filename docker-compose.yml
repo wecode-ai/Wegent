@@ -115,9 +115,6 @@ services:
       BACKEND_INTERNAL_URL: http://backend:8000
       # Knowledge Runtime URL for RAG operations
       KNOWLEDGE_RUNTIME_URL: ${KNOWLEDGE_RUNTIME_URL:-http://knowledge_runtime:8200}
-      # RAG Runtime Mode: "local" (default) or "remote" to use knowledge_runtime
-      # For remote mode, set to: {"default":"remote"}
-      RAG_RUNTIME_MODE: ${RAG_RUNTIME_MODE:-local}
       # Task Dispatch Configuration
       # Mode: 'push' (default) or 'pull' (deprecated, executor_manager polls)
       TASK_DISPATCH_MODE: ${TASK_DISPATCH_MODE:-push}

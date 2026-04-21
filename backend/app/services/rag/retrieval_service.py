@@ -727,8 +727,8 @@ class RetrievalService:
         This method is used for smart context injection where we need all
         chunks from a knowledge base to determine if direct injection is possible.
 
-        Uses gateway (local or remote based on RAG_RUNTIME_MODE) instead of
-        directly accessing storage backend, enabling proper architecture separation.
+        Uses RemoteRagGateway to call knowledge_runtime service for proper
+        architecture separation.
 
         Args:
             knowledge_base_id: Knowledge base ID
@@ -764,7 +764,7 @@ class RetrievalService:
             query_log,
         )
 
-        # Use gateway to get chunks (supports local and remote modes)
+        # Use gateway to get chunks via knowledge_runtime service
         rag_gateway = get_list_chunks_gateway()
         result = await rag_gateway.list_chunks(spec, db=db)
 

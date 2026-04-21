@@ -141,7 +141,7 @@ class TestRetrieveForChatShell:
             "query": "test",
             "knowledge_base_ids": [123],
             "max_results": 5,
-            "route_mode": "auto",
+            "route_mode": "rag_retrieval",
             "runtime_context": {
                 "context_window": 10000,
                 "used_context_tokens": 100,
@@ -157,7 +157,11 @@ class TestRetrieveForChatShell:
                 return_value=object(),
             ) as mock_resolve,
             patch(
-                "app.api.endpoints.internal.rag.LocalRagGateway.query",
+                "app.api.endpoints.internal.rag._finalize_query_runtime_spec",
+                return_value=object(),
+            ),
+            patch(
+                "app.services.rag.remote_gateway.RemoteRagGateway.query",
                 new_callable=AsyncMock,
                 return_value={
                     "mode": "rag_retrieval",
