@@ -9,6 +9,11 @@
 
 set -e
 
+# Determine the script directory and change to it
+# This ensures all relative paths work correctly regardless of where the script is invoked from
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
 # Trap Ctrl+C and cleanup
 cleanup() {
     echo ""

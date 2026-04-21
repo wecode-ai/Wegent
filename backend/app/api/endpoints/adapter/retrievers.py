@@ -93,11 +93,11 @@ async def get_storage_type_retrieval_methods(storage_type: str):
     gateway = RemoteRagGateway()
     response = await gateway.get_storage_types()
 
-    # Find the storage type in the response
+    # Find the storage type in the response (case-insensitive comparison)
     for type_info in response.storage_types:
-        if type_info.type == storage_type.lower():
+        if type_info.type.casefold() == storage_type.casefold():
             return {
-                "storage_type": storage_type,
+                "storage_type": type_info.type,  # Return normalized form from registry
                 "retrieval_methods": type_info.retrieval_methods,
             }
 

@@ -12,7 +12,7 @@ from typing import Any
 import httpx
 from tenacity import (
     retry,
-    retry_if_exception_type,
+    retry_if_exception,
     stop_after_attempt,
     wait_exponential,
 )
@@ -25,6 +25,11 @@ from shared.models import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _is_retryable(exc: BaseException) -> bool:
+    """Check if an exception is a retryable ContentFetchError."""
+    return isinstance(exc, ContentFetchError) and exc.retryable
 
 
 class ContentFetchError(Exception):
@@ -54,7 +59,7 @@ class ContentFetcher:
         self._settings = get_settings()
 
     @retry(
-        retry=retry_if_exception_type(httpx.TransportError),
+        retry=retry_if_exception(_is_retryable),
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=10),
         reraise=True,
