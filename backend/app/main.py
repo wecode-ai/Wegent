@@ -198,19 +198,6 @@ async def lifespan(app: FastAPI):
             finally:
                 db.close()
 
-            # Step 3: Seed built-in templates
-            logger.info("Seeding built-in templates...")
-            db = SessionLocal()
-            try:
-                from app.services.template_seeds import seed_templates
-
-                seed_templates(db)
-                logger.info("✓ Built-in template seeding completed")
-            except Exception as e:
-                logger.warning(f"Failed to seed built-in templates: {e}")
-            finally:
-                db.close()
-
         except Exception as e:
             logger.error(f"✗ Startup initialization failed: {e}")
             # Re-raise the exception to terminate startup
