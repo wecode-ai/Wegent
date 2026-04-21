@@ -177,5 +177,13 @@
     "import_success": "Template imported successfully! Queue \"{{queueName}}\" has been created.",
     "import_failed": "Failed to import template",
     "empty": "No templates available"
+  },
+  "create_choice": {
+    "title": "New Queue",
+    "description": "Choose how to create",
+    "from_template": "Import from Template",
+    "from_template_desc": "Quickly create an automated workflow using a preset template",
+    "custom": "Custom",
+    "custom_desc": "Manually configure queue name, description, and processing rules"
   }
 }

@@ -58,20 +58,56 @@ class TemplateResourceSubscriptionConfig(BaseModel):
     )
 
 
+class TemplateResourceTeamRef(BaseModel):
+    """Reference to an existing Team resource (e.g. a system public Team)."""
+
+    name: str = Field(..., description="Team name")
+    namespace: str = Field("default", description="Team namespace")
+
+
 class TemplateResourceQueueConfig(BaseModel):
-    """Work queue resource configuration within a template."""
+    """Work queue resource configuration within a template.
+
+    Auto-process mode is determined automatically:
+    - If the template defines a 'subscription' resource: mode='subscription'
+    - If 'teamRef' is set (pointing to an existing Team): mode='direct_agent'
+    - Otherwise: mode='direct_agent' using the Team created by this template
+    """
 
     visibility: str = Field("private", description="Queue visibility")
     triggerMode: str = Field("immediate", description="Auto-process trigger mode")
+    teamRef: Optional[TemplateResourceTeamRef] = Field(
+        None,
+        description=(
+            "Reference to an existing Team for direct_agent mode. "
+            "When set, no Ghost/Bot/Team resources need to be defined in the template."
+        ),
+    )
 
 
 class TemplateResources(BaseModel):
-    """Complete resource bundle for a template."""
+    """Resource bundle for a template.
 
-    ghost: TemplateResourceGhostConfig
-    bot: TemplateResourceBotConfig
-    team: TemplateResourceTeamConfig = Field(default_factory=TemplateResourceTeamConfig)
-    subscription: TemplateResourceSubscriptionConfig
+    All resource types are optional - only defined resources are created.
+    The instantiation engine creates resources in dependency order and
+    resolves cross-references automatically.
+
+    Minimal template (direct chat to existing team):
+      queue:
+        teamRef: {name: wegent-chat, namespace: default}
+
+    Full inbox automation template:
+      ghost: {systemPrompt: ...}
+      bot: {shellName: Chat}
+      team: {collaborationModel: pipeline}
+      subscription: {promptTemplate: ..., retryCount: 1}
+      queue: {visibility: private}
+    """
+
+    ghost: Optional[TemplateResourceGhostConfig] = None
+    bot: Optional[TemplateResourceBotConfig] = None
+    team: Optional[TemplateResourceTeamConfig] = None
+    subscription: Optional[TemplateResourceSubscriptionConfig] = None
     queue: TemplateResourceQueueConfig = Field(
         default_factory=TemplateResourceQueueConfig
     )
@@ -135,11 +171,16 @@ class TemplateListResponse(BaseModel):
 
 
 class TemplateInstantiateResponse(BaseModel):
-    """Response model for template instantiation."""
+    """Response model for template instantiation.
 
-    ghostId: int
-    botId: int
-    teamId: int
-    subscriptionId: int
+    For 'inbox' category templates: ghostId, botId, teamId, subscriptionId, queueId are set.
+    For 'direct_agent' mode queues: subscriptionId is None.
+    For 'direct_chat' category templates: only queueId and queueName are set.
+    """
+
+    ghostId: Optional[int] = None
+    botId: Optional[int] = None
+    teamId: Optional[int] = None
+    subscriptionId: Optional[int] = None
     queueId: int
     queueName: str

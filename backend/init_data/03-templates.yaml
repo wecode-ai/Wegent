@@ -205,3 +205,27 @@ spec:
       triggerMode: immediate
 status:
   state: Available
+---
+apiVersion: agent.wecode.io/v1
+kind: Template
+metadata:
+  name: general-chat-assistant
+  namespace: system
+spec:
+  displayName: "General Chat Assistant"
+  description: "Forward incoming messages directly to the default Wegent Chat assistant for immediate AI responses, without any subscription-based processing pipeline."
+  category: inbox
+  tags:
+    - chat
+    - assistant
+    - general
+  icon: "💬"
+  resources:
+    queue:
+      visibility: private
+      triggerMode: immediate
+      teamRef:
+        name: wegent-chat
+        namespace: default
+status:
+  state: Available

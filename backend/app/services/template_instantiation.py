@@ -3,28 +3,48 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """
-Template instantiation engine using the Strategy pattern.
+Template instantiation engine.
 
-Each template category (e.g., 'inbox') has a corresponding instantiator
-that knows how to create the required resources in the correct order.
+Templates define a list of Kind resources to create. The instantiator
+iterates over the resource list in order, creates each Kind, and resolves
+cross-references (e.g. ghostRef, botRef, subscriptionRef) using the names
+of previously created resources.
+
+Supported resource types: Ghost, Bot, Team, Subscription, WorkQueue.
+Any resource type can be omitted from the template - only defined resources
+are created.
 """
 
 import logging
 import secrets
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
-from typing import Dict
+from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
+from app.schemas.subscription import (
+    SubscriptionCreate,
+    SubscriptionExecutionTarget,
+    SubscriptionExecutionTargetType,
+    SubscriptionTaskType,
+    SubscriptionTriggerType,
+    SubscriptionVisibility,
+)
 from app.schemas.template import TemplateInstantiateResponse
+from app.services.subscription.helpers import build_subscription_crd
 
 logger = logging.getLogger(__name__)
 
 NAMESPACE = "default"
 API_VERSION = "agent.wecode.io/v1"
+
+# Ordered list of resource keys as they appear in template YAML.
+# Resources are created in this order so that later resources can reference
+# earlier ones (e.g. Bot references Ghost, Team references Bot).
+RESOURCE_ORDER: List[str] = ["ghost", "bot", "team", "subscription", "queue"]
 
 
 class BaseTemplateInstantiator(ABC):
@@ -42,12 +62,47 @@ class BaseTemplateInstantiator(ABC):
         """Generate a random alphanumeric suffix."""
         return secrets.token_hex(length // 2 + 1)[:length]
 
+    @staticmethod
+    def _create_kind(
+        db: Session,
+        user_id: int,
+        kind_type: str,
+        name: str,
+        json_data: Dict[str, Any],
+    ) -> Kind:
+        """Persist a single Kind record and flush to obtain its database ID.
+
+        This is the single entry point for all Kind creation in the template
+        instantiation engine. All resource-specific helpers must call this
+        method instead of constructing Kind objects directly.
+        """
+        kind = Kind(
+            user_id=user_id,
+            kind=kind_type,
+            name=name,
+            namespace=NAMESPACE,
+            json=json_data,
+            is_active=True,
+        )
+        db.add(kind)
+        db.flush()
+        logger.info(f"Created {kind_type} from template: name={name}, id={kind.id}")
+        return kind
+
 
 class InboxTemplateInstantiator(BaseTemplateInstantiator):
     """Instantiator for inbox-category templates.
 
-    Creates resources in dependency order:
-    Ghost -> Bot -> Team -> Subscription -> WorkQueue
+    Iterates over the resource list defined in the template spec and creates
+    each Kind in dependency order. Resources not present in the template are
+    simply skipped - no resource type is mandatory.
+
+    Dependency order: Ghost -> Bot -> Team -> Subscription -> WorkQueue
+
+    WorkQueue auto-process mode is determined automatically:
+    - If a Subscription was created: mode='subscription' with subscriptionRef
+    - If queue config has 'teamRef': mode='direct_agent' using the referenced Team
+    - If a Team was created: mode='direct_agent' using the newly created Team
     """
 
     def instantiate(
@@ -59,72 +114,87 @@ class InboxTemplateInstantiator(BaseTemplateInstantiator):
         suffix = self._generate_suffix()
         display_name = spec.get("displayName", template_name)
 
-        # 1. Create Ghost
-        ghost = self._create_ghost(
-            db,
-            user_id,
-            template_name,
-            suffix,
-            display_name,
-            resources.get("ghost", {}),
-        )
+        # Track created kinds by resource key for cross-reference resolution
+        created: Dict[str, Optional[Kind]] = {key: None for key in RESOURCE_ORDER}
 
-        # 2. Create Bot referencing Ghost
-        bot = self._create_bot(
-            db,
-            user_id,
-            template_name,
-            suffix,
-            resources.get("bot", {}),
-            ghost,
-        )
+        # Create each resource in dependency order, skipping absent ones
+        for resource_key in RESOURCE_ORDER:
+            config = resources.get(resource_key)
+            if config is None:
+                continue
 
-        # 3. Create Team referencing Bot
-        team = self._create_team(
-            db,
-            user_id,
-            template_name,
-            suffix,
-            display_name,
-            resources.get("team", {}),
-            bot,
-        )
-
-        # 4. Create Subscription referencing Team
-        subscription = self._create_subscription(
-            db,
-            user_id,
-            template_name,
-            suffix,
-            display_name,
-            resources.get("subscription", {}),
-            team,
-        )
-
-        # 5. Create WorkQueue with autoProcess referencing Subscription
-        queue = self._create_queue(
-            db,
-            user_id,
-            template_name,
-            suffix,
-            display_name,
-            resources.get("queue", {}),
-            subscription,
-        )
+            if resource_key == "ghost":
+                created["ghost"] = self._build_ghost(
+                    db, user_id, template_name, suffix, display_name, config
+                )
+            elif resource_key == "bot":
+                created["bot"] = self._build_bot(
+                    db, user_id, template_name, suffix, config, created["ghost"]
+                )
+            elif resource_key == "team":
+                created["team"] = self._build_team(
+                    db,
+                    user_id,
+                    template_name,
+                    suffix,
+                    display_name,
+                    config,
+                    created["bot"],
+                )
+            elif resource_key == "subscription":
+                if created["team"] is None:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Template defines a Subscription but no Team was created",
+                    )
+                created["subscription"] = self._build_subscription(
+                    db,
+                    user_id,
+                    template_name,
+                    suffix,
+                    display_name,
+                    config,
+                    created["team"],
+                )
+            elif resource_key == "queue":
+                created["queue"] = self._build_work_queue(
+                    db,
+                    user_id,
+                    template_name,
+                    suffix,
+                    display_name,
+                    config,
+                    created_team=created["team"],
+                    subscription=created["subscription"],
+                )
 
         # Flush to ensure all IDs are assigned
         db.flush()
 
+        queue = created["queue"]
+        if queue is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Template must define at least a 'queue' resource",
+            )
+
         return TemplateInstantiateResponse(
-            ghostId=ghost.id,
-            botId=bot.id,
-            teamId=team.id,
-            subscriptionId=subscription.id,
+            ghostId=created["ghost"].id if created["ghost"] else None,
+            botId=created["bot"].id if created["bot"] else None,
+            teamId=created["team"].id if created["team"] else None,
+            subscriptionId=(
+                created["subscription"].id if created["subscription"] else None
+            ),
             queueId=queue.id,
             queueName=queue.name,
         )
 
-    def _create_ghost(
+    # ------------------------------------------------------------------
+    # Resource builders - each returns a Kind via _create_kind()
+    # Method names follow the pattern _build_{kind_type_lowercase}.
+    # ------------------------------------------------------------------
+
+    def _build_ghost(
         self,
         db: Session,
         user_id: int,
@@ -133,9 +203,9 @@ class InboxTemplateInstantiator(BaseTemplateInstantiator):
         display_name: str,
         config: Dict,
     ) -> Kind:
-        """Create a Ghost resource from template config."""
+        """Build and persist a Ghost Kind from template config."""
         name = f"tpl-{template_name}-{suffix}-ghost"
-        ghost_spec = {
+        ghost_spec: Dict[str, Any] = {
             "systemPrompt": config.get("systemPrompt", ""),
         }
         if config.get("mcpServers"):
@@ -143,94 +213,68 @@ class InboxTemplateInstantiator(BaseTemplateInstantiator):
         if config.get("skills"):
             ghost_spec["skills"] = config["skills"]
 
-        ghost_json = {
-            "apiVersion": API_VERSION,
-            "kind": "Ghost",
-            "metadata": {
-                "name": name,
-                "namespace": NAMESPACE,
-                "labels": {
-                    "template.wecode.io/source": template_name,
-                    "template.wecode.io/category": "inbox",
+        return self._create_kind(
+            db,
+            user_id,
+            "Ghost",
+            name,
+            {
+                "apiVersion": API_VERSION,
+                "kind": "Ghost",
+                "metadata": {
+                    "name": name,
+                    "namespace": NAMESPACE,
+                    "labels": {"template.wecode.io/source": template_name},
                 },
+                "spec": ghost_spec,
+                "status": {"state": "Available"},
             },
-            "spec": ghost_spec,
-            "status": {"state": "Available"},
-        }
-
-        ghost = Kind(
-            user_id=user_id,
-            kind="Ghost",
-            name=name,
-            namespace=NAMESPACE,
-            json=ghost_json,
-            is_active=True,
         )
-        db.add(ghost)
-        db.flush()
-        logger.info(f"Created Ghost from template: name={name}, id={ghost.id}")
-        return ghost
 
-    def _create_bot(
+    def _build_bot(
         self,
         db: Session,
         user_id: int,
         template_name: str,
         suffix: str,
         config: Dict,
-        ghost: Kind,
+        ghost: Optional[Kind],
     ) -> Kind:
-        """Create a Bot resource referencing the Ghost."""
+        """Build and persist a Bot Kind referencing the Ghost (if any)."""
         name = f"tpl-{template_name}-{suffix}-bot"
         shell_name = config.get("shellName", "Chat")
-
-        # Public shells use 'default' namespace
         shell_namespace = "default"
 
-        # Build model reference from agent_config if provided
-        model_ref_name = ""
-        model_ref_namespace = "default"
         agent_config = config.get("agentConfig") or {}
-        if agent_config.get("bind_model"):
-            model_ref_name = agent_config["bind_model"]
-            model_ref_namespace = agent_config.get("namespace", "default")
+        model_ref_name = agent_config.get("bind_model", "")
+        model_ref_namespace = agent_config.get("namespace", "default")
 
-        bot_json = {
-            "apiVersion": API_VERSION,
-            "kind": "Bot",
-            "metadata": {
-                "name": name,
-                "namespace": NAMESPACE,
-                "labels": {
-                    "template.wecode.io/source": template_name,
-                    "template.wecode.io/category": "inbox",
-                },
-            },
-            "spec": {
-                "ghostRef": {"name": ghost.name, "namespace": NAMESPACE},
-                "shellRef": {"name": shell_name, "namespace": shell_namespace},
-                "modelRef": {
-                    "name": model_ref_name,
-                    "namespace": model_ref_namespace,
-                },
-            },
-            "status": {"state": "Available"},
+        bot_spec: Dict[str, Any] = {
+            "shellRef": {"name": shell_name, "namespace": shell_namespace},
+            "modelRef": {"name": model_ref_name, "namespace": model_ref_namespace},
         }
+        if ghost is not None:
+            bot_spec["ghostRef"] = {"name": ghost.name, "namespace": NAMESPACE}
 
-        bot = Kind(
-            user_id=user_id,
-            kind="Bot",
-            name=name,
-            namespace=NAMESPACE,
-            json=bot_json,
-            is_active=True,
+        return self._create_kind(
+            db,
+            user_id,
+            "Bot",
+            name,
+            {
+                "apiVersion": API_VERSION,
+                "kind": "Bot",
+                "metadata": {
+                    "name": name,
+                    "namespace": NAMESPACE,
+                    "labels": {"template.wecode.io/source": template_name},
+                },
+                "spec": bot_spec,
+                "status": {"state": "Available"},
+            },
         )
-        db.add(bot)
-        db.flush()
-        logger.info(f"Created Bot from template: name={name}, id={bot.id}")
-        return bot
 
-    def _create_team(
+    def _build_team(
         self,
         db: Session,
         user_id: int,
@@ -238,56 +282,50 @@ class InboxTemplateInstantiator(BaseTemplateInstantiator):
         suffix: str,
         display_name: str,
         config: Dict,
-        bot: Kind,
+        bot: Optional[Kind],
     ) -> Kind:
-        """Create a Team resource referencing the Bot."""
+        """Build and persist a Team Kind referencing the Bot (if any)."""
         name = f"tpl-{template_name}-{suffix}"
         collaboration_model = config.get("collaborationModel", "pipeline")
 
-        team_spec = {
-            "members": [
+        members = []
+        if bot is not None:
+            members.append(
                 {
                     "botRef": {"name": bot.name, "namespace": NAMESPACE},
                     "prompt": "",
                     "role": "",
                     "requireConfirmation": False,
                 }
-            ],
+            )
+
+        team_spec: Dict[str, Any] = {
+            "members": members,
             "collaborationModel": collaboration_model,
             "description": config.get("description", display_name),
         }
         if config.get("bindMode"):
             team_spec["bind_mode"] = config["bindMode"]
 
-        team_json = {
-            "apiVersion": API_VERSION,
-            "kind": "Team",
-            "metadata": {
-                "name": name,
-                "namespace": NAMESPACE,
-                "labels": {
-                    "template.wecode.io/source": template_name,
-                    "template.wecode.io/category": "inbox",
+        return self._create_kind(
+            db,
+            user_id,
+            "Team",
+            name,
+            {
+                "apiVersion": API_VERSION,
+                "kind": "Team",
+                "metadata": {
+                    "name": name,
+                    "namespace": NAMESPACE,
+                    "labels": {"template.wecode.io/source": template_name},
                 },
+                "spec": team_spec,
+                "status": {"state": "Available"},
             },
-            "spec": team_spec,
-            "status": {"state": "Available"},
-        }
-
-        team = Kind(
-            user_id=user_id,
-            kind="Team",
-            name=name,
-            namespace=NAMESPACE,
-            json=team_json,
-            is_active=True,
         )
-        db.add(team)
-        db.flush()
-        logger.info(f"Created Team from template: name={name}, id={team.id}")
-        return team
 
-    def _create_subscription(
+    def _build_subscription(
         self,
         db: Session,
         user_id: int,
@@ -297,83 +335,70 @@ class InboxTemplateInstantiator(BaseTemplateInstantiator):
         config: Dict,
         team: Kind,
     ) -> Kind:
-        """Create a Subscription resource for inbox message processing."""
+        """Build and persist a Subscription Kind for inbox message processing.
+
+        Uses Pydantic models via build_subscription_crd() to ensure the stored
+        JSON uses the correct field names (snake_case) that validate_subscription_for_read()
+        expects when resolving the subscription during inbox auto-processing.
+        """
         name = f"tpl-{template_name}-{suffix}-sub"
 
-        # Build CRD spec following the Subscription CRD pattern
-        sub_spec = {
-            "displayName": f"{display_name} - Subscription",
-            "taskType": "collection",
-            "visibility": "private",
-            "trigger": {
-                "type": "event",
-                "event": {
-                    "eventType": "inbox_message",
-                },
-            },
-            "teamRef": {"name": team.name, "namespace": NAMESPACE},
-            "promptTemplate": config.get(
-                "promptTemplate", "Process this inbox message."
-            ),
-            "retryCount": config.get("retryCount", 1),
-            "timeoutSeconds": config.get("timeoutSeconds", 600),
-            "enabled": True,
-            "executionTarget": {"type": "managed"},
-            "preserveHistory": False,
-            "historyMessageCount": 10,
-        }
-
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
-
-        crd_json = {
-            "apiVersion": API_VERSION,
-            "kind": "Subscription",
-            "metadata": {
-                "name": name,
-                "namespace": NAMESPACE,
-                "displayName": f"{display_name} - Subscription",
-                "labels": {
-                    "template.wecode.io/source": template_name,
-                    "template.wecode.io/category": "inbox",
-                },
-            },
-            "spec": sub_spec,
-            "status": {"state": "Active"},
-            "_internal": {
-                "team_id": team.id,
-                "workspace_id": 0,
-                "webhook_token": "",
-                "webhook_secret": "",
-                "enabled": True,
-                "trigger_type": "event",
-                "next_execution_time": now.isoformat(),
-                "last_execution_time": None,
-                "last_execution_status": "",
-                "execution_count": 0,
-                "success_count": 0,
-                "failure_count": 0,
-                "bound_task_id": 0,
-                "market_whitelist_user_ids": [],
-                "expires_at": None,
-            },
-        }
-
-        subscription = Kind(
-            user_id=user_id,
-            kind="Subscription",
+        # Build SubscriptionCreate to reuse the standard CRD builder.
+        # This guarantees the stored JSON matches what Subscription.model_validate()
+        # expects (e.g. event_type instead of eventType).
+        subscription_in = SubscriptionCreate(
             name=name,
             namespace=NAMESPACE,
-            json=crd_json,
-            is_active=True,
+            display_name=f"{display_name} - Subscription",
+            task_type=SubscriptionTaskType.COLLECTION,
+            visibility=SubscriptionVisibility.PRIVATE,
+            trigger_type=SubscriptionTriggerType.EVENT,
+            trigger_config={"event_type": "inbox_message"},
+            team_id=team.id,
+            prompt_template=config.get("promptTemplate", "Process this inbox message."),
+            retry_count=config.get("retryCount", 1),
+            timeout_seconds=config.get("timeoutSeconds", 600),
+            enabled=True,
+            execution_target=SubscriptionExecutionTarget(
+                type=SubscriptionExecutionTargetType.MANAGED
+            ),
+            preserve_history=False,
+            history_message_count=10,
         )
-        db.add(subscription)
-        db.flush()
-        logger.info(
-            f"Created Subscription from template: name={name}, id={subscription.id}"
-        )
-        return subscription
 
-    def _create_queue(
+        webhook_token = secrets.token_urlsafe(32)
+        webhook_secret = secrets.token_urlsafe(32)
+
+        subscription_crd = build_subscription_crd(
+            subscription_in, team, workspace=None, webhook_token=webhook_token
+        )
+
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        crd_json = subscription_crd.model_dump(mode="json")
+        crd_json["metadata"]["labels"] = {
+            "template.wecode.io/source": template_name,
+        }
+        crd_json["_internal"] = {
+            "team_id": team.id,
+            "workspace_id": 0,
+            "webhook_token": webhook_token,
+            "webhook_secret": webhook_secret,
+            "enabled": True,
+            "trigger_type": SubscriptionTriggerType.EVENT.value,
+            "next_execution_time": now.isoformat(),
+            "last_execution_time": None,
+            "last_execution_status": "",
+            "execution_count": 0,
+            "success_count": 0,
+            "failure_count": 0,
+            "bound_task_id": 0,
+            "market_whitelist_user_ids": [],
+            "expires_at": None,
+        }
+
+        return self._create_kind(db, user_id, "Subscription", name, crd_json)
+
+    def _build_work_queue(
         self,
         db: Session,
         user_id: int,
@@ -381,19 +406,23 @@ class InboxTemplateInstantiator(BaseTemplateInstantiator):
         suffix: str,
         display_name: str,
         config: Dict,
-        subscription: Kind,
+        created_team: Optional[Kind],
+        subscription: Optional[Kind],
     ) -> Kind:
-        """Create a WorkQueue with auto-process linked to the Subscription."""
+        """Build and persist a WorkQueue Kind.
+
+        Auto-process mode priority:
+        1. subscription present  -> mode='subscription' with subscriptionRef
+        2. config has 'teamRef'  -> mode='direct_agent' referencing an existing Team
+        3. created_team present  -> mode='direct_agent' referencing the newly created Team
+        4. none of the above     -> error
+        """
         name = f"tpl-{template_name}-{suffix}-queue"
         visibility = config.get("visibility", "private")
         trigger_mode = config.get("triggerMode", "immediate")
 
-        queue_spec = {
-            "displayName": display_name,
-            "description": f"Auto-created from template: {display_name}",
-            "isDefault": False,
-            "visibility": visibility,
-            "autoProcess": {
+        if subscription is not None:
+            auto_process: Dict[str, Any] = {
                 "enabled": True,
                 "mode": "subscription",
                 "subscriptionRef": {
@@ -402,41 +431,68 @@ class InboxTemplateInstantiator(BaseTemplateInstantiator):
                     "userId": user_id,
                 },
                 "triggerMode": trigger_mode,
-            },
-            "resultFeedback": {
-                "replyToSender": False,
-                "saveInQueue": True,
-                "sendNotification": False,
-            },
-        }
-
-        resource_json = {
-            "apiVersion": API_VERSION,
-            "kind": "WorkQueue",
-            "metadata": {
-                "name": name,
-                "namespace": NAMESPACE,
-                "labels": {
-                    "template.wecode.io/source": template_name,
-                    "template.wecode.io/category": "inbox",
+            }
+        elif config.get("teamRef"):
+            # Use an existing Team referenced by name/namespace in the template config.
+            # This allows templates that point to system public Teams (e.g. wegent-chat)
+            # without needing to create Ghost/Bot/Team resources.
+            team_ref = config["teamRef"]
+            auto_process = {
+                "enabled": True,
+                "mode": "direct_agent",
+                "teamRef": {
+                    "namespace": team_ref.get("namespace", NAMESPACE),
+                    "name": team_ref["name"],
                 },
-            },
-            "spec": queue_spec,
-            "status": {"state": "Available"},
-        }
+                "triggerMode": trigger_mode,
+            }
+        elif created_team is not None:
+            auto_process = {
+                "enabled": True,
+                "mode": "direct_agent",
+                "teamRef": {
+                    "namespace": NAMESPACE,
+                    "name": created_team.name,
+                },
+                "triggerMode": trigger_mode,
+            }
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Template queue requires either a Subscription, a teamRef, or a "
+                    "Team resource for auto-process configuration"
+                ),
+            )
 
-        queue = Kind(
-            user_id=user_id,
-            kind="WorkQueue",
-            name=name,
-            namespace=NAMESPACE,
-            json=resource_json,
-            is_active=True,
+        return self._create_kind(
+            db,
+            user_id,
+            "WorkQueue",
+            name,
+            {
+                "apiVersion": API_VERSION,
+                "kind": "WorkQueue",
+                "metadata": {
+                    "name": name,
+                    "namespace": NAMESPACE,
+                    "labels": {"template.wecode.io/source": template_name},
+                },
+                "spec": {
+                    "displayName": display_name,
+                    "description": f"Auto-created from template: {display_name}",
+                    "isDefault": False,
+                    "visibility": visibility,
+                    "autoProcess": auto_process,
+                    "resultFeedback": {
+                        "replyToSender": False,
+                        "saveInQueue": True,
+                        "sendNotification": False,
+                    },
+                },
+                "status": {"state": "Available"},
+            },
         )
-        db.add(queue)
-        db.flush()
-        logger.info(f"Created WorkQueue from template: name={name}, id={queue.id}")
-        return queue
 
 
 # --- Instantiator Registry ---
