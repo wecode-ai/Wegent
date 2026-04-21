@@ -97,7 +97,6 @@ class JobService(BaseService[Kind, None, None]):
                         Subtask.updated_at <= cutoff,
                         TaskResource.kind == "Task",
                         TaskResource.is_active.in_(TaskResource.is_active_query()),
-                        TaskResource.updated_at <= cutoff,
                         Subtask.executor_name.isnot(None),
                         Subtask.executor_name != "",
                         Subtask.executor_deleted_at == False,
@@ -127,6 +126,8 @@ class JobService(BaseService[Kind, None, None]):
 
                 task_crd = Task.model_validate(task.json)
                 task_status = task_crd.status.status if task_crd.status else "PENDING"
+                labels = task_crd.metadata.labels or {}
+                is_subscription_task = labels.get("type") == "subscription"
 
                 # Check if task has preserveExecutor label set to "true"
                 # If so, skip this task's executor from cleanup
@@ -144,6 +145,13 @@ class JobService(BaseService[Kind, None, None]):
                         datetime.now() - subtask.updated_at
                     ).total_seconds() < settings.CODE_TASK_EXECUTOR_DELETE_AFTER_HOURS * 3600:
                         continue
+
+                if (
+                    not is_subscription_task
+                    and isinstance(task.updated_at, datetime)
+                    and task.updated_at > cutoff
+                ):
+                    continue
 
                 # Check if task status is in COMPLETED, FAILED, or CANCELLED
                 if task_status in ["COMPLETED", "FAILED", "CANCELLED"]:

@@ -105,7 +105,7 @@ class ExecutorKindsService(BaseService[Kind, None, None]):
                 timeout=30.0,
             )
             response.raise_for_status()
-            return response.json()
+            return self._validate_delete_response(response.json())
         except requests.exceptions.RequestException as e:
             raise HTTPException(
                 status_code=500, detail=f"Error deleting executor task: {str(e)}"
@@ -139,11 +139,30 @@ class ExecutorKindsService(BaseService[Kind, None, None]):
                     headers={"Content-Type": "application/json"},
                 )
                 response.raise_for_status()
-                return response.json()
+                return self._validate_delete_response(response.json())
         except httpx.HTTPError as e:
             raise HTTPException(
                 status_code=500, detail=f"Error deleting executor task: {str(e)}"
             )
+
+    def _validate_delete_response(self, response_data: Any) -> Dict[str, Any]:
+        """Validate executor deletion response body."""
+        if response_data is True:
+            return {"status": "success"}
+
+        if not isinstance(response_data, dict):
+            raise HTTPException(
+                status_code=500,
+                detail=f"Invalid delete executor response: {response_data!r}",
+            )
+
+        if response_data.get("status") != "success":
+            raise HTTPException(
+                status_code=500,
+                detail=response_data.get("error_msg", "Executor deletion failed"),
+            )
+
+        return response_data
 
 
 executor_kinds_service = ExecutorKindsService(Kind)

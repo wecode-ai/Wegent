@@ -140,6 +140,42 @@ class _ExecutorRuntimeClient:
         except Exception as e:
             return None, str(e)
 
+    async def get_sandbox(self, sandbox_id: str):
+        """Get sandbox status via executor_manager API."""
+        import httpx
+
+        from app.core.config import settings
+
+        base_url = settings.EXECUTOR_MANAGER_URL.rstrip("/")
+        url = f"{base_url}/executor-manager/sandboxes/{sandbox_id}"
+
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.get(url)
+                if response.status_code == 404:
+                    return None, None
+                response.raise_for_status()
+                return response.json(), None
+        except Exception as e:
+            return None, self._format_http_error(e)
+
+    async def delete_sandbox(self, sandbox_id: str):
+        """Delete a sandbox via executor_manager API."""
+        import httpx
+
+        from app.core.config import settings
+
+        base_url = settings.EXECUTOR_MANAGER_URL.rstrip("/")
+        url = f"{base_url}/executor-manager/sandboxes/{sandbox_id}"
+
+        try:
+            async with httpx.AsyncClient(timeout=180.0) as client:
+                response = await client.delete(url)
+                response.raise_for_status()
+                return True, None
+        except Exception as e:
+            return False, self._format_http_error(e)
+
     async def prepare_executor(self, request: ExecutionRequest):
         """Prepare a normal executor runtime without dispatching the task."""
         import httpx

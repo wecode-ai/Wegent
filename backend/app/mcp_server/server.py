@@ -21,8 +21,9 @@ The knowledge MCP server uses a decorator-based auto-registration system:
 
 import contextvars
 import logging
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
-from typing import Any, Dict, Optional
+from typing import Any, AsyncIterator, Dict, Optional
 
 from fastapi import APIRouter, FastAPI, Request
 from mcp.server.fastmcp import FastMCP
@@ -491,7 +492,15 @@ def _build_root_metadata(spec: McpAppSpec) -> Dict[str, Any]:
 
 
 def _build_mcp_app(spec: McpAppSpec) -> Starlette:
-    """Create a Starlette app for a streamable-http MCP server."""
+    """Create a Starlette app for a streamable-http MCP server.
+
+    IMPORTANT: This function creates a lifespan that initializes the MCP
+    session manager's task group. Without this, the streamable_http_app
+    will fail with "RuntimeError: Task group is not initialized" when
+    multiple requests arrive concurrently.
+
+    See: https://github.com/modelcontextprotocol/python-sdk/pull/1669
+    """
     # Ensure tools are registered before creating the app
     if spec.name == "knowledge":
         ensure_knowledge_tools_registered()
@@ -501,6 +510,17 @@ def _build_mcp_app(spec: McpAppSpec) -> Starlette:
         ensure_prompt_optimization_tools_registered()
     elif spec.name == "subscription":
         ensure_subscription_tools_registered()
+
+    @asynccontextmanager
+    async def lifespan(app: Starlette) -> AsyncIterator[None]:
+        """Lifespan context manager that initializes MCP session manager.
+
+        The session_manager.run() context manager initializes the task group
+        required for streamable HTTP transport. Without this, concurrent
+        requests will fail with "Task group is not initialized" error.
+        """
+        async with spec.server.session_manager.run():
+            yield
 
     async def health_check(request: Request) -> JSONResponse:
         return JSONResponse({"status": "healthy", "service": spec.service_name})
@@ -572,7 +592,7 @@ def _build_mcp_app(spec: McpAppSpec) -> Starlette:
     if spec.include_root_metadata and spec.transport_path != "/":
         routes.insert(0, Route("/", root_metadata, methods=["GET"]))
 
-    base_app = Starlette(debug=False, routes=routes)
+    base_app = Starlette(debug=False, routes=routes, lifespan=lifespan)
 
     from starlette.middleware.base import BaseHTTPMiddleware
 
