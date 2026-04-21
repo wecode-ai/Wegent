@@ -5928,7 +5928,6 @@ requires-dist = [
     { name = "lxml", specifier = ">=4.9.0" },
     { name = "markdown", specifier = ">=3.5.0" },
     { name = "mcp", specifier = ">=1.0.0" },
-    { name = "minio", specifier = ">=7.2.0" },
     { name = "minio", specifier = ">=7.2.20" },
     { name = "mysql-connector-python", specifier = ">=8.3.0" },
     { name = "openpyxl", specifier = ">=3.1.2" },
