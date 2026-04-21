@@ -2,18 +2,17 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""DingTalk Knowledge Tool Provider.
+"""Wegent Knowledge Tool Provider.
 
-This module provides the DingTalkKnowledgeProvider class that creates
-tools for downloading DingTalk documents and uploading them as attachments
-to Wegent.
+This module provides the WegentKnowledgeProvider class that creates
+tools for managing Wegent knowledge bases and uploading DingTalk documents.
 
 Tools provided:
 - download_dingtalk_document: Download DingTalk document from download URL in sandbox and upload as attachment
 - save_dingtalk_content: Save DingTalk online document content to file in sandbox and upload as attachment
 
 Workflow:
-1. Call MCP tool (get_document_info, download_file, get_document_content) to get document info
+1. Call DingTalk MCP tool (get_document_info, download_file, get_document_content) to retrieve document details
 2. Call provider tool with download_url/content and file_extension to upload
 """
 
@@ -39,8 +38,8 @@ logger = logging.getLogger(__name__)
 ATTACHMENT_MAX_BYTES = int(os.getenv("ATTACHMENT_MAX_BYTES", "104857600"))
 
 
-class DingTalkKnowledgeProvider(SkillToolProvider):
-    """Tool provider for DingTalk Knowledge operations.
+class WegentKnowledgeProvider(SkillToolProvider):
+    """Tool provider for Wegent Knowledge operations.
 
     This provider creates tools that help upload DingTalk documents
     to Wegent knowledge bases. It handles:
@@ -52,7 +51,7 @@ class DingTalkKnowledgeProvider(SkillToolProvider):
     @property
     def provider_name(self) -> str:
         """Return the provider name used in SKILL.md."""
-        return "dingtalk_knowledge"
+        return "wegent_knowledge"
 
     @property
     def supported_tools(self) -> list[str]:
@@ -65,7 +64,7 @@ class DingTalkKnowledgeProvider(SkillToolProvider):
         context: SkillToolContext,
         tool_config: Optional[dict[str, Any]] = None,
     ) -> BaseTool:
-        """Create a DingTalk Knowledge tool instance.
+        """Create a Wegent Knowledge tool instance.
 
         Args:
             tool_name: Name of the tool to create
@@ -79,7 +78,7 @@ class DingTalkKnowledgeProvider(SkillToolProvider):
             ValueError: If tool_name is unknown
         """
         logger.info(
-            f"[DingTalkKnowledgeProvider] Creating tool: {tool_name}, "
+            f"[WegentKnowledgeProvider] Creating tool: {tool_name}, "
             f"task_id={context.task_id}, user_id={context.user_id}"
         )
 
@@ -211,7 +210,7 @@ class _DingTalkSandboxUploadTool(BaseTool):
 
     @trace_async(
         span_name="PrepareSandbox",
-        tracer_name="dingtalk_knowledge",
+        tracer_name="wegent_knowledge",
         extract_attributes=lambda self, effective_timeout: {
             "task_id": self.task_id,
             "user_id": self.user_id,
@@ -278,7 +277,7 @@ class _DingTalkSandboxUploadTool(BaseTool):
 
     @trace_async(
         span_name="UploadAndReturn",
-        tracer_name="dingtalk_knowledge",
+        tracer_name="wegent_knowledge",
         extract_attributes=lambda self, sandbox, save_path, filename, file_size, temp_dir, start_time, effective_timeout: {
             "filename": filename,
             "file_size": file_size,
@@ -434,7 +433,7 @@ class _DingTalkSandboxUploadTool(BaseTool):
 
     @trace_async(
         span_name="HandleError",
-        tracer_name="dingtalk_knowledge",
+        tracer_name="wegent_knowledge",
         extract_attributes=lambda self, filename, error: {
             "filename": filename,
             "error_type": type(error).__name__,
@@ -520,7 +519,7 @@ dingtalk-docs.download_file(nodeId="nYMoOje9")
 # Returns: {"download_url": "https://...", "download_token": "..."}
 
 # Step 3: Download and upload in sandbox
-dingtalk_knowledge.download_dingtalk_document(
+wegent_knowledge.download_dingtalk_document(
     download_url="https://alidocs.dingtalk.com/...",
     file_extension="docx",
     filename="产品需求.docx"
@@ -546,7 +545,7 @@ Note: This tool requires sandbox access. Make sure the sandbox skill is loaded.
 
     @trace_async(
         span_name="DownloadDingTalkDocument",
-        tracer_name="dingtalk_knowledge",
+        tracer_name="wegent_knowledge",
         extract_attributes=lambda self, download_url, file_extension, filename=None, timeout_seconds=None: {
             "download_url": str(urlparse(download_url)._replace(query="").geturl()),
             "filename": filename or f"dingtalk_document.{file_extension.lstrip('.')}",
@@ -712,7 +711,7 @@ dingtalk-docs.get_document_content(nodeId="nYMoOje9")
 # Returns: {"markdown": "# Title\n\nContent...", ...}
 
 # Step 4: Save content and upload in sandbox (use 'md' extension for adoc content)
-dingtalk_knowledge.save_dingtalk_content(
+wegent_knowledge.save_dingtalk_content(
     content="# Title\n\nContent...",
     file_extension="md",  # Use 'md' for adoc content since it's markdown
     filename="产品需求.md"
@@ -738,7 +737,7 @@ Note: This tool requires sandbox access. Make sure the sandbox skill is loaded.
 
     @trace_async(
         span_name="SaveDingTalkContent",
-        tracer_name="dingtalk_knowledge",
+        tracer_name="wegent_knowledge",
         extract_attributes=lambda self, content, file_extension, filename=None, timeout_seconds=None: {
             "filename": filename or f"dingtalk_document.{file_extension.lstrip('.')}",
             "file_extension": file_extension,
