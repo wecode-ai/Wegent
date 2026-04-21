@@ -268,6 +268,8 @@ services:
     pull_policy: ${DOCKER_PULL_POLICY:-always}
     container_name: wegent-knowledge-runtime
     restart: always
+    profiles:
+      - rag
     ports:
       - "${KNOWLEDGE_RUNTIME_PORT:-8200}:8200"
     environment:
