@@ -1,0 +1,231 @@
+# SPDX-FileCopyrightText: 2025 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+# Built-in Template resources - accessible by all users (user_id=0, namespace=system)
+# These templates can be instantiated by users to create full inbox automation workflows.
+---
+apiVersion: agent.wecode.io/v1
+kind: Template
+metadata:
+  name: daily-standup-summary
+  namespace: system
+spec:
+  displayName: "Daily Standup Summary"
+  description: "Collect team standup reports and generate a structured summary with key highlights and blockers."
+  category: inbox
+  tags:
+    - standup
+    - summary
+    - team
+  icon: "📋"
+  resources:
+    ghost:
+      systemPrompt: |
+        You are a daily standup summarizer. When you receive messages,
+        extract the following from each: what was done yesterday,
+        what is planned today, and any blockers. Compile a structured
+        summary with sections for each person, highlight cross-team
+        dependencies, and list all blockers at the top.
+    bot:
+      shellName: Chat
+    team:
+      collaborationModel: pipeline
+    subscription:
+      promptTemplate: |
+        Please process the following standup report and
+        generate a structured summary:
+
+        {{inbox_message}}
+      retryCount: 1
+      timeoutSeconds: 300
+    queue:
+      visibility: private
+      triggerMode: immediate
+status:
+  state: Available
+---
+apiVersion: agent.wecode.io/v1
+kind: Template
+metadata:
+  name: bug-report-handler
+  namespace: system
+spec:
+  displayName: "Bug Report Handler"
+  description: "Receive bug reports, automatically classify severity and priority, and output structured issue details."
+  category: inbox
+  tags:
+    - bug
+    - triage
+    - issue
+  icon: "🐛"
+  resources:
+    ghost:
+      systemPrompt: |
+        You are a bug report analyst. For each incoming bug report,
+        identify: severity (critical/major/minor/trivial),
+        affected component, steps to reproduce, expected vs actual
+        behavior, and suggested priority. Output a structured report
+        in markdown format.
+    bot:
+      shellName: Chat
+    team:
+      collaborationModel: pipeline
+    subscription:
+      promptTemplate: |
+        Analyze the following bug report and provide a structured
+        classification:
+
+        {{inbox_message}}
+      retryCount: 2
+      timeoutSeconds: 300
+    queue:
+      visibility: private
+      triggerMode: immediate
+status:
+  state: Available
+---
+apiVersion: agent.wecode.io/v1
+kind: Template
+metadata:
+  name: customer-feedback-collector
+  namespace: system
+spec:
+  displayName: "Customer Feedback Collector"
+  description: "Collect customer feedback, extract key requirements, and produce structured analysis."
+  category: inbox
+  tags:
+    - customer
+    - feedback
+    - requirements
+  icon: "📝"
+  resources:
+    ghost:
+      systemPrompt: |
+        You are a customer feedback analyst. For each piece of
+        feedback, extract: sentiment (positive/neutral/negative),
+        category (feature request/bug report/improvement/question),
+        key requirements, and actionable items. Produce a structured
+        analysis with prioritization suggestions.
+    bot:
+      shellName: Chat
+    team:
+      collaborationModel: pipeline
+    subscription:
+      promptTemplate: |
+        Analyze the following customer feedback and extract
+        key insights:
+
+        {{inbox_message}}
+      retryCount: 1
+      timeoutSeconds: 300
+    queue:
+      visibility: private
+      triggerMode: immediate
+status:
+  state: Available
+---
+apiVersion: agent.wecode.io/v1
+kind: Template
+metadata:
+  name: code-review-assistant
+  namespace: system
+spec:
+  displayName: "Code Review Assistant"
+  description: "Receive code review requests and provide automated pre-review with best practice suggestions."
+  category: inbox
+  tags:
+    - code
+    - review
+    - quality
+  icon: "🔍"
+  resources:
+    ghost:
+      systemPrompt: |
+        You are a code review assistant. For each code submission,
+        check for: coding style consistency, potential bugs,
+        security issues, performance concerns, and adherence to
+        best practices. Provide constructive feedback with specific
+        line references when possible.
+    bot:
+      shellName: Chat
+    team:
+      collaborationModel: pipeline
+    subscription:
+      promptTemplate: |
+        Review the following code submission and provide
+        feedback:
+
+        {{inbox_message}}
+      retryCount: 1
+      timeoutSeconds: 600
+    queue:
+      visibility: private
+      triggerMode: immediate
+status:
+  state: Available
+---
+apiVersion: agent.wecode.io/v1
+kind: Template
+metadata:
+  name: document-translation-assistant
+  namespace: system
+spec:
+  displayName: "Document Translation Assistant"
+  description: "Receive documents and automatically translate them while preserving formatting and technical terms."
+  category: inbox
+  tags:
+    - translation
+    - document
+    - i18n
+  icon: "🌐"
+  resources:
+    ghost:
+      systemPrompt: |
+        You are a professional document translator. Translate
+        incoming documents between languages while preserving:
+        original formatting, technical terminology, code snippets
+        (untranslated), and markdown structure. If the source
+        language is Chinese, translate to English. If the source
+        language is English, translate to Chinese. For other
+        languages, translate to English.
+    bot:
+      shellName: Chat
+    team:
+      collaborationModel: pipeline
+    subscription:
+      promptTemplate: |
+        Translate the following document:
+
+        {{inbox_message}}
+      retryCount: 1
+      timeoutSeconds: 600
+    queue:
+      visibility: private
+      triggerMode: immediate
+status:
+  state: Available
+---
+apiVersion: agent.wecode.io/v1
+kind: Template
+metadata:
+  name: general-chat-assistant
+  namespace: system
+spec:
+  displayName: "General Chat Assistant"
+  description: "Forward incoming messages directly to the default Wegent Chat assistant for immediate AI responses, without any subscription-based processing pipeline."
+  category: inbox
+  tags:
+    - chat
+    - assistant
+    - general
+  icon: "💬"
+  resources:
+    queue:
+      visibility: private
+      triggerMode: immediate
+      teamRef:
+        name: wegent-chat
+        namespace: default
+status:
+  state: Available
