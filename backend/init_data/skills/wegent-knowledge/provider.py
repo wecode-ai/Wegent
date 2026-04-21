@@ -82,6 +82,11 @@ class WegentKnowledgeProvider(SkillToolProvider):
             f"task_id={context.task_id}, user_id={context.user_id}"
         )
 
+        # Get shell_type from tool_config or use default
+        default_shell_type = "Agno"
+        if tool_config and "default_shell_type" in tool_config:
+            default_shell_type = tool_config["default_shell_type"]
+
         if tool_name == "download_dingtalk_document":
             return DownloadDingTalkDocumentTool(
                 task_id=context.task_id,
@@ -90,6 +95,7 @@ class WegentKnowledgeProvider(SkillToolProvider):
                 user_name=context.user_name,
                 auth_token=context.auth_token,
                 ws_emitter=context.ws_emitter,
+                default_shell_type=default_shell_type,
             )
         elif tool_name == "save_dingtalk_content":
             return SaveDingTalkContentTool(
@@ -99,6 +105,7 @@ class WegentKnowledgeProvider(SkillToolProvider):
                 user_name=context.user_name,
                 auth_token=context.auth_token,
                 ws_emitter=context.ws_emitter,
+                default_shell_type=default_shell_type,
             )
         else:
             raise ValueError(f"Unknown tool: {tool_name}")
@@ -112,6 +119,11 @@ class WegentKnowledgeProvider(SkillToolProvider):
         Returns:
             True if valid
         """
+        # Validate shell_type if present
+        shell_type = tool_config.get("default_shell_type")
+        if shell_type is not None:
+            if shell_type not in ["ClaudeCode", "Agno"]:
+                return False
         return True
 
 
@@ -207,6 +219,7 @@ class _DingTalkSandboxUploadTool(BaseTool):
     user_name: Optional[str] = None
     auth_token: str = ""
     ws_emitter: Any = None
+    default_shell_type: str = "Agno"
 
     @trace_async(
         span_name="PrepareSandbox",
@@ -241,21 +254,22 @@ class _DingTalkSandboxUploadTool(BaseTool):
         effective_user_name = self.user_name or f"user_{self.user_id}"
         logger.info("[_prepare_sandbox] Using user_name=%s", effective_user_name)
 
-        # Get or create sandbox manager singleton
+        # Get or create sandbox manager singleton with timeout
         sandbox_manager = SandboxManager.get_instance(
             task_id=self.task_id,
             user_id=self.user_id,
             user_name=effective_user_name,
+            timeout=effective_timeout,
         )
         logger.info("[_prepare_sandbox] Got SandboxManager instance")
 
-        # Get or create sandbox - use ClaudeCode as default shell type
-        # Note: timeout is passed via SandboxManager.get_instance(), not get_or_create_sandbox()
+        # Get or create sandbox using the configured shell type
         logger.info(
-            "[_prepare_sandbox] Calling get_or_create_sandbox with shell_type=ClaudeCode"
+            "[_prepare_sandbox] Calling get_or_create_sandbox with shell_type=%s",
+            self.default_shell_type,
         )
         sandbox, error = await sandbox_manager.get_or_create_sandbox(
-            shell_type="ClaudeCode",
+            shell_type=self.default_shell_type,
             workspace_ref=None,
         )
 
@@ -275,10 +289,33 @@ class _DingTalkSandboxUploadTool(BaseTool):
 
         return sandbox, temp_dir
 
+    async def _cleanup_temp_dir(self, sandbox: Any, temp_dir: str) -> None:
+        """Clean up temporary directory in sandbox.
+
+        Args:
+            sandbox: Sandbox instance
+            temp_dir: Temp directory path to clean up
+        """
+        try:
+            await sandbox.commands.run(
+                cmd=["rm", "-rf", temp_dir],
+                cwd="/home/user",
+            )
+            logger.info(
+                "[%s] Cleaned up temp_dir=%s", self.__class__.__name__, temp_dir
+            )
+        except Exception as e:
+            logger.error(
+                "[%s] Failed to cleanup temp_dir=%s: %s",
+                self.__class__.__name__,
+                temp_dir,
+                e,
+            )
+
     @trace_async(
         span_name="UploadAndReturn",
         tracer_name="wegent_knowledge",
-        extract_attributes=lambda self, sandbox, save_path, filename, file_size, temp_dir, start_time, effective_timeout: {
+        extract_attributes=lambda self, sandbox, save_path, filename, file_size, start_time, effective_timeout: {
             "filename": filename,
             "file_size": file_size,
             "task_id": self.task_id,
@@ -290,7 +327,6 @@ class _DingTalkSandboxUploadTool(BaseTool):
         save_path: str,
         filename: str,
         file_size: int,
-        temp_dir: str,
         start_time: float,
         effective_timeout: int,
     ) -> str:
@@ -301,7 +337,6 @@ class _DingTalkSandboxUploadTool(BaseTool):
             save_path: Path to file in sandbox
             filename: Original filename
             file_size: Size of file in bytes
-            temp_dir: Temp directory path for cleanup
             start_time: Start time for execution time calculation
             effective_timeout: Timeout for operations
 
@@ -324,6 +359,7 @@ class _DingTalkSandboxUploadTool(BaseTool):
 
         # Build curl command for upload using argument list (safer than shell string)
         # Use -sS to show errors but suppress progress, and -w to capture HTTP status code
+        # Use a unique suffix pattern for reliable extraction
         upload_curl_cmd = [
             "curl",
             "-sS",
@@ -334,102 +370,85 @@ class _DingTalkSandboxUploadTool(BaseTool):
             "-F",
             f"file=@{save_path}",
             "-w",
-            "\n%{http_code}",
+            "\nHTTP_STATUS:%{http_code}",
             upload_url,
         ]
 
         logger.info("[%s] Uploading to Wegent", self.__class__.__name__)
 
-        try:
-            upload_result = await sandbox.commands.run(
-                cmd=upload_curl_cmd,
-                cwd="/home/user",
-                timeout=effective_timeout,
+        upload_result = await sandbox.commands.run(
+            cmd=upload_curl_cmd,
+            cwd="/home/user",
+            timeout=effective_timeout,
+        )
+
+        if upload_result.exit_code != 0:
+            raise RuntimeError(
+                f"Upload failed: {upload_result.stderr or 'Unknown error'}"
             )
 
-            if upload_result.exit_code != 0:
-                raise RuntimeError(
-                    f"Upload failed: {upload_result.stderr or 'Unknown error'}"
+        # Parse response - extract HTTP status code using regex for reliability
+        stdout = upload_result.stdout
+        http_status_match = re.search(r"HTTP_STATUS:(\d{3})$", stdout.strip())
+        if not http_status_match:
+            raise RuntimeError(
+                "Invalid upload response format: could not extract HTTP status"
+            )
+
+        http_status = int(http_status_match.group(1))
+        # Remove the status line from response body
+        response_body = stdout[: http_status_match.start()].strip()
+
+        # Parse JSON body
+        try:
+            api_response = json.loads(response_body) if response_body else {}
+        except json.JSONDecodeError as e:
+            raise RuntimeError(f"Failed to parse upload response: {e}") from e
+
+        # Check HTTP status code for success (2xx)
+        if 200 <= http_status < 300:
+            attachment_id = api_response.get("id")
+            if not attachment_id:
+                raise RuntimeError("No attachment_id in response")
+
+            execution_time = time.time() - start_time
+
+            response = {
+                "success": True,
+                "attachment_id": attachment_id,
+                "filename": filename,
+                "file_size": file_size,
+                "download_url": f"/api/attachments/{attachment_id}/download",
+                "message": "Document uploaded successfully",
+                "execution_time": execution_time,
+            }
+
+            logger.info(
+                "[%s] Success: attachment_id=%s",
+                self.__class__.__name__,
+                attachment_id,
+            )
+
+            # Emit success status
+            if self.ws_emitter:
+                await self.ws_emitter.emit_tool_call(
+                    task_id=self.task_id,
+                    tool_name=self.name,
+                    tool_input={"filename": filename},
+                    status="completed",
+                    output=response,
                 )
 
-            # Parse response - extract HTTP status code from last line
-            output_lines = upload_result.stdout.strip().split("\n")
-            if len(output_lines) < 2:
-                raise RuntimeError("Invalid upload response format")
-
-            http_status = int(output_lines[-1])
-            response_body = "\n".join(output_lines[:-1])
-
-            # Parse JSON body
-            try:
-                api_response = json.loads(response_body)
-            except json.JSONDecodeError as e:
-                raise RuntimeError(f"Failed to parse upload response: {e}") from e
-
-            # Check HTTP status code for success (2xx)
-            if 200 <= http_status < 300:
-                attachment_id = api_response.get("id")
-                if not attachment_id:
-                    raise RuntimeError("No attachment_id in response")
-
-                execution_time = time.time() - start_time
-
-                response = {
-                    "success": True,
-                    "attachment_id": attachment_id,
-                    "filename": filename,
-                    "file_size": file_size,
-                    "download_url": f"/api/attachments/{attachment_id}/download",
-                    "message": "Document uploaded successfully",
-                    "execution_time": execution_time,
-                }
-
-                logger.info(
-                    "[%s] Success: attachment_id=%s",
-                    self.__class__.__name__,
-                    attachment_id,
-                )
-
-                # Emit success status
-                if self.ws_emitter:
-                    await self.ws_emitter.emit_tool_call(
-                        task_id=self.task_id,
-                        tool_name=self.name,
-                        tool_input={"filename": filename},
-                        status="completed",
-                        output=response,
-                    )
-
-                return json.dumps(response, ensure_ascii=False, indent=2)
-            else:
-                # Non-2xx status code - extract error detail
-                error_detail = api_response.get("detail") or upload_result.stderr
-                # Handle case where error_detail is a dict
-                if isinstance(error_detail, dict):
-                    error_detail = error_detail.get("message") or json.dumps(
-                        error_detail
-                    )
-                if not error_detail:
-                    error_detail = f"HTTP {http_status}: Unknown error"
-                raise RuntimeError(f"Upload API error: {error_detail}")
-
-        finally:
-            # Cleanup temp directory - always run on success and exceptions
-            try:
-                await sandbox.commands.run(
-                    cmd=["rm", "-rf", temp_dir],
-                    cwd="/home/user",
-                )
-                logger.info(
-                    "[%s] Cleaned up temp_dir=%s", self.__class__.__name__, temp_dir
-                )
-            except Exception as e:
-                logger.error(
-                    "[%s] Failed to cleanup temp_dir=%s: %s",
-                    self.__class__.__name__,
-                    temp_dir,
-                    e,
-                )
+            return json.dumps(response, ensure_ascii=False, indent=2)
+        else:
+            # Non-2xx status code - extract error detail
+            error_detail = api_response.get("detail") or upload_result.stderr
+            # Handle case where error_detail is a dict
+            if isinstance(error_detail, dict):
+                error_detail = error_detail.get("message") or json.dumps(error_detail)
+            if not error_detail:
+                error_detail = f"HTTP {http_status}: Unknown error"
+            raise RuntimeError(f"Upload API error: {error_detail}")
 
     @trace_async(
         span_name="HandleError",
@@ -526,7 +545,7 @@ wegent_knowledge.download_dingtalk_document(
 )
 ```
 
-Note: This tool requires sandbox access. Make sure the sandbox skill is loaded.
+Note: This tool runs inside a sandbox; it will acquire one automatically.
 """
 
     args_schema: type[BaseModel] = DownloadDingTalkDocumentInput
@@ -563,6 +582,8 @@ Note: This tool requires sandbox access. Make sure the sandbox skill is loaded.
         """Download DingTalk document and upload as attachment."""
         start_time = time.time()
         effective_timeout = timeout_seconds or 300
+        sandbox = None
+        temp_dir = None
 
         # Build filename from extension if not provided
         if not filename:
@@ -593,7 +614,7 @@ Note: This tool requires sandbox access. Make sure the sandbox skill is loaded.
                     tool_name=self.name,
                     tool_input={
                         "filename": filename,
-                        "extension": file_ext,
+                        "file_extension": file_ext,
                     },
                     status="running",
                 )
@@ -649,13 +670,16 @@ Note: This tool requires sandbox access. Make sure the sandbox skill is loaded.
                 save_path=save_path,
                 filename=filename,
                 file_size=file_size,
-                temp_dir=temp_dir,
                 start_time=start_time,
                 effective_timeout=effective_timeout,
             )
 
         except Exception as e:
             return await self._handle_error(filename, e)
+        finally:
+            # Always cleanup temp_dir in finally block
+            if sandbox and temp_dir:
+                await self._cleanup_temp_dir(sandbox, temp_dir)
 
 
 class SaveDingTalkContentTool(_DingTalkSandboxUploadTool):
@@ -718,7 +742,7 @@ wegent_knowledge.save_dingtalk_content(
 )
 ```
 
-Note: This tool requires sandbox access. Make sure the sandbox skill is loaded.
+Note: This tool runs inside a sandbox; it will acquire one automatically.
 """
 
     args_schema: type[BaseModel] = SaveDingTalkContentInput
@@ -755,6 +779,8 @@ Note: This tool requires sandbox access. Make sure the sandbox skill is loaded.
         """Save content to file and upload as attachment."""
         start_time = time.time()
         effective_timeout = timeout_seconds or 300
+        sandbox = None
+        temp_dir = None
 
         logger.info(
             "[SaveDingTalkContentTool._arun] Starting with file_extension=%s, content_length=%s",
@@ -800,14 +826,6 @@ Note: This tool requires sandbox access. Make sure the sandbox skill is loaded.
         try:
             logger.info("[SaveDingTalkContentTool._arun] Preparing to start sandbox...")
 
-            # Fail-fast size check before writing
-            content_bytes = content.encode("utf-8")
-            if len(content_bytes) > ATTACHMENT_MAX_BYTES:
-                raise RuntimeError(
-                    f"Content size ({len(content_bytes)} bytes) exceeds maximum allowed size "
-                    f"({ATTACHMENT_MAX_BYTES} bytes)"
-                )
-
             # Prepare sandbox
             sandbox, temp_dir = await self._prepare_sandbox(effective_timeout)
             logger.info(
@@ -815,6 +833,14 @@ Note: This tool requires sandbox access. Make sure the sandbox skill is loaded.
             )
 
             save_path = f"{temp_dir}/{filename}"
+
+            # Encode content and validate size inside try block
+            content_bytes = content.encode("utf-8")
+            if len(content_bytes) > ATTACHMENT_MAX_BYTES:
+                raise RuntimeError(
+                    f"Content size ({len(content_bytes)} bytes) exceeds maximum allowed size "
+                    f"({ATTACHMENT_MAX_BYTES} bytes)"
+                )
 
             # Write content directly using sandbox.files.write
             logger.info("[SaveDingTalkContentTool] Writing content to file")
@@ -835,10 +861,13 @@ Note: This tool requires sandbox access. Make sure the sandbox skill is loaded.
                 save_path=save_path,
                 filename=filename,
                 file_size=file_size,
-                temp_dir=temp_dir,
                 start_time=start_time,
                 effective_timeout=effective_timeout,
             )
 
         except Exception as e:
             return await self._handle_error(filename, e)
+        finally:
+            # Always cleanup temp_dir in finally block
+            if sandbox and temp_dir:
+                await self._cleanup_temp_dir(sandbox, temp_dir)
