@@ -1313,6 +1313,47 @@ class DocumentParser:
                 DocumentParseError.PARSE_FAILED,
             ) from e
 
+    def _load_workbook_with_fallback(self, excel_file: "io.BytesIO") -> "Workbook":
+        """
+        Load an openpyxl workbook with a fallback for corrupted stylesheets.
+
+        Some Excel files contain malformed style data (e.g. invalid Fill objects)
+        that cause openpyxl to raise TypeError during stylesheet parsing.
+        When this happens, retry with stylesheet parsing patched out so that
+        cell data can still be extracted without styles.
+
+        Note: openpyxl.reader.excel imports apply_stylesheet via
+        ``from openpyxl.styles.stylesheet import apply_stylesheet``, so we must
+        patch the name in the *reader* module's namespace, not in the stylesheet
+        module itself.
+        """
+        from openpyxl import load_workbook
+
+        try:
+            return load_workbook(excel_file, read_only=True, data_only=True)
+        except TypeError as e:
+            # Corrupted stylesheet (e.g. "expected <class 'openpyxl.styles.fills.Fill'>")
+            # Retry by monkey-patching apply_stylesheet in the reader module namespace
+            # so that the already-bound local reference is replaced.
+            logger.warning(
+                f"Failed to load Excel stylesheet, retrying without styles: {e}"
+            )
+            import openpyxl.reader.excel as _reader_module
+
+            _original_apply = _reader_module.apply_stylesheet
+
+            def _noop_apply_stylesheet(archive, wb):  # noqa: ANN001, ANN202
+                """Skip stylesheet parsing for files with corrupted style data."""
+                return wb
+
+            _reader_module.apply_stylesheet = _noop_apply_stylesheet
+            try:
+                excel_file.seek(0)
+                return load_workbook(excel_file, read_only=True, data_only=True)
+            finally:
+                # Always restore the original function to avoid side effects
+                _reader_module.apply_stylesheet = _original_apply
+
     def _parse_excel_smart(
         self, binary_data: bytes, extension: str, max_length: int
     ) -> Tuple[str, Optional[TruncationInfo]]:
@@ -1328,10 +1369,8 @@ class DocumentParser:
                     DocumentParseError.LEGACY_XLS,
                 )
 
-            from openpyxl import load_workbook
-
             excel_file = io.BytesIO(binary_data)
-            wb = load_workbook(excel_file, read_only=True, data_only=True)
+            wb = self._load_workbook_with_fallback(excel_file)
 
             # Extract data per sheet
             sheets_data = []

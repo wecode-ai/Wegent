@@ -512,6 +512,8 @@ class TaskOperationsMixin:
         Delete user Task and handle running subtasks.
         """
         logger.info(f"Deleting task with id: {task_id}")
+        from app.core.async_utils import execute_async_safely
+        from app.services.execution import get_executor_runtime_client
 
         # First check if user is the task owner
         task = (
@@ -548,19 +550,66 @@ class TaskOperationsMixin:
                         (subtask.executor_namespace, subtask.executor_name)
                     )
 
-        # Stop running subtasks on executor
-        for executor_namespace, executor_name in unique_executor_keys:
-            try:
+        runtime_client = get_executor_runtime_client()
+        sandbox_lookup = execute_async_safely(
+            runtime_client.get_sandbox,
+            str(task_id),
+            timeout=30.0,
+        )
+        sandbox_payload = None
+        sandbox_lookup_error = None
+        if sandbox_lookup is None:
+            sandbox_lookup_error = "sandbox lookup failed"
+        else:
+            sandbox_payload, sandbox_lookup_error = sandbox_lookup
+
+        cleanup_mode = "sandbox" if sandbox_payload is not None else "executor"
+        if sandbox_lookup_error:
+            cleanup_mode = "fallback"
+        logger.info(
+            "[delete_task] Runtime cleanup mode resolved for task_id=%s mode=%s sandbox_lookup_error=%s",
+            task_id,
+            cleanup_mode,
+            sandbox_lookup_error,
+        )
+
+        if cleanup_mode in {"sandbox", "fallback"}:
+            sandbox_delete_result = execute_async_safely(
+                runtime_client.delete_sandbox,
+                str(task_id),
+                timeout=180.0,
+            )
+            sandbox_deleted = False
+            sandbox_delete_error = "sandbox delete failed"
+            if sandbox_delete_result is not None:
+                sandbox_deleted, sandbox_delete_error = sandbox_delete_result
+
+            if sandbox_deleted:
                 logger.info(
-                    f"deleting task - delete_executor_task ns={executor_namespace} name={executor_name}"
+                    "[delete_task] Sandbox runtime cleanup succeeded for task_id=%s",
+                    task_id,
                 )
-                executor_kinds_service.delete_executor_task_sync(
-                    executor_name, executor_namespace
+            else:
+                logger.info(
+                    "[delete_task] Sandbox runtime cleanup skipped or failed for task_id=%s error=%s",
+                    task_id,
+                    sandbox_delete_error,
                 )
-            except Exception as e:
-                logger.warning(
-                    f"Failed to delete executor task ns={executor_namespace} name={executor_name}: {str(e)}"
-                )
+
+        if cleanup_mode in {"executor", "fallback"}:
+            # Stop running subtasks on executor
+            for executor_namespace, executor_name in unique_executor_keys:
+                try:
+                    logger.info(
+                        f"deleting task - delete_executor_task ns={executor_namespace} name={executor_name}"
+                    )
+                    executor_kinds_service.delete_executor_task_sync(
+                        executor_name, executor_namespace
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to delete executor task ns={executor_namespace} name={executor_name}: {str(e)}"
+                    )
 
         # Close device sessions for device tasks
         for device_id in device_ids:
