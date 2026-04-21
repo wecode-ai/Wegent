@@ -10,6 +10,7 @@ import logging
 from typing import Any
 
 import httpx
+import pyrfc6266
 from tenacity import (
     retry,
     retry_if_exception,
@@ -208,6 +209,12 @@ class ContentFetcher:
     ) -> tuple[str, str]:
         """Extract filename from response headers or URL.
 
+        Uses pyrfc6266 to properly parse Content-Disposition header
+        per RFC 6266 / RFC 5987, handling:
+        - quoted values
+        - filename* (RFC 5987 UTF-8 encoded filenames)
+        - multiple parameters
+
         Args:
             response: HTTP response.
             url: Original URL.
@@ -215,18 +222,22 @@ class ContentFetcher:
         Returns:
             Tuple of (filename, extension).
         """
-        # Try Content-Disposition header first
         content_disposition = response.headers.get("Content-Disposition", "")
-        if "filename=" in content_disposition:
-            # Parse filename from Content-Disposition
-            parts = content_disposition.split("filename=")
-            if len(parts) > 1:
-                filename = parts[1].strip('"').strip("'")
-                if "." in filename:
-                    extension = "." + filename.rsplit(".", 1)[-1]
-                else:
-                    extension = ""
-                return filename, extension
+
+        if content_disposition:
+            try:
+                filename = pyrfc6266.parse_filename(content_disposition)
+                if filename:
+                    if "." in filename:
+                        extension = "." + filename.rsplit(".", 1)[-1]
+                    else:
+                        extension = ""
+                    return filename, extension
+            except Exception:
+                # Fall through to URL extraction on parse failure
+                logger.debug(
+                    f"Failed to parse Content-Disposition: {content_disposition}"
+                )
 
         # Fall back to URL extraction
         return self._extract_filename_from_url(url)

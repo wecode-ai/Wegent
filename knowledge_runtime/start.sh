@@ -242,7 +242,7 @@ fi
 # Create virtual environment if needed
 if [ ! -d ".venv" ]; then
     echo "Creating virtual environment..."
-    uv venv
+    uv venv --python "$PYTHON_EXEC"
 fi
 
 # Sync dependencies

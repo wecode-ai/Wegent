@@ -823,7 +823,7 @@ name = "exceptiongroup"
 version = "1.3.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+    { name = "typing-extensions", marker = "python_full_version < '3.11'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/50/79/66800aadf48771f6b62f7eb014e352e5d06856655206165d775e675a02c9/exceptiongroup-1.3.1.tar.gz", hash = "sha256:8b412432c6055b0b7d14c310000ae93352ed6754f70fa8f7c34141f91c4e3219", size = 30371, upload-time = "2025-11-21T23:01:54.787Z" }
 wheels = [
@@ -2819,6 +2819,15 @@ wheels = [
 ]
 
 [[package]]
+name = "pyparsing"
+version = "3.0.9"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/71/22/207523d16464c40a0310d2d4d8926daffa00ac1f5b1576170a32db749636/pyparsing-3.0.9.tar.gz", hash = "sha256:2b020ecf7d21b687f219b71ecad3631f644a47f01403fa1d1036b0c6416d70fb", size = 1999906, upload-time = "2022-05-10T23:26:05.963Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/6c/10/a7d0fa5baea8fe7b50f448ab742f26f52b80bfca85ac2be9d35cdd9a3246/pyparsing-3.0.9-py3-none-any.whl", hash = "sha256:5026bae9a10eeaefb61dab2f09052b9f4307d44aee4eda64b309723d8d206bbc", size = 98338, upload-time = "2022-05-10T23:26:03.201Z" },
+]
+
+[[package]]
 name = "pypdf"
 version = "6.10.2"
 source = { registry = "https://pypi.org/simple" }
@@ -2837,6 +2846,18 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/9f/bb/18dc3062d37db6c491392007dfd1a7f524bb95886eb956569ac38a23a784/PyPDF2-3.0.1.tar.gz", hash = "sha256:a74408f69ba6271f71b9352ef4ed03dc53a31aa404d29b5d31f53bfecfee1440", size = 227419, upload-time = "2022-12-31T10:36:13.13Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/8e/5e/c86a5643653825d3c913719e788e41386bee415c2b87b4f955432f2de6b2/pypdf2-3.0.1-py3-none-any.whl", hash = "sha256:d16e4205cfee272fbdc0568b68d82be796540b1537508cef59388f839c191928", size = 232572, upload-time = "2022-12-31T10:36:10.327Z" },
+]
+
+[[package]]
+name = "pyrfc6266"
+version = "1.0.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pyparsing" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/74/ef/693fe33d34317facaf26a5716f965dac492d0f47e56e90bf310d7d4e74df/pyrfc6266-1.0.2.tar.gz", hash = "sha256:3c41616b6a1f2e9a26df7f005fbaa634f960121769ccc4445acfb404e9f8fd4c", size = 4454, upload-time = "2022-04-29T14:53:23.805Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/69/fc/d416c1bfb54f86259f631fd9ff6a9b813f7050129a377d94c43500109479/pyrfc6266-1.0.2-py3-none-any.whl", hash = "sha256:0532307f319566f337dba97577dfaefe493c3e0c40ab211449ba4566fc2cf73d", size = 4729, upload-time = "2022-04-29T14:53:22.569Z" },
 ]
 
 [[package]]
@@ -3622,6 +3643,7 @@ dependencies = [
     { name = "httpx", extra = ["brotli", "socks"] },
     { name = "pydantic" },
     { name = "pydantic-settings" },
+    { name = "pyrfc6266" },
     { name = "python-dotenv" },
     { name = "tenacity" },
     { name = "uvicorn" },
@@ -3646,6 +3668,7 @@ requires-dist = [
     { name = "httpx", extras = ["brotli", "socks"], specifier = ">=0.26.0" },
     { name = "pydantic", specifier = ">=2.5.3" },
     { name = "pydantic-settings", specifier = ">=2.0.0" },
+    { name = "pyrfc6266", specifier = ">=1.0.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "tenacity", specifier = ">=8.2.3" },
     { name = "uvicorn", specifier = ">=0.30.0" },
