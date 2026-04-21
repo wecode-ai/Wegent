@@ -4,106 +4,111 @@
 
 """
 Quota endpoint patch module
-Apply monkey patch to app.api.endpoints.quota to implement proxy forwarding for quota information
-Do not modify open source code, follow minimal intrusion principle
+Apply monkey patch to app.api.endpoints.quota to implement proxy forwarding
+to the unified AIGC quota service (aigc_quota).
+Do not modify open source code, follow minimal intrusion principle.
 """
-from typing import Any, Callable
-from functools import wraps
-import httpx
 import logging
+from functools import wraps
+from typing import Callable
+
+import httpx
 
 try:
-    from fastapi import HTTPException
     from app.api.endpoints import quota as quota_module
 except Exception:
     quota_module = None
 
 logger = logging.getLogger(__name__)
 
+AIGC_QUOTA_URL = (
+    "https://copilot.weibo.com/v1/wecode_quota/user_aigc_model_quota_detail"
+)
+
+
+def _transform_aigc_response(raw: dict) -> dict:
+    """
+    Transform the AIGC quota service response into the unified format
+    consumed by the frontend.
+    """
+    user_quota = raw.get("user_quota", 0)
+    user_usage = raw.get("user_usage", 0)
+    return {
+        "data": {
+            "quota": user_quota,
+            "usage": round(user_usage, 2),
+            "remaining": round(user_quota - user_usage, 2),
+            "usage_rate": raw.get("user_usage_rate", 0),
+            "user": raw.get("username", ""),
+        },
+        "quota_source": "AIGC",
+        "status": "success",
+    }
+
 
 def _wrap_quota_endpoint(endpoint: Callable) -> Callable:
     """
-    Wrap quota endpoint to implement proxy forwarding to external quota service
+    Wrap quota endpoint to proxy to the unified AIGC quota service.
     """
+
     @wraps(endpoint)
     async def wrapper(*args, **kwargs):
-        path = kwargs.get("path", "")
-        request = kwargs.get("request")
         current_user = kwargs.get("current_user")
-        
+
         if not current_user:
             return await endpoint(*args, **kwargs)
-        
-        target_url = f"http://copilot.weibo.com/v1/{path}"
-        
-        headers = {str(k): str(v) for k, v in request.headers.items()}
-        headers.pop("host", None)
-        headers.pop("Authorization", None)
-        headers["wecode-user"] = current_user.user_name
-        
-        body = await request.body()
-        
+
         try:
             async with httpx.AsyncClient() as client:
-                resp = await client.request(
-                    method=request.method,
-                    url=target_url,
-                    headers=headers,
-                    params=request.query_params,
-                    content=body,
-                    timeout=10
+                resp = await client.post(
+                    AIGC_QUOTA_URL,
+                    json={"user_name": current_user.user_name},
+                    timeout=10,
                 )
-            
-            content_type = resp.headers.get("content-type", "")
-            if content_type.startswith("application/json"):
-                json_data = resp.json()
-                if isinstance(json_data, dict):
-                    json_data["quota_source"] = "WeCode"
-                return json_data
-            return resp.text
-            
-        except httpx.RequestError as e:
-            logger.error(f"Quota service request failed: {str(e)}")
-            return await endpoint(*args, **kwargs)
+                resp.raise_for_status()
+
+            raw = resp.json()
+            if not isinstance(raw, dict) or "user_quota" not in raw:
+                logger.warning("Unexpected AIGC quota response: %s", raw)
+                return await endpoint(*args, **kwargs)
+
+            return _transform_aigc_response(raw)
+
         except Exception as e:
-            logger.error(f"Unexpected error in quota proxy: {str(e)}")
+            logger.error("AIGC quota service request failed: %s", e)
             return await endpoint(*args, **kwargs)
-    
-    # Mark as patched to avoid duplicate patching
+
     setattr(wrapper, "_wecode_patched", True)
     return wrapper
 
 
 def apply_patch() -> None:
     """
-    Apply quota endpoint patch
-    Traverse routes in app.api.endpoints.quota.router and wrap endpoints
+    Apply quota endpoint patch.
+    Traverse routes in app.api.endpoints.quota.router and wrap endpoints.
     """
     if quota_module is None:
         logger.warning("quota_module not available, skipping patch")
         return
-    
+
     router = getattr(quota_module, "router", None)
     if router is None or not hasattr(router, "routes"):
         logger.warning("Quota router not found, skipping patch")
         return
-    
+
     for route in router.routes:
         path = getattr(route, "path", None)
         methods = getattr(route, "methods", set())
         endpoint = getattr(route, "endpoint", None)
-        
-        # Skip non-callable endpoints or already patched endpoints
+
         if not callable(endpoint) or getattr(endpoint, "_wecode_patched", False):
             continue
-        
-        # Apply patch to all quota-related routes
+
         if path == "/{path:path}" and "GET" in methods:
             try:
-                wrapped = _wrap_quota_endpoint(endpoint)
-                route.endpoint = wrapped
+                route.endpoint = _wrap_quota_endpoint(endpoint)
             except Exception as e:
-                logger.error(f"Failed to apply quota endpoint patch: {str(e)}")
+                logger.error("Failed to apply quota endpoint patch: %s", e)
                 continue
 
 
