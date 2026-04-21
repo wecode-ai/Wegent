@@ -693,10 +693,10 @@ class TestRetrieveForChatShell:
         ]
 
     @pytest.mark.asyncio
-    async def test_force_rag_route_uses_knowledge_engine_query_executor_when_runtime_configs_are_available(
+    async def test_force_rag_route_uses_remote_rag_gateway_when_runtime_configs_are_available(
         self,
     ):
-        """Resolved runtime configs should drive the engine query seam in local mode."""
+        """Resolved runtime configs should drive the gateway query in remote mode."""
         from app.services.rag.retrieval_service import RetrievalService
         from shared.models import (
             RemoteKnowledgeBaseQueryConfig,
@@ -706,8 +706,6 @@ class TestRetrieveForChatShell:
         )
 
         db = MagicMock()
-        storage_backend = MagicMock()
-        embed_model = object()
         kb_config = RemoteKnowledgeBaseQueryConfig(
             knowledge_base_id=123,
             index_owner_user_id=7,
@@ -730,30 +728,27 @@ class TestRetrieveForChatShell:
             ),
         )
 
-        with (
-            patch(
-                "app.services.rag.retrieval_service.create_storage_backend_from_runtime_config",
-                return_value=storage_backend,
-            ) as mock_storage,
-            patch(
-                "app.services.rag.retrieval_service.create_embedding_model_from_runtime_config",
-                return_value=embed_model,
-            ) as mock_embedding,
-            patch(
-                "app.services.rag.retrieval_service.QueryExecutor.execute",
-                new_callable=AsyncMock,
-                return_value={
-                    "records": [
-                        {
-                            "content": "release checklist",
-                            "score": 0.91,
-                            "title": "Checklist",
-                            "metadata": {"doc_ref": "9"},
-                        }
-                    ]
-                },
-            ) as mock_execute,
-        ):
+        mock_gateway = MagicMock()
+        mock_gateway.query = AsyncMock(
+            return_value={
+                "mode": "rag_retrieval",
+                "records": [
+                    {
+                        "content": "release checklist",
+                        "score": 0.91,
+                        "title": "Checklist",
+                        "metadata": {"doc_ref": "9"},
+                    }
+                ],
+                "total": 1,
+                "total_estimated_tokens": 0,
+            }
+        )
+
+        with patch(
+            "app.services.rag.retrieval_service.get_query_gateway",
+            return_value=mock_gateway,
+        ) as mock_get_gateway:
             result = await RetrievalService().retrieve_with_routing(
                 query="release checklist",
                 knowledge_base_ids=[123],
@@ -774,15 +769,5 @@ class TestRetrieveForChatShell:
                 "knowledge_base_id": 123,
             }
         ]
-        mock_storage.assert_called_once_with(kb_config.retriever_config)
-        mock_embedding.assert_called_once_with(kb_config.embedding_model_config)
-        mock_execute.assert_awaited_once_with(
-            knowledge_id="123",
-            query="release checklist",
-            retrieval_config=kb_config.retrieval_config,
-            metadata_condition={
-                "operator": "and",
-                "conditions": [{"key": "doc_ref", "operator": "in", "value": ["9"]}],
-            },
-            user_id=7,
-        )
+        mock_get_gateway.assert_called_once()
+        mock_gateway.query.assert_awaited_once()

@@ -34,6 +34,7 @@ from shared.models import (
     RemoteQueryResponse,
     RemoteRagError,
     RemoteTestConnectionRequest,
+    StorageTypesResponse,
 )
 
 
@@ -79,6 +80,30 @@ class RemoteRagGateway:
                 response = await client.post(
                     f"{self._base_url}{path}",
                     json=payload.model_dump(mode="json", exclude_none=True),
+                    headers=headers,
+                )
+        except httpx.RequestError as exc:
+            raise RemoteRagGatewayError(
+                f"knowledge_runtime transport error: {exc}",
+                code="remote_transport_error",
+                retryable=True,
+                details={"path": path},
+            ) from exc
+
+        if response.is_error:
+            self._raise_remote_error(response)
+        return response.json()
+
+    async def _get(self, path: str) -> dict[str, Any]:
+        """Make a GET request to knowledge_runtime."""
+        headers = {}
+        if self._auth_token:
+            headers["Authorization"] = f"Bearer {self._auth_token}"
+
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                response = await client.get(
+                    f"{self._base_url}{path}",
                     headers=headers,
                 )
         except httpx.RequestError as exc:
@@ -261,6 +286,15 @@ class RemoteRagGateway:
         del db
         payload = RemoteTestConnectionRequest(retriever_config=spec.retriever_config)
         return await self._post_model("/internal/rag/test-connection", payload)
+
+    async def get_storage_types(self) -> StorageTypesResponse:
+        """Get all supported storage types with their retrieval methods.
+
+        Returns:
+            StorageTypesResponse containing all supported storage types.
+        """
+        response_payload = await self._get("/internal/rag/storage-types")
+        return StorageTypesResponse.model_validate(response_payload)
 
 
 def _get_attachment_source_metadata(

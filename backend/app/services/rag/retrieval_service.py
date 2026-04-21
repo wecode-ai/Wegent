@@ -15,10 +15,9 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.kind import Kind
+from app.services.rag.gateway_factory import get_query_gateway
 from app.services.rag.runtime_resolver import RagRuntimeResolver
-from knowledge_engine.embedding import create_embedding_model_from_runtime_config
-from knowledge_engine.query import QueryExecutor
-from knowledge_engine.storage.factory import create_storage_backend_from_runtime_config
+from app.services.rag.runtime_specs import QueryRuntimeSpec
 from shared.models import RemoteKnowledgeBaseQueryConfig
 from shared.telemetry.decorators import add_span_event, set_span_attribute, trace_async
 
@@ -641,11 +640,20 @@ class RetrievalService:
             db=db,
             user_name=user_name,
         )
-        result = await self._execute_runtime_query(
+
+        # Build QueryRuntimeSpec and use RemoteRagGateway
+        spec = QueryRuntimeSpec(
+            knowledge_base_ids=[resolved_config.knowledge_base_id],
             query=query,
-            knowledge_base_config=resolved_config,
+            max_results=resolved_config.retrieval_config.top_k,
+            route_mode="rag_retrieval",
             metadata_condition=metadata_condition,
+            knowledge_base_configs=[resolved_config],
+            enabled_index_families=["chunk_vector"],
         )
+
+        gateway = get_query_gateway()
+        result = await gateway.query(spec, db=db)
 
         # Log detailed retrieval results for debugging
         records = result.get("records", [])
@@ -688,31 +696,6 @@ class RetrievalService:
                 f"Failed to resolve runtime config for knowledge base {kb.id}"
             )
         return configs[0]
-
-    async def _execute_runtime_query(
-        self,
-        *,
-        query: str,
-        knowledge_base_config: RemoteKnowledgeBaseQueryConfig,
-        metadata_condition: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
-        storage_backend = create_storage_backend_from_runtime_config(
-            knowledge_base_config.retriever_config
-        )
-        embed_model = create_embedding_model_from_runtime_config(
-            knowledge_base_config.embedding_model_config
-        )
-        executor = QueryExecutor(
-            storage_backend=storage_backend,
-            embed_model=embed_model,
-        )
-        return await executor.execute(
-            knowledge_id=str(knowledge_base_config.knowledge_base_id),
-            query=query,
-            retrieval_config=knowledge_base_config.retrieval_config,
-            metadata_condition=metadata_condition,
-            user_id=knowledge_base_config.index_owner_user_id,
-        )
 
     async def get_all_chunks_from_knowledge_base(
         self,

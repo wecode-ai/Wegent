@@ -18,6 +18,7 @@ from shared.models import (
     RemoteListChunksResponse,
     RemotePurgeKnowledgeIndexRequest,
     RemoteTestConnectionRequest,
+    StorageTypesResponse,
 )
 
 router = APIRouter()
@@ -97,3 +98,14 @@ async def test_connection(request: RemoteTestConnectionRequest) -> dict[str, Any
     """
     executor = AdminExecutor()
     return await executor.test_connection(request)
+
+
+@router.get("/storage-types")
+async def get_storage_types() -> StorageTypesResponse:
+    """Get all supported storage types with their retrieval methods.
+
+    Returns:
+        List of supported storage types and their retrieval methods.
+    """
+    executor = AdminExecutor()
+    return executor.get_storage_types()

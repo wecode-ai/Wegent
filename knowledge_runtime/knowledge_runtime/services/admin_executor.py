@@ -11,7 +11,11 @@ import logging
 from typing import Any
 
 from knowledge_engine.services.document_service import DocumentService
-from knowledge_engine.storage.factory import create_storage_backend_from_runtime_config
+from knowledge_engine.storage.factory import (
+    create_storage_backend_from_runtime_config,
+    get_all_storage_retrieval_methods,
+    get_supported_storage_types,
+)
 from shared.models import (
     RemoteDeleteDocumentIndexRequest,
     RemoteDropKnowledgeIndexRequest,
@@ -20,6 +24,8 @@ from shared.models import (
     RemoteListChunksResponse,
     RemotePurgeKnowledgeIndexRequest,
     RemoteTestConnectionRequest,
+    StorageTypeInfo,
+    StorageTypesResponse,
 )
 
 logger = logging.getLogger(__name__)
@@ -205,3 +211,22 @@ class AdminExecutor:
                 "success": False,
                 "message": str(e),
             }
+
+    def get_storage_types(self) -> StorageTypesResponse:
+        """Get all supported storage types with their retrieval methods.
+
+        Returns:
+            StorageTypesResponse containing all supported storage types.
+        """
+        storage_types = get_supported_storage_types()
+        retrieval_methods_map = get_all_storage_retrieval_methods()
+
+        type_infos = [
+            StorageTypeInfo(
+                type=storage_type,
+                retrieval_methods=retrieval_methods_map.get(storage_type, []),
+            )
+            for storage_type in storage_types
+        ]
+
+        return StorageTypesResponse(storage_types=type_infos)

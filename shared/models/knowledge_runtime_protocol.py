@@ -241,3 +241,16 @@ class RemoteListChunksResponse(KnowledgeRuntimeProtocolModel):
 
     chunks: list[RemoteListChunkRecord]
     total: int
+
+
+class StorageTypeInfo(KnowledgeRuntimeProtocolModel):
+    """Information about a single storage type."""
+
+    type: str
+    retrieval_methods: list[str] = Field(default_factory=list)
+
+
+class StorageTypesResponse(KnowledgeRuntimeProtocolModel):
+    """Response containing all supported storage types."""
+
+    storage_types: list[StorageTypeInfo]

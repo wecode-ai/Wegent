@@ -67,6 +67,8 @@ from .knowledge_runtime_protocol import (
     RuntimeEmbeddingModelConfig,
     RuntimeRetrievalConfig,
     RuntimeRetrieverConfig,
+    StorageTypeInfo,
+    StorageTypesResponse,
 )
 
 # OpenAI Request Converter
@@ -144,6 +146,8 @@ __all__ = [
     "RemoteQueryRequest",
     "RemoteQueryRecord",
     "RemoteQueryResponse",
+    "StorageTypeInfo",
+    "StorageTypesResponse",
     # OpenAI Responses API
     "ResponsesAPIStreamEvents",
     "ResponsesAPIStreamingResponse",
