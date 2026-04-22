@@ -49,7 +49,7 @@ export default function ChatPage() {
   const { teams, isTeamsLoading, refreshTeams } = useTeamContext()
 
   // Task context
-  const { refreshTasks } = useTaskContext()
+  const { refreshTasks, selectedTaskDetail } = useTaskContext()
 
   // User state for git token check
   const { user } = useUser()
@@ -60,6 +60,22 @@ export default function ChatPage() {
   // Check for share_id in URL
   const searchParams = useSearchParams()
   const hasShareId = !!searchParams.get('share_id')
+
+  // Check if a task is currently open
+  const taskId =
+    searchParams.get('task_id') || searchParams.get('taskid') || searchParams.get('taskId')
+
+  // Redirect device tasks to /devices/chat page for proper layout
+  useEffect(() => {
+    if (selectedTaskDetail?.task_type === 'task' && taskId) {
+      const params = new URLSearchParams()
+      params.set('taskId', String(taskId))
+      if (selectedTaskDetail.device_id) {
+        params.set('deviceId', selectedTaskDetail.device_id)
+      }
+      router.replace(`/devices/chat?${params.toString()}`)
+    }
+  }, [selectedTaskDetail?.task_type, selectedTaskDetail?.device_id, taskId, router])
 
   // Check for pending task share from public page (after login)
   useEffect(() => {

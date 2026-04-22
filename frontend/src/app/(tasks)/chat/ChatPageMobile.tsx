@@ -89,7 +89,7 @@ export function ChatPageMobile() {
   const { user } = useUser()
 
   // Router for navigation
-  const _router = useRouter()
+  const router = useRouter()
 
   // Check for share_id in URL
   const searchParams = useSearchParams()
@@ -99,6 +99,18 @@ export function ChatPageMobile() {
   const taskId =
     searchParams.get('task_id') || searchParams.get('taskid') || searchParams.get('taskId')
   const hasOpenTask = !!taskId
+
+  // Redirect device tasks to /devices/chat page for proper layout
+  useEffect(() => {
+    if (selectedTaskDetail?.task_type === 'task' && taskId) {
+      const params = new URLSearchParams()
+      params.set('taskId', String(taskId))
+      if (selectedTaskDetail.device_id) {
+        params.set('deviceId', selectedTaskDetail.device_id)
+      }
+      router.replace(`/devices/chat?${params.toString()}`)
+    }
+  }, [selectedTaskDetail?.task_type, selectedTaskDetail?.device_id, taskId, router])
 
   // Mobile sidebar state
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)

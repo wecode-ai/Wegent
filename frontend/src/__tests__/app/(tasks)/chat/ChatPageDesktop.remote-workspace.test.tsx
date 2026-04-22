@@ -27,6 +27,10 @@ jest.mock('next/navigation', () => ({
   useSearchParams: () => ({
     get: () => null,
   }),
+  useRouter: () => ({
+    push: jest.fn(),
+    replace: jest.fn(),
+  }),
 }))
 
 jest.mock('@/features/tasks/service/teamService', () => ({
