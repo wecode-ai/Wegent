@@ -107,9 +107,10 @@ class TestGetAllChunksFromKnowledgeBase:
                 return_value=mock_gateway,
             ) as mock_get_gateway,
         ):
+            db_session = MagicMock()
             result = await RetrievalService().get_all_chunks_from_knowledge_base(
                 knowledge_base_id=123,
-                db=MagicMock(),
+                db=db_session,
                 max_chunks=50,
                 query="debug query",
             )
@@ -124,14 +125,14 @@ class TestGetAllChunksFromKnowledgeBase:
             }
         ]
         mock_build_spec.assert_called_once_with(
-            db=ANY,
+            db=db_session,
             knowledge_base_id=123,
             max_chunks=50,
             query="debug query",
             metadata_condition=None,
         )
         mock_get_gateway.assert_called_once()
-        mock_gateway.list_chunks.assert_awaited_once_with(spec, db=ANY)
+        mock_gateway.list_chunks.assert_awaited_once_with(spec, db=db_session)
 
 
 @pytest.mark.unit

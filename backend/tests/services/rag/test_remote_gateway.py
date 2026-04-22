@@ -729,8 +729,11 @@ async def test_gateway_adds_auth_header_when_token_configured(mocker) -> None:
 
 
 @pytest.mark.asyncio
-async def test_gateway_no_auth_header_when_token_empty(mocker) -> None:
+async def test_gateway_no_auth_header_when_token_empty(mocker, monkeypatch) -> None:
     """Test that gateway does not add Authorization header when token is empty."""
+    # Ensure INTERNAL_SERVICE_TOKEN is empty so the test is deterministic
+    monkeypatch.setattr(settings, "INTERNAL_SERVICE_TOKEN", "")
+
     post_mock = mocker.patch(
         "httpx.AsyncClient.post",
         return_value=_build_response(

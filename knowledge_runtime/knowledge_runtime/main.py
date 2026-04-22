@@ -51,14 +51,18 @@ app = FastAPI(
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     """Global exception handler that returns RemoteRagError format."""
+    # Log the actual exception with full traceback for diagnostics
     logger.exception(f"Unhandled exception for {request.url}: {exc}")
 
-    # Determine if error is retryable
-    retryable = isinstance(exc, (ConnectionError, TimeoutError))
+    # Preserve retryability from exceptions that have this attribute (e.g., ContentFetchError)
+    # Fall back to checking for connection/timeout errors
+    retryable = getattr(exc, "retryable", None)
+    if retryable is None:
+        retryable = isinstance(exc, (ConnectionError, TimeoutError))
 
     error_response = RemoteRagError(
         code="internal_error",
-        message=str(exc),
+        message="internal server error",
         retryable=retryable,
         details={"exception_type": type(exc).__name__},
     )

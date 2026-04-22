@@ -21,6 +21,7 @@ from shared.models import (
     RemotePurgeKnowledgeIndexRequest,
     RemoteTestConnectionRequest,
 )
+from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +37,10 @@ class AdminExecutor:
     - test_connection: Test storage backend connection
     """
 
+    @trace_async(
+        span_name="delete_document_index",
+        tracer_name="knowledge_runtime.services.admin",
+    )
     async def delete_document_index(
         self,
         request: RemoteDeleteDocumentIndexRequest,
@@ -68,6 +73,10 @@ class AdminExecutor:
 
         return result
 
+    @trace_async(
+        span_name="purge_knowledge_index",
+        tracer_name="knowledge_runtime.services.admin",
+    )
     async def purge_knowledge_index(
         self,
         request: RemotePurgeKnowledgeIndexRequest,
@@ -98,6 +107,10 @@ class AdminExecutor:
 
         return result
 
+    @trace_async(
+        span_name="drop_knowledge_index",
+        tracer_name="knowledge_runtime.services.admin",
+    )
     async def drop_knowledge_index(
         self,
         request: RemoteDropKnowledgeIndexRequest,
@@ -128,6 +141,10 @@ class AdminExecutor:
 
         return result
 
+    @trace_async(
+        span_name="list_chunks",
+        tracer_name="knowledge_runtime.services.admin",
+    )
     async def list_chunks(
         self,
         request: RemoteListChunksRequest,
@@ -175,6 +192,10 @@ class AdminExecutor:
             total=len(records),
         )
 
+    @trace_async(
+        span_name="test_connection",
+        tracer_name="knowledge_runtime.services.admin",
+    )
     async def test_connection(
         self,
         request: RemoteTestConnectionRequest,
