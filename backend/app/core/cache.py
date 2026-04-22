@@ -2,7 +2,6 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -134,14 +133,20 @@ class RedisCache:
         return self.get_sync(cache_key)
 
     async def set(
-        self, key: str, value: Any, expire: int = settings.REPO_CACHE_EXPIRED_TIME
+        self,
+        key: str,
+        value: Any,
+        expire: int | None = settings.REPO_CACHE_EXPIRED_TIME,
     ) -> bool:
-        """Set value to cache with expiration (seconds)"""
+        """Set value to cache with optional expiration (seconds)"""
         try:
             client = await self._get_client()
             try:
                 payload = orjson.dumps(value)
-                ok = await client.set(key, payload, ex=expire)
+                if expire is None:
+                    ok = await client.set(key, payload)
+                else:
+                    ok = await client.set(key, payload, ex=expire)
                 return bool(ok)
             finally:
                 await client.aclose()

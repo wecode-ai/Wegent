@@ -706,6 +706,14 @@ export function useChatStreamHandlers({
                 // This ensures full task functionality (follow-up questions, link sharing, etc.)
                 if (taskType === 'knowledge' && knowledgeBaseId && pathname === '/knowledge') {
                   router.push(`/knowledge/document/${knowledgeBaseId}?taskId=${completedTaskId}`)
+                } else if (taskType === 'task' && !pathname?.startsWith('/devices')) {
+                  // For device tasks started from /chat, navigate to /devices/chat
+                  const params = new URLSearchParams()
+                  params.set('taskId', String(completedTaskId))
+                  if (effectiveDeviceId) {
+                    params.set('deviceId', effectiveDeviceId)
+                  }
+                  router.push(`/devices/chat?${params.toString()}`)
                 } else {
                   const params = new URLSearchParams(Array.from(searchParams.entries()))
                   params.set('taskId', String(completedTaskId))

@@ -55,6 +55,7 @@ save_config() {
         grep -v "^BACKEND_PORT=" "$CONFIG_FILE" | \
         grep -v "^CHAT_SHELL_PORT=" | \
         grep -v "^EXECUTOR_MANAGER_PORT=" | \
+        grep -v "^KNOWLEDGE_RUNTIME_PORT=" | \
         grep -v "^WEGENT_FRONTEND_PORT=" | \
         grep -v "^EXECUTOR_IMAGE=" | \
         grep -v "^WEGENT_SOCKET_URL=" > "$temp_file" || true
@@ -81,6 +82,7 @@ EOF
 BACKEND_PORT=$BACKEND_PORT
 CHAT_SHELL_PORT=$CHAT_SHELL_PORT
 EXECUTOR_MANAGER_PORT=$EXECUTOR_MANAGER_PORT
+KNOWLEDGE_RUNTIME_PORT=$KNOWLEDGE_RUNTIME_PORT
 WEGENT_FRONTEND_PORT=$WEGENT_FRONTEND_PORT
 
 # Executor Docker image
@@ -96,6 +98,7 @@ EOF
         echo "BACKEND_PORT=$BACKEND_PORT" >> "$temp_file"
         echo "CHAT_SHELL_PORT=$CHAT_SHELL_PORT" >> "$temp_file"
         echo "EXECUTOR_MANAGER_PORT=$EXECUTOR_MANAGER_PORT" >> "$temp_file"
+        echo "KNOWLEDGE_RUNTIME_PORT=$KNOWLEDGE_RUNTIME_PORT" >> "$temp_file"
         echo "WEGENT_FRONTEND_PORT=$WEGENT_FRONTEND_PORT" >> "$temp_file"
         echo "EXECUTOR_IMAGE=$EXECUTOR_IMAGE" >> "$temp_file"
         echo "WEGENT_SOCKET_URL=$WEGENT_SOCKET_URL" >> "$temp_file"
@@ -166,8 +169,15 @@ init_config() {
     EXECUTOR_MANAGER_PORT=${input_executor_manager_port:-$DEFAULT_EXECUTOR_MANAGER_PORT}
     echo ""
 
+    # Knowledge Runtime Port
+    echo -e "${CYAN}4. Knowledge Runtime Port${NC}"
+    echo -e "   The port for Knowledge Runtime service (RAG operations)."
+    read -p "   Knowledge Runtime Port [$DEFAULT_KNOWLEDGE_RUNTIME_PORT]: " input_knowledge_runtime_port
+    KNOWLEDGE_RUNTIME_PORT=${input_knowledge_runtime_port:-$DEFAULT_KNOWLEDGE_RUNTIME_PORT}
+    echo ""
+
     # Frontend Port
-    echo -e "${CYAN}4. Frontend Port${NC}"
+    echo -e "${CYAN}5. Frontend Port${NC}"
     echo -e "   The port where the web UI will be accessible."
     read -p "   Frontend Port [$DEFAULT_WEGENT_FRONTEND_PORT]: " input_frontend_port
     WEGENT_FRONTEND_PORT=${input_frontend_port:-$DEFAULT_WEGENT_FRONTEND_PORT}
@@ -178,14 +188,14 @@ init_config() {
     echo ""
 
     # Executor Image
-    echo -e "${CYAN}5. Executor Docker Image${NC}"
+    echo -e "${CYAN}6. Executor Docker Image${NC}"
     echo -e "   The Docker image used for task execution."
     read -p "   Executor Image [$DEFAULT_EXECUTOR_IMAGE]: " input_image
     EXECUTOR_IMAGE=${input_image:-$DEFAULT_EXECUTOR_IMAGE}
     echo ""
 
     # Socket URL
-    echo -e "${CYAN}6. Socket URL${NC}"
+    echo -e "${CYAN}7. Socket URL${NC}"
     echo -e "   The WebSocket URL for real-time communication."
     echo -e "   For remote access, use your machine's IP address."
     echo -e "   Detected local IP: ${GREEN}$local_ip${NC}"
@@ -201,6 +211,7 @@ init_config() {
     echo -e "    Backend Port:        ${CYAN}$BACKEND_PORT${NC}"
     echo -e "    Chat Shell Port:     ${CYAN}$CHAT_SHELL_PORT${NC}"
     echo -e "    Executor Mgr Port:   ${CYAN}$EXECUTOR_MANAGER_PORT${NC}"
+    echo -e "    Knowledge Rtm Port:  ${CYAN}$KNOWLEDGE_RUNTIME_PORT${NC}"
     echo -e "    Frontend Port:       ${CYAN}$WEGENT_FRONTEND_PORT${NC}"
     echo -e "  ${YELLOW}Other Settings:${NC}"
     echo -e "    Executor Image:      ${CYAN}$EXECUTOR_IMAGE${NC}"
@@ -700,6 +711,7 @@ get_local_ip() {
 DEFAULT_BACKEND_PORT=8000
 DEFAULT_CHAT_SHELL_PORT=8100
 DEFAULT_EXECUTOR_MANAGER_PORT=8001
+DEFAULT_KNOWLEDGE_RUNTIME_PORT=8200
 DEFAULT_WEGENT_FRONTEND_PORT=3000
 
 # Other settings
@@ -709,6 +721,7 @@ DEFAULT_EXECUTOR_IMAGE="ghcr.io/wecode-ai/wegent-executor:latest"
 BACKEND_PORT=$DEFAULT_BACKEND_PORT
 CHAT_SHELL_PORT=$DEFAULT_CHAT_SHELL_PORT
 EXECUTOR_MANAGER_PORT=$DEFAULT_EXECUTOR_MANAGER_PORT
+KNOWLEDGE_RUNTIME_PORT=$DEFAULT_KNOWLEDGE_RUNTIME_PORT
 WEGENT_FRONTEND_PORT=$DEFAULT_WEGENT_FRONTEND_PORT
 EXECUTOR_IMAGE=$DEFAULT_EXECUTOR_IMAGE
 
@@ -716,6 +729,7 @@ EXECUTOR_IMAGE=$DEFAULT_EXECUTOR_IMAGE
 WEGENT_SOCKET_URL=""
 TASK_API_DOMAIN=""
 EXECUTOR_MANAGER_URL=""
+KNOWLEDGE_RUNTIME_URL=""
 
 # PID file directory
 PID_DIR="$SCRIPT_DIR/.pids"
@@ -730,12 +744,13 @@ Options:
   -b, --backend-port PORT       Backend API port (default: $DEFAULT_BACKEND_PORT)
   -c, --chat-shell-port PORT    Chat Shell port (default: $DEFAULT_CHAT_SHELL_PORT)
   -m, --executor-manager-port PORT  Executor Manager port (default: $DEFAULT_EXECUTOR_MANAGER_PORT)
+  -k, --knowledge-runtime-port PORT  Knowledge Runtime port (default: $DEFAULT_KNOWLEDGE_RUNTIME_PORT)
   -p, --port PORT               Frontend port (default: $DEFAULT_WEGENT_FRONTEND_PORT)
   -e, --executor-image IMG      Executor image (default: $DEFAULT_EXECUTOR_IMAGE)
   --socket-url URL              Socket direct url (auto-computed from BACKEND_PORT)
   --init                        Interactive configuration initialization
   --stop [services...]          Stop services (default: all). Can specify multiple:
-                                backend|be|api, frontend|fe|ui, chat_shell|cs|chat, executor_manager|em|executor
+                                backend|be|api, frontend|fe|ui, chat_shell|cs|chat, executor_manager|em|executor, knowledge_runtime|kr|knowledge
   -g, --graceful                Use graceful shutdown with stop/restart (SIGTERM, wait 30s, then SIGKILL)
   --restart [services...]       Restart services (default: all)
   --status                      Check service status
@@ -752,6 +767,7 @@ Configuration File:
       BACKEND_PORT          - Backend API port (default: $DEFAULT_BACKEND_PORT)
       CHAT_SHELL_PORT       - Chat Shell port (default: $DEFAULT_CHAT_SHELL_PORT)
       EXECUTOR_MANAGER_PORT - Executor Manager port (default: $DEFAULT_EXECUTOR_MANAGER_PORT)
+      KNOWLEDGE_RUNTIME_PORT - Knowledge Runtime port (default: $DEFAULT_KNOWLEDGE_RUNTIME_PORT)
       WEGENT_FRONTEND_PORT  - Frontend port (default: $DEFAULT_WEGENT_FRONTEND_PORT)
 
     Other Settings:
@@ -759,6 +775,7 @@ Configuration File:
       WEGENT_SOCKET_URL     - WebSocket URL (auto-computed: http://LOCAL_IP:BACKEND_PORT)
       TASK_API_DOMAIN       - URL for executor_manager to call backend (auto-computed)
       EXECUTOR_MANAGER_URL  - URL for backend to call executor_manager (auto-computed)
+      KNOWLEDGE_RUNTIME_URL - URL for backend to call knowledge_runtime (auto-computed)
 
 Examples:
   $0                                    # Start with default configuration
@@ -766,12 +783,13 @@ Examples:
   $0 -b 8001                            # Specify backend port as 8001
   $0 -c 8101                            # Specify chat shell port as 8101
   $0 -m 8002                            # Specify executor manager port as 8002
+  $0 -k 8201                            # Specify knowledge runtime port as 8201
   $0 -p 8080                            # Specify frontend port as 8080
   $0 -e my-executor:latest              # Specify custom executor image
   $0 --socket-url http://192.168.1.100:8000  # Specify socket URL with your IP
   $0 --stop                             # Stop all services (force kill)
   $0 --stop backend frontend            # Stop only backend and frontend
-  $0 --stop be cs                       # Stop backend and chat_shell (short names)
+  $0 --stop be cs kr                    # Stop backend, chat_shell, knowledge_runtime (short names)
   $0 --stop --graceful                  # Stop with graceful shutdown
   $0 --restart --graceful               # Restart with graceful shutdown
   $0 --restart backend --graceful       # Restart only backend gracefully
@@ -786,6 +804,7 @@ ACTION="start"
 CLI_BACKEND_PORT=""
 CLI_CHAT_SHELL_PORT=""
 CLI_EXECUTOR_MANAGER_PORT=""
+CLI_KNOWLEDGE_RUNTIME_PORT=""
 CLI_WEGENT_FRONTEND_PORT=""
 CLI_EXECUTOR_IMAGE=""
 CLI_WEGENT_SOCKET_URL=""
@@ -802,6 +821,10 @@ case $1 in
         ;;
     -m|--executor-manager-port)
         CLI_EXECUTOR_MANAGER_PORT="$2"
+        shift 2
+        ;;
+    -k|--knowledge-runtime-port)
+        CLI_KNOWLEDGE_RUNTIME_PORT="$2"
         shift 2
         ;;
     -p|--port)
@@ -868,6 +891,7 @@ load_config
 [ -n "$CLI_BACKEND_PORT" ] && BACKEND_PORT="$CLI_BACKEND_PORT"
 [ -n "$CLI_CHAT_SHELL_PORT" ] && CHAT_SHELL_PORT="$CLI_CHAT_SHELL_PORT"
 [ -n "$CLI_EXECUTOR_MANAGER_PORT" ] && EXECUTOR_MANAGER_PORT="$CLI_EXECUTOR_MANAGER_PORT"
+[ -n "$CLI_KNOWLEDGE_RUNTIME_PORT" ] && KNOWLEDGE_RUNTIME_PORT="$CLI_KNOWLEDGE_RUNTIME_PORT"
 [ -n "$CLI_WEGENT_FRONTEND_PORT" ] && WEGENT_FRONTEND_PORT="$CLI_WEGENT_FRONTEND_PORT"
 [ -n "$CLI_EXECUTOR_IMAGE" ] && EXECUTOR_IMAGE="$CLI_EXECUTOR_IMAGE"
 [ -n "$CLI_WEGENT_SOCKET_URL" ] && WEGENT_SOCKET_URL="$CLI_WEGENT_SOCKET_URL"
@@ -878,9 +902,11 @@ LOCAL_IP=$(get_local_ip)
 # TASK_API_DOMAIN should be the same as WEGENT_SOCKET_URL (both point to backend)
 [ -z "$TASK_API_DOMAIN" ] && TASK_API_DOMAIN="$WEGENT_SOCKET_URL"
 [ -z "$EXECUTOR_MANAGER_URL" ] && EXECUTOR_MANAGER_URL="http://localhost:$EXECUTOR_MANAGER_PORT"
+[ -z "$KNOWLEDGE_RUNTIME_URL" ] && KNOWLEDGE_RUNTIME_URL="http://localhost:$KNOWLEDGE_RUNTIME_PORT"
 [ -z "$BACKEND_API_URL" ] && BACKEND_API_URL="http://$LOCAL_IP:$BACKEND_PORT"
 
 export BACKEND_API_URL="$BACKEND_API_URL"
+export KNOWLEDGE_RUNTIME_URL="$KNOWLEDGE_RUNTIME_URL"
 
 # Create PID directory
 mkdir -p "$PID_DIR"
@@ -949,7 +975,7 @@ check_socket_url_ip() {
 
 # Check all required ports
 check_all_ports() {
-    local ports=("$BACKEND_PORT:Backend" "$CHAT_SHELL_PORT:Chat Shell" "$EXECUTOR_MANAGER_PORT:Executor Manager" "$WEGENT_FRONTEND_PORT:Frontend")
+    local ports=("$BACKEND_PORT:Backend" "$CHAT_SHELL_PORT:Chat Shell" "$EXECUTOR_MANAGER_PORT:Executor Manager" "$KNOWLEDGE_RUNTIME_PORT:Knowledge Runtime" "$WEGENT_FRONTEND_PORT:Frontend")
     local conflicts=()
 
     for item in "${ports[@]}"; do
@@ -988,8 +1014,8 @@ stop_services() {
     shift
 
     # Define all services and their ports
-    local all_services=("backend" "frontend" "chat_shell" "executor_manager")
-    local all_ports=("$BACKEND_PORT" "$WEGENT_FRONTEND_PORT" "$CHAT_SHELL_PORT" "$EXECUTOR_MANAGER_PORT")
+    local all_services=("backend" "frontend" "chat_shell" "executor_manager" "knowledge_runtime")
+    local all_ports=("$BACKEND_PORT" "$WEGENT_FRONTEND_PORT" "$CHAT_SHELL_PORT" "$EXECUTOR_MANAGER_PORT" "$KNOWLEDGE_RUNTIME_PORT")
 
     # Determine which services to stop
     local services=()
@@ -1019,9 +1045,13 @@ stop_services() {
                     services+=("executor_manager")
                     service_ports+=("$EXECUTOR_MANAGER_PORT")
                     ;;
+                knowledge_runtime|kr|knowledge)
+                    services+=("knowledge_runtime")
+                    service_ports+=("$KNOWLEDGE_RUNTIME_PORT")
+                    ;;
                 *)
                     echo -e "${RED}Unknown service: $svc${NC}"
-                    echo -e "Valid services: backend|be|api, frontend|fe|ui, chat_shell|cs|chat, executor_manager|em|executor"
+                    echo -e "Valid services: backend|be|api, frontend|fe|ui, chat_shell|cs|chat, executor_manager|em|executor, knowledge_runtime|kr|knowledge"
                     return 1
                     ;;
             esac
@@ -1218,7 +1248,7 @@ show_status() {
     echo -e "${BLUE}Wegent Service Status:${NC}"
     echo ""
 
-    local services=("backend:$BACKEND_PORT" "frontend:$WEGENT_FRONTEND_PORT" "chat_shell:$CHAT_SHELL_PORT" "executor_manager:$EXECUTOR_MANAGER_PORT")
+    local services=("backend:$BACKEND_PORT" "frontend:$WEGENT_FRONTEND_PORT" "chat_shell:$CHAT_SHELL_PORT" "executor_manager:$EXECUTOR_MANAGER_PORT" "knowledge_runtime:$KNOWLEDGE_RUNTIME_PORT")
 
     for item in "${services[@]}"; do
         local service="${item%%:*}"
@@ -1323,6 +1353,7 @@ start_services() {
     local start_frontend=false
     local start_chat_shell=false
     local start_executor_manager=false
+    local start_knowledge_runtime=false
 
     if [ $# -eq 0 ]; then
         # No specific services, start all
@@ -1330,6 +1361,7 @@ start_services() {
         start_frontend=true
         start_chat_shell=true
         start_executor_manager=true
+        start_knowledge_runtime=true
     else
         # Parse specified services
         for svc in "$@"; do
@@ -1349,6 +1381,10 @@ start_services() {
                 executor_manager|em|executor)
                     start_executor_manager=true
                     specified_services+=("executor_manager")
+                    ;;
+                knowledge_runtime|kr|knowledge)
+                    start_knowledge_runtime=true
+                    specified_services+=("knowledge_runtime")
                     ;;
             esac
         done
@@ -1416,11 +1452,13 @@ start_services() {
     echo -e "  Backend Port:        $BACKEND_PORT"
     echo -e "  Chat Shell Port:     $CHAT_SHELL_PORT"
     echo -e "  Executor Mgr Port:   $EXECUTOR_MANAGER_PORT"
+    echo -e "  Knowledge Rtm Port:  $KNOWLEDGE_RUNTIME_PORT"
     echo -e "  Frontend Port:       $WEGENT_FRONTEND_PORT"
     echo -e "  Executor Image:      $EXECUTOR_IMAGE"
     echo -e "  Socket URL:          $WEGENT_SOCKET_URL"
     echo -e "  Task API Domain:     $TASK_API_DOMAIN"
     echo -e "  Executor Manager:    $EXECUTOR_MANAGER_URL"
+    echo -e "  Knowledge Runtime:   $KNOWLEDGE_RUNTIME_URL"
     echo ""
 
     # Check if WEGENT_SOCKET_URL IP matches local IP
@@ -1441,6 +1479,10 @@ start_services() {
     if [ "$start_executor_manager" = true ] && ! check_port "$EXECUTOR_MANAGER_PORT" "executor_manager"; then
         port_conflict=true
         echo -e "  ${RED}●${NC} Port $EXECUTOR_MANAGER_PORT (Executor Manager) is already in use"
+    fi
+    if [ "$start_knowledge_runtime" = true ] && ! check_port "$KNOWLEDGE_RUNTIME_PORT" "knowledge_runtime"; then
+        port_conflict=true
+        echo -e "  ${RED}●${NC} Port $KNOWLEDGE_RUNTIME_PORT (Knowledge Runtime) is already in use"
     fi
     if [ "$start_frontend" = true ] && ! check_port "$WEGENT_FRONTEND_PORT" "frontend"; then
         port_conflict=true
@@ -1473,6 +1515,9 @@ start_services() {
     fi
     if [ "$start_executor_manager" = true ]; then
         sync_python_deps "executor_manager" "Executor Manager"
+    fi
+    if [ "$start_knowledge_runtime" = true ]; then
+        sync_python_deps "knowledge_runtime" "Knowledge Runtime"
     fi
     echo ""
 
@@ -1538,7 +1583,18 @@ start_services() {
             "export EXECUTOR_IMAGE=$EXECUTOR_IMAGE && export TASK_API_DOMAIN=$TASK_API_DOMAIN && export DOCKER_HOST_ADDR=localhost && export NETWORK=wegent-network && export CALLBACK_HOST=$CALLBACK_HOST && source .venv/bin/activate && uvicorn main:app --reload --reload-dir . --reload-dir ../shared $RELOAD_EXCLUDE --host 0.0.0.0 --port $EXECUTOR_MANAGER_PORT --log-level debug"
     fi
 
-    # 4. Start Frontend (run in background)
+    # 4. Start Knowledge Runtime
+    if [ "$start_knowledge_runtime" = true ]; then
+        # INTERNAL_SERVICE_TOKEN: Token for internal service authentication
+        # BACKEND_INTERNAL_URL: URL for knowledge_runtime to call backend
+        # KNOWLEDGE_RUNTIME_URL: URL for backend to call knowledge_runtime
+        # --reload-dir: Watch shared and knowledge_engine modules for changes (editable dependencies)
+        # --reload-exclude: Exclude .venv and __pycache__ to reduce CPU usage
+        start_service "knowledge_runtime" "knowledge_runtime" \
+            "export INTERNAL_SERVICE_TOKEN=\$INTERNAL_SERVICE_TOKEN && export BACKEND_INTERNAL_URL=http://localhost:$BACKEND_PORT && export KNOWLEDGE_RUNTIME_URL=$KNOWLEDGE_RUNTIME_URL && source .venv/bin/activate && uvicorn knowledge_runtime.main:app --reload --reload-dir . --reload-dir ../shared --reload-dir ../knowledge_engine $RELOAD_EXCLUDE --host 0.0.0.0 --port $KNOWLEDGE_RUNTIME_PORT --log-level debug"
+    fi
+
+    # 5. Start Frontend (run in background)
     if [ "$start_frontend" = true ]; then
         echo -e "  Starting ${BLUE}frontend${NC}..."
         cd "$SCRIPT_DIR/frontend"
@@ -1592,6 +1648,9 @@ start_services() {
     if [ "$start_executor_manager" = true ]; then
         check_service_health "executor_manager" $EXECUTOR_MANAGER_PORT "/health" || failed=1
     fi
+    if [ "$start_knowledge_runtime" = true ]; then
+        check_service_health "knowledge_runtime" $KNOWLEDGE_RUNTIME_PORT "/internal/rag/health" || failed=1
+    fi
     if [ "$start_frontend" = true ]; then
         check_service_health "frontend" $WEGENT_FRONTEND_PORT "" || failed=1
     fi
@@ -1606,6 +1665,7 @@ start_services() {
         echo -e "  Frontend:         $PID_DIR/frontend.log"
         echo -e "  Chat Shell:       $PID_DIR/chat_shell.log"
         echo -e "  Executor Manager: $PID_DIR/executor_manager.log"
+        echo -e "  Knowledge Runtime: $PID_DIR/knowledge_runtime.log"
         echo -e "${YELLOW}════════════════════════════════════════════════════════${NC}"
         exit 1
     fi
@@ -1637,10 +1697,11 @@ start_services() {
     echo -e "  $0 --socket-url http://YOUR_IP:8000  # Set custom socket URL"
     echo ""
     echo -e "${YELLOW}Log Files:${NC}"
-    echo -e "  Backend:          $PID_DIR/backend.log"
-    echo -e "  Frontend:         $PID_DIR/frontend.log"
-    echo -e "  Chat Shell:       $PID_DIR/chat_shell.log"
-    echo -e "  Executor Manager: $PID_DIR/executor_manager.log"
+    echo -e "  Backend:           $PID_DIR/backend.log"
+    echo -e "  Frontend:          $PID_DIR/frontend.log"
+    echo -e "  Chat Shell:        $PID_DIR/chat_shell.log"
+    echo -e "  Executor Manager:  $PID_DIR/executor_manager.log"
+    echo -e "  Knowledge Runtime: $PID_DIR/knowledge_runtime.log"
     echo -e "${GREEN}════════════════════════════════════════════════════════${NC}"
 }
 

@@ -18,6 +18,7 @@ from app.models.subtask import Subtask
 from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.work_queue import AutoProcessConfig, TeamRef
+from app.services.readers import KindType, kindReader
 from shared.models.db.enums import QueueMessageStatus
 from shared.models.db.work_queue import QueueMessage
 
@@ -114,12 +115,24 @@ class InboxDirectAgentHandler:
         workspace_params = self._find_latest_workspace_params(
             db, team, work_queue.user_id
         )
+        (
+            override_model_id,
+            force_override_bot_model,
+            force_override_bot_model_type,
+        ) = self._resolve_model_override(
+            db=db,
+            owner=user,
+            auto_process=auto_process,
+        )
 
         # Build TaskCreationParams
         from app.services.chat.storage.task_manager import TaskCreationParams
 
         params = TaskCreationParams(
             message=user_message,
+            model_id=override_model_id,
+            force_override_bot_model=force_override_bot_model,
+            force_override_bot_model_type=force_override_bot_model_type,
             task_type="chat" if not workspace_params else None,
             **workspace_params,
         )
@@ -285,6 +298,39 @@ class InboxDirectAgentHandler:
                                 "branch_name": repo.get("branchName") or None,
                             }
         return {}
+
+    def _resolve_model_override(
+        self,
+        db: Session,
+        owner: User,
+        auto_process: AutoProcessConfig,
+    ) -> tuple[Optional[str], bool, Optional[str]]:
+        """Resolve queue-configured model override for direct agent execution."""
+        if not auto_process.modelRef:
+            return None, False, None
+
+        model_kind = kindReader.get_by_name_and_namespace(
+            db,
+            owner.id,
+            KindType.MODEL,
+            auto_process.modelRef.namespace,
+            auto_process.modelRef.name,
+        )
+
+        model_type = None
+        if model_kind:
+            if model_kind.user_id == 0:
+                model_type = "public"
+            elif model_kind.namespace == "default":
+                model_type = "user"
+            else:
+                model_type = "group"
+
+        return (
+            auto_process.modelRef.name,
+            auto_process.forceOverrideBotModel,
+            model_type,
+        )
 
     def _trigger_ai_in_background(
         self,

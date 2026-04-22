@@ -342,6 +342,132 @@ class TestDirectAgentTemplate:
 class TestCustomTeamTemplate:
     """Template that creates Ghost/Bot/Team but no Subscription."""
 
+    @pytest.mark.parametrize(
+        ("agent_config", "expected_namespace"),
+        [
+            (
+                {"bind_model": "gpt-4.1", "bind_model_type": "public"},
+                "default",
+            ),
+            (
+                {
+                    "bind_model": "private-model",
+                    "bind_model_type": "user",
+                    "bind_model_namespace": "personal-space",
+                },
+                "personal-space",
+            ),
+            (
+                {
+                    "bind_model": "group-model",
+                    "bind_model_type": "group",
+                    "bind_model_namespace": "team-space",
+                },
+                "team-space",
+            ),
+        ],
+    )
+    def test_bot_uses_standard_model_binding_fields(
+        self, instantiator, mock_db, agent_config, expected_namespace
+    ):
+        """Bot creation should read bind_model_type/bind_model_namespace from template agentConfig."""
+        template = _make_template(
+            {
+                "ghost": {"systemPrompt": "You are a chat assistant."},
+                "bot": {
+                    "shellName": "Chat",
+                    "agentConfig": agent_config,
+                },
+                "team": {"collaborationModel": "solo"},
+                "queue": {"visibility": "private"},
+            }
+        )
+
+        captured_bot_json = {}
+
+        def capturing_create_kind(db, user_id, kind_type, name, json_data):
+            if kind_type == "Bot":
+                captured_bot_json.update(json_data)
+            k = MagicMock(spec=Kind)
+            k.id = 1
+            k.name = name
+            k.kind = kind_type
+            db.add(k)
+            db.flush()
+            return k
+
+        with patch.object(
+            InboxTemplateInstantiator,
+            "_create_kind",
+            staticmethod(capturing_create_kind),
+        ):
+            instantiator.instantiate(mock_db, user_id=1, template=template)
+
+        assert captured_bot_json["spec"]["modelRef"] == {
+            "name": agent_config["bind_model"],
+            "namespace": expected_namespace,
+        }
+
+    def test_ghost_stores_precise_skill_refs_from_template_triplet(
+        self, instantiator, mock_db
+    ):
+        """Ghost creation should persist resolved skill_refs when template provides name/namespace/userId."""
+        template = _make_template(
+            {
+                "ghost": {
+                    "systemPrompt": "You are a wiki organizer.",
+                    "skillRefs": [
+                        {
+                            "name": "wegent-knowledge",
+                            "namespace": "default",
+                            "userId": 0,
+                        }
+                    ],
+                },
+                "bot": {"shellName": "Chat"},
+                "team": {"collaborationModel": "solo"},
+                "queue": {"visibility": "private"},
+            }
+        )
+
+        skill = MagicMock(spec=Kind)
+        skill.id = 42
+        skill.name = "wegent-knowledge"
+        skill.kind = "Skill"
+        skill.namespace = "default"
+        skill.user_id = 0
+
+        mock_db.query.return_value.filter.return_value.first.return_value = skill
+
+        captured_ghost_json = {}
+
+        def capturing_create_kind(db, user_id, kind_type, name, json_data):
+            if kind_type == "Ghost":
+                captured_ghost_json.update(json_data)
+            k = MagicMock(spec=Kind)
+            k.id = 1
+            k.name = name
+            k.kind = kind_type
+            db.add(k)
+            db.flush()
+            return k
+
+        with patch.object(
+            InboxTemplateInstantiator,
+            "_create_kind",
+            staticmethod(capturing_create_kind),
+        ):
+            instantiator.instantiate(mock_db, user_id=1, template=template)
+
+        assert captured_ghost_json["spec"]["skills"] == ["wegent-knowledge"]
+        assert captured_ghost_json["spec"]["skill_refs"] == {
+            "wegent-knowledge": {
+                "skill_id": 42,
+                "namespace": "default",
+                "is_public": True,
+            }
+        }
+
     def test_creates_ghost_bot_team_queue_without_subscription(
         self, instantiator, mock_db
     ):
@@ -369,6 +495,49 @@ class TestCustomTeamTemplate:
         assert result.teamId is not None
         assert result.subscriptionId is None
         assert result.queueId is not None
+
+    def test_single_bot_team_marks_member_as_leader(self, instantiator, mock_db):
+        """Template-created single-bot Team should mark its only member as leader."""
+        template = _make_template(
+            {
+                "ghost": {"systemPrompt": "You are a chat assistant."},
+                "bot": {"shellName": "Chat"},
+                "team": {"collaborationModel": "solo"},
+                "queue": {"visibility": "private"},
+            }
+        )
+
+        captured_team_json = {}
+
+        def capturing_create_kind(db, user_id, kind_type, name, json_data):
+            if kind_type == "Team":
+                captured_team_json.update(json_data)
+            k = MagicMock(spec=Kind)
+            k.id = 1
+            k.name = name
+            k.kind = kind_type
+            db.add(k)
+            db.flush()
+            return k
+
+        with patch.object(
+            InboxTemplateInstantiator,
+            "_create_kind",
+            staticmethod(capturing_create_kind),
+        ):
+            instantiator.instantiate(mock_db, user_id=1, template=template)
+
+        assert captured_team_json["spec"]["members"] == [
+            {
+                "botRef": {
+                    "name": captured_team_json["spec"]["members"][0]["botRef"]["name"],
+                    "namespace": "default",
+                },
+                "prompt": "",
+                "role": "leader",
+                "requireConfirmation": False,
+            }
+        ]
 
     def test_queue_uses_direct_agent_mode_with_created_team(
         self, instantiator, mock_db

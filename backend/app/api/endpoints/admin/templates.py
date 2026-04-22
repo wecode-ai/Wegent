@@ -4,16 +4,33 @@
 
 """Admin API endpoints for template management."""
 
-from fastapi import APIRouter, Depends, Path
+from typing import Optional
+
+from fastapi import APIRouter, Depends, Path, Query
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core.security import get_admin_user
 from app.models.user import User
-from app.schemas.template import TemplateCreate, TemplateResponse, TemplateUpdate
+from app.schemas.template import (
+    TemplateCreate,
+    TemplateListResponse,
+    TemplateResponse,
+    TemplateUpdate,
+)
 from app.services.template_service import template_service
 
 router = APIRouter(prefix="/templates")
+
+
+@router.get("", response_model=TemplateListResponse)
+def list_templates(
+    category: Optional[str] = Query(None, description="Filter by template category"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+):
+    """List all templates (admin only)."""
+    return template_service.list_templates(db, category=category)
 
 
 @router.post("", response_model=TemplateResponse, status_code=201)

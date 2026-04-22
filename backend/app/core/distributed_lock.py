@@ -29,12 +29,14 @@ Usage:
             distributed_lock.release("my_task")
 """
 
+import asyncio
 import logging
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
 from threading import Event, Thread
-from typing import Generator, Optional
+from typing import AsyncGenerator, Generator, Optional
 
 import redis
+from redis.asyncio import Redis as AsyncRedis
 
 from app.core.config import settings
 
@@ -56,6 +58,7 @@ class DistributedLock:
     def __init__(self):
         """Initialize the distributed lock with lazy Redis client loading."""
         self._redis_client: Optional[redis.Redis] = None
+        self._async_redis_client: Optional[AsyncRedis] = None
 
     @property
     def redis_client(self) -> Optional[redis.Redis]:
@@ -251,6 +254,125 @@ class DistributedLock:
                 watchdog_thread.join(timeout=1)
             if acquired:
                 self.release(lock_name)
+
+    @property
+    def async_redis_client(self) -> Optional[AsyncRedis]:
+        """Lazy-load async Redis client from settings."""
+        if self._async_redis_client is None:
+            try:
+                redis_url = getattr(settings, "CELERY_BROKER_URL", None) or getattr(
+                    settings, "REDIS_URL", None
+                )
+                if redis_url:
+                    self._async_redis_client = AsyncRedis.from_url(
+                        redis_url,
+                        decode_responses=True,
+                        socket_timeout=5,
+                        socket_connect_timeout=5,
+                    )
+            except Exception as e:
+                logger.warning(
+                    f"[DistributedLock] Failed to create async Redis client: {e}"
+                )
+                self._async_redis_client = None
+        return self._async_redis_client
+
+    async def acquire_async(self, lock_name: str, expire_seconds: int = 60) -> bool:
+        """Acquire a distributed lock asynchronously."""
+        if self.async_redis_client is None:
+            logger.debug(
+                f"[DistributedLock] Async Redis not available, allowing {lock_name}"
+            )
+            return True
+
+        lock_key = f"{LOCK_KEY_PREFIX}{lock_name}"
+        try:
+            result = await self.async_redis_client.set(
+                lock_key, "1", nx=True, ex=expire_seconds
+            )
+            if result:
+                logger.debug(f"[DistributedLock] Acquired async lock: {lock_name}")
+            else:
+                logger.debug(
+                    f"[DistributedLock] Async lock {lock_name} already held by another instance"
+                )
+            return result is True
+        except Exception as e:
+            logger.error(
+                f"[DistributedLock] Failed to acquire async lock {lock_name}: {e}"
+            )
+            return True
+
+    async def release_async(self, lock_name: str) -> bool:
+        """Release a distributed lock asynchronously."""
+        if self.async_redis_client is None:
+            return True
+
+        lock_key = f"{LOCK_KEY_PREFIX}{lock_name}"
+        try:
+            await self.async_redis_client.delete(lock_key)
+            logger.debug(f"[DistributedLock] Released async lock: {lock_name}")
+            return True
+        except Exception as e:
+            logger.error(
+                f"[DistributedLock] Failed to release async lock {lock_name}: {e}"
+            )
+            return False
+
+    async def extend_async(self, lock_name: str, expire_seconds: int = 60) -> bool:
+        """Extend the expiration time of a held lock asynchronously."""
+        if self.async_redis_client is None:
+            return True
+
+        lock_key = f"{LOCK_KEY_PREFIX}{lock_name}"
+        try:
+            result = await self.async_redis_client.expire(lock_key, expire_seconds)
+            return result is True
+        except Exception as e:
+            logger.error(
+                f"[DistributedLock] Failed to extend async lock {lock_name}: {e}"
+            )
+            return False
+
+    @asynccontextmanager
+    async def acquire_watchdog_context_async(
+        self,
+        lock_name: str,
+        expire_seconds: int = 60,
+        extend_interval_seconds: int = 30,
+    ) -> AsyncGenerator[bool, None]:
+        """Acquire a lock and keep extending it with an async watchdog task."""
+        acquired = await self.acquire_async(lock_name, expire_seconds)
+        watchdog_task: Optional[asyncio.Task] = None
+
+        if (
+            acquired
+            and self.async_redis_client is not None
+            and extend_interval_seconds > 0
+            and extend_interval_seconds < expire_seconds
+        ):
+
+            async def _watchdog() -> None:
+                try:
+                    while True:
+                        await asyncio.sleep(extend_interval_seconds)
+                        await self.extend_async(lock_name, expire_seconds)
+                except asyncio.CancelledError:
+                    pass
+
+            watchdog_task = asyncio.create_task(_watchdog())
+
+        try:
+            yield acquired
+        finally:
+            if watchdog_task is not None:
+                watchdog_task.cancel()
+                try:
+                    await watchdog_task
+                except asyncio.CancelledError:
+                    pass
+            if acquired:
+                await self.release_async(lock_name)
 
 
 # Singleton instance

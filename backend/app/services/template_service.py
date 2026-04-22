@@ -9,7 +9,7 @@ Templates are stored as Kind records with kind='Template', user_id=0, namespace=
 """
 
 import logging
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
@@ -19,6 +19,7 @@ from app.schemas.template import (
     TemplateCreate,
     TemplateInstantiateResponse,
     TemplateListResponse,
+    TemplateResources,
     TemplateResponse,
     TemplateUpdate,
 )
@@ -29,6 +30,12 @@ logger = logging.getLogger(__name__)
 TEMPLATE_KIND = "Template"
 TEMPLATE_NAMESPACE = "system"
 TEMPLATE_USER_ID = 0  # System-owned resource
+ALLOWED_TEMPLATE_MODEL_BINDING_KEYS = {
+    "bind_model",
+    "bind_model_type",
+    "bind_model_namespace",
+}
+ALLOWED_TEMPLATE_MODEL_TYPES = {"public", "user", "group"}
 
 
 class TemplateService:
@@ -52,6 +59,8 @@ class TemplateService:
                 status_code=400,
                 detail=f"Template '{data.name}' already exists",
             )
+
+        self._validate_resources_for_write(data.resources)
 
         # Build CRD JSON
         resource_json = {
@@ -105,6 +114,7 @@ class TemplateService:
         if data.icon is not None:
             spec["icon"] = data.icon
         if data.resources is not None:
+            self._validate_resources_for_write(data.resources)
             spec["resources"] = data.resources.model_dump(mode="json")
 
         # Replace entire json to trigger SQLAlchemy dirty tracking
@@ -211,6 +221,82 @@ class TemplateService:
             createdAt=kind.created_at,
             updatedAt=kind.updated_at,
         )
+
+    def _validate_resources_for_write(self, resources: TemplateResources) -> None:
+        """Validate template resources for create/update write paths only."""
+        ghost = resources.ghost
+        if ghost and ghost.skills and not ghost.skillRefs:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Template ghost skills must use skillRefs for precise resource "
+                    "identification; bare skills are not allowed"
+                ),
+            )
+
+        bot = resources.bot
+        if not bot or not bot.agentConfig:
+            return
+
+        self._validate_bot_agent_config(bot.agentConfig)
+
+    def _validate_bot_agent_config(self, agent_config: Any) -> None:
+        """Validate template bot agentConfig uses the standard model binding shape."""
+        if not isinstance(agent_config, dict):
+            raise HTTPException(
+                status_code=400,
+                detail="Template bot agentConfig must be a JSON object",
+            )
+
+        if "namespace" in agent_config:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Template bot agentConfig must use bind_model_namespace; "
+                    "legacy namespace is not allowed"
+                ),
+            )
+
+        keys = set(agent_config.keys())
+        unknown_keys = keys - ALLOWED_TEMPLATE_MODEL_BINDING_KEYS
+        if unknown_keys:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Template bot agentConfig only supports bind_model, "
+                    "bind_model_type, and bind_model_namespace; "
+                    f"unsupported keys: {sorted(unknown_keys)}"
+                ),
+            )
+
+        bind_model = agent_config.get("bind_model")
+        if not isinstance(bind_model, str) or not bind_model.strip():
+            raise HTTPException(
+                status_code=400,
+                detail="Template bot agentConfig must provide a non-empty bind_model",
+            )
+
+        model_type = agent_config.get("bind_model_type")
+        if model_type is not None and model_type not in ALLOWED_TEMPLATE_MODEL_TYPES:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Template bot agentConfig bind_model_type must be one of "
+                    "public, user, or group"
+                ),
+            )
+
+        model_namespace = agent_config.get("bind_model_namespace")
+        if model_namespace is not None and (
+            not isinstance(model_namespace, str) or not model_namespace.strip()
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Template bot agentConfig bind_model_namespace must be a "
+                    "non-empty string when provided"
+                ),
+            )
 
 
 template_service = TemplateService()

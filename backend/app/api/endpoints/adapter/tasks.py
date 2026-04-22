@@ -11,11 +11,13 @@ from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db, with_task_telemetry
 from app.core import security
 from app.core.config import settings
+from app.db.session import get_async_db
 from app.models.user import User
 from app.schemas.remote_workspace import (
     RemoteWorkspaceStatusResponse,
@@ -844,10 +846,10 @@ def cancel_preserve_executor(
 
 
 @router.post("/{task_id}/cleanup-executor", response_model=dict)
-def cleanup_task_executor(
+async def cleanup_task_executor(
     task_id: int = Depends(with_task_telemetry),
     current_user: User = Depends(security.get_current_user),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """
     Clean up the executor for a finished task.
@@ -855,7 +857,7 @@ def cleanup_task_executor(
     This endpoint reuses the same cleanup rules as the scheduled executor cleanup
     job and only affects the specified task.
     """
-    return job_service.cleanup_task_executor(
+    return await job_service.cleanup_task_executor(
         db=db,
         task_id=task_id,
         user_id=current_user.id,

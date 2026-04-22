@@ -5,7 +5,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import { useSearchParams } from 'next/navigation'
+import { useSearchParams, useRouter } from 'next/navigation'
 import { UserGroupIcon } from '@heroicons/react/24/outline'
 import { useTeamContext } from '@/contexts/TeamContext'
 import TopNavigation from '@/features/layout/TopNavigation'
@@ -51,6 +51,7 @@ import { useIsDesktop } from '@/features/layout/hooks/useMediaQuery'
  */
 export function ChatPageDesktop() {
   const { t } = useTranslation()
+  const router = useRouter()
 
   // Team state from context (centralized to avoid duplicate API calls)
   const { teams, isTeamsLoading, refreshTeams } = useTeamContext()
@@ -108,6 +109,18 @@ export function ChatPageDesktop() {
   const taskId =
     searchParams.get('task_id') || searchParams.get('taskid') || searchParams.get('taskId')
   const hasOpenTask = !!taskId
+
+  // Redirect device tasks to /devices/chat page for proper layout
+  useEffect(() => {
+    if (selectedTaskDetail?.task_type === 'task' && taskId) {
+      const params = new URLSearchParams()
+      params.set('taskId', String(taskId))
+      if (selectedTaskDetail.device_id) {
+        params.set('deviceId', selectedTaskDetail.device_id)
+      }
+      router.replace(`/devices/chat?${params.toString()}`)
+    }
+  }, [selectedTaskDetail?.task_type, selectedTaskDetail?.device_id, taskId, router])
 
   // Collapsed sidebar state
   const [isCollapsed, setIsCollapsed] = useState(false)

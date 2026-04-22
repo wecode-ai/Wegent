@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from decimal import Decimal
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -69,85 +69,70 @@ class TestGetAllChunksFromKnowledgeBase:
     @pytest.mark.asyncio
     async def test_get_all_chunks_without_user_auth_check(self):
         """Internal all-chunks should work without passing a request user."""
+        from app.services.rag import gateway_factory
         from app.services.rag.retrieval_service import RetrievalService
-        from shared.models import (
-            RemoteKnowledgeBaseQueryConfig,
-            RuntimeEmbeddingModelConfig,
-            RuntimeRetrievalConfig,
-            RuntimeRetrieverConfig,
+        from app.services.rag.runtime_specs import ListChunksRuntimeSpec
+        from shared.models import RuntimeRetrieverConfig
+
+        retriever_config = RuntimeRetrieverConfig(
+            name="retriever-a",
+            namespace="default",
+            storage_config={"type": "qdrant", "url": "http://qdrant:6333"},
         )
-
-        kb = MagicMock()
-        kb.id = 123
-        kb.name = "KB"
-        kb.namespace = "team-a"
-        kb.user_id = 42
-        kb.json = {
-            "spec": {
-                "retrievalConfig": {
-                    "retriever_name": "retriever-a",
-                    "retriever_namespace": "default",
-                }
-            }
-        }
-
-        db = MagicMock()
-        db.query.return_value.filter.return_value.first.return_value = kb
-
-        mock_backend = MagicMock()
-        mock_backend.get_index_name.return_value = "kb-index"
-        mock_backend.get_all_chunks.return_value = [
-            {"content": "chunk", "title": "doc-1", "doc_ref": "1"}
-        ]
-        runtime_config = RemoteKnowledgeBaseQueryConfig(
+        spec = ListChunksRuntimeSpec(
             knowledge_base_id=123,
             index_owner_user_id=42,
-            retriever_config=RuntimeRetrieverConfig(
-                name="retriever-a",
-                namespace="default",
-                storage_config={"type": "qdrant", "url": "http://qdrant:6333"},
-            ),
-            embedding_model_config=RuntimeEmbeddingModelConfig(
-                model_name="embed-a",
-                model_namespace="default",
-                resolved_config={"protocol": "openai"},
-            ),
-            retrieval_config=RuntimeRetrievalConfig(top_k=20),
+            retriever_config=retriever_config,
+            max_chunks=50,
+            query="debug query",
+            metadata_condition=None,
+        )
+
+        mock_gateway = MagicMock()
+        mock_gateway.list_chunks = AsyncMock(
+            return_value={
+                "chunks": [{"content": "chunk", "title": "doc-1", "doc_ref": "1"}],
+                "total": 1,
+            }
         )
 
         with (
             patch(
-                "app.services.rag.retrieval_service.RagRuntimeResolver.build_query_knowledge_base_configs",
-                return_value=[runtime_config],
-            ) as mock_build_runtime_configs,
-            patch(
-                "app.services.rag.retrieval_service.create_storage_backend_from_runtime_config",
-                return_value=mock_backend,
-            ) as mock_create_storage_backend,
+                "app.services.rag.retrieval_service.RagRuntimeResolver.build_internal_list_chunks_runtime_spec",
+                return_value=spec,
+            ) as mock_build_spec,
+            patch.object(
+                gateway_factory,
+                "get_list_chunks_gateway",
+                return_value=mock_gateway,
+            ) as mock_get_gateway,
         ):
+            db_session = MagicMock()
             result = await RetrievalService().get_all_chunks_from_knowledge_base(
                 knowledge_base_id=123,
-                db=db,
+                db=db_session,
                 max_chunks=50,
                 query="debug query",
             )
 
-        assert result == [{"content": "chunk", "title": "doc-1", "doc_ref": "1"}]
-        mock_build_runtime_configs.assert_called_once_with(
-            db=db,
-            knowledge_base_ids=[123],
-            user_name=None,
-        )
-        mock_create_storage_backend.assert_called_once_with(
-            runtime_config.retriever_config
-        )
-        mock_backend.get_index_name.assert_called_once_with("123", user_id=42)
-        mock_backend.get_all_chunks.assert_called_once_with(
-            knowledge_id="123",
+        assert result == [
+            {
+                "content": "chunk",
+                "title": "doc-1",
+                "chunk_id": None,
+                "doc_ref": "1",
+                "metadata": None,
+            }
+        ]
+        mock_build_spec.assert_called_once_with(
+            db=db_session,
+            knowledge_base_id=123,
             max_chunks=50,
-            user_id=42,
+            query="debug query",
             metadata_condition=None,
         )
+        mock_get_gateway.assert_called_once()
+        mock_gateway.list_chunks.assert_awaited_once_with(spec, db=db_session)
 
 
 @pytest.mark.unit

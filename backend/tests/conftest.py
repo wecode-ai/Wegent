@@ -12,6 +12,7 @@ from typing import Generator, Tuple
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import Settings
@@ -159,6 +160,26 @@ def test_db(test_engine, test_session_factory) -> Generator[Session, None, None]
         # Rollback the transaction to restore database state
         transaction.rollback()
         connection.close()
+
+
+@pytest.fixture(scope="function")
+async def async_test_db():
+    """
+    Async test DB session for testing async service methods.
+    Uses an independent in-memory SQLite database with its own tables.
+    Data setup should be done via this session (not test_db).
+    """
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with factory() as session:
+        yield session
+
+    await engine.dispose()
 
 
 @pytest.fixture(scope="function")

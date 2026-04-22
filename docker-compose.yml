@@ -76,10 +76,13 @@ services:
     restart: always
     ports:
       - "${BACKEND_PORT:-8000}:8000"
-    # volumes:
-      # To customize init data, uncomment the following line to override the built-in data:
-      # - ./custom_init_data:/app/init_data:ro
+    volumes:
+      - ./logs/backend:/app/logs
     environment:
+      # Logging configuration
+      LOG_FILE_ENABLED: ${LOG_FILE_ENABLED:-true}
+      LOG_DIR: /app/logs
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
       # Disable litellm network request for model cost map to prevent startup blocking
       LITELLM_LOCAL_MODEL_COST_MAP: "True"
       ENVIRONMENT: ${BACKEND_ENVIRONMENT:-development}
@@ -110,6 +113,11 @@ services:
       # INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-chat-shell-token}
       # Internal URL for MCP and other internal service calls (use container name in Docker)
       BACKEND_INTERNAL_URL: http://backend:8000
+      # Knowledge Runtime URL for RAG operations
+      KNOWLEDGE_RUNTIME_URL: ${KNOWLEDGE_RUNTIME_URL:-http://knowledge_runtime:8200}
+      # RAG Runtime Mode: "local" (default) or "remote" to use knowledge_runtime
+      # For remote mode, set to: {"default":"remote"}
+      RAG_RUNTIME_MODE: ${RAG_RUNTIME_MODE:-local}
       # Task Dispatch Configuration
       # Mode: 'push' (default) or 'pull' (deprecated, executor_manager polls)
       TASK_DISPATCH_MODE: ${TASK_DISPATCH_MODE:-push}
@@ -254,6 +262,44 @@ services:
       - redis
     networks:
       - wegent-network
+
+  knowledge_runtime:
+    image: ghcr.io/wecode-ai/wegent-knowledge-runtime:latest
+    pull_policy: ${DOCKER_PULL_POLICY:-always}
+    container_name: wegent-knowledge-runtime
+    restart: always
+    profiles:
+      - rag
+    ports:
+      - "${KNOWLEDGE_RUNTIME_PORT:-8200}:8200"
+    environment:
+      - TZ=${TZ:-Asia/Shanghai}
+      # Backend URL for fetching content
+      - BACKEND_INTERNAL_URL=${BACKEND_INTERNAL_URL:-http://backend:8000}
+      # Content fetching timeout in seconds
+      - CONTENT_FETCH_TIMEOUT=${CONTENT_FETCH_TIMEOUT:-120}
+      # Logging configuration
+      - LOG_FILE_ENABLED=${LOG_FILE_ENABLED:-true}
+      - LOG_DIR=${LOG_DIR:-/app/logs}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      # Internal service token (uncomment to enable, must match Backend's INTERNAL_SERVICE_TOKEN)
+      # - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:-your-secure-token-here}
+      # OpenTelemetry Configuration (uncomment to enable)
+      # - OTEL_ENABLED=true
+      # - OTEL_SERVICE_NAME=wegent-knowledge-runtime
+      # - OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
+    depends_on:
+      - backend
+    volumes:
+      - ./logs/knowledge_runtime:/app/logs
+    networks:
+      - wegent-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8200/internal/rag/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
 
 volumes:
   mysql_data:

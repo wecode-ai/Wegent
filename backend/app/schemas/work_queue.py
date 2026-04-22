@@ -10,6 +10,8 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
+from app.schemas.kind import ModelRef
+
 # Re-export shared enums so callers can import from this module without
 # knowing the internal package structure.  Using the shared definitions
 # ensures all modules compare against the same enum class, preventing
@@ -77,6 +79,8 @@ class AutoProcessConfig(BaseModel):
     # Defaults to "subscription" for backward compatibility with existing records.
     mode: Literal["subscription", "direct_agent"] = "subscription"
     teamRef: Optional[TeamRef] = None
+    modelRef: Optional[ModelRef] = None
+    forceOverrideBotModel: bool = False
     subscriptionRef: Optional[SubscriptionRef] = None
     triggerMode: TriggerMode = TriggerMode.IMMEDIATE
     scheduleInterval: Optional[int] = Field(

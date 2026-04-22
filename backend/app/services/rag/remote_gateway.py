@@ -69,23 +69,25 @@ class RemoteRagGateway:
         self,
         *,
         base_url: str | None = None,
-        token: str | None = None,
         timeout: float = 30.0,
+        auth_token: str | None = None,
     ) -> None:
         self._base_url = (base_url or settings.KNOWLEDGE_RUNTIME_URL).rstrip("/")
-        self._token = token if token is not None else settings.INTERNAL_SERVICE_TOKEN
         self._timeout = timeout
-
-    def _build_headers(self) -> dict[str, str]:
-        return {"Authorization": f"Bearer {self._token}"}
+        # Priority: 1. explicit auth_token, 2. INTERNAL_SERVICE_TOKEN
+        self._auth_token = auth_token or settings.INTERNAL_SERVICE_TOKEN
 
     async def _post_model(self, path: str, payload: Any) -> dict[str, Any]:
+        headers = {}
+        if self._auth_token:
+            headers["Authorization"] = f"Bearer {self._auth_token}"
+
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
                 response = await client.post(
                     f"{self._base_url}{path}",
-                    headers=self._build_headers(),
                     json=payload.model_dump(mode="json", exclude_none=True),
+                    headers=headers,
                 )
         except httpx.RequestError as exc:
             raise RemoteRagGatewayError(

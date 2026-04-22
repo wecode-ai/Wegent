@@ -194,6 +194,14 @@ class InboxTemplateInstantiator(BaseTemplateInstantiator):
     # Method names follow the pattern _build_{kind_type_lowercase}.
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _resolve_bot_model_ref(agent_config: Dict[str, Any]) -> Dict[str, str]:
+        """Resolve template bot agentConfig into a Bot spec modelRef."""
+        model_name = agent_config.get("bind_model", "")
+        namespace = agent_config.get("bind_model_namespace") or NAMESPACE
+
+        return {"name": model_name, "namespace": namespace}
+
     def _build_ghost(
         self,
         db: Session,
@@ -210,8 +218,39 @@ class InboxTemplateInstantiator(BaseTemplateInstantiator):
         }
         if config.get("mcpServers"):
             ghost_spec["mcpServers"] = config["mcpServers"]
-        if config.get("skills"):
-            ghost_spec["skills"] = config["skills"]
+
+        skill_names = list(dict.fromkeys(config.get("skills") or []))
+        template_skill_refs = config.get("skillRefs") or []
+        if template_skill_refs:
+            explicit_skill_names = []
+            for ref in template_skill_refs:
+                skill_name = ref["name"]
+                if skill_name in explicit_skill_names:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            "Template ghost skillRefs contain duplicate skill names. "
+                            f"Duplicate: '{skill_name}'"
+                        ),
+                    )
+                explicit_skill_names.append(skill_name)
+
+            if skill_names and skill_names != explicit_skill_names:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Template ghost skills and skillRefs must reference the same "
+                        "ordered skill names"
+                    ),
+                )
+
+            skill_names = explicit_skill_names
+            ghost_spec["skill_refs"] = self._resolve_template_skill_refs(
+                db, template_skill_refs
+            )
+
+        if skill_names:
+            ghost_spec["skills"] = skill_names
 
         return self._create_kind(
             db,
@@ -231,6 +270,43 @@ class InboxTemplateInstantiator(BaseTemplateInstantiator):
             },
         )
 
+    def _resolve_template_skill_refs(
+        self, db: Session, skill_refs: List[Dict[str, Any]]
+    ) -> Dict[str, Dict[str, Any]]:
+        """Resolve template skill triplets into Ghost skill_refs metadata."""
+        resolved: Dict[str, Dict[str, Any]] = {}
+
+        for ref in skill_refs:
+            skill = (
+                db.query(Kind)
+                .filter(
+                    Kind.kind == "Skill",
+                    Kind.name == ref["name"],
+                    Kind.namespace == ref.get("namespace", NAMESPACE),
+                    Kind.user_id == ref["userId"],
+                    Kind.is_active == True,
+                )
+                .first()
+            )
+            if not skill:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Template ghost skillRef not found: "
+                        f"name='{ref['name']}', "
+                        f"namespace='{ref.get('namespace', NAMESPACE)}', "
+                        f"userId={ref['userId']}"
+                    ),
+                )
+
+            resolved[skill.name] = {
+                "skill_id": skill.id,
+                "namespace": skill.namespace,
+                "is_public": skill.user_id == 0,
+            }
+
+        return resolved
+
     def _build_bot(
         self,
         db: Session,
@@ -246,12 +322,11 @@ class InboxTemplateInstantiator(BaseTemplateInstantiator):
         shell_namespace = "default"
 
         agent_config = config.get("agentConfig") or {}
-        model_ref_name = agent_config.get("bind_model", "")
-        model_ref_namespace = agent_config.get("namespace", "default")
+        model_ref = self._resolve_bot_model_ref(agent_config)
 
         bot_spec: Dict[str, Any] = {
             "shellRef": {"name": shell_name, "namespace": shell_namespace},
-            "modelRef": {"name": model_ref_name, "namespace": model_ref_namespace},
+            "modelRef": model_ref,
         }
         if ghost is not None:
             bot_spec["ghostRef"] = {"name": ghost.name, "namespace": NAMESPACE}
@@ -294,7 +369,7 @@ class InboxTemplateInstantiator(BaseTemplateInstantiator):
                 {
                     "botRef": {"name": bot.name, "namespace": NAMESPACE},
                     "prompt": "",
-                    "role": "",
+                    "role": "leader",
                     "requireConfirmation": False,
                 }
             )
