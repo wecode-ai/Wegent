@@ -215,7 +215,7 @@ class AdminExecutor:
         logger.info("Testing storage backend connection")
 
         try:
-            success = storage_backend.test_connection()
+            success = await asyncio.to_thread(storage_backend.test_connection)
             return {
                 "success": success,
                 "message": "Connection successful" if success else "Connection failed",
