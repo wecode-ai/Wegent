@@ -9,7 +9,10 @@ Compatible with OpenAI Responses API format.
 
 from typing import Any, Dict, List, Literal, Optional, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, conint, conlist
+
+# Maximum number of attachment IDs allowed per request
+MAX_ATTACHMENT_IDS = 100
 
 
 class WorkspaceConfig(BaseModel):
@@ -178,6 +181,14 @@ class ResponseCreateInput(BaseModel):
         default=None,
         description="Configuration for model reasoning/thinking. Supported for gpt-5 and o-series models. "
         "Controls reasoning effort and summary output.",
+    )
+    attachment_ids: Optional[conlist(conint(ge=1), max_length=MAX_ATTACHMENT_IDS)] = (
+        Field(
+            default=None,
+            description="List of attachment context IDs from POST /v1/attachments/upload. "
+            "Attachments will be linked to this request and included in the context. "
+            f"Maximum {MAX_ATTACHMENT_IDS} attachments, each ID must be a positive integer.",
+        )
     )
 
 

@@ -6,6 +6,7 @@
 from app.api.endpoints import (
     admin,
     api_keys,
+    attachments_open,
     auth,
     deep_research,
     devices,
@@ -56,6 +57,7 @@ from app.api.endpoints.adapter import (
     task_members,
     tasks,
     teams,
+    templates,
 )
 from app.api.endpoints.internal import bots_router as internal_bots_router
 from app.api.endpoints.internal import (
@@ -155,6 +157,11 @@ api_router.include_router(
     tags=["knowledge-summary"],
 )
 api_router.include_router(
+    attachments_open.router,
+    prefix="/v1/attachments",
+    tags=["attachments-open"],
+)
+api_router.include_router(
     knowledge_open.router,
     prefix="/knowledge",
     tags=["knowledge-open"],
@@ -167,6 +174,8 @@ api_router.include_router(tables.router, prefix="/tables", tags=["tables"])
 api_router.include_router(
     work_queue.router, prefix="/work-queues", tags=["work-queues"]
 )
+# Template endpoints (browse and instantiate)
+api_router.include_router(templates.router, prefix="/templates", tags=["templates"])
 api_router.include_router(
     work_queue.messages_router, prefix="/queue-messages", tags=["queue-messages"]
 )
