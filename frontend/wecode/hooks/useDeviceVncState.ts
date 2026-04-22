@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { cloudDeviceApis } from '@wecode/apis'
 
 interface Device {
@@ -23,6 +23,7 @@ interface UseDeviceVncStateOptions {
 export function useDeviceVncState({ selectedDevice, selectedDeviceId }: UseDeviceVncStateOptions) {
   const [isVncOpen, setIsVncOpen] = useState(false)
   const [sandboxId, setSandboxId] = useState<string | null>(null)
+  const lastAutoOpenedDeviceIdRef = useRef<string | null>(null)
 
   // Determine if current device is a cloud device
   const isCloudDevice = selectedDevice?.device_type === 'cloud'
@@ -36,16 +37,27 @@ export function useDeviceVncState({ selectedDevice, selectedDeviceId }: UseDevic
     }
 
     let cancelled = false
+    setSandboxId(null)
+
     cloudDeviceApis
       .getCloudDeviceStatus(selectedDeviceId)
       .then(status => {
-        if (!cancelled && status.sandbox_id) {
-          setSandboxId(status.sandbox_id)
-          // Don't auto-open VNC panel - let user click to open
+        if (cancelled) {
+          return
+        }
+
+        const nextSandboxId = status.sandbox_id ?? null
+        setSandboxId(nextSandboxId)
+
+        if (nextSandboxId && lastAutoOpenedDeviceIdRef.current !== selectedDeviceId) {
+          setIsVncOpen(true)
+          lastAutoOpenedDeviceIdRef.current = selectedDeviceId
         }
       })
       .catch(() => {
-        // Silently handle - VNC toggle won't show if fetch fails
+        if (!cancelled) {
+          setSandboxId(null)
+        }
       })
 
     return () => {
