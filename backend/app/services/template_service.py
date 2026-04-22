@@ -224,16 +224,6 @@ class TemplateService:
 
     def _validate_resources_for_write(self, resources: TemplateResources) -> None:
         """Validate template resources for create/update write paths only."""
-        ghost = resources.ghost
-        if ghost and ghost.skills and not ghost.skillRefs:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "Template ghost skills must use skillRefs for precise resource "
-                    "identification; bare skills are not allowed"
-                ),
-            )
-
         bot = resources.bot
         if not bot or not bot.agentConfig:
             return

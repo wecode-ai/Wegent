@@ -7,17 +7,21 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
+from pydantic import ValidationError
 
 from app.schemas.template import TemplateCreate, TemplateResources, TemplateUpdate
 from app.services.template_service import template_service
 
 
-def test_create_template_rejects_bare_ghost_skills(mocker):
+def test_create_template_accepts_precise_ghost_skill_refs_only(mocker):
     db = mocker.Mock()
     query = mocker.Mock()
     query.filter.return_value = query
     query.first.return_value = None
     db.query.return_value = query
+    mocker.patch.object(
+        template_service, "_to_response", return_value=SimpleNamespace()
+    )
 
     data = TemplateCreate(
         name="wiki-template",
@@ -26,59 +30,39 @@ def test_create_template_rejects_bare_ghost_skills(mocker):
             {
                 "ghost": {
                     "systemPrompt": "You are a helper.",
-                    "skills": ["wegent-knowledge"],
+                    "skillRefs": [
+                        {
+                            "name": "wegent-knowledge",
+                            "namespace": "default",
+                            "user_id": 0,
+                        }
+                    ],
+                    "preloadSkillRefs": [
+                        {
+                            "name": "wegent-knowledge",
+                            "namespace": "default",
+                            "user_id": 0,
+                        }
+                    ],
                 },
                 "queue": {"visibility": "private"},
             }
         ),
     )
 
-    with pytest.raises(HTTPException) as exc_info:
-        template_service.create_template(db, data)
+    template_service.create_template(db, data)
 
-    assert exc_info.value.status_code == 400
-    assert "skillRefs" in exc_info.value.detail
-
-
-def test_update_template_rejects_bare_ghost_skills(mocker):
-    db = mocker.Mock()
-    template = SimpleNamespace(
-        id=1,
-        name="legacy-template",
-        kind="Template",
-        is_active=True,
-        created_at=datetime.utcnow(),
-        updated_at=datetime.utcnow(),
-        json={
-            "spec": {
-                "displayName": "Legacy",
-                "category": "inbox",
-                "resources": {"queue": {"visibility": "private"}},
-            }
-        },
-    )
-    query = mocker.Mock()
-    query.filter.return_value = query
-    query.first.return_value = template
-    db.query.return_value = query
-
-    data = TemplateUpdate(
-        resources=TemplateResources.model_validate(
-            {
-                "ghost": {
-                    "systemPrompt": "You are a helper.",
-                    "skills": ["wegent-knowledge"],
-                },
-                "queue": {"visibility": "private"},
-            }
-        )
-    )
-
-    with pytest.raises(HTTPException) as exc_info:
-        template_service.update_template(db, template.id, data)
-
-    assert exc_info.value.status_code == 400
-    assert "skillRefs" in exc_info.value.detail
+    stored_template = db.add.call_args[0][0]
+    assert stored_template.json["spec"]["resources"]["ghost"] == {
+        "systemPrompt": "You are a helper.",
+        "mcpServers": None,
+        "skillRefs": [
+            {"name": "wegent-knowledge", "namespace": "default", "user_id": 0}
+        ],
+        "preloadSkillRefs": [
+            {"name": "wegent-knowledge", "namespace": "default", "user_id": 0}
+        ],
+    }
 
 
 @pytest.mark.parametrize("template_cls", [TemplateCreate, TemplateUpdate])
