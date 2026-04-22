@@ -54,7 +54,8 @@ class TestAdminExecutor:
         )
 
         mock_storage_backend = MagicMock()
-        mock_storage_backend.delete_document = AsyncMock(
+        # Use regular Mock (not AsyncMock) since asyncio.to_thread calls sync functions
+        mock_storage_backend.delete_document = MagicMock(
             return_value={
                 "status": "success",
                 "deleted_chunks": 5,
@@ -87,7 +88,8 @@ class TestAdminExecutor:
         )
 
         mock_storage_backend = MagicMock()
-        mock_storage_backend.delete_knowledge = AsyncMock(
+        # Use regular Mock (not AsyncMock) since asyncio.to_thread calls sync functions
+        mock_storage_backend.delete_knowledge = MagicMock(
             return_value={
                 "status": "success",
                 "deleted_count": 100,
@@ -119,7 +121,8 @@ class TestAdminExecutor:
         )
 
         mock_storage_backend = MagicMock()
-        mock_storage_backend.drop_knowledge_index = AsyncMock(
+        # Use regular Mock (not AsyncMock) since asyncio.to_thread calls sync functions
+        mock_storage_backend.drop_knowledge_index = MagicMock(
             return_value={"status": "success"}
         )
 
@@ -146,7 +149,8 @@ class TestAdminExecutor:
         )
 
         mock_storage_backend = MagicMock()
-        mock_storage_backend.get_all_chunks = AsyncMock(
+        # Use regular Mock (not AsyncMock) since asyncio.to_thread calls sync functions
+        mock_storage_backend.get_all_chunks = MagicMock(
             return_value=[
                 {
                     "content": "Chunk 1 content",
@@ -188,7 +192,8 @@ class TestAdminExecutor:
         )
 
         mock_storage_backend = MagicMock()
-        mock_storage_backend.get_all_chunks = AsyncMock(return_value=[])
+        # Use regular Mock (not AsyncMock) since asyncio.to_thread calls sync functions
+        mock_storage_backend.get_all_chunks = MagicMock(return_value=[])
         mock_storage_backend.extract_chunk_text = lambda x: x
 
         with patch(
@@ -253,7 +258,8 @@ class TestAdminExecutor:
         )
 
         mock_storage_backend = MagicMock()
-        mock_storage_backend.get_all_chunks = AsyncMock(return_value=[])
+        # Use regular Mock (not AsyncMock) since asyncio.to_thread calls sync functions
+        mock_storage_backend.get_all_chunks = MagicMock(return_value=[])
         mock_storage_backend.extract_chunk_text = lambda x: x
 
         with patch(
