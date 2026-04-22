@@ -241,7 +241,11 @@ spec:
       skillRefs:
         - name: wegent-knowledge
           namespace: default
-          userId: 0
+          user_id: 0
+      preloadSkillRefs:
+        - name: wegent-knowledge
+          namespace: default
+          user_id: 0
     bot:
       shellName: Chat
       agentConfig:
