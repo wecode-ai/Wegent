@@ -12,7 +12,7 @@ from typing import Any
 import httpx
 from tenacity import (
     retry,
-    retry_if_exception_type,
+    retry_if_exception,
     stop_after_attempt,
     wait_exponential,
 )
@@ -54,7 +54,7 @@ class ContentFetcher:
         self._settings = get_settings()
 
     @retry(
-        retry=retry_if_exception_type(httpx.TransportError),
+        retry=retry_if_exception(lambda e: getattr(e, "retryable", False)),
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=10),
         reraise=True,

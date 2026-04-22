@@ -9,6 +9,12 @@
 
 set -e
 
+# Get the directory where this script is located
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Change to script directory so relative paths work correctly
+cd "$SCRIPT_DIR"
+
 # Trap Ctrl+C and cleanup
 cleanup() {
     echo ""
@@ -275,7 +281,7 @@ else
 fi
 
 # Set PYTHONPATH to include project root
-PROJECT_ROOT=$(cd .. && pwd)
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 export PYTHONPATH="${PYTHONPATH}:${PROJECT_ROOT}"
 echo -e "${GREEN}✓ PYTHONPATH set to include: $PROJECT_ROOT${NC}"
 

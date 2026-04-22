@@ -4,7 +4,7 @@
 
 """Tests for AdminExecutor service."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -54,12 +54,10 @@ class TestAdminExecutor:
         )
 
         mock_storage_backend = MagicMock()
-        mock_storage_backend.delete_document = AsyncMock(
-            return_value={
-                "status": "success",
-                "deleted_chunks": 5,
-            }
-        )
+        mock_storage_backend.delete_document.return_value = {
+            "status": "success",
+            "deleted_chunks": 5,
+        }
 
         with patch(
             "knowledge_runtime.services.admin_executor.create_storage_backend_from_runtime_config",
@@ -87,12 +85,10 @@ class TestAdminExecutor:
         )
 
         mock_storage_backend = MagicMock()
-        mock_storage_backend.delete_knowledge = AsyncMock(
-            return_value={
-                "status": "success",
-                "deleted_count": 100,
-            }
-        )
+        mock_storage_backend.delete_knowledge.return_value = {
+            "status": "success",
+            "deleted_count": 100,
+        }
 
         with patch(
             "knowledge_runtime.services.admin_executor.create_storage_backend_from_runtime_config",
@@ -119,9 +115,7 @@ class TestAdminExecutor:
         )
 
         mock_storage_backend = MagicMock()
-        mock_storage_backend.drop_knowledge_index = AsyncMock(
-            return_value={"status": "success"}
-        )
+        mock_storage_backend.drop_knowledge_index.return_value = {"status": "success"}
 
         with patch(
             "knowledge_runtime.services.admin_executor.create_storage_backend_from_runtime_config",
@@ -146,24 +140,22 @@ class TestAdminExecutor:
         )
 
         mock_storage_backend = MagicMock()
-        mock_storage_backend.get_all_chunks = AsyncMock(
-            return_value=[
-                {
-                    "content": "Chunk 1 content",
-                    "title": "Doc1",
-                    "chunk_id": 0,
-                    "doc_ref": "doc_1",
-                    "metadata": {"key": "value"},
-                },
-                {
-                    "content": "Chunk 2 content",
-                    "title": "Doc2",
-                    "chunk_id": 1,
-                    "doc_ref": "doc_2",
-                    "metadata": {},
-                },
-            ]
-        )
+        mock_storage_backend.get_all_chunks.return_value = [
+            {
+                "content": "Chunk 1 content",
+                "title": "Doc1",
+                "chunk_id": 0,
+                "doc_ref": "doc_1",
+                "metadata": {"key": "value"},
+            },
+            {
+                "content": "Chunk 2 content",
+                "title": "Doc2",
+                "chunk_id": 1,
+                "doc_ref": "doc_2",
+                "metadata": {},
+            },
+        ]
         mock_storage_backend.extract_chunk_text = lambda x: x
 
         with patch(
@@ -188,7 +180,7 @@ class TestAdminExecutor:
         )
 
         mock_storage_backend = MagicMock()
-        mock_storage_backend.get_all_chunks = AsyncMock(return_value=[])
+        mock_storage_backend.get_all_chunks.return_value = []
         mock_storage_backend.extract_chunk_text = lambda x: x
 
         with patch(
@@ -253,7 +245,7 @@ class TestAdminExecutor:
         )
 
         mock_storage_backend = MagicMock()
-        mock_storage_backend.get_all_chunks = AsyncMock(return_value=[])
+        mock_storage_backend.get_all_chunks.return_value = []
         mock_storage_backend.extract_chunk_text = lambda x: x
 
         with patch(

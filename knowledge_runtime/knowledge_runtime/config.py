@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -19,11 +20,23 @@ class Settings(BaseSettings):
     )
 
     # Server configuration
-    host: str = "0.0.0.0"
-    port: int = 8200
+    # Allow both KNOWLEDGE_RUNTIME_* prefixed env vars and simple names
+    host: str = Field(
+        default="0.0.0.0",
+        validation_alias=AliasChoices("KNOWLEDGE_RUNTIME_HOST", "HOST"),
+    )
+    port: int = Field(
+        default=8200,
+        validation_alias=AliasChoices("KNOWLEDGE_RUNTIME_PORT", "PORT"),
+    )
 
     # Backend URL for fetching content
-    backend_internal_url: str = "http://localhost:8000"
+    backend_internal_url: str = Field(
+        default="http://localhost:8000",
+        validation_alias=AliasChoices(
+            "KNOWLEDGE_RUNTIME_BACKEND_INTERNAL_URL", "BACKEND_INTERNAL_URL"
+        ),
+    )
 
     # Content fetching timeout in seconds
     content_fetch_timeout: int = 120
