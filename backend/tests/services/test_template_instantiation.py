@@ -420,7 +420,7 @@ class TestCustomTeamTemplate:
                         {
                             "name": "wegent-knowledge",
                             "namespace": "default",
-                            "userId": 0,
+                            "user_id": 0,
                         }
                     ],
                 },
@@ -460,13 +460,59 @@ class TestCustomTeamTemplate:
             instantiator.instantiate(mock_db, user_id=1, template=template)
 
         assert captured_ghost_json["spec"]["skills"] == ["wegent-knowledge"]
-        assert captured_ghost_json["spec"]["skill_refs"] == {
-            "wegent-knowledge": {
-                "skill_id": 42,
-                "namespace": "default",
-                "is_public": True,
+
+    def test_ghost_stores_precise_preload_skill_refs_from_template_triplet(
+        self, instantiator, mock_db
+    ):
+        """Ghost creation should persist resolved preload_skill_refs when template provides preload triplets."""
+        template = _make_template(
+            {
+                "ghost": {
+                    "systemPrompt": "You are a wiki organizer.",
+                    "preloadSkillRefs": [
+                        {
+                            "name": "wegent-knowledge",
+                            "namespace": "default",
+                            "user_id": 0,
+                        }
+                    ],
+                },
+                "bot": {"shellName": "Chat"},
+                "team": {"collaborationModel": "solo"},
+                "queue": {"visibility": "private"},
             }
-        }
+        )
+
+        skill = MagicMock(spec=Kind)
+        skill.id = 42
+        skill.name = "wegent-knowledge"
+        skill.kind = "Skill"
+        skill.namespace = "default"
+        skill.user_id = 0
+
+        mock_db.query.return_value.filter.return_value.first.return_value = skill
+
+        captured_ghost_json = {}
+
+        def capturing_create_kind(db, user_id, kind_type, name, json_data):
+            if kind_type == "Ghost":
+                captured_ghost_json.update(json_data)
+            k = MagicMock(spec=Kind)
+            k.id = 1
+            k.name = name
+            k.kind = kind_type
+            db.add(k)
+            db.flush()
+            return k
+
+        with patch.object(
+            InboxTemplateInstantiator,
+            "_create_kind",
+            staticmethod(capturing_create_kind),
+        ):
+            instantiator.instantiate(mock_db, user_id=1, template=template)
+
+        assert captured_ghost_json["spec"]["preload_skills"] == ["wegent-knowledge"]
 
     def test_creates_ghost_bot_team_queue_without_subscription(
         self, instantiator, mock_db

@@ -456,8 +456,8 @@ export interface AdminDeviceActionResponse {
 export interface TemplateResourceGhostConfig {
   systemPrompt: string
   mcpServers?: Record<string, unknown>
-  skills?: string[]
   skillRefs?: TemplateResourceSkillRef[]
+  preloadSkillRefs?: TemplateResourceSkillRef[]
 }
 
 export interface TemplateResourceSkillRef {
