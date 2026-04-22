@@ -96,7 +96,7 @@ export function UserFloatingMenu({ className = '' }: UserFloatingMenuProps) {
   }, [isExpanded, handleClickOutside, handleKeyDown])
 
   return (
-    <div ref={containerRef} className={`relative ${className}`}>
+    <div ref={containerRef} className={`relative z-30 ${className}`}>
       {/* User avatar button */}
       <button
         type="button"
@@ -141,7 +141,7 @@ export function UserFloatingMenu({ className = '' }: UserFloatingMenuProps) {
       <div
         role="menu"
         aria-label={t('common:user.menu', 'User menu')}
-        className={`absolute bottom-full left-0 mb-2 min-w-[200px] rounded-xl bg-surface border border-border overflow-hidden transition-all duration-200 ease-out ${
+        className={`absolute bottom-full left-0 z-40 mb-2 min-w-[200px] rounded-xl bg-surface border border-border overflow-hidden transition-all duration-200 ease-out ${
           isExpanded
             ? 'opacity-100 translate-y-0 pointer-events-auto'
             : 'opacity-0 translate-y-2 pointer-events-none'

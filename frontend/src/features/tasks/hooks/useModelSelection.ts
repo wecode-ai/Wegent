@@ -75,6 +75,8 @@ export interface UseModelSelectionOptions {
   taskId: number | null
   /** Task's model_id from backend - used as fallback when no session preference exists */
   taskModelId?: string | null
+  /** Initial force override value when restoring a persisted non-task selection */
+  initialForceOverride?: boolean
   /** Currently selected team with bot details */
   selectedTeam: TeamWithBotDetails | null
   /** Whether the selector is disabled (e.g., viewing existing task) */
@@ -160,6 +162,7 @@ export function useModelSelection({
   teamId,
   taskId,
   taskModelId,
+  initialForceOverride,
   selectedTeam,
   disabled = false,
   modelCategoryType = 'llm',
@@ -326,6 +329,7 @@ export function useModelSelection({
     if (!hasInitializedRef.current || teamChanged || taskChanged) {
       isRestoringRef.current = true
       let restoredModel: Model | null = null
+      let restoredForceOverride: boolean | undefined
 
       // Priority 1: Use taskModelId from API (if exists and not default)
       // Search in ALL models, not just filtered ones, since task already has a recorded model
@@ -333,6 +337,7 @@ export function useModelSelection({
         const foundModel = models.find(m => m.name === taskModelId || m.displayName === taskModelId)
         if (foundModel) {
           restoredModel = foundModel
+          restoredForceOverride = initialForceOverride
         }
       }
 
@@ -350,7 +355,7 @@ export function useModelSelection({
           })
           if (foundModel) {
             restoredModel = foundModel
-            setForceOverrideState(preference.forceOverride)
+            restoredForceOverride = preference.forceOverride
           }
         }
       }
@@ -360,23 +365,29 @@ export function useModelSelection({
         const teamDefaultModel = getTeamDefaultModel()
         if (teamDefaultModel) {
           restoredModel = teamDefaultModel
+          restoredForceOverride = false
         }
       }
 
       // Priority 4: Use default if showDefaultOption and no model found
       if (!restoredModel && showDefaultOption) {
         restoredModel = { name: DEFAULT_MODEL_NAME, provider: '', modelId: '' }
-        setForceOverrideState(false)
+        restoredForceOverride = false
       }
 
       if (restoredModel) {
         setSelectedModel(restoredModel)
-        if (restoredModel.name !== DEFAULT_MODEL_NAME) {
+        if (restoredModel.name === DEFAULT_MODEL_NAME) {
+          setForceOverrideState(false)
+        } else if (restoredForceOverride !== undefined) {
+          setForceOverrideState(restoredForceOverride)
+        } else {
           setForceOverrideState(true)
         }
       } else if (teamChanged) {
         // Clear selection on team change if no model found
         setSelectedModel(null)
+        setForceOverrideState(false)
       }
 
       hasInitializedRef.current = true
@@ -407,6 +418,7 @@ export function useModelSelection({
     teamId,
     taskId,
     taskModelId,
+    initialForceOverride,
     compatibleProvider,
   ])
 

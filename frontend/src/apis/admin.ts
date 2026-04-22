@@ -452,6 +452,93 @@ export interface AdminDeviceActionResponse {
   message: string
 }
 
+// Template Resource Types
+export interface TemplateResourceGhostConfig {
+  systemPrompt: string
+  mcpServers?: Record<string, unknown>
+  skills?: string[]
+  skillRefs?: TemplateResourceSkillRef[]
+}
+
+export interface TemplateResourceSkillRef {
+  name: string
+  namespace: string
+  userId: number
+}
+
+export interface TemplateResourceBotConfig {
+  shellName: string
+  agentConfig?: Record<string, unknown>
+}
+
+export interface TemplateResourceTeamConfig {
+  collaborationModel: string
+  bindMode?: string[]
+  description?: string
+}
+
+export interface TemplateResourceSubscriptionConfig {
+  promptTemplate: string
+  retryCount: number
+  timeoutSeconds: number
+}
+
+export interface TemplateResourceTeamRef {
+  name: string
+  namespace: string
+}
+
+export interface TemplateResourceQueueConfig {
+  visibility: string
+  triggerMode: string
+  teamRef?: TemplateResourceTeamRef
+}
+
+export interface TemplateResources {
+  ghost?: TemplateResourceGhostConfig
+  bot?: TemplateResourceBotConfig
+  team?: TemplateResourceTeamConfig
+  subscription?: TemplateResourceSubscriptionConfig
+  queue?: TemplateResourceQueueConfig
+}
+
+export interface AdminTemplate {
+  id: number
+  name: string
+  displayName: string
+  description?: string | null
+  category: string
+  tags: string[]
+  icon?: string | null
+  resources: TemplateResources
+  createdAt: string
+  updatedAt: string
+}
+
+export interface AdminTemplateListResponse {
+  total: number
+  items: AdminTemplate[]
+}
+
+export interface AdminTemplateCreate {
+  name: string
+  displayName: string
+  description?: string
+  category?: string
+  tags?: string[]
+  icon?: string
+  resources: TemplateResources
+}
+
+export interface AdminTemplateUpdate {
+  displayName?: string
+  description?: string
+  category?: string
+  tags?: string[]
+  icon?: string
+  resources?: TemplateResources
+}
+
 // Admin API Services
 export const adminApis = {
   // ==================== User Management ====================
@@ -1031,5 +1118,40 @@ export const adminApis = {
       user_id: userId,
       target_host: targetHost,
     })
+  },
+
+  // ==================== Template Management ====================
+
+  /**
+   * Get list of all templates with optional category filter
+   */
+  async getTemplates(category?: string): Promise<AdminTemplateListResponse> {
+    const params = new URLSearchParams()
+    if (category) {
+      params.append('category', category)
+    }
+    const query = params.toString()
+    return apiClient.get(`/admin/templates${query ? `?${query}` : ''}`)
+  },
+
+  /**
+   * Create a new template
+   */
+  async createTemplate(data: AdminTemplateCreate): Promise<AdminTemplate> {
+    return apiClient.post('/admin/templates', data)
+  },
+
+  /**
+   * Update an existing template
+   */
+  async updateTemplate(templateId: number, data: AdminTemplateUpdate): Promise<AdminTemplate> {
+    return apiClient.put(`/admin/templates/${templateId}`, data)
+  },
+
+  /**
+   * Delete a template (soft delete)
+   */
+  async deleteTemplate(templateId: number): Promise<void> {
+    return apiClient.delete(`/admin/templates/${templateId}`)
   },
 }

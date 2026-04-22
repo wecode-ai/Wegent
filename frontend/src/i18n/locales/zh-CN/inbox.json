@@ -25,6 +25,7 @@
     "auto_process": "自动处理",
     "auto_process_enabled": "启用自动处理",
     "auto_process_team": "处理智能体",
+    "auto_process_model": "处理模型",
     "auto_process_subscription": "关联订阅",
     "auto_process_mode_label": "处理模式",
     "auto_process_mode_subscription": "订阅器模式",

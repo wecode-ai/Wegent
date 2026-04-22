@@ -19,6 +19,7 @@ import PublicGhostList from '@/features/admin/components/PublicGhostList'
 import PublicShellList from '@/features/admin/components/PublicShellList'
 import PublicTeamList from '@/features/admin/components/PublicTeamList'
 import PublicBotList from '@/features/admin/components/PublicBotList'
+import TemplateList from '@/features/admin/components/TemplateList'
 import ApiKeyManagement from '@/features/admin/components/ApiKeyManagement'
 import SystemConfigPanel from '@/features/admin/components/SystemConfigPanel'
 import BackgroundExecutionMonitorPanel from '@/features/admin/components/BackgroundExecutionMonitorPanel'
@@ -79,6 +80,7 @@ function AdminContent() {
         'public-shells',
         'public-teams',
         'public-bots',
+        'templates',
         'api-keys',
         'system-config',
         'im-channels',
@@ -143,6 +145,8 @@ function AdminContent() {
         return <PublicTeamList />
       case 'public-bots':
         return <PublicBotList />
+      case 'templates':
+        return <TemplateList />
       case 'api-keys':
         return <ApiKeyManagement />
       case 'system-config':
