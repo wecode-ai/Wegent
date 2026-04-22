@@ -55,6 +55,7 @@ export function QueueSidebar({
   const { queues, queuesLoading, selectedQueueId, setSelectedQueueId, unreadCount, refreshQueues } =
     useInboxContext()
   const [hoveredQueueId, setHoveredQueueId] = useState<number | null>(null)
+  const [openQueueMenuId, setOpenQueueMenuId] = useState<number | null>(null)
   const [choiceDialogOpen, setChoiceDialogOpen] = useState(false)
   const [templateDialogOpen, setTemplateDialogOpen] = useState(false)
 
@@ -104,16 +105,22 @@ export function QueueSidebar({
             {queues.map(queue => {
               const isSelected = queue.id === selectedQueueId
               const isHovered = queue.id === hoveredQueueId
+              const isMenuOpen = queue.id === openQueueMenuId
+              const showMenu = isHovered || isMenuOpen
               const queueUnread = unreadCount?.byQueue?.[queue.id] || 0
 
               return (
                 <div
                   key={queue.id}
                   className={cn(
-                    'group flex items-center gap-2 rounded-lg px-3 py-2 cursor-pointer transition-colors',
+                    'group relative flex items-center gap-2 rounded-lg py-2 pl-3 cursor-pointer transition-colors',
+                    showMenu ? 'pr-11' : 'pr-3',
                     isSelected ? 'bg-primary/10 text-primary' : 'hover:bg-surface text-text-primary'
                   )}
-                  onClick={() => setSelectedQueueId(queue.id)}
+                  onClick={() => {
+                    setOpenQueueMenuId(null)
+                    setSelectedQueueId(queue.id)
+                  }}
                   onMouseEnter={() => setHoveredQueueId(queue.id)}
                   onMouseLeave={() => setHoveredQueueId(null)}
                   data-testid={`queue-item-${queue.id}`}
@@ -137,20 +144,45 @@ export function QueueSidebar({
                     )}
                   </div>
 
-                  {/* Unread badge or actions */}
-                  <div className="flex items-center gap-1">
-                    {queueUnread > 0 && !isHovered && (
+                  {/* Unread badge */}
+                  {queueUnread > 0 && !showMenu && (
+                    <div className="flex items-center gap-1">
                       <Badge variant="error" size="sm">
                         {queueUnread}
                       </Badge>
-                    )}
-                    {(isHovered || isSelected) && (
-                      <DropdownMenu>
+                    </div>
+                  )}
+
+                  {/* Actions menu */}
+                  <div className="absolute right-2 top-1/2 -translate-y-1/2">
+                    <div
+                      className={cn(
+                        'transition-opacity duration-150',
+                        showMenu ? 'opacity-100' : 'pointer-events-none opacity-0'
+                      )}
+                      onClick={event => event.stopPropagation()}
+                      onMouseDown={event => event.stopPropagation()}
+                      onPointerDown={event => event.stopPropagation()}
+                    >
+                      <DropdownMenu
+                        onOpenChange={open => {
+                          setOpenQueueMenuId(current => {
+                            if (open) {
+                              return queue.id
+                            }
+
+                            return current === queue.id ? null : current
+                          })
+                        }}
+                      >
                         <DropdownMenuTrigger asChild onClick={e => e.stopPropagation()}>
                           <Button
                             variant="ghost"
                             size="icon"
-                            className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity"
+                            className="h-7 w-7 rounded-md"
+                            data-testid={`queue-menu-trigger-${queue.id}`}
+                            onMouseDown={event => event.stopPropagation()}
+                            onPointerDown={event => event.stopPropagation()}
                           >
                             <MoreHorizontal className="h-4 w-4" />
                           </Button>
@@ -176,7 +208,7 @@ export function QueueSidebar({
                           </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
-                    )}
+                    </div>
                   </div>
                 </div>
               )

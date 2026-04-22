@@ -8,6 +8,13 @@ export interface TemplateResourceGhostConfig {
   systemPrompt: string
   mcpServers?: Record<string, unknown>
   skills?: string[]
+  skillRefs?: TemplateResourceSkillRef[]
+}
+
+export interface TemplateResourceSkillRef {
+  name: string
+  namespace: string
+  userId: number
 }
 
 export interface TemplateResourceBotConfig {
@@ -68,9 +75,7 @@ export interface TemplateInstantiateResponse {
 }
 
 export async function listTemplates(category?: string): Promise<TemplateListResponse> {
-  const url = category
-    ? `/templates?category=${encodeURIComponent(category)}`
-    : '/templates'
+  const url = category ? `/templates?category=${encodeURIComponent(category)}` : '/templates'
   return apiClient.get<TemplateListResponse>(url)
 }
 
@@ -78,8 +83,6 @@ export async function getTemplate(id: number): Promise<Template> {
   return apiClient.get<Template>(`/templates/${id}`)
 }
 
-export async function instantiateTemplate(
-  id: number
-): Promise<TemplateInstantiateResponse> {
+export async function instantiateTemplate(id: number): Promise<TemplateInstantiateResponse> {
   return apiClient.post<TemplateInstantiateResponse>(`/templates/${id}/instantiate`)
 }

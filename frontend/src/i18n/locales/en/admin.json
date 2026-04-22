@@ -10,6 +10,7 @@
     "public_bots": "Public Bots",
     "public_ghosts": "Public Ghosts",
     "public_shells": "Public Shells",
+    "templates": "Templates",
     "api_keys": "API Keys",
     "system_config": "System Config",
     "im_channels": "IM Channels",
@@ -865,6 +866,61 @@
       "upgrade_sent": "Upgrade command sent",
       "restart_sent": "Restart command sent",
       "migrate_sent": "Migrate command sent"
+    }
+  },
+  "templates": {
+    "title": "Template Management",
+    "description": "Manage system-level templates. Users can quickly create Inbox automation workflows from templates.",
+    "loading": "Loading templates...",
+    "no_templates": "No templates found",
+    "create_template": "Create Template",
+    "edit_template": "Edit Template",
+    "delete_template": "Delete Template",
+    "create_description": "Create a new system template. Users can instantiate it to create a complete Inbox automation workflow.",
+    "edit_description": "Edit the template's basic information and resource configuration.",
+    "tabs": {
+      "basic": "Basic Info",
+      "resources": "Resources"
+    },
+    "categories": {
+      "inbox": "Inbox Automation"
+    },
+    "form": {
+      "name": "Template Name",
+      "name_placeholder": "Enter unique template identifier (e.g., daily-standup)",
+      "name_hint": "Unique identifier for the template. Cannot be changed after creation. Only lowercase letters, numbers, and hyphens allowed.",
+      "display_name": "Display Name",
+      "display_name_placeholder": "Enter display name",
+      "description": "Description",
+      "description_placeholder": "Enter template description (optional)",
+      "category": "Category",
+      "icon": "Icon",
+      "icon_placeholder": "Enter an emoji icon (e.g., 📋)",
+      "icon_hint": "Use an emoji as the template icon",
+      "tags": "Tags",
+      "tags_placeholder": "Enter tags separated by commas (e.g., standup, summary)",
+      "tags_hint": "Separate multiple tags with commas",
+      "resources": "Resource Configuration (JSON)",
+      "resources_placeholder": "Enter resource configuration as JSON",
+      "resources_hint": "Defines resources created when the template is instantiated. Supports ghost, bot, team, subscription, and queue fields."
+    },
+    "confirm": {
+      "delete_title": "Delete Template",
+      "delete_message": "Are you sure you want to delete template \"{{name}}\"? This action cannot be undone. Resources already created from this template will not be affected."
+    },
+    "success": {
+      "created": "Template created successfully",
+      "updated": "Template updated successfully",
+      "deleted": "Template deleted successfully"
+    },
+    "errors": {
+      "load_failed": "Failed to load templates",
+      "create_failed": "Failed to create template",
+      "update_failed": "Failed to update template",
+      "delete_failed": "Failed to delete template",
+      "name_required": "Template name is required",
+      "display_name_required": "Display name is required",
+      "resources_invalid_json": "Resource configuration must be valid JSON"
     }
   }
 }

@@ -48,6 +48,7 @@ from .blocks import (
 from .execution import EventType, ExecutionEvent, ExecutionRequest
 from .knowledge_runtime_protocol import (
     BackendAttachmentStreamContentRef,
+    ContentRef,
     KnowledgeRuntimeAuth,
     PresignedUrlContentRef,
     RemoteDeleteDocumentIndexRequest,
@@ -124,6 +125,7 @@ __all__ = [
     "ExecutionEvent",
     "ExecutionRequest",
     "BackendAttachmentStreamContentRef",
+    "ContentRef",
     "PresignedUrlContentRef",
     "KnowledgeRuntimeAuth",
     "RemoteRagError",

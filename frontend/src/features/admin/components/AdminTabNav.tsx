@@ -29,6 +29,7 @@ import {
   Activity,
   MessageSquare,
   Monitor,
+  LayoutTemplate,
 } from 'lucide-react'
 
 export type AdminTabId =
@@ -40,6 +41,7 @@ export type AdminTabId =
   | 'public-shells'
   | 'public-teams'
   | 'public-bots'
+  | 'templates'
   | 'api-keys'
   | 'system-config'
   | 'im-channels'
@@ -65,6 +67,7 @@ export function AdminTabNav({ activeTab, onTabChange }: AdminTabNavProps) {
   const [indicatorStyle, setIndicatorStyle] = useState({ width: 0, left: 0 })
 
   // Tab items
+  // Tab items
   const tabs: TabItem[] = [
     { id: 'users', label: t('admin:tabs.users'), icon: Users },
     { id: 'public-models', label: t('admin:tabs.public_models'), icon: Cpu },
@@ -74,13 +77,13 @@ export function AdminTabNav({ activeTab, onTabChange }: AdminTabNavProps) {
     { id: 'public-shells', label: t('admin:tabs.public_shells'), icon: Terminal },
     { id: 'public-teams', label: t('admin:tabs.public_teams'), icon: UsersRound },
     { id: 'public-bots', label: t('admin:tabs.public_bots'), icon: Bot },
+    { id: 'templates', label: t('admin:tabs.templates'), icon: LayoutTemplate },
     { id: 'api-keys', label: t('admin:tabs.api_keys'), icon: KeyRound },
     { id: 'system-config', label: t('admin:tabs.system_config'), icon: Settings },
     { id: 'im-channels', label: t('admin:tabs.im_channels'), icon: MessageSquare },
     { id: 'monitor', label: t('admin:tabs.monitor'), icon: Activity },
     { id: 'device-monitor', label: t('admin:tabs.device_monitor'), icon: Monitor },
   ]
-
   // Update the indicator position when the active tab changes
   useEffect(() => {
     const updateIndicator = () => {

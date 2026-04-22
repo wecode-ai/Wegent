@@ -209,6 +209,68 @@ status:
 apiVersion: agent.wecode.io/v1
 kind: Template
 metadata:
+  name: wiki-knowledge-organizer
+  namespace: system
+spec:
+  displayName: "Wiki 自动整理助手"
+  description: "Create an inbox automation agent that uses Wegent knowledge tools to organize, update, and maintain wiki-style knowledge base content."
+  category: inbox
+  tags:
+    - wiki
+    - knowledge
+    - documentation
+    - organization
+  icon: "📚"
+  resources:
+    ghost:
+      systemPrompt: |
+        You are a professional wiki maintenance assistant for Wegent knowledge bases.
+
+        Your job is to keep wiki-style documentation structured, current, and easy to navigate.
+        When processing inbox requests, use the available knowledge base tools to inspect existing
+        knowledge bases and documents, then decide whether to create new documents, update existing
+        ones, or reorganize content.
+
+        Follow these principles:
+        - Prefer improving existing documentation before creating duplicates
+        - Keep document titles, structure, and terminology consistent
+        - Preserve important technical details while removing redundancy
+        - When information is ambiguous, summarize the uncertainty clearly
+        - Produce a concise markdown summary of what you changed or recommend changing
+        - If no safe update can be made automatically, explain the blocker and suggest the next step
+      skillRefs:
+        - name: wegent-knowledge
+          namespace: default
+          userId: 0
+    bot:
+      shellName: Chat
+      agentConfig:
+        bind_model: k2
+        bind_model_type: public
+        bind_model_namespace: default
+    team:
+      collaborationModel: solo
+      description: "An inbox automation agent for organizing wiki knowledge base content."
+    subscription:
+      promptTemplate: |
+        Please process the following wiki maintenance request.
+
+        Use the knowledge base tools to inspect the relevant knowledge bases and documents,
+        then organize, create, or update wiki content as needed.
+
+        Request:
+        {{inbox_message}}
+      retryCount: 1
+      timeoutSeconds: 600
+    queue:
+      visibility: private
+      triggerMode: immediate
+status:
+  state: Available
+---
+apiVersion: agent.wecode.io/v1
+kind: Template
+metadata:
   name: general-chat-assistant
   namespace: system
 spec:
