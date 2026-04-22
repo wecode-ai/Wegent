@@ -101,8 +101,15 @@ class ArchiveService:
             )
 
             if not archive_result:
-                logger.warning(f"[ArchiveService] Archive failed for task {task_id}")
-                return None
+                # Executor may have uploaded the file before the response failed.
+                # Check MinIO directly so we don't discard a successful upload.
+                archive_result = self._try_recover_archive(task_id, storage_key)
+                if not archive_result:
+                    logger.warning(
+                        f"[ArchiveService] Archive failed for task {task_id}, "
+                        "file not found in storage either"
+                    )
+                    return None
 
             # Create archive info
             archive_info = ArchiveInfo(
@@ -299,11 +306,23 @@ class ArchiveService:
                 )
                 response.raise_for_status()
                 return response.json()
+        except httpx.HTTPStatusError as e:
+            logger.error(
+                f"[ArchiveService] HTTP error calling archive: "
+                f"task_id={task_id} status={e.response.status_code} "
+                f"body={e.response.text[:500]}"
+            )
+            return None
         except httpx.HTTPError as e:
-            logger.error(f"[ArchiveService] HTTP error calling archive: {e}")
+            logger.error(
+                f"[ArchiveService] HTTP error calling archive: "
+                f"task_id={task_id} error={e}"
+            )
             return None
         except Exception as e:
-            logger.error(f"[ArchiveService] Error calling archive: {e}")
+            logger.error(
+                f"[ArchiveService] Error calling archive: task_id={task_id} error={e}"
+            )
             return None
 
     async def _call_executor_restore(
@@ -356,6 +375,33 @@ class ArchiveService:
             logger.error(f"[ArchiveService] Error calling restore: {e}")
             return None
 
+    def _try_recover_archive(
+        self, task_id: int, storage_key: str
+    ) -> Optional[Dict[str, Any]]:
+        """Check if the archive file exists in storage despite a failed API call.
+
+        The executor may have successfully uploaded the file to MinIO before
+        the HTTP response failed. In that case we can still record the archive.
+        """
+        try:
+            if not archive_storage_service.archive_exists(storage_key):
+                return None
+
+            stat = archive_storage_service.client.stat_object(
+                archive_storage_service._bucket, storage_key
+            )
+            logger.info(
+                f"[ArchiveService] Recovered archive from storage: "
+                f"task_id={task_id} size={stat.size} bytes"
+            )
+            return {"size_bytes": stat.size}
+        except Exception as e:
+            logger.warning(
+                f"[ArchiveService] Failed to recover archive from storage: "
+                f"task_id={task_id} error={e}"
+            )
+            return None
+
     def _update_task_archive_info(
         self, db: Session, task: TaskResource, archive_info: ArchiveInfo
     ) -> None:
@@ -376,7 +422,10 @@ class ArchiveService:
 
             task.json = task_json
             flag_modified(task, "json")
-            db.add(task)
+            # Use merge() instead of add() because the task object may be
+            # bound to a different session (the caller creates a short-lived
+            # sync session while the task was loaded by the main async session).
+            db.merge(task)
             # Note: commit is done by caller
 
             logger.info(f"[ArchiveService] Updated archive info for task {task.id}")
