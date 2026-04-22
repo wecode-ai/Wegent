@@ -8,6 +8,7 @@ from app.core.config import settings
 from app.services.rag.gateway import RagGateway
 from app.services.rag.local_gateway import LocalRagGateway
 from app.services.rag.remote_gateway import RemoteRagGateway
+from shared.telemetry.decorators import trace_sync
 
 
 def _build_gateway(mode: str) -> RagGateway:
@@ -27,3 +28,9 @@ def get_query_gateway() -> RagGateway:
 
 def get_delete_gateway() -> RagGateway:
     return _build_gateway(settings.get_rag_runtime_mode("delete"))
+
+
+@trace_sync("rag.get_list_chunks_gateway")
+def get_list_chunks_gateway() -> RagGateway:
+    """Return the appropriate RagGateway (local or remote) based on the 'list_chunks' runtime mode."""
+    return _build_gateway(settings.get_rag_runtime_mode("list_chunks"))

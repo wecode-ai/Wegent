@@ -25,6 +25,7 @@
     "auto_process": "Auto Process",
     "auto_process_enabled": "Enable auto processing",
     "auto_process_team": "Processing Agent",
+    "auto_process_model": "Processing Model",
     "auto_process_subscription": "Linked Subscription",
     "auto_process_mode_label": "Processing Mode",
     "auto_process_mode_subscription": "Subscription Mode",

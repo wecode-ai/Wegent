@@ -24,6 +24,11 @@ export interface TeamRef {
   name: string
 }
 
+export interface ModelRef {
+  namespace: string
+  name: string
+}
+
 export interface SubscriptionRef {
   namespace: string
   name: string
@@ -40,6 +45,8 @@ export interface AutoProcessConfig {
   enabled: boolean
   mode?: 'subscription' | 'direct_agent'
   teamRef?: TeamRef
+  modelRef?: ModelRef
+  forceOverrideBotModel?: boolean
   subscriptionRef?: SubscriptionRef
   triggerMode: TriggerMode
   scheduleInterval?: number

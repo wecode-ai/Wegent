@@ -27,6 +27,10 @@ import {
 } from '@/components/ui/select'
 import { SearchableSelect, type SearchableSelectItem } from '@/components/ui/searchable-select'
 import { Tag } from '@/components/ui/tag'
+import ModelSelector, {
+  DEFAULT_MODEL_NAME,
+  type Model,
+} from '@/features/tasks/components/selector/ModelSelector'
 import { TeamIconDisplay } from '@/features/settings/components/teams/TeamIconDisplay'
 import { toast } from 'sonner'
 import {
@@ -36,6 +40,7 @@ import {
   type WorkQueueCreateRequest,
   type WorkQueueUpdateRequest,
   type QueueVisibility,
+  type ModelRef,
   type SubscriptionRef,
   type TeamRef,
 } from '@/apis/work-queue'
@@ -78,6 +83,8 @@ export function QueueEditDialog({ queue, open, onOpenChange }: QueueEditDialogPr
 
   // Direct agent mode state - use shared TeamContext instead of local fetch
   const [selectedTeamId, setSelectedTeamId] = useState<string>('')
+  const [selectedModel, setSelectedModel] = useState<Model | null>(null)
+  const [forceOverrideBotModel, setForceOverrideBotModel] = useState(false)
   const { teams, isTeamsLoading: loadingTeams } = useTeamContext()
   const sharedBadgeStyle = getSharedBadgeStyle()
 
@@ -127,6 +134,17 @@ export function QueueEditDialog({ queue, open, onOpenChange }: QueueEditDialogPr
       setAutoProcessEnabled(queue.autoProcess?.enabled || false)
       setSelectedSubscriptionId('')
       setSelectedTeamId('')
+      setSelectedModel(
+        queue.autoProcess?.modelRef
+          ? {
+              name: queue.autoProcess.modelRef.name,
+              namespace: queue.autoProcess.modelRef.namespace,
+              provider: '',
+              modelId: '',
+            }
+          : null
+      )
+      setForceOverrideBotModel(queue.autoProcess?.forceOverrideBotModel || false)
     } else if (open && !queue) {
       setName('')
       setDisplayName('')
@@ -136,6 +154,8 @@ export function QueueEditDialog({ queue, open, onOpenChange }: QueueEditDialogPr
       setProcessMode('direct_agent')
       setSelectedSubscriptionId('')
       setSelectedTeamId('')
+      setSelectedModel(null)
+      setForceOverrideBotModel(false)
     }
   }, [open, queue])
 
@@ -252,6 +272,21 @@ export function QueueEditDialog({ queue, open, onOpenChange }: QueueEditDialogPr
     })
   }, [teams, sharedBadgeStyle])
 
+  const selectedTeam = useMemo(() => {
+    return teams.find(team => String(team.id) === selectedTeamId) ?? null
+  }, [teams, selectedTeamId])
+
+  const isEditingCurrentQueueTeam = useMemo(() => {
+    if (!queue?.autoProcess?.teamRef || !selectedTeam) {
+      return false
+    }
+
+    return (
+      queue.autoProcess.teamRef.name === selectedTeam.name &&
+      queue.autoProcess.teamRef.namespace === (selectedTeam.namespace || 'default')
+    )
+  }, [queue?.autoProcess?.teamRef, selectedTeam])
+
   const handleSubmit = async () => {
     if (!displayName.trim()) {
       toast.error(t('queues.display_name_placeholder'))
@@ -266,6 +301,8 @@ export function QueueEditDialog({ queue, open, onOpenChange }: QueueEditDialogPr
     // Build subscriptionRef / teamRef from selected values
     let subscriptionRef: SubscriptionRef | undefined
     let teamRef: TeamRef | undefined
+    let modelRef: ModelRef | undefined
+    let shouldForceOverrideBotModel = false
 
     if (autoProcessEnabled) {
       if (processMode === 'subscription' && selectedSubscriptionId) {
@@ -285,10 +322,17 @@ export function QueueEditDialog({ queue, open, onOpenChange }: QueueEditDialogPr
             name: team.name,
           }
         }
+
+        if (selectedModel && selectedModel.name !== DEFAULT_MODEL_NAME) {
+          modelRef = {
+            namespace: selectedModel.namespace || 'default',
+            name: selectedModel.name,
+          }
+          shouldForceOverrideBotModel = forceOverrideBotModel
+        }
       }
     }
 
-    setLoading(true)
     setLoading(true)
     try {
       if (isEditing && queue) {
@@ -302,6 +346,8 @@ export function QueueEditDialog({ queue, open, onOpenChange }: QueueEditDialogPr
             triggerMode: 'immediate',
             subscriptionRef,
             teamRef,
+            modelRef,
+            forceOverrideBotModel: shouldForceOverrideBotModel,
           },
         }
         await updateWorkQueue(queue.id, updateData)
@@ -318,6 +364,8 @@ export function QueueEditDialog({ queue, open, onOpenChange }: QueueEditDialogPr
             triggerMode: 'immediate',
             subscriptionRef,
             teamRef,
+            modelRef,
+            forceOverrideBotModel: shouldForceOverrideBotModel,
           },
         }
         await createWorkQueue(createData)
@@ -462,21 +510,52 @@ export function QueueEditDialog({ queue, open, onOpenChange }: QueueEditDialogPr
 
               {/* Team Selector – shown only in direct_agent mode, uses shared TeamContext */}
               {processMode === 'direct_agent' && (
-                <div className="space-y-2">
-                  <Label>{t('queues.auto_process_team')}</Label>
-                  <SearchableSelect
-                    value={selectedTeamId}
-                    onValueChange={setSelectedTeamId}
-                    items={teamSelectItems}
-                    loading={loadingTeams}
-                    placeholder={t('queues.select_team_placeholder')}
-                    searchPlaceholder={t('common:teams.search_team')}
-                    emptyText={t('queues.no_teams_available')}
-                    noMatchText={t('common:teams.no_match')}
-                    triggerClassName="w-full"
-                    contentClassName="max-w-[320px]"
-                  />
-                </div>
+                <>
+                  <div className="space-y-2">
+                    <Label>{t('queues.auto_process_team')}</Label>
+                    <SearchableSelect
+                      value={selectedTeamId}
+                      onValueChange={setSelectedTeamId}
+                      items={teamSelectItems}
+                      loading={loadingTeams}
+                      placeholder={t('queues.select_team_placeholder')}
+                      searchPlaceholder={t('common:teams.search_team')}
+                      emptyText={t('queues.no_teams_available')}
+                      noMatchText={t('common:teams.no_match')}
+                      triggerClassName="w-full"
+                      contentClassName="max-w-[320px]"
+                    />
+                  </div>
+
+                  {selectedTeam && (
+                    <div className="space-y-2">
+                      <Label>{t('queues.auto_process_model')}</Label>
+                      <div data-testid="queue-model-selector">
+                        <ModelSelector
+                          key={`queue-model-${queue?.id ?? 'new'}-${selectedTeam.id}-${queue?.autoProcess?.modelRef?.name ?? 'default'}`}
+                          selectedModel={selectedModel}
+                          setSelectedModel={setSelectedModel}
+                          forceOverride={forceOverrideBotModel}
+                          setForceOverride={setForceOverrideBotModel}
+                          selectedTeam={selectedTeam}
+                          disabled={loading || loadingTeams}
+                          teamId={null}
+                          taskId={queue?.id ?? null}
+                          taskModelId={
+                            isEditingCurrentQueueTeam
+                              ? (queue?.autoProcess?.modelRef?.name ?? null)
+                              : null
+                          }
+                          initialForceOverride={
+                            isEditingCurrentQueueTeam
+                              ? (queue?.autoProcess?.forceOverrideBotModel ?? false)
+                              : false
+                          }
+                        />
+                      </div>
+                    </div>
+                  )}
+                </>
               )}
             </>
           )}

@@ -10,6 +10,7 @@
     "public_bots": "公共机器人",
     "public_ghosts": "公共 Ghost",
     "public_shells": "公共 Shell",
+    "templates": "模板管理",
     "api_keys": "密钥管理",
     "system_config": "系统配置",
     "im_channels": "IM 渠道",
@@ -865,6 +866,61 @@
       "upgrade_sent": "升级命令已发送",
       "restart_sent": "重启命令已发送",
       "migrate_sent": "迁移命令已发送"
+    }
+  },
+  "templates": {
+    "title": "模板管理",
+    "description": "管理系统级模板，用户可通过模板快速创建 Inbox 自动化工作流",
+    "loading": "加载模板中...",
+    "no_templates": "暂无模板",
+    "create_template": "创建模板",
+    "edit_template": "编辑模板",
+    "delete_template": "删除模板",
+    "create_description": "创建新的系统模板，用户可通过模板一键创建完整的 Inbox 自动化工作流。",
+    "edit_description": "编辑模板的基础信息和资源配置。",
+    "tabs": {
+      "basic": "基础信息",
+      "resources": "资源配置"
+    },
+    "categories": {
+      "inbox": "Inbox 自动化"
+    },
+    "form": {
+      "name": "模板名称",
+      "name_placeholder": "请输入模板唯一标识名称（如：daily-standup）",
+      "name_hint": "模板的唯一标识符，创建后不可修改，只允许小写字母、数字和连字符",
+      "display_name": "显示名称",
+      "display_name_placeholder": "请输入模板显示名称",
+      "description": "描述",
+      "description_placeholder": "请输入模板描述（可选）",
+      "category": "分类",
+      "icon": "图标",
+      "icon_placeholder": "请输入 Emoji 图标（如：📋）",
+      "icon_hint": "使用 Emoji 作为模板图标",
+      "tags": "标签",
+      "tags_placeholder": "请输入标签，多个标签用逗号分隔（如：standup, summary）",
+      "tags_hint": "多个标签用英文逗号分隔",
+      "resources": "资源配置（JSON）",
+      "resources_placeholder": "请输入资源配置 JSON",
+      "resources_hint": "定义模板实例化时创建的资源，支持 ghost、bot、team、subscription、queue 字段"
+    },
+    "confirm": {
+      "delete_title": "删除模板",
+      "delete_message": "确定要删除模板 \"{{name}}\" 吗？此操作无法撤销，已使用此模板创建的资源不受影响。"
+    },
+    "success": {
+      "created": "模板创建成功",
+      "updated": "模板更新成功",
+      "deleted": "模板删除成功"
+    },
+    "errors": {
+      "load_failed": "加载模板列表失败",
+      "create_failed": "创建模板失败",
+      "update_failed": "更新模板失败",
+      "delete_failed": "删除模板失败",
+      "name_required": "模板名称不能为空",
+      "display_name_required": "显示名称不能为空",
+      "resources_invalid_json": "资源配置必须是有效的 JSON 格式"
     }
   }
 }
