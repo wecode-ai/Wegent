@@ -6,12 +6,14 @@ from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.services.adapters.retriever_kinds import retriever_kinds_service
+from app.services.chat.config.model_resolver import (
+    build_default_headers_with_placeholders,
+)
 from app.services.knowledge.index_runtime import (
     KnowledgeBaseIndexInfo,
     get_kb_index_info,
     get_kb_index_info_by_record,
 )
-from app.services.rag.embedding.factory import _process_custom_headers_placeholders
 from app.services.rag.runtime_specs import (
     ConnectionTestRuntimeSpec,
     DeleteRuntimeSpec,
@@ -28,6 +30,34 @@ from app.services.rag.runtime_specs import (
     RuntimeRetrieverConfig,
 )
 from shared.utils.crypto import decrypt_api_key
+
+
+def _process_custom_headers_placeholders(
+    custom_headers: dict[str, Any], user_name: str | None = None
+) -> dict[str, Any]:
+    """
+    Process placeholders in custom headers.
+
+    Supports placeholder format: ${user.name}
+
+    Args:
+        custom_headers: Custom headers dict (may contain placeholders)
+        user_name: User name for placeholder replacement
+
+    Returns:
+        Custom headers with placeholders replaced
+    """
+    if not custom_headers or not isinstance(custom_headers, dict):
+        return custom_headers
+
+    # Build data sources for placeholder replacement
+    # Only support ${user.name} for now
+    data_sources: dict[str, dict[str, Any]] = {
+        "user": {"name": user_name or ""},
+    }
+
+    # Use existing build_default_headers_with_placeholders function
+    return build_default_headers_with_placeholders(custom_headers, data_sources)
 
 
 class RagRuntimeResolver:

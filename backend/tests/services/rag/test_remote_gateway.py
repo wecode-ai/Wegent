@@ -13,9 +13,9 @@ from app.core.config import settings
 from app.services.rag.gateway_factory import (
     get_delete_gateway,
     get_index_gateway,
+    get_list_chunks_gateway,
     get_query_gateway,
 )
-from app.services.rag.local_gateway import LocalRagGateway
 from app.services.rag.remote_gateway import RemoteRagGateway, RemoteRagGatewayError
 from app.services.rag.runtime_specs import (
     ConnectionTestRuntimeSpec,
@@ -69,7 +69,6 @@ async def test_remote_gateway_index_document_posts_runtime_request(mocker) -> No
     )
     gateway = RemoteRagGateway(
         base_url="http://knowledge-runtime",
-        token="runtime-token",
     )
     spec = IndexRuntimeSpec(
         knowledge_base_id=1,
@@ -109,7 +108,6 @@ async def test_remote_gateway_index_document_posts_runtime_request(mocker) -> No
     post_mock.assert_awaited_once()
     args, kwargs = post_mock.await_args
     assert args[0] == "http://knowledge-runtime/internal/rag/index"
-    assert kwargs["headers"] == {"Authorization": "Bearer runtime-token"}
     assert kwargs["json"] == {
         "knowledge_base_id": 1,
         "document_id": 2,
@@ -177,7 +175,6 @@ async def test_remote_gateway_query_omits_backend_only_route_fields(mocker) -> N
     )
     gateway = RemoteRagGateway(
         base_url="http://knowledge-runtime",
-        token="runtime-token",
     )
     spec = QueryRuntimeSpec(
         knowledge_base_ids=[1],
@@ -288,7 +285,6 @@ async def test_remote_gateway_translates_structured_remote_errors(mocker) -> Non
     )
     gateway = RemoteRagGateway(
         base_url="http://knowledge-runtime",
-        token="runtime-token",
     )
 
     with pytest.raises(
@@ -346,7 +342,6 @@ async def test_remote_gateway_wraps_transport_errors(mocker) -> None:
     )
     gateway = RemoteRagGateway(
         base_url="http://knowledge-runtime",
-        token="runtime-token",
     )
 
     with pytest.raises(RemoteRagGatewayError, match="transport error") as exc:
@@ -401,7 +396,6 @@ async def test_remote_gateway_delete_posts_resolved_retriever_config(mocker) -> 
     )
     gateway = RemoteRagGateway(
         base_url="http://knowledge-runtime",
-        token="runtime-token",
     )
     spec = DeleteRuntimeSpec(
         knowledge_base_id=1,
@@ -452,7 +446,6 @@ async def test_remote_gateway_purge_index_posts_runtime_request(mocker) -> None:
     )
     gateway = RemoteRagGateway(
         base_url="http://knowledge-runtime",
-        token="runtime-token",
     )
     spec = PurgeKnowledgeRuntimeSpec(
         knowledge_base_id=1,
@@ -500,7 +493,6 @@ async def test_remote_gateway_drop_index_posts_runtime_request(mocker) -> None:
     )
     gateway = RemoteRagGateway(
         base_url="http://knowledge-runtime",
-        token="runtime-token",
     )
     spec = DropKnowledgeIndexRuntimeSpec(
         knowledge_base_id=1,
@@ -550,7 +542,6 @@ async def test_remote_gateway_test_connection_posts_resolved_retriever_config(
     )
     gateway = RemoteRagGateway(
         base_url="http://knowledge-runtime",
-        token="runtime-token",
     )
     spec = ConnectionTestRuntimeSpec(
         retriever_config=RuntimeRetrieverConfig(
@@ -600,7 +591,6 @@ async def test_remote_gateway_list_chunks_posts_runtime_request(mocker) -> None:
     )
     gateway = RemoteRagGateway(
         base_url="http://knowledge-runtime",
-        token="runtime-token",
     )
     spec = ListChunksRuntimeSpec(
         knowledge_base_id=1,
@@ -661,29 +651,155 @@ async def test_remote_gateway_list_chunks_posts_runtime_request(mocker) -> None:
     }
 
 
-def test_gateway_factory_returns_local_gateways_by_default(monkeypatch) -> None:
-    monkeypatch.setattr(settings, "RAG_RUNTIME_MODE", "local")
-
-    assert isinstance(get_index_gateway(), LocalRagGateway)
-    assert isinstance(get_query_gateway(), LocalRagGateway)
-    assert isinstance(get_delete_gateway(), LocalRagGateway)
-
-
-def test_gateway_factory_returns_remote_gateways_when_enabled(monkeypatch) -> None:
-    monkeypatch.setattr(settings, "RAG_RUNTIME_MODE", "remote")
-
+def test_gateway_factory_always_returns_remote_gateway() -> None:
+    """Gateway factory should always return RemoteRagGateway instances."""
+    # All gateway getters should return RemoteRagGateway
     assert isinstance(get_index_gateway(), RemoteRagGateway)
     assert isinstance(get_query_gateway(), RemoteRagGateway)
     assert isinstance(get_delete_gateway(), RemoteRagGateway)
+    assert isinstance(get_list_chunks_gateway(), RemoteRagGateway)
+
+    # All getters should return the same singleton instance
+    assert get_index_gateway() is get_query_gateway()
+    assert get_query_gateway() is get_delete_gateway()
+    assert get_delete_gateway() is get_list_chunks_gateway()
 
 
-def test_gateway_factory_supports_per_operation_overrides(monkeypatch) -> None:
-    monkeypatch.setattr(
-        settings,
-        "RAG_RUNTIME_MODE",
-        {"default": "local", "query": "remote", "delete": "remote"},
+# ============================================================================
+# Authentication Tests
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_gateway_adds_auth_header_when_token_configured(mocker) -> None:
+    """Test that gateway adds Authorization header when auth_token is provided."""
+    post_mock = mocker.patch(
+        "httpx.AsyncClient.post",
+        return_value=_build_response(
+            url="http://knowledge-runtime/internal/rag/query",
+            status_code=200,
+            json_body={"records": [], "total": 0, "total_estimated_tokens": 0},
+        ),
+    )
+    gateway = RemoteRagGateway(
+        base_url="http://knowledge-runtime",
+        auth_token="test-auth-token-123",
+    )
+    spec = QueryRuntimeSpec(
+        knowledge_base_ids=[1],
+        query="test",
+        knowledge_base_configs=[
+            QueryKnowledgeBaseRuntimeConfig(
+                knowledge_base_id=1,
+                index_owner_user_id=1,
+                retriever_config=RuntimeRetrieverConfig(
+                    name="test",
+                    namespace="default",
+                    storage_config={"type": "elasticsearch", "url": "http://es:9200"},
+                ),
+                embedding_model_config=RuntimeEmbeddingModelConfig(
+                    model_name="test",
+                    model_namespace="default",
+                    resolved_config={"protocol": "openai", "model_id": "test-model"},
+                ),
+                retrieval_config=RuntimeRetrievalConfig(),
+            )
+        ],
     )
 
-    assert isinstance(get_index_gateway(), LocalRagGateway)
-    assert isinstance(get_query_gateway(), RemoteRagGateway)
-    assert isinstance(get_delete_gateway(), RemoteRagGateway)
+    await gateway.query(spec)
+
+    args, kwargs = post_mock.await_args
+    assert "headers" in kwargs
+    assert kwargs["headers"]["Authorization"] == "Bearer test-auth-token-123"
+
+
+@pytest.mark.asyncio
+async def test_gateway_no_auth_header_when_token_empty(mocker) -> None:
+    """Test that gateway does not add Authorization header when token is empty."""
+    post_mock = mocker.patch(
+        "httpx.AsyncClient.post",
+        return_value=_build_response(
+            url="http://knowledge-runtime/internal/rag/query",
+            status_code=200,
+            json_body={"records": [], "total": 0, "total_estimated_tokens": 0},
+        ),
+    )
+    gateway = RemoteRagGateway(
+        base_url="http://knowledge-runtime",
+        auth_token="",
+    )
+    spec = QueryRuntimeSpec(
+        knowledge_base_ids=[1],
+        query="test",
+        knowledge_base_configs=[
+            QueryKnowledgeBaseRuntimeConfig(
+                knowledge_base_id=1,
+                index_owner_user_id=1,
+                retriever_config=RuntimeRetrieverConfig(
+                    name="test",
+                    namespace="default",
+                    storage_config={"type": "elasticsearch", "url": "http://es:9200"},
+                ),
+                embedding_model_config=RuntimeEmbeddingModelConfig(
+                    model_name="test",
+                    model_namespace="default",
+                    resolved_config={"protocol": "openai", "model_id": "test-model"},
+                ),
+                retrieval_config=RuntimeRetrievalConfig(),
+            )
+        ],
+    )
+
+    await gateway.query(spec)
+
+    args, kwargs = post_mock.await_args
+    # When token is empty, headers should be empty dict
+    assert kwargs.get("headers") == {}
+
+
+@pytest.mark.asyncio
+async def test_gateway_uses_settings_token_when_not_provided(
+    mocker, monkeypatch
+) -> None:
+    """Test that gateway uses INTERNAL_SERVICE_TOKEN from settings when auth_token not provided."""
+    monkeypatch.setattr(settings, "INTERNAL_SERVICE_TOKEN", "settings-token-456")
+
+    post_mock = mocker.patch(
+        "httpx.AsyncClient.post",
+        return_value=_build_response(
+            url="http://knowledge-runtime/internal/rag/query",
+            status_code=200,
+            json_body={"records": [], "total": 0, "total_estimated_tokens": 0},
+        ),
+    )
+    # Create gateway without explicit auth_token
+    gateway = RemoteRagGateway(
+        base_url="http://knowledge-runtime",
+    )
+    spec = QueryRuntimeSpec(
+        knowledge_base_ids=[1],
+        query="test",
+        knowledge_base_configs=[
+            QueryKnowledgeBaseRuntimeConfig(
+                knowledge_base_id=1,
+                index_owner_user_id=1,
+                retriever_config=RuntimeRetrieverConfig(
+                    name="test",
+                    namespace="default",
+                    storage_config={"type": "elasticsearch", "url": "http://es:9200"},
+                ),
+                embedding_model_config=RuntimeEmbeddingModelConfig(
+                    model_name="test",
+                    model_namespace="default",
+                    resolved_config={"protocol": "openai", "model_id": "test-model"},
+                ),
+                retrieval_config=RuntimeRetrievalConfig(),
+            )
+        ],
+    )
+
+    await gateway.query(spec)
+
+    args, kwargs = post_mock.await_args
+    assert kwargs["headers"]["Authorization"] == "Bearer settings-token-456"

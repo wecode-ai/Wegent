@@ -34,6 +34,7 @@ from shared.models import (
     RemoteQueryResponse,
     RemoteRagError,
     RemoteTestConnectionRequest,
+    StorageTypesResponse,
 )
 
 
@@ -56,36 +57,54 @@ class RemoteRagGatewayError(RuntimeError):
         self.details = details
 
 
-def should_fallback_to_local(error: RemoteRagGatewayError) -> bool:
-    """Return whether a remote error is safe to retry locally."""
-
-    return error.retryable or (
-        error.status_code is not None and error.status_code >= 500
-    )
-
-
 class RemoteRagGateway:
     def __init__(
         self,
         *,
         base_url: str | None = None,
-        token: str | None = None,
         timeout: float = 30.0,
+        auth_token: str | None = None,
     ) -> None:
         self._base_url = (base_url or settings.KNOWLEDGE_RUNTIME_URL).rstrip("/")
-        self._token = token if token is not None else settings.INTERNAL_SERVICE_TOKEN
         self._timeout = timeout
-
-    def _build_headers(self) -> dict[str, str]:
-        return {"Authorization": f"Bearer {self._token}"}
+        # Priority: 1. explicit auth_token, 2. INTERNAL_SERVICE_TOKEN
+        self._auth_token = auth_token or settings.INTERNAL_SERVICE_TOKEN
 
     async def _post_model(self, path: str, payload: Any) -> dict[str, Any]:
+        headers = {}
+        if self._auth_token:
+            headers["Authorization"] = f"Bearer {self._auth_token}"
+
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
                 response = await client.post(
                     f"{self._base_url}{path}",
-                    headers=self._build_headers(),
                     json=payload.model_dump(mode="json", exclude_none=True),
+                    headers=headers,
+                )
+        except httpx.RequestError as exc:
+            raise RemoteRagGatewayError(
+                f"knowledge_runtime transport error: {exc}",
+                code="remote_transport_error",
+                retryable=True,
+                details={"path": path},
+            ) from exc
+
+        if response.is_error:
+            self._raise_remote_error(response)
+        return response.json()
+
+    async def _get(self, path: str) -> dict[str, Any]:
+        """Make a GET request to knowledge_runtime."""
+        headers = {}
+        if self._auth_token:
+            headers["Authorization"] = f"Bearer {self._auth_token}"
+
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                response = await client.get(
+                    f"{self._base_url}{path}",
+                    headers=headers,
                 )
         except httpx.RequestError as exc:
             raise RemoteRagGatewayError(
@@ -267,6 +286,15 @@ class RemoteRagGateway:
         del db
         payload = RemoteTestConnectionRequest(retriever_config=spec.retriever_config)
         return await self._post_model("/internal/rag/test-connection", payload)
+
+    async def get_storage_types(self) -> StorageTypesResponse:
+        """Get all supported storage types with their retrieval methods.
+
+        Returns:
+            StorageTypesResponse containing all supported storage types.
+        """
+        response_payload = await self._get("/internal/rag/storage-types")
+        return StorageTypesResponse.model_validate(response_payload)
 
 
 def _get_attachment_source_metadata(

@@ -15,18 +15,11 @@ from app.models.user import User
 from app.schemas.kind import Retriever
 from app.services.adapters.retriever_kinds import retriever_kinds_service
 from app.services.rag.gateway_factory import get_query_gateway
-from app.services.rag.local_gateway import LocalRagGateway
-from app.services.rag.remote_gateway import RemoteRagGatewayError
+from app.services.rag.remote_gateway import RemoteRagGateway, RemoteRagGatewayError
 from app.services.rag.runtime_specs import ConnectionTestRuntimeSpec
-from knowledge_engine.storage.factory import (
-    create_storage_backend_from_config,
-    get_all_storage_retrieval_methods,
-    get_supported_retrieval_methods,
-    get_supported_storage_types,
-)
 from shared.models import RuntimeRetrieverConfig
 
-# RAG module is heavy (llama_index, scipy, pandas, grpc) - skip in standalone mode
+# RAG requires knowledge_runtime service - skip in standalone mode
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -43,7 +36,7 @@ def _check_rag_available():
 
 # Static routes must be defined before dynamic routes to avoid conflicts
 @router.get("/storage-types/retrieval-methods")
-def get_storage_retrieval_methods():
+async def get_storage_retrieval_methods():
     """
     Get supported retrieval methods for all storage types.
 
@@ -61,14 +54,25 @@ def get_storage_retrieval_methods():
     }
     """
     _check_rag_available()
+
+    gateway = RemoteRagGateway()
+    response = await gateway.get_storage_types()
+
+    # Convert StorageTypesResponse to the expected format
+    data = {
+        type_info.type: type_info.retrieval_methods
+        for type_info in response.storage_types
+    }
+    storage_types = [type_info.type for type_info in response.storage_types]
+
     return {
-        "data": get_all_storage_retrieval_methods(),
-        "storage_types": get_supported_storage_types(),
+        "data": data,
+        "storage_types": storage_types,
     }
 
 
 @router.get("/storage-types/{storage_type}/retrieval-methods")
-def get_storage_type_retrieval_methods(storage_type: str):
+async def get_storage_type_retrieval_methods(storage_type: str):
     """
     Get supported retrieval methods for a specific storage type.
 
@@ -86,14 +90,22 @@ def get_storage_type_retrieval_methods(storage_type: str):
     """
     _check_rag_available()
 
-    try:
-        methods = get_supported_retrieval_methods(storage_type)
-        return {
-            "storage_type": storage_type,
-            "retrieval_methods": methods,
-        }
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    gateway = RemoteRagGateway()
+    response = await gateway.get_storage_types()
+
+    # Find the storage type in the response (case-insensitive comparison)
+    for type_info in response.storage_types:
+        if type_info.type.casefold() == storage_type.casefold():
+            return {
+                "storage_type": type_info.type,  # Return normalized form from registry
+                "retrieval_methods": type_info.retrieval_methods,
+            }
+
+    raise HTTPException(
+        status_code=400,
+        detail=f"Unsupported storage type: {storage_type}. "
+        f"Supported types: {[t.type for t in response.storage_types]}",
+    )
 
 
 @router.get("")
@@ -259,15 +271,6 @@ async def test_retriever_connection(
         }
 
     try:
-        create_storage_backend_from_config(
-            storage_type=storage_type,
-            url=url,
-            username=username,
-            password=password,
-            api_key=api_key,
-            index_strategy={"mode": "per_dataset"},
-            ext={},
-        )
         runtime_spec = ConnectionTestRuntimeSpec(
             retriever_config=RuntimeRetrieverConfig(
                 name="connection-test",
@@ -284,12 +287,13 @@ async def test_retriever_connection(
             )
         )
         gateway = get_query_gateway()
-        try:
-            return await gateway.test_connection(runtime_spec)
-        except RemoteRagGatewayError:
-            return await LocalRagGateway().test_connection(runtime_spec)
+        return await gateway.test_connection(runtime_spec)
 
     except ValueError as e:
+        return {"success": False, "message": str(e)}
+
+    except RemoteRagGatewayError as e:
+        logger.error(f"Retriever connection test failed: {str(e)}")
         return {"success": False, "message": str(e)}
 
     except Exception as e:

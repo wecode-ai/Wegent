@@ -2,7 +2,7 @@
 
 ## Overview
 
-This directory now holds the Backend-side runtime boundary for knowledge retrieval and indexing. It is no longer the home of the full execution implementation.
+This directory holds the Backend-side runtime boundary for knowledge retrieval and indexing. All RAG operations are now executed remotely through the `knowledge_runtime` service.
 
 Current architecture:
 
@@ -35,9 +35,8 @@ Control-plane logic lives primarily under `backend/app/services/knowledge/`.
 - `runtime_specs.py`: normalized runtime contracts
 - `runtime_resolver.py`: resolves CRD + KB metadata into runtime specs
 - `gateway.py`: common gateway protocol
-- `local_gateway.py`: local execution path
 - `remote_gateway.py`: remote execution path through `knowledge_runtime`
-- `gateway_factory.py`: chooses local / remote by `RAG_RUNTIME_MODE`
+- `gateway_factory.py`: provides singleton RemoteRagGateway instance
 
 ### Execution kernel
 
@@ -62,7 +61,7 @@ Several modules under `backend/app/services/rag/embedding/`, `storage/`, and `re
 
 It does not read Backend DB or own control-plane policy.
 
-## Current Request Flow
+## Request Flow
 
 ### Retrieval
 
@@ -71,10 +70,10 @@ chat_shell / internal callers
   -> /api/internal/rag/retrieve
   -> RagRuntimeResolver
   -> Backend route decision
-     -> direct_injection stays in Backend
-     -> rag_retrieval goes through RagGateway
-  -> LocalRagGateway or RemoteRagGateway
-  -> knowledge_engine (directly or via knowledge_runtime)
+     -> direct_injection: RemoteRagGateway.list_chunks()
+     -> rag_retrieval: RemoteRagGateway.query()
+  -> knowledge_runtime HTTP API
+  -> knowledge_engine
 ```
 
 Notes:
@@ -88,24 +87,12 @@ Notes:
 ```text
 Backend task or API
   -> RagRuntimeResolver
-  -> RagGateway
-  -> LocalRagGateway or RemoteRagGateway
-  -> knowledge_engine (directly or via knowledge_runtime)
+  -> RemoteRagGateway
+  -> knowledge_runtime HTTP API
+  -> knowledge_engine
 ```
 
 `/api/retrievers/test-connection` also routes through this gateway boundary.
-
-## Runtime Modes
-
-`RAG_RUNTIME_MODE` controls whether each operation executes locally or remotely.
-
-Supported shapes:
-
-- `"local"`
-- `"remote"`
-- per-operation map such as `{"default": "local", "query": "remote"}`
-
-The current rollout target keeps local mode as the default while remote parity continues to harden.
 
 ## Content Transport
 
@@ -125,7 +112,6 @@ The following areas are intentionally not part of this boundary yet:
 - `summary_vector_index`
 - `tableRAG`
 - MCP `search`
-- full remote-primary rollout
 
 ## Practical Rule
 

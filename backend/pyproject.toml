@@ -110,21 +110,8 @@ dependencies = [
     "dingtalk-stream>=0.24.0",
     # Telegram Bot SDK for IM channel integration
     "python-telegram-bot>=21.0",
-    # RAG (Retrieval-Augmented Generation) dependencies
-    "llama-index-core>=0.12.0",
-    "llama-index-vector-stores-elasticsearch>=0.4.0",
-    "llama-index-vector-stores-qdrant>=0.9.0", # Includes qdrant-client as dependency
-    "llama-index-vector-stores-milvus>=0.4.0",
-    # Pin pymilvus<2.6.4 due to AsyncMilvusClient event loop bug
-    # See: https://github.com/run-llama/llama_index/issues/20313
-    "pymilvus>=2.4.0,<2.6.4",
-    "llama-index-embeddings-openai>=0.3.0",
-    "llama-index-readers-file>=0.4.0",
-    "docx2txt>=0.8", # Required by llama-index-readers-file for Word document parsing
     # Chat Shell (local workspace dependency for Package mode)
     "wegent-chat-shell",
-    # Knowledge Engine (monorepo workspace dependency)
-    "wegent-knowledge-engine",
     # Shared utilities (monorepo workspace dependency)
     "wegent-shared",
     "minio>=7.2.20",
@@ -132,7 +119,6 @@ dependencies = [
 
 [tool.uv.sources]
 wegent-chat-shell = { path = "../chat_shell", editable = true }
-wegent-knowledge-engine = { path = "../knowledge_engine", editable = true }
 wegent-shared = { path = "../shared", editable = true }
 
 [dependency-groups]
@@ -193,7 +179,7 @@ use_parentheses = true
 ensure_newline_before_comments = true
 skip = ["alembic", ".venv", "venv"]
 skip_gitignore = true
-known_first_party = ["app", "shared", "chat_shell", "knowledge_engine"]
+known_first_party = ["app", "shared", "chat_shell"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

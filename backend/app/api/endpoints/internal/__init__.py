@@ -18,7 +18,7 @@ from .tables import router as tables_router
 from .workspace_archives import router as workspace_archives_router
 
 # RAG router is conditionally imported based on STANDALONE_MODE
-# RAG module is heavy (llama_index, scipy, pandas, grpc) - skip in standalone mode
+# RAG requires knowledge_runtime service - skip in standalone mode
 if not settings.STANDALONE_MODE:
     from .rag import router as rag_router
 
