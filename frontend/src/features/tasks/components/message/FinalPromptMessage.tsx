@@ -67,8 +67,7 @@ export default function FinalPromptMessage({
 
   // Single source of truth: isPendingConfirmation from pipeline_stage_info.is_pending_confirmation
   const showPipelineActions = isPendingConfirmation
-  const showForwardAction =
-    !showPipelineActions && !!taskId && !!subtaskId && !!onForwardClick && !isEditing
+  const showForwardAction = !!taskId && !!subtaskId && !!onForwardClick && !isEditing
 
   const handleCopy = async () => {
     try {
