@@ -158,6 +158,9 @@ function AdminContent() {
         return <BackgroundExecutionMonitorPanel />
       case 'device-monitor':
         return <DeviceMonitorPanel />
+      case 'transition-pages':
+        router.push('/admin/transition-pages')
+        return <UserList />
       default:
         return <UserList />
     }
