@@ -711,10 +711,9 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     }
   }
 
-  // Trigger task detail refresh and manage WebSocket room when selectedTask changes
-  // NOTE: joinTask is called here, and SocketContext's joinTask already has deduplication logic
-  // (joinedTasksRef.current.has(taskId) check), so multiple calls are safe but wasteful.
-  // We only call joinTask when isConnected is true to avoid unnecessary calls.
+  // Effect 1: Handle task selection changes
+  // When selectedTask changes, leave old room and join new room
+  // This effect only reacts to selectedTask changes, not isConnected
   useEffect(() => {
     const currentTaskId = selectedTask?.id ?? null
     const previousTaskId = previousTaskIdRef.current
@@ -728,8 +727,8 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     previousTaskIdRef.current = currentTaskId
 
     if (selectedTask) {
-      // Only join task room when WebSocket is connected
-      // This prevents duplicate joins when both selectedTask and isConnected change
+      // Join task room when WebSocket is connected
+      // joinTask has built-in deduplication, so it's safe to call multiple times
       if (isConnected) {
         joinTask(selectedTask.id)
       }
@@ -738,14 +737,22 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     } else {
       setSelectedTaskDetail(null)
     }
+    // Note: isConnected is intentionally NOT in dependencies - reconnect logic is handled by Effect 2
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedTask, leaveTask, joinTask, isConnected])
+  }, [selectedTask, leaveTask, joinTask])
 
-  // NOTE: Removed separate isConnected useEffect to prevent duplicate joinTask calls.
-  // The selectedTask useEffect above now handles both cases:
-  // 1. When selectedTask changes (and isConnected is true)
-  // 2. When isConnected changes (and selectedTask is set)
-  // This is because we added isConnected to the dependency array.
+  // Effect 2: Handle WebSocket reconnection
+  // When WebSocket reconnects (isConnected changes from false to true),
+  // rejoin the current task room to resume real-time updates
+  useEffect(() => {
+    // Only proceed if WebSocket is connected and there is a selected task
+    if (isConnected && selectedTask) {
+      // Rejoin the task room to ensure we receive real-time updates
+      // joinTask has built-in deduplication (joinedTasksRef), so it's safe to call again
+      joinTask(selectedTask.id)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isConnected])
 
   // Mark task as viewed when selectedTaskDetail is loaded
   // This ensures we have the correct status and timestamps from the backend

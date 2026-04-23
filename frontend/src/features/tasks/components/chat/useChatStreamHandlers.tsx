@@ -452,6 +452,16 @@ export function useChatStreamHandlers({
       const message = overrideMessage?.trim() || taskInputMessage.trim()
       if (!message && !shouldHideChatInput) return
 
+      // Check if team is selected before sending
+      if (!selectedTeam?.id) {
+        toast({
+          variant: 'destructive',
+          title: t('chat:errors.team_not_selected') || '请选择智能体',
+          description: t('chat:errors.team_not_selected_description') || '请从列表中选择一个智能体后开始对话',
+        })
+        return
+      }
+
       if (!isAttachmentReadyToSend) {
         toast({
           variant: 'destructive',

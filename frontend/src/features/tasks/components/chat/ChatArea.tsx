@@ -116,7 +116,7 @@ function ChatAreaContent({
   const { quote, clearQuote, formatQuoteForMessage } = useQuote()
 
   // Task context
-  const { selectedTaskDetail, setSelectedTask, accessDenied } = useTaskContext()
+  const { selectedTask, selectedTaskDetail, setSelectedTask, accessDenied } = useTaskContext()
 
   // Use useTaskStateMachine hook for reactive state updates (SINGLE SOURCE OF TRUTH per AGENTS.md)
   const { state: taskState } = useTaskStateMachine(selectedTaskDetail?.id)
@@ -313,12 +313,14 @@ function ChatAreaContent({
   useEffect(() => {
     if (filteredTeams.length === 0) return
 
-    // Extract team ID from task detail
+    // Extract team ID from task detail or selectedTask as fallback
+    // selectedTask is set immediately when clicking a task from history
+    // selectedTaskDetail may take time to load and may not include team info
     const detailTeamId = selectedTaskDetail?.team
       ? typeof selectedTaskDetail.team === 'number'
         ? selectedTaskDetail.team
         : (selectedTaskDetail.team as Team).id
-      : null
+      : selectedTask?.team_id || null
 
     // Case 1: Sync from task detail (HIGHEST PRIORITY)
     // Only sync when URL taskId matches taskDetail.id to prevent race conditions
@@ -389,6 +391,7 @@ function ChatAreaContent({
     }
   }, [
     filteredTeams,
+    selectedTask,
     selectedTaskDetail,
     taskIdFromUrl,
     selectedTeam,
