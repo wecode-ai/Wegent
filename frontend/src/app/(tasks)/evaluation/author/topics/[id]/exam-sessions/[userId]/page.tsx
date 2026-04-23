@@ -438,6 +438,31 @@ export default function ExamSessionDetailPage() {
   const [detail, setDetail] = useState<ExamSessionDetail | null>(null)
   const [loading, setLoading] = useState(true)
 
+  // Local duration counter for exam/review phases (elapsed time, not countdown)
+  const [elapsedSeconds, setElapsedSeconds] = useState(0)
+
+  // Sync with server value
+  useEffect(() => {
+    if (detail?.session?.exam_duration_seconds !== null) {
+      setElapsedSeconds(detail?.session?.exam_duration_seconds || 0)
+    }
+  }, [detail?.session?.exam_duration_seconds])
+
+  // Local timer for exam and review phases - increment elapsed time
+  useEffect(() => {
+    if (
+      !detail?.session ||
+      (detail.session.current_phase !== 'exam' && detail.session.current_phase !== 'review')
+    )
+      return
+
+    const interval = setInterval(() => {
+      setElapsedSeconds(prev => prev + 1)
+    }, 1000)
+
+    return () => clearInterval(interval)
+  }, [detail?.session.current_phase])
+
   const loadDetail = useCallback(async () => {
     setLoading(true)
     try {
@@ -552,9 +577,15 @@ export default function ExamSessionDetailPage() {
                     <p className="text-xs text-gray-500 mb-1">考试用时</p>
                     <p className="text-sm font-medium text-gray-900 flex items-center gap-1">
                       <Clock className="w-3 h-3" />
-                      {detail.session.exam_duration_seconds
-                        ? formatDuration(detail.session.exam_duration_seconds)
-                        : '-'}
+                      {/* For exam/review: show live elapsed time; for completed: show server value */}
+                      {detail.session.current_phase === 'exam' ||
+                      detail.session.current_phase === 'review'
+                        ? elapsedSeconds > 0
+                          ? formatDuration(elapsedSeconds)
+                          : '-'
+                        : detail.session.exam_duration_seconds !== null
+                          ? formatDuration(detail.session.exam_duration_seconds)
+                          : '-'}
                     </p>
                   </div>
                   <div>

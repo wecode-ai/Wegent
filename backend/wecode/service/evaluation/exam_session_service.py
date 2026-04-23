@@ -190,14 +190,27 @@ class ExamSessionService:
 
         # Calculate actual exam duration (exam + review phases only, excluding intro)
         exam_duration_seconds = None
-        if exam_started_at and phase == "completed" and session.completed_at:
-            # Calculate time from exam start to completion
-            exam_start_dt = datetime.fromtimestamp(
-                int(exam_started_at), tz=timezone.utc
-            )
-            exam_duration_seconds = int(
-                (session.completed_at - exam_start_dt).total_seconds()
-            )
+        if exam_started_at and phase == "completed":
+            if session.completed_at:
+                # Normal case: completed_at is set
+                exam_start_dt = datetime.fromtimestamp(
+                    int(exam_started_at), tz=timezone.utc
+                )
+                exam_duration_seconds = int(
+                    (session.completed_at - exam_start_dt).total_seconds()
+                )
+            elif review_started_at:
+                # Fallback: use review_started_at as approximate completion time
+                # This handles cases where completed_at wasn't saved properly
+                exam_start_dt = datetime.fromtimestamp(
+                    int(exam_started_at), tz=timezone.utc
+                )
+                review_start_dt = datetime.fromtimestamp(
+                    int(review_started_at), tz=timezone.utc
+                )
+                exam_duration_seconds = int(
+                    (review_start_dt - exam_start_dt).total_seconds()
+                )
         elif exam_started_at and phase in ["exam", "review"]:
             # For ongoing exams, calculate from exam start to now
             exam_start_dt = datetime.fromtimestamp(
@@ -540,6 +553,8 @@ class ExamSessionService:
             attributes.flag_modified(session, "extra_data")
         elif target_phase == "completed":
             session.completed_at = datetime.now(timezone.utc)
+            # Mark extra_data as modified since completed_at is stored in extra_data
+            attributes.flag_modified(session, "extra_data")
 
         db.commit()
         db.refresh(session)
@@ -562,6 +577,8 @@ class ExamSessionService:
 
         session.current_phase = "completed"
         session.completed_at = datetime.now(timezone.utc)
+        # Mark extra_data as modified since completed_at is stored in extra_data
+        attributes.flag_modified(session, "extra_data")
 
         db.commit()
         db.refresh(session)
