@@ -106,7 +106,9 @@
     "video_download_started": "Download started",
     "submit_hint": "Submission Hint",
     "submit_hint_placeholder": "Enter a hint to display on the submission page (Markdown supported)",
-    "submit_hint_hint": "Supports Markdown formatting. Will be shown on preview submission, confirm submission, and exam ended pages"
+    "submit_hint_hint": "Supports Markdown formatting. Will be shown on preview submission, confirm submission, and exam ended pages",
+    "not_visible_until": "Earliest Visible Time",
+    "not_visible_until_hint": "If set, respondents cannot access the exam before this time. Leave empty to allow immediate access."
   },
   "versions": {
     "current": "Current",

@@ -106,7 +106,9 @@
     "video_download_started": "开始下载",
     "submit_hint": "交卷提示",
     "submit_hint_placeholder": "请输入交卷提示，支持 Markdown 格式",
-    "submit_hint_hint": "支持 Markdown 格式，将在交卷预览、确认交卷、考试已结束等位置展示"
+    "submit_hint_hint": "支持 Markdown 格式，将在交卷预览、确认交卷、考试已结束等位置展示",
+    "not_visible_until": "最早可见时间",
+    "not_visible_until_hint": "设置后，答题人在此时间之前无法访问考试。留空表示立即允许访问。"
   },
   "versions": {
     "current": "当前版本",

@@ -652,7 +652,27 @@ def get_exam_data(
             detail="This topic is not yet available",
         )
 
+    # Check not_visible_until restriction
+    # This is checked separately to avoid leaking the exact visibility time
     extra_data = topic.extra_data or {}
+    visibility_config = extra_data.get("visibility", {})
+    not_visible_until = visibility_config.get("not_visible_until")
+    if not_visible_until:
+        try:
+            # Parse ISO format datetime string
+            visibility_time = datetime.fromisoformat(not_visible_until.replace("Z", "+00:00"))
+            current_time = datetime.now(timezone.utc)
+            if current_time < visibility_time:
+                # Return generic permission denied - don't leak the visibility time
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="You don't have permission to view this topic",
+                )
+        except (ValueError, TypeError):
+            # If parsing fails, log and allow access (fail open for safety)
+            logger.warning(
+                f"[Evaluation] Invalid not_visible_until format for topic {topic_id}: {not_visible_until}"
+            )
 
     # Get all published questions for the topic
     questions, _ = question_service.list_questions(
