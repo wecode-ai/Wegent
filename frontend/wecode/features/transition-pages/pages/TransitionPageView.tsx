@@ -9,6 +9,7 @@ import { getToken } from '@/apis/user'
 import EnhancedMarkdown from '@/components/common/EnhancedMarkdown'
 
 interface RenderedBlock {
+  key: string
   title: string
   title_font_size?: string
   icon?: string
@@ -18,11 +19,13 @@ interface RenderedBlock {
     url: string
     variant: string
     target: string
+    freeze_on_click?: boolean
   }>
 }
 
 interface RenderedPage {
   page: {
+    page_id: string
     title: string
     title_font_size?: string
     slug: string
@@ -81,6 +84,34 @@ export default function TransitionPageView() {
 
   const toggleTheme = () => {
     setIsDark(prev => !prev)
+  }
+
+  const handleButtonClick = async (blockKey: string, btn: { url: string; target?: string; freeze_on_click?: boolean }) => {
+    console.log('[CLICK] button clicked', { blockKey, freeze_on_click: btn.freeze_on_click, page: page?.page.page_id })
+    if (btn.freeze_on_click && page) {
+      console.log('[CLICK] freezing block...')
+      try {
+        const token = getToken()
+        console.log('[CLICK] token:', token ? 'exists' : 'missing')
+        const response = await fetch(`/api/v1/transition-pages/${page.page.page_id}/freeze-block`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ block_key: blockKey }),
+        })
+        console.log('[CLICK] response status:', response.status)
+        if (!response.ok) {
+          console.error('[CLICK] Failed to freeze block')
+        }
+      } catch (err) {
+        console.error('[CLICK] Error freezing block:', err)
+      }
+    } else {
+      console.log('[CLICK] skip freeze, freeze_on_click:', btn.freeze_on_click, 'page:', !!page)
+    }
+    window.open(btn.url, btn.target || '_blank')
   }
 
   if (loading) {
@@ -205,7 +236,7 @@ export default function TransitionPageView() {
                   {block.buttons.map((btn, btnIndex) => (
                     <button
                       key={btnIndex}
-                      onClick={() => window.open(btn.url, btn.target || '_blank')}
+                      onClick={() => handleButtonClick(block.key, btn)}
                       className={`px-5 py-2.5 rounded-xl font-medium transition-all ${
                         btn.variant === 'primary'
                           ? isDark

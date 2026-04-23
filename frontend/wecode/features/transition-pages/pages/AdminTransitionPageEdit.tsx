@@ -117,7 +117,7 @@ export default function AdminTransitionPageEdit() {
   const [newBlockFontSize, setNewBlockFontSize] = useState('large')
   const [newBlockFreezeEnabled, setNewBlockFreezeEnabled] = useState(false)
   const [newBlockBlockGroupKey, setNewBlockBlockGroupKey] = useState<string>('')
-  const [newBlockButtons, setNewBlockButtons] = useState<Array<{ label: string; url_template: string; variant: string; target: string }>>([])
+  const [newBlockButtons, setNewBlockButtons] = useState<Array<{ label: string; url_template: string; variant: string; target: string; freeze_on_click?: boolean }>>([])
 
   // Manual user add form
   const [newUserEmail, setNewUserEmail] = useState('')
@@ -132,7 +132,7 @@ export default function AdminTransitionPageEdit() {
   const [editBlockStartAt, setEditBlockStartAt] = useState('')
   const [editBlockEndAt, setEditBlockEndAt] = useState('')
   const [editBlockGroups, setEditBlockGroups] = useState<string[]>([])
-  const [editBlockButtons, setEditBlockButtons] = useState<Array<{ label: string; url_template: string; variant: string; target: string }>>([])
+  const [editBlockButtons, setEditBlockButtons] = useState<Array<{ label: string; url_template: string; variant: string; target: string; freeze_on_click?: boolean }>>([])
   const [editBlockFontSize, setEditBlockFontSize] = useState('large')
   const [editBlockStage, setEditBlockStage] = useState('always')
   const [editBlockFreezeEnabled, setEditBlockFreezeEnabled] = useState(false)
@@ -163,7 +163,7 @@ export default function AdminTransitionPageEdit() {
   const [importing, setImporting] = useState(false)
 
   // User views states
-  const [userViews, setUserViews] = useState<Array<{email: string; viewed_blocks: Record<string, string>; updated_at: string}>>([])
+  const [userViews, setUserViews] = useState<Array<{email: string; viewed_blocks: Record<string, {frozen_at: string; source: string}>; updated_at: string}>>([])
   const [loadingViews, setLoadingViews] = useState(false)
 
   // Member management states
@@ -1573,11 +1573,16 @@ export default function AdminTransitionPageEdit() {
                         </Button>
                       </div>
                       <div className="mt-3 flex flex-wrap gap-2">
-                        {Object.entries(view.viewed_blocks).map(([blockKey, timestamp]) => (
-                          <Badge key={blockKey} variant="secondary" className="text-xs">
-                            {blockKey}: {new Date(timestamp).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
-                          </Badge>
-                        ))}
+                        {Object.entries(view.viewed_blocks).map(([blockKey, blockData]) => {
+                          const frozenAt = typeof blockData === 'object' ? blockData.frozen_at : blockData
+                          const source = typeof blockData === 'object' ? blockData.source : 'view'
+                          const sourceLabel = source === 'click' ? '点击' : '浏览'
+                          return (
+                            <Badge key={blockKey} variant="secondary" className="text-xs">
+                              {blockKey}: {new Date(frozenAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })} ({sourceLabel})
+                            </Badge>
+                          )
+                        })}
                       </div>
                     </div>
                   ))}
@@ -1945,6 +1950,18 @@ export default function AdminTransitionPageEdit() {
                       <option value="outline">边框</option>
                       <option value="ghost">幽灵</option>
                     </select>
+                    <label className="flex items-center gap-1 text-sm whitespace-nowrap">
+                      <input
+                        type="checkbox"
+                        checked={btn.freeze_on_click || false}
+                        onChange={(e) => {
+                          const updated = [...editBlockButtons]
+                          updated[idx].freeze_on_click = e.target.checked
+                          setEditBlockButtons(updated)
+                        }}
+                      />
+                      点击冻结
+                    </label>
                     <Button
                       variant="ghost"
                       size="sm"
@@ -2502,6 +2519,18 @@ export default function AdminTransitionPageEdit() {
                       <option value="outline">边框</option>
                       <option value="ghost">幽灵</option>
                     </select>
+                    <label className="flex items-center gap-1 text-sm whitespace-nowrap">
+                      <input
+                        type="checkbox"
+                        checked={btn.freeze_on_click || false}
+                        onChange={(e) => {
+                          const updated = [...newBlockButtons]
+                          updated[idx].freeze_on_click = e.target.checked
+                          setNewBlockButtons(updated)
+                        }}
+                      />
+                      点击冻结
+                    </label>
                     <Button
                       variant="ghost"
                       size="sm"
