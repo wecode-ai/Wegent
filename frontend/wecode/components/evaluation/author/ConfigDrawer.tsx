@@ -21,8 +21,8 @@ import {
 // Tabs component imported but using custom tab implementation for drawer
 import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
+import { ExamInstructionsMarkdown } from '@wecode/components/evaluation/exam/ExamInstructionsMarkdown'
 import { SubmitHintMarkdown } from '@wecode/components/evaluation/exam/SubmitHintMarkdown'
-import EnhancedMarkdown from '@/components/common/EnhancedMarkdown'
 import { getAuthorTopic, updateAuthorTopic } from '@wecode/api/evaluation-author'
 import { downloadEvaluationFile } from '@wecode/api/evaluation-shared'
 import { TopicVisibility, type Topic } from '@wecode/types/evaluation'
@@ -630,9 +630,9 @@ export function ConfigDrawer({ isOpen, topicId, onClose, onTopicUpdate }: Config
                     </Button>
                   </div>
                   {showInstructionsPreview ? (
-                    <div className="min-h-[120px] rounded-lg border border-gray-200 bg-gray-50 p-4">
+                    <div className="min-h-[120px] rounded-lg border border-gray-200 bg-white p-4">
                       {instructions.trim() ? (
-                        <EnhancedMarkdown source={instructions} theme="light" />
+                        <ExamInstructionsMarkdown content={instructions} />
                       ) : (
                         <p className="text-gray-400">{t('topics.no_instructions')}</p>
                       )}

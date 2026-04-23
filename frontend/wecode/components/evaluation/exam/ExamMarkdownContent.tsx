@@ -30,6 +30,11 @@ export const examMarkdownComponents: Components = {
   ol: ({ children }) => <ol className="new-exam-ol">{children}</ol>,
   li: ({ children }) => <li className="new-exam-li">{children}</li>,
   blockquote: ({ children }) => <blockquote className="new-exam-blockquote">{children}</blockquote>,
+  table: ({ children }) => (
+    <div className="table-wrapper">
+      <table>{children}</table>
+    </div>
+  ),
 }
 
 // Static remark plugins array - defined outside component
