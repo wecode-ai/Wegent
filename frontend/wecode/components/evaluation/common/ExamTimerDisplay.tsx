@@ -54,9 +54,9 @@ export function ExamTimerDisplay({
     setRemainingSeconds(initialRemainingSeconds)
   }, [initialRemainingSeconds])
 
-  // Local countdown - only during exam phase
+  // Local countdown - during exam and review phases
   useEffect(() => {
-    if (phase !== 'exam') return
+    if (phase !== 'exam' && phase !== 'review') return
 
     const interval = setInterval(() => {
       setRemainingSeconds(prev => prev - 1)
@@ -65,8 +65,8 @@ export function ExamTimerDisplay({
     return () => clearInterval(interval)
   }, [phase])
 
-  // Only show timer during exam phase
-  if (phase !== 'exam') {
+  // Only show timer during exam and review phases
+  if (phase !== 'exam' && phase !== 'review') {
     return null
   }
 
@@ -122,9 +122,9 @@ export function useSessionTimer(
     setRemainingSeconds(initialRemainingSeconds)
   }, [initialRemainingSeconds])
 
-  // Local countdown - only during exam phase
+  // Local countdown - during exam and review phases
   useEffect(() => {
-    if (phase !== 'exam') return
+    if (phase !== 'exam' && phase !== 'review') return
 
     const interval = setInterval(() => {
       setRemainingSeconds(prev => prev - 1)
@@ -134,7 +134,7 @@ export function useSessionTimer(
   }, [phase])
 
   const isOvertime = checkIsOvertime(remainingSeconds)
-  const showTimer = phase === 'exam'
+  const showTimer = phase === 'exam' || phase === 'review'
 
   const formattedTime = useMemo(
     () => formatTime(remainingSeconds, isOvertime),
