@@ -774,6 +774,7 @@
     "bonus_content": "Bonus Description",
     "bonus_content_placeholder": "Detailed description of the bonus question, supports Markdown",
     "bonus_content_hint": "Supports Markdown formatting",
+    "or": "or",
     "drag_hint": "Drag slots to reorder",
     "delete_title": "Confirm Delete Slot",
     "delete_description": "This slot configuration will be permanently deleted. Existing answer data will not be affected.",

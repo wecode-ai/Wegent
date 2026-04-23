@@ -778,6 +778,7 @@
     "bonus_content": "附加题说明",
     "bonus_content_placeholder": "附加题的详细描述，支持 Markdown 格式",
     "bonus_content_hint": "支持 Markdown 格式",
+    "or": "或",
     "drag_hint": "拖拽槽位以调整顺序",
     "delete_title": "确认删除槽位",
     "delete_description": "删除后该槽位配置将无法恢复。已提交的答案数据不会被删除。",
