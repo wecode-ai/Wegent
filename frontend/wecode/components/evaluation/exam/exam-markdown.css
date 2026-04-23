@@ -2,7 +2,13 @@
 
 .new-exam-markdown {
   font-size: 1rem;
+  color: #374151;
+  line-height: 1.8;
 }
+
+/* ============================================================================
+   Typography - Base & Headings
+   ============================================================================ */
 
 .new-exam-markdown p {
   font-size: 1rem;
@@ -16,109 +22,262 @@
 }
 
 .new-exam-markdown strong {
+  font-weight: 600;
+  color: #111827;
+}
+
+/* Section headers like 场景描述, 你要做什么 */
+.new-exam-markdown p strong:only-child {
   font-weight: 700;
-  color: #1f2937;
+  color: #111827;
+}
+
+/* First section header should not have top margin */
+.new-exam-markdown > p:first-child strong:only-child {
+  margin-top: 0;
 }
 
 /* ============================================================================
-   有序列表 - 任务卡片样式
+   Headings - PRD Style
+   ============================================================================ */
+
+.new-exam-markdown h2 {
+  font-size: 1.125rem;
+  font-weight: 700;
+  color: #1f2937;
+  margin-top: 1.5rem;
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 2px solid #fee2e2;
+  line-height: 1.4;
+}
+
+.new-exam-markdown h2:first-child {
+  margin-top: 0;
+}
+
+.new-exam-markdown h3 {
+  font-size: 1rem;
+  font-weight: 600;
+  color: #374151;
+  margin-top: 1rem;
+  margin-bottom: 0.5rem;
+  line-height: 1.5;
+}
+
+/* Sub-headings within sections */
+.new-exam-markdown h4 {
+  font-size: 1rem;
+  font-weight: 600;
+  color: #374151;
+  margin-top: 1.25rem;
+  margin-bottom: 0.5rem;
+  line-height: 1.5;
+}
+
+/* ============================================================================
+   Tables - Feature Requirements Table
+   ============================================================================ */
+
+/* Table wrapper for overflow handling */
+.new-exam-markdown .table-wrapper {
+  margin: 1.5rem 0;
+  border-radius: 0.75rem;
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  border: 1px solid #e5e7eb;
+}
+
+.new-exam-markdown .table-wrapper > table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9375rem;
+  background-color: #ffffff;
+}
+
+.new-exam-markdown .table-wrapper > table > thead {
+  background: linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%);
+}
+
+.new-exam-markdown .table-wrapper > table > thead > tr > th {
+  padding: 1rem 1.25rem;
+  text-align: left;
+  font-weight: 600;
+  color: #374151;
+  border-bottom: 2px solid #e5e7eb;
+  white-space: nowrap;
+}
+
+.new-exam-markdown .table-wrapper > table > thead > tr > th:first-child {
+  width: 80px;
+  text-align: center;
+}
+
+.new-exam-markdown .table-wrapper > table > tbody > tr > td {
+  padding: 1rem 1.25rem;
+  color: #4b5563;
+  border-bottom: 1px solid #f3f4f6;
+  line-height: 1.7;
+  vertical-align: top;
+}
+
+.new-exam-markdown .table-wrapper > table > tbody > tr:last-child > td {
+  border-bottom: none;
+}
+
+.new-exam-markdown .table-wrapper > table > tbody > tr:hover {
+  background-color: #fafafa;
+}
+
+/* Feature ID cell (F1, F2, etc.) */
+.new-exam-markdown .table-wrapper > table > tbody > tr > td:first-child {
+  font-weight: 600;
+  color: #df2029;
+  text-align: center;
+  font-size: 0.875rem;
+  background-color: rgba(223, 32, 41, 0.03);
+}
+
+/* Compact table style for feature lists */
+.new-exam-markdown .table-wrapper.compact {
+  margin: 1rem 0;
+  border-radius: 0.5rem;
+}
+
+.new-exam-markdown .table-wrapper.compact > table {
+  font-size: 0.875rem;
+}
+
+.new-exam-markdown .table-wrapper.compact > table > thead > tr > th {
+  padding: 0.75rem 1rem;
+  font-size: 0.8125rem;
+  text-transform: uppercase;
+  letter-spacing: 0.025em;
+}
+
+.new-exam-markdown .table-wrapper.compact > table > tbody > tr > td {
+  padding: 0.75rem 1rem;
+}
+
+/* Fallback: style tables without wrapper too */
+.new-exam-markdown > table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9375rem;
+  background-color: #ffffff;
+  margin: 1.5rem 0;
+  border-radius: 0.75rem;
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  border: 1px solid #e5e7eb;
+  display: block;
+}
+
+.new-exam-markdown > table > thead {
+  background: linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%);
+  display: table;
+  width: 100%;
+}
+
+.new-exam-markdown > table > tbody {
+  display: table;
+  width: 100%;
+}
+
+.new-exam-markdown > table > thead > tr > th {
+  padding: 1rem 1.25rem;
+  text-align: left;
+  font-weight: 600;
+  color: #374151;
+  border-bottom: 2px solid #e5e7eb;
+  white-space: nowrap;
+}
+
+.new-exam-markdown > table > thead > tr > th:first-child {
+  width: 80px;
+  text-align: center;
+}
+
+.new-exam-markdown > table > tbody > tr > td {
+  padding: 1rem 1.25rem;
+  color: #4b5563;
+  border-bottom: 1px solid #f3f4f6;
+  line-height: 1.7;
+  vertical-align: top;
+}
+
+.new-exam-markdown > table > tbody > tr:last-child > td {
+  border-bottom: none;
+}
+
+.new-exam-markdown > table > tbody > tr:hover {
+  background-color: #fafafa;
+}
+
+/* Feature ID cell (F1, F2, etc.) */
+.new-exam-markdown > table > tbody > tr > td:first-child {
+  font-weight: 600;
+  color: #df2029;
+  text-align: center;
+  font-size: 0.875rem;
+  background-color: rgba(223, 32, 41, 0.03);
+}
+
+/* ============================================================================
+   有序列表 - 简洁数字列表样式
    ============================================================================ */
 
 ol.new-exam-ol {
   list-style: none;
-  padding: 1.5rem;
+  padding: 0;
   margin: 1rem 0;
-  background-color: #f9fafb;
-  border-radius: 1rem;
-  counter-reset: task-counter;
+  counter-reset: item-counter;
 }
 
-/* 使用 Grid 布局：第一列是序号，第二列是所有内容纵向排列 */
 ol.new-exam-ol > li.new-exam-li {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  grid-template-rows: auto;
-  column-gap: 1rem;
-  row-gap: 0;
-  align-items: start;
-  counter-increment: task-counter;
-  margin-bottom: 1rem;
-  font-size: 1rem;
-  margin-top: 0;
+  position: relative;
+  padding-left: 2rem;
+  margin-bottom: 0.75rem;
+  counter-increment: item-counter;
+  line-height: 1.8;
+  color: #4b5563;
 }
 
-/* 序号伪元素放在第一列，跨所有行 */
 ol.new-exam-ol > li.new-exam-li::before {
-  grid-column: 1;
-  grid-row: 1 / -1;
-  content: counter(task-counter);
-  width: 28px;
-  height: 28px;
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background-color: rgba(223, 32, 41, 0.1);
-  border-radius: 9999px;
-  font-size: 0.875rem;
-  font-weight: 700;
+  content: counter(item-counter) '.';
+  position: absolute;
+  left: 0;
+  top: 0;
+  font-weight: 600;
   color: #df2029;
-  margin-top: 2px;
-}
-
-/* 所有 p 元素放在第二列 */
-ol.new-exam-ol > li.new-exam-li > p {
-  grid-column: 2;
 }
 
 ol.new-exam-ol > li.new-exam-li:last-child {
   margin-bottom: 0;
 }
 
-/* 段落之间无间距，只有列表项之间有间距 */
 ol.new-exam-ol > li.new-exam-li > p {
   margin: 0;
   line-height: 1.8;
   color: #4b5563;
-  font-size: 1rem;
-}
-
-ol.new-exam-ol > li.new-exam-li > p:first-child {
-  font-weight: 700;
-  color: #1f2937;
-  line-height: 1.5;
 }
 
 /* ============================================================================
-   引用块 - 要求和交付内容样式 - 带左侧竖线
+   引用块 - 要求和交付内容样式
    ============================================================================ */
 
 blockquote.new-exam-blockquote {
-  margin: 1rem 0;
-  padding: 1.5rem 1.5rem 1.5rem 2.25rem;
-  background-color: #f9fafb;
+  margin: 1rem 0 1.5rem 0;
+  padding: 1.5rem;
+  background-color: rgba(254, 242, 242, 0.5);
   border-radius: 1rem;
-  font-size: 1rem;
-  border-left: none;
-  position: relative;
-}
-
-/* 左侧竖线 */
-blockquote.new-exam-blockquote::before {
-  content: '';
-  position: absolute;
-  left: 1rem;
-  top: 1.5rem;
-  bottom: 1.5rem;
-  width: 6px;
-  background-color: #e5e7eb;
-  border-radius: 9999px;
+  border: 1px solid rgba(254, 202, 202, 0.6);
 }
 
 blockquote.new-exam-blockquote > p {
-  margin: 0 0 1rem 0;
+  margin: 0 0 0.75rem 0;
   color: #4b5563;
-  line-height: 1.8;
+  line-height: 1.7;
   font-size: 1rem;
 }
 
@@ -127,41 +286,134 @@ blockquote.new-exam-blockquote > p:last-child {
 }
 
 blockquote.new-exam-blockquote strong {
-  font-weight: 600;
+  font-weight: 700;
   color: #374151;
 }
 
-/* 引用块内的列表 */
-blockquote.new-exam-blockquote ul {
+/* ============================================================================
+   Unordered Lists - PRD Style
+   ============================================================================ */
+
+.new-exam-markdown ul {
   list-style: none;
-  padding: 0;
-  margin: 0 0 1rem 0;
+  padding-left: 0;
+  margin: 1rem 0;
 }
 
-blockquote.new-exam-blockquote ul:last-child {
+.new-exam-markdown ul > li {
+  position: relative;
+  padding-left: 1.5rem;
+  margin-bottom: 0.75rem;
+  color: #4b5563;
+  line-height: 1.7;
+}
+
+.new-exam-markdown ul > li:last-child {
   margin-bottom: 0;
 }
 
-blockquote.new-exam-blockquote ul > li {
-  position: relative;
-  padding-left: 1.25rem;
-  margin-bottom: 0.5rem;
-  color: #4b5563;
-  line-height: 1.8;
-  font-size: 1rem;
-}
-
-blockquote.new-exam-blockquote ul > li::before {
+/* Bullet point style */
+.new-exam-markdown ul > li::before {
   content: '';
   position: absolute;
-  left: 0;
+  left: 0.25rem;
   top: 0.65rem;
   width: 6px;
   height: 6px;
-  background-color: #9ca3af;
+  background-color: #df2029;
   border-radius: 50%;
 }
 
-blockquote.new-exam-blockquote ul > li:last-child {
+/* Nested lists */
+.new-exam-markdown ul > li > ul {
+  margin-top: 0.5rem;
+  margin-bottom: 0;
+}
+
+.new-exam-markdown ul > li > ul > li::before {
+  background-color: #9ca3af;
+}
+
+/* Task list style (checkboxes) */
+.new-exam-markdown ul > li[data-checked='true'],
+.new-exam-markdown ul > li[data-checked='false'] {
+  padding-left: 1.75rem;
+}
+
+.new-exam-markdown ul > li[data-checked='true']::before,
+.new-exam-markdown ul > li[data-checked='false']::before {
+  display: none;
+}
+
+/* ============================================================================
+   Additional Enhancements
+   ============================================================================ */
+
+/* Horizontal Rule - render as empty space */
+.new-exam-markdown hr {
+  margin: 1.5rem 0;
+  border: none;
+  height: 0;
+  background: transparent;
+}
+
+/* Inline Code */
+.new-exam-markdown code {
+  background-color: #f3f4f6;
+  color: #df2029;
+  padding: 0.2rem 0.4rem;
+  border-radius: 0.375rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.875em;
+  border: 1px solid #e5e7eb;
+}
+
+/* Links */
+.new-exam-markdown a {
+  color: #df2029;
+  text-decoration: none;
+  font-weight: 500;
+  border-bottom: 1px solid transparent;
+  transition: border-color 0.15s ease;
+}
+
+.new-exam-markdown a:hover {
+  border-bottom-color: #df2029;
+}
+
+/* Emphasis text */
+.new-exam-markdown em {
+  color: #6b7280;
+  font-style: italic;
+}
+
+/* Strikethrough */
+.new-exam-markdown del {
+  color: #9ca3af;
+  text-decoration: line-through;
+}
+
+/* Definition/Description styling */
+.new-exam-markdown dl {
+  margin: 1rem 0;
+  padding: 1rem 1.25rem;
+  background-color: #f9fafb;
+  border-radius: 0.75rem;
+  border-left: 4px solid #df2029;
+}
+
+.new-exam-markdown dt {
+  font-weight: 600;
+  color: #374151;
+  margin-bottom: 0.25rem;
+}
+
+.new-exam-markdown dd {
+  color: #4b5563;
+  margin-left: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.new-exam-markdown dd:last-child {
   margin-bottom: 0;
 }
