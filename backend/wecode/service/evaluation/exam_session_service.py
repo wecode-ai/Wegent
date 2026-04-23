@@ -504,6 +504,32 @@ class ExamSessionService:
                             f"[ExamSession] Converted text to S3 for answer {answer.id} slot {slot_key}"
                         )
 
+            # Handle link_or_attachment mode - attachment takes priority
+            if answer_slots:
+                answers = new_content_data.get("answers", {})
+                for slot in answer_slots:
+                    slot_key = slot.get("key")
+                    input_mode = slot.get("inputMode", "attachment")
+                    # Only process link_or_attachment slots
+                    if not slot_key or input_mode != "link_or_attachment":
+                        continue
+
+                    slot_answer = answers.get(slot_key, {})
+                    link = slot_answer.get("link", "").strip()
+                    files = slot_answer.get("files", [])
+
+                    # If both link and files exist, prioritize attachment (clear link)
+                    if link and files:
+                        logger.info(
+                            f"[ExamSession] Answer {answer.id} slot {slot_key} has both link and files, "
+                            f"prioritizing attachment ({len(files)} files)"
+                        )
+                        # Create a copy to avoid modifying the original dict directly
+                        if slot_key not in new_content_data["answers"]:
+                            new_content_data["answers"][slot_key] = {}
+                        new_content_data["answers"][slot_key]["link"] = ""
+                        answer_modified = True
+
             if answer_modified:
                 answer.content_data = new_content_data
                 attributes.flag_modified(answer, "content_data")

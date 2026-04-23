@@ -91,10 +91,17 @@ export function DynamicSlotInput({
   const showText = slot.inputMode === 'text'
   const showLink = slot.inputMode === 'link+attachment'
   const showAttachment = slot.inputMode === 'attachment' || slot.inputMode === 'link+attachment'
+  const showLinkOrAttachment = slot.inputMode === 'link_or_attachment'
 
   const currentFiles = useMemo(() => value.files || [], [value.files])
   const maxFiles = slot.maxFiles || 10
   const canAddMore = currentFiles.length < maxFiles && !disabled
+
+  // For link_or_attachment mode: mutual exclusion logic
+  const hasLink = Boolean(value.link?.trim())
+  const hasAttachment = currentFiles.length > 0
+  const linkDisabled = disabled || hasAttachment  // Disable link when has attachment
+  const attachmentDisabled = disabled || hasLink   // Disable attachment when has link
 
   // Check if there's a .txt file in the attachments (for loading text from S3)
   const txtAttachment = useMemo(() => {
@@ -378,6 +385,191 @@ export function DynamicSlotInput({
             )}
           </div>
         </div>
+      </div>
+    )
+  }
+
+  // Link or Attachment mode (mutual exclusion)
+  if (showLinkOrAttachment) {
+    return (
+      <div className="space-y-3">
+        {/* Header */}
+        <div className="flex items-center gap-2">
+          <Icon name={slot.icon as keyof typeof Icon} size={18} className="text-gray-400" />
+          <h3 className="text-base font-bold text-gray-700 flex items-center gap-2">
+            {slot.label}
+            {slot.required && (
+              <span className="text-[#DF2029] text-sm font-normal">({t('slots.required')})</span>
+            )}
+            {!slot.required && slot.required !== undefined && (
+              <span className="text-sm text-gray-400 font-normal">({t('slots.optional')})</span>
+            )}
+          </h3>
+        </div>
+
+        {/* Hint - rendered with Markdown support */}
+        {slot.hint && <SlotMarkdownContent content={slot.hint} />}
+
+        {/* Link Input */}
+        <div className="space-y-2">
+          <div className="flex items-center gap-2">
+            <Link2 size={18} className={cn('flex-shrink-0', linkDisabled ? 'text-gray-200' : 'text-gray-300')} />
+            <Input
+              type="url"
+              value={value.link || ''}
+              onChange={e => handleLinkChange(e.target.value)}
+              placeholder={t('answers.link_placeholder')}
+              disabled={linkDisabled}
+              className="flex-1 px-4 py-3 rounded-xl border border-gray-200 bg-white text-[1rem] text-gray-900 transition placeholder:text-gray-300 disabled:opacity-50 disabled:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#DF2029]"
+            />
+          </div>
+          {hasAttachment && (
+            <p className="text-xs text-gray-400">{t('answers.link_disabled_hint')}</p>
+          )}
+        </div>
+
+        {/* Divider with "or" */}
+        <div className="flex items-center gap-4">
+          <div className="flex-1 h-px bg-gray-200" />
+          <span className="text-sm text-gray-400">{t('slots.or')}</span>
+          <div className="flex-1 h-px bg-gray-200" />
+        </div>
+
+        {/* File Upload Zone */}
+        {!attachmentDisabled && canAddMore && (
+          <div
+            className={cn(
+              'rounded-2xl border-2 border-dashed p-6 transition-all duration-200 cursor-pointer',
+              isDragOver
+                ? 'border-[#c81d25] bg-red-100 border-solid'
+                : 'border-gray-200 hover:border-[#DF2029] hover:bg-red-50',
+              attachmentDisabled && 'opacity-50 pointer-events-none'
+            )}
+            onDragOver={e => {
+              e.preventDefault()
+              setIsDragOver(true)
+            }}
+            onDragLeave={() => setIsDragOver(false)}
+            onDrop={e => {
+              e.preventDefault()
+              setIsDragOver(false)
+              handleFileSelect(e.dataTransfer.files)
+            }}
+            onClick={() => !attachmentDisabled && fileInputRef.current?.click()}
+          >
+            <input
+              ref={fileInputRef}
+              type="file"
+              className="hidden"
+              multiple
+              accept={slot.accept}
+              onChange={e => {
+                handleFileSelect(e.target.files)
+                e.target.value = ''
+              }}
+            />
+            <div className="flex flex-col items-center gap-3">
+              <div className="w-12 h-12 rounded-full bg-red-50 flex items-center justify-center">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="24"
+                  height="24"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  className="text-[#DF2029]"
+                >
+                  <path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242" />
+                  <path d="M12 12v9" />
+                  <path d="m16 16-4-4-4 4" />
+                </svg>
+              </div>
+              <div className="text-center">
+                <p className="text-base font-medium text-gray-700">{t('answers.upload_drag_hint')}</p>
+                {slot.accept && (
+                  <p className="text-sm text-gray-400 mt-1">
+                    {t('answers.accepted_formats')}: {slot.accept.replace(/\./g, '').toUpperCase()}
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+        {hasLink && (
+          <p className="text-xs text-gray-400">{t('answers.attachment_disabled_hint')}</p>
+        )}
+
+        {/* Uploading files */}
+        {Array.from(uploadingFiles.entries()).map(([fileId, { file, progress, error }]) => (
+          <div
+            key={fileId}
+            className={cn(
+              'flex items-center gap-3 rounded-lg border p-3',
+              error ? 'border-destructive bg-destructive/5' : 'border-border bg-surface'
+            )}
+          >
+            {error ? (
+              <X className="h-5 w-5 text-destructive" />
+            ) : (
+              <Loader2 className="h-5 w-5 animate-spin text-primary" />
+            )}
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-medium">{file.name}</p>
+              {error ? (
+                <p className="text-xs text-destructive">{error}</p>
+              ) : (
+                <Progress value={progress} className="mt-1 h-1" />
+              )}
+            </div>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
+              onClick={() => handleRemoveUploading(fileId)}
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
+        ))}
+
+        {/* Uploaded attachments */}
+        {currentFiles.map(attachment => (
+          <div
+            key={attachment.key}
+            className="flex items-center gap-3 rounded-lg border border-gray-200 bg-gray-50 p-3"
+          >
+            <FileText className="h-5 w-5 text-gray-400" />
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-medium">{attachment.filename}</p>
+              {attachment.size && (
+                <p className="text-xs text-gray-400">{formatFileSize(attachment.size)}</p>
+              )}
+            </div>
+            <div className="flex gap-1">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                onClick={() => handleDownload(attachment)}
+                title="Download"
+              >
+                <Download className="h-4 w-4" />
+              </Button>
+              {!disabled && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 text-destructive hover:text-destructive"
+                  onClick={() => handleRemove(attachment.key)}
+                  title="Delete"
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              )}
+            </div>
+          </div>
+        ))}
       </div>
     )
   }

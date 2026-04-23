@@ -289,7 +289,9 @@
     },
     "uploaded_files": "已上传文件",
     "text_supplement": "文本补充",
-    "auto_saved": "自动保存于"
+    "auto_saved": "自动保存于",
+    "link_disabled_hint": "已上传附件，链接输入已禁用",
+    "attachment_disabled_hint": "已填写链接，附件上传已禁用"
   },
   "respondents": {
     "title": "答题人"
@@ -767,7 +769,8 @@
       "label": "输入模式",
       "attachment": "仅附件",
       "text": "仅文本",
-      "link_attachment": "链接+附件"
+      "link_attachment": "链接+附件",
+      "link_or_attachment": "链接 or 附件"
     },
     "bonus_config": "附加题配置",
     "bonus_title": "附加题标题",
@@ -775,6 +778,7 @@
     "bonus_content": "附加题说明",
     "bonus_content_placeholder": "附加题的详细描述，支持 Markdown 格式",
     "bonus_content_hint": "支持 Markdown 格式",
+    "or": "或",
     "drag_hint": "拖拽槽位以调整顺序",
     "delete_title": "确认删除槽位",
     "delete_description": "删除后该槽位配置将无法恢复。已提交的答案数据不会被删除。",
