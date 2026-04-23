@@ -17,6 +17,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -28,6 +29,7 @@ from wecode.models.evaluation import (
     EvalAnswer,
     EvalQuestion,
     EvalQuestionVersion,
+    QuestionStatus,
 )
 from wecode.models.evaluation_exam_session import EvalExamSession
 from wecode.schemas.evaluation import (
@@ -126,12 +128,20 @@ def _get_topic_or_404(db: Session, topic_id: int):
     return topic
 
 
-def _topic_to_response(topic) -> TopicInDB:
+def _topic_to_response(
+    topic,
+    question_count: Optional[int] = None,
+    published_question_count: Optional[int] = None,
+    creator_name: Optional[str] = None,
+) -> TopicInDB:
     """
     Convert topic model to response schema.
 
     Args:
         topic: Topic model instance
+        question_count: Total number of questions (optional)
+        published_question_count: Number of published questions (optional)
+        creator_name: Creator username (optional)
 
     Returns:
         TopicInDB response
@@ -149,6 +159,9 @@ def _topic_to_response(topic) -> TopicInDB:
         updated_at=topic.updated_at,
         is_active=topic.is_active,
         description=(topic.extra_data or {}).get("description"),
+        question_count=question_count,
+        published_question_count=published_question_count,
+        creator_name=creator_name,
     )
 
 
@@ -223,7 +236,47 @@ def list_my_topics(
         my_only=True,  # Only show user's own topics
     )
 
-    items = [_topic_to_response(topic) for topic in topics]
+    # Batch query question counts for all topics
+    topic_ids = [topic.id for topic in topics]
+    question_counts = {}
+    published_question_counts = {}
+
+    if topic_ids:
+        # Query total question counts
+        total_counts_query = (
+            db.query(EvalQuestion.topic_id, func.count(EvalQuestion.id).label("count"))
+            .filter(
+                EvalQuestion.topic_id.in_(topic_ids),
+                EvalQuestion.is_active == True,
+            )
+            .group_by(EvalQuestion.topic_id)
+            .all()
+        )
+        question_counts = {row.topic_id: row.count for row in total_counts_query}
+
+        # Query published question counts
+        published_counts_query = (
+            db.query(EvalQuestion.topic_id, func.count(EvalQuestion.id).label("count"))
+            .filter(
+                EvalQuestion.topic_id.in_(topic_ids),
+                EvalQuestion.is_active == True,
+                EvalQuestion.status == QuestionStatus.PUBLISHED,
+            )
+            .group_by(EvalQuestion.topic_id)
+            .all()
+        )
+        published_question_counts = {
+            row.topic_id: row.count for row in published_counts_query
+        }
+
+    items = [
+        _topic_to_response(
+            topic,
+            question_count=question_counts.get(topic.id, 0),
+            published_question_count=published_question_counts.get(topic.id, 0),
+        )
+        for topic in topics
+    ]
 
     return TopicListResponse(total=total, items=items)
 
