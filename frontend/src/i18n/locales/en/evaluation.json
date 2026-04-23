@@ -230,7 +230,12 @@
     "users": "users"
   },
   "respondents": {
-    "title": "Respondents"
+    "title": "Respondents",
+    "tooltip": "Unique users who entered the exam page (matches session list)"
+  },
+  "answers": {
+    "title": "Answers",
+    "tooltip": "Total number of answers submitted by all respondents (including multiple submissions)"
   },
   "answers": {
     "title": "Answers",
