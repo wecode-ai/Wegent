@@ -297,7 +297,12 @@
     "invalid_url_hint": "请输入有效的 URL 地址（如 https://example.com）"
   },
   "respondents": {
-    "title": "答题人"
+    "title": "答题人数",
+    "tooltip": "进入考试页面的唯一用户数（与会话列表一致）"
+  },
+  "answers": {
+    "title": "作答数",
+    "tooltip": "所有答题人提交的答案总数（包含多次提交）"
   },
   "grading": {
     "title": "评分",

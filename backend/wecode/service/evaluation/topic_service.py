@@ -396,6 +396,8 @@ class TopicService:
         Returns:
             Dictionary with statistics
         """
+        from wecode.models.evaluation_exam_session import EvalExamSession
+
         # Question counts
         total_questions = (
             db.query(func.count(EvalQuestion.id))
@@ -433,9 +435,13 @@ class TopicService:
             .scalar()
         )
 
+        # total_respondents: unique users who entered the exam (from exam sessions)
         total_respondents = (
-            db.query(func.count(func.distinct(EvalAnswer.respondent_id)))
-            .filter(EvalAnswer.question_id.in_(question_ids))
+            db.query(func.count(func.distinct(EvalExamSession.user_id)))
+            .filter(
+                EvalExamSession.topic_id == topic_id,
+                EvalExamSession.is_active == 1,
+            )
             .scalar()
         )
 
