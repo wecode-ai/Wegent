@@ -230,7 +230,12 @@ class TopicService:
         # Handle extra_data updates
         if extra_data is not None:
             current_extra_data = dict(topic.extra_data) if topic.extra_data else {}
-            current_extra_data.update(extra_data)
+            for key, value in extra_data.items():
+                if value is None:
+                    # Remove key if value is explicitly None (cleared by user)
+                    current_extra_data.pop(key, None)
+                else:
+                    current_extra_data[key] = value
             topic.extra_data = current_extra_data
             flag_modified(topic, "extra_data")
 
