@@ -77,13 +77,13 @@ export function ExamInfoSection({
       {/* Ready phase - waiting for user to enter */}
       {!loading && examPhase === 'ready' && (
         <div className="flex flex-col items-center gap-4 py-10">
-          <p className="text-gray-600 mb-4">考试即将开始，请点击下方按钮查看考试须知</p>
+          <p className="text-gray-600 mb-4">考试即将开始，请点击下方按钮查看实操题说明</p>
           <button
             onClick={onStartAnswering}
             disabled={isTransitioning}
             className={`px-10 py-3.5 bg-[#DF2029] hover:bg-[#c81d25] text-white text-lg font-bold rounded-2xl shadow-lg shadow-red-200/50 transition-all hover:shadow-red-300/60 active:scale-[0.98] ${isTransitioning ? 'opacity-50 cursor-not-allowed' : ''}`}
           >
-            {isTransitioning ? '加载中...' : '考试须知'}
+            {isTransitioning ? '加载中...' : '实操题说明'}
           </button>
         </div>
       )}
