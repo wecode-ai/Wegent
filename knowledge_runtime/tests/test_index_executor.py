@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Tests for IndexExecutor service."""
+"""Tests for IndexExecutor service using reference mode."""
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -10,19 +10,27 @@ import pytest
 
 from knowledge_runtime.services.index_executor import IndexExecutor
 from shared.models import (
+    KnowledgeBaseReference,
     PresignedUrlContentRef,
     RemoteIndexRequest,
+    RemoteKnowledgeBaseQueryConfig,
     RuntimeEmbeddingModelConfig,
+    RuntimeRetrievalConfig,
     RuntimeRetrieverConfig,
 )
 
 
 @pytest.fixture
-def index_request():
-    """Create a sample index request."""
-    return RemoteIndexRequest(
+def kb_reference():
+    """Create a sample knowledge base reference."""
+    return KnowledgeBaseReference(knowledge_base_id=1, user_id=7)
+
+
+@pytest.fixture
+def resolved_kb_config():
+    """Create a resolved KB config (returned by resolver)."""
+    return RemoteKnowledgeBaseQueryConfig(
         knowledge_base_id=1,
-        document_id=100,
         index_owner_user_id=7,
         retriever_config=RuntimeRetrieverConfig(
             name="test-retriever",
@@ -40,21 +48,33 @@ def index_request():
                 "api_key": "test-key",
             },
         ),
+        retrieval_config=RuntimeRetrievalConfig(
+            top_k=5,
+            score_threshold=0.7,
+        ),
+    )
+
+
+@pytest.fixture
+def index_request(kb_reference):
+    """Create a sample index request using reference mode."""
+    return RemoteIndexRequest(
+        knowledge_base_id=1,
+        document_id=100,
         content_ref=PresignedUrlContentRef(
             kind="presigned_url",
             url="https://storage.example.com/bucket/test.pdf",
         ),
-        source_file="test.pdf",
-        file_extension=".pdf",
+        knowledge_base_reference=kb_reference,
     )
 
 
 class TestIndexExecutor:
-    """Tests for IndexExecutor."""
+    """Tests for IndexExecutor using reference mode."""
 
     @pytest.mark.asyncio
-    async def test_execute_success(self, index_request) -> None:
-        """Test successful index execution."""
+    async def test_execute_success(self, index_request, resolved_kb_config) -> None:
+        """Test successful index execution using reference mode."""
         mock_storage_backend = MagicMock()
         mock_embed_model = MagicMock()
         mock_document_service = MagicMock()
@@ -71,6 +91,11 @@ class TestIndexExecutor:
         )
 
         with (
+            patch.object(
+                IndexExecutor()._resolver,
+                "resolve_knowledge_base_query_config",
+                return_value=resolved_kb_config,
+            ),
             patch(
                 "knowledge_runtime.services.index_executor.create_storage_backend_from_runtime_config",
                 return_value=mock_storage_backend,
@@ -84,7 +109,7 @@ class TestIndexExecutor:
                 return_value=mock_document_service,
             ),
             patch("httpx.AsyncClient") as mock_client,
-            patch("knowledge_runtime.config._settings", None),  # Reset settings cache
+            patch("knowledge_runtime.config._settings", None),
         ):
             mock_response = MagicMock()
             mock_response.content = b"test content"
@@ -101,10 +126,10 @@ class TestIndexExecutor:
         mock_document_service.index_document_from_binary.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_execute_uses_request_metadata_over_fetched(
-        self, index_request
+    async def test_execute_resolves_reference(
+        self, index_request, resolved_kb_config
     ) -> None:
-        """Test that request metadata overrides fetched content metadata."""
+        """Test that executor resolves KB reference correctly."""
         mock_storage_backend = MagicMock()
         mock_embed_model = MagicMock()
         mock_document_service = MagicMock()
@@ -116,7 +141,14 @@ class TestIndexExecutor:
             }
         )
 
+        executor = IndexExecutor()
+
         with (
+            patch.object(
+                executor._resolver,
+                "resolve_knowledge_base_query_config",
+                return_value=resolved_kb_config,
+            ) as mock_resolve,
             patch(
                 "knowledge_runtime.services.index_executor.create_storage_backend_from_runtime_config",
                 return_value=mock_storage_backend,
@@ -130,23 +162,23 @@ class TestIndexExecutor:
                 return_value=mock_document_service,
             ),
             patch("httpx.AsyncClient") as mock_client,
-            patch("knowledge_runtime.config._settings", None),  # Reset settings cache
+            patch("knowledge_runtime.config._settings", None),
         ):
             mock_response = MagicMock()
-            # Content from fetch has different filename
             mock_response.content = b"content"
             mock_response.raise_for_status = MagicMock()
             mock_client.return_value.__aenter__.return_value.get = AsyncMock(
                 return_value=mock_response
             )
 
-            executor = IndexExecutor()
             await executor.execute(index_request)
 
-        call_kwargs = mock_document_service.index_document_from_binary.call_args.kwargs
-        # Should use request metadata, not fetched
-        assert call_kwargs["source_file"] == "test.pdf"
-        assert call_kwargs["file_extension"] == ".pdf"
+        # Verify resolver was called with correct reference
+        mock_resolve.assert_called_once_with(
+            knowledge_base_id=1,
+            user_id=7,
+            user_name=None,
+        )
 
     @pytest.mark.asyncio
     async def test_execute_content_fetch_error_propagates(self, index_request) -> None:
@@ -155,7 +187,7 @@ class TestIndexExecutor:
 
         with (
             patch("httpx.AsyncClient") as mock_client,
-            patch("knowledge_runtime.config._settings", None),  # Reset settings cache
+            patch("knowledge_runtime.config._settings", None),
         ):
             mock_client.return_value.__aenter__.return_value.get = AsyncMock(
                 side_effect=ContentFetchError("Fetch failed", retryable=True)
@@ -169,7 +201,9 @@ class TestIndexExecutor:
             assert exc_info.value.retryable
 
     @pytest.mark.asyncio
-    async def test_execute_storage_error_propagates(self, index_request) -> None:
+    async def test_execute_storage_error_propagates(
+        self, index_request, resolved_kb_config
+    ) -> None:
         """Test that storage backend errors propagate correctly."""
         mock_storage_backend = MagicMock()
         mock_embed_model = MagicMock()
@@ -180,6 +214,11 @@ class TestIndexExecutor:
         )
 
         with (
+            patch.object(
+                IndexExecutor()._resolver,
+                "resolve_knowledge_base_query_config",
+                return_value=resolved_kb_config,
+            ),
             patch(
                 "knowledge_runtime.services.index_executor.create_storage_backend_from_runtime_config",
                 return_value=mock_storage_backend,
@@ -193,7 +232,7 @@ class TestIndexExecutor:
                 return_value=mock_document_service,
             ),
             patch("httpx.AsyncClient") as mock_client,
-            patch("knowledge_runtime.config._settings", None),  # Reset settings cache
+            patch("knowledge_runtime.config._settings", None),
         ):
             mock_response = MagicMock()
             mock_response.content = b"content"
