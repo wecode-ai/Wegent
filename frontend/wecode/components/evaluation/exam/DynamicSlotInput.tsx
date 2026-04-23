@@ -78,7 +78,20 @@ export function DynamicSlotInput({
   const [showPreview, setShowPreview] = useState(disabled)
   // Loading state for fetching text from S3 attachment
   const [loadingFromS3, setLoadingFromS3] = useState(false)
+  // URL validation error state
+  const [urlError, setUrlError] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+
+  // URL validation function
+  const isValidUrl = (url: string): boolean => {
+    if (!url.trim()) return true // Empty is valid (optional field)
+    try {
+      const urlObj = new URL(url)
+      return urlObj.protocol === 'http:' || urlObj.protocol === 'https:'
+    } catch {
+      return false
+    }
+  }
 
   // Auto-switch to preview mode when disabled changes to true (e.g., exam ends)
   useEffect(() => {
@@ -141,10 +154,16 @@ export function DynamicSlotInput({
   const handleLinkChange = useCallback(
     (newLink: string) => {
       onChange({ ...value, link: newLink })
+      // Validate URL in real-time
+      if (newLink.trim() && !isValidUrl(newLink)) {
+        setUrlError(t('answers.invalid_url_hint'))
+      } else {
+        setUrlError(null)
+      }
       // Trigger debounced auto-save for link changes too
       onTextChange?.()
     },
-    [value, onChange, onTextChange]
+    [value, onChange, onTextChange, t]
   )
 
   const handleFileSelect = useCallback(
@@ -420,11 +439,19 @@ export function DynamicSlotInput({
               onChange={e => handleLinkChange(e.target.value)}
               placeholder={t('answers.link_placeholder')}
               disabled={linkDisabled}
-              className="flex-1 px-4 py-3 rounded-xl border border-gray-200 bg-white text-[1rem] text-gray-900 transition placeholder:text-gray-300 disabled:opacity-50 disabled:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#DF2029]"
+              className={cn(
+                "flex-1 px-4 py-3 rounded-xl border bg-white text-[1rem] text-gray-900 transition placeholder:text-gray-300 disabled:opacity-50 disabled:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset",
+                urlError
+                  ? "border-red-400 focus-visible:ring-red-400"
+                  : "border-gray-200 focus-visible:ring-[#DF2029]"
+              )}
             />
           </div>
           {hasAttachment && (
             <p className="text-xs text-gray-400">{t('answers.link_disabled_hint')}</p>
+          )}
+          {urlError && !hasAttachment && (
+            <p className="text-xs text-red-500">{urlError}</p>
           )}
         </div>
 
@@ -605,9 +632,17 @@ export function DynamicSlotInput({
               onChange={e => handleLinkChange(e.target.value)}
               placeholder={t('answers.link_placeholder')}
               disabled={disabled}
-              className="flex-1 px-4 py-3 rounded-xl border border-gray-200 bg-white text-[1rem] text-gray-900 transition placeholder:text-gray-300 disabled:opacity-50 disabled:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#DF2029]"
+              className={cn(
+                "flex-1 px-4 py-3 rounded-xl border bg-white text-[1rem] text-gray-900 transition placeholder:text-gray-300 disabled:opacity-50 disabled:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset",
+                urlError
+                  ? "border-red-400 focus-visible:ring-red-400"
+                  : "border-gray-200 focus-visible:ring-[#DF2029]"
+              )}
             />
           </div>
+          {urlError && (
+            <p className="text-xs text-red-500">{urlError}</p>
+          )}
         </div>
       )}
 
