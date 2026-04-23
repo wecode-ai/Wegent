@@ -106,7 +106,9 @@
     "video_download_started": "Download started",
     "submit_hint": "Submission Hint",
     "submit_hint_placeholder": "Enter a hint to display on the submission page (Markdown supported)",
-    "submit_hint_hint": "Supports Markdown formatting. Will be shown on preview submission, confirm submission, and exam ended pages"
+    "submit_hint_hint": "Supports Markdown formatting. Will be shown on preview submission, confirm submission, and exam ended pages",
+    "not_visible_until": "Earliest Visible Time",
+    "not_visible_until_hint": "If set, respondents cannot access the exam before this time. Leave empty to allow immediate access."
   },
   "versions": {
     "current": "Current",
@@ -264,6 +266,9 @@
     "text_placeholder": "Enter your content (supports Markdown)...",
     "link_placeholder": "Enter link URL...",
     "accepted_formats": "Accepted formats",
+    "link_disabled_hint": "Link input is disabled because you have uploaded attachments",
+    "attachment_disabled_hint": "Attachment upload is disabled because you have entered a link",
+    "invalid_url_hint": "Please enter a valid URL (e.g., https://example.com)",
     "new_version_available": "A new version of this question is available. You may want to re-answer.",
     "respondents": "Respondents",
     "tabs": {
@@ -763,7 +768,8 @@
       "label": "Input Mode",
       "attachment": "Attachment Only",
       "text": "Text Only",
-      "link_attachment": "Link + Attachment"
+      "link_attachment": "Link + Attachment",
+      "link_or_attachment": "Link or Attachment"
     },
     "bonus_config": "Bonus Configuration",
     "bonus_title": "Bonus Title",
@@ -771,6 +777,7 @@
     "bonus_content": "Bonus Description",
     "bonus_content_placeholder": "Detailed description of the bonus question, supports Markdown",
     "bonus_content_hint": "Supports Markdown formatting",
+    "or": "or",
     "drag_hint": "Drag slots to reorder",
     "delete_title": "Confirm Delete Slot",
     "delete_description": "This slot configuration will be permanently deleted. Existing answer data will not be affected.",

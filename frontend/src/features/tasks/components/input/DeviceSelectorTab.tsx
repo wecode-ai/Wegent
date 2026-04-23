@@ -35,6 +35,7 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import {
+  compareDevicesByExecutionPriority,
   formatSlotUsage,
   getSelectableDevices,
   getStatusColor,
@@ -289,12 +290,18 @@ export function DeviceSelectorTab({
   const defaultExecutionTarget = user?.preferences?.default_execution_target
 
   const selectableDevices = useMemo(() => getSelectableDevices(devices), [devices])
+  const displayDevices = useMemo(
+    () => [...devices].sort(compareDevicesByExecutionPriority),
+    [devices]
+  )
 
   // Count online devices
   const onlineDeviceCount = useMemo(
-    () => selectableDevices.filter(d => d.status !== 'offline').length,
-    [selectableDevices]
+    () => devices.filter(device => device.status !== 'offline').length,
+    [devices]
   )
+
+  const totalDeviceCount = devices.length
 
   // Get preferred device based on user preference or fallback to first available
   const preferredDevice = useMemo(() => {
@@ -323,12 +330,12 @@ export function DeviceSelectorTab({
   }, [selectableDevices, defaultExecutionTarget])
 
   const localDevices = useMemo(() => {
-    return selectableDevices.filter(device => device.device_type !== 'cloud')
-  }, [selectableDevices])
+    return displayDevices.filter(device => device.device_type !== 'cloud')
+  }, [displayDevices])
 
   const cloudDevices = useMemo(() => {
-    return selectableDevices.filter(device => device.device_type === 'cloud')
-  }, [selectableDevices])
+    return displayDevices.filter(device => device.device_type === 'cloud')
+  }, [displayDevices])
 
   const selectedDevice = useMemo(() => {
     if (hasMessages) {
@@ -414,9 +421,6 @@ export function DeviceSelectorTab({
   }
 
   const renderTriggerContent = () => {
-    // Show device count summary
-    const totalDevices = selectableDevices.length
-
     if (selectedDevice) {
       const devicePrefix =
         selectedDevice.device_type === 'cloud' ? t('cloud_device_prefix') : t('local_device_prefix')
@@ -443,9 +447,9 @@ export function DeviceSelectorTab({
               getStatusColor(selectedDevice.status)
             )}
           />
-          {totalDevices > 0 && (
+          {totalDeviceCount > 0 && (
             <span className="text-text-muted text-[10px] ml-0.5 flex-shrink-0">
-              {onlineDeviceCount}/{totalDevices}
+              {onlineDeviceCount}/{totalDeviceCount}
             </span>
           )}
         </>
@@ -456,9 +460,9 @@ export function DeviceSelectorTab({
       <>
         <Cloud className="w-3.5 h-3.5 text-primary" />
         <span>{t('cloud_mode')}</span>
-        {totalDevices > 0 && (
+        {totalDeviceCount > 0 && (
           <span className="text-text-muted text-[10px] ml-0.5">
-            {onlineDeviceCount}/{totalDevices}
+            {onlineDeviceCount}/{totalDeviceCount}
           </span>
         )}
       </>
@@ -640,7 +644,7 @@ export function DeviceSelectorTab({
               </div>
 
               {/* Empty state hint */}
-              {selectableDevices.length === 0 && (
+              {displayDevices.length === 0 && (
                 <div className="text-center py-4">
                   <p className="text-sm text-text-muted mb-2">{t('no_devices_available')}</p>
                   <button

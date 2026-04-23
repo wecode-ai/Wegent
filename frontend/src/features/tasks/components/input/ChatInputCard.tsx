@@ -207,6 +207,11 @@ export function ChatInputCard({
   // Ref for skill button to enable fly animation from autocomplete
   const skillSelectorRef = useRef<SkillSelectorPopoverRef>(null)
 
+  const shouldUseCompactQueueSpacing =
+    !hasMessages &&
+    !taskInputMessage.trim() &&
+    selectedContexts.some(context => context.type === 'queue_message')
+
   // Get skill button element for fly animation
   const getSkillButtonElement = () => {
     return skillSelectorRef.current?.getButtonElement() ?? null
@@ -234,7 +239,7 @@ export function ChatInputCard({
 
       {/* Chat Input Card */}
       <div
-        className={`relative w-full max-w-[820px] mx-auto rounded-3xl border bg-base shadow-card-hover transition-colors flex flex-col justify-between ${isDragging ? 'border-primary ring-2 ring-primary/20' : 'border-primary/40'}`}
+        className={`relative w-full max-w-[820px] mx-auto rounded-3xl border bg-base shadow-card-hover transition-colors flex flex-col justify-start ${isDragging ? 'border-primary ring-2 ring-primary/20' : 'border-primary/40'}`}
         onDragEnter={onDragEnter}
         onDragLeave={onDragLeave}
         onDragOver={onDragOver}
@@ -283,7 +288,7 @@ export function ChatInputCard({
 
         {/* Chat Input with inline badge */}
         {!shouldHideChatInput && (
-          <div className="px-4 pt-3">
+          <div className={`px-4 ${shouldUseCompactQueueSpacing ? 'pt-1.5' : 'pt-3'}`}>
             <ChatInput
               message={taskInputMessage}
               setMessage={setTaskInputMessage}
@@ -325,6 +330,7 @@ export function ChatInputCard({
               // Expand/collapse props for input height toggle
               isExpanded={isInputExpanded}
               onExpandToggle={handleExpandToggle}
+              compactSpacing={shouldUseCompactQueueSpacing}
             />
           </div>
         )}
@@ -342,7 +348,7 @@ export function ChatInputCard({
         )}
 
         {/* Team Selector and Send Button - always show */}
-        <div ref={inputControlsRef}>
+        <div ref={inputControlsRef} className="mt-auto">
           <ChatInputControls
             selectedTeam={selectedTeam}
             teams={teams}

@@ -15,7 +15,8 @@
     "system_config": "System Config",
     "im_channels": "IM Channels",
     "monitor": "Subscription Monitor",
-    "device_monitor": "Device Monitor"
+    "device_monitor": "Device Monitor",
+    "transition_pages": "Transition Pages"
   },
   "stats": {
     "total_users": "Total Users",

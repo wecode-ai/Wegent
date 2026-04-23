@@ -57,6 +57,8 @@ interface ChatInputProps {
   isExpanded?: boolean
   /** Callback when expand/collapse button is clicked */
   onExpandToggle?: () => void
+  /** Use tighter vertical spacing for prefilled queue-message state */
+  compactSpacing?: boolean
 }
 
 export default function ChatInput({
@@ -85,6 +87,7 @@ export default function ChatInput({
   skillButtonRef,
   isExpanded = false,
   onExpandToggle,
+  compactSpacing = false,
 }: ChatInputProps) {
   const { t, i18n } = useTranslation()
 
@@ -634,7 +637,13 @@ export default function ChatInput({
   // Calculate min height based on device
   // Figma design shows input card ~140px total, text area takes most of it
   // Text area should be ~60-70px minimum (about 2-3 lines with 26px line-height)
-  const baseMinHeight = isMobile ? '3.5rem' : '4rem'
+  const baseMinHeight = compactSpacing
+    ? isMobile
+      ? '3rem'
+      : '3.25rem'
+    : isMobile
+      ? '3.5rem'
+      : '4rem'
   // When expanded, increase min height to show the expanded state visually
   const expandedMinHeight = isMobile ? '9rem' : '10rem'
   const minHeight = !isMobile && isExpanded ? expandedMinHeight : baseMinHeight
@@ -662,7 +671,7 @@ export default function ChatInput({
         <div
           className="absolute pointer-events-none text-text-muted text-base leading-[26px]"
           style={{
-            top: '0.25rem',
+            top: compactSpacing ? '0' : '0.25rem',
             left: badge ? `${badgeWidth}px` : '0',
           }}
         >
@@ -730,7 +739,9 @@ export default function ChatInput({
             {badge && (
               <span
                 ref={badgeRef}
-                className="absolute left-0 top-0.5 pointer-events-auto z-10"
+                className={`absolute left-0 pointer-events-auto z-10 ${
+                  compactSpacing ? 'top-0' : 'top-0.5'
+                }`}
                 style={{ userSelect: 'none' }}
               >
                 {badge}
@@ -752,7 +763,11 @@ export default function ChatInput({
                     onFocus={handleFocus}
                     data-testid="message-input"
                     data-roleid="message-input"
-                    className={`w-full pt-1 pb-2 bg-transparent text-text-primary text-base leading-[26px] focus:outline-none transition-all duration-300 ease-in-out ${isInputDisabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    className={`w-full ${
+                      compactSpacing ? 'pt-0.5 pb-1' : 'pt-1 pb-2'
+                    } bg-transparent text-text-primary text-base leading-[26px] focus:outline-none transition-all duration-300 ease-in-out ${
+                      isInputDisabled ? 'opacity-50 cursor-not-allowed' : ''
+                    }`}
                     style={{
                       minHeight,
                       whiteSpace: 'pre-wrap',

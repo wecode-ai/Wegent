@@ -6,7 +6,7 @@
 
 import { useState } from 'react'
 import { createSmartMarkdownComponents } from '@/components/common/SmartUrlRenderer'
-import { Copy, Check, Plus, Star, RefreshCw, Edit3, X, Save, Loader2 } from 'lucide-react'
+import { Copy, Check, Plus, Star, RefreshCw, Edit3, X, Save, Loader2, Send } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import type { FinalPromptData, Team, GitRepoInfo, GitBranch } from '@/types/api'
 import EnhancedMarkdown from '@/components/common/EnhancedMarkdown'
@@ -24,6 +24,7 @@ interface FinalPromptMessageProps {
   selectedBranch?: GitBranch | null
   // Pipeline mode props
   taskId?: number | null
+  subtaskId?: number | null
   /**
    * Whether the current pipeline stage is pending confirmation.
    * This is the single source of truth from pipeline_stage_info.is_pending_confirmation.
@@ -31,6 +32,7 @@ interface FinalPromptMessageProps {
    */
   isPendingConfirmation?: boolean
   onStageConfirmed?: () => void
+  onForwardClick?: (subtaskId: number) => void
   /**
    * Whether the current message is still streaming.
    * When true, action buttons should be hidden to prevent premature user interaction.
@@ -44,8 +46,10 @@ export default function FinalPromptMessage({
   selectedRepo,
   selectedBranch,
   taskId = null,
+  subtaskId = null,
   isPendingConfirmation = false,
   onStageConfirmed,
+  onForwardClick,
   isMessageStreaming = false,
 }: FinalPromptMessageProps) {
   const { t } = useTranslation('chat')
@@ -63,6 +67,7 @@ export default function FinalPromptMessage({
 
   // Single source of truth: isPendingConfirmation from pipeline_stage_info.is_pending_confirmation
   const showPipelineActions = isPendingConfirmation
+  const showForwardAction = !!taskId && !!subtaskId && !!onForwardClick && !isEditing
 
   const handleCopy = async () => {
     try {
@@ -122,6 +127,14 @@ export default function FinalPromptMessage({
     toast({
       title: t('clarification.prompt_ready'),
     })
+  }
+
+  const handleForward = () => {
+    if (!subtaskId) {
+      return
+    }
+
+    onForwardClick?.(subtaskId)
   }
 
   const handleContinueToNextStage = async () => {
@@ -268,6 +281,18 @@ export default function FinalPromptMessage({
           {copied ? <Check className="w-4 h-4 mr-2" /> : <Copy className="w-4 h-4 mr-2" />}
           {copied ? t('clarification.copied') : t('clarification.copy_prompt')}
         </Button>
+
+        {showForwardAction && (
+          <Button
+            variant="ghost"
+            onClick={handleForward}
+            disabled={isMessageStreaming}
+            data-testid="final-prompt-forward-button"
+          >
+            <Send className="w-4 h-4 mr-2" />
+            {t('actions.forward')}
+          </Button>
+        )}
 
         {showPipelineActions ? (
           <Button

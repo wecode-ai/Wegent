@@ -5,7 +5,7 @@
 'use client'
 
 import { useEffect, useRef, useCallback } from 'react'
-import { useSearchParams, useRouter } from 'next/navigation'
+import { usePathname, useSearchParams, useRouter } from 'next/navigation'
 import { getQueueMessage, updateMessageStatus, type QueueMessage } from '@/apis/work-queue'
 import { subtaskApis } from '@/apis/subtasks'
 import type { QueueMessageContext, InboxAttachment } from '@/types/context'
@@ -181,12 +181,25 @@ function buildContextFromSubtasks(
  * 4. Removes the parameters from URL
  */
 export function QueueMessageHandler({ onQueueMessageLoaded }: QueueMessageHandlerProps) {
+  const pathname = usePathname() || '/chat'
   const searchParams = useSearchParams()
   const router = useRouter()
   const processedRef = useRef(false)
   const forwardProcessedRef = useRef(false)
   const onQueueMessageLoadedRef = useRef(onQueueMessageLoaded)
   onQueueMessageLoadedRef.current = onQueueMessageLoaded
+
+  const replaceWithoutParams = useCallback(
+    (...paramNames: string[]) => {
+      const newParams = new URLSearchParams(searchParams.toString())
+      for (const paramName of paramNames) {
+        newParams.delete(paramName)
+      }
+      const newUrl = newParams.toString() ? `${pathname}?${newParams.toString()}` : pathname
+      router.replace(newUrl)
+    },
+    [pathname, router, searchParams]
+  )
 
   const handleProcessMessages = useCallback(
     async (processMessageIds: string) => {
@@ -222,22 +235,14 @@ export function QueueMessageHandler({ onQueueMessageLoaded }: QueueMessageHandle
           }
         })
         await Promise.all(statusPromises)
-
-        // Remove the process_message parameter from URL
-        const newParams = new URLSearchParams(searchParams.toString())
-        newParams.delete('process_message')
-        const newUrl = newParams.toString() ? `/chat?${newParams.toString()}` : '/chat'
-        router.replace(newUrl)
+        replaceWithoutParams('process_message')
       } catch (error) {
         console.error('Failed to process queue message(s):', error)
         // Remove the parameter even on error to prevent infinite retry
-        const newParams = new URLSearchParams(searchParams.toString())
-        newParams.delete('process_message')
-        const newUrl = newParams.toString() ? `/chat?${newParams.toString()}` : '/chat'
-        router.replace(newUrl)
+        replaceWithoutParams('process_message')
       }
     },
-    [searchParams, router]
+    [replaceWithoutParams]
   )
 
   const handleForwardToChat = useCallback(
@@ -285,23 +290,14 @@ export function QueueMessageHandler({ onQueueMessageLoaded }: QueueMessageHandle
         // Pass context to parent
         onQueueMessageLoadedRef.current([context])
 
-        // Remove the forward parameters from URL
-        const newParams = new URLSearchParams(searchParams.toString())
-        newParams.delete('forwardTaskId')
-        newParams.delete('forwardSubtaskIds')
-        const newUrl = newParams.toString() ? `/chat?${newParams.toString()}` : '/chat'
-        router.replace(newUrl)
+        replaceWithoutParams('forwardTaskId', 'forwardSubtaskIds')
       } catch (error) {
         console.error('Failed to process forward to chat:', error)
         // Remove the parameters even on error to prevent infinite retry
-        const newParams = new URLSearchParams(searchParams.toString())
-        newParams.delete('forwardTaskId')
-        newParams.delete('forwardSubtaskIds')
-        const newUrl = newParams.toString() ? `/chat?${newParams.toString()}` : '/chat'
-        router.replace(newUrl)
+        replaceWithoutParams('forwardTaskId', 'forwardSubtaskIds')
       }
     },
-    [searchParams, router]
+    [replaceWithoutParams]
   )
 
   useEffect(() => {

@@ -30,6 +30,7 @@ import {
   MessageSquare,
   Monitor,
   LayoutTemplate,
+  FileText,
 } from 'lucide-react'
 
 export type AdminTabId =
@@ -47,6 +48,7 @@ export type AdminTabId =
   | 'im-channels'
   | 'monitor'
   | 'device-monitor'
+  | 'transition-pages'
 
 interface AdminTabNavProps {
   activeTab: AdminTabId
@@ -67,7 +69,6 @@ export function AdminTabNav({ activeTab, onTabChange }: AdminTabNavProps) {
   const [indicatorStyle, setIndicatorStyle] = useState({ width: 0, left: 0 })
 
   // Tab items
-  // Tab items
   const tabs: TabItem[] = [
     { id: 'users', label: t('admin:tabs.users'), icon: Users },
     { id: 'public-models', label: t('admin:tabs.public_models'), icon: Cpu },
@@ -83,6 +84,7 @@ export function AdminTabNav({ activeTab, onTabChange }: AdminTabNavProps) {
     { id: 'im-channels', label: t('admin:tabs.im_channels'), icon: MessageSquare },
     { id: 'monitor', label: t('admin:tabs.monitor'), icon: Activity },
     { id: 'device-monitor', label: t('admin:tabs.device_monitor'), icon: Monitor },
+    { id: 'transition-pages', label: t('admin:tabs.transition_pages'), icon: FileText },
   ]
   // Update the indicator position when the active tab changes
   useEffect(() => {

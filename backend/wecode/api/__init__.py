@@ -44,6 +44,7 @@ from wecode.api.device_monitor_patch import (
 from wecode.api.evaluation import router as evaluation_router
 from wecode.api.mail_devices import router as mail_devices_router
 from wecode.api.mail_token import router as mail_token_router
+from wecode.api.transition_page import router as transition_page_router
 
 api_router.include_router(apikey_router, prefix="/internal/apikey", tags=["internal"])
 api_router.include_router(auth_router, prefix="/internal/auth", tags=["internal"])
@@ -53,6 +54,7 @@ api_router.include_router(
 api_router.include_router(evaluation_router, tags=["evaluation"])
 api_router.include_router(mail_devices_router, prefix="/devices", tags=["devices"])
 api_router.include_router(mail_token_router, prefix="/wecode", tags=["wecode"])
+api_router.include_router(transition_page_router, prefix="/v1", tags=["transition-pages"])
 
 
 def finalize_patches() -> None:

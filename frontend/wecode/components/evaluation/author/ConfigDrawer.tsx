@@ -21,8 +21,8 @@ import {
 // Tabs component imported but using custom tab implementation for drawer
 import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
+import { ExamInstructionsMarkdown } from '@wecode/components/evaluation/exam/ExamInstructionsMarkdown'
 import { SubmitHintMarkdown } from '@wecode/components/evaluation/exam/SubmitHintMarkdown'
-import EnhancedMarkdown from '@/components/common/EnhancedMarkdown'
 import { getAuthorTopic, updateAuthorTopic } from '@wecode/api/evaluation-author'
 import { downloadEvaluationFile } from '@wecode/api/evaluation-shared'
 import { TopicVisibility, type Topic } from '@wecode/types/evaluation'
@@ -75,6 +75,9 @@ export function ConfigDrawer({ isOpen, topicId, onClose, onTopicUpdate }: Config
   const [examMinutes, setExamMinutes] = useState(50)
   const [reviewMinutes, setReviewMinutes] = useState(5)
 
+  // Visibility config state
+  const [notVisibleUntil, setNotVisibleUntil] = useState<string>('')
+
   // Submit hint config state
   const [submitHint, setSubmitHint] = useState('')
   const [showSubmitHintPreview, setShowSubmitHintPreview] = useState(false)
@@ -117,6 +120,14 @@ export function ConfigDrawer({ isOpen, topicId, onClose, onTopicUpdate }: Config
         setReviewMinutes(duration.review ?? 5)
       }
 
+      // Load visibility config from extra_data
+      const visibility = extraData?.visibility as { not_visible_until?: string } | undefined
+      if (visibility?.not_visible_until) {
+        setNotVisibleUntil(visibility.not_visible_until)
+      } else {
+        setNotVisibleUntil('')
+      }
+
       // Load video attachment from extra_data
       setVideoAttachment((extraData?.video as ExamVideoAttachment) || null)
 
@@ -152,6 +163,7 @@ export function ConfigDrawer({ isOpen, topicId, onClose, onTopicUpdate }: Config
       setVideoUploadProgress(0)
       setIsUploadingVideo(false)
       setShowVideoPlayer(false)
+      setNotVisibleUntil('')
       setInitialLoaded(false) // Reset so next open will reload data
     }
   }, [isOpen])
@@ -178,6 +190,9 @@ export function ConfigDrawer({ isOpen, topicId, onClose, onTopicUpdate }: Config
             intro: introMinutes,
             exam: examMinutes,
             review: reviewMinutes,
+          },
+          visibility: {
+            not_visible_until: notVisibleUntil || undefined,
           },
           video: videoAttachment || undefined,
           submit_hint: submitHint.trim() || undefined,
@@ -421,6 +436,26 @@ export function ConfigDrawer({ isOpen, topicId, onClose, onTopicUpdate }: Config
                   {t('topics.exam_config', 'Exam Configuration')}
                 </h3>
 
+                {/* Visibility - Not Visible Until */}
+                <div className="space-y-2 mb-6">
+                  <Label htmlFor="notVisibleUntil">
+                    {t('topics.not_visible_until', 'Earliest Visible Time')}
+                  </Label>
+                  <Input
+                    id="notVisibleUntil"
+                    type="datetime-local"
+                    value={notVisibleUntil}
+                    onChange={e => setNotVisibleUntil(e.target.value)}
+                    disabled={saving}
+                  />
+                  <p className="text-xs text-gray-500">
+                    {t(
+                      'topics.not_visible_until_hint',
+                      'If set, respondents cannot access the exam before this time. Leave empty to allow immediate access.'
+                    )}
+                  </p>
+                </div>
+
                 {/* Duration - Three Phase */}
                 <div className="grid gap-4 md:grid-cols-3 mb-6">
                   <div className="space-y-2">
@@ -630,9 +665,9 @@ export function ConfigDrawer({ isOpen, topicId, onClose, onTopicUpdate }: Config
                     </Button>
                   </div>
                   {showInstructionsPreview ? (
-                    <div className="min-h-[120px] rounded-lg border border-gray-200 bg-gray-50 p-4">
+                    <div className="min-h-[120px] rounded-lg border border-gray-200 bg-white p-4">
                       {instructions.trim() ? (
-                        <EnhancedMarkdown source={instructions} theme="light" />
+                        <ExamInstructionsMarkdown content={instructions} />
                       ) : (
                         <p className="text-gray-400">{t('topics.no_instructions')}</p>
                       )}
