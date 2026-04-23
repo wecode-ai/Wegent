@@ -264,6 +264,8 @@
     "text_placeholder": "Enter your content (supports Markdown)...",
     "link_placeholder": "Enter link URL...",
     "accepted_formats": "Accepted formats",
+    "link_disabled_hint": "Link input is disabled because you have uploaded attachments",
+    "attachment_disabled_hint": "Attachment upload is disabled because you have entered a link",
     "new_version_available": "A new version of this question is available. You may want to re-answer.",
     "respondents": "Respondents",
     "tabs": {
@@ -763,7 +765,8 @@
       "label": "Input Mode",
       "attachment": "Attachment Only",
       "text": "Text Only",
-      "link_attachment": "Link + Attachment"
+      "link_attachment": "Link + Attachment",
+      "link_or_attachment": "Link or Attachment"
     },
     "bonus_config": "Bonus Configuration",
     "bonus_title": "Bonus Title",
