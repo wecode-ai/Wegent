@@ -56,6 +56,11 @@ interface TransitionPageDetail {
     start_at?: string
     end_at?: string
   }>
+  block_groups: Array<{
+    key: string
+    name: string
+    mutex?: boolean
+  }>
   blocks: Array<{
     key: string
     title: string
@@ -69,6 +74,7 @@ interface TransitionPageDetail {
       users?: string[]
     }
     sort_order: number
+    block_group_key?: string
   }>
   members: Array<{
     email: string
@@ -97,6 +103,12 @@ export default function AdminTransitionPageEdit() {
   const [newGroupKey, setNewGroupKey] = useState('')
   const [newGroupName, setNewGroupName] = useState('')
 
+  // Add block group dialog
+  const [addingBlockGroup, setAddingBlockGroup] = useState(false)
+  const [newBlockGroupKey, setNewBlockGroupKey] = useState('')
+  const [newBlockGroupName, setNewBlockGroupName] = useState('')
+  const [newBlockGroupMutex, setNewBlockGroupMutex] = useState(false)
+
   // Add block dialog
   const [addingBlock, setAddingBlock] = useState(false)
   const [newBlockKey, setNewBlockKey] = useState('')
@@ -104,6 +116,7 @@ export default function AdminTransitionPageEdit() {
   const [newBlockTemplate, setNewBlockTemplate] = useState('')
   const [newBlockFontSize, setNewBlockFontSize] = useState('large')
   const [newBlockFreezeEnabled, setNewBlockFreezeEnabled] = useState(false)
+  const [newBlockBlockGroupKey, setNewBlockBlockGroupKey] = useState<string>('')
   const [newBlockButtons, setNewBlockButtons] = useState<Array<{ label: string; url_template: string; variant: string; target: string }>>([])
 
   // Manual user add form
@@ -123,12 +136,18 @@ export default function AdminTransitionPageEdit() {
   const [editBlockFontSize, setEditBlockFontSize] = useState('large')
   const [editBlockStage, setEditBlockStage] = useState('always')
   const [editBlockFreezeEnabled, setEditBlockFreezeEnabled] = useState(false)
+  const [editBlockBlockGroupKey, setEditBlockBlockGroupKey] = useState<string>('')
 
   const [editingGroup, setEditingGroup] = useState<TransitionPageDetail['groups'][0] | null>(null)
   const [editGroupName, setEditGroupName] = useState('')
   const [editGroupStartAt, setEditGroupStartAt] = useState('')
   const [editGroupEndAt, setEditGroupEndAt] = useState('')
   const [editGroupContent, setEditGroupContent] = useState('{}')
+
+  // Edit block group dialog
+  const [editingBlockGroup, setEditingBlockGroup] = useState<TransitionPageDetail['block_groups'][0] | null>(null)
+  const [editBlockGroupName, setEditBlockGroupName] = useState('')
+  const [editBlockGroupMutex, setEditBlockGroupMutex] = useState(false)
 
   // Edit member content dialog
   const [editingMember, setEditingMember] = useState<TransitionPageDetail['members'][0] | null>(null)
@@ -279,6 +298,42 @@ export default function AdminTransitionPageEdit() {
       if (!response.ok) throw new Error('Failed to add group')
       toast({ title: '用户组添加成功' })
       setAddingGroup(false)
+      setNewGroupKey('')
+      setNewGroupName('')
+      loadPage()
+    } catch (error) {
+      toast({
+        title: '添加失败',
+        description: error instanceof Error ? error.message : '未知错误',
+        variant: 'destructive',
+      })
+    }
+  }
+
+  const saveAddBlockGroup = async () => {
+    if (!newBlockGroupKey || !newBlockGroupName) {
+      toast({ title: '请填写完整信息', variant: 'destructive' })
+      return
+    }
+    try {
+      const token = getToken()
+      const response = await fetch(`/api/v1/transition-pages/${pageId}/block-groups`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          key: newBlockGroupKey,
+          data: { name: newBlockGroupName, mutex: newBlockGroupMutex },
+        }),
+      })
+      if (!response.ok) throw new Error('Failed to add block group')
+      toast({ title: '区块组添加成功' })
+      setAddingBlockGroup(false)
+      setNewBlockGroupKey('')
+      setNewBlockGroupName('')
+      setNewBlockGroupMutex(false)
       loadPage()
     } catch (error) {
       toast({
@@ -331,6 +386,29 @@ export default function AdminTransitionPageEdit() {
       const token = getToken()
       const response = await fetch(
         `/api/v1/transition-pages/${pageId}/groups/${groupKey}`,
+        {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      )
+      if (!response.ok) throw new Error('Failed to delete')
+      toast({ title: '删除成功' })
+      loadPage()
+    } catch (error) {
+      toast({
+        title: '删除失败',
+        description: error instanceof Error ? error.message : '未知错误',
+        variant: 'destructive',
+      })
+    }
+  }
+
+  const handleDeleteBlockGroup = async (blockGroupKey: string) => {
+    if (!confirm('确定删除此区块组？')) return
+    try {
+      const token = getToken()
+      const response = await fetch(
+        `/api/v1/transition-pages/${pageId}/block-groups/${blockGroupKey}`,
         {
           method: 'DELETE',
           headers: { Authorization: `Bearer ${token}` },
@@ -509,6 +587,7 @@ export default function AdminTransitionPageEdit() {
             condition: { groups: [], users: [] },
             buttons: newBlockButtons,
             freeze_enabled: newBlockFreezeEnabled,
+            block_group_key: newBlockBlockGroupKey || null,
           },
           sort_order: page?.blocks.length || 0,
         }),
@@ -539,6 +618,7 @@ export default function AdminTransitionPageEdit() {
       groups?: string[]
       buttons?: Array<{ label: string; url_template: string; variant: string; target: string }>
       freeze_enabled?: boolean
+      block_group_key?: string | null
     }
   ) => {
     try {
@@ -565,6 +645,7 @@ export default function AdminTransitionPageEdit() {
               },
               buttons: data.buttons || [],
               freeze_enabled: data.freeze_enabled ?? false,
+              block_group_key: data.block_group_key ?? null,
             },
           }),
         }
@@ -813,6 +894,7 @@ export default function AdminTransitionPageEdit() {
     setEditBlockFontSize(block.title_font_size || 'large')
     setEditBlockStage(block.stage || 'always')
     setEditBlockFreezeEnabled((block as any).freeze_enabled || false)
+    setEditBlockBlockGroupKey(block.block_group_key || '')
   }
 
   const openEditGroup = (group: TransitionPageDetail['groups'][0]) => {
@@ -821,6 +903,45 @@ export default function AdminTransitionPageEdit() {
     setEditGroupStartAt(group.start_at || '')
     setEditGroupEndAt(group.end_at || '')
     setEditGroupContent(JSON.stringify((group as any).content || {}, null, 2))
+  }
+
+  const openEditBlockGroup = (blockGroup: TransitionPageDetail['block_groups'][0]) => {
+    setEditingBlockGroup(blockGroup)
+    setEditBlockGroupName(blockGroup.name)
+    setEditBlockGroupMutex(blockGroup.mutex || false)
+  }
+
+  const saveBlockGroupEdit = async () => {
+    if (!editingBlockGroup) return
+    try {
+      const token = getToken()
+      const response = await fetch(
+        `/api/v1/transition-pages/${pageId}/block-groups/${editingBlockGroup.key}`,
+        {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            data: {
+              name: editBlockGroupName,
+              mutex: editBlockGroupMutex,
+            },
+          }),
+        }
+      )
+      if (!response.ok) throw new Error('Failed to update block group')
+      toast({ title: '区块组更新成功' })
+      setEditingBlockGroup(null)
+      loadPage()
+    } catch (error) {
+      toast({
+        title: '更新失败',
+        description: error instanceof Error ? error.message : '未知错误',
+        variant: 'destructive',
+      })
+    }
   }
 
   const saveBlockEdit = async () => {
@@ -835,6 +956,7 @@ export default function AdminTransitionPageEdit() {
       groups: editBlockGroups,
       buttons: editBlockButtons,
       freeze_enabled: editBlockFreezeEnabled,
+      block_group_key: editBlockBlockGroupKey || null,
     })
     setEditingBlock(null)
   }
@@ -1164,6 +1286,7 @@ export default function AdminTransitionPageEdit() {
               )}
             </CardContent>
           </Card>
+
         </TabsContent>
 
         <TabsContent value="blocks">
@@ -1174,12 +1297,34 @@ export default function AdminTransitionPageEdit() {
                   <CardTitle>内容区块</CardTitle>
                   <CardDescription>配置页面展示的内容</CardDescription>
                 </div>
-                <Button onClick={openAddBlock} size="sm">
-                  <Plus className="w-4 h-4 mr-1" />添加
-                </Button>
+                <div className="flex gap-2">
+                  <Button variant="outline" onClick={() => setAddingBlockGroup(true)} size="sm">
+                    <Plus className="w-4 h-4 mr-1" />新建区块组
+                  </Button>
+                  <Button onClick={openAddBlock} size="sm">
+                    <Plus className="w-4 h-4 mr-1" />添加区块
+                  </Button>
+                </div>
               </div>
             </CardHeader>
             <CardContent>
+              {/* Block Groups Summary */}
+              {page.block_groups && page.block_groups.length > 0 && (
+                <div className="mb-4 p-3 bg-slate-50 rounded-lg">
+                  <div className="text-sm font-medium mb-2">区块组</div>
+                  <div className="flex flex-wrap gap-2">
+                    {page.block_groups.map((bg) => (
+                      <div key={bg.key} className="flex items-center gap-1 px-2 py-1 bg-white border rounded text-sm">
+                        <span>{bg.name}</span>
+                        {bg.mutex && <span className="text-amber-600 text-xs">(互斥)</span>}
+                        <button onClick={() => openEditBlockGroup(bg)} className="ml-1 text-gray-400 hover:text-gray-600">
+                          <Settings className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
               {page.blocks.length === 0 ? (
                 <p className="text-gray-500 text-center py-8">暂无内容区块</p>
               ) : (
@@ -1205,6 +1350,11 @@ export default function AdminTransitionPageEdit() {
                           </div>
                           <div className="text-sm text-gray-500 mt-1">
                             标识: {block.key}
+                            {block.block_group_key && (
+                              <span className="ml-2 text-blue-600">
+                                区块组: {page?.block_groups?.find(bg => bg.key === block.block_group_key)?.name || block.block_group_key}
+                              </span>
+                            )}
                           </div>
                         </div>
                         <div className="flex gap-1">
@@ -1425,7 +1575,7 @@ export default function AdminTransitionPageEdit() {
                       <div className="mt-3 flex flex-wrap gap-2">
                         {Object.entries(view.viewed_blocks).map(([blockKey, timestamp]) => (
                           <Badge key={blockKey} variant="secondary" className="text-xs">
-                            {blockKey}: {new Date(timestamp).toLocaleDateString('zh-CN')}
+                            {blockKey}: {new Date(timestamp).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
                           </Badge>
                         ))}
                       </div>
@@ -1682,6 +1832,30 @@ export default function AdminTransitionPageEdit() {
                 启用冻结模式（用户看过之后不受时间调整影响）
               </Label>
             </div>
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <Label>所属区块组</Label>
+                <button
+                  onClick={() => { setAddingBlockGroup(true); }}
+                  className="text-xs text-blue-600 hover:text-blue-800"
+                  type="button"
+                >
+                  + 快速创建
+                </button>
+              </div>
+              <select
+                value={editBlockBlockGroupKey}
+                onChange={(e) => setEditBlockBlockGroupKey(e.target.value)}
+                className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
+              >
+                <option value="">无分组</option>
+                {page?.block_groups?.map((bg) => (
+                  <option key={bg.key} value={bg.key}>
+                    {bg.name} {bg.mutex ? '(互斥)' : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <Label>开始时间 (可选)</Label>
@@ -1877,6 +2051,40 @@ export default function AdminTransitionPageEdit() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditingGroup(null)}>取消</Button>
             <Button variant="primary" onClick={saveGroupEdit}>保存</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Block Group Dialog */}
+      <Dialog open={!!editingBlockGroup} onOpenChange={() => setEditingBlockGroup(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>编辑区块组</DialogTitle>
+            <DialogDescription>修改区块组名称和互斥设置</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div>
+              <Label>组名称</Label>
+              <Input
+                value={editBlockGroupName}
+                onChange={(e) => setEditBlockGroupName(e.target.value)}
+                placeholder="区块组名称"
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <Checkbox
+                id="editBlockGroupMutex"
+                checked={editBlockGroupMutex}
+                onCheckedChange={(checked) => setEditBlockGroupMutex(checked as boolean)}
+              />
+              <Label htmlFor="editBlockGroupMutex" className="cursor-pointer">
+                启用互斥模式（看过组内任一内容后冻结整个组）
+              </Label>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditingBlockGroup(null)}>取消</Button>
+            <Button variant="primary" onClick={saveBlockGroupEdit}>保存</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -2115,8 +2323,50 @@ export default function AdminTransitionPageEdit() {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setAddingGroup(false)}>取消</Button>
+            <Button variant="outline" onClick={() => { setAddingGroup(false); setNewGroupKey(''); setNewGroupName(''); }}>取消</Button>
             <Button variant="primary" onClick={saveAddGroup}>添加</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Add Block Group Dialog */}
+      <Dialog open={addingBlockGroup} onOpenChange={() => setAddingBlockGroup(false)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>添加区块组</DialogTitle>
+            <DialogDescription>创建新的区块互斥分组</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div>
+              <Label>组标识</Label>
+              <Input
+                value={newBlockGroupKey}
+                onChange={(e) => setNewBlockGroupKey(e.target.value)}
+                placeholder="如: objective"
+              />
+            </div>
+            <div>
+              <Label>组名称</Label>
+              <Input
+                value={newBlockGroupName}
+                onChange={(e) => setNewBlockGroupName(e.target.value)}
+                placeholder="如: 客观题"
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <Checkbox
+                id="newBlockGroupMutex"
+                checked={newBlockGroupMutex}
+                onCheckedChange={(checked) => setNewBlockGroupMutex(checked as boolean)}
+              />
+              <Label htmlFor="newBlockGroupMutex">
+                启用互斥模式（看过组内任一内容后冻结整个组）
+              </Label>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setAddingBlockGroup(false); setNewBlockGroupKey(''); setNewBlockGroupName(''); setNewBlockGroupMutex(false); }}>取消</Button>
+            <Button variant="primary" onClick={saveAddBlockGroup}>添加</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -2179,6 +2429,30 @@ export default function AdminTransitionPageEdit() {
               <Label htmlFor="newBlockFreezeEnabled" className="cursor-pointer">
                 启用冻结模式（用户看过之后不受时间调整影响）
               </Label>
+            </div>
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <Label>所属区块组</Label>
+                <button
+                  onClick={() => { setAddingBlockGroup(true); }}
+                  className="text-xs text-blue-600 hover:text-blue-800"
+                  type="button"
+                >
+                  + 快速创建
+                </button>
+              </div>
+              <select
+                value={newBlockBlockGroupKey}
+                onChange={(e) => setNewBlockBlockGroupKey(e.target.value)}
+                className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
+              >
+                <option value="">无分组</option>
+                {page?.block_groups?.map((bg) => (
+                  <option key={bg.key} value={bg.key}>
+                    {bg.name} {bg.mutex ? '(互斥)' : ''}
+                  </option>
+                ))}
+              </select>
             </div>
             <div>
               <div className="flex items-center justify-between mb-2">

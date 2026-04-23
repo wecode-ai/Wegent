@@ -7,6 +7,7 @@ import io
 import uuid
 import json
 import logging
+import copy
 from datetime import datetime, timezone
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
@@ -26,6 +27,7 @@ GROUP_MEMBER = "group_member"
 BLOCK = "block"
 USER_CONTENT = "user_content"
 USER_VIEW = "user_view"  # Records which blocks user has viewed
+BLOCK_GROUP = "block_group"  # Block groups for mutex functionality
 
 
 def generate_page_id() -> str:
@@ -57,6 +59,7 @@ class TransitionPageService:
             page_id=page_id,
             type=PAGE,
             key=slug,
+            global_key=f"{page_id}:page:{slug}",
             data_json={"title": title, "slug": slug, "status": "draft"},
             sort_order=0,
         )
@@ -129,6 +132,7 @@ class TransitionPageService:
             page_id=page_id,
             type=GROUP,
             key=key,
+            global_key=f"{page_id}:group:{key}",
             data_json=group_data.model_dump(mode="json"),
             sort_order=0,
         )
@@ -181,6 +185,68 @@ class TransitionPageService:
         ).delete()
         self.db.commit()
 
+    # Block Group methods (for mutex functionality)
+    def create_block_group(self, page_id: str, key: str, data: Any) -> TransitionPageItem:
+        from wecode.schemas.transition_page import BlockGroupData
+
+        group_data = data if isinstance(data, BlockGroupData) else BlockGroupData(**data)
+        group = TransitionPageItem(
+            id=get_snowflake_id(),
+            page_id=page_id,
+            type=BLOCK_GROUP,
+            key=key,
+            global_key=f"{page_id}:block_group:{key}",
+            data_json=group_data.model_dump(mode="json"),
+            sort_order=0,
+        )
+        self.db.add(group)
+        self.db.commit()
+        self.db.refresh(group)
+        return group
+
+    def get_block_group(self, page_id: str, key: str) -> Optional[TransitionPageItem]:
+        return (
+            self.db.query(TransitionPageItem)
+            .filter(
+                TransitionPageItem.page_id == page_id,
+                TransitionPageItem.type == BLOCK_GROUP,
+                TransitionPageItem.key == key,
+            )
+            .first()
+        )
+
+    def list_block_groups(self, page_id: str) -> list[TransitionPageItem]:
+        return (
+            self.db.query(TransitionPageItem)
+            .filter(TransitionPageItem.page_id == page_id, TransitionPageItem.type == BLOCK_GROUP)
+            .all()
+        )
+
+    def update_block_group(self, page_id: str, key: str, data: Any) -> TransitionPageItem:
+        from wecode.schemas.transition_page import BlockGroupData
+
+        group = self.get_block_group(page_id, key)
+        if not group:
+            raise ValueError(f"Block group '{key}' not found")
+
+        group_data = data if isinstance(data, BlockGroupData) else BlockGroupData(**data)
+        group.data_json = group_data.model_dump(mode="json")
+        group.updated_at = datetime.utcnow()
+        self.db.commit()
+        self.db.refresh(group)
+        return group
+
+    def delete_block_group(self, page_id: str, key: str) -> None:
+        group = self.get_block_group(page_id, key)
+        if not group:
+            raise ValueError(f"Block group '{key}' not found")
+        self.db.query(TransitionPageItem).filter(
+            TransitionPageItem.page_id == page_id,
+            TransitionPageItem.type == BLOCK_GROUP,
+            TransitionPageItem.key == key,
+        ).delete()
+        self.db.commit()
+
     def add_group_member(self, page_id: str, email: str, group_key: str) -> TransitionPageItem:
         # Check if group exists
         group = self.get_group(page_id, group_key)
@@ -200,6 +266,7 @@ class TransitionPageService:
             page_id=page_id,
             type=GROUP_MEMBER,
             key=get_user_key(email),
+            global_key=f"{page_id}:member:{get_user_key(email)}",
             data_json={"email": email, "group_key": group_key},
             sort_order=0,
         )
@@ -246,6 +313,7 @@ class TransitionPageService:
             page_id=page_id,
             type=BLOCK,
             key=key,
+            global_key=f"{page_id}:block:{key}",
             data_json=block_data.model_dump(mode="json"),
             sort_order=sort_order,
         )
@@ -319,6 +387,7 @@ class TransitionPageService:
             page_id=page_id,
             type=USER_CONTENT,
             key=get_user_key(email),
+            global_key=f"{page_id}:user_content:{get_user_key(email)}",
             data_json={"content": content},
             sort_order=0,
         )
@@ -352,8 +421,8 @@ class TransitionPageService:
 
     def record_block_view(self, page_id: str, email: str, block_key: str, existing: Optional[TransitionPageItem] = None) -> TransitionPageItem:
         """Record that user has viewed a block with timestamp."""
-        if existing is None:
-            existing = self.get_user_view(page_id, email)
+        # Always re-query to avoid race conditions
+        existing = self.get_user_view(page_id, email)
         now = datetime.now(timezone.utc).isoformat()
         logger.info(f"[RECORD_VIEW] page_id={page_id} email={email} block_key={block_key} existing={existing is not None}")
         if existing:
@@ -395,22 +464,27 @@ class TransitionPageService:
 
     def batch_record_block_views(self, page_id: str, email: str, block_keys: list[str], existing: Optional[TransitionPageItem] = None) -> TransitionPageItem:
         """Batch record that user has viewed multiple blocks."""
-        if existing is None:
-            existing = self.get_user_view(page_id, email)
+        # Always re-query to avoid race conditions
+        existing = self.get_user_view(page_id, email)
         now = datetime.now(timezone.utc).isoformat()
 
         if existing:
-            data = dict(existing.data_json)
-            if page_id not in data:
-                data[page_id] = {"viewed_blocks": {}}
+            # Use deep copy to ensure we don't share references with original data
+            new_data = copy.deepcopy(dict(existing.data_json))
+            if page_id not in new_data:
+                new_data[page_id] = {"viewed_blocks": {}}
+            if "viewed_blocks" not in new_data[page_id]:
+                new_data[page_id]["viewed_blocks"] = {}
             for block_key in block_keys:
-                if block_key not in data[page_id]["viewed_blocks"]:
-                    data[page_id]["viewed_blocks"][block_key] = now
-            existing.data_json = data
+                if block_key not in new_data[page_id]["viewed_blocks"]:
+                    new_data[page_id]["viewed_blocks"][block_key] = now
+            # Force SQLAlchemy to detect change by assigning new object
+            existing.data_json = new_data
             existing.updated_at = datetime.utcnow()
             self.db.commit()
             self.db.refresh(existing)
             logger.info(f"[BATCH_RECORD] updated existing record with {len(block_keys)} blocks")
+            logger.info(f"[BATCH_RECORD] data after update: {existing.data_json}")
             return existing
 
         # Create new record with all blocks
@@ -631,26 +705,53 @@ class TransitionPageService:
         if user_view and page_id in user_view.data_json:
             viewed_blocks = dict(user_view.data_json[page_id].get("viewed_blocks", {}))
 
+        # Build block group mutex map: block_group_key -> is_frozen (any block in group viewed)
+        block_group_mutex_map = {}
+        for block in blocks:
+            block_data = block.data_json
+            bg_key = block_data.get("block_group_key")
+            if bg_key:
+                block_group = self.get_block_group(page_id, bg_key)
+                if block_group and block_group.data_json.get("mutex", False):
+                    # Check if any block in this block group has been viewed
+                    if bg_key not in block_group_mutex_map:
+                        block_group_mutex_map[bg_key] = False
+                    if block.key in viewed_blocks:
+                        block_group_mutex_map[bg_key] = True
+
+        logger.info(f"[RENDER] block_group_mutex_map={block_group_mutex_map}")
+
         # First pass: determine which blocks to show and which need recording
         blocks_to_render = []
         blocks_to_record = []
 
+        logger.info(f"[RENDER] all blocks: {[b.key for b in blocks]}")
         for block in blocks:
             block_data = block.data_json
             block_key = block.key
             freeze_enabled = block_data.get("freeze_enabled", False)
+            block_group_key = block_data.get("block_group_key")
+            condition_groups = block_data.get("condition", {}).get("groups")
 
-            logger.info(f"[RENDER] block={block_key} freeze_enabled={freeze_enabled} viewed_blocks={viewed_blocks}")
+            logger.info(f"[RENDER] block={block_key} freeze_enabled={freeze_enabled} block_group_key={block_group_key} viewed_blocks={viewed_blocks}")
+            logger.info(f"[RENDER] block={block_key} condition_groups={condition_groups} user_group_key={user_group_key}")
 
             # Check if block was already viewed (frozen) - only if freeze_enabled
             is_viewed = freeze_enabled and block_key in viewed_blocks
 
-            logger.info(f"[RENDER] block={block_key} is_viewed={is_viewed}")
+            # Check if block group is frozen (mutex group with any viewed block)
+            is_block_group_frozen = block_group_key and block_group_key in block_group_mutex_map and block_group_mutex_map[block_group_key]
+
+            logger.info(f"[RENDER] block={block_key} is_viewed={is_viewed} is_block_group_frozen={is_block_group_frozen}")
 
             # Frozen blocks have highest priority - always visible regardless of time
             if is_viewed:
                 logger.info(f"[RENDER] block={block_key} frozen - skipping time check")
                 blocks_to_render.append(block)
+            elif is_block_group_frozen:
+                # Block group is frozen but this block wasn't viewed - hide it
+                logger.info(f"[RENDER] block={block_key} hidden - block group {block_group_key} is frozen")
+                continue
             else:
                 # Not viewed before, check time/conditions
                 visible = self.is_block_visible(block_data, user_email, user_group_key, now, group_data)
