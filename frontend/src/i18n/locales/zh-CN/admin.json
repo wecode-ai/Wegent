@@ -15,7 +15,8 @@
     "system_config": "系统配置",
     "im_channels": "IM 渠道",
     "monitor": "订阅监控",
-    "device_monitor": "设备监控"
+    "device_monitor": "设备监控",
+    "transition_pages": "过渡页面"
   },
   "stats": {
     "total_users": "总用户数",

@@ -515,6 +515,15 @@ function preprocessCjkBoldEdgeCases(text: string): string {
 }
 
 /**
+ * Remove zero-width characters that break markdown parsing
+ * U+200B (zero-width space), U+200C (zero-width non-joiner), U+200D (zero-width joiner)
+ * U+FEFF (byte order mark / zero-width no-break space)
+ */
+function removeZeroWidthChars(text: string): string {
+  return text.replace(/[\u200B\u200C\u200D\uFEFF]/g, '')
+}
+
+/**
  * Enhanced Markdown renderer with Mermaid diagram and LaTeX math formula support
  *
  * Detects ```mermaid code blocks and renders them using MermaidDiagram component.
@@ -531,11 +540,12 @@ export const EnhancedMarkdown = memo(function EnhancedMarkdown({
   const { frontmatter, body } = useMemo(() => extractFrontmatter(source), [source])
 
   // Pre-process source:
-  // 1. Convert \[...\] and \(...\) to dollar syntax for LaTeX
-  // 2. Fix CJK punctuation + ** edge cases (CommonMark right-flanking delimiter rule)
-  // 3. Convert bare URLs to markdown link format (iOS 16 Safari compatibility)
+  // 1. Remove zero-width characters that break markdown parsing
+  // 2. Convert \[...\] and \(...\) to dollar syntax for LaTeX
+  // 3. Fix CJK punctuation + ** edge cases (CommonMark right-flanking delimiter rule)
+  // 4. Convert bare URLs to markdown link format (iOS 16 Safari compatibility)
   const processedSource = useMemo(
-    () => autolinkUrls(preprocessCjkBoldEdgeCases(preprocessLatexSyntax(body))),
+    () => autolinkUrls(preprocessCjkBoldEdgeCases(preprocessLatexSyntax(removeZeroWidthChars(body)))),
     [body]
   )
 
