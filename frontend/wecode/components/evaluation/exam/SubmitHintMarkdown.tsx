@@ -50,7 +50,7 @@ const LinkComponent: Components['a'] = ({ href, children, ...props }) => {
   return (
     <a
       href={href}
-      className="text-primary hover:underline"
+      className="text-[#DF2029] hover:underline"
       {...(isHttp && { target: '_blank', rel: 'noopener noreferrer' })}
       {...validProps}
     >

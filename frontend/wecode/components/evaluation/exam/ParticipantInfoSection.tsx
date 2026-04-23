@@ -19,8 +19,8 @@ export function ParticipantInfoSection({ participantName }: ParticipantInfoSecti
       </div>
       <div className="max-w-md">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
-            <Icon name="user" size={20} className="text-primary" />
+          <div className="w-10 h-10 rounded-full bg-[#DF2029]/10 flex items-center justify-center flex-shrink-0">
+            <Icon name="user" size={20} className="text-[#DF2029]" />
           </div>
           <div>
             <p className="text-sm text-gray-500">用户名</p>

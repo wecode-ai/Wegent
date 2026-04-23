@@ -20,7 +20,6 @@ import type { ExamAttachment, AnswerSlot, SlotAnswer } from '@wecode/types/evalu
 import { useTranslation } from '@/hooks/useTranslation'
 import { Icon } from './ExamIcons'
 import { SlotMarkdownContent } from './SlotMarkdownContent'
-import { useTheme } from '@/features/theme/ThemeProvider'
 import EnhancedMarkdown from '@/components/common/EnhancedMarkdown'
 
 interface DynamicSlotInputProps {
@@ -71,7 +70,6 @@ export function DynamicSlotInput({
   lastSavedAt,
 }: DynamicSlotInputProps) {
   const { t } = useTranslation('evaluation')
-  const { theme } = useTheme()
   const [uploadingFiles, setUploadingFiles] = useState<Map<string, UploadingFile>>(new Map())
   const [isDragOver, setIsDragOver] = useState(false)
   // When disabled (e.g., after exam ends), default to preview mode to show full content
@@ -322,7 +320,7 @@ export function DynamicSlotInput({
               <div className="markdown-content">
                 <EnhancedMarkdown
                   source={value.text || ''}
-                  theme={theme === 'dark' ? 'dark' : 'light'}
+                  theme="light"
                 />
               </div>
             ) : (
@@ -533,18 +531,18 @@ export function DynamicSlotInput({
             key={fileId}
             className={cn(
               'flex items-center gap-3 rounded-lg border p-3',
-              error ? 'border-destructive bg-destructive/5' : 'border-border bg-surface'
+              error ? 'border-red-500 bg-red-50' : 'border-gray-200 bg-gray-50'
             )}
           >
             {error ? (
-              <X className="h-5 w-5 text-destructive" />
+              <X className="h-5 w-5 text-red-500" />
             ) : (
-              <Loader2 className="h-5 w-5 animate-spin text-primary" />
+              <Loader2 className="h-5 w-5 animate-spin text-[#DF2029]" />
             )}
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-medium">{file.name}</p>
               {error ? (
-                <p className="text-xs text-destructive">{error}</p>
+                <p className="text-xs text-red-500">{error}</p>
               ) : (
                 <Progress value={progress} className="mt-1 h-1" />
               )}
@@ -587,7 +585,7 @@ export function DynamicSlotInput({
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-8 w-8 text-destructive hover:text-destructive"
+                  className="h-8 w-8 text-red-500 hover:text-red-500"
                   onClick={() => handleRemove(attachment.key)}
                   title="Delete"
                 >
@@ -714,18 +712,18 @@ export function DynamicSlotInput({
           key={fileId}
           className={cn(
             'flex items-center gap-3 rounded-lg border p-3',
-            error ? 'border-destructive bg-destructive/5' : 'border-border bg-surface'
+            error ? 'border-red-500 bg-red-50' : 'border-gray-200 bg-gray-50'
           )}
         >
           {error ? (
-            <X className="h-5 w-5 text-destructive" />
+            <X className="h-5 w-5 text-red-500" />
           ) : (
-            <Loader2 className="h-5 w-5 animate-spin text-primary" />
+            <Loader2 className="h-5 w-5 animate-spin text-[#DF2029]" />
           )}
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-medium">{file.name}</p>
             {error ? (
-              <p className="text-xs text-destructive">{error}</p>
+              <p className="text-xs text-red-500">{error}</p>
             ) : (
               <Progress value={progress} className="mt-1 h-1" />
             )}
@@ -768,7 +766,7 @@ export function DynamicSlotInput({
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-8 w-8 text-destructive hover:text-destructive"
+                className="h-8 w-8 text-red-500 hover:text-red-500"
                 onClick={() => handleRemove(attachment.key)}
                 title="Delete"
               >
