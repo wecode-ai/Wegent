@@ -107,7 +107,7 @@ class RetrievalService:
         )
         document_query = document_query.filter(
             KnowledgeDocument.kind_id.in_(knowledge_base_ids),
-            KnowledgeDocument.is_active == True,
+            KnowledgeDocument.is_active.is_(True),
         )
         if document_ids:
             document_query = document_query.filter(
@@ -787,7 +787,9 @@ class RetrievalService:
         from app.services.knowledge.document_read_service import document_read_service
 
         if not knowledge_base_ids:
-            logger.warning("[RAG] get_original_documents: no knowledge base IDs provided")
+            logger.warning(
+                "[RAG] get_original_documents: no knowledge base IDs provided"
+            )
             return []
 
         max_text_length = settings.MAX_EXTRACTED_TEXT_LENGTH
@@ -806,7 +808,7 @@ class RetrievalService:
                     SubtaskContext,
                     KnowledgeDocument.attachment_id == SubtaskContext.id,
                 )
-                .filter(KnowledgeDocument.is_active == True)
+                .filter(KnowledgeDocument.is_active.is_(True))
                 .filter(KnowledgeDocument.id.in_(document_ids))
                 .filter(KnowledgeDocument.kind_id.in_(knowledge_base_ids))
             )
@@ -822,7 +824,9 @@ class RetrievalService:
 
             has_truncated = any((row[2] or 0) >= max_text_length for row in doc_rows)
             if has_truncated:
-                truncated_ids = [row[0] for row in doc_rows if (row[2] or 0) >= max_text_length]
+                truncated_ids = [
+                    row[0] for row in doc_rows if (row[2] or 0) >= max_text_length
+                ]
                 logger.warning(
                     "[RAG] Documents truncated, rejecting direct_injection: "
                     "kb_ids=%s, truncated_doc_ids=%s",
@@ -860,7 +864,7 @@ class RetrievalService:
                     SubtaskContext,
                     KnowledgeDocument.attachment_id == SubtaskContext.id,
                 )
-                .filter(KnowledgeDocument.is_active == True)
+                .filter(KnowledgeDocument.is_active.is_(True))
                 .filter(KnowledgeDocument.kind_id == kb_id)
             )
             doc_rows = query.all()
@@ -870,7 +874,9 @@ class RetrievalService:
 
             has_truncated = any((row[2] or 0) >= max_text_length for row in doc_rows)
             if has_truncated:
-                truncated_ids = [row[0] for row in doc_rows if (row[2] or 0) >= max_text_length]
+                truncated_ids = [
+                    row[0] for row in doc_rows if (row[2] or 0) >= max_text_length
+                ]
                 logger.warning(
                     "[RAG] Documents truncated, rejecting direct_injection: "
                     "kb_id=%s, truncated_doc_ids=%s",
