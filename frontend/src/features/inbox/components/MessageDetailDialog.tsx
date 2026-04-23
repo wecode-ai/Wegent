@@ -20,7 +20,7 @@ interface MessageDetailDialogProps {
   message: QueueMessage | null
   open: boolean
   onOpenChange: (open: boolean) => void
-  onProcess: (message: QueueMessage, mode?: InboxProcessMode) => void
+  onProcess: (message: QueueMessage, mode: InboxProcessMode) => void
 }
 
 const statusLabels: Record<QueueMessageStatus, string> = {
@@ -197,7 +197,8 @@ export function MessageDetailDialog({
               >
                 <Button
                   variant="primary"
-                  size="sm"
+                  size="lg"
+                  className="px-4"
                   data-testid="send-to-chat-button"
                   onClick={() => {
                     onProcess(message, 'chat')
@@ -208,7 +209,8 @@ export function MessageDetailDialog({
                 </Button>
                 <Button
                   variant="outline"
-                  size="sm"
+                  size="lg"
+                  className="px-4"
                   data-testid="send-to-device-button"
                   onClick={() => {
                     onProcess(message, 'device')
@@ -219,7 +221,8 @@ export function MessageDetailDialog({
                 </Button>
                 <Button
                   variant="outline"
-                  size="sm"
+                  size="lg"
+                  className="px-4"
                   data-testid="send-to-code-button"
                   onClick={() => {
                     onProcess(message, 'code')

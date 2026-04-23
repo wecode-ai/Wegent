@@ -23,6 +23,21 @@ jest.mock('@/components/ui/dialog', () => ({
   DialogTitle: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }))
 
+jest.mock('@/components/ui/button', () => ({
+  Button: ({
+    children,
+    variant,
+    ...props
+  }: {
+    children: React.ReactNode
+    variant?: string
+  } & React.ButtonHTMLAttributes<HTMLButtonElement>) => (
+    <button data-variant={variant} {...props}>
+      {children}
+    </button>
+  ),
+}))
+
 jest.mock('@/components/ui/scroll-area', () => ({
   ScrollArea: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }))
@@ -39,7 +54,7 @@ const message = {
 } as QueueMessage
 
 describe('MessageDetailDialog', () => {
-  it('renders three process shortcut buttons and forwards the selected mode', async () => {
+  it('renders three process shortcut buttons and forwards each selected mode', async () => {
     const user = userEvent.setup()
     const onOpenChange = jest.fn()
     const onProcess = jest.fn()
@@ -56,10 +71,20 @@ describe('MessageDetailDialog', () => {
     expect(screen.getByTestId('send-to-chat-button')).toBeInTheDocument()
     expect(screen.getByTestId('send-to-device-button')).toBeInTheDocument()
     expect(screen.getByTestId('send-to-code-button')).toBeInTheDocument()
+    expect(screen.getByTestId('send-to-chat-button')).toHaveAttribute('data-variant', 'primary')
+    expect(screen.getByTestId('send-to-device-button')).toHaveAttribute('data-variant', 'outline')
+    expect(screen.getByTestId('send-to-code-button')).toHaveAttribute('data-variant', 'outline')
+
+    await user.click(screen.getByTestId('send-to-chat-button'))
+    expect(onProcess).toHaveBeenNthCalledWith(1, message, 'chat')
+    expect(onOpenChange).toHaveBeenNthCalledWith(1, false)
 
     await user.click(screen.getByTestId('send-to-device-button'))
+    expect(onProcess).toHaveBeenNthCalledWith(2, message, 'device')
+    expect(onOpenChange).toHaveBeenNthCalledWith(2, false)
 
-    expect(onProcess).toHaveBeenCalledWith(message, 'device')
-    expect(onOpenChange).toHaveBeenCalledWith(false)
+    await user.click(screen.getByTestId('send-to-code-button'))
+    expect(onProcess).toHaveBeenNthCalledWith(3, message, 'code')
+    expect(onOpenChange).toHaveBeenNthCalledWith(3, false)
   })
 })

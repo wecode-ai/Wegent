@@ -205,6 +205,11 @@ jest.mock('@/features/tasks/components/selector/ModelSelector', () => ({
 }))
 
 describe('ChatArea queue message handler mounting', () => {
+  it('mounts QueueMessageHandler for chat mode', () => {
+    render(<ChatArea teams={[]} isTeamsLoading={false} taskType="chat" showRepositorySelector />)
+    expect(screen.getByTestId('queue-message-handler')).toBeInTheDocument()
+  })
+
   it('mounts QueueMessageHandler for code mode', () => {
     render(<ChatArea teams={[]} isTeamsLoading={false} taskType="code" showRepositorySelector />)
     expect(screen.getByTestId('queue-message-handler')).toBeInTheDocument()
