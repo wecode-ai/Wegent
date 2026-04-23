@@ -8,9 +8,6 @@ bindShells:
   - Chat
   - Agno
   - ClaudeCode
-provider:
-  module: provider
-  class: WegentKnowledgeProvider
 config:
   unconfiguredGuide:
     modalLink: "wegent://modal/mcp-provider-config?provider=dingtalk&service=docs"
@@ -85,6 +82,85 @@ You now have access to Wegent Knowledge Base management tools.
   - query: Search query text
   - max_results: Maximum results to return (default: 10, max: 50)
   - document_ids: Optional list of document IDs to filter search scope
+
+## Usage Notes
+
+- All operations inherit the current user's permissions
+- After creating or updating documents, indexing happens asynchronously
+- Documents may show status "pending" until indexing completes
+- For web scraping, the URL content is fetched and stored as document content
+- `wegent_kb_update_document_content` supports `text` documents and plain-text file documents such as `txt`, `md`, and `markdown`; binary files like `pdf` or `docx` still require creating or replacing the source file instead of inline editing
+- Default behavior: if user doesn't specify scope, use `scope="all"` directly (no extra confirmation).
+- Avoid loops: if a tool call fails, report the error once and stop retrying/re-loading the skill unless the user changes inputs.
+- Long documents should be read incrementally: start with the backend default limit, then continue with `offset = previous_offset + previous_returned_length` while `has_more=true`
+
+## Example Workflows for Knowledge Base Management
+
+1. First, list available knowledge bases:
+   ```
+   wegent_kb_list_knowledge_bases(scope="all")
+   ```
+
+2. List documents in a specific knowledge base:
+   ```
+   wegent_kb_list_documents(knowledge_base_id=123)
+   ```
+
+3. Create a new knowledge base:
+   ```
+   wegent_kb_create_knowledge_base(
+     name="My KB",
+     description="My personal notes",
+     namespace="default",
+     kb_type="notebook"
+   )
+   ```
+
+4. Create a new text document:
+   ```
+   wegent_kb_create_document(
+     knowledge_base_id=123,
+     name="Meeting Notes",
+     source_type="text",
+     content="Notes from today's meeting..."
+   )
+   ```
+
+5. Update document content:
+   ```text
+   wegent_kb_update_document_content(
+     document_id=456,
+     content="Updated notes with new information...",
+     trigger_reindex=true
+   )
+   ```
+
+6. Read long document content incrementally:
+   ```text
+   wegent_kb_read_document_content(
+     document_id=456,
+     offset=0
+   )
+   ```
+
+7. Search knowledge base using RAG retrieval:
+   ```text
+   wegent_kb_search_knowledge_base(
+     knowledge_base_id=123,
+     query="How to configure the system?",
+     max_results=10
+   )
+   ```
+
+8. Search within specific documents:
+   ```text
+   wegent_kb_search_knowledge_base(
+     knowledge_base_id=123,
+     query="deployment steps",
+     max_results=5,
+     document_ids=[456, 789]
+   )
+   ```
 
 ## DingTalk Document Upload
 
@@ -176,57 +252,59 @@ Returns: `{"download_url": "https://...", "download_token": "..."}`
 Then proceed to Step 4A.
 
 #### Step 4A: Download and Upload via Sandbox (for file-based documents)
-**CRITICAL: You MUST use the wegent_knowledge provider tool to download and upload the file in sandbox.**
+**CRITICAL: You MUST use the sandbox `exec` tool to download and upload the file.**
 
 If you got a `download_url` from Option D:
-1. Start a sandbox environment
-2. Use the wegent_knowledge provider tool to download the file in sandbox and upload it to Wegent:
-```python
-wegent_knowledge.download_dingtalk_document(
-    download_url="{download_url_from_step_3}",
-    file_extension="{file_extension_from_get_document_info}",  # e.g., "docx", "xlsx", "pdf"
-    filename="{document_name}.{file_extension}"  # Optional, will auto-generate if not provided
-)
-```
-This tool internally:
-- Downloads the file from the provided URL within the sandbox
-- Calls the `upload_file` tool to upload the file from sandbox to Wegent
-- Returns an `attachment_id` for the uploaded file
+1. Use the sandbox `exec` tool to download the file and upload it to Wegent:
+```bash
+# Download the file
+curl -L -o /tmp/{filename}.{ext} "{download_url}"
 
-**DO NOT** call `wegent-knowledge.create_document` directly with a URL - you must first download and upload the file in sandbox using the provider tool.
+# Upload to Wegent and capture attachment_id
+[ -f /tmp/{filename}.{ext} ] && curl -sS -X POST \
+  -H "Authorization: Bearer ${AUTH_TOKEN}" \
+  -F "file=@/tmp/{filename}.{ext}" \
+  -w "\nHTTP_STATUS:%{http_code}" \
+  "${TASK_API_DOMAIN}/api/attachments/upload"
+```
+Parse the JSON response to extract `attachment_id`.
 
 #### Step 4B: Save Content and Upload via Sandbox (for online documents)
-**CRITICAL: You MUST use the wegent_knowledge provider tool to save content and upload in sandbox.**
+**CRITICAL: You MUST use the sandbox `exec` tool to save content and upload the file.**
 
-If you got content from Option A (adoc):
-1. Start a sandbox environment
-2. Use the wegent_knowledge provider tool to save the content to a file in sandbox and upload it to Wegent:
-```python
-wegent_knowledge.save_dingtalk_content(
-    content="{markdown_content_from_get_document_content}",
-    file_extension="md",  # IMPORTANT: Use "md" for adoc content since it's markdown format
-    filename="{document_name}.md"  # Optional, will auto-generate if not provided
-)
+If you got content from adoc or axls or able:
+1. Must Use the sandbox `exec` tool to write the content to a markdown file and upload it to Wegent:
+```bash
+# Write markdown content to file
+cat > /tmp/{filename}.md << 'EOF'
+{markdown_content_from_get_document_content}
+EOF
+
+# Upload to Wegent and capture attachment_id
+[ -f /tmp/{filename}.md ] && \
+curl -sS -X POST \
+  -H "Authorization: Bearer ${AUTH_TOKEN}" \
+  -F "file=@/tmp/{filename}.md" \
+  -w "\nHTTP_STATUS:%{http_code}" \
+  "${TASK_API_DOMAIN}/api/attachments/upload"
 ```
-This tool internally:
-- Saves the content to a file within the sandbox
-- Calls the `upload_file` tool to upload the file from sandbox to Wegent
-- Returns an `attachment_id` for the uploaded file
+Parse the JSON response to extract `attachment_id`.
 
-**Important:** The content from `get_document_content` is always in markdown format, so you MUST use `file_extension="md"`.
-
-**DO NOT** create the attachment directly - you must use the provider tool which handles sandbox file operations including the upload.
+**Important:** The content from `get_document_content` is always in markdown format, so save it with `.md` extension.
 
 #### Step 5: Create Document in Wegent Knowledge Base
+
+**⚠️ CRITICAL:** When calling `wegent_kb_create_document`, `source_type` MUST be set to `"attachment"`.
+
 Use the **wegent-knowledge** MCP server's `wegent_kb_create_document` tool to create the document in **Wegent's** knowledge base:
 
 ```python
 wegent_kb_create_document(
     knowledge_base_id=123,  # REQUIRED: The target Wegent knowledge base ID
-    name="Document Name",   # Use the document name from get_document_info
+    name="Document Name",   # REQUIRED: Use the document name from get_document_info
     source_type="attachment",  # REQUIRED: Must be "attachment" since we have attachment_id
     attachment_id=456,      # REQUIRED: From Step 4A or 4B
-    trigger_indexing=True
+    trigger_indexing=True   # REQUIRED
 )
 ```
 
@@ -266,23 +344,26 @@ Steps:
    - Returns: `{"name": "Specifications", "contentType": "FILE", "file_extension": "docx", "nodeType": "file", ...}`
 3. Since contentType≠ALIDOC and nodeType=file, call dingtalk-docs.download_file(nodeId="nYMoOje9")
    - Returns: `{"download_url": "https://...", "download_token": "..."}`
-4. Call wegent_knowledge.download_dingtalk_document in sandbox:
-   ```python
-   wegent_knowledge.download_dingtalk_document(
-       download_url="https://alidocs.dingtalk.com/...",
-       file_extension="docx",  # From get_document_info file_extension field
-       filename="Specifications.docx"
-   )
+4. Use sandbox exec to download and upload:
+   ```bash
+   curl -L -o /tmp/Specifications.docx "https://alidocs.dingtalk.com/..."
+
+   [ -f /tmp/Specifications.docx ] && \
+   curl -sS -X POST \
+     -H "Authorization: Bearer ${AUTH_TOKEN}" \
+     -F "file=@/tmp/Specifications.docx" \
+     -w "\nHTTP_STATUS:%{http_code}" \
+     "${TASK_API_DOMAIN}/api/attachments/upload"
    ```
-   - Returns: `{success: true, attachment_id: 123, filename: "Specifications.docx", ...}`
+   - Parse response to get `attachment_id: 123`
 5. Call **wegent_kb_create_document** to create document in Wegent knowledge base:
    ```python
    wegent_kb_create_document(
-       knowledge_base_id=1,  # Target Wegent knowledge base ID
-       name="Specifications",  # From get_document_info
-       source_type="attachment",
-       attachment_id=123,  # From step 4
-       trigger_indexing=True
+       knowledge_base_id=1,      # REQUIRED: Target Wegent knowledge base ID
+       name="Specifications",    # REQUIRED: From get_document_info
+       source_type="attachment", # REQUIRED
+       attachment_id=123,        # REQUIRED: From step 4
+       trigger_indexing=True.    # REQUIRED
    )
    ```
    **Result:** Document is now available in Wegent's knowledge base (NOT in DingTalk).
@@ -297,104 +378,29 @@ Steps:
    - Returns: `{"name": "Specifications", "contentType": "ALIDOC", "file_extension": "adoc", ...}`
 3. Since contentType=ALIDOC and extension=adoc, call dingtalk-docs.get_document_content(nodeId="AbCdEfGh")
    - Returns: `{"markdown": "# Title\n\nContent...", ...}`
-4. Call wegent_knowledge.save_dingtalk_content in sandbox:
-   ```python
-   wegent_knowledge.save_dingtalk_content(
-       content="# Title\n\nContent...",
-       file_extension="md",  # IMPORTANT: Use "md" for adoc content
-       filename="Specifications.md"
-   )
+4. Use sandbox exec to save content and upload:
+   ```bash
+   cat > /tmp/Specifications.md << 'EOF' && \
+   # Title
+
+   Content...
+   EOF
+   [ -f /tmp/Specifications.md ] && \
+   curl -sS -X POST \
+     -H "Authorization: Bearer ${AUTH_TOKEN}" \
+     -F "file=@/tmp/Specifications.md" \
+     -w "\nHTTP_STATUS:%{http_code}" \
+     "${TASK_API_DOMAIN}/api/attachments/upload"
    ```
-   - Returns: `{success: true, attachment_id: 456, filename: "Specifications.md", ...}`
+   - Parse response to get `attachment_id: 456`
 5. Call **wegent_kb_create_document** to create document in Wegent knowledge base:
    ```python
    wegent_kb_create_document(
-       knowledge_base_id=1,  # Target Wegent knowledge base ID
-       name="Specifications",  # From get_document_info
-       source_type="attachment",
-       attachment_id=456,  # From step 4
-       trigger_indexing=True
+       knowledge_base_id=1,      # REQUIRED: Target Wegent knowledge base ID
+       name="Specifications",    # REQUIRED: From get_document_info
+       source_type="attachment", # REQUIRED
+       attachment_id=456,        # REQUIRED: From step 4
+       trigger_indexing=True.    # REQUIRED
    )
    ```
    **Result:** Document is now available in Wegent's knowledge base (NOT in DingTalk).
-
-## Usage Notes
-
-- All operations inherit the current user's permissions
-- After creating or updating documents, indexing happens asynchronously
-- Documents may show status "pending" until indexing completes
-- For web scraping, the URL content is fetched and stored as document content
-- `wegent_kb_update_document_content` supports `text` documents and plain-text file documents such as `txt`, `md`, and `markdown`; binary files like `pdf` or `docx` still require creating or replacing the source file instead of inline editing
-- Default behavior: if user doesn't specify scope, use `scope="all"` directly (no extra confirmation).
-- Avoid loops: if a tool call fails, report the error once and stop retrying/re-loading the skill unless the user changes inputs.
-- Long documents should be read incrementally: start with the backend default limit, then continue with `offset = previous_offset + previous_returned_length` while `has_more=true`
-
-## Example Workflows
-
-### Knowledge Base Management
-
-1. First, list available knowledge bases:
-   ```
-   wegent_kb_list_knowledge_bases(scope="all")
-   ```
-
-2. List documents in a specific knowledge base:
-   ```
-   wegent_kb_list_documents(knowledge_base_id=123)
-   ```
-
-3. Create a new knowledge base:
-   ```
-   wegent_kb_create_knowledge_base(
-     name="My KB",
-     description="My personal notes",
-     namespace="default",
-     kb_type="notebook"
-   )
-   ```
-
-4. Create a new text document:
-   ```
-   wegent_kb_create_document(
-     knowledge_base_id=123,
-     name="Meeting Notes",
-     source_type="text",
-     content="Notes from today's meeting..."
-   )
-   ```
-
-5. Update document content:
-   ```text
-   wegent_kb_update_document_content(
-     document_id=456,
-     content="Updated notes with new information...",
-     trigger_reindex=true
-   )
-   ```
-
-6. Read long document content incrementally:
-   ```text
-   wegent_kb_read_document_content(
-     document_id=456,
-     offset=0
-   )
-   ```
-
-7. Search knowledge base using RAG retrieval:
-   ```text
-   wegent_kb_search_knowledge_base(
-     knowledge_base_id=123,
-     query="How to configure the system?",
-     max_results=10
-   )
-   ```
-
-8. Search within specific documents:
-   ```text
-   wegent_kb_search_knowledge_base(
-     knowledge_base_id=123,
-     query="deployment steps",
-     max_results=5,
-     document_ids=[456, 789]
-   )
-   ```
