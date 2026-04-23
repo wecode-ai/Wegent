@@ -266,6 +266,7 @@
     "accepted_formats": "Accepted formats",
     "link_disabled_hint": "Link input is disabled because you have uploaded attachments",
     "attachment_disabled_hint": "Attachment upload is disabled because you have entered a link",
+    "invalid_url_hint": "Please enter a valid URL (e.g., https://example.com)",
     "new_version_available": "A new version of this question is available. You may want to re-answer.",
     "respondents": "Respondents",
     "tabs": {
