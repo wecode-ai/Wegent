@@ -341,6 +341,9 @@ export function ExamPage({ topicId }: ExamPageProps) {
           // Description from extra_data
           if (typeof extraData.description === 'string') {
             setTopicDescription(extraData.description)
+          } else if (extraData.description === undefined) {
+            // Description was cleared, reset to empty string
+            setTopicDescription('')
           }
           // Duration from extra_data.duration
           if (extraData.duration && typeof extraData.duration === 'object') {
