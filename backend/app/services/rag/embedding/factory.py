@@ -209,6 +209,7 @@ def create_embedding_model_from_crd(
                     custom_headers if isinstance(custom_headers, dict) else {}
                 ),
                 "dimensions": dimensions,
+                "additional_input_modalities": additional_input_modalities,
             },
         )
     )

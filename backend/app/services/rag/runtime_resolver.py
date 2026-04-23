@@ -27,6 +27,9 @@ from app.services.rag.runtime_specs import (
     RuntimeRetrievalConfig,
     RuntimeRetrieverConfig,
 )
+from knowledge_engine.embedding.capabilities import (
+    normalize_additional_input_modalities,
+)
 from shared.utils.crypto import decrypt_api_key
 
 
@@ -662,6 +665,11 @@ class RagRuntimeResolver:
 
         embedding_config = spec.get("embeddingConfig", {})
         dimensions = embedding_config.get("dimensions") if embedding_config else None
+        additional_input_modalities = normalize_additional_input_modalities(
+            embedding_config.get("additional_input_modalities")
+            if embedding_config
+            else None
+        )
 
         return RuntimeEmbeddingModelConfig(
             model_name=model_name,
@@ -675,6 +683,7 @@ class RagRuntimeResolver:
                     custom_headers if isinstance(custom_headers, dict) else {}
                 ),
                 "dimensions": dimensions,
+                "additional_input_modalities": additional_input_modalities,
             },
         )
 

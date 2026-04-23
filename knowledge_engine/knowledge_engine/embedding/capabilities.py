@@ -33,3 +33,26 @@ def normalize_additional_input_modalities(
 def embedding_supports_image_input(modalities: Iterable[str] | None) -> bool:
     """Return whether the config explicitly declares image input support."""
     return "image" in normalize_additional_input_modalities(modalities)
+
+
+def get_embed_model_additional_input_modalities(embed_model) -> list[str]:
+    """Read normalized additional input modalities from an embedding model."""
+    if embed_model is None:
+        return []
+
+    for attribute_name in (
+        "_additional_input_modalities",
+        "additional_input_modalities",
+    ):
+        modalities = getattr(embed_model, attribute_name, None)
+        if modalities is not None:
+            return normalize_additional_input_modalities(modalities)
+
+    return []
+
+
+def embed_model_supports_image_input(embed_model) -> bool:
+    """Return whether an embedding model instance accepts image input."""
+    return embedding_supports_image_input(
+        get_embed_model_additional_input_modalities(embed_model)
+    )

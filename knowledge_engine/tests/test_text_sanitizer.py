@@ -6,9 +6,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from llama_index.core import Document
-from llama_index.core.schema import TextNode
+from llama_index.core.schema import NodeRelationship, RelatedNodeInfo, TextNode
 
-from knowledge_engine.index.indexer import DocumentIndexer
+from knowledge_engine.index.indexer import DocumentIndexer, sanitize_documents
 from knowledge_engine.storage.base import BaseStorageBackend
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
 from knowledge_engine.text_sanitizer import sanitize_text_for_indexing
@@ -99,13 +99,40 @@ class TestTextSanitizer:
         assert result.text == "payload=[embedded binary content omitted]"
         assert result.replacement_summary["embedded_binary"] == 1
 
-    def test_replaces_long_bare_base64_blob(self) -> None:
+    def test_replaces_url_safe_base64_data_url_with_binary_placeholder(self) -> None:
+        text = "payload=data:application/octet-stream;base64,QUJDREVG-_8="
+
+        result = sanitize_text_for_indexing(text)
+
+        assert result.text == "payload=[embedded binary content omitted]"
+        assert result.replacement_summary["embedded_binary"] == 1
+
+    def test_replaces_line_wrapped_markdown_image_data_url(self) -> None:
+        text = (
+            "![architecture](data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUA\n"
+            " iVBORw0KGgoAAAANSUhEUgAAAAUB)"
+        )
+
+        result = sanitize_text_for_indexing(text)
+
+        assert result.text == "![architecture]([inline image omitted])"
+        assert result.replacement_summary["inline_image"] == 1
+
+    def test_replaces_line_wrapped_pdf_data_url_with_pdf_placeholder(self) -> None:
+        text = "See data:application/pdf;base64,JVBERi0xLjQK\n JcTl8uXr and continue"
+
+        result = sanitize_text_for_indexing(text)
+
+        assert result.text == "See [inline pdf omitted] and continue"
+        assert result.replacement_summary["inline_pdf"] == 1
+
+    def test_keeps_long_bare_base64_blob(self) -> None:
         blob = "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo=" * 12
 
         result = sanitize_text_for_indexing(f"prefix {blob} suffix")
 
-        assert result.text == "prefix [base64 content omitted] suffix"
-        assert result.replacement_summary["bare_base64"] == 1
+        assert result.text == f"prefix {blob} suffix"
+        assert result.replacements_count == 0
 
     def test_keeps_normal_text_and_short_base64_like_tokens(self) -> None:
         text = "Keep token QUJDREVGR0g= and url https://example.com intact"
@@ -114,6 +141,33 @@ class TestTextSanitizer:
 
         assert result.text == text
         assert result.replacements_count == 0
+
+    def test_preserves_inline_image_data_url_for_image_capable_embedder(self) -> None:
+        text = "![architecture](data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUA)"
+
+        result = sanitize_text_for_indexing(text, sanitize_inline_images=False)
+
+        assert result.text == text
+        assert result.replacements_count == 0
+
+    def test_sanitize_documents_updates_existing_document_in_place(self) -> None:
+        document = Document(
+            text="![architecture](data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUA)",
+            relationships={
+                NodeRelationship.SOURCE: RelatedNodeInfo(node_id="source-node")
+            },
+        )
+
+        sanitized_documents = sanitize_documents(
+            [document],
+            sanitize_inline_images=True,
+        )
+
+        assert sanitized_documents == [document]
+        assert sanitized_documents[0].text == "![architecture]([inline image omitted])"
+        assert sanitized_documents[0].relationships == {
+            NodeRelationship.SOURCE: RelatedNodeInfo(node_id="source-node")
+        }
 
     def test_indexer_sanitizes_documents_before_splitter(self) -> None:
         storage_backend = _FakeStorageBackend()
@@ -160,3 +214,47 @@ class TestTextSanitizer:
         call_args = mock_build.call_args
         sanitized_docs = call_args.kwargs.get("documents") or call_args.args[0]
         assert sanitized_docs[0].text == "![architecture]([inline image omitted])"
+
+    def test_indexer_keeps_inline_images_for_image_capable_embedder(self) -> None:
+        storage_backend = _FakeStorageBackend()
+        embed_model = MagicMock()
+        embed_model._additional_input_modalities = ["image"]
+        with patch(
+            "knowledge_engine.index.indexer.prepare_ingestion",
+        ) as mock_prepare:
+            mock_prepare.return_value = MagicMock(
+                normalized_splitter_config=MagicMock(
+                    model_dump=lambda **kw: {"chunk_strategy": "semantic"}
+                )
+            )
+            indexer = DocumentIndexer(
+                storage_backend=storage_backend,
+                embed_model=embed_model,
+                splitter_config={},
+                file_extension=".md",
+            )
+
+        original_text = (
+            "![architecture](data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUA)"
+        )
+        documents = [Document(text=original_text)]
+        chunk_metadata = ChunkMetadata(
+            knowledge_id="1",
+            doc_ref="doc_1",
+            source_file="test.md",
+            created_at="2026-03-31T00:00:00+00:00",
+        )
+
+        with patch(
+            "knowledge_engine.index.indexer.build_ingestion_result"
+        ) as mock_build:
+            mock_build.return_value = MagicMock(
+                index_nodes=[TextNode(text="chunk")],
+                parent_nodes=None,
+                parser_subtype=None,
+            )
+            indexer._index_documents(documents=documents, chunk_metadata=chunk_metadata)
+
+        call_args = mock_build.call_args
+        sanitized_docs = call_args.kwargs.get("documents") or call_args.args[0]
+        assert sanitized_docs[0].text == original_text

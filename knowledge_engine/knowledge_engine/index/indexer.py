@@ -10,6 +10,7 @@ from typing import Any, Dict, List
 
 from llama_index.core import Document, SimpleDirectoryReader
 
+from knowledge_engine.embedding.capabilities import embed_model_supports_image_input
 from knowledge_engine.ingestion.pipeline import (
     build_ingestion_result,
     prepare_ingestion,
@@ -44,27 +45,30 @@ def sanitize_metadata(metadata: Dict[str, Any]) -> Dict[str, Any]:
     return sanitized
 
 
-def sanitize_documents(documents: List[Document]) -> List[Document]:
+def sanitize_documents(
+    documents: List[Document],
+    *,
+    sanitize_inline_images: bool,
+) -> List[Document]:
     """Sanitize document text before chunking."""
-    sanitized_documents: List[Document] = []
     for doc in documents:
-        result = sanitize_text_for_indexing(doc.text)
-        if result.replacements_count > 0:
-            add_span_event(
-                "rag.indexer.documents.sanitized",
-                {
-                    "replacements_count": str(result.replacements_count),
-                    "replacement_summary": str(result.replacement_summary),
-                },
-            )
+        result = sanitize_text_for_indexing(
+            doc.text,
+            sanitize_inline_images=sanitize_inline_images,
+        )
+        if result.replacements_count == 0:
+            continue
 
-        payload = doc.model_dump()
-        payload["text"] = result.text
-        if payload.get("text_resource"):
-            payload["text_resource"]["text"] = result.text
-        sanitized_documents.append(Document(**payload))
+        add_span_event(
+            "rag.indexer.documents.sanitized",
+            {
+                "replacements_count": str(result.replacements_count),
+                "replacement_summary": str(result.replacement_summary),
+            },
+        )
+        doc.set_content(result.text)
 
-    return sanitized_documents
+    return documents
 
 
 class DocumentIndexer:
@@ -151,7 +155,12 @@ class DocumentIndexer:
         for doc in documents:
             doc.metadata = sanitize_metadata(doc.metadata)
 
-        documents = sanitize_documents(documents)
+        documents = sanitize_documents(
+            documents,
+            sanitize_inline_images=not embed_model_supports_image_input(
+                self.embed_model
+            ),
+        )
 
         ingestion_result = build_ingestion_result(
             documents=documents,
