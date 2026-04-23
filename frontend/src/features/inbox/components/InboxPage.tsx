@@ -7,6 +7,7 @@
 import { useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { useTranslation } from '@/hooks/useTranslation'
+import { useDevices } from '@/contexts/DeviceContext'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -22,7 +23,7 @@ import { useInboxContext } from '../contexts/inboxContext'
 import { triggerInboxUnreadRefresh } from '../hooks'
 import { QueueSidebar } from './QueueSidebar'
 import { MessageList } from './MessageList'
-import { MessageDetailDialog } from './MessageDetailDialog'
+import { MessageDetailDialog, type InboxProcessMode } from './MessageDetailDialog'
 import { QueueEditDialog } from './QueueEditDialog'
 import {
   deleteWorkQueue,
@@ -31,10 +32,12 @@ import {
   type WorkQueue,
   type QueueMessage,
 } from '@/apis/work-queue'
+import { getPreferredExecutionDevice } from '@/features/devices/utils/execution-target'
 
 export function InboxPage() {
   const { t } = useTranslation('inbox')
   const router = useRouter()
+  const { devices } = useDevices()
   const { refreshQueues, refreshMessages, refreshUnreadCount } = useInboxContext()
 
   // Queue edit dialog
@@ -126,12 +129,27 @@ export function InboxPage() {
 
   // Handle process message
   const handleProcessMessage = useCallback(
-    (message: QueueMessage) => {
-      // Navigate to chat page to process the message
-      // Pass the message content as initial context
-      router.push(`/chat?process_message=${message.id}`)
+    (message: QueueMessage, mode: InboxProcessMode = 'chat') => {
+      const params = new URLSearchParams()
+      params.set('process_message', String(message.id))
+
+      if (mode === 'code') {
+        router.push(`/code?${params.toString()}`)
+        return
+      }
+
+      if (mode === 'device') {
+        const preferredDevice = getPreferredExecutionDevice(devices)
+        if (preferredDevice?.device_id) {
+          params.set('deviceId', preferredDevice.device_id)
+        } else {
+          toast.error(t('messages.device_fallback_to_chat'))
+        }
+      }
+
+      router.push(`/chat?${params.toString()}`)
     },
-    [router]
+    [devices, router, t]
   )
 
   // Handle batch process messages

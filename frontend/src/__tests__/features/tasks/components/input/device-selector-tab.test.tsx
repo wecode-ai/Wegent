@@ -4,9 +4,30 @@
 
 import '@testing-library/jest-dom'
 import { fireEvent, render, screen } from '@testing-library/react'
+import type { DeviceInfo } from '@/apis/devices'
 import DeviceSelectorTab from '@/features/tasks/components/input/DeviceSelectorTab'
 
 const mockSetSelectedDeviceId = jest.fn()
+let mockDevices: DeviceInfo[] = []
+
+function createDevice(overrides: Partial<DeviceInfo>): DeviceInfo {
+  return {
+    id: 1,
+    device_id: 'device-1',
+    name: 'macOS-Device',
+    status: 'online',
+    is_default: false,
+    device_type: 'local',
+    connection_mode: 'websocket',
+    slot_used: 0,
+    slot_max: 1,
+    running_tasks: [],
+    executor_version: null,
+    latest_version: null,
+    update_available: false,
+    ...overrides,
+  }
+}
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
@@ -29,18 +50,7 @@ jest.mock('sonner', () => ({
 
 jest.mock('@/contexts/DeviceContext', () => ({
   useDevices: () => ({
-    devices: [
-      {
-        id: 1,
-        device_id: 'device-1',
-        name: 'macOS-Device',
-        status: 'online',
-        slot_used: 0,
-        slot_max: 1,
-        device_type: 'desktop',
-        is_default: false,
-      },
-    ],
+    devices: mockDevices,
     selectedDeviceId: null,
     setSelectedDeviceId: mockSetSelectedDeviceId,
     isLoading: false,
@@ -74,6 +84,7 @@ jest.mock('@/components/ui/tooltip', () => ({
 describe('DeviceSelectorTab', () => {
   beforeEach(() => {
     mockSetSelectedDeviceId.mockClear()
+    mockDevices = [createDevice({})]
   })
 
   it('does not render nested buttons inside device cards and keeps card keyboard-selectable', () => {
@@ -89,5 +100,51 @@ describe('DeviceSelectorTab', () => {
     fireEvent.keyDown(deviceCard, { key: 'Enter' })
 
     expect(mockSetSelectedDeviceId).toHaveBeenCalledWith('device-1')
+  })
+
+  it('shows online devices over total registered devices in the trigger summary', () => {
+    mockDevices = [
+      createDevice({
+        id: 1,
+        device_id: 'device-1',
+        name: 'Online Device',
+        status: 'online',
+      }),
+      createDevice({
+        id: 2,
+        device_id: 'device-2',
+        name: 'Offline Device',
+        status: 'offline',
+      }),
+    ]
+
+    render(<DeviceSelectorTab />)
+
+    expect(screen.getByText('1/2')).toBeInTheDocument()
+  })
+
+  it('renders offline devices in the list and keeps them disabled', () => {
+    mockDevices = [
+      createDevice({
+        id: 1,
+        device_id: 'device-1',
+        name: 'Online Device',
+        status: 'online',
+      }),
+      createDevice({
+        id: 2,
+        device_id: 'device-2',
+        name: 'Offline Device',
+        status: 'offline',
+      }),
+    ]
+
+    render(<DeviceSelectorTab />)
+
+    const offlineDeviceCard = screen.getByTestId('device-card-device-2')
+
+    expect(offlineDeviceCard).toBeInTheDocument()
+    expect(offlineDeviceCard).toHaveAttribute('aria-disabled', 'true')
+    expect(screen.queryByText('no_devices_available')).not.toBeInTheDocument()
   })
 })

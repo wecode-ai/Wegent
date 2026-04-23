@@ -1484,8 +1484,10 @@ const MessageBubble = memo(
               selectedRepo={selectedRepo}
               selectedBranch={selectedBranch}
               taskId={selectedTaskDetail?.id}
+              subtaskId={msg.subtaskId}
               isPendingConfirmation={isPendingConfirmation}
               onStageConfirmed={onPipelineStageConfirmed}
+              onForwardClick={onForwardClick}
               isMessageStreaming={isStreaming || message.status === 'streaming'}
             />
           )
