@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>冻结设置 UI 设计</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #f5f5f5;
+      padding: 40px;
+    }
+    .container {
+      max-width: 800px;
+      margin: 0 auto;
+      background: white;
+      border-radius: 12px;
+      padding: 32px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+    .section {
+      margin-bottom: 24px;
+      padding: 20px;
+      background: #fafafa;
+      border-radius: 8px;
+    }
+    .section-title {
+      font-size: 16px;
+      font-weight: 600;
+      color: #333;
+      margin-bottom: 16px;
+    }
+    .form-row {
+      display: flex;
+      gap: 16px;
+      margin-bottom: 16px;
+      align-items: center;
+    }
+    .form-label {
+      width: 80px;
+      color: #666;
+      font-size: 14px;
+    }
+    .form-input {
+      flex: 1;
+      padding: 10px 12px;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      font-size: 14px;
+    }
+    .form-select {
+      padding: 10px 12px;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      font-size: 14px;
+      min-width: 200px;
+    }
+
+    /* 冻结设置卡片 */
+    .freeze-cards {
+      display: flex;
+      gap: 12px;
+    }
+    .freeze-card {
+      flex: 1;
+      padding: 16px;
+      border: 2px solid #e0e0e0;
+      border-radius: 12px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .freeze-card:hover {
+      border-color: #bdbdbd;
+      background: #f5f5f5;
+    }
+    .freeze-card.selected {
+      border-color: #2196f3;
+      background: #e3f2fd;
+    }
+    .freeze-icon {
+      width: 48px;
+      height: 48px;
+      margin: 0 auto 12px;
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 24px;
+    }
+    .freeze-card.none .freeze-icon { background: #e9ecef; }
+    .freeze-card.view .freeze-icon { background: #e3f2fd; color: #1976d2; }
+    .freeze-card.click .freeze-icon { background: #f3e5f5; color: #7b1fa2; }
+    .freeze-title {
+      font-weight: 500;
+      color: #333;
+      margin-bottom: 4px;
+    }
+    .freeze-desc {
+      font-size: 12px;
+      color: #666;
+    }
+
+    /* 按钮区域 */
+    .buttons-section {
+      margin-top: 24px;
+      padding-top: 24px;
+      border-top: 1px solid #eee;
+    }
+    .button-row {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      padding: 12px;
+      background: #f5f5f5;
+      border-radius: 8px;
+      margin-bottom: 8px;
+    }
+    .btn-input {
+      flex: 1;
+      padding: 8px 12px;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      font-size: 14px;
+    }
+    .btn-variant {
+      padding: 8px 16px;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      background: white;
+      font-size: 14px;
+    }
+    .btn-freeze {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 12px;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      background: white;
+      cursor: pointer;
+      font-size: 14px;
+      transition: all 0.2s;
+    }
+    .btn-freeze:hover {
+      border-color: #2196f3;
+    }
+    .btn-freeze.active {
+      background: #e3f2fd;
+      border-color: #2196f3;
+      color: #1976d2;
+    }
+    .btn-delete {
+      color: #999;
+      cursor: pointer;
+      padding: 8px;
+    }
+    .add-btn {
+      padding: 10px 20px;
+      border: 1px dashed #ccc;
+      border-radius: 8px;
+      background: white;
+      color: #666;
+      cursor: pointer;
+      font-size: 14px;
+      width: 100%;
+      margin-top: 8px;
+    }
+    .add-btn:hover {
+      border-color: #999;
+    }
+
+    /* 提示信息 */
+    .freeze-hint {
+      margin-top: 12px;
+      padding: 12px;
+      background: #fff3e0;
+      border-radius: 8px;
+      font-size: 13px;
+      color: #e65100;
+      display: none;
+    }
+    .freeze-hint.show {
+      display: block;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- 基础设置 -->
+    <div class="section">
+      <div class="section-title">基础设置</div>
+      <div class="form-row">
+        <span class="form-label">标题</span>
+        <input class="form-input" value="主观题" />
+      </div>
+      <div class="form-row">
+        <span class="form-label">所属组</span>
+        <select class="form-select">
+          <option>主观题 (互斥)</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- 冻结设置 -->
+    <div class="section">
+      <div class="section-title">冻结设置</div>
+      <div class="freeze-cards">
+        <div class="freeze-card none selected" onclick="selectFreeze('none')">
+          <div class="freeze-icon">⊘</div>
+          <div class="freeze-title">不冻结</div>
+          <div class="freeze-desc">按时间条件显示</div>
+        </div>
+        <div class="freeze-card view" onclick="selectFreeze('view')">
+          <div class="freeze-icon">👁</div>
+          <div class="freeze-title">访问冻结</div>
+          <div class="freeze-desc">看过之后始终显示</div>
+        </div>
+        <div class="freeze-card click" onclick="selectFreeze('click')">
+          <div class="freeze-icon">👆</div>
+          <div class="freeze-title">点击冻结</div>
+          <div class="freeze-desc">点击后始终显示</div>
+        </div>
+      </div>
+      <div class="freeze-hint" id="freezeHint">
+        💡 选择"点击冻结"后，需要至少一个按钮开启"点击冻结"开关
+      </div>
+    </div>
+
+    <!-- 按钮 -->
+    <div class="section">
+      <div class="section-title">按钮</div>
+      <div class="button-row">
+        <input class="btn-input" placeholder="按钮文字" value="考试链接" style="flex:0.6" />
+        <input class="btn-input" placeholder="链接" value="https://wegent.intra.weibo.com/..." />
+        <select class="btn-variant">
+          <option>主按钮</option>
+          <option>次按钮</option>
+        </select>
+        <button class="btn-freeze active" onclick="toggleBtnFreeze(this)">
+          ❄️ 冻结
+        </button>
+        <span class="btn-delete">🗑</span>
+      </div>
+      <button class="add-btn">+ 添加按钮</button>
+    </div>
+  </div>
+
+  <script>
+    function selectFreeze(type) {
+      document.querySelectorAll('.freeze-card').forEach(card => {
+        card.classList.remove('selected');
+      });
+      document.querySelector('.freeze-card.' + type).classList.add('selected');
+
+      const hint = document.getElementById('freezeHint');
+      if (type === 'click') {
+        hint.classList.add('show');
+      } else {
+        hint.classList.remove('show');
+      }
+    }
+
+    function toggleBtnFreeze(btn) {
+      btn.classList.toggle('active');
+      if (btn.classList.contains('active')) {
+        btn.innerHTML = '❄️ 冻结';
+      } else {
+        btn.innerHTML = '冻结';
+      }
+    }
+  </script>
+</body>
+</html>

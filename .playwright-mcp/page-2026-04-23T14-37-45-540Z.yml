@@ -1,0 +1,36 @@
+- generic [ref=e2]:
+  - generic [ref=e3]:
+    - generic [ref=e4]: 基础设置
+    - generic [ref=e5]:
+      - generic [ref=e6]: 标题
+      - textbox [ref=e7]: 主观题
+    - generic [ref=e8]:
+      - generic [ref=e9]: 所属组
+      - combobox [ref=e10]:
+        - option "主观题 (互斥)" [selected]
+  - generic [ref=e11]:
+    - generic [ref=e12]: 冻结设置
+    - generic [ref=e13]:
+      - generic [ref=e14] [cursor=pointer]:
+        - generic [ref=e15]: ⊘
+        - generic [ref=e16]: 不冻结
+        - generic [ref=e17]: 按时间条件显示
+      - generic [ref=e18] [cursor=pointer]:
+        - generic [ref=e19]: 👁
+        - generic [ref=e20]: 访问冻结
+        - generic [ref=e21]: 看过之后始终显示
+      - generic [ref=e22] [cursor=pointer]:
+        - generic [ref=e23]: 👆
+        - generic [ref=e24]: 点击冻结
+        - generic [ref=e25]: 点击后始终显示
+  - generic [ref=e26]:
+    - generic [ref=e27]: 按钮
+    - generic [ref=e28]:
+      - textbox "按钮文字" [ref=e29]: 考试链接
+      - textbox "链接" [ref=e30]: https://wegent.intra.weibo.com/...
+      - combobox [ref=e31]:
+        - option "主按钮" [selected]
+        - option "次按钮"
+      - button "❄️ 冻结" [ref=e32] [cursor=pointer]
+      - generic [ref=e33] [cursor=pointer]: 🗑
+    - button "+ 添加按钮" [ref=e34] [cursor=pointer]
