@@ -116,7 +116,22 @@ class ListChunksRuntimeSpec(RuntimeSpecModel):
 
 
 class ConnectionTestRuntimeSpec(RuntimeSpecModel):
-    retriever_config: RuntimeRetrieverConfig
+    """Runtime spec for connection testing.
+
+    For RemoteGateway (reference mode):
+    - Use retriever_name, retriever_namespace, user_id to resolve config
+
+    For LocalGateway (full config mode):
+    - Use retriever_config directly
+    """
+
+    # Reference mode fields (for RemoteGateway)
+    retriever_name: Optional[str] = None
+    retriever_namespace: str = "default"
+    user_id: Optional[int] = None
+
+    # Full config mode field (for LocalGateway)
+    retriever_config: Optional[RuntimeRetrieverConfig] = None
 
 
 DEFAULT_DIRECT_INJECTION_BUDGET = DirectInjectionBudget()

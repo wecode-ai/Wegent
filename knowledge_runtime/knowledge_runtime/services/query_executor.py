@@ -14,6 +14,7 @@ from knowledge_engine.embedding.factory import (
 )
 from knowledge_engine.query.executor import QueryExecutor as KnowledgeQueryExecutor
 from knowledge_engine.storage.factory import create_storage_backend_from_runtime_config
+from knowledge_runtime.services.resolver import get_resolver
 from shared.models import (
     RemoteKnowledgeBaseQueryConfig,
     RemoteQueryRecord,
@@ -28,24 +29,34 @@ class QueryExecutor:
     """Executes RAG query operations.
 
     This executor:
-    1. Creates storage backends and embedding models for each knowledge base
-    2. Executes queries against each KB
-    3. Aggregates and sorts results by score
+    1. Resolves KB references to full configurations using RuntimeResolver
+    2. Creates storage backends and embedding models for each knowledge base
+    3. Executes queries against each KB
+    4. Aggregates and sorts results by score
     """
+
+    def __init__(self) -> None:
+        self._resolver = get_resolver()
 
     async def execute(self, request: RemoteQueryRequest) -> RemoteQueryResponse:
         """Execute the query operation.
 
         Args:
-            request: The query request containing query text and KB configs.
+            request: The query request containing query text and KB references.
 
         Returns:
             Query response with ranked records.
         """
+        # Resolve KB references to full configurations
+        kb_configs = self._resolve_references(
+            request.knowledge_base_references,
+            request.user_name,
+        )
+
         all_records: list[RemoteQueryRecord] = []
 
         # Query each knowledge base
-        for kb_config in request.knowledge_base_configs:
+        for kb_config in kb_configs:
             records = await self._query_knowledge_base(
                 request=request,
                 kb_config=kb_config,
@@ -71,6 +82,30 @@ class QueryExecutor:
             total=len(all_records),
             total_estimated_tokens=total_tokens,
         )
+
+    def _resolve_references(
+        self,
+        references: list[Any],
+        user_name: str | None,
+    ) -> list[RemoteKnowledgeBaseQueryConfig]:
+        """Resolve KB references to full configurations.
+
+        Args:
+            references: List of KnowledgeBaseReference objects.
+            user_name: Optional user name for placeholder processing.
+
+        Returns:
+            List of resolved RemoteKnowledgeBaseQueryConfig objects.
+        """
+        configs: list[RemoteKnowledgeBaseQueryConfig] = []
+        for ref in references:
+            config = self._resolver.resolve_knowledge_base_query_config(
+                knowledge_base_id=ref.knowledge_base_id,
+                user_id=ref.user_id,
+                user_name=user_name,
+            )
+            configs.append(config)
+        return configs
 
     async def _query_knowledge_base(
         self,

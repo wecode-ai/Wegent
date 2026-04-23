@@ -16,6 +16,7 @@ from fastapi.responses import JSONResponse
 from knowledge_runtime.api.router import router
 from knowledge_runtime.config import get_settings
 from knowledge_runtime.core.logging import setup_logging
+from knowledge_runtime.db import init_db, is_db_initialized
 from shared.models import RemoteRagError
 
 logger = logging.getLogger(__name__)
@@ -32,6 +33,16 @@ async def lifespan(app: FastAPI):
         log_dir=settings.log_dir,
         log_level=settings.log_level,
     )
+
+    # Initialize database connection for reference mode
+    if settings.DATABASE_URL:
+        try:
+            init_db()
+            logger.info("Database connection initialized for reference mode")
+        except Exception as e:
+            logger.warning(f"Failed to initialize database connection: {e}")
+    else:
+        logger.info("DATABASE_URL not configured, reference mode will not be available")
 
     logger.info(
         f"knowledge_runtime starting on {settings.host}:{settings.port}",

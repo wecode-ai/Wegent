@@ -2,6 +2,13 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+"""Remote RAG Gateway for Knowledge Runtime.
+
+This gateway sends requests to Knowledge Runtime using reference mode:
+only passes references (user_id + kb_id/retriever_name), not full configurations.
+The Knowledge Runtime resolves full configurations from the database.
+"""
+
 from __future__ import annotations
 
 from typing import Any
@@ -11,8 +18,6 @@ from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.models.subtask_context import ContextType
-from app.services.context import context_service
 from app.services.rag.content_refs import build_content_ref_for_attachment
 from app.services.rag.runtime_specs import (
     ConnectionTestRuntimeSpec,
@@ -24,6 +29,7 @@ from app.services.rag.runtime_specs import (
     QueryRuntimeSpec,
 )
 from shared.models import (
+    KnowledgeBaseReference,
     RemoteDeleteDocumentIndexRequest,
     RemoteDropKnowledgeIndexRequest,
     RemoteIndexRequest,
@@ -34,6 +40,7 @@ from shared.models import (
     RemoteQueryResponse,
     RemoteRagError,
     RemoteTestConnectionRequest,
+    RetrieverReference,
 )
 
 
@@ -137,37 +144,36 @@ class RemoteRagGateway:
         *,
         db: Session | None = None,
     ) -> dict[str, Any]:
+        """Index a document using reference mode.
+
+        Args:
+            spec: Index runtime spec with KB reference info.
+            db: Database session (required for content ref resolution).
+
+        Returns:
+            Indexing result.
+        """
         if db is None:
             raise ValueError("db is required for RemoteRagGateway.index_document")
         if spec.source.source_type != "attachment" or spec.source.attachment_id is None:
             raise ValueError("RemoteRagGateway only supports attachment sources")
 
-        source_file, file_extension = _get_attachment_source_metadata(
-            db=db,
-            attachment_id=spec.source.attachment_id,
+        # Build KB reference - use index_owner_user_id for resolving config
+        kb_reference = KnowledgeBaseReference(
+            knowledge_base_id=spec.knowledge_base_id,
+            user_id=spec.index_owner_user_id,
         )
+
         payload = RemoteIndexRequest(
             knowledge_base_id=spec.knowledge_base_id,
             document_id=spec.document_id,
-            index_owner_user_id=spec.index_owner_user_id,
-            retriever_config=spec.retriever_config
-            or {
-                "name": spec.retriever_name,
-                "namespace": spec.retriever_namespace,
-            },
-            embedding_model_config=spec.embedding_model_config
-            or {
-                "model_name": spec.embedding_model_name,
-                "model_namespace": spec.embedding_model_namespace,
-            },
-            splitter_config=spec.splitter_config,
-            index_families=spec.index_families,
             content_ref=build_content_ref_for_attachment(
                 db=db,
                 attachment_id=spec.source.attachment_id,
             ),
-            source_file=source_file,
-            file_extension=file_extension,
+            knowledge_base_reference=kb_reference,
+            splitter_config=spec.splitter_config,
+            index_families=spec.index_families,
             user_name=spec.user_name,
         )
         return await self._post_model("/internal/rag/index", payload)
@@ -178,15 +184,36 @@ class RemoteRagGateway:
         *,
         db: Session | None = None,
     ) -> dict[str, Any]:
+        """Execute a RAG query using reference mode.
+
+        Args:
+            spec: Query runtime spec with KB references.
+            db: Database session (not used, kept for interface consistency).
+
+        Returns:
+            Query result with records.
+        """
         del db
+
+        # Build KB references from knowledge_base_configs
+        # Each KB config contains the index_owner_user_id needed for reference
+        kb_references = [
+            KnowledgeBaseReference(
+                knowledge_base_id=kb_config.knowledge_base_id,
+                user_id=kb_config.index_owner_user_id,
+            )
+            for kb_config in spec.knowledge_base_configs
+        ]
+
         payload = RemoteQueryRequest(
             knowledge_base_ids=spec.knowledge_base_ids,
             query=spec.query,
             max_results=spec.max_results,
+            knowledge_base_references=kb_references,
+            user_id=spec.user_id or 0,
             document_ids=spec.document_ids,
             metadata_condition=spec.metadata_condition,
             user_name=spec.user_name,
-            knowledge_base_configs=spec.knowledge_base_configs,
             enabled_index_families=spec.enabled_index_families,
             retrieval_policy=spec.retrieval_policy,
         )
@@ -203,12 +230,27 @@ class RemoteRagGateway:
         *,
         db: Session,
     ) -> dict[str, Any]:
+        """Delete a document's index using reference mode.
+
+        Args:
+            spec: Delete runtime spec with KB reference.
+            db: Database session (not used, kept for interface consistency).
+
+        Returns:
+            Deletion result.
+        """
         del db
+
+        # Build KB reference
+        kb_reference = KnowledgeBaseReference(
+            knowledge_base_id=spec.knowledge_base_id,
+            user_id=spec.index_owner_user_id,
+        )
+
         payload = RemoteDeleteDocumentIndexRequest(
             knowledge_base_id=spec.knowledge_base_id,
             document_ref=spec.document_ref,
-            index_owner_user_id=spec.index_owner_user_id,
-            retriever_config=spec.retriever_config,
+            knowledge_base_reference=kb_reference,
             enabled_index_families=spec.enabled_index_families,
         )
         return await self._post_model("/internal/rag/delete-document-index", payload)
@@ -219,11 +261,26 @@ class RemoteRagGateway:
         *,
         db: Session,
     ) -> dict[str, Any]:
+        """Purge all chunks for a knowledge base using reference mode.
+
+        Args:
+            spec: Purge runtime spec with KB reference.
+            db: Database session (not used, kept for interface consistency).
+
+        Returns:
+            Purge result.
+        """
         del db
+
+        # Build KB reference
+        kb_reference = KnowledgeBaseReference(
+            knowledge_base_id=spec.knowledge_base_id,
+            user_id=spec.index_owner_user_id,
+        )
+
         payload = RemotePurgeKnowledgeIndexRequest(
             knowledge_base_id=spec.knowledge_base_id,
-            index_owner_user_id=spec.index_owner_user_id,
-            retriever_config=spec.retriever_config,
+            knowledge_base_reference=kb_reference,
         )
         return await self._post_model("/internal/rag/purge-knowledge-index", payload)
 
@@ -233,11 +290,26 @@ class RemoteRagGateway:
         *,
         db: Session,
     ) -> dict[str, Any]:
+        """Drop the physical index for a knowledge base using reference mode.
+
+        Args:
+            spec: Drop runtime spec with KB reference.
+            db: Database session (not used, kept for interface consistency).
+
+        Returns:
+            Drop result.
+        """
         del db
+
+        # Build KB reference
+        kb_reference = KnowledgeBaseReference(
+            knowledge_base_id=spec.knowledge_base_id,
+            user_id=spec.index_owner_user_id,
+        )
+
         payload = RemoteDropKnowledgeIndexRequest(
             knowledge_base_id=spec.knowledge_base_id,
-            index_owner_user_id=spec.index_owner_user_id,
-            retriever_config=spec.retriever_config,
+            knowledge_base_reference=kb_reference,
         )
         return await self._post_model("/internal/rag/drop-knowledge-index", payload)
 
@@ -247,11 +319,26 @@ class RemoteRagGateway:
         *,
         db: Session | None = None,
     ) -> dict[str, Any]:
+        """List chunks for a knowledge base using reference mode.
+
+        Args:
+            spec: List chunks runtime spec with KB reference.
+            db: Database session (not used, kept for interface consistency).
+
+        Returns:
+            List of chunks.
+        """
         del db
+
+        # Build KB reference
+        kb_reference = KnowledgeBaseReference(
+            knowledge_base_id=spec.knowledge_base_id,
+            user_id=spec.index_owner_user_id,
+        )
+
         payload = RemoteListChunksRequest(
             knowledge_base_id=spec.knowledge_base_id,
-            index_owner_user_id=spec.index_owner_user_id,
-            retriever_config=spec.retriever_config,
+            knowledge_base_reference=kb_reference,
             max_chunks=spec.max_chunks,
             query=spec.query,
             metadata_condition=spec.metadata_condition,
@@ -266,21 +353,25 @@ class RemoteRagGateway:
         *,
         db: Session | None = None,
     ) -> dict[str, Any]:
+        """Test storage backend connection using reference mode.
+
+        Args:
+            spec: Connection test runtime spec with Retriever reference.
+            db: Database session (not used, kept for interface consistency).
+
+        Returns:
+            Connection test result.
+        """
         del db
-        payload = RemoteTestConnectionRequest(retriever_config=spec.retriever_config)
+
+        # Build Retriever reference
+        retriever_reference = RetrieverReference(
+            name=spec.retriever_name,
+            namespace=spec.retriever_namespace,
+            user_id=spec.user_id or 0,
+        )
+
+        payload = RemoteTestConnectionRequest(
+            retriever_reference=retriever_reference,
+        )
         return await self._post_model("/internal/rag/test-connection", payload)
-
-
-def _get_attachment_source_metadata(
-    *,
-    db: Session,
-    attachment_id: int,
-) -> tuple[str | None, str | None]:
-    context = context_service.get_context_optional(
-        db=db,
-        context_id=attachment_id,
-    )
-    if context is None or context.context_type != ContextType.ATTACHMENT.value:
-        return None, None
-
-    return context.original_filename or None, context.file_extension or None

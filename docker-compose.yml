@@ -274,14 +274,15 @@ services:
       - "${KNOWLEDGE_RUNTIME_PORT:-8200}:8200"
     environment:
       - TZ=${TZ:-Asia/Shanghai}
-      # Backend URL for fetching content
-      - BACKEND_INTERNAL_URL=${BACKEND_INTERNAL_URL:-http://backend:8000}
       # Content fetching timeout in seconds
       - CONTENT_FETCH_TIMEOUT=${CONTENT_FETCH_TIMEOUT:-120}
       # Logging configuration
       - LOG_FILE_ENABLED=${LOG_FILE_ENABLED:-true}
       - LOG_DIR=${LOG_DIR:-/app/logs}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      # Database configuration for reference mode (required for RemoteGateway)
+      # Must use the same database as Backend
+      - DATABASE_URL=mysql+pymysql://${MYSQL_USER:-task_user}:${MYSQL_PASSWORD:-task_password}@mysql:3306/${MYSQL_DATABASE:-task_manager}
       # Internal service token (uncomment to enable, must match Backend's INTERNAL_SERVICE_TOKEN)
       # - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:-your-secure-token-here}
       # OpenTelemetry Configuration (uncomment to enable)
@@ -290,6 +291,7 @@ services:
       # - OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
     depends_on:
       - backend
+      - mysql
     volumes:
       - ./logs/knowledge_runtime:/app/logs
     networks:

@@ -2,6 +2,12 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+"""Tests for RemoteRagGateway using reference mode.
+
+The gateway now uses reference mode: only passes references (user_id + kb_id/retriever_name),
+not full configurations. The Knowledge Runtime resolves full configurations from the database.
+"""
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock
@@ -46,6 +52,7 @@ def _build_response(
 
 @pytest.mark.asyncio
 async def test_remote_gateway_index_document_posts_runtime_request(mocker) -> None:
+    """Test RemoteRagGateway.index_document sends reference mode request."""
     db = MagicMock()
     mocker.patch(
         "app.services.rag.remote_gateway.build_content_ref_for_attachment",
@@ -53,11 +60,6 @@ async def test_remote_gateway_index_document_posts_runtime_request(mocker) -> No
             kind="presigned_url",
             url="https://storage.example.com/release-notes.md",
         ),
-    )
-    mocker.patch(
-        "app.services.rag.remote_gateway._get_attachment_source_metadata",
-        return_value=("release-notes.md", ".md"),
-        create=True,
     )
     post_mock = mocker.patch(
         "httpx.AsyncClient.post",
@@ -79,24 +81,6 @@ async def test_remote_gateway_index_document_posts_runtime_request(mocker) -> No
         embedding_model_name="embedding-a",
         embedding_model_namespace="default",
         source=IndexSource(source_type="attachment", attachment_id=9),
-        retriever_config=RuntimeRetrieverConfig(
-            name="retriever-a",
-            namespace="default",
-            storage_config={
-                "type": "qdrant",
-                "url": "http://qdrant:6333",
-                "indexStrategy": {"mode": "per_dataset"},
-            },
-        ),
-        embedding_model_config=RuntimeEmbeddingModelConfig(
-            model_name="embedding-a",
-            model_namespace="default",
-            resolved_config={
-                "protocol": "openai",
-                "model_id": "text-embedding-3-small",
-                "base_url": "https://api.openai.com/v1",
-            },
-        ),
         splitter_config={"type": "sentence"},
         index_families=["chunk_vector", "summary_vector_index"],
         user_name="alice",
@@ -108,52 +92,19 @@ async def test_remote_gateway_index_document_posts_runtime_request(mocker) -> No
     post_mock.assert_awaited_once()
     args, kwargs = post_mock.await_args
     assert args[0] == "http://knowledge-runtime/internal/rag/index"
-    assert kwargs["json"] == {
-        "knowledge_base_id": 1,
-        "document_id": 2,
-        "index_owner_user_id": 3,
-        "retriever_config": {
-            "name": "retriever-a",
-            "namespace": "default",
-            "storage_config": {
-                "type": "qdrant",
-                "url": "http://qdrant:6333",
-                "indexStrategy": {"mode": "per_dataset"},
-            },
-        },
-        "embedding_model_config": {
-            "model_name": "embedding-a",
-            "model_namespace": "default",
-            "resolved_config": {
-                "protocol": "openai",
-                "model_id": "text-embedding-3-small",
-                "base_url": "https://api.openai.com/v1",
-            },
-        },
-        "splitter_config": {
-            "chunk_strategy": "flat",
-            "format_enhancement": "none",
-            "flat_config": {
-                "chunk_size": 1024,
-                "chunk_overlap": 200,
-                "separator": "\n\n",
-            },
-            "markdown_enhancement": {"enabled": False},
-            "legacy_type": "sentence",
-        },
-        "index_families": ["chunk_vector", "summary_vector_index"],
-        "content_ref": {
-            "kind": "presigned_url",
-            "url": "https://storage.example.com/release-notes.md",
-        },
-        "source_file": "release-notes.md",
-        "file_extension": ".md",
-        "user_name": "alice",
-    }
+    # Reference mode: only passes KB reference, not full config
+    assert kwargs["json"]["knowledge_base_id"] == 1
+    assert kwargs["json"]["document_id"] == 2
+    assert kwargs["json"]["knowledge_base_reference"]["knowledge_base_id"] == 1
+    assert kwargs["json"]["knowledge_base_reference"]["user_id"] == 3
+    assert kwargs["json"]["content_ref"]["kind"] == "presigned_url"
+    assert kwargs["json"]["index_families"] == ["chunk_vector", "summary_vector_index"]
+    assert kwargs["json"]["user_name"] == "alice"
 
 
 @pytest.mark.asyncio
 async def test_remote_gateway_query_omits_backend_only_route_fields(mocker) -> None:
+    """Test RemoteRagGateway.query sends reference mode request."""
     post_mock = mocker.patch(
         "httpx.AsyncClient.post",
         return_value=_build_response(
@@ -233,44 +184,24 @@ async def test_remote_gateway_query_omits_backend_only_route_fields(mocker) -> N
     }
     args, kwargs = post_mock.await_args
     assert args[0] == "http://knowledge-runtime/internal/rag/query"
-    assert kwargs["json"] == {
-        "knowledge_base_ids": [1],
-        "query": "release checklist",
-        "max_results": 5,
-        "knowledge_base_configs": [
-            {
-                "knowledge_base_id": 1,
-                "index_owner_user_id": 8,
-                "retriever_config": {
-                    "name": "retriever-a",
-                    "namespace": "default",
-                    "storage_config": {
-                        "type": "qdrant",
-                        "url": "http://qdrant:6333",
-                    },
-                },
-                "embedding_model_config": {
-                    "model_name": "embedding-a",
-                    "model_namespace": "default",
-                    "resolved_config": {
-                        "protocol": "openai",
-                        "model_id": "text-embedding-3-small",
-                    },
-                },
-                "retrieval_config": {
-                    "top_k": 20,
-                    "score_threshold": 0.7,
-                    "retrieval_mode": "vector",
-                },
-            }
-        ],
-        "enabled_index_families": ["chunk_vector", "summary_vector_index"],
-        "retrieval_policy": "summary_then_chunk_expand",
-    }
+    # Reference mode: passes KB references, not full configs
+    assert kwargs["json"]["knowledge_base_ids"] == [1]
+    assert kwargs["json"]["query"] == "release checklist"
+    assert kwargs["json"]["max_results"] == 5
+    assert kwargs["json"]["knowledge_base_references"] == [
+        {"knowledge_base_id": 1, "user_id": 8}
+    ]
+    assert kwargs["json"]["user_id"] == 8
+    assert kwargs["json"]["enabled_index_families"] == [
+        "chunk_vector",
+        "summary_vector_index",
+    ]
+    assert kwargs["json"]["retrieval_policy"] == "summary_then_chunk_expand"
 
 
 @pytest.mark.asyncio
 async def test_remote_gateway_translates_structured_remote_errors(mocker) -> None:
+    """Test RemoteRagGateway translates structured remote errors."""
     mocker.patch(
         "httpx.AsyncClient.post",
         return_value=_build_response(
@@ -294,10 +225,11 @@ async def test_remote_gateway_translates_structured_remote_errors(mocker) -> Non
             QueryRuntimeSpec(
                 knowledge_base_ids=[1],
                 query="release",
+                user_id=1,
                 knowledge_base_configs=[
                     QueryKnowledgeBaseRuntimeConfig(
                         knowledge_base_id=1,
-                        index_owner_user_id=8,
+                        index_owner_user_id=1,
                         retriever_config=RuntimeRetrieverConfig(
                             name="retriever-a",
                             namespace="default",
@@ -314,11 +246,7 @@ async def test_remote_gateway_translates_structured_remote_errors(mocker) -> Non
                                 "model_id": "text-embedding-3-small",
                             },
                         ),
-                        retrieval_config=RuntimeRetrievalConfig(
-                            top_k=20,
-                            score_threshold=0.7,
-                            retrieval_mode="vector",
-                        ),
+                        retrieval_config=RuntimeRetrievalConfig(),
                     )
                 ],
             )
@@ -331,6 +259,7 @@ async def test_remote_gateway_translates_structured_remote_errors(mocker) -> Non
 
 @pytest.mark.asyncio
 async def test_remote_gateway_wraps_transport_errors(mocker) -> None:
+    """Test RemoteRagGateway wraps transport errors."""
     mocker.patch(
         "httpx.AsyncClient.post",
         side_effect=httpx.ConnectError(
@@ -349,10 +278,11 @@ async def test_remote_gateway_wraps_transport_errors(mocker) -> None:
             QueryRuntimeSpec(
                 knowledge_base_ids=[1],
                 query="release",
+                user_id=1,
                 knowledge_base_configs=[
                     QueryKnowledgeBaseRuntimeConfig(
                         knowledge_base_id=1,
-                        index_owner_user_id=8,
+                        index_owner_user_id=1,
                         retriever_config=RuntimeRetrieverConfig(
                             name="retriever-a",
                             namespace="default",
@@ -369,11 +299,7 @@ async def test_remote_gateway_wraps_transport_errors(mocker) -> None:
                                 "model_id": "text-embedding-3-small",
                             },
                         ),
-                        retrieval_config=RuntimeRetrievalConfig(
-                            top_k=20,
-                            score_threshold=0.7,
-                            retrieval_mode="vector",
-                        ),
+                        retrieval_config=RuntimeRetrievalConfig(),
                     )
                 ],
             )
@@ -385,7 +311,8 @@ async def test_remote_gateway_wraps_transport_errors(mocker) -> None:
 
 
 @pytest.mark.asyncio
-async def test_remote_gateway_delete_posts_resolved_retriever_config(mocker) -> None:
+async def test_remote_gateway_delete_posts_reference_mode(mocker) -> None:
+    """Test RemoteRagGateway.delete_document_index sends reference mode request."""
     post_mock = mocker.patch(
         "httpx.AsyncClient.post",
         return_value=_build_response(
@@ -417,25 +344,17 @@ async def test_remote_gateway_delete_posts_resolved_retriever_config(mocker) -> 
     assert result == {"status": "accepted", "knowledge_id": "1"}
     args, kwargs = post_mock.await_args
     assert args[0] == "http://knowledge-runtime/internal/rag/delete-document-index"
-    assert kwargs["json"] == {
-        "knowledge_base_id": 1,
-        "document_ref": "9",
-        "index_owner_user_id": 7,
-        "retriever_config": {
-            "name": "retriever-a",
-            "namespace": "default",
-            "storage_config": {
-                "type": "elasticsearch",
-                "url": "http://es:9200",
-                "indexStrategy": {"mode": "per_user"},
-            },
-        },
-        "enabled_index_families": ["chunk_vector"],
-    }
+    # Reference mode: passes KB reference
+    assert kwargs["json"]["knowledge_base_id"] == 1
+    assert kwargs["json"]["document_ref"] == "9"
+    assert kwargs["json"]["knowledge_base_reference"]["knowledge_base_id"] == 1
+    assert kwargs["json"]["knowledge_base_reference"]["user_id"] == 7
+    assert kwargs["json"]["enabled_index_families"] == ["chunk_vector"]
 
 
 @pytest.mark.asyncio
 async def test_remote_gateway_purge_index_posts_runtime_request(mocker) -> None:
+    """Test RemoteRagGateway.purge_knowledge_index sends reference mode request."""
     post_mock = mocker.patch(
         "httpx.AsyncClient.post",
         return_value=_build_response(
@@ -466,23 +385,15 @@ async def test_remote_gateway_purge_index_posts_runtime_request(mocker) -> None:
     assert result == {"status": "deleted", "knowledge_id": "1", "deleted_chunks": 8}
     args, kwargs = post_mock.await_args
     assert args[0] == "http://knowledge-runtime/internal/rag/purge-knowledge-index"
-    assert kwargs["json"] == {
-        "knowledge_base_id": 1,
-        "index_owner_user_id": 7,
-        "retriever_config": {
-            "name": "retriever-a",
-            "namespace": "default",
-            "storage_config": {
-                "type": "elasticsearch",
-                "url": "http://es:9200",
-                "indexStrategy": {"mode": "per_user"},
-            },
-        },
-    }
+    # Reference mode: passes KB reference
+    assert kwargs["json"]["knowledge_base_id"] == 1
+    assert kwargs["json"]["knowledge_base_reference"]["knowledge_base_id"] == 1
+    assert kwargs["json"]["knowledge_base_reference"]["user_id"] == 7
 
 
 @pytest.mark.asyncio
 async def test_remote_gateway_drop_index_posts_runtime_request(mocker) -> None:
+    """Test RemoteRagGateway.drop_knowledge_index sends reference mode request."""
     post_mock = mocker.patch(
         "httpx.AsyncClient.post",
         return_value=_build_response(
@@ -513,25 +424,17 @@ async def test_remote_gateway_drop_index_posts_runtime_request(mocker) -> None:
     assert result == {"status": "dropped", "knowledge_id": "1", "index_name": "kb_1"}
     args, kwargs = post_mock.await_args
     assert args[0] == "http://knowledge-runtime/internal/rag/drop-knowledge-index"
-    assert kwargs["json"] == {
-        "knowledge_base_id": 1,
-        "index_owner_user_id": 7,
-        "retriever_config": {
-            "name": "retriever-a",
-            "namespace": "default",
-            "storage_config": {
-                "type": "elasticsearch",
-                "url": "http://es:9200",
-                "indexStrategy": {"mode": "per_dataset"},
-            },
-        },
-    }
+    # Reference mode: passes KB reference
+    assert kwargs["json"]["knowledge_base_id"] == 1
+    assert kwargs["json"]["knowledge_base_reference"]["knowledge_base_id"] == 1
+    assert kwargs["json"]["knowledge_base_reference"]["user_id"] == 7
 
 
 @pytest.mark.asyncio
-async def test_remote_gateway_test_connection_posts_resolved_retriever_config(
+async def test_remote_gateway_test_connection_posts_reference_mode(
     mocker,
 ) -> None:
+    """Test RemoteRagGateway.test_connection sends reference mode request."""
     post_mock = mocker.patch(
         "httpx.AsyncClient.post",
         return_value=_build_response(
@@ -544,11 +447,9 @@ async def test_remote_gateway_test_connection_posts_resolved_retriever_config(
         base_url="http://knowledge-runtime",
     )
     spec = ConnectionTestRuntimeSpec(
-        retriever_config=RuntimeRetrieverConfig(
-            name="retriever-a",
-            namespace="default",
-            storage_config={"type": "elasticsearch", "url": "http://es:9200"},
-        )
+        retriever_name="retriever-a",
+        retriever_namespace="default",
+        user_id=42,
     )
 
     result = await gateway.test_connection(spec, db=MagicMock())
@@ -556,20 +457,15 @@ async def test_remote_gateway_test_connection_posts_resolved_retriever_config(
     assert result == {"success": True, "message": "Connection successful"}
     args, kwargs = post_mock.await_args
     assert args[0] == "http://knowledge-runtime/internal/rag/test-connection"
-    assert kwargs["json"] == {
-        "retriever_config": {
-            "name": "retriever-a",
-            "namespace": "default",
-            "storage_config": {
-                "type": "elasticsearch",
-                "url": "http://es:9200",
-            },
-        }
-    }
+    # Reference mode: passes Retriever reference
+    assert kwargs["json"]["retriever_reference"]["name"] == "retriever-a"
+    assert kwargs["json"]["retriever_reference"]["namespace"] == "default"
+    assert kwargs["json"]["retriever_reference"]["user_id"] == 42
 
 
 @pytest.mark.asyncio
 async def test_remote_gateway_list_chunks_posts_runtime_request(mocker) -> None:
+    """Test RemoteRagGateway.list_chunks sends reference mode request."""
     post_mock = mocker.patch(
         "httpx.AsyncClient.post",
         return_value=_build_response(
@@ -629,29 +525,22 @@ async def test_remote_gateway_list_chunks_posts_runtime_request(mocker) -> None:
     }
     args, kwargs = post_mock.await_args
     assert args[0] == "http://knowledge-runtime/internal/rag/all-chunks"
-    assert kwargs["json"] == {
-        "knowledge_base_id": 1,
-        "index_owner_user_id": 8,
-        "retriever_config": {
-            "name": "retriever-a",
-            "namespace": "default",
-            "storage_config": {
-                "type": "qdrant",
-                "url": "http://qdrant:6333",
-            },
-        },
-        "max_chunks": 1000,
-        "query": "list_index_chunks",
-        "metadata_condition": {
-            "operator": "and",
-            "conditions": [
-                {"key": "lang", "operator": "==", "value": "zh"},
-            ],
-        },
+    # Reference mode: passes KB reference
+    assert kwargs["json"]["knowledge_base_id"] == 1
+    assert kwargs["json"]["knowledge_base_reference"]["knowledge_base_id"] == 1
+    assert kwargs["json"]["knowledge_base_reference"]["user_id"] == 8
+    assert kwargs["json"]["max_chunks"] == 1000
+    assert kwargs["json"]["query"] == "list_index_chunks"
+    assert kwargs["json"]["metadata_condition"] == {
+        "operator": "and",
+        "conditions": [
+            {"key": "lang", "operator": "==", "value": "zh"},
+        ],
     }
 
 
 def test_gateway_factory_returns_local_gateways_by_default(monkeypatch) -> None:
+    """Test gateway factory returns LocalRagGateway by default."""
     monkeypatch.setattr(settings, "RAG_RUNTIME_MODE", "local")
 
     assert isinstance(get_index_gateway(), LocalRagGateway)
@@ -660,6 +549,7 @@ def test_gateway_factory_returns_local_gateways_by_default(monkeypatch) -> None:
 
 
 def test_gateway_factory_returns_remote_gateways_when_enabled(monkeypatch) -> None:
+    """Test gateway factory returns RemoteRagGateway when configured."""
     monkeypatch.setattr(settings, "RAG_RUNTIME_MODE", "remote")
 
     assert isinstance(get_index_gateway(), RemoteRagGateway)
@@ -668,6 +558,7 @@ def test_gateway_factory_returns_remote_gateways_when_enabled(monkeypatch) -> No
 
 
 def test_gateway_factory_supports_per_operation_overrides(monkeypatch) -> None:
+    """Test gateway factory supports per-operation mode overrides."""
     monkeypatch.setattr(
         settings,
         "RAG_RUNTIME_MODE",
@@ -702,6 +593,7 @@ async def test_gateway_adds_auth_header_when_token_configured(mocker) -> None:
     spec = QueryRuntimeSpec(
         knowledge_base_ids=[1],
         query="test",
+        user_id=1,
         knowledge_base_configs=[
             QueryKnowledgeBaseRuntimeConfig(
                 knowledge_base_id=1,
@@ -749,6 +641,7 @@ async def test_gateway_no_auth_header_when_token_empty(mocker, monkeypatch) -> N
     spec = QueryRuntimeSpec(
         knowledge_base_ids=[1],
         query="test",
+        user_id=1,
         knowledge_base_configs=[
             QueryKnowledgeBaseRuntimeConfig(
                 knowledge_base_id=1,
@@ -797,6 +690,7 @@ async def test_gateway_uses_settings_token_when_not_provided(
     spec = QueryRuntimeSpec(
         knowledge_base_ids=[1],
         query="test",
+        user_id=1,
         knowledge_base_configs=[
             QueryKnowledgeBaseRuntimeConfig(
                 knowledge_base_id=1,

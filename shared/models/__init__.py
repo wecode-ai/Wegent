@@ -49,6 +49,8 @@ from .execution import EventType, ExecutionEvent, ExecutionRequest
 from .knowledge_runtime_protocol import (
     BackendAttachmentStreamContentRef,
     ContentRef,
+    EmbeddingModelReference,
+    KnowledgeBaseReference,
     KnowledgeRuntimeAuth,
     PresignedUrlContentRef,
     RemoteDeleteDocumentIndexRequest,
@@ -64,6 +66,7 @@ from .knowledge_runtime_protocol import (
     RemoteQueryResponse,
     RemoteRagError,
     RemoteTestConnectionRequest,
+    RetrieverReference,
     RuntimeEmbeddingModelConfig,
     RuntimeRetrievalConfig,
     RuntimeRetrieverConfig,
@@ -133,6 +136,11 @@ __all__ = [
     "RuntimeEmbeddingModelConfig",
     "RuntimeRetrievalConfig",
     "RemoteKnowledgeBaseQueryConfig",
+    # Reference types for RemoteGateway
+    "KnowledgeBaseReference",
+    "RetrieverReference",
+    "EmbeddingModelReference",
+    # Request/Response models
     "RemoteIndexRequest",
     "RemoteDeleteDocumentIndexRequest",
     "RemotePurgeKnowledgeIndexRequest",

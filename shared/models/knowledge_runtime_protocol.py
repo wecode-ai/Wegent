@@ -24,6 +24,49 @@ class KnowledgeRuntimeProtocolModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+# ============================================================================
+# Reference Types (for RemoteGateway reference mode)
+# ============================================================================
+
+
+class KnowledgeBaseReference(KnowledgeRuntimeProtocolModel):
+    """Reference to a KnowledgeBase CRD for RemoteGateway operations.
+
+    Used to resolve the full configuration from the database at runtime,
+    avoiding the need to pass sensitive credentials over HTTP.
+    """
+
+    knowledge_base_id: int
+    user_id: int  # Used for permission validation and config resolution
+
+
+class RetrieverReference(KnowledgeRuntimeProtocolModel):
+    """Reference to a Retriever CRD.
+
+    Used for test_connection operations to resolve retriever config at runtime.
+    """
+
+    name: str
+    namespace: str = "default"
+    user_id: int  # Used for permission validation
+
+
+class EmbeddingModelReference(KnowledgeRuntimeProtocolModel):
+    """Reference to an Embedding Model CRD.
+
+    Used internally when resolving embedding model configuration.
+    """
+
+    model_name: str
+    model_namespace: str = "default"
+    user_id: int
+
+
+# ============================================================================
+# Content Reference Types
+# ============================================================================
+
+
 class BackendAttachmentStreamContentRef(KnowledgeRuntimeProtocolModel):
     """Content reference resolved by streaming through Backend."""
 
@@ -108,100 +151,140 @@ class RemoteKnowledgeBaseQueryConfig(KnowledgeRuntimeProtocolModel):
     retrieval_config: RuntimeRetrievalConfig
 
 
+# ============================================================================
+# Request Models (Reference Mode Only)
+# ============================================================================
+
+
 class RemoteIndexRequest(KnowledgeRuntimeProtocolModel):
-    """Index request sent from Backend to knowledge_runtime."""
+    """Index request sent from Backend to knowledge_runtime.
+
+    Uses reference mode: only passes KB reference, Runtime resolves full config.
+    """
 
     knowledge_base_id: int
     document_id: int | None = None
-    index_owner_user_id: int
-    retriever_config: RuntimeRetrieverConfig
-    embedding_model_config: RuntimeEmbeddingModelConfig
+    content_ref: ContentRef
+
+    # Reference mode - Runtime resolves full config from database
+    knowledge_base_reference: KnowledgeBaseReference
+
+    # Optional overrides
     splitter_config: NormalizedSplitterConfig = Field(
         default_factory=build_runtime_default_splitter_config
     )
-    source_file: str | None = None
-    file_extension: str | None = None
     index_families: list[str] = Field(default_factory=lambda: ["chunk_vector"])
-    content_ref: ContentRef
-    trace_context: dict[str, Any] | None = None
     user_name: str | None = None
     extensions: dict[str, Any] | None = None
 
 
 class RemoteDeleteDocumentIndexRequest(KnowledgeRuntimeProtocolModel):
-    """Delete-document-index request sent from Backend to knowledge_runtime."""
+    """Delete-document-index request sent from Backend to knowledge_runtime.
+
+    Uses reference mode: only passes KB reference, Runtime resolves full config.
+    """
 
     knowledge_base_id: int
     document_ref: str
-    index_owner_user_id: int | None = None
-    retriever_config: RuntimeRetrieverConfig
+
+    # Reference mode - Runtime resolves full config from database
+    knowledge_base_reference: KnowledgeBaseReference
+
     enabled_index_families: list[str] = Field(default_factory=lambda: ["chunk_vector"])
     extensions: dict[str, Any] | None = None
 
 
 class RemotePurgeKnowledgeIndexRequest(KnowledgeRuntimeProtocolModel):
-    """Delete-all-chunks request sent from Backend to knowledge_runtime."""
+    """Delete-all-chunks request sent from Backend to knowledge_runtime.
+
+    Uses reference mode: only passes KB reference, Runtime resolves full config.
+    """
 
     knowledge_base_id: int
-    index_owner_user_id: int
-    retriever_config: RuntimeRetrieverConfig
+
+    # Reference mode - Runtime resolves full config from database
+    knowledge_base_reference: KnowledgeBaseReference
+
     extensions: dict[str, Any] | None = None
 
 
 class RemoteDropKnowledgeIndexRequest(KnowledgeRuntimeProtocolModel):
-    """Drop-physical-index request sent from Backend to knowledge_runtime."""
+    """Drop-physical-index request sent from Backend to knowledge_runtime.
+
+    Uses reference mode: only passes KB reference, Runtime resolves full config.
+    """
 
     knowledge_base_id: int
-    index_owner_user_id: int
-    retriever_config: RuntimeRetrieverConfig
+
+    # Reference mode - Runtime resolves full config from database
+    knowledge_base_reference: KnowledgeBaseReference
+
     extensions: dict[str, Any] | None = None
 
 
 class RemoteListChunksRequest(KnowledgeRuntimeProtocolModel):
-    """List-chunks request sent from Backend to knowledge_runtime."""
+    """List-chunks request sent from Backend to knowledge_runtime.
+
+    Uses reference mode: only passes KB reference, Runtime resolves full config.
+    """
 
     knowledge_base_id: int
-    index_owner_user_id: int
-    retriever_config: RuntimeRetrieverConfig
     max_chunks: int = Field(default=10000, gt=0, le=10000)
     query: str | None = None
     metadata_condition: dict[str, Any] | None = None
+
+    # Reference mode - Runtime resolves full config from database
+    knowledge_base_reference: KnowledgeBaseReference
+
     extensions: dict[str, Any] | None = None
 
 
 class RemoteTestConnectionRequest(KnowledgeRuntimeProtocolModel):
-    """Test-connection request sent from Backend to knowledge_runtime."""
+    """Test-connection request sent from Backend to knowledge_runtime.
 
-    retriever_config: RuntimeRetrieverConfig
+    Uses reference mode: only passes Retriever reference, Runtime resolves full config.
+    """
+
+    # Reference mode - Runtime resolves full config from database
+    retriever_reference: RetrieverReference
+
     extensions: dict[str, Any] | None = None
 
 
 class RemoteQueryRequest(KnowledgeRuntimeProtocolModel):
-    """Query request sent from Backend to knowledge_runtime."""
+    """Query request sent from Backend to knowledge_runtime.
+
+    Uses reference mode: only passes KB references, Runtime resolves full configs.
+    """
 
     knowledge_base_ids: list[int]
     query: str
     max_results: int = Field(default=5, gt=0)
+
+    # Reference mode - Runtime resolves full configs from database
+    knowledge_base_references: list[KnowledgeBaseReference]
+    user_id: int  # For permission validation
+
+    # Optional filters
     document_ids: list[int] | None = None
     metadata_condition: dict[str, Any] | None = None
     user_name: str | None = None
-    knowledge_base_configs: list[RemoteKnowledgeBaseQueryConfig]
     enabled_index_families: list[str] = Field(default_factory=lambda: ["chunk_vector"])
     retrieval_policy: RetrievalPolicy = "chunk_only"
     extensions: dict[str, Any] | None = None
 
     @model_validator(mode="after")
-    def validate_knowledge_base_configs(self) -> "RemoteQueryRequest":
-        if not self.knowledge_base_configs:
-            raise ValueError("knowledge_base_configs must not be empty")
+    def validate_knowledge_base_references(self) -> "RemoteQueryRequest":
+        if not self.knowledge_base_references:
+            raise ValueError("knowledge_base_references must not be empty")
 
         requested_ids = list(self.knowledge_base_ids)
-        configured_ids = [
-            config.knowledge_base_id for config in self.knowledge_base_configs
+        referenced_ids = [
+            ref.knowledge_base_id for ref in self.knowledge_base_references
         ]
-        if Counter(requested_ids) != Counter(configured_ids):
+        if Counter(requested_ids) != Counter(referenced_ids):
             raise ValueError(
-                "knowledge_base_configs must align with knowledge_base_ids"
+                "knowledge_base_references must align with knowledge_base_ids"
             )
         return self
 
