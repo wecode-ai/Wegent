@@ -12,7 +12,7 @@
 // ============================================================================
 
 /** Answer slot input mode */
-export type SlotInputMode = 'attachment' | 'text' | 'link+attachment'
+export type SlotInputMode = 'attachment' | 'text' | 'link+attachment' | 'link_or_attachment'
 
 /**
  * Answer slot configuration
