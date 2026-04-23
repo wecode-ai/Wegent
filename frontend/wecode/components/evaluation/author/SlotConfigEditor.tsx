@@ -168,6 +168,7 @@ const INPUT_MODE_OPTIONS: { value: SlotInputMode; labelKey: string }[] = [
   { value: 'attachment', labelKey: 'slots.input_mode.attachment' },
   { value: 'text', labelKey: 'slots.input_mode.text' },
   { value: 'link+attachment', labelKey: 'slots.input_mode.link_attachment' },
+  { value: 'link_or_attachment', labelKey: 'slots.input_mode.link_or_attachment' },
 ]
 
 /**
@@ -420,7 +421,7 @@ function SlotItem({
           </div>
 
           {/* File settings - only shown for attachment input modes */}
-          {(slot.inputMode === 'attachment' || slot.inputMode === 'link+attachment') && (
+          {(slot.inputMode === 'attachment' || slot.inputMode === 'link+attachment' || slot.inputMode === 'link_or_attachment') && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 bg-gray-50 rounded-lg">
               <div className="space-y-2">
                 <Label>{t('slots.max_files')}</Label>
