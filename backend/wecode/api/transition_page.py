@@ -13,6 +13,8 @@ from app.models.user import User
 
 from wecode.schemas.transition_page import (
     BlockCreateRequest,
+    BlockGroupCreateRequest,
+    BlockGroupUpdateRequest,
     BlockUpdateRequest,
     GroupCreateRequest,
     GroupMemberInfo,
@@ -77,6 +79,7 @@ def get_page(
         raise HTTPException(status_code=404, detail="Page not found")
 
     groups = service.list_groups(page_id)
+    block_groups = service.list_block_groups(page_id)
     blocks = service.list_blocks(page_id)
     members = service.list_group_members(page_id)
 
@@ -87,6 +90,7 @@ def get_page(
         status=page.data_json.get("status", "draft"),
         title_font_size=page.data_json.get("title_font_size"),
         groups=[{"key": g.key, **g.data_json} for g in groups],
+        block_groups=[{"key": bg.key, **bg.data_json} for bg in block_groups],
         blocks=[{"key": b.key, "sort_order": b.sort_order, **b.data_json} for b in blocks],
         members=[GroupMemberInfo(**m.data_json) for m in members],
         created_at=page.created_at,
@@ -156,6 +160,58 @@ def delete_group(
 ) -> dict[str, str]:
     service.delete_group(page_id, group_key)
     return {"message": "Group deleted"}
+
+
+# Block Group routes (for mutex functionality)
+@router.get("/{page_id}/block-groups")
+def list_block_groups(
+    page_id: str,
+    service: TransitionPageService = Depends(get_service),
+    current_user: User = Depends(get_current_user),
+) -> list[dict[str, Any]]:
+    """List all block groups for this page"""
+    block_groups = service.list_block_groups(page_id)
+    return [{"key": bg.key, **bg.data_json} for bg in block_groups]
+
+
+@router.post("/{page_id}/block-groups", response_model=TransitionPageItemResponse)
+def create_block_group(
+    page_id: str,
+    req: BlockGroupCreateRequest,
+    service: TransitionPageService = Depends(get_service),
+    current_user: User = Depends(get_current_user),
+) -> TransitionPageItemResponse:
+    try:
+        group = service.create_block_group(page_id, req.key, req.data)
+        return TransitionPageItemResponse.model_validate(group)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.put("/{page_id}/block-groups/{block_group_key}", response_model=TransitionPageItemResponse)
+def update_block_group(
+    page_id: str,
+    block_group_key: str,
+    req: BlockGroupUpdateRequest,
+    service: TransitionPageService = Depends(get_service),
+    current_user: User = Depends(get_current_user),
+) -> TransitionPageItemResponse:
+    try:
+        group = service.update_block_group(page_id, block_group_key, req.data)
+        return TransitionPageItemResponse.model_validate(group)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.delete("/{page_id}/block-groups/{block_group_key}")
+def delete_block_group(
+    page_id: str,
+    block_group_key: str,
+    service: TransitionPageService = Depends(get_service),
+    current_user: User = Depends(get_current_user),
+) -> dict[str, str]:
+    service.delete_block_group(page_id, block_group_key)
+    return {"message": "Block group deleted"}
 
 
 @router.post("/{page_id}/blocks", response_model=TransitionPageItemResponse)

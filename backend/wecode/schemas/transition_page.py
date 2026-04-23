@@ -65,6 +65,7 @@ class BlockData(BaseModel):
     markdown_template: str
     buttons: list[BlockButton] = Field(default_factory=list)
     freeze_enabled: bool = False  # Enable freeze mode - once viewed, always visible
+    block_group_key: Optional[str] = None  # Associated block group key for mutex grouping
 
 
 class GroupData(BaseModel):
@@ -74,6 +75,26 @@ class GroupData(BaseModel):
     start_at: Optional[str] = None
     end_at: Optional[str] = None
     content: Optional[dict[str, Any]] = None
+
+
+class BlockGroupData(BaseModel):
+    """Block group data structure for mutex grouping"""
+
+    name: str
+    mutex: bool = False  # If true, viewing any block in group freezes entire group
+
+
+class BlockGroupCreateRequest(BaseModel):
+    """Create block group request"""
+
+    key: str
+    data: BlockGroupData
+
+
+class BlockGroupUpdateRequest(BaseModel):
+    """Update block group request"""
+
+    data: BlockGroupData
 
 
 class TransitionPageCreate(BaseModel):
@@ -189,6 +210,7 @@ class TransitionPageDetail(BaseModel):
     status: str
     title_font_size: Optional[str] = None
     groups: list[dict[str, Any]]
+    block_groups: list[dict[str, Any]] = []
     blocks: list[dict[str, Any]]
     members: list[GroupMemberInfo]
     created_at: datetime
