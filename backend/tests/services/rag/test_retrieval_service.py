@@ -188,18 +188,15 @@ class TestRetrieveForChatShell:
         ) as mock_estimate:
             service = RetrievalService()
             service.get_original_documents_from_knowledge_base = AsyncMock(
-                return_value=(
-                    [
-                        {
-                            "content": "full document content",
-                            "score": 1.0,
-                            "title": "doc-1",
-                            "metadata": {"document_id": 1, "total_length": 100},
-                            "knowledge_base_id": 123,
-                        }
-                    ],
-                    False,  # has_truncated
-                )
+                return_value=[
+                    {
+                        "content": "full document content",
+                        "score": 1.0,
+                        "title": "doc-1",
+                        "metadata": {"document_id": 1, "total_length": 100},
+                        "knowledge_base_id": 123,
+                    }
+                ]
             )
 
             result = await service.retrieve_with_routing(
@@ -237,18 +234,15 @@ class TestRetrieveForChatShell:
         ):
             service = RetrievalService()
             service.get_original_documents_from_knowledge_base = AsyncMock(
-                return_value=(
-                    [
-                        {
-                            "content": "This is a full document with enough text to exceed the runtime budget.",
-                            "score": 1.0,
-                            "title": "doc-1",
-                            "metadata": {"document_id": 1, "total_length": 100},
-                            "knowledge_base_id": 123,
-                        }
-                    ],
-                    False,  # has_truncated
-                )
+                return_value=[
+                    {
+                        "content": "This is a full document with enough text to exceed the runtime budget.",
+                        "score": 1.0,
+                        "title": "doc-1",
+                        "metadata": {"document_id": 1, "total_length": 100},
+                        "knowledge_base_id": 123,
+                    }
+                ]
             )
             service.retrieve_from_knowledge_base_internal = AsyncMock(
                 return_value={
@@ -287,25 +281,22 @@ class TestRetrieveForChatShell:
         db = MagicMock()
         service = RetrievalService()
         service.get_original_documents_from_knowledge_base = AsyncMock(
-            return_value=(
-                [
-                    {
-                        "content": "document-1",
-                        "score": 1.0,
-                        "title": "doc-1",
-                        "metadata": {"document_id": 1, "total_length": 100},
-                        "knowledge_base_id": 123,
-                    },
-                    {
-                        "content": "document-2",
-                        "score": 1.0,
-                        "title": "doc-2",
-                        "metadata": {"document_id": 2, "total_length": 100},
-                        "knowledge_base_id": 123,
-                    },
-                ],
-                False,  # has_truncated
-            )
+            return_value=[
+                {
+                    "content": "document-1",
+                    "score": 1.0,
+                    "title": "doc-1",
+                    "metadata": {"document_id": 1, "total_length": 100},
+                    "knowledge_base_id": 123,
+                },
+                {
+                    "content": "document-2",
+                    "score": 1.0,
+                    "title": "doc-2",
+                    "metadata": {"document_id": 2, "total_length": 100},
+                    "knowledge_base_id": 123,
+                },
+            ]
         )
         service.retrieve_from_knowledge_base_internal = AsyncMock(
             return_value={
@@ -340,18 +331,15 @@ class TestRetrieveForChatShell:
         db = MagicMock()
         service = RetrievalService()
         service.get_original_documents_from_knowledge_base = AsyncMock(
-            return_value=(
-                [
-                    {
-                        "content": "full document content",
-                        "score": 1.0,
-                        "title": "doc-1",
-                        "metadata": {"document_id": 1, "total_length": 100},
-                        "knowledge_base_id": 123,
-                    }
-                ],
-                False,  # has_truncated
-            )
+            return_value=[
+                {
+                    "content": "full document content",
+                    "score": 1.0,
+                    "title": "doc-1",
+                    "metadata": {"document_id": 1, "total_length": 100},
+                    "knowledge_base_id": 123,
+                }
+            ]
         )
 
         with patch.object(
@@ -849,14 +837,14 @@ class TestGetOriginalDocumentsFromKnowledgeBase:
                 mock_doc_read_service,
         ):
             service = RetrievalService()
-            records, has_truncated = (
+            records = (
                 await service.get_original_documents_from_knowledge_base(
-                    knowledge_base_id=123,
+                    knowledge_base_ids=[123],
                     db=db,
                 )
             )
 
-        assert has_truncated is False
+        assert records is not None
         assert len(records) == 2
         assert records[0]["content"] == "This is the full content of document 1."
         assert records[0]["score"] == 1.0
@@ -897,15 +885,15 @@ class TestGetOriginalDocumentsFromKnowledgeBase:
                 mock_doc_read_service,
         ):
             service = RetrievalService()
-            records, has_truncated = (
+            records = (
                 await service.get_original_documents_from_knowledge_base(
-                    knowledge_base_id=123,
+                    knowledge_base_ids=[123],
                     db=db,
                     document_ids=[1],
                 )
             )
 
-        assert has_truncated is False
+        assert records is not None
         assert len(records) == 1
         assert records[0]["metadata"]["document_id"] == 1
 
@@ -923,14 +911,14 @@ class TestGetOriginalDocumentsFromKnowledgeBase:
         db.query.return_value = mock_query
 
         service = RetrievalService()
-        records, has_truncated = (
+        records = (
             await service.get_original_documents_from_knowledge_base(
-                knowledge_base_id=123,
+                knowledge_base_ids=[123],
                 db=db,
             )
         )
 
-        assert has_truncated is False
+        assert records is not None
         assert records == []
 
     @pytest.mark.asyncio
@@ -971,14 +959,14 @@ class TestGetOriginalDocumentsFromKnowledgeBase:
                 mock_doc_read_service,
         ):
             service = RetrievalService()
-            records, has_truncated = (
+            records = (
                 await service.get_original_documents_from_knowledge_base(
-                    knowledge_base_id=123,
+                    knowledge_base_ids=[123],
                     db=db,
                 )
             )
 
-        assert has_truncated is False
+        assert records is not None
         assert len(records) == 1
         assert records[0]["metadata"]["document_id"] == 1
 
@@ -999,15 +987,14 @@ class TestGetOriginalDocumentsFromKnowledgeBase:
         db.query.return_value = mock_query
 
         service = RetrievalService()
-        records, has_truncated = (
+        records = (
             await service.get_original_documents_from_knowledge_base(
-                knowledge_base_id=123,
+                knowledge_base_ids=[123],
                 db=db,
             )
         )
 
-        assert has_truncated is True
-        assert records == []
+        assert records is None
 
     @pytest.mark.asyncio
     async def test_document_above_limit_rejects_direct_injection(self):
@@ -1026,15 +1013,14 @@ class TestGetOriginalDocumentsFromKnowledgeBase:
         db.query.return_value = mock_query
 
         service = RetrievalService()
-        records, has_truncated = (
+        records = (
             await service.get_original_documents_from_knowledge_base(
-                knowledge_base_id=123,
+                knowledge_base_ids=[123],
                 db=db,
             )
         )
 
-        assert has_truncated is True
-        assert records == []
+        assert records is None
 
     @pytest.mark.asyncio
     async def test_mixed_documents_reject_if_any_truncated(self):
@@ -1053,15 +1039,14 @@ class TestGetOriginalDocumentsFromKnowledgeBase:
         db.query.return_value = mock_query
 
         service = RetrievalService()
-        records, has_truncated = (
+        records = (
             await service.get_original_documents_from_knowledge_base(
-                knowledge_base_id=123,
+                knowledge_base_ids=[123],
                 db=db,
             )
         )
 
-        assert has_truncated is True
-        assert records == []
+        assert records is None
 
     @pytest.mark.asyncio
     async def test_query_by_document_ids_only(self):
@@ -1106,15 +1091,15 @@ class TestGetOriginalDocumentsFromKnowledgeBase:
                 mock_doc_read_service,
         ):
             service = RetrievalService()
-            records, has_truncated = (
+            records = (
                 await service.get_original_documents_from_knowledge_base(
-                    knowledge_base_id=None,  # No KB ID, only document IDs
+                    knowledge_base_ids=[123, 456],  # KB IDs for document IDs scope
                     db=db,
                     document_ids=[1, 2],
                 )
             )
 
-        assert has_truncated is False
+        assert records is not None
         assert len(records) == 2
         # Should have correct KB IDs from result
         assert records[0]["knowledge_base_id"] == 123
@@ -1154,34 +1139,34 @@ class TestGetOriginalDocumentsFromKnowledgeBase:
                 mock_doc_read_service,
         ):
             service = RetrievalService()
-            records, has_truncated = (
+            records = (
                 await service.get_original_documents_from_knowledge_base(
-                    knowledge_base_id=123,
+                    knowledge_base_ids=[123],
                     db=db,
                     document_ids=[1, 2, 3],  # Only doc 1 is in KB 123
                 )
             )
 
-        assert has_truncated is False
+        assert records is not None
         assert len(records) == 1
         assert records[0]["knowledge_base_id"] == 123
 
     @pytest.mark.asyncio
     async def test_no_filter_criteria_returns_empty(self):
-        """Should return empty when neither knowledge_base_id nor document_ids provided."""
+        """Should return empty when no knowledge_base_ids provided."""
         from app.services.rag.retrieval_service import RetrievalService
 
         db = MagicMock()
         service = RetrievalService()
-        records, has_truncated = (
+        records = (
             await service.get_original_documents_from_knowledge_base(
-                knowledge_base_id=None,
+                knowledge_base_ids=[],  # Empty KB IDs
                 db=db,
                 document_ids=None,
             )
         )
 
-        assert has_truncated is False
+        assert records is not None
         assert records == []
 
 
@@ -1203,18 +1188,15 @@ class TestDirectInjectionUsesOriginalDocuments:
         ):
             service = RetrievalService()
             service.get_original_documents_from_knowledge_base = AsyncMock(
-                return_value=(
-                    [
-                        {
-                            "content": "full document",
-                            "score": 1.0,
-                            "title": "doc-1",
-                            "metadata": {"document_id": 1},
-                            "knowledge_base_id": 123,
-                        }
-                    ],
-                    False,  # has_truncated
-                )
+                return_value=[
+                    {
+                        "content": "full document",
+                        "score": 1.0,
+                        "title": "doc-1",
+                        "metadata": {"document_id": 1},
+                        "knowledge_base_id": 123,
+                    }
+                ]
             )
             service.get_all_chunks_from_knowledge_base = AsyncMock(
                 return_value=[
@@ -1236,7 +1218,7 @@ class TestDirectInjectionUsesOriginalDocuments:
 
         # Verify get_original_documents was called
         service.get_original_documents_from_knowledge_base.assert_awaited_once_with(
-            knowledge_base_id=123,
+            knowledge_base_ids=[123],
             db=db,
             document_ids=None,
         )
@@ -1258,18 +1240,15 @@ class TestDirectInjectionUsesOriginalDocuments:
         ):
             service = RetrievalService()
             service.get_original_documents_from_knowledge_base = AsyncMock(
-                return_value=(
-                    [
-                        {
-                            "content": "filtered document",
-                            "score": 1.0,
-                            "title": "doc-1",
-                            "metadata": {"document_id": 1},
-                            "knowledge_base_id": 123,
-                        }
-                    ],
-                    False,  # has_truncated
-                )
+                return_value=[
+                    {
+                        "content": "filtered document",
+                        "score": 1.0,
+                        "title": "doc-1",
+                        "metadata": {"document_id": 1},
+                        "knowledge_base_id": 123,
+                    }
+                ]
             )
 
             result = await service.retrieve_with_routing(
@@ -1281,9 +1260,9 @@ class TestDirectInjectionUsesOriginalDocuments:
                 user_id=7,
             )
 
-        # When document_ids is provided, knowledge_base_id is None (single query optimization)
+        # document_ids is passed along with knowledge_base_ids for scope filtering
         service.get_original_documents_from_knowledge_base.assert_awaited_once_with(
-            knowledge_base_id=None,
+            knowledge_base_ids=[123],
             db=db,
             document_ids=[1, 2, 3],
         )
@@ -1309,10 +1288,7 @@ class TestDirectInjectionTruncationRejection:
         ):
             service = RetrievalService()
             service.get_original_documents_from_knowledge_base = AsyncMock(
-                return_value=(
-                    [],  # Empty records
-                    True,  # has_truncated
-                )
+                return_value=None  # Truncated documents
             )
             service.retrieve_from_knowledge_base_internal = AsyncMock(
                 return_value={
@@ -1352,26 +1328,9 @@ class TestDirectInjectionTruncationRejection:
                 return_value=100,
         ):
             service = RetrievalService()
-            # First KB returns valid documents, second KB has truncated
+            # Simulate truncation detection for multi-KB query
             service.get_original_documents_from_knowledge_base = AsyncMock(
-                side_effect=[
-                    (
-                        [
-                            {
-                                "content": "valid document",
-                                "score": 1.0,
-                                "title": "doc-1",
-                                "metadata": {"document_id": 1},
-                                "knowledge_base_id": 123,
-                            }
-                        ],
-                        False,  # has_truncated
-                    ),
-                    (
-                        [],  # Empty due to truncation
-                        True,  # has_truncated
-                    ),
-                ]
+                return_value=None  # Truncated documents
             )
             service.retrieve_from_knowledge_base_internal = AsyncMock(
                 return_value={
@@ -1443,14 +1402,14 @@ class TestDirectInjectionTruncationRejection:
                 mock_doc_read_service,
         ):
             service = RetrievalService()
-            records, has_truncated = (
+            records = (
                 await service.get_original_documents_from_knowledge_base(
-                    knowledge_base_id=123,
+                    knowledge_base_ids=[123],
                     db=db,
                 )
             )
 
-        assert has_truncated is False
+        assert records is not None
         assert len(records) == 2
         assert records[0]["content"] == "Small document content."
 
@@ -1463,10 +1422,7 @@ class TestDirectInjectionTruncationRejection:
 
         service = RetrievalService()
         service.get_original_documents_from_knowledge_base = AsyncMock(
-            return_value=(
-                [],  # Empty due to truncation
-                True,  # has_truncated
-            )
+            return_value=None  # Truncated documents
         )
         service.retrieve_from_knowledge_base_internal = AsyncMock(
             return_value={

@@ -237,51 +237,15 @@ class RetrievalService:
         - Checking for truncated documents
         - Validating against token/chunk limits
         """
-        direct_records: list[Dict[str, Any]] = []
-        has_any_truncated = False
-        truncated_kb_ids: list[int] = []
+        # Fetch original documents - returns None if truncated, [] if no docs, [records] if success
+        direct_records = await self.get_original_documents_from_knowledge_base(
+            knowledge_base_ids=knowledge_base_ids,
+            db=db,
+            document_ids=document_ids,
+        )
 
-        # Fetch original documents
-        if document_ids:
-            docs, has_truncated = await self.get_original_documents_from_knowledge_base(
-                knowledge_base_id=None,
-                db=db,
-                document_ids=document_ids,
-            )
-            if has_truncated:
-                has_any_truncated = True
-                truncated_kb_ids = knowledge_base_ids
-            else:
-                direct_records = docs
-        else:
-            for kb_id in knowledge_base_ids:
-                docs, has_truncated = (
-                    await self.get_original_documents_from_knowledge_base(
-                        knowledge_base_id=kb_id,
-                        db=db,
-                        document_ids=None,
-                    )
-                )
-                if has_truncated:
-                    has_any_truncated = True
-                    truncated_kb_ids.append(kb_id)
-                    break
-                direct_records.extend(docs)
-
-        # Reject if any document is truncated
-        if has_any_truncated:
-            logger.info(
-                "[RAG] Direct injection rejected due to truncated documents, "
-                "falling back to rag_retrieval. truncated_kb_ids=%s",
-                truncated_kb_ids,
-            )
-            add_span_event(
-                "rag.routing.direct_injection_rejected_truncated",
-                {
-                    "truncated_kb_ids": truncated_kb_ids,
-                    "fallback_mode": "rag_retrieval",
-                },
-            )
+        # None means truncated documents detected, fallback to RAG
+        if direct_records is None:
             return None
 
         # Validate against token/chunk limits
@@ -792,11 +756,11 @@ class RetrievalService:
 
     async def get_original_documents_from_knowledge_base(
         self,
-        knowledge_base_id: Optional[int],
+        knowledge_base_ids: list[int],
         db: Session,
         document_ids: Optional[list[int]] = None,
-    ) -> tuple[List[Dict[str, Any]], bool]:
-        """Get original documents from knowledge base for direct injection.
+    ) -> Optional[List[Dict[str, Any]]]:
+        """Get original documents from knowledge bases for direct injection.
 
         Returns complete original document content from MySQL instead of
         chunked content from Elasticsearch. This preserves document structure
@@ -804,107 +768,143 @@ class RetrievalService:
 
         IMPORTANT: This method implements truncation detection to prevent
         injecting incomplete content. If any document's text_length is >=
-        MAX_EXTRACTED_TEXT_LENGTH, the method returns empty records with
-        has_truncated=True to trigger fallback to RAG retrieval.
+        MAX_EXTRACTED_TEXT_LENGTH, the method returns None to trigger fallback
+        to RAG retrieval.
 
         Args:
-            knowledge_base_id: Optional knowledge base ID. If not provided,
-                document_ids must be specified.
+            knowledge_base_ids: List of knowledge base IDs to search.
             db: Database session
-            document_ids: Optional list of document IDs to filter. If provided
-                without knowledge_base_id, queries directly by document IDs.
+            document_ids: Optional list of document IDs to filter. If provided,
+                queries directly by document IDs within the knowledge_base_ids scope.
 
         Returns:
-            tuple: (records, has_truncated_docs)
-                - records: List of document dicts with content, score, title, metadata
-                - has_truncated_docs: True if any document may be truncated
+            - None: Documents are truncated, should fallback to RAG
+            - []: No documents found
+            - [records]: List of document dicts with content, score, title, metadata
         """
         from app.models.knowledge import KnowledgeDocument
         from app.models.subtask_context import SubtaskContext
         from app.services.knowledge.document_read_service import document_read_service
 
-        # Validate that at least one filter is provided
-        if not knowledge_base_id and not document_ids:
-            logger.warning("[RAG] get_original_documents: no filter criteria provided")
-            return [], False
+        if not knowledge_base_ids:
+            logger.warning("[RAG] get_original_documents: no knowledge base IDs provided")
+            return []
 
-        # Build query - always include kind_id for consistent result format
-        query = (
-            db.query(
-                KnowledgeDocument.id,
-                KnowledgeDocument.kind_id,
-                SubtaskContext.text_length,
-            )
-            .select_from(KnowledgeDocument)
-            .join(
-                SubtaskContext,
-                KnowledgeDocument.attachment_id == SubtaskContext.id,
-            )
-            .filter(KnowledgeDocument.is_active == True)
-        )
-
-        # Add filters incrementally
-        if document_ids:
-            query = query.filter(KnowledgeDocument.id.in_(document_ids))
-        if knowledge_base_id:
-            query = query.filter(KnowledgeDocument.kind_id == knowledge_base_id)
-
-        doc_rows = query.all()
-
-        if not doc_rows:
-            log_kb_id = knowledge_base_id or "all"
-            log_doc_ids = document_ids or "all"
-            logger.info(
-                "[RAG] get_original_documents: no documents found for kb_id=%s, doc_ids=%s",
-                log_kb_id,
-                log_doc_ids,
-            )
-            return [], False
-
-        # Extract KB IDs from results (always 3 columns: id, kind_id, text_length)
-        found_kb_ids = {row[1] for row in doc_rows}
-
-        # Check if any document is potentially truncated
         max_text_length = settings.MAX_EXTRACTED_TEXT_LENGTH
-        has_truncated = any((row[2] or 0) >= max_text_length for row in doc_rows)
+        records: List[Dict[str, Any]] = []
 
-        if has_truncated:
-            truncated_ids = [
-                row[0] for row in doc_rows if (row[2] or 0) >= max_text_length
-            ]
-            log_kb_id = knowledge_base_id or list(found_kb_ids)
-            logger.warning(
-                "[RAG] Documents potentially truncated, rejecting direct_injection: "
-                "kb_id=%s, truncated_doc_ids=%s, max_text_length=%s",
-                log_kb_id,
-                truncated_ids,
-                max_text_length,
+        # Case 1: Query by document IDs with KB scope filter
+        if document_ids:
+            query = (
+                db.query(
+                    KnowledgeDocument.id,
+                    KnowledgeDocument.kind_id,
+                    SubtaskContext.text_length,
+                )
+                .select_from(KnowledgeDocument)
+                .join(
+                    SubtaskContext,
+                    KnowledgeDocument.attachment_id == SubtaskContext.id,
+                )
+                .filter(KnowledgeDocument.is_active == True)
+                .filter(KnowledgeDocument.id.in_(document_ids))
+                .filter(KnowledgeDocument.kind_id.in_(knowledge_base_ids))
             )
-            return [], True  # Return empty with truncated flag
+            doc_rows = query.all()
 
-        # Get original content for complete documents
-        all_document_ids = [row[0] for row in doc_rows]
-        # Determine knowledge base IDs for the read service
-        kb_ids_for_read = (
-            [knowledge_base_id] if knowledge_base_id else list(found_kb_ids)
-        )
-        log_kb_id = knowledge_base_id or (list(found_kb_ids) if found_kb_ids else "all")
+            if not doc_rows:
+                logger.info(
+                    "[RAG] get_original_documents: no documents found for doc_ids=%s in kb_ids=%s",
+                    document_ids,
+                    knowledge_base_ids,
+                )
+                return []
+
+            has_truncated = any((row[2] or 0) >= max_text_length for row in doc_rows)
+            if has_truncated:
+                truncated_ids = [row[0] for row in doc_rows if (row[2] or 0) >= max_text_length]
+                logger.warning(
+                    "[RAG] Documents truncated, rejecting direct_injection: "
+                    "kb_ids=%s, truncated_doc_ids=%s",
+                    knowledge_base_ids,
+                    truncated_ids,
+                )
+                return None
+
+            all_document_ids = [row[0] for row in doc_rows]
+            results = document_read_service.read_documents(
+                db=db,
+                document_ids=all_document_ids,
+                offset=0,
+                limit=10_000_000,
+                knowledge_base_ids=knowledge_base_ids,
+            )
+            records = self._build_document_records(results, knowledge_base_ids)
+            logger.info(
+                "[RAG] get_original_documents completed: doc_ids=%s, document_count=%d",
+                document_ids,
+                len(records),
+            )
+            return records
+
+        # Case 2: Query each KB sequentially, stop on first truncation
+        for kb_id in knowledge_base_ids:
+            query = (
+                db.query(
+                    KnowledgeDocument.id,
+                    KnowledgeDocument.kind_id,
+                    SubtaskContext.text_length,
+                )
+                .select_from(KnowledgeDocument)
+                .join(
+                    SubtaskContext,
+                    KnowledgeDocument.attachment_id == SubtaskContext.id,
+                )
+                .filter(KnowledgeDocument.is_active == True)
+                .filter(KnowledgeDocument.kind_id == kb_id)
+            )
+            doc_rows = query.all()
+
+            if not doc_rows:
+                continue
+
+            has_truncated = any((row[2] or 0) >= max_text_length for row in doc_rows)
+            if has_truncated:
+                truncated_ids = [row[0] for row in doc_rows if (row[2] or 0) >= max_text_length]
+                logger.warning(
+                    "[RAG] Documents truncated, rejecting direct_injection: "
+                    "kb_id=%s, truncated_doc_ids=%s",
+                    kb_id,
+                    truncated_ids,
+                )
+                return None
+
+            all_document_ids = [row[0] for row in doc_rows]
+            results = document_read_service.read_documents(
+                db=db,
+                document_ids=all_document_ids,
+                offset=0,
+                limit=10_000_000,
+                knowledge_base_ids=[kb_id],
+            )
+            records.extend(self._build_document_records(results, [kb_id]))
+
         logger.info(
-            "[RAG] get_original_documents: kb_id=%s, document_count=%d",
-            log_kb_id,
-            len(all_document_ids),
+            "[RAG] get_original_documents completed: kb_ids=%s, document_count=%d",
+            knowledge_base_ids,
+            len(records),
         )
+        return records
 
-        results = document_read_service.read_documents(
-            db=db,
-            document_ids=all_document_ids,
-            offset=0,
-            limit=10_000_000,  # Large limit for full content
-            knowledge_base_ids=kb_ids_for_read if kb_ids_for_read else None,
-        )
-
-        # 4. Build response in same format as chunks for compatibility
+    @staticmethod
+    def _build_document_records(
+        results: List[Dict[str, Any]],
+        knowledge_base_ids: list[int],
+    ) -> List[Dict[str, Any]]:
+        """Build document records from read results."""
         records = []
+        kb_id = knowledge_base_ids[0] if len(knowledge_base_ids) == 1 else None
+
         for result in results:
             if result.get("error"):
                 logger.warning(
@@ -913,30 +913,20 @@ class RetrievalService:
                     result.get("error"),
                 )
                 continue
-            # Use kb_id from result if knowledge_base_id not provided
-            doc_kb_id = knowledge_base_id or result.get("kb_id")
             records.append(
                 {
                     "content": result.get("content", ""),
-                    "score": 1.0,  # Direct injection uses max score
+                    "score": 1.0,
                     "title": result.get("name", "Unknown"),
                     "metadata": {
                         "document_id": result.get("id"),
                         "total_length": result.get("total_length", 0),
                     },
-                    "knowledge_base_id": doc_kb_id,
+                    "knowledge_base_id": kb_id or result.get("kb_id"),
                 }
             )
 
-        logger.info(
-            "[RAG] get_original_documents completed: kb_id=%s, document_count=%d, "
-            "total_chars=%d",
-            log_kb_id,
-            len(records),
-            sum(len(r.get("content", "")) for r in records),
-        )
-
-        return records, False
+        return records
 
     async def get_all_chunks_from_knowledge_base(
         self,
