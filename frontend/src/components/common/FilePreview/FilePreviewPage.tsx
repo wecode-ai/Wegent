@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button'
 import { FilePreview } from './FilePreview'
 import { getPreviewType, formatFileSize } from './utils'
 import { downloadAttachment } from '@/apis/attachments'
-import { ShareButton } from './components'
+// import { ShareButton } from './components'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 
@@ -45,7 +45,6 @@ export function FilePreviewPage({
   fileSize,
   shareToken,
   onClose,
-  canShare,
 }: FilePreviewPageProps) {
   const previewType = getPreviewType(mimeType, filename)
   const isHtml = previewType === 'html'
@@ -232,15 +231,15 @@ export function FilePreviewPage({
               </button>
             </div>
           )}
-          {/* Share button - only show if user can share (owner only) */}
-          {canShare && attachmentId && (
+          {/* Share button - temporarily hidden */}
+          {/* {canShare && attachmentId && (
             <ShareButton
               attachmentId={attachmentId}
               canShare={canShare}
               variant="outline"
               size="sm"
             />
-          )}
+          )} */}
           <Button
             variant="primary"
             size="sm"
