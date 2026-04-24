@@ -235,10 +235,6 @@
   },
   "answers": {
     "title": "Answers",
-    "tooltip": "Total number of answers submitted by all respondents (including multiple submissions)"
-  },
-  "answers": {
-    "title": "Answers",
     "submit": "Submit Answer",
     "my_answers": "My Answers",
     "content": "Answer Content",
@@ -302,7 +298,14 @@
     },
     "uploaded_files": "Uploaded files",
     "text_supplement": "Text supplement",
-    "auto_saved": "Auto-saved at"
+    "auto_saved": "Auto-saved at",
+    "link_disabled_hint": "Link input disabled because attachments have been uploaded",
+    "attachment_disabled_hint": "Attachment upload disabled because link has been provided",
+    "invalid_url_hint": "Please enter a valid URL (e.g., https://example.com)",
+    "respondents_count": "Respondents",
+    "respondents_tooltip": "Unique users who entered the exam page (matches session list)",
+    "answers_count": "Answers",
+    "answers_tooltip": "Total number of answers submitted by all respondents (including multiple submissions)"
   },
   "grading": {
     "title": "Grading",
