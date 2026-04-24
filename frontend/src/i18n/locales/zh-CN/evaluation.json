@@ -294,15 +294,11 @@
     "auto_saved": "自动保存于",
     "link_disabled_hint": "已上传附件，链接输入已禁用",
     "attachment_disabled_hint": "已填写链接，附件上传已禁用",
-    "invalid_url_hint": "请输入有效的 URL 地址（如 https://example.com）"
-  },
-  "respondents": {
-    "title": "答题人数",
-    "tooltip": "进入考试页面的唯一用户数（与会话列表一致）"
-  },
-  "answers": {
-    "title": "作答数",
-    "tooltip": "所有答题人提交的答案总数（包含多次提交）"
+    "invalid_url_hint": "请输入有效的 URL 地址（如 https://example.com）",
+    "respondents_count": "答题人数",
+    "respondents_tooltip": "进入考试页面的唯一用户数（与会话列表一致）",
+    "answers_count": "作答数",
+    "answers_tooltip": "所有答题人提交的答案总数（包含多次提交）"
   },
   "grading": {
     "title": "评分",
