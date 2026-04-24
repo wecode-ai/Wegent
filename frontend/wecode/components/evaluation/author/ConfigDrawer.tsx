@@ -180,6 +180,13 @@ export function ConfigDrawer({ isOpen, topicId, onClose, onTopicUpdate }: Config
 
     setSaving(true)
     try {
+      // Convert local datetime to ISO format with timezone offset (UTC+8)
+      let notVisibleUntilWithTimezone: string | undefined
+      if (notVisibleUntil) {
+        // datetime-local format: "2026-04-24T10:07", append Asia/Shanghai timezone (+08:00)
+        notVisibleUntilWithTimezone = `${notVisibleUntil}:00+08:00`
+      }
+
       const updatedTopic = await updateAuthorTopic(topicId, {
         name: name.trim(),
         visibility,
@@ -192,7 +199,7 @@ export function ConfigDrawer({ isOpen, topicId, onClose, onTopicUpdate }: Config
             review: reviewMinutes,
           },
           visibility: {
-            not_visible_until: notVisibleUntil || undefined,
+            not_visible_until: notVisibleUntilWithTimezone,
           },
           video: videoAttachment || undefined,
           submit_hint: submitHint.trim() || undefined,
