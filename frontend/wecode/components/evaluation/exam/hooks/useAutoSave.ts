@@ -18,6 +18,7 @@ interface UseAutoSaveReturn<T> {
   saveStatus: SaveStatus
   lastSavedAt: Date | null
   manualSave: (data: T) => Promise<void>
+  hasUnsavedChanges: boolean
 }
 
 /**
@@ -38,9 +39,12 @@ export function useAutoSave<T>({
   const timeoutRef = useRef<NodeJS.Timeout | null>(null)
   const pendingDataRef = useRef<T | null>(null)
   const onSaveRef = useRef(onSave)
+  const hasUnsavedChangesRef = useRef(false)
 
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle')
   const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null)
+  // Track unsaved changes to prevent submission race conditions
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
 
   // Keep onSave ref up to date
   useEffect(() => {
@@ -62,6 +66,8 @@ export function useAutoSave<T>({
 
   const performSave = useCallback(async (data: T): Promise<void> => {
     setSaveStatus('saving')
+    hasUnsavedChangesRef.current = false
+    setHasUnsavedChanges(false)
     try {
       await onSaveRef.current(data)
       setSaveStatus('saved')
@@ -72,6 +78,8 @@ export function useAutoSave<T>({
       }, 3000)
     } catch (error) {
       setSaveStatus('error')
+      hasUnsavedChangesRef.current = true
+      setHasUnsavedChanges(true)
       console.error('Auto-save failed:', error)
     }
   }, [])
@@ -79,6 +87,10 @@ export function useAutoSave<T>({
   const triggerSave = useCallback(
     (data: T) => {
       if (!enabled) return
+
+      // Mark that we have unsaved changes
+      hasUnsavedChangesRef.current = true
+      setHasUnsavedChanges(true)
 
       // Store the latest data
       pendingDataRef.current = data
@@ -111,6 +123,9 @@ export function useAutoSave<T>({
       pendingDataRef.current = null
       await performSave(dataToSave)
     }
+    // Ensure the unsaved changes flag is reset even if there was no pending data
+    hasUnsavedChangesRef.current = false
+    setHasUnsavedChanges(false)
   }, [performSave])
 
   const manualSave = useCallback(
@@ -121,6 +136,8 @@ export function useAutoSave<T>({
         timeoutRef.current = null
       }
       pendingDataRef.current = null
+      hasUnsavedChangesRef.current = false
+      setHasUnsavedChanges(false)
       await performSave(data)
     },
     [performSave]
@@ -132,5 +149,6 @@ export function useAutoSave<T>({
     saveStatus,
     lastSavedAt,
     manualSave,
+    hasUnsavedChanges,
   }
 }

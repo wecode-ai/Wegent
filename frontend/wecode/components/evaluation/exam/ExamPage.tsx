@@ -276,6 +276,7 @@ export function ExamPage({ topicId }: ExamPageProps) {
     flushSave: flushTextSave,
     saveStatus: textSaveStatus,
     lastSavedAt: textLastSavedAt,
+    hasUnsavedChanges: hasUnsavedTextChanges,
   } = useAutoSave<{
     questionId: number
     answers: Record<string, SlotAnswer>
@@ -298,7 +299,7 @@ export function ExamPage({ topicId }: ExamPageProps) {
   // Warn user about unsaved changes on page leave
   useEffect(() => {
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-      if (textSaveStatus === 'saving' || textSaveStatus === 'error') {
+      if (textSaveStatus === 'saving' || textSaveStatus === 'error' || hasUnsavedTextChanges) {
         e.preventDefault()
         e.returnValue = t('exam.modal.leave_description')
         return e.returnValue
@@ -307,7 +308,7 @@ export function ExamPage({ topicId }: ExamPageProps) {
 
     window.addEventListener('beforeunload', handleBeforeUnload)
     return () => window.removeEventListener('beforeunload', handleBeforeUnload)
-  }, [textSaveStatus, t])
+  }, [textSaveStatus, hasUnsavedTextChanges, t])
 
   useEffect(() => {
     if (questionIds.length > 0) {
@@ -527,7 +528,12 @@ export function ExamPage({ topicId }: ExamPageProps) {
   // Load existing answer data for all questions
   useEffect(() => {
     async function loadExistingAnswer() {
+      // Skip loading if data already loaded or dependencies not ready
       if (dataLoadedRef.current || !examSession || Object.keys(answerSlotsMap).length === 0) return
+      // BUG FIX: Skip loading if there are unsaved changes to prevent overwriting local state
+      // This fixes the "text rollback" bug where deleting to empty would restore old server data
+      if (hasUnsavedTextChanges) return
+
       dataLoadedRef.current = true
 
       try {
@@ -555,7 +561,7 @@ export function ExamPage({ topicId }: ExamPageProps) {
       }
     }
     loadExistingAnswer()
-  }, [examSession, topicId, answerSlotsMap])
+  }, [examSession, topicId, answerSlotsMap, hasUnsavedTextChanges])
 
   const progressSteps = useMemo(() => {
     const anyQuestionSelected = selectedTopic !== null
@@ -604,11 +610,14 @@ export function ExamPage({ topicId }: ExamPageProps) {
 
   const hasRequiredContent = hasDynamicRequiredFiles(currentAnswers, currentAnswerSlots)
 
+  // BUG FIX: Block submission when there are unsaved text changes to prevent data loss
+  // This fixes the race condition where paste + quick submit would save empty data
   const isSubmitReady =
     selectedTopic !== null &&
     hasRequiredContent &&
     participantName.trim().length > 0 &&
-    !isCompleted
+    !isCompleted &&
+    !hasUnsavedTextChanges
 
   const startAnswering = async () => {
     if (isTransitioning) return
@@ -1002,7 +1011,11 @@ export function ExamPage({ topicId }: ExamPageProps) {
                       : 'bg-gray-100 text-gray-400 cursor-not-allowed'
                   } ${isTransitioning ? 'opacity-50 cursor-not-allowed' : ''}`}
                 >
-                  {isTransitioning ? t('exam.loading') : t('exam.confirm.confirm')}
+                  {isTransitioning
+                    ? t('exam.loading')
+                    : hasUnsavedTextChanges
+                      ? t('exam.saving')
+                      : t('exam.confirm.confirm')}
                 </button>
               </div>
             </div>
