@@ -1020,16 +1020,24 @@ export function ExamPage({ topicId }: ExamPageProps) {
                     // BUG FIX: Force save all text inputs when clicking preview button
                     // This ensures content is persisted before showing confirm dialog
                     if (hasUnsavedTextChanges) {
-                      await flushTextSave()
-                      // After save completes, check again if ready (content validation)
-                      if (!hasRequiredContent || participantName.trim().length === 0) {
-                        // Still not ready, show toast and don't open modal
-                        toast({
-                          title: t('errors.validation_failed'),
-                          description: t('exam.submit.required_not_filled'),
-                          variant: 'destructive',
-                        })
-                        return
+                      // flushSave returns the saved data for validation
+                      const savedData = await flushTextSave()
+                      // After save completes, check again if ready using the saved data
+                      // This ensures we validate against the actual data that was persisted
+                      if (savedData) {
+                        const latestHasRequiredContent = hasDynamicRequiredFiles(
+                          savedData.answers,
+                          currentAnswerSlots
+                        )
+                        if (!latestHasRequiredContent || participantName.trim().length === 0) {
+                          // Still not ready, show toast and don't open modal
+                          toast({
+                            title: t('errors.validation_failed'),
+                            description: t('exam.submit.required_not_filled'),
+                            variant: 'destructive',
+                          })
+                          return
+                        }
                       }
                     }
                     setShowPreviewConfirmModal(true)

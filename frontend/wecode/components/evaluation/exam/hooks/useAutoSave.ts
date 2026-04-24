@@ -14,7 +14,7 @@ interface UseAutoSaveOptions<T> {
 
 interface UseAutoSaveReturn<T> {
   triggerSave: (data: T) => void
-  flushSave: () => Promise<void>
+  flushSave: () => Promise<T | null>
   saveStatus: SaveStatus
   lastSavedAt: Date | null
   manualSave: (data: T) => Promise<void>
@@ -112,7 +112,7 @@ export function useAutoSave<T>({
     [delay, enabled, performSave]
   )
 
-  const flushSave = useCallback(async (): Promise<void> => {
+  const flushSave = useCallback(async (): Promise<T | null> => {
     if (timeoutRef.current) {
       clearTimeout(timeoutRef.current)
       timeoutRef.current = null
@@ -122,10 +122,14 @@ export function useAutoSave<T>({
       const dataToSave = pendingDataRef.current
       pendingDataRef.current = null
       await performSave(dataToSave)
+      hasUnsavedChangesRef.current = false
+      setHasUnsavedChanges(false)
+      return dataToSave
     }
     // Ensure the unsaved changes flag is reset even if there was no pending data
     hasUnsavedChangesRef.current = false
     setHasUnsavedChanges(false)
+    return null
   }, [performSave])
 
   const manualSave = useCallback(
