@@ -8,7 +8,6 @@ import { useState, useCallback, useRef, useMemo, useEffect } from 'react'
 import { FileText, Loader2, X, Download, Eye, EyeOff, Link2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
-import { Input } from '@/components/ui/input'
 import { cn, sanitizeFilename } from '@/lib/utils'
 import {
   uploadEvaluationFile,
@@ -431,17 +430,17 @@ export function DynamicSlotInput({
         <div className="space-y-2">
           <div className="flex items-center gap-2">
             <Link2 size={18} className={cn('flex-shrink-0', linkDisabled ? 'text-gray-200' : 'text-gray-300')} />
-            <Input
+            <input
               type="url"
               value={value.link || ''}
               onChange={e => handleLinkChange(e.target.value)}
               placeholder={t('answers.link_placeholder')}
               disabled={linkDisabled}
               className={cn(
-                "flex-1 px-4 py-3 rounded-xl border bg-white text-[1rem] text-gray-900 transition placeholder:text-gray-300 disabled:opacity-50 disabled:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset",
+                "flex-1 h-10 px-4 py-3 rounded-xl border bg-white text-[1rem] text-gray-900 transition placeholder:text-gray-300 disabled:opacity-50 disabled:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-inset",
                 urlError
-                  ? "border-red-400 focus-visible:ring-red-400"
-                  : "border-gray-200 focus-visible:ring-[#DF2029]"
+                  ? "border-red-400 focus:ring-red-400"
+                  : "border-gray-200 focus:ring-[#DF2029]"
               )}
             />
           </div>
@@ -540,11 +539,11 @@ export function DynamicSlotInput({
               <Loader2 className="h-5 w-5 animate-spin text-[#DF2029]" />
             )}
             <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium">{file.name}</p>
+              <p className="filename-text truncate text-sm font-medium text-gray-900">{file.name}</p>
               {error ? (
                 <p className="text-xs text-red-500">{error}</p>
               ) : (
-                <Progress value={progress} className="mt-1 h-1" />
+                <Progress value={progress} className="mt-1 h-1 bg-gray-200 [&>div]:bg-[#DF2029]" />
               )}
             </div>
             <Button
@@ -566,9 +565,9 @@ export function DynamicSlotInput({
           >
             <FileText className="h-5 w-5 text-gray-400" />
             <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium">{attachment.filename}</p>
+              <p className="filename-text truncate text-sm font-medium text-gray-900">{attachment.filename}</p>
               {attachment.size && (
-                <p className="text-xs text-gray-400">{formatFileSize(attachment.size)}</p>
+                <p className="filesize-text text-xs text-gray-400">{formatFileSize(attachment.size)}</p>
               )}
             </div>
             <div className="flex gap-1">
@@ -624,17 +623,17 @@ export function DynamicSlotInput({
         <div className="space-y-2">
           <div className="flex items-center gap-2">
             <Link2 size={18} className="text-gray-300 flex-shrink-0" />
-            <Input
+            <input
               type="url"
               value={value.link || ''}
               onChange={e => handleLinkChange(e.target.value)}
               placeholder={t('answers.link_placeholder')}
               disabled={disabled}
               className={cn(
-                "flex-1 px-4 py-3 rounded-xl border bg-white text-[1rem] text-gray-900 transition placeholder:text-gray-300 disabled:opacity-50 disabled:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset",
+                "flex-1 h-10 px-4 py-3 rounded-xl border bg-white text-[1rem] text-gray-900 transition placeholder:text-gray-300 disabled:opacity-50 disabled:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-inset",
                 urlError
-                  ? "border-red-400 focus-visible:ring-red-400"
-                  : "border-gray-200 focus-visible:ring-[#DF2029]"
+                  ? "border-red-400 focus:ring-red-400"
+                  : "border-gray-200 focus:ring-[#DF2029]"
               )}
             />
           </div>
@@ -721,11 +720,11 @@ export function DynamicSlotInput({
             <Loader2 className="h-5 w-5 animate-spin text-[#DF2029]" />
           )}
           <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-medium">{file.name}</p>
+            <p className="filename-text truncate text-sm font-medium text-gray-900">{file.name}</p>
             {error ? (
               <p className="text-xs text-red-500">{error}</p>
             ) : (
-              <Progress value={progress} className="mt-1 h-1" />
+              <Progress value={progress} className="mt-1 h-1 bg-gray-200 [&>div]:bg-[#DF2029]" />
             )}
           </div>
           <Button
@@ -747,9 +746,9 @@ export function DynamicSlotInput({
         >
           <FileText className="h-5 w-5 text-gray-400" />
           <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-medium">{attachment.filename}</p>
+            <p className="filename-text truncate text-sm font-medium text-gray-900">{attachment.filename}</p>
             {attachment.size && (
-              <p className="text-xs text-gray-400">{formatFileSize(attachment.size)}</p>
+              <p className="filesize-text text-xs text-gray-400">{formatFileSize(attachment.size)}</p>
             )}
           </div>
           <div className="flex gap-1">
