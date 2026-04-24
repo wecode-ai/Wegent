@@ -659,9 +659,15 @@ def get_exam_data(
     not_visible_until = visibility_config.get("not_visible_until")
     if not_visible_until:
         try:
-            # Parse ISO format datetime string
-            visibility_time = datetime.fromisoformat(not_visible_until.replace("Z", "+00:00"))
+            # Parse ISO format datetime string (handles both with and without timezone)
+            # Replace Z with +00:00 for UTC timezone
+            parsed_str = not_visible_until.replace("Z", "+00:00")
+            visibility_time = datetime.fromisoformat(parsed_str)
             current_time = datetime.now(timezone.utc)
+            # If visibility_time has no timezone, assume it's in Asia/Shanghai (UTC+8)
+            if visibility_time.tzinfo is None:
+                from datetime import timedelta
+                visibility_time = visibility_time.replace(tzinfo=timezone(timedelta(hours=8)))
             if current_time < visibility_time:
                 # Return generic permission denied - don't leak the visibility time
                 raise HTTPException(
