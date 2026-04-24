@@ -292,7 +292,7 @@ export function ExamPage({ topicId }: ExamPageProps) {
         throw error
       }
     },
-    delay: 2000,
+    delay: 1000, // Auto-save after 1 second of inactivity
     enabled: examPhase === 'exam' && selectedTopic !== null,
   })
 
