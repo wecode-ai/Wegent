@@ -191,7 +191,7 @@ export function ConfigDrawer({ isOpen, topicId, onClose, onTopicUpdate }: Config
         name: name.trim(),
         visibility,
         extra_data: {
-          description: description.trim() || undefined,
+          description: description.trim() || null,
           instructions: instructions.trim() || undefined,
           duration: {
             intro: introMinutes,
