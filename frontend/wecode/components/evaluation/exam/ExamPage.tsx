@@ -525,14 +525,17 @@ export function ExamPage({ topicId }: ExamPageProps) {
     }
   }, [])
 
+  // Track if user has made any local changes to prevent overwriting with server data
+  const hasLocalChangesRef = useRef(false)
+
   // Load existing answer data for all questions
   useEffect(() => {
     async function loadExistingAnswer() {
       // Skip loading if data already loaded or dependencies not ready
       if (dataLoadedRef.current || !examSession || Object.keys(answerSlotsMap).length === 0) return
-      // BUG FIX: Skip loading if there are unsaved changes to prevent overwriting local state
+      // BUG FIX: Skip loading if there are local changes to prevent overwriting local state
       // This fixes the "text rollback" bug where deleting to empty would restore old server data
-      if (hasUnsavedTextChanges) return
+      if (hasLocalChangesRef.current) return
 
       dataLoadedRef.current = true
 
@@ -561,7 +564,7 @@ export function ExamPage({ topicId }: ExamPageProps) {
       }
     }
     loadExistingAnswer()
-  }, [examSession, topicId, answerSlotsMap, hasUnsavedTextChanges])
+  }, [examSession, topicId, answerSlotsMap])
 
   const progressSteps = useMemo(() => {
     const anyQuestionSelected = selectedTopic !== null
@@ -706,7 +709,8 @@ export function ExamPage({ topicId }: ExamPageProps) {
     setShowPreviewConfirmModal(false)
     setIsTransitioning(true)
     try {
-      // Flush any pending auto-save before advancing phase
+      // BUG FIX: Force save all text inputs before advancing phase
+      // This ensures all content is persisted to backend before review
       await flushTextSave()
       const result = await advanceExamPhase(topicId, 'review')
       setExamSession(result.session)
@@ -733,6 +737,9 @@ export function ExamPage({ topicId }: ExamPageProps) {
     setShowFinalConfirmModal(false)
     setIsTransitioning(true)
     try {
+      // BUG FIX: Force save all text inputs before final submission
+      // This ensures all content is persisted to backend before completing exam
+      await flushTextSave()
       const result = await advanceExamPhase(topicId, 'completed')
       setExamSession(result.session)
     } catch (error) {
@@ -881,6 +888,8 @@ export function ExamPage({ topicId }: ExamPageProps) {
               answerSlots={currentAnswerSlots}
               answers={currentAnswers}
               onChange={(slotKey: string, value: SlotAnswer) => {
+                // Mark that user has made local changes to prevent server data overwrite
+                hasLocalChangesRef.current = true
                 setQuestionData(prev => ({
                   ...prev,
                   [currentQuestionId!]: {
@@ -1003,7 +1012,14 @@ export function ExamPage({ topicId }: ExamPageProps) {
 
               <div className="flex justify-center">
                 <button
-                  onClick={() => setShowPreviewConfirmModal(true)}
+                  onClick={async () => {
+                    // BUG FIX: Force save all text inputs when clicking preview button
+                    // This ensures content is persisted before showing confirm dialog
+                    if (hasUnsavedTextChanges) {
+                      await flushTextSave()
+                    }
+                    setShowPreviewConfirmModal(true)
+                  }}
                   disabled={isTransitioning || !isSubmitReady}
                   className={`mt-4 px-10 py-3.5 text-lg font-bold rounded-2xl transition-all active:scale-[0.98] ${
                     isSubmitReady
