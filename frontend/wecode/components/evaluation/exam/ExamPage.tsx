@@ -292,7 +292,7 @@ export function ExamPage({ topicId }: ExamPageProps) {
         throw error
       }
     },
-    delay: 2000,
+    delay: 1000, // Auto-save after 1 second of inactivity
     enabled: examPhase === 'exam' && selectedTopic !== null,
   })
 
@@ -1020,23 +1020,33 @@ export function ExamPage({ topicId }: ExamPageProps) {
                     // BUG FIX: Force save all text inputs when clicking preview button
                     // This ensures content is persisted before showing confirm dialog
                     if (hasUnsavedTextChanges) {
-                      await flushTextSave()
-                      // After save completes, check again if ready (content validation)
-                      if (!hasRequiredContent || participantName.trim().length === 0) {
-                        // Still not ready, show toast and don't open modal
-                        toast({
-                          title: t('errors.validation_failed'),
-                          description: t('exam.submit.required_not_filled'),
-                          variant: 'destructive',
-                        })
-                        return
+                      // flushSave returns the saved data for validation
+                      const savedData = await flushTextSave()
+                      // After save completes, check again if ready using the saved data
+                      // This ensures we validate against the actual data that was persisted
+                      if (savedData) {
+                        const latestHasRequiredContent = hasDynamicRequiredFiles(
+                          savedData.answers,
+                          currentAnswerSlots
+                        )
+                        if (!latestHasRequiredContent || participantName.trim().length === 0) {
+                          // Still not ready, show toast and don't open modal
+                          toast({
+                            title: t('errors.validation_failed'),
+                            description: t('exam.submit.required_not_filled'),
+                            variant: 'destructive',
+                          })
+                          return
+                        }
                       }
                     }
                     setShowPreviewConfirmModal(true)
                   }}
-                  // BUG FIX: Allow click when has unsaved changes to trigger save
-                  // But disable during actual transition/loading
-                  disabled={isTransitioning}
+                  // Disable button when:
+                  // 1. Not ready (required fields not filled, validation errors)
+                  // 2. No unsaved changes to save (if has unsaved changes, allow click to trigger save)
+                  // 3. During transition/loading
+                  disabled={(!isSubmitReady && !hasUnsavedTextChanges) || isTransitioning}
                   className={`mt-4 px-10 py-3.5 text-lg font-bold rounded-2xl transition-all active:scale-[0.98] ${
                     isSubmitReady || hasUnsavedTextChanges
                       ? 'bg-[#DF2029] hover:bg-[#c81d25] text-white shadow-lg shadow-red-200/50 hover:shadow-red-300/60'
