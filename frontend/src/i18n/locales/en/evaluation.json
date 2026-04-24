@@ -227,7 +227,31 @@
     "granted_success": "Permission granted successfully",
     "revoked_success": "Permission revoked successfully",
     "no_permissions_description": "Add users to give them access to this topic. You can assign different roles like respondent, grader, or question creator.",
-    "users": "users"
+    "users": "users",
+    "select_all": "Select All",
+    "batch_delete": "Delete Selected ({{count}})",
+    "batch_remove_title": "Remove Selected Permissions",
+    "batch_remove_description": "Are you sure you want to remove permissions for {{count}} selected users? This action cannot be undone.",
+    "batch_revoked_success": "Successfully removed {{count}} permissions",
+    "batch_revoked_partial": "Partially completed: {{success}} succeeded, {{failed}} failed",
+    "batch_modify": "Batch Modify",
+    "batch_modify_description": "Grant or remove permissions for multiple users",
+    "operation_type": "Operation Type",
+    "operations": {
+      "grant": "Grant",
+      "delete": "Delete"
+    },
+    "usernames": "Usernames",
+    "usernames_placeholder": "Enter usernames, one per line or separated by commas/spaces\nExample:\nzhangsan\nlisi\nwangwu",
+    "usernames_hint": "One username per line, or separated by commas or spaces. Duplicates will be automatically removed.",
+    "usernames_count": "{{count}} usernames detected",
+    "modify_no_usernames": "Please enter at least one username",
+    "grant_success": "Successfully granted permissions to {{count}} users",
+    "grant_partial": "Partially completed: {{success}} succeeded, {{failed}} failed",
+    "delete_success": "Successfully removed permissions for {{count}} users",
+    "delete_partial": "Partially completed: {{success}} succeeded, {{failed}} failed",
+    "users_not_found": "Users not found",
+    "processing": "Processing..."
   },
   "respondents": {
     "title": "Respondents",
@@ -302,7 +326,7 @@
     "respondents_count": "Respondents",
     "respondents_tooltip": "Unique users who entered the exam page (matches session list)",
     "answers_count": "Answers",
-    "answers_tooltip": "Total number of answers submitted by all respondents (including multiple submissions)"
+    "tooltip": "Total number of answers submitted by all respondents (including multiple submissions)"
   },
   "grading": {
     "title": "Grading",

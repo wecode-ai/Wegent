@@ -227,7 +227,31 @@
     "granted_success": "权限授予成功",
     "revoked_success": "权限撤销成功",
     "no_permissions_description": "添加用户以授予他们访问此专题的权限。您可以分配不同的角色，如答题人、评分人或出题人。",
-    "users": "用户"
+    "users": "用户",
+    "select_all": "全选",
+    "batch_delete": "删除选中 ({{count}})",
+    "batch_remove_title": "移除选中权限",
+    "batch_remove_description": "确定要移除 {{count}} 个选中用户的权限吗？此操作不可撤销。",
+    "batch_revoked_success": "成功移除 {{count}} 个权限",
+    "batch_revoked_partial": "部分完成：{{success}} 个成功，{{failed}} 个失败",
+    "batch_modify": "批量修改",
+    "batch_modify_description": "批量授予或删除用户权限",
+    "operation_type": "操作类型",
+    "operations": {
+      "grant": "授权",
+      "delete": "删除"
+    },
+    "usernames": "用户名",
+    "usernames_placeholder": "输入用户名，每行一个或用逗号/空格分隔\n示例：\nzhangsan\nlisi\nwangwu",
+    "usernames_hint": "每行一个用户名，或用逗号、空格分隔。重复的用户名会自动去重。",
+    "usernames_count": "检测到 {{count}} 个用户名",
+    "modify_no_usernames": "请至少输入一个用户名",
+    "grant_success": "成功为 {{count}} 个用户授权",
+    "grant_partial": "部分完成：{{success}} 个成功，{{failed}} 个失败",
+    "delete_success": "成功删除 {{count}} 个用户权限",
+    "delete_partial": "部分完成：{{success}} 个成功，{{failed}} 个失败",
+    "users_not_found": "未找到用户",
+    "processing": "处理中..."
   },
   "respondents": {
     "title": "答题人",
@@ -302,7 +326,7 @@
     "respondents_count": "答题人数",
     "respondents_tooltip": "进入考试页面的唯一用户数（与会话列表一致）",
     "answers_count": "作答数",
-    "answers_tooltip": "所有答题人提交的答案总数（包含多次提交）"
+    "tooltip": "所有答题人提交的答案总数（包含多次提交）"
   },
   "grading": {
     "title": "评分",
