@@ -34,10 +34,10 @@ export function CompletedState({ examDurationSeconds, hint }: CompletedStateProp
           <CheckCircle className="w-8 h-8 text-green-500" />
         </div>
         {hint && <div className="mb-4">{hint}</div>}
-        <h3 className="text-lg font-bold text-gray-700 mb-2">考试已结束</h3>
+        <h3 className="text-lg font-bold text-gray-700 mb-2">实操题考试已结束</h3>
         {examDurationSeconds !== null && examDurationSeconds > 0 && (
           <p className="text-sm text-gray-500">
-            您的考试已结束，整体用时 {formatDuration(examDurationSeconds)}
+            您的实操题考试已结束，整体用时 {formatDuration(examDurationSeconds)}
           </p>
         )}
       </div>
