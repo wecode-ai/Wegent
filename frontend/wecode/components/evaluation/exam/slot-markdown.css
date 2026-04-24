@@ -1,13 +1,13 @@
 /* Slot Markdown Styles */
 
 .slot-markdown {
-  font-size: 1rem;
+  font-size: 0.875rem;
 }
 
 /* Main description paragraphs */
 .slot-markdown > .slot-md-p {
-  font-size: 1rem;
-  line-height: 1.8;
+  font-size: 0.875rem;
+  line-height: 1.6;
   color: #4b5563; /* text-gray-600 */
   margin-bottom: 0.5rem;
 }
@@ -63,9 +63,9 @@
   display: flex;
   align-items: flex-start;
   gap: 0.5rem;
-  font-size: 0.875rem;
+  font-size: 0.8125rem;
   color: #4b5563;
-  line-height: 1.6;
+  line-height: 1.5;
   margin-bottom: 0.25rem;
 }
 
