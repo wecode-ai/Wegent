@@ -244,29 +244,56 @@ async def upload_file(
             )
 
     # Validate file type for exam attachments
-    if file_type == FileType.EXAM_ATTACHMENT and question_id and slot:
+    if file_type == FileType.EXAM_ATTACHMENT and question_id:
         question_service = get_question_service()
         question = question_service.get(db, question_id)
         if question and question.content_data:
             answer_slots = question.content_data.get("answerSlots", [])
-            for answer_slot in answer_slots:
-                if answer_slot.get("key") == slot:
-                    accept = answer_slot.get("accept", "")
-                    if accept:
-                        allowed_extensions = [
-                            ext.strip().lower()
-                            for ext in accept.split(",")
-                            if ext.strip()
-                        ]
-                        filename_lower = (file.filename or "").lower()
-                        if not any(
-                            filename_lower.endswith(ext) for ext in allowed_extensions
-                        ):
-                            raise HTTPException(
-                                status_code=status.HTTP_400_BAD_REQUEST,
-                                detail=f"File type not allowed. Allowed types: {accept}",
-                            )
-                    break
+
+            # Determine which slots to validate against
+            slots_to_check = []
+            if slot:
+                # If slot is specified, validate against that specific slot
+                slots_to_check = [s for s in answer_slots if s.get("key") == slot]
+            else:
+                # If no slot specified, validate against all file-upload slots
+                # (attachment, link+attachment, link_or_attachment modes)
+                slots_to_check = [
+                    s for s in answer_slots
+                    if s.get("inputMode") in ("attachment", "link+attachment", "link_or_attachment")
+                ]
+
+            # Collect all allowed extensions from relevant slots
+            all_allowed_extensions = []
+            accept_display_list = []
+            for answer_slot in slots_to_check:
+                accept = answer_slot.get("accept", "")
+                if accept:
+                    allowed_extensions = [
+                        ext.strip().lower()
+                        for ext in accept.split(",")
+                        if ext.strip()
+                    ]
+                    all_allowed_extensions.extend(allowed_extensions)
+                    accept_display_list.append(accept)
+
+            # Validate file extension if we have any restrictions
+            if all_allowed_extensions:
+                filename_lower = (file.filename or "").lower()
+                if not any(
+                    filename_lower.endswith(ext) for ext in all_allowed_extensions
+                ):
+                    # Format allowed types for display (remove dots and deduplicate)
+                    allowed_types = ", ".join(
+                        sorted(set(
+                            acc.replace(".", "").upper()
+                            for acc in accept_display_list
+                        ))
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"文件格式不支持，仅允许上传以下格式：{allowed_types}",
+                    )
 
     # Read file content
     try:

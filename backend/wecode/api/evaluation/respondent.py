@@ -1170,6 +1170,8 @@ def advance_exam_phase(
     exam_session_service = get_exam_session_service()
     topic_service = get_topic_service()
     permission_service = get_permission_service()
+    answer_service = get_answer_service()
+    question_service = get_question_service()
 
     # Get topic
     topic = topic_service.get(db, topic_id)
@@ -1190,6 +1192,24 @@ def advance_exam_phase(
     session = exam_session_service.get_or_create_session(
         db=db, topic_id=topic_id, user_id=current_user.id
     )
+
+    # BUG FIX: Validate required fields are saved in database before advancing from exam phase
+    # This prevents race conditions where user submits before auto-save completes
+    if request.target_phase in ("review", "completed") and session.selected_question_id:
+        question = question_service.get(db, session.selected_question_id)
+        if question:
+            # Get latest answer from database (not from frontend)
+            latest_answer = answer_service.get_latest_answer(
+                db=db,
+                question_id=session.selected_question_id,
+                respondent_id=current_user.id,
+            )
+            # Check if required fields are properly saved
+            if not _has_valid_answer_content(latest_answer, question):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="请等待所有必填项保存完成后再提交",
+                )
 
     # Advance phase
     try:
