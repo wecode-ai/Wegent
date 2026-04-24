@@ -2,6 +2,9 @@
 
 /* Lock the entire exam page to light theme colors */
 .exam-page {
+  /* Force light color scheme for form elements (textarea, input, etc.) */
+  color-scheme: light !important;
+
   /* Override all CSS variables used by shadcn/ui components */
   --background: 255 255 255 !important;
   --foreground: 26 26 26 !important;
@@ -36,7 +39,10 @@
 
 /* Dark theme override - force light colors even in dark mode */
 .dark .exam-page,
-[data-theme="dark"] .exam-page {
+[data-theme='dark'] .exam-page {
+  /* Force light color scheme for form elements */
+  color-scheme: light !important;
+
   /* Same light theme values */
   --background: 255 255 255 !important;
   --foreground: 26 26 26 !important;
@@ -69,12 +75,14 @@
 }
 
 /* Force specific element styles - highest specificity */
-.exam-page input[type="url"],
-.exam-page input[type="text"],
+.exam-page input[type='url'],
+.exam-page input[type='text'],
 .exam-page textarea {
   background-color: #ffffff !important;
   color: #111827 !important;
   border-color: #e5e7eb !important;
+  /* Prevent browser from applying dark mode styles */
+  color-scheme: light !important;
 }
 
 .exam-page input::placeholder,
@@ -95,7 +103,7 @@
 }
 
 .exam-page .file-upload-zone:hover {
-  border-color: #DF2029 !important;
+  border-color: #df2029 !important;
   background-color: #fef2f2 !important;
 }
 
@@ -112,21 +120,21 @@
 }
 
 /* Progress bar - override inline styles */
-.exam-page [role="progressbar"] {
+.exam-page [role='progressbar'] {
   background-color: #e5e7eb !important;
 }
 
-.exam-page [role="progressbar"] > div {
-  background-color: #DF2029 !important;
+.exam-page [role='progressbar'] > div {
+  background-color: #df2029 !important;
 }
 
 /* Buttons */
-.exam-page button[data-variant="ghost"] {
+.exam-page button[data-variant='ghost'] {
   color: #6b7280 !important;
   background-color: transparent !important;
 }
 
-.exam-page button[data-variant="ghost"]:hover {
+.exam-page button[data-variant='ghost']:hover {
   background-color: #f3f4f6 !important;
 }
 
@@ -173,20 +181,15 @@
 
 /* Ensure bg-primary uses brand red */
 .exam-page .bg-primary {
-  background-color: #DF2029 !important;
+  background-color: #df2029 !important;
 }
 
 /* Ensure text-primary uses brand red */
 .exam-page .text-primary {
-  color: #DF2029 !important;
+  color: #df2029 !important;
 }
 
-/* Ensure bg-secondary uses light gray */
-.exam-page .bg-secondary {
-  background-color: #e5e7eb !important;
-}
-
-/* Fix for Progress component bg-secondary */
+/* Ensure bg-secondary uses light gray (for Progress component and others) */
 .exam-page .bg-secondary {
   background-color: #e5e7eb !important;
 }
