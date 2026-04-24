@@ -77,3 +77,6 @@ export {
 // Hooks
 export { useExamTimer } from './hooks/useExamTimer'
 export { useAutoSave } from './hooks/useAutoSave'
+
+// Watermark
+export { UsernameWatermark } from './UsernameWatermark'

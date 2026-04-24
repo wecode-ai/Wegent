@@ -711,7 +711,7 @@
     "time_warning": {
       "title": "Exam Ending Soon",
       "description": "There are {{minutes}} minutes remaining until the exam ends. Please complete your answers and prepare to submit.",
-      "hint": "Recommendation: Check if all required items are completed (answer notes, assessment report, interaction records), and submit promptly after confirmation."
+      "hint": "Recommendation: Check if all required items are completed, and submit promptly after confirmation."
     },
     "exam_method": {
       "title": "Assessment Method",
