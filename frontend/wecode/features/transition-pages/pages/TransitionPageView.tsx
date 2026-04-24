@@ -7,6 +7,69 @@ import type { LucideProps } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { getToken } from '@/apis/user'
 import EnhancedMarkdown from '@/components/common/EnhancedMarkdown'
+import { useUser } from '@/features/common/UserContext'
+
+// Dark watermark canvas generator
+function generateWatermarkCanvas(text: string): string {
+  const canvas = document.createElement('canvas')
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return ''
+
+  canvas.width = 200
+  canvas.height = 150
+
+  ctx.fillStyle = 'rgba(0, 0, 0, 0)'
+  ctx.fillRect(0, 0, canvas.width, canvas.height)
+
+  ctx.save()
+  ctx.translate(canvas.width / 2, canvas.height / 2)
+  ctx.rotate(-Math.PI / 6)
+  ctx.font = '16px sans-serif'
+  ctx.fillStyle = 'rgba(128, 128, 128, 0.12)'
+  ctx.textAlign = 'center'
+  ctx.fillText(text, 0, 0)
+  ctx.restore()
+
+  return canvas.toDataURL()
+}
+
+// Disable copy functionality
+function disableCopy() {
+  if (typeof window === 'undefined') return
+
+  const handler = (e: Event) => {
+    e.preventDefault()
+    return false
+  }
+
+  document.addEventListener('copy', handler, true)
+  document.addEventListener('cut', handler, true)
+  document.addEventListener('contextmenu', handler, true)
+  document.addEventListener('selectstart', handler, true)
+
+  // Disable keyboard shortcuts (allow F12 for dev tools)
+  document.addEventListener(
+    'keydown',
+    (e) => {
+      if (e.key === 'F12') return
+      if (
+        (e.ctrlKey || e.metaKey) &&
+        (e.key === 'c' || e.key === 'x' || e.key === 'a' || e.key === 'p')
+      ) {
+        e.preventDefault()
+        return false
+      }
+    },
+    true
+  )
+
+  return () => {
+    document.removeEventListener('copy', handler, true)
+    document.removeEventListener('cut', handler, true)
+    document.removeEventListener('contextmenu', handler, true)
+    document.removeEventListener('selectstart', handler, true)
+  }
+}
 
 interface RenderedBlock {
   key: string
@@ -47,8 +110,8 @@ function getBlockIcon(iconName?: string) {
 export default function TransitionPageView() {
   const params = useParams()
   const slug = params.slug as string
+  const { user } = useUser()
   const [isDark, setIsDark] = useState(false)
-
   const [page, setPage] = useState<RenderedPage | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -57,6 +120,9 @@ export default function TransitionPageView() {
     const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches
     setIsDark(prefersDark)
     loadPage()
+
+    // Disable copy functionality
+    disableCopy()
   }, [slug])
 
   const loadPage = async () => {
@@ -150,8 +216,22 @@ export default function TransitionPageView() {
     )
   }
 
+  // Generate watermark URL from user context
+  const watermarkText = user?.user_name || user?.email || null
+  const watermarkUrl = typeof window !== 'undefined' && watermarkText ? generateWatermarkCanvas(watermarkText) : ''
+
   return (
-    <div className={`min-h-screen transition-colors duration-500 ${isDark ? 'bg-slate-950' : 'bg-slate-50'}`}>
+    <div
+      className={`min-h-screen transition-colors duration-500 ${isDark ? 'bg-slate-950' : 'bg-slate-50'}`}
+      style={{
+        backgroundImage: watermarkUrl ? `url(${watermarkUrl})` : undefined,
+        backgroundRepeat: 'repeat',
+        userSelect: 'none',
+        WebkitUserSelect: 'none',
+        MozUserSelect: 'none',
+        msUserSelect: 'none',
+      }}
+    >
       {/* Theme Toggle */}
       <div className="fixed top-4 right-4 z-50">
         <button
@@ -196,6 +276,10 @@ export default function TransitionPageView() {
                   ? 'bg-slate-900 border border-slate-800 hover:border-slate-700 hover:shadow-lg hover:shadow-slate-900/50'
                   : 'bg-white border border-slate-200 hover:border-slate-300 hover:shadow-lg hover:shadow-slate-200/50'
               }`}
+              style={{
+                backgroundImage: watermarkUrl ? `url(${watermarkUrl})` : undefined,
+                backgroundRepeat: 'repeat',
+              }}
             >
               {/* Block Header */}
               <div className="flex items-center gap-3 mb-5">
