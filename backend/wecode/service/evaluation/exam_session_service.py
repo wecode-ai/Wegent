@@ -14,7 +14,6 @@ from sqlalchemy.orm import Session, attributes
 from wecode.exceptions import BusinessException
 from wecode.models.evaluation import EvalAnswer, EvalQuestion, EvalTopic
 from wecode.models.evaluation_exam_session import EvalExamSession
-from wecode.service.evaluation.storage_service import EvalStorageService
 from wecode.service.evaluation.text_conversion_service import TextConversionService
 
 logger = logging.getLogger(__name__)
@@ -496,19 +495,7 @@ class ExamSessionService:
                     # BUG FIX: Always convert text to S3 if text content exists
                     # This handles the case where user returns to exam, modifies text,
                     # and previews again - we need to update the S3 file with new content
-                    if existing_files:
-                        # Delete old files from S3 first
-                        storage_service = EvalStorageService()
-                        for old_file in existing_files:
-                            try:
-                                storage_service.delete_file(old_file["key"])
-                                logger.info(
-                                    f"[ExamSession] Deleted old S3 file {old_file['key']} for answer {answer.id} slot {slot_key}"
-                                )
-                            except Exception as e:
-                                logger.warning(
-                                    f"[ExamSession] Failed to delete old S3 file {old_file['key']}: {e}"
-                                )
+                    # Note: Old S3 files are NOT deleted to preserve history and avoid data loss
 
                     # Convert text content to S3
                     attachment = TextConversionService.convert_text_slot_to_s3(
