@@ -121,10 +121,16 @@ export function DynamicSlotInput({
     return undefined
   }, [showText, currentFiles])
 
-  // Load text from S3 attachment if exists and text field is empty
-  // Note: Load regardless of disabled state - text may have been converted to S3 during review phase
+  // BUG FIX: Disabled auto-loading from S3 to prevent "text rollback" bug
+  // When user deletes text to empty, this effect was reloading content from S3
+  // making it appear like the text "came back" (后退现象)
+  // Only load from S3 on initial mount if there's no local content, not on every change
+  const initialLoadDoneRef = useRef(false)
   useEffect(() => {
-    if (txtAttachment && !value.text && !loadingFromS3) {
+    // Only load once on initial mount, and only if disabled (review/completed phase)
+    // This prevents the "text rollback" bug during editing
+    if (txtAttachment && !value.text && !loadingFromS3 && disabled && !initialLoadDoneRef.current) {
+      initialLoadDoneRef.current = true
       setLoadingFromS3(true)
       fetchFileContent(txtAttachment.key)
         .then(content => {
@@ -137,7 +143,7 @@ export function DynamicSlotInput({
           setLoadingFromS3(false)
         })
     }
-  }, [txtAttachment, value, loadingFromS3, onChange])
+  }, [txtAttachment, value, loadingFromS3, onChange, disabled])
 
   const handleTextChange = useCallback(
     (newText: string) => {

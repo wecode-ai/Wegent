@@ -689,7 +689,8 @@
       "file_limit": "Total attachments per question cannot exceed 20, currently uploaded {{count}}",
       "submit_button": "Submit Assessment Materials",
       "resubmit_button": "Submit Again",
-      "saving": "Saving..."
+      "saving": "Saving...",
+      "required_not_filled": "Please complete all required fields"
     },
     "confirm": {
       "title": "Confirm Submission",

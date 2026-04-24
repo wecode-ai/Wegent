@@ -627,7 +627,8 @@
       "file_limit": "每道题目总附件数不能超过 20 个，当前已上传 {{count}} 个",
       "submit_button": "提交考核材料",
       "resubmit_button": "再次提交",
-      "saving": "保存中..."
+      "saving": "保存中...",
+      "required_not_filled": "请先完成所有必填项的填写"
     },
     "confirm": {
       "title": "确认提交",

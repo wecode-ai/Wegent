@@ -1017,12 +1017,24 @@ export function ExamPage({ topicId }: ExamPageProps) {
                     // This ensures content is persisted before showing confirm dialog
                     if (hasUnsavedTextChanges) {
                       await flushTextSave()
+                      // After save completes, check again if ready (content validation)
+                      if (!hasRequiredContent || participantName.trim().length === 0) {
+                        // Still not ready, show toast and don't open modal
+                        toast({
+                          title: t('errors.validation_failed'),
+                          description: t('exam.submit.required_not_filled'),
+                          variant: 'destructive',
+                        })
+                        return
+                      }
                     }
                     setShowPreviewConfirmModal(true)
                   }}
-                  disabled={isTransitioning || !isSubmitReady}
+                  // BUG FIX: Allow click when has unsaved changes to trigger save
+                  // But disable during actual transition/loading
+                  disabled={isTransitioning}
                   className={`mt-4 px-10 py-3.5 text-lg font-bold rounded-2xl transition-all active:scale-[0.98] ${
-                    isSubmitReady
+                    isSubmitReady || hasUnsavedTextChanges
                       ? 'bg-[#DF2029] hover:bg-[#c81d25] text-white shadow-lg shadow-red-200/50 hover:shadow-red-300/60'
                       : 'bg-gray-100 text-gray-400 cursor-not-allowed'
                   } ${isTransitioning ? 'opacity-50 cursor-not-allowed' : ''}`}
