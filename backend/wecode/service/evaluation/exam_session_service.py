@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session, attributes
 from wecode.exceptions import BusinessException
 from wecode.models.evaluation import EvalAnswer, EvalQuestion, EvalTopic
 from wecode.models.evaluation_exam_session import EvalExamSession
+from wecode.service.evaluation.storage_service import EvalStorageService
 from wecode.service.evaluation.text_conversion_service import TextConversionService
 
 logger = logging.getLogger(__name__)
@@ -488,14 +489,26 @@ class ExamSessionService:
                     text_content = slot_answer.get("text", "")
                     existing_files = slot_answer.get("files", [])
 
-                    # Skip if no text content or already has files
+                    # Skip if no text content
                     if not text_content or not text_content.strip():
                         continue
+
+                    # BUG FIX: Always convert text to S3 if text content exists
+                    # This handles the case where user returns to exam, modifies text,
+                    # and previews again - we need to update the S3 file with new content
                     if existing_files:
-                        logger.info(
-                            f"[ExamSession] Answer {answer.id} slot {slot_key} already has {len(existing_files)} files, skipping"
-                        )
-                        continue
+                        # Delete old files from S3 first
+                        storage_service = EvalStorageService()
+                        for old_file in existing_files:
+                            try:
+                                storage_service.delete_file(old_file["key"])
+                                logger.info(
+                                    f"[ExamSession] Deleted old S3 file {old_file['key']} for answer {answer.id} slot {slot_key}"
+                                )
+                            except Exception as e:
+                                logger.warning(
+                                    f"[ExamSession] Failed to delete old S3 file {old_file['key']}: {e}"
+                                )
 
                     # Convert text content to S3
                     attachment = TextConversionService.convert_text_slot_to_s3(
@@ -509,12 +522,16 @@ class ExamSessionService:
                         if slot_key not in new_content_data["answers"]:
                             new_content_data["answers"][slot_key] = {}
                         new_content_data["answers"][slot_key]["files"] = [attachment]
-                        # Clear text content after conversion
-                        new_content_data["answers"][slot_key]["text"] = ""
+                        # BUG FIX: Keep text content in DB until final submission
+                        # This allows user to return to exam phase and continue editing
+                        # Only clear text when entering completed phase (final submission)
+                        if target_phase == "completed":
+                            new_content_data["answers"][slot_key]["text"] = ""
                         answer_modified = True
                         converted_count += 1
                         logger.info(
-                            f"[ExamSession] Converted text to S3 for answer {answer.id} slot {slot_key}"
+                            f"[ExamSession] Converted text to S3 for answer {answer.id} slot {slot_key} "
+                            f"(text {'cleared' if target_phase == 'completed' else 'preserved'})"
                         )
 
             # Handle link_or_attachment mode - attachment takes priority
