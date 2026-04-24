@@ -488,14 +488,14 @@ class ExamSessionService:
                     text_content = slot_answer.get("text", "")
                     existing_files = slot_answer.get("files", [])
 
-                    # Skip if no text content or already has files
+                    # Skip if no text content
                     if not text_content or not text_content.strip():
                         continue
-                    if existing_files:
-                        logger.info(
-                            f"[ExamSession] Answer {answer.id} slot {slot_key} already has {len(existing_files)} files, skipping"
-                        )
-                        continue
+
+                    # BUG FIX: Always convert text to S3 if text content exists
+                    # This handles the case where user returns to exam, modifies text,
+                    # and previews again - we need to update the S3 file with new content
+                    # Note: Old S3 files are NOT deleted to preserve history and avoid data loss
 
                     # Convert text content to S3
                     attachment = TextConversionService.convert_text_slot_to_s3(
@@ -509,12 +509,16 @@ class ExamSessionService:
                         if slot_key not in new_content_data["answers"]:
                             new_content_data["answers"][slot_key] = {}
                         new_content_data["answers"][slot_key]["files"] = [attachment]
-                        # Clear text content after conversion
-                        new_content_data["answers"][slot_key]["text"] = ""
+                        # BUG FIX: Keep text content in DB until final submission
+                        # This allows user to return to exam phase and continue editing
+                        # Only clear text when entering completed phase (final submission)
+                        if target_phase == "completed":
+                            new_content_data["answers"][slot_key]["text"] = ""
                         answer_modified = True
                         converted_count += 1
                         logger.info(
-                            f"[ExamSession] Converted text to S3 for answer {answer.id} slot {slot_key}"
+                            f"[ExamSession] Converted text to S3 for answer {answer.id} slot {slot_key} "
+                            f"(text {'cleared' if target_phase == 'completed' else 'preserved'})"
                         )
 
             # Handle link_or_attachment mode - attachment takes priority
