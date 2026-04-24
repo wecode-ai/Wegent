@@ -243,6 +243,31 @@ async def upload_file(
                 detail="You don't have permission to upload topic attachments",
             )
 
+    # Validate file type for exam attachments
+    if file_type == FileType.EXAM_ATTACHMENT and question_id and slot:
+        question_service = get_question_service()
+        question = question_service.get(db, question_id)
+        if question and question.content_data:
+            answer_slots = question.content_data.get("answerSlots", [])
+            for answer_slot in answer_slots:
+                if answer_slot.get("key") == slot:
+                    accept = answer_slot.get("accept", "")
+                    if accept:
+                        allowed_extensions = [
+                            ext.strip().lower()
+                            for ext in accept.split(",")
+                            if ext.strip()
+                        ]
+                        filename_lower = (file.filename or "").lower()
+                        if not any(
+                            filename_lower.endswith(ext) for ext in allowed_extensions
+                        ):
+                            raise HTTPException(
+                                status_code=status.HTTP_400_BAD_REQUEST,
+                                detail=f"File type not allowed. Allowed types: {accept}",
+                            )
+                    break
+
     # Read file content
     try:
         file_content = await file.read()

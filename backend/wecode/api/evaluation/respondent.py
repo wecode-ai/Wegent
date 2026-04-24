@@ -474,6 +474,13 @@ def submit_answer(
     if answer_create.content_text:
         content_data["text"] = answer_create.content_text
 
+    # Validate answer content before saving
+    if not _has_valid_exam_content(content_data, question):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Answer does not contain valid content for required fields",
+        )
+
     answer = answer_service.submit(
         db=db,
         question_id=question_id,
@@ -667,7 +674,10 @@ def get_exam_data(
             # If visibility_time has no timezone, assume it's in Asia/Shanghai (UTC+8)
             if visibility_time.tzinfo is None:
                 from datetime import timedelta
-                visibility_time = visibility_time.replace(tzinfo=timezone(timedelta(hours=8)))
+
+                visibility_time = visibility_time.replace(
+                    tzinfo=timezone(timedelta(hours=8))
+                )
             if current_time < visibility_time:
                 # Return generic permission denied - don't leak the visibility time
                 raise HTTPException(
@@ -907,6 +917,13 @@ def submit_exam(
         "participantName": request.participantName,
         "selectedTopicId": topic_id,
     }
+
+    # Validate answer content before saving
+    if not _has_valid_exam_content(content_data, question):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Answer does not contain valid content for required fields",
+        )
 
     # Check for existing answer to allow multiple submissions
     existing_answer = answer_service.get_latest_answer(
@@ -1203,6 +1220,77 @@ def advance_exam_phase(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
+
+
+def _has_valid_exam_content(content_data: Dict[str, Any], question: Any) -> bool:
+    """
+    Check if exam content data has valid content for required fields.
+
+    Validates against answerSlots configuration:
+    - For each required slot, check if content has valid content (text, link, or files)
+
+    Args:
+        content_data: The content data from exam submission
+        question: Question object with content_data.answerSlots
+
+    Returns:
+        True if content has valid content for all required fields
+    """
+    if not content_data:
+        return False
+
+    # Get answerSlots from question if available
+    answer_slots = []
+    if question and question.content_data:
+        answer_slots = question.content_data.get("answerSlots", [])
+
+    # Get answers dict with slot keys
+    answers = content_data.get("answers", {})
+
+    # If answerSlots are defined, validate required slots
+    if answer_slots:
+        for slot in answer_slots:
+            if not slot.get("required", False):
+                continue  # Skip optional slots
+            slot_key = slot.get("key")
+            if not slot_key:
+                continue
+            slot_answer = answers.get(slot_key, {})
+            # A slot has valid content if it has non-empty text, link, OR files
+            has_text = bool(slot_answer.get("text", "").strip())
+            has_link = bool(slot_answer.get("link", "").strip())
+            has_files = bool(slot_answer.get("files") and len(slot_answer["files"]) > 0)
+            if not has_text and not has_link and not has_files:
+                return False  # Required slot is empty
+        # All required slots have content
+        return True
+
+    # Fallback: Check if any answer slot has content
+    if answers:
+        for slot_answer in answers.values():
+            if isinstance(slot_answer, dict):
+                has_text = bool(slot_answer.get("text", "").strip())
+                has_link = bool(slot_answer.get("link", "").strip())
+                has_files = bool(
+                    slot_answer.get("files") and len(slot_answer["files"]) > 0
+                )
+                if has_text or has_link or has_files:
+                    return True
+
+    # Legacy fallback: Check old structure for backward compatibility
+    attachments = content_data.get("attachments", {})
+
+    # Check any attachment slot
+    for slot_value in attachments.values():
+        if isinstance(slot_value, list) and len(slot_value) > 0:
+            return True
+        if isinstance(slot_value, dict):
+            if slot_value.get("files") and len(slot_value["files"]) > 0:
+                return True
+            if slot_value.get("link") and slot_value["link"].strip():
+                return True
+
+    return False
 
 
 def _has_valid_answer_content(answer: Any, question: Any = None) -> bool:
