@@ -1034,9 +1034,11 @@ export function ExamPage({ topicId }: ExamPageProps) {
                     }
                     setShowPreviewConfirmModal(true)
                   }}
-                  // BUG FIX: Allow click when has unsaved changes to trigger save
-                  // But disable during actual transition/loading
-                  disabled={isTransitioning}
+                  // Disable button when:
+                  // 1. Not ready (required fields not filled, validation errors)
+                  // 2. No unsaved changes to save (if has unsaved changes, allow click to trigger save)
+                  // 3. During transition/loading
+                  disabled={(!isSubmitReady && !hasUnsavedTextChanges) || isTransitioning}
                   className={`mt-4 px-10 py-3.5 text-lg font-bold rounded-2xl transition-all active:scale-[0.98] ${
                     isSubmitReady || hasUnsavedTextChanges
                       ? 'bg-[#DF2029] hover:bg-[#c81d25] text-white shadow-lg shadow-red-200/50 hover:shadow-red-300/60'
