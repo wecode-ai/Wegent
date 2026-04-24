@@ -29,7 +29,7 @@ interface DynamicSlotInputProps {
   topicId: number
   questionId: number
   /** Callback when text/link field changes (for debounced auto-save) */
-  onTextChange?: () => void
+  onTextChange?: (latestValue?: SlotAnswer) => void
   /** Save status for text input */
   saveStatus?: 'idle' | 'saving' | 'saved' | 'error'
   /** Last saved timestamp */
@@ -121,15 +121,19 @@ export function DynamicSlotInput({
     return undefined
   }, [showText, currentFiles])
 
-  // BUG FIX: Disabled auto-loading from S3 to prevent "text rollback" bug
-  // When user deletes text to empty, this effect was reloading content from S3
-  // making it appear like the text "came back" (后退现象)
-  // Only load from S3 on initial mount if there's no local content, not on every change
+  // Load text content from S3 only in review/completed phase (disabled=true)
+  // This prevents the "text rollback" bug where deleting to empty would restore old content
+  // In exam phase, text is always stored in DB, so no need to load from S3
+  // In review phase, backend converts text to S3 file and clears DB text
   const initialLoadDoneRef = useRef(false)
   useEffect(() => {
-    // Only load once on initial mount, and only if disabled (review/completed phase)
-    // This prevents the "text rollback" bug during editing
-    if (txtAttachment && !value.text && !loadingFromS3 && disabled && !initialLoadDoneRef.current) {
+    // Only load from S3 when:
+    // 1. Component is disabled (review/completed phase)
+    // 2. There's a .txt file in attachments
+    // 3. Local text is empty
+    // 4. Not currently loading
+    // 5. Initial load hasn't been done yet
+    if (disabled && txtAttachment && !value.text && !loadingFromS3 && !initialLoadDoneRef.current) {
       initialLoadDoneRef.current = true
       setLoadingFromS3(true)
       fetchFileContent(txtAttachment.key)
@@ -143,28 +147,30 @@ export function DynamicSlotInput({
           setLoadingFromS3(false)
         })
     }
-  }, [txtAttachment, value, loadingFromS3, onChange, disabled])
+  }, [disabled, txtAttachment, value, loadingFromS3, onChange])
 
   const handleTextChange = useCallback(
     (newText: string) => {
-      onChange({ ...value, text: newText })
-      // Trigger debounced auto-save
-      onTextChange?.()
+      const newValue = { ...value, text: newText }
+      onChange(newValue)
+      // Trigger debounced auto-save with the latest value
+      onTextChange?.(newValue)
     },
     [value, onChange, onTextChange]
   )
 
   const handleLinkChange = useCallback(
     (newLink: string) => {
-      onChange({ ...value, link: newLink })
+      const newValue = { ...value, link: newLink }
+      onChange(newValue)
       // Validate URL in real-time
       if (newLink.trim() && !isValidUrl(newLink)) {
         setUrlError(t('answers.invalid_url_hint'))
       } else {
         setUrlError(null)
       }
-      // Trigger debounced auto-save for link changes too
-      onTextChange?.()
+      // Trigger debounced auto-save for link changes too, with the latest value
+      onTextChange?.(newValue)
     },
     [value, onChange, onTextChange, t]
   )

@@ -24,7 +24,7 @@ interface DynamicAnswerUploadZoneProps {
   /** Callback when total limit is exceeded */
   onLimitExceeded?: () => void
   /** Callback when text/link field changes (for debounced auto-save) */
-  onTextChange?: (slotKey: string) => void
+  onTextChange?: (slotKey: string, latestValue?: SlotAnswer) => void
   /** Save status for text inputs (keyed by slot key) */
   textSaveStatus?: Record<string, SaveStatus>
   /** Last saved timestamp for text inputs (keyed by slot key) */
@@ -121,7 +121,7 @@ export function DynamicAnswerUploadZone({
               disabled={disabled}
               topicId={topicId}
               questionId={questionId}
-              onTextChange={() => onTextChange?.(slot.key)}
+              onTextChange={latestValue => onTextChange?.(slot.key, latestValue)}
               saveStatus={textSaveStatus[slot.key] || 'idle'}
               lastSavedAt={textLastSavedAt[slot.key] || null}
             />

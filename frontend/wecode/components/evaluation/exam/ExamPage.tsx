@@ -922,10 +922,14 @@ export function ExamPage({ topicId }: ExamPageProps) {
                   variant: 'destructive',
                 })
               }}
-              onTextChange={(_slotKey: string) => {
+              onTextChange={(slotKey: string, latestValue?: SlotAnswer) => {
                 // Trigger debounced auto-save for text/link changes
+                // Use the latest value passed from child to ensure we save the most recent data
                 const questionId = currentQuestionId!
-                const answers = questionData[questionId]?.answers || {}
+                const currentAnswers = questionData[questionId]?.answers || {}
+                const answers = latestValue
+                  ? { ...currentAnswers, [slotKey]: latestValue }
+                  : currentAnswers
                 triggerTextSave({ questionId, answers })
               }}
               textSaveStatus={Object.fromEntries(

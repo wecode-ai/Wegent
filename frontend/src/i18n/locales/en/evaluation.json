@@ -692,6 +692,7 @@
       "saving": "Saving...",
       "required_not_filled": "Please complete all required fields"
     },
+    "saving": "Saving...",
     "confirm": {
       "title": "Confirm Submission",
       "description": "Please confirm the following submission content is correct",

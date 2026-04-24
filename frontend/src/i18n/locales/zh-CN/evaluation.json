@@ -630,6 +630,7 @@
       "saving": "保存中...",
       "required_not_filled": "请先完成所有必填项的填写"
     },
+    "saving": "保存中...",
     "confirm": {
       "title": "确认提交",
       "description": "请确认以下提交内容无误",
