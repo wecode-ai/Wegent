@@ -688,8 +688,11 @@
       "confirm_hint": "You can still return to answer after entering preview",
       "file_limit": "Total attachments per question cannot exceed 20, currently uploaded {{count}}",
       "submit_button": "Submit Assessment Materials",
-      "resubmit_button": "Submit Again"
+      "resubmit_button": "Submit Again",
+      "saving": "Saving...",
+      "required_not_filled": "Please complete all required fields"
     },
+    "saving": "Saving...",
     "confirm": {
       "title": "Confirm Submission",
       "description": "Please confirm the following submission content is correct",
