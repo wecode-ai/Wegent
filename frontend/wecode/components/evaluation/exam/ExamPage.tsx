@@ -49,6 +49,7 @@ import {
   PreviewConfirmModal,
   FinalConfirmModal,
   TimeWarningModal,
+  UsernameWatermark,
 } from './index'
 import { ExamTopicDetail } from './ExamTopicDetail'
 import { SubmitHintMarkdown } from './SubmitHintMarkdown'
@@ -465,6 +466,64 @@ export function ExamPage({ topicId }: ExamPageProps) {
     }
   }, [])
 
+  // Anti-copy protection: prevent right-click and copy keyboard shortcuts
+  useEffect(() => {
+    // Prevent context menu (right-click)
+    const handleContextMenu = (e: MouseEvent) => {
+      e.preventDefault()
+      return false
+    }
+
+    // Prevent copy keyboard shortcuts (Ctrl+C, Cmd+C, Ctrl+X, Cmd+X)
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Check for copy (Ctrl+C or Cmd+C)
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'c' || e.key === 'C')) {
+        e.preventDefault()
+        return false
+      }
+      // Check for cut (Ctrl+X or Cmd+X)
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'x' || e.key === 'X')) {
+        e.preventDefault()
+        return false
+      }
+      // Check for select all (Ctrl+A or Cmd+A)
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'a' || e.key === 'A')) {
+        // Allow select all within input/textarea only
+        const target = e.target as HTMLElement
+        const isInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA'
+        if (!isInput) {
+          e.preventDefault()
+          return false
+        }
+      }
+    }
+
+    // Prevent drag start
+    const handleDragStart = (e: DragEvent) => {
+      e.preventDefault()
+      return false
+    }
+
+    // Prevent copy event
+    const handleCopy = (e: ClipboardEvent) => {
+      e.preventDefault()
+      return false
+    }
+
+    // Add event listeners
+    document.addEventListener('contextmenu', handleContextMenu, true)
+    document.addEventListener('keydown', handleKeyDown, true)
+    document.addEventListener('dragstart', handleDragStart, true)
+    document.addEventListener('copy', handleCopy, true)
+
+    return () => {
+      document.removeEventListener('contextmenu', handleContextMenu, true)
+      document.removeEventListener('keydown', handleKeyDown, true)
+      document.removeEventListener('dragstart', handleDragStart, true)
+      document.removeEventListener('copy', handleCopy, true)
+    }
+  }, [])
+
   // Load existing answer data for all questions
   useEffect(() => {
     async function loadExistingAnswer() {
@@ -706,6 +765,7 @@ export function ExamPage({ topicId }: ExamPageProps) {
 
   return (
     <div className="exam-page min-h-screen bg-[#fafbfc] overflow-visible" data-theme="light">
+      <UsernameWatermark username={participantName} />
       <ExamHeader
         title={examData.title}
         year={examData.year}

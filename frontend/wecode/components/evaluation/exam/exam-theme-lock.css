@@ -193,3 +193,47 @@
 .exam-page .bg-secondary {
   background-color: #e5e7eb !important;
 }
+
+/* Anti-copy protection - prevent text selection and copying */
+.exam-page {
+  /* Disable text selection */
+  -webkit-user-select: none !important;
+  -moz-user-select: none !important;
+  -ms-user-select: none !important;
+  user-select: none !important;
+
+  /* Disable drag and drop */
+  -webkit-user-drag: none !important;
+  -khtml-user-drag: none !important;
+  -moz-user-drag: none !important;
+  -o-user-drag: none !important;
+  user-drag: none !important;
+}
+
+/* Allow text selection in input fields and textareas for usability */
+.exam-page input[type='text'],
+.exam-page input[type='url'],
+.exam-page input[type='email'],
+.exam-page input[type='number'],
+.exam-page textarea {
+  -webkit-user-select: text !important;
+  -moz-user-select: text !important;
+  -ms-user-select: text !important;
+  user-select: text !important;
+}
+
+/* Prevent image dragging */
+.exam-page img {
+  -webkit-user-drag: none !important;
+  -khtml-user-drag: none !important;
+  -moz-user-drag: none !important;
+  -o-user-drag: none !important;
+  user-drag: none !important;
+  pointer-events: none !important;
+}
+
+/* But allow pointer events on images inside links or buttons for interaction */
+.exam-page a img,
+.exam-page button img {
+  pointer-events: auto !important;
+}

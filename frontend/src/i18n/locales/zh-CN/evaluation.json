@@ -229,6 +229,10 @@
     "no_permissions_description": "添加用户以授予他们访问此专题的权限。您可以分配不同的角色，如答题人、评分人或出题人。",
     "users": "用户"
   },
+  "respondents": {
+    "title": "答题人",
+    "tooltip": "进入考试页面的唯一用户数（与会话列表一致）"
+  },
   "answers": {
     "title": "作答",
     "submit": "提交答案",
@@ -307,7 +311,6 @@
     "view_tasks": "查看评分任务",
     "view_tasks_description": "查看和管理待处理的评分任务",
     "execute": "执行评分",
-    "retry": "重试",
     "retry_hint": "点击重试重新执行评分任务",
     "upload_report": "上传报告",
     "upload_report_description": "上传自定义报告文件作为最终评分结果",
@@ -431,11 +434,7 @@
     "use_default_or_custom": "可使用默认配置或自定义覆盖",
     "stage1_scorer": "阶段 1：评分模型",
     "stage2_aggregator": "阶段 2：聚合模型",
-    "single_mode": "单模型评分",
-    "multi_mode": "多模型评分",
     "single_model": "单模型",
-    "scorer_models": "评分模型",
-    "aggregator_model": "聚合模型",
     "retrying": "重试中...",
     "executing": "启动中...",
     "ai_recovered_message": "AI 评分任务已恢复，但报告内容未保存。",
@@ -534,7 +533,7 @@
     "start_answering": "开始答题",
     "end_exam": "结束答题",
     "leave_exam": "离开考试",
-    "exam_ended": "考试已结束",
+    "exam_ended": "实操题考试已结束",
     "progress": {
       "select_topic": "选择题目",
       "upload_materials": "上传材料",
@@ -646,7 +645,7 @@
     "time_warning": {
       "title": "考试即将结束",
       "description": "距离考试结束还有 {{minutes}} 分钟，请尽快完成作答并准备提交。",
-      "hint": "建议：检查是否已完成所有必传项（作答说明、交互过程记录、产出报告及方案），确认无误后及时提交。"
+      "hint": "建议：检查是否已完成所有必传项，确认无误后及时提交。"
     },
     "exam_method": {
       "title": "考评方式",
@@ -743,7 +742,6 @@
     "add_first_slot": "添加第一个槽位",
     "unnamed_slot": "未命名槽位",
     "bonus": "附加题",
-    "required": "必填",
     "key": "槽位标识",
     "key_placeholder": "唯一标识，如 mainReport（仅限字母和数字）",
     "label": "显示名称",
