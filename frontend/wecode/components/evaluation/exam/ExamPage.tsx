@@ -4,6 +4,8 @@
 
 'use client'
 
+import './exam-theme-lock.css'
+
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { useUser } from '@/features/common/UserContext'
@@ -47,6 +49,7 @@ import {
   PreviewConfirmModal,
   FinalConfirmModal,
   TimeWarningModal,
+  UsernameWatermark,
 } from './index'
 import { ExamTopicDetail } from './ExamTopicDetail'
 import { SubmitHintMarkdown } from './SubmitHintMarkdown'
@@ -341,6 +344,9 @@ export function ExamPage({ topicId }: ExamPageProps) {
           // Description from extra_data
           if (typeof extraData.description === 'string') {
             setTopicDescription(extraData.description)
+          } else if (extraData.description === undefined) {
+            // Description was cleared, reset to empty string
+            setTopicDescription('')
           }
           // Duration from extra_data.duration
           if (extraData.duration && typeof extraData.duration === 'object') {
@@ -460,6 +466,64 @@ export function ExamPage({ topicId }: ExamPageProps) {
     }
   }, [])
 
+  // Anti-copy protection: prevent right-click and copy keyboard shortcuts
+  useEffect(() => {
+    // Prevent context menu (right-click)
+    const handleContextMenu = (e: MouseEvent) => {
+      e.preventDefault()
+      return false
+    }
+
+    // Prevent copy keyboard shortcuts (Ctrl+C, Cmd+C, Ctrl+X, Cmd+X)
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Check for copy (Ctrl+C or Cmd+C)
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'c' || e.key === 'C')) {
+        e.preventDefault()
+        return false
+      }
+      // Check for cut (Ctrl+X or Cmd+X)
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'x' || e.key === 'X')) {
+        e.preventDefault()
+        return false
+      }
+      // Check for select all (Ctrl+A or Cmd+A)
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'a' || e.key === 'A')) {
+        // Allow select all within input/textarea only
+        const target = e.target as HTMLElement
+        const isInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA'
+        if (!isInput) {
+          e.preventDefault()
+          return false
+        }
+      }
+    }
+
+    // Prevent drag start
+    const handleDragStart = (e: DragEvent) => {
+      e.preventDefault()
+      return false
+    }
+
+    // Prevent copy event
+    const handleCopy = (e: ClipboardEvent) => {
+      e.preventDefault()
+      return false
+    }
+
+    // Add event listeners
+    document.addEventListener('contextmenu', handleContextMenu, true)
+    document.addEventListener('keydown', handleKeyDown, true)
+    document.addEventListener('dragstart', handleDragStart, true)
+    document.addEventListener('copy', handleCopy, true)
+
+    return () => {
+      document.removeEventListener('contextmenu', handleContextMenu, true)
+      document.removeEventListener('keydown', handleKeyDown, true)
+      document.removeEventListener('dragstart', handleDragStart, true)
+      document.removeEventListener('copy', handleCopy, true)
+    }
+  }, [])
+
   // Load existing answer data for all questions
   useEffect(() => {
     async function loadExistingAnswer() {
@@ -558,9 +622,30 @@ export function ExamPage({ topicId }: ExamPageProps) {
           const questionIndex = questions.findIndex(q => q.id === data.session.selected_question_id)
           setSelectedTopic(questionIndex >= 0 ? questionIndex : null)
         }
+        // Auto-select the only question when there's only one question
+        if (questions.length === 1) {
+          setSelectedTopic(0)
+        }
       } else if (examPhase === 'intro') {
         const result = await advanceExamPhase(topicId, 'exam')
         setExamSession(result.session)
+        // Auto-select the only question when entering exam phase
+        if (questions.length === 1) {
+          const questionId = questionIds[0]
+          const slots = answerSlotsMap[questionId] || []
+          await selectExamQuestion(topicId, questionId)
+          const data = await getExamData(topicId)
+          if (data.userAnswer?.content_data) {
+            const content = data.userAnswer.content_data
+            const answers = extractAttachmentsFromContent(content, slots)
+            const questionState = { answers }
+            setQuestionData(prev => ({
+              ...prev,
+              [questionId]: questionState,
+            }))
+          }
+          setSelectedTopic(0)
+        }
       }
     } catch (error) {
       console.error('Failed to start/enter exam:', error)
@@ -679,7 +764,8 @@ export function ExamPage({ topicId }: ExamPageProps) {
         : 'md:grid-cols-3'
 
   return (
-    <div className="min-h-screen bg-[#fafbfc] overflow-visible">
+    <div className="exam-page min-h-screen bg-[#fafbfc] overflow-visible" data-theme="light">
+      <UsernameWatermark username={participantName} />
       <ExamHeader
         title={examData.title}
         year={examData.year}
@@ -712,26 +798,32 @@ export function ExamPage({ topicId }: ExamPageProps) {
 
         {(examPhase === 'exam' || examPhase === 'review') && (
           <section className="animate-[fadeIn_0.3s_ease-out]">
-            <div className="flex items-center gap-3 mb-6">
-              <div className="w-1.5 h-7 bg-[#DF2029] rounded-full" />
-              <h2 className="text-xl font-bold text-gray-900">
-                {examPhase === 'review' ? t('exam.topic.title_selected') : t('exam.topic.title')}
-              </h2>
-            </div>
+            {/* Only show question selection header and cards when there are multiple questions */}
+            {questions.length > 1 && (
+              <div className="flex items-center gap-3 mb-6">
+                <div className="w-1.5 h-7 bg-[#DF2029] rounded-full" />
+                <h2 className="text-xl font-bold text-gray-900">
+                  {examPhase === 'review' ? t('exam.topic.title_selected') : t('exam.topic.title')}
+                </h2>
+              </div>
+            )}
             {examPhase === 'review' && selectedTopic !== null ? (
               <div className="mb-6">
-                <div className={`grid grid-cols-1 ${gridClass} gap-5 mb-6`}>
-                  {examData.topics.map((topic, i) => (
-                    <AIAssessmentTopicCard
-                      key={topic.id}
-                      topic={topic}
-                      selected={selectedTopic === i}
-                      disabled={selectingTopic !== null}
-                      onClick={() => handleTopicSelect(i)}
-                      displayIndex={i + 1}
-                    />
-                  ))}
-                </div>
+                {/* Show topic cards only when there are multiple questions */}
+                {questions.length > 1 && (
+                  <div className={`grid grid-cols-1 ${gridClass} gap-5 mb-6`}>
+                    {examData.topics.map((topic, i) => (
+                      <AIAssessmentTopicCard
+                        key={topic.id}
+                        topic={topic}
+                        selected={selectedTopic === i}
+                        disabled={selectingTopic !== null}
+                        onClick={() => handleTopicSelect(i)}
+                        displayIndex={i + 1}
+                      />
+                    ))}
+                  </div>
+                )}
                 <div className="mt-6">
                   <ExamTopicDetail topic={selectedTopicData!} />
                 </div>
@@ -740,22 +832,25 @@ export function ExamPage({ topicId }: ExamPageProps) {
               <div className="text-gray-500 py-4">{t('exam.confirm.not_selected_topic')}</div>
             ) : (
               <>
-                <div className={`grid grid-cols-1 ${gridClass} gap-5 mb-6`}>
-                  {examData.topics.map((topic, i) => (
-                    <AIAssessmentTopicCard
-                      key={topic.id}
-                      topic={topic}
-                      selected={selectedTopic === i}
-                      disabled={(isCompleted && selectedTopic !== i) || selectingTopic !== null}
-                      onClick={() =>
-                        !isCompleted &&
-                        !selectingTopic &&
-                        handleTopicSelect(selectedTopic === i ? null : i)
-                      }
-                      displayIndex={i + 1}
-                    />
-                  ))}
-                </div>
+                {/* Show topic cards only when there are multiple questions */}
+                {questions.length > 1 && (
+                  <div className={`grid grid-cols-1 ${gridClass} gap-5 mb-6`}>
+                    {examData.topics.map((topic, i) => (
+                      <AIAssessmentTopicCard
+                        key={topic.id}
+                        topic={topic}
+                        selected={selectedTopic === i}
+                        disabled={(isCompleted && selectedTopic !== i) || selectingTopic !== null}
+                        onClick={() =>
+                          !isCompleted &&
+                          !selectingTopic &&
+                          handleTopicSelect(selectedTopic === i ? null : i)
+                        }
+                        displayIndex={i + 1}
+                      />
+                    ))}
+                  </div>
+                )}
                 {selectedTopic !== null && selectedTopicData && (
                   <ExamTopicDetail topic={selectedTopicData} />
                 )}

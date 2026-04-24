@@ -115,9 +115,9 @@ export default function AdminTransitionPageEdit() {
   const [newBlockTitle, setNewBlockTitle] = useState('')
   const [newBlockTemplate, setNewBlockTemplate] = useState('')
   const [newBlockFontSize, setNewBlockFontSize] = useState('large')
-  const [newBlockFreezeEnabled, setNewBlockFreezeEnabled] = useState(false)
+  const [newBlockFreezeMode, setNewBlockFreezeMode] = useState<'none' | 'view' | 'click'>('none')
   const [newBlockBlockGroupKey, setNewBlockBlockGroupKey] = useState<string>('')
-  const [newBlockButtons, setNewBlockButtons] = useState<Array<{ label: string; url_template: string; variant: string; target: string }>>([])
+  const [newBlockButtons, setNewBlockButtons] = useState<Array<{ label: string; url_template: string; variant: string; target: string; freeze_on_click?: boolean }>>([])
 
   // Manual user add form
   const [newUserEmail, setNewUserEmail] = useState('')
@@ -132,10 +132,10 @@ export default function AdminTransitionPageEdit() {
   const [editBlockStartAt, setEditBlockStartAt] = useState('')
   const [editBlockEndAt, setEditBlockEndAt] = useState('')
   const [editBlockGroups, setEditBlockGroups] = useState<string[]>([])
-  const [editBlockButtons, setEditBlockButtons] = useState<Array<{ label: string; url_template: string; variant: string; target: string }>>([])
+  const [editBlockButtons, setEditBlockButtons] = useState<Array<{ label: string; url_template: string; variant: string; target: string; freeze_on_click?: boolean }>>([])
   const [editBlockFontSize, setEditBlockFontSize] = useState('large')
   const [editBlockStage, setEditBlockStage] = useState('always')
-  const [editBlockFreezeEnabled, setEditBlockFreezeEnabled] = useState(false)
+  const [editBlockFreezeMode, setEditBlockFreezeMode] = useState<'none' | 'view' | 'click'>('none')
   const [editBlockBlockGroupKey, setEditBlockBlockGroupKey] = useState<string>('')
 
   const [editingGroup, setEditingGroup] = useState<TransitionPageDetail['groups'][0] | null>(null)
@@ -163,7 +163,7 @@ export default function AdminTransitionPageEdit() {
   const [importing, setImporting] = useState(false)
 
   // User views states
-  const [userViews, setUserViews] = useState<Array<{email: string; viewed_blocks: Record<string, string>; updated_at: string}>>([])
+  const [userViews, setUserViews] = useState<Array<{email: string; viewed_blocks: Record<string, {frozen_at: string; source: string}>; updated_at: string}>>([])
   const [loadingViews, setLoadingViews] = useState(false)
 
   // Member management states
@@ -569,6 +569,11 @@ export default function AdminTransitionPageEdit() {
       toast({ title: '请填写完整信息', variant: 'destructive' })
       return
     }
+    // Clean up freeze_on_click based on freeze mode
+    const cleanedButtons = newBlockButtons.map((btn: any) => ({
+      ...btn,
+      freeze_on_click: newBlockFreezeMode === 'click' ? btn.freeze_on_click : false
+    }))
     try {
       const token = getToken()
       const response = await fetch(`/api/v1/transition-pages/${pageId}/blocks`, {
@@ -585,8 +590,8 @@ export default function AdminTransitionPageEdit() {
             markdown_template: newBlockTemplate,
             stage: 'always',
             condition: { groups: [], users: [] },
-            buttons: newBlockButtons,
-            freeze_enabled: newBlockFreezeEnabled,
+            buttons: cleanedButtons,
+            freeze_enabled: newBlockFreezeMode === 'view',
             block_group_key: newBlockBlockGroupKey || null,
           },
           sort_order: page?.blocks.length || 0,
@@ -893,7 +898,20 @@ export default function AdminTransitionPageEdit() {
     setEditBlockButtons((block as any).buttons || [])
     setEditBlockFontSize(block.title_font_size || 'large')
     setEditBlockStage(block.stage || 'always')
-    setEditBlockFreezeEnabled((block as any).freeze_enabled || false)
+    // Determine freeze mode from freeze_enabled and buttons
+    const freezeEnabled = (block as any).freeze_enabled || false
+    const buttons = (block as any).buttons || []
+    const hasClickFreeze = buttons.some((b: any) => b.freeze_on_click)
+    // freeze_enabled=true means view freeze
+    // freeze_enabled=false + hasClickFreeze means click freeze
+    // freeze_enabled=false + no click freeze means no freeze
+    if (freezeEnabled) {
+      setEditBlockFreezeMode('view')
+    } else if (hasClickFreeze) {
+      setEditBlockFreezeMode('click')
+    } else {
+      setEditBlockFreezeMode('none')
+    }
     setEditBlockBlockGroupKey(block.block_group_key || '')
   }
 
@@ -946,6 +964,11 @@ export default function AdminTransitionPageEdit() {
 
   const saveBlockEdit = async () => {
     if (!editingBlock) return
+    // Clean up freeze_on_click based on freeze mode
+    const cleanedButtons = editBlockButtons.map((btn: any) => ({
+      ...btn,
+      freeze_on_click: editBlockFreezeMode === 'click' ? btn.freeze_on_click : false
+    }))
     await handleUpdateBlock(editingBlock.key, {
       title: editBlockTitle,
       title_font_size: editBlockFontSize,
@@ -954,8 +977,8 @@ export default function AdminTransitionPageEdit() {
       start_at: editBlockStartAt,
       end_at: editBlockEndAt,
       groups: editBlockGroups,
-      buttons: editBlockButtons,
-      freeze_enabled: editBlockFreezeEnabled,
+      buttons: cleanedButtons,
+      freeze_enabled: editBlockFreezeMode === 'view',
       block_group_key: editBlockBlockGroupKey || null,
     })
     setEditingBlock(null)
@@ -1344,9 +1367,17 @@ export default function AdminTransitionPageEdit() {
                             ) : (
                               <Badge className="bg-blue-100 text-blue-700 hover:bg-blue-100">限时展示</Badge>
                             )}
-                            {(block as any).freeze_enabled && (
-                              <Badge className="bg-amber-100 text-amber-700 hover:bg-amber-100">已冻结</Badge>
-                            )}
+                            {(() => {
+                              const freezeEnabled = (block as any).freeze_enabled || false
+                              const buttons = (block as any).buttons || []
+                              const hasClickFreeze = buttons.some((b: any) => b.freeze_on_click)
+                              if (freezeEnabled) {
+                                return <Badge className="bg-amber-100 text-amber-700 hover:bg-amber-100">查看冻结</Badge>
+                              } else if (hasClickFreeze) {
+                                return <Badge className="bg-purple-100 text-purple-700 hover:bg-purple-100">点击冻结</Badge>
+                              }
+                              return null
+                            })()}
                           </div>
                           <div className="text-sm text-gray-500 mt-1">
                             标识: {block.key}
@@ -1573,11 +1604,16 @@ export default function AdminTransitionPageEdit() {
                         </Button>
                       </div>
                       <div className="mt-3 flex flex-wrap gap-2">
-                        {Object.entries(view.viewed_blocks).map(([blockKey, timestamp]) => (
-                          <Badge key={blockKey} variant="secondary" className="text-xs">
-                            {blockKey}: {new Date(timestamp).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
-                          </Badge>
-                        ))}
+                        {Object.entries(view.viewed_blocks).map(([blockKey, blockData]) => {
+                          const frozenAt = typeof blockData === 'object' ? blockData.frozen_at : blockData
+                          const source = typeof blockData === 'object' ? blockData.source : 'view'
+                          const sourceLabel = source === 'click' ? '点击' : '浏览'
+                          return (
+                            <Badge key={blockKey} variant="secondary" className="text-xs">
+                              {blockKey}: {new Date(frozenAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })} ({sourceLabel})
+                            </Badge>
+                          )
+                        })}
                       </div>
                     </div>
                   ))}
@@ -1822,16 +1858,6 @@ export default function AdminTransitionPageEdit() {
                 <option value="after">组结束后</option>
               </select>
             </div>
-            <div className="flex items-center gap-2">
-              <Checkbox
-                id="editBlockFreezeEnabled"
-                checked={editBlockFreezeEnabled}
-                onCheckedChange={(checked) => setEditBlockFreezeEnabled(checked as boolean)}
-              />
-              <Label htmlFor="editBlockFreezeEnabled" className="cursor-pointer">
-                启用冻结模式（用户看过之后不受时间调整影响）
-              </Label>
-            </div>
             <div>
               <div className="flex items-center justify-between mb-1">
                 <Label>所属区块组</Label>
@@ -1946,6 +1972,19 @@ export default function AdminTransitionPageEdit() {
                       <option value="ghost">幽灵</option>
                     </select>
                     <Button
+                      variant={btn.freeze_on_click ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => {
+                        const updated = [...editBlockButtons]
+                        updated[idx].freeze_on_click = !btn.freeze_on_click
+                        setEditBlockButtons(updated)
+                      }}
+                      className={btn.freeze_on_click ? "bg-purple-600 hover:bg-purple-700" : ""}
+                      title="点击冻结"
+                    >
+                      ❄️
+                    </Button>
+                    <Button
                       variant="ghost"
                       size="sm"
                       onClick={() => setEditBlockButtons(editBlockButtons.filter((_, i) => i !== idx))}
@@ -1955,6 +1994,83 @@ export default function AdminTransitionPageEdit() {
                   </div>
                 ))}
               </div>
+            </div>
+            <div>
+              <Label className="mb-3 block">冻结设置</Label>
+              <div className="flex gap-3">
+                <div
+                  onClick={() => setEditBlockFreezeMode('none')}
+                  className={`flex-1 p-4 border-2 rounded-xl cursor-pointer transition-all text-center ${
+                    editBlockFreezeMode === 'none'
+                      ? 'border-blue-500 bg-blue-50'
+                      : 'border-gray-200 hover:border-gray-300'
+                  }`}
+                >
+                  <div className={`w-10 h-10 mx-auto mb-2 rounded-lg flex items-center justify-center text-xl ${
+                    editBlockFreezeMode === 'none' ? 'bg-gray-200' : 'bg-gray-100'
+                  }`}>⊘</div>
+                  <div className="font-medium text-sm">不冻结</div>
+                  <div className="text-xs text-gray-500 mt-1">按时间条件显示</div>
+                </div>
+                <div
+                  onClick={() => setEditBlockFreezeMode('view')}
+                  className={`flex-1 p-4 border-2 rounded-xl cursor-pointer transition-all text-center ${
+                    editBlockFreezeMode === 'view'
+                      ? 'border-blue-500 bg-blue-50'
+                      : 'border-gray-200 hover:border-gray-300'
+                  }`}
+                >
+                  <div className={`w-10 h-10 mx-auto mb-2 rounded-lg flex items-center justify-center text-xl ${
+                    editBlockFreezeMode === 'view' ? 'bg-blue-100 text-blue-600' : 'bg-blue-50 text-blue-500'
+                  }`}>👁</div>
+                  <div className="font-medium text-sm">访问冻结</div>
+                  <div className="text-xs text-gray-500 mt-1">看过之后始终显示</div>
+                </div>
+                <div
+                  onClick={() => setEditBlockFreezeMode('click')}
+                  className={`flex-1 p-4 border-2 rounded-xl cursor-pointer transition-all text-center ${
+                    editBlockFreezeMode === 'click'
+                      ? 'border-purple-500 bg-purple-50'
+                      : 'border-gray-200 hover:border-gray-300'
+                  }`}
+                >
+                  <div className={`w-10 h-10 mx-auto mb-2 rounded-lg flex items-center justify-center text-xl ${
+                    editBlockFreezeMode === 'click' ? 'bg-purple-100 text-purple-600' : 'bg-purple-50 text-purple-500'
+                  }`}>👆</div>
+                  <div className="font-medium text-sm">点击冻结</div>
+                  <div className="text-xs text-gray-500 mt-1">点击后始终显示</div>
+                </div>
+              </div>
+              {editBlockFreezeMode === 'click' && editBlockButtons.length > 0 && (
+                <div className="mt-3 p-3 bg-purple-50 rounded-lg">
+                  <div className="text-sm font-medium text-purple-700 mb-2">选择触发冻结的按钮：</div>
+                  <div className="space-y-2">
+                    {editBlockButtons.map((btn, idx) => (
+                      <div
+                        key={idx}
+                        onClick={() => {
+                          const updated = [...editBlockButtons]
+                          updated[idx].freeze_on_click = !btn.freeze_on_click
+                          setEditBlockButtons(updated)
+                        }}
+                        className={`flex items-center justify-between p-2 rounded cursor-pointer transition-colors ${
+                          btn.freeze_on_click
+                            ? 'bg-purple-200 text-purple-800'
+                            : 'bg-white hover:bg-purple-100'
+                        }`}
+                      >
+                        <span className="text-sm">{btn.label || `按钮 ${idx + 1}`}</span>
+                        {btn.freeze_on_click && <span className="text-sm">❄️ 已启用</span>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {editBlockFreezeMode === 'click' && editBlockButtons.length === 0 && (
+                <div className="mt-3 p-3 bg-amber-50 rounded-lg text-sm text-amber-700">
+                  请先添加按钮，再选择要触发冻结的按钮
+                </div>
+              )}
             </div>
           </div>
           <DialogFooter>
@@ -2420,16 +2536,6 @@ export default function AdminTransitionPageEdit() {
                 <option value="xlarge">特大 (text-3xl)</option>
               </select>
             </div>
-            <div className="flex items-center gap-2">
-              <Checkbox
-                id="newBlockFreezeEnabled"
-                checked={newBlockFreezeEnabled}
-                onCheckedChange={(checked) => setNewBlockFreezeEnabled(checked as boolean)}
-              />
-              <Label htmlFor="newBlockFreezeEnabled" className="cursor-pointer">
-                启用冻结模式（用户看过之后不受时间调整影响）
-              </Label>
-            </div>
             <div>
               <div className="flex items-center justify-between mb-1">
                 <Label>所属区块组</Label>
@@ -2503,6 +2609,19 @@ export default function AdminTransitionPageEdit() {
                       <option value="ghost">幽灵</option>
                     </select>
                     <Button
+                      variant={btn.freeze_on_click ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => {
+                        const updated = [...newBlockButtons]
+                        updated[idx].freeze_on_click = !btn.freeze_on_click
+                        setNewBlockButtons(updated)
+                      }}
+                      className={btn.freeze_on_click ? "bg-purple-600 hover:bg-purple-700" : ""}
+                      title="点击冻结"
+                    >
+                      ❄️
+                    </Button>
+                    <Button
                       variant="ghost"
                       size="sm"
                       onClick={() => setNewBlockButtons(newBlockButtons.filter((_, i) => i !== idx))}
@@ -2512,6 +2631,83 @@ export default function AdminTransitionPageEdit() {
                   </div>
                 ))}
               </div>
+            </div>
+            <div>
+              <Label className="mb-3 block">冻结设置</Label>
+              <div className="flex gap-3">
+                <div
+                  onClick={() => setNewBlockFreezeMode('none')}
+                  className={`flex-1 p-4 border-2 rounded-xl cursor-pointer transition-all text-center ${
+                    newBlockFreezeMode === 'none'
+                      ? 'border-blue-500 bg-blue-50'
+                      : 'border-gray-200 hover:border-gray-300'
+                  }`}
+                >
+                  <div className={`w-10 h-10 mx-auto mb-2 rounded-lg flex items-center justify-center text-xl ${
+                    newBlockFreezeMode === 'none' ? 'bg-gray-200' : 'bg-gray-100'
+                  }`}>⊘</div>
+                  <div className="font-medium text-sm">不冻结</div>
+                  <div className="text-xs text-gray-500 mt-1">按时间条件显示</div>
+                </div>
+                <div
+                  onClick={() => setNewBlockFreezeMode('view')}
+                  className={`flex-1 p-4 border-2 rounded-xl cursor-pointer transition-all text-center ${
+                    newBlockFreezeMode === 'view'
+                      ? 'border-blue-500 bg-blue-50'
+                      : 'border-gray-200 hover:border-gray-300'
+                  }`}
+                >
+                  <div className={`w-10 h-10 mx-auto mb-2 rounded-lg flex items-center justify-center text-xl ${
+                    newBlockFreezeMode === 'view' ? 'bg-blue-100 text-blue-600' : 'bg-blue-50 text-blue-500'
+                  }`}>👁</div>
+                  <div className="font-medium text-sm">访问冻结</div>
+                  <div className="text-xs text-gray-500 mt-1">看过之后始终显示</div>
+                </div>
+                <div
+                  onClick={() => setNewBlockFreezeMode('click')}
+                  className={`flex-1 p-4 border-2 rounded-xl cursor-pointer transition-all text-center ${
+                    newBlockFreezeMode === 'click'
+                      ? 'border-purple-500 bg-purple-50'
+                      : 'border-gray-200 hover:border-gray-300'
+                  }`}
+                >
+                  <div className={`w-10 h-10 mx-auto mb-2 rounded-lg flex items-center justify-center text-xl ${
+                    newBlockFreezeMode === 'click' ? 'bg-purple-100 text-purple-600' : 'bg-purple-50 text-purple-500'
+                  }`}>👆</div>
+                  <div className="font-medium text-sm">点击冻结</div>
+                  <div className="text-xs text-gray-500 mt-1">点击后始终显示</div>
+                </div>
+              </div>
+              {newBlockFreezeMode === 'click' && newBlockButtons.length > 0 && (
+                <div className="mt-3 p-3 bg-purple-50 rounded-lg">
+                  <div className="text-sm font-medium text-purple-700 mb-2">选择触发冻结的按钮：</div>
+                  <div className="space-y-2">
+                    {newBlockButtons.map((btn, idx) => (
+                      <div
+                        key={idx}
+                        onClick={() => {
+                          const updated = [...newBlockButtons]
+                          updated[idx].freeze_on_click = !btn.freeze_on_click
+                          setNewBlockButtons(updated)
+                        }}
+                        className={`flex items-center justify-between p-2 rounded cursor-pointer transition-colors ${
+                          btn.freeze_on_click
+                            ? 'bg-purple-200 text-purple-800'
+                            : 'bg-white hover:bg-purple-100'
+                        }`}
+                      >
+                        <span className="text-sm">{btn.label || `按钮 ${idx + 1}`}</span>
+                        {btn.freeze_on_click && <span className="text-sm">❄️ 已启用</span>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {newBlockFreezeMode === 'click' && newBlockButtons.length === 0 && (
+                <div className="mt-3 p-3 bg-amber-50 rounded-lg text-sm text-amber-700">
+                  请先添加按钮，再选择要触发冻结的按钮
+                </div>
+              )}
             </div>
           </div>
           <DialogFooter>

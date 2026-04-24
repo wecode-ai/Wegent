@@ -98,11 +98,27 @@ class TestTopicService:
             db=mock_db,
             topic=mock_topic,
             name="Updated Name",
-            description="Updated description",
+            extra_data={"description": "Updated description"},
         )
 
         assert mock_topic.name == "Updated Name"
         assert mock_topic.extra_data.get("description") == "Updated description"
+        mock_db.flush.assert_called_once()
+
+    def test_update_topic_clear_description(self, topic_service, mock_db):
+        """Test clearing a topic description by setting it to None."""
+        mock_topic = MagicMock()
+        mock_topic.extra_data = {"description": "Existing description"}
+
+        result = topic_service.update(
+            db=mock_db,
+            topic=mock_topic,
+            name="Updated Name",
+            extra_data={"description": None},
+        )
+
+        assert mock_topic.name == "Updated Name"
+        assert "description" not in mock_topic.extra_data
         mock_db.flush.assert_called_once()
 
     def test_delete_topic(self, topic_service, mock_db):
@@ -273,7 +289,9 @@ class TestPermissionService:
         result = permission_service.can_edit_topic(mock_db, mock_topic, 2)
         assert result is True
 
-    def test_can_edit_topic_non_creator_no_permission(self, permission_service, mock_db):
+    def test_can_edit_topic_non_creator_no_permission(
+        self, permission_service, mock_db
+    ):
         """Test that non-creator without permission cannot edit a topic."""
         mock_topic = MagicMock()
         mock_topic.creator_id = 1

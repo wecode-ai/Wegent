@@ -230,7 +230,12 @@ class TopicService:
         # Handle extra_data updates
         if extra_data is not None:
             current_extra_data = dict(topic.extra_data) if topic.extra_data else {}
-            current_extra_data.update(extra_data)
+            for key, value in extra_data.items():
+                if value is None:
+                    # Remove key if value is explicitly None (cleared by user)
+                    current_extra_data.pop(key, None)
+                else:
+                    current_extra_data[key] = value
             topic.extra_data = current_extra_data
             flag_modified(topic, "extra_data")
 
@@ -391,6 +396,8 @@ class TopicService:
         Returns:
             Dictionary with statistics
         """
+        from wecode.models.evaluation_exam_session import EvalExamSession
+
         # Question counts
         total_questions = (
             db.query(func.count(EvalQuestion.id))
@@ -428,9 +435,13 @@ class TopicService:
             .scalar()
         )
 
+        # total_respondents: unique users who entered the exam (from exam sessions)
         total_respondents = (
-            db.query(func.count(func.distinct(EvalAnswer.respondent_id)))
-            .filter(EvalAnswer.question_id.in_(question_ids))
+            db.query(func.count(func.distinct(EvalExamSession.user_id)))
+            .filter(
+                EvalExamSession.topic_id == topic_id,
+                EvalExamSession.is_active == 1,
+            )
             .scalar()
         )
 

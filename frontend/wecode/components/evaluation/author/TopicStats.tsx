@@ -4,8 +4,14 @@
 
 'use client'
 
-import { FileCheck, Users, MessageSquare, BarChart3 } from 'lucide-react'
+import { FileCheck, Users, MessageSquare, BarChart3, HelpCircle } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { TopicStatistics } from '@wecode/types/evaluation'
 
@@ -35,12 +41,14 @@ interface StatCardProps {
   progress?: number
   /** Color theme for the card */
   color: 'blue' | 'green' | 'purple' | 'amber'
+  /** Optional tooltip text for explanation */
+  tooltip?: string
 }
 
 /**
  * StatCard - Individual statistic card with icon and optional progress bar
  */
-function StatCard({ icon, value, label, subtitle, progress, color }: StatCardProps) {
+function StatCard({ icon, value, label, subtitle, progress, color, tooltip }: StatCardProps) {
   const colorClasses = {
     blue: {
       bg: 'bg-blue-50',
@@ -66,30 +74,50 @@ function StatCard({ icon, value, label, subtitle, progress, color }: StatCardPro
 
   const c = colorClasses[color]
 
-  return (
-    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 hover:shadow-md hover:-translate-y-[2px] transition-all duration-250">
-      <div className="flex items-start justify-between">
-        <div>
-          <div className={`w-10 h-10 rounded-xl ${c.bg} flex items-center justify-center mb-3`}>
-            {icon}
-          </div>
-          <div className="text-2xl font-bold text-gray-900">{value}</div>
-          <div className="text-sm text-gray-500 mt-1">{label}</div>
-          {subtitle && <div className="text-xs text-gray-400 mt-0.5">{subtitle}</div>}
-        </div>
-      </div>
-      {progress !== undefined && progress >= 0 && (
-        <div className="mt-4">
-          <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
-            <div
-              className={`h-full ${c.progress} rounded-full transition-all duration-500`}
-              style={{ width: `${Math.min(100, Math.max(0, progress))}%` }}
-            />
-          </div>
-          <div className="text-xs text-gray-400 mt-1.5">{Math.round(progress)}%</div>
-        </div>
+  const labelContent = (
+    <div className="text-sm text-gray-500 mt-1 flex items-center gap-1">
+      {label}
+      {tooltip && (
+        <HelpCircle className="w-3.5 h-3.5 text-gray-400" />
       )}
     </div>
+  )
+
+  return (
+    <TooltipProvider delayDuration={100}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 hover:shadow-md hover:-translate-y-[2px] transition-all duration-250 cursor-default">
+            <div className="flex items-start justify-between">
+              <div>
+                <div className={`w-10 h-10 rounded-xl ${c.bg} flex items-center justify-center mb-3`}>
+                  {icon}
+                </div>
+                <div className="text-2xl font-bold text-gray-900">{value}</div>
+                {labelContent}
+                {subtitle && <div className="text-xs text-gray-400 mt-0.5">{subtitle}</div>}
+              </div>
+            </div>
+            {progress !== undefined && progress >= 0 && (
+              <div className="mt-4">
+                <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full ${c.progress} rounded-full transition-all duration-500`}
+                    style={{ width: `${Math.min(100, Math.max(0, progress))}%` }}
+                  />
+                </div>
+                <div className="text-xs text-gray-400 mt-1.5">{Math.round(progress)}%</div>
+              </div>
+            )}
+          </div>
+        </TooltipTrigger>
+        {tooltip && (
+          <TooltipContent side="bottom" className="max-w-xs">
+            <p className="text-sm">{tooltip}</p>
+          </TooltipContent>
+        )}
+      </Tooltip>
+    </TooltipProvider>
   )
 }
 
@@ -111,7 +139,7 @@ function StatCardSkeleton() {
  *
  * Displays 4 key metrics in a grid:
  * - Questions (published/total)
- * - Respondents
+ * - Respondents (users who entered the exam)
  * - Answers
  * - Grading Progress
  *
@@ -151,12 +179,13 @@ export function TopicStats({ statistics, isLoading = false }: TopicStatsProps) {
         color="blue"
       />
 
-      {/* Respondents Card */}
+      {/* Respondents Card - users who entered the exam */}
       <StatCard
         icon={<Users className="w-5 h-5 text-emerald-600" />}
         value={statistics.total_respondents}
         label={t('respondents.title')}
         color="green"
+        tooltip={t('respondents.tooltip')}
       />
 
       {/* Answers Card */}
@@ -165,6 +194,7 @@ export function TopicStats({ statistics, isLoading = false }: TopicStatsProps) {
         value={statistics.total_answers}
         label={t('answers.title')}
         color="purple"
+        tooltip={t('answers.tooltip')}
       />
 
       {/* Grading Progress Card */}

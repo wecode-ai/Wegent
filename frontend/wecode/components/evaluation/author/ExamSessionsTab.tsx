@@ -204,12 +204,19 @@ function SessionCard({
 
             {/* Phase Badge and Timer */}
             <div className="flex items-center gap-2">
-              {session.current_phase === 'exam' && (
+              {/* Timer for exam and review phases (countdown/overtime) */}
+              {(session.current_phase === 'exam' || session.current_phase === 'review') && (
                 <ExamTimerDisplay
                   initialRemainingSeconds={session.remaining_seconds}
                   phase={session.current_phase}
                   size="sm"
                 />
+              )}
+              {/* Show duration for completed sessions */}
+              {session.current_phase === 'completed' && session.exam_duration_seconds !== null && (
+                <span className="text-sm font-medium text-gray-700">
+                  {formatDuration(session.exam_duration_seconds)}
+                </span>
               )}
               {getPhaseBadge(session.current_phase, t)}
             </div>
@@ -361,6 +368,14 @@ export function ExamSessionsTab({ topicId }: ExamSessionsTabProps) {
       loadSessions()
     }
   }, [topicId, loadSessions])
+
+  // Refresh sessions when page or tab changes
+  // Note: Real-time duration display is handled locally in SessionCard
+  useEffect(() => {
+    if (topicId) {
+      loadSessions()
+    }
+  }, [topicId, page, activeTab])
 
   // Handle reset session
   const handleResetClick = (session: ExamSession) => {

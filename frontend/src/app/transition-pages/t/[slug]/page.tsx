@@ -1,6 +1,7 @@
 'use client'
 
 import dynamic from 'next/dynamic'
+import { UserProvider } from '@/features/common/UserContext'
 
 const TransitionPageView = dynamic(
   () => import('@wecode/features/transition-pages/pages/TransitionPageView'),
@@ -8,5 +9,9 @@ const TransitionPageView = dynamic(
 )
 
 export default function TransitionPage() {
-  return <TransitionPageView />
+  return (
+    <UserProvider>
+      <TransitionPageView />
+    </UserProvider>
+  )
 }

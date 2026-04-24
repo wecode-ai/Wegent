@@ -123,7 +123,14 @@ export function ConfigDrawer({ isOpen, topicId, onClose, onTopicUpdate }: Config
       // Load visibility config from extra_data
       const visibility = extraData?.visibility as { not_visible_until?: string } | undefined
       if (visibility?.not_visible_until) {
-        setNotVisibleUntil(visibility.not_visible_until)
+        // Convert ISO format with timezone to datetime-local format (YYYY-MM-DDTHH:mm)
+        const date = new Date(visibility.not_visible_until)
+        const year = date.getFullYear()
+        const month = String(date.getMonth() + 1).padStart(2, '0')
+        const day = String(date.getDate()).padStart(2, '0')
+        const hours = String(date.getHours()).padStart(2, '0')
+        const minutes = String(date.getMinutes()).padStart(2, '0')
+        setNotVisibleUntil(`${year}-${month}-${day}T${hours}:${minutes}`)
       } else {
         setNotVisibleUntil('')
       }
@@ -180,11 +187,18 @@ export function ConfigDrawer({ isOpen, topicId, onClose, onTopicUpdate }: Config
 
     setSaving(true)
     try {
+      // Convert local datetime to ISO format with timezone offset (UTC+8)
+      let notVisibleUntilWithTimezone: string | undefined
+      if (notVisibleUntil) {
+        // datetime-local format: "2026-04-24T10:07", append Asia/Shanghai timezone (+08:00)
+        notVisibleUntilWithTimezone = `${notVisibleUntil}:00+08:00`
+      }
+
       const updatedTopic = await updateAuthorTopic(topicId, {
         name: name.trim(),
         visibility,
         extra_data: {
-          description: description.trim() || undefined,
+          description: description.trim() || null,
           instructions: instructions.trim() || undefined,
           duration: {
             intro: introMinutes,
@@ -192,7 +206,7 @@ export function ConfigDrawer({ isOpen, topicId, onClose, onTopicUpdate }: Config
             review: reviewMinutes,
           },
           visibility: {
-            not_visible_until: notVisibleUntil || undefined,
+            not_visible_until: notVisibleUntilWithTimezone,
           },
           video: videoAttachment || undefined,
           submit_hint: submitHint.trim() || undefined,

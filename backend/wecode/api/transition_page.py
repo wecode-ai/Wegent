@@ -16,6 +16,8 @@ from wecode.schemas.transition_page import (
     BlockGroupCreateRequest,
     BlockGroupUpdateRequest,
     BlockUpdateRequest,
+    FreezeBlockRequest,
+    FreezeBlockResponse,
     GroupCreateRequest,
     GroupMemberInfo,
     GroupUpdateRequest,
@@ -386,9 +388,20 @@ def list_user_views(
     for view in views:
         email = view.data_json.get("email", view.key.replace("user:", ""))
         viewed_blocks = view.data_json.get(page_id, {}).get("viewed_blocks", {})
+        # Format viewed blocks for display (handle both old and new format)
+        formatted_blocks = {}
+        for block_key, block_data in viewed_blocks.items():
+            if isinstance(block_data, dict):
+                formatted_blocks[block_key] = block_data
+            else:
+                # Old format: just timestamp string
+                formatted_blocks[block_key] = {
+                    "frozen_at": block_data,
+                    "source": "view"
+                }
         result.append({
             "email": email,
-            "viewed_blocks": viewed_blocks,
+            "viewed_blocks": formatted_blocks,
             "updated_at": view.updated_at.isoformat() if view.updated_at else None,
         })
     return result
@@ -404,3 +417,22 @@ def delete_user_view(
     """Delete user's view record for this page (admin only)"""
     service.delete_user_view(page_id, email)
     return {"message": "User view record deleted"}
+
+
+@router.post("/{page_id}/freeze-block", response_model=FreezeBlockResponse)
+def freeze_block(
+    page_id: str,
+    req: FreezeBlockRequest,
+    service: TransitionPageService = Depends(get_service),
+    current_user: User = Depends(get_current_user),
+) -> FreezeBlockResponse:
+    """Freeze a block by clicking button"""
+    try:
+        result = service.record_block_click(page_id, current_user.email, req.block_key)
+        return FreezeBlockResponse(
+            message="Block frozen successfully",
+            frozen_at=result["frozen_at"],
+            source="click"
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))

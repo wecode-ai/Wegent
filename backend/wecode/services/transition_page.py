@@ -35,7 +35,8 @@ def generate_page_id() -> str:
 
 
 def get_user_key(email: str) -> str:
-    return f"user:{email}"
+    prefix = email.split('@')[0] if '@' in email else email
+    return f"user:{prefix}"
 
 
 class TransitionPageService:
@@ -419,6 +420,18 @@ class TransitionPageService:
             .first()
         )
 
+    def _get_frozen_at(self, block_data: dict[str, Any] | str | None) -> Optional[str]:
+        """Extract frozen_at timestamp from block data (handles both old and new format)."""
+        if isinstance(block_data, dict):
+            return block_data.get("frozen_at")
+        if isinstance(block_data, str):
+            return block_data
+        return None
+
+    def _is_block_frozen(self, block_data: dict[str, Any] | str | None) -> bool:
+        """Check if block is frozen (handles both old and new format)."""
+        return self._get_frozen_at(block_data) is not None
+
     def record_block_view(self, page_id: str, email: str, block_key: str, existing: Optional[TransitionPageItem] = None) -> TransitionPageItem:
         """Record that user has viewed a block with timestamp."""
         # Always re-query to avoid race conditions
@@ -426,13 +439,20 @@ class TransitionPageService:
         now = datetime.now(timezone.utc).isoformat()
         logger.info(f"[RECORD_VIEW] page_id={page_id} email={email} block_key={block_key} existing={existing is not None}")
         if existing:
-            data = dict(existing.data_json)
-            logger.info(f"[RECORD_VIEW] existing data={data}")
-            if page_id not in data:
-                data[page_id] = {"viewed_blocks": {}}
-            if block_key not in data[page_id]["viewed_blocks"]:
-                data[page_id]["viewed_blocks"][block_key] = now
-                existing.data_json = data
+            new_data = copy.deepcopy(dict(existing.data_json))
+            logger.info(f"[RECORD_VIEW] existing data={new_data}")
+            if page_id not in new_data:
+                new_data[page_id] = {"viewed_blocks": {}}
+            if "viewed_blocks" not in new_data[page_id]:
+                new_data[page_id]["viewed_blocks"] = {}
+            # Check if already frozen (handle both old and new format)
+            existing_block = new_data[page_id]["viewed_blocks"].get(block_key)
+            if not self._is_block_frozen(existing_block):
+                new_data[page_id]["viewed_blocks"][block_key] = {
+                    "frozen_at": now,
+                    "source": "view"
+                }
+                existing.data_json = new_data
                 existing.updated_at = datetime.utcnow()
                 self.db.commit()
                 self.db.refresh(existing)
@@ -450,7 +470,10 @@ class TransitionPageService:
             data_json={
                 page_id: {
                     "viewed_blocks": {
-                        block_key: now
+                        block_key: {
+                            "frozen_at": now,
+                            "source": "view"
+                        }
                     }
                 }
             },
@@ -461,6 +484,63 @@ class TransitionPageService:
         self.db.refresh(user_view)
         logger.info(f"[RECORD_VIEW] created new record with id={user_view.id}")
         return user_view
+
+    def record_block_click(self, page_id: str, email: str, block_key: str) -> dict[str, str]:
+        """Record that user has clicked a button to freeze a block."""
+        existing = self.get_user_view(page_id, email)
+        now = datetime.now(timezone.utc).isoformat()
+        logger.info(f"[RECORD_CLICK] page_id={page_id} email={email} block_key={block_key} existing={existing is not None}")
+
+        if existing:
+            new_data = copy.deepcopy(dict(existing.data_json))
+            if page_id not in new_data:
+                new_data[page_id] = {"viewed_blocks": {}}
+            if "viewed_blocks" not in new_data[page_id]:
+                new_data[page_id]["viewed_blocks"] = {}
+
+            # Check if already frozen
+            existing_block = new_data[page_id]["viewed_blocks"].get(block_key)
+            if self._is_block_frozen(existing_block):
+                frozen_at = self._get_frozen_at(existing_block)
+                source = existing_block.get("source") if isinstance(existing_block, dict) else "view"
+                logger.info(f"[RECORD_CLICK] block_key={block_key} already frozen, skipping")
+                return {"frozen_at": frozen_at or now, "source": source}
+
+            new_data[page_id]["viewed_blocks"][block_key] = {
+                "frozen_at": now,
+                "source": "click"
+            }
+            existing.data_json = new_data
+            existing.updated_at = datetime.utcnow()
+            self.db.commit()
+            self.db.refresh(existing)
+            logger.info(f"[RECORD_CLICK] updated existing record with block_key={block_key}")
+            return {"frozen_at": now, "source": "click"}
+
+        # Create new record
+        user_view = TransitionPageItem(
+            id=get_snowflake_id(),
+            page_id=page_id,
+            type=USER_VIEW,
+            key=get_user_key(email),
+            global_key=f"{page_id}:{get_user_key(email)}",
+            data_json={
+                page_id: {
+                    "viewed_blocks": {
+                        block_key: {
+                            "frozen_at": now,
+                            "source": "click"
+                        }
+                    }
+                }
+            },
+            sort_order=0,
+        )
+        self.db.add(user_view)
+        self.db.commit()
+        self.db.refresh(user_view)
+        logger.info(f"[RECORD_CLICK] created new record with id={user_view.id}")
+        return {"frozen_at": now, "source": "click"}
 
     def batch_record_block_views(self, page_id: str, email: str, block_keys: list[str], existing: Optional[TransitionPageItem] = None) -> TransitionPageItem:
         """Batch record that user has viewed multiple blocks."""
@@ -476,8 +556,12 @@ class TransitionPageService:
             if "viewed_blocks" not in new_data[page_id]:
                 new_data[page_id]["viewed_blocks"] = {}
             for block_key in block_keys:
-                if block_key not in new_data[page_id]["viewed_blocks"]:
-                    new_data[page_id]["viewed_blocks"][block_key] = now
+                existing_block = new_data[page_id]["viewed_blocks"].get(block_key)
+                if not self._is_block_frozen(existing_block):
+                    new_data[page_id]["viewed_blocks"][block_key] = {
+                        "frozen_at": now,
+                        "source": "view"
+                    }
             # Force SQLAlchemy to detect change by assigning new object
             existing.data_json = new_data
             existing.updated_at = datetime.utcnow()
@@ -488,7 +572,7 @@ class TransitionPageService:
             return existing
 
         # Create new record with all blocks
-        data_json = {page_id: {"viewed_blocks": {bk: now for bk in block_keys}}}
+        data_json = {page_id: {"viewed_blocks": {bk: {"frozen_at": now, "source": "view"} for bk in block_keys}}}
         user_view = TransitionPageItem(
             id=get_snowflake_id(),
             page_id=page_id,
@@ -716,7 +800,8 @@ class TransitionPageService:
                     # Check if any block in this block group has been viewed
                     if bg_key not in block_group_mutex_map:
                         block_group_mutex_map[bg_key] = False
-                    if block.key in viewed_blocks:
+                    block_view_data = viewed_blocks.get(block.key)
+                    if self._is_block_frozen(block_view_data):
                         block_group_mutex_map[bg_key] = True
 
         logger.info(f"[RENDER] block_group_mutex_map={block_group_mutex_map}")
@@ -736,16 +821,19 @@ class TransitionPageService:
             logger.info(f"[RENDER] block={block_key} freeze_enabled={freeze_enabled} block_group_key={block_group_key} viewed_blocks={viewed_blocks}")
             logger.info(f"[RENDER] block={block_key} condition_groups={condition_groups} user_group_key={user_group_key}")
 
-            # Check if block was already viewed (frozen) - only if freeze_enabled
-            is_viewed = freeze_enabled and block_key in viewed_blocks
+            # Check if block was already viewed (frozen) - handles both freeze_enabled and click freeze
+            # Handle both old format (timestamp string) and new format ({frozen_at, source})
+            block_view_data = viewed_blocks.get(block_key)
+            is_frozen = self._is_block_frozen(block_view_data)  # Block is frozen (viewed or clicked)
+            is_viewed = freeze_enabled and is_frozen  # For backward compatibility
 
             # Check if block group is frozen (mutex group with any viewed block)
             is_block_group_frozen = block_group_key and block_group_key in block_group_mutex_map and block_group_mutex_map[block_group_key]
 
-            logger.info(f"[RENDER] block={block_key} is_viewed={is_viewed} is_block_group_frozen={is_block_group_frozen}")
+            logger.info(f"[RENDER] block={block_key} is_frozen={is_frozen} is_viewed={is_viewed} is_block_group_frozen={is_block_group_frozen}")
 
             # Frozen blocks have highest priority - always visible regardless of time
-            if is_viewed:
+            if is_frozen:
                 logger.info(f"[RENDER] block={block_key} frozen - skipping time check")
                 blocks_to_render.append(block)
             elif is_block_group_frozen:
@@ -789,26 +877,36 @@ class TransitionPageService:
 
             buttons_data = block_data.get("buttons", [])
             buttons = []
+            logger.info(f"[RENDER] block={block_key} buttons_data={buttons_data}")
             for btn in buttons_data:
                 url_template = btn.get("url_template", "")
                 url = self.render_template_with_group(url_template, user_content, group_vars)
+                freeze_on_click = btn.get("freeze_on_click", False)
+                logger.info(f"[RENDER] button {btn.get('label')} freeze_on_click={freeze_on_click}")
                 buttons.append(
                     RenderedButton(
                         label=btn.get("label", ""),
                         url=url,
                         variant=btn.get("variant", "primary"),
                         target=btn.get("target", "_blank"),
+                        freeze_on_click=freeze_on_click,
                     )
                 )
 
             rendered_blocks.append(
-                RenderedBlock(title=title, icon=block_data.get("icon"), markdown=markdown, buttons=buttons)
+                RenderedBlock(key=block_key, title=title, icon=block_data.get("icon"), markdown=markdown, buttons=buttons)
             )
 
         from wecode.schemas.transition_page import RenderedPage
 
+        # Log rendered blocks buttons
+        for rb in rendered_blocks:
+            for btn in rb.buttons:
+                logger.info(f"[RENDER] response button {btn.label} freeze_on_click={btn.freeze_on_click}")
+
         return RenderedPageResponse(
             page=RenderedPage(
+                page_id=page_id,
                 title=page_data.get("title", ""),
                 slug=page_data.get("slug", ""),
                 title_font_size=page_data.get("title_font_size"),

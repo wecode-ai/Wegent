@@ -20,6 +20,7 @@ const config: Config = {
     '^@/lib/remark-gfm-safe$': '<rootDir>/src/__mocks__/remark-gfm-safe.ts',
     '^remark-math$': '<rootDir>/src/__mocks__/remark-stub.ts',
     '^remark-gfm$': '<rootDir>/src/__mocks__/remark-stub.ts',
+    '^remark-frontmatter$': '<rootDir>/src/__mocks__/remark-stub.ts',
     '^rehype-katex$': '<rootDir>/src/__mocks__/rehype-stub.ts',
     '^rehype-raw$': '<rootDir>/src/__mocks__/rehype-stub.ts',
     '^micromark-util-combine-extensions$': '<rootDir>/src/__mocks__/micromark-stub.ts',

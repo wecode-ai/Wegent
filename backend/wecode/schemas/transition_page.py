@@ -41,6 +41,7 @@ class BlockButton(BaseModel):
     url_template: str
     variant: ButtonVariant = ButtonVariant.PRIMARY
     target: str = "_blank"
+    freeze_on_click: bool = False  # Click to freeze current block
 
 
 class TitleFontSize(str, Enum):
@@ -140,6 +141,20 @@ class GroupUpdateRequest(BaseModel):
     data: GroupData
 
 
+class FreezeBlockRequest(BaseModel):
+    """Freeze block request"""
+
+    block_key: str
+
+
+class FreezeBlockResponse(BaseModel):
+    """Freeze block response"""
+
+    message: str
+    frozen_at: str
+    source: str
+
+
 class UserImportResponse(BaseModel):
     """Import users response"""
 
@@ -156,11 +171,13 @@ class RenderedButton(BaseModel):
     url: str
     variant: str
     target: str
+    freeze_on_click: bool = False
 
 
 class RenderedBlock(BaseModel):
     """Rendered block"""
 
+    key: str  # Block key for freeze API
     title: str
     icon: Optional[str] = None
     markdown: str
@@ -170,6 +187,7 @@ class RenderedBlock(BaseModel):
 class RenderedPage(BaseModel):
     """Rendered page info"""
 
+    page_id: str
     title: str
     slug: str
     title_font_size: Optional[str] = None

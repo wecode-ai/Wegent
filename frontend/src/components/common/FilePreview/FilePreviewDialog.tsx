@@ -11,7 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { FilePreview } from './FilePreview'
 import { getPreviewType, formatFileSize } from './utils'
 import { downloadAttachment } from '@/apis/attachments'
-import { ShareButton } from './components'
+// import { ShareButton } from './components'
 import { useTranslation } from '@/hooks/useTranslation'
 
 export interface FilePreviewDialogProps {
@@ -45,7 +45,6 @@ export function FilePreviewDialog({
   mimeType,
   fileSize,
   shareToken,
-  canShare,
 }: FilePreviewDialogProps) {
   const previewType = getPreviewType(mimeType, filename)
   const isHtml = previewType === 'html'
@@ -146,15 +145,15 @@ export function FilePreviewDialog({
                 </Button>
               </div>
             )}
-            {/* Share button - only show if user can share (owner only) */}
-            {canShare && (
+            {/* Share button - temporarily hidden */}
+            {/* {canShare && (
               <ShareButton
                 attachmentId={attachmentId}
                 canShare={canShare}
                 variant="outline"
                 size="sm"
               />
-            )}
+            )} */}
             <Button
               variant="primary"
               size="sm"
