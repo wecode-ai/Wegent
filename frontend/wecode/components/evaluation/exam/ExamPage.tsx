@@ -4,6 +4,8 @@
 
 'use client'
 
+import './exam-theme-lock.css'
+
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { useUser } from '@/features/common/UserContext'
@@ -703,7 +705,7 @@ export function ExamPage({ topicId }: ExamPageProps) {
         : 'md:grid-cols-3'
 
   return (
-    <div className="min-h-screen bg-[#fafbfc] overflow-visible" data-theme="light">
+    <div className="exam-page min-h-screen bg-[#fafbfc] overflow-visible" data-theme="light">
       <ExamHeader
         title={examData.title}
         year={examData.year}

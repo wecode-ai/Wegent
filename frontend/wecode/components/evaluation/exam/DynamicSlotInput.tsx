@@ -8,7 +8,6 @@ import { useState, useCallback, useRef, useMemo, useEffect } from 'react'
 import { FileText, Loader2, X, Download, Eye, EyeOff, Link2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
-import { Input } from '@/components/ui/input'
 import { cn, sanitizeFilename } from '@/lib/utils'
 import {
   uploadEvaluationFile,
@@ -111,8 +110,8 @@ export function DynamicSlotInput({
   // For link_or_attachment mode: mutual exclusion logic
   const hasLink = Boolean(value.link?.trim())
   const hasAttachment = currentFiles.length > 0
-  const linkDisabled = disabled || hasAttachment  // Disable link when has attachment
-  const attachmentDisabled = disabled || hasLink   // Disable attachment when has link
+  const linkDisabled = disabled || hasAttachment // Disable link when has attachment
+  const attachmentDisabled = disabled || hasLink // Disable attachment when has link
 
   // Check if there's a .txt file in the attachments (for loading text from S3)
   const txtAttachment = useMemo(() => {
@@ -318,10 +317,7 @@ export function DynamicSlotInput({
           <div className="min-h-[200px] rounded-2xl border border-gray-200 bg-gray-50 p-5">
             {(value.text || '').trim() ? (
               <div className="markdown-content">
-                <EnhancedMarkdown
-                  source={value.text || ''}
-                  theme="light"
-                />
+                <EnhancedMarkdown source={value.text || ''} theme="light" />
               </div>
             ) : (
               <p className="text-gray-400 text-center py-8">{t('slots.no_content')}</p>
@@ -430,27 +426,28 @@ export function DynamicSlotInput({
         {/* Link Input */}
         <div className="space-y-2">
           <div className="flex items-center gap-2">
-            <Link2 size={18} className={cn('flex-shrink-0', linkDisabled ? 'text-gray-200' : 'text-gray-300')} />
-            <Input
+            <Link2
+              size={18}
+              className={cn('flex-shrink-0', linkDisabled ? 'text-gray-200' : 'text-gray-300')}
+            />
+            <input
               type="url"
               value={value.link || ''}
               onChange={e => handleLinkChange(e.target.value)}
               placeholder={t('answers.link_placeholder')}
               disabled={linkDisabled}
               className={cn(
-                "flex-1 px-4 py-3 rounded-xl border bg-white text-[1rem] text-gray-900 transition placeholder:text-gray-300 disabled:opacity-50 disabled:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset",
+                'flex-1 h-10 px-4 py-3 rounded-xl border bg-white text-[1rem] text-gray-900 transition placeholder:text-gray-300 disabled:opacity-50 disabled:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-inset',
                 urlError
-                  ? "border-red-400 focus-visible:ring-red-400"
-                  : "border-gray-200 focus-visible:ring-[#DF2029]"
+                  ? 'border-red-400 focus:ring-red-400'
+                  : 'border-gray-200 focus:ring-[#DF2029]'
               )}
             />
           </div>
           {hasAttachment && (
             <p className="text-xs text-gray-400">{t('answers.link_disabled_hint')}</p>
           )}
-          {urlError && !hasAttachment && (
-            <p className="text-xs text-red-500">{urlError}</p>
-          )}
+          {urlError && !hasAttachment && <p className="text-xs text-red-500">{urlError}</p>}
         </div>
 
         {/* Divider with "or" */}
@@ -464,7 +461,7 @@ export function DynamicSlotInput({
         {!attachmentDisabled && canAddMore && (
           <div
             className={cn(
-              'rounded-2xl border-2 border-dashed p-6 transition-all duration-200 cursor-pointer',
+              'file-upload-zone rounded-2xl border-2 border-dashed p-6 transition-all duration-200 cursor-pointer',
               isDragOver
                 ? 'border-[#c81d25] bg-red-100 border-solid'
                 : 'border-gray-200 hover:border-[#DF2029] hover:bg-red-50',
@@ -511,7 +508,9 @@ export function DynamicSlotInput({
                 </svg>
               </div>
               <div className="text-center">
-                <p className="text-base font-medium text-gray-700">{t('answers.upload_drag_hint')}</p>
+                <p className="text-base font-medium text-gray-700">
+                  {t('answers.upload_drag_hint')}
+                </p>
                 {slot.accept && (
                   <p className="text-sm text-gray-400 mt-1">
                     {t('answers.accepted_formats')}: {slot.accept.replace(/\./g, '').toUpperCase()}
@@ -530,7 +529,7 @@ export function DynamicSlotInput({
           <div
             key={fileId}
             className={cn(
-              'flex items-center gap-3 rounded-lg border p-3',
+              'uploading-file flex items-center gap-3 rounded-lg border p-3',
               error ? 'border-red-500 bg-red-50' : 'border-gray-200 bg-gray-50'
             )}
           >
@@ -540,11 +539,13 @@ export function DynamicSlotInput({
               <Loader2 className="h-5 w-5 animate-spin text-[#DF2029]" />
             )}
             <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium">{file.name}</p>
+              <p className="filename-text truncate text-sm font-medium text-gray-900">
+                {file.name}
+              </p>
               {error ? (
                 <p className="text-xs text-red-500">{error}</p>
               ) : (
-                <Progress value={progress} className="mt-1 h-1" />
+                <Progress value={progress} className="mt-1 h-1 bg-gray-200 [&>div]:bg-[#DF2029]" />
               )}
             </div>
             <Button
@@ -562,13 +563,17 @@ export function DynamicSlotInput({
         {currentFiles.map(attachment => (
           <div
             key={attachment.key}
-            className="flex items-center gap-3 rounded-lg border border-gray-200 bg-gray-50 p-3"
+            className="uploaded-attachment flex items-center gap-3 rounded-lg border border-gray-200 bg-gray-50 p-3"
           >
             <FileText className="h-5 w-5 text-gray-400" />
             <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium">{attachment.filename}</p>
+              <p className="filename-text truncate text-sm font-medium text-gray-900">
+                {attachment.filename}
+              </p>
               {attachment.size && (
-                <p className="text-xs text-gray-400">{formatFileSize(attachment.size)}</p>
+                <p className="filesize-text text-xs text-gray-400">
+                  {formatFileSize(attachment.size)}
+                </p>
               )}
             </div>
             <div className="flex gap-1">
@@ -624,23 +629,21 @@ export function DynamicSlotInput({
         <div className="space-y-2">
           <div className="flex items-center gap-2">
             <Link2 size={18} className="text-gray-300 flex-shrink-0" />
-            <Input
+            <input
               type="url"
               value={value.link || ''}
               onChange={e => handleLinkChange(e.target.value)}
               placeholder={t('answers.link_placeholder')}
               disabled={disabled}
               className={cn(
-                "flex-1 px-4 py-3 rounded-xl border bg-white text-[1rem] text-gray-900 transition placeholder:text-gray-300 disabled:opacity-50 disabled:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset",
+                'flex-1 h-10 px-4 py-3 rounded-xl border bg-white text-[1rem] text-gray-900 transition placeholder:text-gray-300 disabled:opacity-50 disabled:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-inset',
                 urlError
-                  ? "border-red-400 focus-visible:ring-red-400"
-                  : "border-gray-200 focus-visible:ring-[#DF2029]"
+                  ? 'border-red-400 focus:ring-red-400'
+                  : 'border-gray-200 focus:ring-[#DF2029]'
               )}
             />
           </div>
-          {urlError && (
-            <p className="text-xs text-red-500">{urlError}</p>
-          )}
+          {urlError && <p className="text-xs text-red-500">{urlError}</p>}
         </div>
       )}
 
@@ -648,7 +651,7 @@ export function DynamicSlotInput({
       {showAttachment && canAddMore && (
         <div
           className={cn(
-            'rounded-2xl border-2 border-dashed p-6 transition-all duration-200 cursor-pointer',
+            'file-upload-zone rounded-2xl border-2 border-dashed p-6 transition-all duration-200 cursor-pointer',
             isDragOver
               ? 'border-[#c81d25] bg-red-100 border-solid'
               : 'border-gray-200 hover:border-[#DF2029] hover:bg-red-50',
@@ -711,7 +714,7 @@ export function DynamicSlotInput({
         <div
           key={fileId}
           className={cn(
-            'flex items-center gap-3 rounded-lg border p-3',
+            'uploading-file flex items-center gap-3 rounded-lg border p-3',
             error ? 'border-red-500 bg-red-50' : 'border-gray-200 bg-gray-50'
           )}
         >
@@ -721,11 +724,11 @@ export function DynamicSlotInput({
             <Loader2 className="h-5 w-5 animate-spin text-[#DF2029]" />
           )}
           <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-medium">{file.name}</p>
+            <p className="filename-text truncate text-sm font-medium text-gray-900">{file.name}</p>
             {error ? (
               <p className="text-xs text-red-500">{error}</p>
             ) : (
-              <Progress value={progress} className="mt-1 h-1" />
+              <Progress value={progress} className="mt-1 h-1 bg-gray-200 [&>div]:bg-[#DF2029]" />
             )}
           </div>
           <Button
@@ -743,13 +746,17 @@ export function DynamicSlotInput({
       {currentFiles.map(attachment => (
         <div
           key={attachment.key}
-          className="flex items-center gap-3 rounded-lg border border-gray-200 bg-gray-50 p-3"
+          className="uploaded-attachment flex items-center gap-3 rounded-lg border border-gray-200 bg-gray-50 p-3"
         >
           <FileText className="h-5 w-5 text-gray-400" />
           <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-medium">{attachment.filename}</p>
+            <p className="filename-text truncate text-sm font-medium text-gray-900">
+              {attachment.filename}
+            </p>
             {attachment.size && (
-              <p className="text-xs text-gray-400">{formatFileSize(attachment.size)}</p>
+              <p className="filesize-text text-xs text-gray-400">
+                {formatFileSize(attachment.size)}
+              </p>
             )}
           </div>
           <div className="flex gap-1">

@@ -1,0 +1,195 @@
+/* Exam Page Theme Lock - Forces light theme styles regardless of global theme */
+
+/* Lock the entire exam page to light theme colors */
+.exam-page {
+  /* Force light color scheme for form elements (textarea, input, etc.) */
+  color-scheme: light !important;
+
+  /* Override all CSS variables used by shadcn/ui components */
+  --background: 255 255 255 !important;
+  --foreground: 26 26 26 !important;
+  --card: 255 255 255 !important;
+  --card-foreground: 26 26 26 !important;
+  --popover: 255 255 255 !important;
+  --popover-foreground: 26 26 26 !important;
+  --primary: 223 32 41 !important;
+  --primary-foreground: 255 255 255 !important;
+  --secondary: 247 247 248 !important;
+  --secondary-foreground: 26 26 26 !important;
+  --muted: 247 247 248 !important;
+  --muted-foreground: 102 102 102 !important;
+  --accent: 247 247 248 !important;
+  --accent-foreground: 26 26 26 !important;
+  --destructive: 239 68 68 !important;
+  --destructive-foreground: 255 255 255 !important;
+  --border: 229 231 235 !important;
+  --input: 229 231 235 !important;
+  --ring: 223 32 41 !important;
+  --radius: 0.5rem !important;
+
+  /* Custom theme variables */
+  --color-bg-base: 255 255 255 !important;
+  --color-bg-surface: 247 247 248 !important;
+  --color-text-primary: 26 26 26 !important;
+  --color-text-secondary: 102 102 102 !important;
+  --color-text-muted: 153 153 153 !important;
+  --color-primary: 223 32 41 !important;
+  --color-border: 229 231 235 !important;
+}
+
+/* Dark theme override - force light colors even in dark mode */
+.dark .exam-page,
+[data-theme='dark'] .exam-page {
+  /* Force light color scheme for form elements */
+  color-scheme: light !important;
+
+  /* Same light theme values */
+  --background: 255 255 255 !important;
+  --foreground: 26 26 26 !important;
+  --card: 255 255 255 !important;
+  --card-foreground: 26 26 26 !important;
+  --popover: 255 255 255 !important;
+  --popover-foreground: 26 26 26 !important;
+  --primary: 223 32 41 !important;
+  --primary-foreground: 255 255 255 !important;
+  --secondary: 247 247 248 !important;
+  --secondary-foreground: 26 26 26 !important;
+  --muted: 247 247 248 !important;
+  --muted-foreground: 102 102 102 !important;
+  --accent: 247 247 248 !important;
+  --accent-foreground: 26 26 26 !important;
+  --destructive: 239 68 68 !important;
+  --destructive-foreground: 255 255 255 !important;
+  --border: 229 231 235 !important;
+  --input: 229 231 235 !important;
+  --ring: 223 32 41 !important;
+
+  /* Custom theme variables */
+  --color-bg-base: 255 255 255 !important;
+  --color-bg-surface: 247 247 248 !important;
+  --color-text-primary: 26 26 26 !important;
+  --color-text-secondary: 102 102 102 !important;
+  --color-text-muted: 153 153 153 !important;
+  --color-primary: 223 32 41 !important;
+  --color-border: 229 231 235 !important;
+}
+
+/* Force specific element styles - highest specificity */
+.exam-page input[type='url'],
+.exam-page input[type='text'],
+.exam-page textarea {
+  background-color: #ffffff !important;
+  color: #111827 !important;
+  border-color: #e5e7eb !important;
+  /* Prevent browser from applying dark mode styles */
+  color-scheme: light !important;
+}
+
+.exam-page input::placeholder,
+.exam-page textarea::placeholder {
+  color: #d1d5db !important;
+}
+
+.exam-page input:disabled,
+.exam-page textarea:disabled {
+  background-color: #f3f4f6 !important;
+  opacity: 0.5 !important;
+}
+
+/* File upload zone */
+.exam-page .file-upload-zone {
+  border-color: #e5e7eb !important;
+  background-color: transparent !important;
+}
+
+.exam-page .file-upload-zone:hover {
+  border-color: #df2029 !important;
+  background-color: #fef2f2 !important;
+}
+
+/* Uploading files and attachments */
+.exam-page .uploading-file,
+.exam-page .uploaded-attachment {
+  background-color: #f9fafb !important;
+  border-color: #e5e7eb !important;
+}
+
+.exam-page .uploading-file.error {
+  background-color: #fef2f2 !important;
+  border-color: #ef4444 !important;
+}
+
+/* Progress bar - override inline styles */
+.exam-page [role='progressbar'] {
+  background-color: #e5e7eb !important;
+}
+
+.exam-page [role='progressbar'] > div {
+  background-color: #df2029 !important;
+}
+
+/* Buttons */
+.exam-page button[data-variant='ghost'] {
+  color: #6b7280 !important;
+  background-color: transparent !important;
+}
+
+.exam-page button[data-variant='ghost']:hover {
+  background-color: #f3f4f6 !important;
+}
+
+/* Text colors for filenames - force dark text */
+.exam-page .filename-text {
+  color: #111827 !important;
+}
+
+.exam-page .filesize-text {
+  color: #9ca3af !important;
+}
+
+/* Markdown preview area */
+.exam-page .markdown-preview {
+  background-color: #f9fafb !important;
+  border-color: #e5e7eb !important;
+}
+
+/* Card/Container backgrounds */
+.exam-page .card-container {
+  background-color: #ffffff !important;
+  border-color: #f3f4f6 !important;
+}
+
+/* Ensure border-border uses light theme gray */
+.exam-page .border-border {
+  border-color: #e5e7eb !important;
+}
+
+/* Ensure bg-surface uses light theme background */
+.exam-page .bg-surface {
+  background-color: #f9fafb !important;
+}
+
+/* Ensure text-text-primary uses light theme text */
+.exam-page .text-text-primary {
+  color: #1a1a1a !important;
+}
+
+/* Ensure text-text-muted uses light theme muted text */
+.exam-page .text-text-muted {
+  color: #999999 !important;
+}
+
+/* Ensure bg-primary uses brand red */
+.exam-page .bg-primary {
+  background-color: #df2029 !important;
+}
+
+/* Ensure text-primary uses brand red */
+.exam-page .text-primary {
+  color: #df2029 !important;
+}
+
+/* Ensure bg-secondary uses light gray (for Progress component and others) */
+.exam-page .bg-secondary {
+  background-color: #e5e7eb !important;
+}

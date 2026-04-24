@@ -105,3 +105,4 @@ executor/dist/
 .worktrees/
 docs/superpowers/
 .worktrees/
+.gstack/
