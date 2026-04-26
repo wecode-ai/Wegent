@@ -131,8 +131,11 @@ async def test_local_gateway_test_connection_delegates_to_connection_executor():
     )
     db = MagicMock()
     spec = ConnectionTestRuntimeSpec(
-        knowledge_base_id=1,
-        user_id=7,
+        retriever_config=RuntimeRetrieverConfig(
+            name="test-retriever",
+            namespace="default",
+            storage_config={"type": "qdrant", "url": "http://localhost:6333"},
+        )
     )
 
     result = await gateway.test_connection(spec, db=db)

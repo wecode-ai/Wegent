@@ -15,7 +15,6 @@ from app.models.subtask_context import ContextType
 from app.services.context import context_service
 from app.services.rag.content_refs import build_content_ref_for_attachment
 from app.services.rag.runtime_specs import (
-    ConnectionTestRuntimeSpec,
     DeleteRuntimeSpec,
     DropKnowledgeIndexRuntimeSpec,
     IndexRuntimeSpec,
@@ -33,7 +32,6 @@ from shared.models import (
     RemoteQueryRequest,
     RemoteQueryResponse,
     RemoteRagError,
-    RemoteTestConnectionRequest,
 )
 
 
@@ -238,19 +236,6 @@ class RemoteRagGateway:
         response_payload = await self._post_model("/internal/rag/all-chunks", payload)
         response = RemoteListChunksResponse.model_validate(response_payload)
         return response.model_dump()
-
-    async def test_connection(
-        self,
-        spec: ConnectionTestRuntimeSpec,
-        *,
-        db: Session | None = None,
-    ) -> dict[str, Any]:
-        del db
-        payload = RemoteTestConnectionRequest(
-            knowledge_base_id=spec.knowledge_base_id,
-            user_id=spec.user_id,
-        )
-        return await self._post_model("/internal/rag/test-connection", payload)
 
 
 def _get_attachment_source_metadata(
