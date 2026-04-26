@@ -12,6 +12,8 @@ from typing import Any
 
 from knowledge_engine.services.document_service import DocumentService
 from knowledge_engine.storage.factory import create_storage_backend_from_runtime_config
+from knowledge_runtime.db.session import get_session
+from knowledge_runtime.services.config_resolver import ConfigResolver
 from shared.models import (
     RemoteDeleteDocumentIndexRequest,
     RemoteDropKnowledgeIndexRequest,
@@ -37,6 +39,9 @@ class AdminExecutor:
     - test_connection: Test storage backend connection
     """
 
+    def __init__(self) -> None:
+        self._config_resolver = ConfigResolver()
+
     @trace_async(
         span_name="delete_document_index",
         tracer_name="knowledge_runtime.services.admin",
@@ -48,15 +53,28 @@ class AdminExecutor:
         """Delete a document's index from a knowledge base.
 
         Args:
-            request: The delete request.
+            request: The delete request (reference mode).
 
         Returns:
             Deletion result.
         """
-        storage_backend = create_storage_backend_from_runtime_config(
-            request.retriever_config
-        )
+        db_gen = get_session()
+        db = next(db_gen)
+        try:
+            retriever_config = self._config_resolver.resolve_retriever_config(
+                db=db,
+                knowledge_base_id=request.knowledge_base_id,
+                user_id=request.user_id,
+            )
+            # Get KB owner user_id for the delete operation
+            kb = self._config_resolver._get_knowledge_base(
+                db, request.knowledge_base_id
+            )
+            index_owner_user_id = kb.user_id
+        finally:
+            db.close()
 
+        storage_backend = create_storage_backend_from_runtime_config(retriever_config)
         knowledge_id = str(request.knowledge_base_id)
 
         logger.info(
@@ -68,7 +86,7 @@ class AdminExecutor:
             storage_backend.delete_document,
             knowledge_id=knowledge_id,
             doc_ref=request.document_ref,
-            user_id=request.index_owner_user_id,
+            user_id=index_owner_user_id,
         )
 
         return result
@@ -84,15 +102,27 @@ class AdminExecutor:
         """Delete all chunks for a knowledge base.
 
         Args:
-            request: The purge request.
+            request: The purge request (reference mode).
 
         Returns:
             Purge result.
         """
-        storage_backend = create_storage_backend_from_runtime_config(
-            request.retriever_config
-        )
+        db_gen = get_session()
+        db = next(db_gen)
+        try:
+            retriever_config = self._config_resolver.resolve_retriever_config(
+                db=db,
+                knowledge_base_id=request.knowledge_base_id,
+                user_id=request.user_id,
+            )
+            kb = self._config_resolver._get_knowledge_base(
+                db, request.knowledge_base_id
+            )
+            index_owner_user_id = kb.user_id
+        finally:
+            db.close()
 
+        storage_backend = create_storage_backend_from_runtime_config(retriever_config)
         knowledge_id = str(request.knowledge_base_id)
 
         logger.info(
@@ -102,7 +132,7 @@ class AdminExecutor:
         result = await asyncio.to_thread(
             storage_backend.delete_knowledge,
             knowledge_id=knowledge_id,
-            user_id=request.index_owner_user_id,
+            user_id=index_owner_user_id,
         )
 
         return result
@@ -118,15 +148,27 @@ class AdminExecutor:
         """Physically drop the index/collection for a knowledge base.
 
         Args:
-            request: The drop request.
+            request: The drop request (reference mode).
 
         Returns:
             Drop result.
         """
-        storage_backend = create_storage_backend_from_runtime_config(
-            request.retriever_config
-        )
+        db_gen = get_session()
+        db = next(db_gen)
+        try:
+            retriever_config = self._config_resolver.resolve_retriever_config(
+                db=db,
+                knowledge_base_id=request.knowledge_base_id,
+                user_id=request.user_id,
+            )
+            kb = self._config_resolver._get_knowledge_base(
+                db, request.knowledge_base_id
+            )
+            index_owner_user_id = kb.user_id
+        finally:
+            db.close()
 
+        storage_backend = create_storage_backend_from_runtime_config(retriever_config)
         knowledge_id = str(request.knowledge_base_id)
 
         logger.info(
@@ -136,7 +178,7 @@ class AdminExecutor:
         result = await asyncio.to_thread(
             storage_backend.drop_knowledge_index,
             knowledge_id=knowledge_id,
-            user_id=request.index_owner_user_id,
+            user_id=index_owner_user_id,
         )
 
         return result
@@ -152,15 +194,27 @@ class AdminExecutor:
         """List all chunks in a knowledge base.
 
         Args:
-            request: The list request.
+            request: The list request (reference mode).
 
         Returns:
             List of chunks.
         """
-        storage_backend = create_storage_backend_from_runtime_config(
-            request.retriever_config
-        )
+        db_gen = get_session()
+        db = next(db_gen)
+        try:
+            retriever_config = self._config_resolver.resolve_retriever_config(
+                db=db,
+                knowledge_base_id=request.knowledge_base_id,
+                user_id=request.user_id,
+            )
+            kb = self._config_resolver._get_knowledge_base(
+                db, request.knowledge_base_id
+            )
+            index_owner_user_id = kb.user_id
+        finally:
+            db.close()
 
+        storage_backend = create_storage_backend_from_runtime_config(retriever_config)
         knowledge_id = str(request.knowledge_base_id)
 
         chunks = await asyncio.to_thread(
@@ -168,7 +222,7 @@ class AdminExecutor:
             knowledge_id=knowledge_id,
             max_chunks=request.max_chunks,
             metadata_condition=request.metadata_condition,
-            user_id=request.index_owner_user_id,
+            user_id=index_owner_user_id,
         )
 
         records = [
@@ -203,14 +257,23 @@ class AdminExecutor:
         """Test connection to a storage backend.
 
         Args:
-            request: The test request.
+            request: The test request (reference mode).
 
         Returns:
             Connection test result.
         """
-        storage_backend = create_storage_backend_from_runtime_config(
-            request.retriever_config
-        )
+        db_gen = get_session()
+        db = next(db_gen)
+        try:
+            retriever_config = self._config_resolver.resolve_retriever_config(
+                db=db,
+                knowledge_base_id=request.knowledge_base_id,
+                user_id=request.user_id,
+            )
+        finally:
+            db.close()
+
+        storage_backend = create_storage_backend_from_runtime_config(retriever_config)
 
         logger.info("Testing storage backend connection")
 
