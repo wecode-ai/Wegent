@@ -11,6 +11,12 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from shared.models.runtime_config import (
+    RuntimeEmbeddingModelConfig,
+    RuntimeRetrievalConfig,
+    RuntimeRetrieverConfig,
+)
+
 
 class KnowledgeRuntimeProtocolModel(BaseModel):
     """Base protocol model with strict field validation."""
@@ -40,14 +46,13 @@ ContentRef = Annotated[
     Field(discriminator="kind"),
 ]
 
+
 RetrievalPolicy = Literal[
     "chunk_only",
     "summary_first",
     "summary_then_chunk_expand",
     "hybrid",
 ]
-
-RetrievalMode = Literal["vector", "keyword", "hybrid"]
 
 
 class KnowledgeRuntimeAuth(KnowledgeRuntimeProtocolModel):
@@ -64,32 +69,6 @@ class RemoteRagError(KnowledgeRuntimeProtocolModel):
     message: str
     retryable: bool = False
     details: dict[str, Any] | None = None
-
-
-class RuntimeRetrieverConfig(KnowledgeRuntimeProtocolModel):
-    """Resolved retriever identity and storage configuration."""
-
-    name: str
-    namespace: str = "default"
-    storage_config: dict[str, Any] = Field(default_factory=dict)
-
-
-class RuntimeEmbeddingModelConfig(KnowledgeRuntimeProtocolModel):
-    """Resolved embedding model configuration."""
-
-    model_name: str
-    model_namespace: str = "default"
-    resolved_config: dict[str, Any] = Field(default_factory=dict)
-
-
-class RuntimeRetrievalConfig(KnowledgeRuntimeProtocolModel):
-    """Normalized retrieval config for a single knowledge base target."""
-
-    top_k: int = Field(default=20, gt=0)
-    score_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
-    retrieval_mode: RetrievalMode = "vector"
-    vector_weight: float | None = Field(default=None, ge=0.0, le=1.0)
-    keyword_weight: float | None = Field(default=None, ge=0.0, le=1.0)
 
 
 class RemoteKnowledgeBaseQueryConfig(KnowledgeRuntimeProtocolModel):
