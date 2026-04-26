@@ -94,9 +94,10 @@ export function DocumentItem({
 
   // Check if the document has been modified since creation (compare at second level)
   const isUnmodified = (() => {
-    const created = new Date(document.created_at).getTime()
-    const updated = new Date(document.updated_at).getTime()
-    return Math.abs(updated - created) < 1000
+    const created = Date.parse(document.created_at)
+    const updated = Date.parse(document.updated_at)
+    if (Number.isNaN(created) || Number.isNaN(updated)) return false
+    return Math.floor(created / 1000) === Math.floor(updated / 1000)
   })()
 
   const handleCheckboxChange = (checked: boolean) => {
