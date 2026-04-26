@@ -28,6 +28,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { downloadAttachment } from '@/apis/attachments'
 import type { KnowledgeDocument } from '@/types/knowledge'
 import { useTranslation } from '@/hooks/useTranslation'
+import { formatDate } from '@/utils/dateTime'
 import { toast } from '@/hooks/use-toast'
 
 interface DocumentItemProps {
@@ -242,81 +243,80 @@ export function DocumentItem({
               </button>
             )}
           </div>
-          <div className="flex items-center gap-1.5 mt-0.5">
-            {/* Type badge */}
-            {isTable ? (
-              <Badge
-                variant="default"
-                size="sm"
-                className="bg-blue-500/10 text-blue-600 border-blue-500/20 text-[9px] px-1 py-0"
-              >
-                {t('knowledge:document.document.type.table')}
-              </Badge>
-            ) : isWeb ? (
-              <Badge
-                variant="default"
-                size="sm"
-                className="bg-green-500/10 text-green-600 border-green-500/20 text-[9px] px-1 py-0"
-              >
-                {t('knowledge:document.document.type.web')}
-              </Badge>
-            ) : (
-              <span className="text-[9px] text-text-muted uppercase">
-                {document.file_extension}
-              </span>
-            )}
-            {/* Size */}
-            {!isTable && !isWeb && (
-              <span className="text-[9px] text-text-muted">
-                {formatFileSize(document.file_size)}
-              </span>
-            )}
-            {/* Status indicator */}
-            {document.is_active ? (
-              <span
-                className="w-1 h-1 rounded-full flex-shrink-0 bg-green-500"
-                title={t('knowledge:document.document.indexStatus.available')}
-              />
-            ) : showIndexingState ? (
-              <TooltipProvider>
-                <Tooltip delayDuration={200}>
-                  <TooltipTrigger asChild>
-                    <span className="w-1 h-1 rounded-full flex-shrink-0 bg-blue-500 cursor-help animate-pulse" />
-                  </TooltipTrigger>
-                  <TooltipContent side="top" className="max-w-xs">
-                    <p className="text-xs">
-                      {t('knowledge:document.document.indexStatus.indexingHint')}
-                    </p>
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-            ) : (
-              <TooltipProvider>
-                <Tooltip delayDuration={200}>
-                  <TooltipTrigger asChild>
-                    <span
-                      className={`w-1 h-1 rounded-full flex-shrink-0 cursor-help ${unavailableDotColor}`}
-                    />
-                  </TooltipTrigger>
-                  <TooltipContent side="top" className="max-w-xs">
-                    <p className="text-xs">{unavailableHint}</p>
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-            )}
-            {/* Creator */}
-            {document.created_by && (
-              <>
-                <span className="text-[9px] text-text-muted">·</span>
+          <div className="flex items-center justify-between mt-0.5">
+            <div className="flex items-center gap-1.5 min-w-0">
+              {/* Type badge */}
+              {isTable ? (
+                <Badge
+                  variant="default"
+                  size="sm"
+                  className="bg-blue-500/10 text-blue-600 border-blue-500/20 text-[9px] px-1 py-0"
+                >
+                  {t('knowledge:document.document.type.table')}
+                </Badge>
+              ) : isWeb ? (
+                <Badge
+                  variant="default"
+                  size="sm"
+                  className="bg-green-500/10 text-green-600 border-green-500/20 text-[9px] px-1 py-0"
+                >
+                  {t('knowledge:document.document.type.web')}
+                </Badge>
+              ) : (
+                <span className="text-[9px] text-text-muted uppercase">
+                  {document.file_extension}
+                </span>
+              )}
+              {/* Size */}
+              {!isTable && !isWeb && (
+                <span className="text-[9px] text-text-muted">
+                  {formatFileSize(document.file_size)}
+                </span>
+              )}
+              {/* Status indicator */}
+              {document.is_active ? (
+                <span
+                  className="w-1 h-1 rounded-full flex-shrink-0 bg-green-500"
+                  title={t('knowledge:document.document.indexStatus.available')}
+                />
+              ) : showIndexingState ? (
+                <TooltipProvider>
+                  <Tooltip delayDuration={200}>
+                    <TooltipTrigger asChild>
+                      <span className="w-1 h-1 rounded-full flex-shrink-0 bg-blue-500 cursor-help animate-pulse" />
+                    </TooltipTrigger>
+                    <TooltipContent side="top" className="max-w-xs">
+                      <p className="text-xs">
+                        {t('knowledge:document.document.indexStatus.indexingHint')}
+                      </p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              ) : (
+                <TooltipProvider>
+                  <Tooltip delayDuration={200}>
+                    <TooltipTrigger asChild>
+                      <span
+                        className={`w-1 h-1 rounded-full flex-shrink-0 cursor-help ${unavailableDotColor}`}
+                      />
+                    </TooltipTrigger>
+                    <TooltipContent side="top" className="max-w-xs">
+                      <p className="text-xs">{unavailableHint}</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              )}
+            </div>
+            <div className="flex items-center gap-1.5 flex-shrink-0">
+              {document.created_by && (
                 <span className="text-[9px] text-text-muted truncate max-w-[60px]">
                   {document.created_by}
                 </span>
-              </>
-            )}
-            {/* Updated time - show "-" if not modified */}
-            <span className="text-[9px] text-text-muted">
-              {isUnmodified ? '-' : formatDateTime(document.updated_at)}
-            </span>
+              )}
+              <span className="text-[9px] text-text-muted">
+                {isUnmodified ? '-' : formatDate(document.updated_at)}
+              </span>
+            </div>
           </div>
         </div>
 
