@@ -9,12 +9,13 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from sqlalchemy.orm import Session
+
 from knowledge_engine.embedding.factory import (
     create_embedding_model_from_runtime_config,
 )
 from knowledge_engine.query.executor import QueryExecutor as KnowledgeQueryExecutor
 from knowledge_engine.storage.factory import create_storage_backend_from_runtime_config
-from knowledge_runtime.db.session import get_session
 from knowledge_runtime.services.config_resolver import ConfigResolver
 from shared.models import (
     RemoteQueryRecord,
@@ -35,7 +36,8 @@ class QueryExecutor:
     4. Aggregates and sorts results by score
     """
 
-    def __init__(self) -> None:
+    def __init__(self, db: Session) -> None:
+        self._db = db
         self._config_resolver = ConfigResolver()
 
     async def execute(self, request: RemoteQueryRequest) -> RemoteQueryResponse:
@@ -67,8 +69,10 @@ class QueryExecutor:
         )
 
         logger.info(
-            f"Query complete: query='{request.query[:50]}...', "
-            f"total_results={len(all_records)}, returned={len(limited_records)}"
+            "Query complete: query='%s...', total_results=%d, returned=%d",
+            request.query[:50],
+            len(all_records),
+            len(limited_records),
         )
 
         return RemoteQueryResponse(
@@ -92,16 +96,11 @@ class QueryExecutor:
             List of records from this knowledge base.
         """
         # Resolve config from database
-        db_gen = get_session()
-        db = next(db_gen)
-        try:
-            config = self._config_resolver.resolve_query_config(
-                db=db,
-                knowledge_base_id=knowledge_base_id,
-                user_id=request.user_id,
-            )
-        finally:
-            db.close()
+        config = self._config_resolver.resolve_query_config(
+            db=self._db,
+            knowledge_base_id=knowledge_base_id,
+            user_id=request.user_id,
+        )
 
         # Create storage backend and embedding model
         storage_backend = create_storage_backend_from_runtime_config(
@@ -142,26 +141,19 @@ class QueryExecutor:
             )
 
         logger.info(
-            f"Queried KB: knowledge_base_id={knowledge_base_id}, "
-            f"records={len(records)}"
+            "Queried KB: knowledge_base_id=%d, records=%d",
+            knowledge_base_id,
+            len(records),
         )
 
         return records
 
     def _extract_document_id(self, record: dict[str, Any]) -> int | None:
-        """Extract document ID from record metadata.
-
-        Args:
-            record: Query result record.
-
-        Returns:
-            Document ID if found, None otherwise.
-        """
+        """Extract document ID from record metadata."""
         metadata = record.get("metadata") or {}
         doc_ref = metadata.get("doc_ref")
         if doc_ref and isinstance(doc_ref, str):
             try:
-                # doc_ref format is typically "doc_xxx" or numeric string
                 if doc_ref.startswith("doc_"):
                     return int(doc_ref[4:])
                 return int(doc_ref)
@@ -170,14 +162,5 @@ class QueryExecutor:
         return None
 
     def _estimate_tokens(self, text: str) -> int:
-        """Estimate token count for text.
-
-        Uses a simple heuristic: ~4 characters per token.
-
-        Args:
-            text: Text to estimate tokens for.
-
-        Returns:
-            Estimated token count.
-        """
+        """Estimate token count (~4 characters per token)."""
         return len(text) // 4

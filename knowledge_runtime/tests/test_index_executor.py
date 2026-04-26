@@ -83,10 +83,6 @@ class TestIndexExecutor:
 
         with (
             patch(
-                "knowledge_runtime.services.index_executor.get_session",
-                return_value=iter([mock_db]),
-            ),
-            patch(
                 "knowledge_runtime.services.index_executor.create_storage_backend_from_runtime_config",
                 return_value=mock_storage_backend,
             ),
@@ -101,7 +97,7 @@ class TestIndexExecutor:
             patch("httpx.AsyncClient") as mock_client,
             patch("knowledge_runtime.config._settings", None),
         ):
-            executor = IndexExecutor()
+            executor = IndexExecutor(db=mock_db)
             executor._config_resolver.resolve_index_config = MagicMock(
                 return_value=mock_index_config
             )
@@ -127,9 +123,6 @@ class TestIndexExecutor:
             document_id=100,
         )
 
-        # Verify db session was closed
-        mock_db.close.assert_called_once()
-
     @pytest.mark.asyncio
     async def test_execute_uses_request_metadata_over_fetched(
         self, index_request, mock_index_config
@@ -149,10 +142,6 @@ class TestIndexExecutor:
 
         with (
             patch(
-                "knowledge_runtime.services.index_executor.get_session",
-                return_value=iter([mock_db]),
-            ),
-            patch(
                 "knowledge_runtime.services.index_executor.create_storage_backend_from_runtime_config",
                 return_value=mock_storage_backend,
             ),
@@ -167,7 +156,7 @@ class TestIndexExecutor:
             patch("httpx.AsyncClient") as mock_client,
             patch("knowledge_runtime.config._settings", None),
         ):
-            executor = IndexExecutor()
+            executor = IndexExecutor(db=mock_db)
             executor._config_resolver.resolve_index_config = MagicMock(
                 return_value=mock_index_config
             )
@@ -203,10 +192,6 @@ class TestIndexExecutor:
 
         with (
             patch(
-                "knowledge_runtime.services.index_executor.get_session",
-                return_value=iter([mock_db]),
-            ),
-            patch(
                 "knowledge_runtime.services.index_executor.create_storage_backend_from_runtime_config",
                 return_value=mock_storage_backend,
             ) as mock_create_storage,
@@ -221,7 +206,7 @@ class TestIndexExecutor:
             patch("httpx.AsyncClient") as mock_client,
             patch("knowledge_runtime.config._settings", None),
         ):
-            executor = IndexExecutor()
+            executor = IndexExecutor(db=mock_db)
             executor._config_resolver.resolve_index_config = MagicMock(
                 return_value=mock_index_config
             )
@@ -259,14 +244,10 @@ class TestIndexExecutor:
         mock_db = MagicMock()
 
         with (
-            patch(
-                "knowledge_runtime.services.index_executor.get_session",
-                return_value=iter([mock_db]),
-            ),
             patch("httpx.AsyncClient") as mock_client,
             patch("knowledge_runtime.config._settings", None),
         ):
-            executor = IndexExecutor()
+            executor = IndexExecutor(db=mock_db)
             executor._config_resolver.resolve_index_config = MagicMock(
                 return_value=mock_index_config
             )
@@ -296,10 +277,6 @@ class TestIndexExecutor:
 
         with (
             patch(
-                "knowledge_runtime.services.index_executor.get_session",
-                return_value=iter([mock_db]),
-            ),
-            patch(
                 "knowledge_runtime.services.index_executor.create_storage_backend_from_runtime_config",
                 return_value=mock_storage_backend,
             ),
@@ -314,7 +291,7 @@ class TestIndexExecutor:
             patch("httpx.AsyncClient") as mock_client,
             patch("knowledge_runtime.config._settings", None),
         ):
-            executor = IndexExecutor()
+            executor = IndexExecutor(db=mock_db)
             executor._config_resolver.resolve_index_config = MagicMock(
                 return_value=mock_index_config
             )
@@ -338,45 +315,14 @@ class TestIndexExecutor:
 
         mock_db = MagicMock()
 
-        with patch(
-            "knowledge_runtime.services.index_executor.get_session",
-            return_value=iter([mock_db]),
-        ):
-            executor = IndexExecutor()
-            executor._config_resolver.resolve_index_config = MagicMock(
-                side_effect=ConfigResolutionError(
-                    "config_not_found", "Knowledge base 1 not found"
-                )
+        executor = IndexExecutor(db=mock_db)
+        executor._config_resolver.resolve_index_config = MagicMock(
+            side_effect=ConfigResolutionError(
+                "config_not_found", "Knowledge base 1 not found"
             )
+        )
 
-            with pytest.raises(ConfigResolutionError) as exc_info:
-                await executor.execute(index_request)
+        with pytest.raises(ConfigResolutionError) as exc_info:
+            await executor.execute(index_request)
 
-            assert exc_info.value.code == "config_not_found"
-
-        # Verify db session was closed even on error
-        mock_db.close.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_execute_db_closed_on_config_resolution_error(
-        self, index_request
-    ) -> None:
-        """Test that db session is closed even when config resolution fails."""
-        from knowledge_runtime.services.config_resolver import ConfigResolutionError
-
-        mock_db = MagicMock()
-
-        with patch(
-            "knowledge_runtime.services.index_executor.get_session",
-            return_value=iter([mock_db]),
-        ):
-            executor = IndexExecutor()
-            executor._config_resolver.resolve_index_config = MagicMock(
-                side_effect=ConfigResolutionError("config_not_found", "KB not found")
-            )
-
-            with pytest.raises(ConfigResolutionError):
-                await executor.execute(index_request)
-
-        # DB session should be closed even on error
-        mock_db.close.assert_called_once()
+        assert exc_info.value.code == "config_not_found"

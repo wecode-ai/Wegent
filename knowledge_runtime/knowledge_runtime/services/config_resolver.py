@@ -51,6 +51,14 @@ class QueryConfig:
     user_name: str | None = None
 
 
+@dataclass
+class AdminConfig:
+    """Resolved configuration for admin operations (delete/purge/drop/list)."""
+
+    index_owner_user_id: int
+    retriever_config: RuntimeRetrieverConfig
+
+
 class ConfigResolutionError(ValueError):
     """Raised when config resolution fails with a specific error code."""
 
@@ -157,6 +165,28 @@ class ConfigResolver:
             embedding_model_config=embedding_model_config,
             retrieval_config=runtime_retrieval_config,
             user_name=user_name,
+        )
+
+    def resolve_admin_config(
+        self,
+        db: Session,
+        *,
+        knowledge_base_id: int,
+    ) -> AdminConfig:
+        """Resolve config for admin operations (delete/purge/drop/list)."""
+        kb = self._get_knowledge_base(db, knowledge_base_id)
+        retrieval_config = self._parse_kb_retrieval_config(kb)
+
+        retriever_config = self._build_resolved_retriever_config(
+            db=db,
+            user_id=kb.user_id,
+            name=retrieval_config["retriever_name"],
+            namespace=retrieval_config["retriever_namespace"],
+        )
+
+        return AdminConfig(
+            index_owner_user_id=kb.user_id,
+            retriever_config=retriever_config,
         )
 
     def resolve_retriever_config(

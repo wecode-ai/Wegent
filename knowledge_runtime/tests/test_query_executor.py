@@ -58,12 +58,6 @@ def query_request():
     )
 
 
-def _make_mock_session_generator():
-    """Create a generator that yields a new mock db session each time."""
-    while True:
-        yield MagicMock()
-
-
 class TestQueryExecutor:
     """Tests for QueryExecutor."""
 
@@ -94,10 +88,6 @@ class TestQueryExecutor:
 
         with (
             patch(
-                "knowledge_runtime.services.query_executor.get_session",
-                side_effect=lambda: iter([MagicMock()]),
-            ),
-            patch(
                 "knowledge_runtime.services.query_executor.create_storage_backend_from_runtime_config",
                 return_value=mock_storage_backend,
             ),
@@ -110,7 +100,7 @@ class TestQueryExecutor:
                 return_value=mock_kb_executor,
             ),
         ):
-            executor = QueryExecutor()
+            executor = QueryExecutor(db=mock_db)
             executor._config_resolver.resolve_query_config = MagicMock(
                 side_effect=[config_1, config_2]
             )
@@ -146,14 +136,11 @@ class TestQueryExecutor:
         mock_kb_executor = MagicMock()
         mock_kb_executor.execute = mock_execute
 
+        mock_db = MagicMock()
         config_1 = _make_query_config(1)
         config_2 = _make_query_config(2)
 
         with (
-            patch(
-                "knowledge_runtime.services.query_executor.get_session",
-                side_effect=lambda: iter([MagicMock()]),
-            ),
             patch(
                 "knowledge_runtime.services.query_executor.create_storage_backend_from_runtime_config",
                 return_value=mock_storage_backend,
@@ -167,7 +154,7 @@ class TestQueryExecutor:
                 return_value=mock_kb_executor,
             ),
         ):
-            executor = QueryExecutor()
+            executor = QueryExecutor(db=mock_db)
             executor._config_resolver.resolve_query_config = MagicMock(
                 side_effect=[config_1, config_2]
             )
@@ -196,14 +183,11 @@ class TestQueryExecutor:
             }
         )
 
+        mock_db = MagicMock()
         config_1 = _make_query_config(1)
         config_2 = _make_query_config(2)
 
         with (
-            patch(
-                "knowledge_runtime.services.query_executor.get_session",
-                side_effect=lambda: iter([MagicMock()]),
-            ),
             patch(
                 "knowledge_runtime.services.query_executor.create_storage_backend_from_runtime_config",
                 return_value=mock_storage_backend,
@@ -217,7 +201,7 @@ class TestQueryExecutor:
                 return_value=mock_kb_executor,
             ),
         ):
-            executor = QueryExecutor()
+            executor = QueryExecutor(db=mock_db)
             executor._config_resolver.resolve_query_config = MagicMock(
                 side_effect=[config_1, config_2]
             )
@@ -236,14 +220,11 @@ class TestQueryExecutor:
         mock_kb_executor = MagicMock()
         mock_kb_executor.execute = AsyncMock(return_value={"records": []})
 
+        mock_db = MagicMock()
         config_1 = _make_query_config(1)
         config_2 = _make_query_config(2)
 
         with (
-            patch(
-                "knowledge_runtime.services.query_executor.get_session",
-                side_effect=lambda: iter([MagicMock()]),
-            ),
             patch(
                 "knowledge_runtime.services.query_executor.create_storage_backend_from_runtime_config",
                 return_value=mock_storage_backend,
@@ -257,7 +238,7 @@ class TestQueryExecutor:
                 return_value=mock_kb_executor,
             ),
         ):
-            executor = QueryExecutor()
+            executor = QueryExecutor(db=mock_db)
             executor._config_resolver.resolve_query_config = MagicMock(
                 side_effect=[config_1, config_2]
             )
@@ -277,14 +258,11 @@ class TestQueryExecutor:
         mock_kb_executor = MagicMock()
         mock_kb_executor.execute = AsyncMock(return_value={"records": []})
 
+        mock_db = MagicMock()
         config_1 = _make_query_config(1)
         config_2 = _make_query_config(2)
 
         with (
-            patch(
-                "knowledge_runtime.services.query_executor.get_session",
-                side_effect=lambda: iter([MagicMock()]),
-            ),
             patch(
                 "knowledge_runtime.services.query_executor.create_storage_backend_from_runtime_config",
                 return_value=mock_storage_backend,
@@ -298,7 +276,7 @@ class TestQueryExecutor:
                 return_value=mock_kb_executor,
             ),
         ):
-            executor = QueryExecutor()
+            executor = QueryExecutor(db=mock_db)
             mock_resolve = MagicMock(side_effect=[config_1, config_2])
             executor._config_resolver.resolve_query_config = mock_resolve
 
@@ -307,12 +285,12 @@ class TestQueryExecutor:
         # ConfigResolver should be called twice, once for each KB
         assert mock_resolve.call_count == 2
         mock_resolve.assert_any_call(
-            db=mock_resolve.call_args_list[0].kwargs["db"],
+            db=mock_db,
             knowledge_base_id=1,
             user_id=42,
         )
         mock_resolve.assert_any_call(
-            db=mock_resolve.call_args_list[1].kwargs["db"],
+            db=mock_db,
             knowledge_base_id=2,
             user_id=42,
         )
@@ -320,7 +298,8 @@ class TestQueryExecutor:
     @pytest.mark.asyncio
     async def test_extract_document_id_from_doc_ref(self) -> None:
         """Test document ID extraction from various doc_ref formats."""
-        executor = QueryExecutor()
+        mock_db = MagicMock()
+        executor = QueryExecutor(db=mock_db)
 
         # Test "doc_XXX" format
         assert (
@@ -339,7 +318,8 @@ class TestQueryExecutor:
 
     def test_estimate_tokens(self) -> None:
         """Test token estimation heuristic."""
-        executor = QueryExecutor()
+        mock_db = MagicMock()
+        executor = QueryExecutor(db=mock_db)
 
         # ~4 characters per token
         assert executor._estimate_tokens("test") == 1  # 4 chars

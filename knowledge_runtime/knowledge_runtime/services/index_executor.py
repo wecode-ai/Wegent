@@ -9,12 +9,13 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from sqlalchemy.orm import Session
+
 from knowledge_engine.embedding.factory import (
     create_embedding_model_from_runtime_config,
 )
 from knowledge_engine.services.document_service import DocumentService
 from knowledge_engine.storage.factory import create_storage_backend_from_runtime_config
-from knowledge_runtime.db.session import get_session
 from knowledge_runtime.services.config_resolver import ConfigResolver
 from knowledge_runtime.services.content_fetcher import ContentFetcher
 from shared.models import RemoteIndexRequest
@@ -32,9 +33,10 @@ class IndexExecutor:
     4. Indexes the document using DocumentService
     """
 
-    def __init__(self) -> None:
-        self._content_fetcher = ContentFetcher()
+    def __init__(self, db: Session) -> None:
+        self._db = db
         self._config_resolver = ConfigResolver()
+        self._content_fetcher = ContentFetcher()
 
     async def execute(self, request: RemoteIndexRequest) -> dict[str, Any]:
         """Execute the indexing operation.
@@ -50,17 +52,12 @@ class IndexExecutor:
             ContentFetchError: If content fetching fails.
         """
         # Resolve configs from database
-        db_gen = get_session()
-        db = next(db_gen)
-        try:
-            config = self._config_resolver.resolve_index_config(
-                db=db,
-                knowledge_base_id=request.knowledge_base_id,
-                user_id=request.user_id,
-                document_id=request.document_id,
-            )
-        finally:
-            db.close()
+        config = self._config_resolver.resolve_index_config(
+            db=self._db,
+            knowledge_base_id=request.knowledge_base_id,
+            user_id=request.user_id,
+            document_id=request.document_id,
+        )
 
         # Fetch content from the content reference
         binary_data, source_file, file_extension = await self._content_fetcher.fetch(
@@ -88,8 +85,10 @@ class IndexExecutor:
         knowledge_id = str(request.knowledge_base_id)
 
         logger.info(
-            f"Indexing document for knowledge_base_id={request.knowledge_base_id}, "
-            f"source_file={source_file}, user_id={config.index_owner_user_id}"
+            "Indexing document for knowledge_base_id=%d, source_file=%s, user_id=%d",
+            request.knowledge_base_id,
+            source_file,
+            config.index_owner_user_id,
         )
 
         # Index the document
@@ -105,8 +104,9 @@ class IndexExecutor:
         )
 
         logger.info(
-            f"Indexing complete: chunk_count={result.get('chunk_count')}, "
-            f"doc_ref={result.get('doc_ref')}"
+            "Indexing complete: chunk_count=%s, doc_ref=%s",
+            result.get("chunk_count"),
+            result.get("doc_ref"),
         )
 
         return result

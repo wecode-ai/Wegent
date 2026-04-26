@@ -8,8 +8,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session
 
+from knowledge_runtime.db.session import get_db
 from knowledge_runtime.services.index_executor import IndexExecutor
 from shared.models import RemoteIndexRequest
 
@@ -17,19 +19,18 @@ router = APIRouter()
 
 
 @router.post("/index")
-async def index_document(request: RemoteIndexRequest) -> dict[str, Any]:
+async def index_document(
+    request: RemoteIndexRequest,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
     """Index a document for RAG retrieval.
 
-    This endpoint:
-    1. Fetches content from the provided ContentRef
-    2. Creates storage backend and embedding model from configs
-    3. Indexes the document chunks into the vector store
-
     Args:
-        request: The index request containing content reference and configs.
+        request: The index request containing knowledge_base_id and content_ref.
+        db: Database session for config resolution.
 
     Returns:
         Indexing result with chunk_count, doc_ref, etc.
     """
-    executor = IndexExecutor()
+    executor = IndexExecutor(db=db)
     return await executor.execute(request)

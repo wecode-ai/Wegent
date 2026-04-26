@@ -38,8 +38,15 @@ def init_db(database_url: str) -> None:
     logger.info("Database engine initialized")
 
 
-def get_session() -> Generator[Session, None, None]:
-    """Get a database session. Must call init_db() first."""
+def get_db() -> Generator[Session, None, None]:
+    """FastAPI dependency that yields a DB session and ensures cleanup.
+
+    Usage in endpoints::
+
+        @router.post("/index")
+        async def index_document(request, db: Session = Depends(get_db)):
+            ...
+    """
     if _session_factory is None:
         raise RuntimeError("Database not initialized. Call init_db() first.")
     session = _session_factory()
