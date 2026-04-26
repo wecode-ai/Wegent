@@ -113,7 +113,7 @@ interface DocumentListProps {
   isOrganization?: boolean
 }
 
-type SortField = 'name' | 'size' | 'date' | 'updatedDate'
+type SortField = 'name' | 'size' | 'date' | 'updatedAt'
 type SortOrder = 'asc' | 'desc'
 
 export function DocumentList({
@@ -262,7 +262,7 @@ export function DocumentList({
         case 'date':
           comparison = new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
           break
-        case 'updatedDate':
+        case 'updatedAt':
           comparison = new Date(a.updated_at).getTime() - new Date(b.updated_at).getTime()
           break
       }
@@ -830,10 +830,10 @@ export function DocumentList({
                 {/* Updated date column header */}
                 <div
                   className="w-40 flex-shrink-0 text-center cursor-pointer hover:text-text-primary select-none"
-                  onClick={() => handleSort('updatedDate')}
+                  onClick={() => handleSort('updatedAt')}
                 >
-                  {t('document.document.columns.updatedDate')}
-                  <SortIcon field="updatedDate" />
+                  {t('document.document.columns.updatedAt')}
+                  <SortIcon field="updatedAt" />
                 </div>
                 <div className="w-24 flex-shrink-0 text-center">
                   {t('document.document.columns.indexStatus')}

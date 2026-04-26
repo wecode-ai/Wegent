@@ -92,6 +92,9 @@ export function DocumentItem({
     return `${year}/${month}/${day} ${hours}:${minutes}:${seconds}`
   }
 
+  // Check if the document has been modified since creation
+  const isUnmodified = document.updated_at === document.created_at
+
   const handleCheckboxChange = (checked: boolean) => {
     onSelect?.(document, checked)
   }
@@ -310,6 +313,10 @@ export function DocumentItem({
                 </span>
               </>
             )}
+            {/* Updated time - show "-" if not modified */}
+            <span className="text-[9px] text-text-muted">
+              {isUnmodified ? '-' : formatDateTime(document.updated_at)}
+            </span>
           </div>
         </div>
 
@@ -481,7 +488,7 @@ export function DocumentItem({
         </span>
       </div>
       {/* Creator */}
-      <div className="w-24 flex-shrink-0 text-center">
+      <div className="w-24 flex-shrink-0 text-center" data-testid="creator-cell">
         <span className="text-xs text-text-muted truncate">{document.created_by || '-'}</span>
       </div>
       {/* Upload date with time */}
@@ -489,8 +496,10 @@ export function DocumentItem({
         <span className="text-xs text-text-muted">{formatDateTime(document.created_at)}</span>
       </div>
       {/* Updated date */}
-      <div className="w-40 flex-shrink-0 text-center">
-        <span className="text-xs text-text-muted">{formatDateTime(document.updated_at)}</span>
+      <div className="w-40 flex-shrink-0 text-center" data-testid="updated-at-cell">
+        <span className="text-xs text-text-muted">
+          {isUnmodified ? '-' : formatDateTime(document.updated_at)}
+        </span>
       </div>
 
       {/* Index status (is_active) */}

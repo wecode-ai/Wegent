@@ -659,12 +659,12 @@ class KnowledgeOrchestrator:
         )
 
         # Batch query user names for created_by field
-        user_ids = list({doc.user_id for doc in documents})
+        user_ids = list({doc.user_id for doc in documents if doc.user_id})
         user_name_map: dict[int, str] = {}
         if user_ids:
-            user_rows = db.query(User.id, User.user_name).filter(
-                User.id.in_(user_ids)
-            ).all()
+            user_rows = (
+                db.query(User.id, User.user_name).filter(User.id.in_(user_ids)).all()
+            )
             user_name_map = {uid: uname for uid, uname in user_rows}
 
         items = []
