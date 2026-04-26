@@ -132,12 +132,22 @@ class ConfigResolver:
         )
 
         rc = retrieval_config
+        retrieval_mode = rc.get("retrieval_mode", "vector")
+        hybrid_weights = rc.get("hybrid_weights") or {}
         runtime_retrieval_config = RuntimeRetrievalConfig(
             top_k=rc.get("top_k", 20),
             score_threshold=rc.get("score_threshold", 0.7),
-            retrieval_mode=rc.get("retrieval_mode", "vector"),
-            vector_weight=rc.get("vector_weight"),
-            keyword_weight=rc.get("keyword_weight"),
+            retrieval_mode=retrieval_mode,
+            vector_weight=(
+                hybrid_weights.get("vector_weight")
+                if retrieval_mode == "hybrid"
+                else None
+            ),
+            keyword_weight=(
+                hybrid_weights.get("keyword_weight")
+                if retrieval_mode == "hybrid"
+                else None
+            ),
         )
 
         return QueryConfig(
@@ -215,12 +225,7 @@ class ConfigResolver:
             "top_k": retrieval_config.get("top_k", 20),
             "score_threshold": retrieval_config.get("score_threshold", 0.7),
             "retrieval_mode": retrieval_config.get("retrieval_mode", "vector"),
-            "vector_weight": (retrieval_config.get("hybrid_weights") or {}).get(
-                "vector_weight"
-            ),
-            "keyword_weight": (retrieval_config.get("hybrid_weights") or {}).get(
-                "keyword_weight"
-            ),
+            "hybrid_weights": retrieval_config.get("hybrid_weights"),
         }
 
     def _build_resolved_retriever_config(

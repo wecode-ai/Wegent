@@ -534,8 +534,7 @@ class TestParseKbRetrievalConfig:
         assert result["top_k"] == 15
         assert result["score_threshold"] == 0.6
         assert result["retrieval_mode"] == "hybrid"
-        assert result["vector_weight"] == 0.8
-        assert result["keyword_weight"] == 0.2
+        assert result["hybrid_weights"] == {"vector_weight": 0.8, "keyword_weight": 0.2}
 
     def test_defaults(self, resolver: ConfigResolver) -> None:
         """Test parsing with minimal config uses defaults."""
@@ -556,8 +555,7 @@ class TestParseKbRetrievalConfig:
         assert result["top_k"] == 20
         assert result["score_threshold"] == 0.7
         assert result["retrieval_mode"] == "vector"
-        assert result["vector_weight"] is None
-        assert result["keyword_weight"] is None
+        assert result["hybrid_weights"] is None
 
     def test_missing_retriever_name(self, resolver: ConfigResolver) -> None:
         """Test missing retriever_name raises ConfigResolutionError."""
