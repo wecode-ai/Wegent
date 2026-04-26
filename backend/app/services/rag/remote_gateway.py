@@ -148,27 +148,14 @@ class RemoteRagGateway:
         )
         payload = RemoteIndexRequest(
             knowledge_base_id=spec.knowledge_base_id,
+            user_id=spec.index_owner_user_id,
             document_id=spec.document_id,
-            index_owner_user_id=spec.index_owner_user_id,
-            retriever_config=spec.retriever_config
-            or {
-                "name": spec.retriever_name,
-                "namespace": spec.retriever_namespace,
-            },
-            embedding_model_config=spec.embedding_model_config
-            or {
-                "model_name": spec.embedding_model_name,
-                "model_namespace": spec.embedding_model_namespace,
-            },
-            splitter_config=spec.splitter_config,
-            index_families=spec.index_families,
+            source_file=source_file,
+            file_extension=file_extension,
             content_ref=build_content_ref_for_attachment(
                 db=db,
                 attachment_id=spec.source.attachment_id,
             ),
-            source_file=source_file,
-            file_extension=file_extension,
-            user_name=spec.user_name,
         )
         return await self._post_model("/internal/rag/index", payload)
 
@@ -181,14 +168,11 @@ class RemoteRagGateway:
         del db
         payload = RemoteQueryRequest(
             knowledge_base_ids=spec.knowledge_base_ids,
+            user_id=spec.user_id or 0,
             query=spec.query,
             max_results=spec.max_results,
             document_ids=spec.document_ids,
             metadata_condition=spec.metadata_condition,
-            user_name=spec.user_name,
-            knowledge_base_configs=spec.knowledge_base_configs,
-            enabled_index_families=spec.enabled_index_families,
-            retrieval_policy=spec.retrieval_policy,
         )
         response_payload = await self._post_model("/internal/rag/query", payload)
         response = RemoteQueryResponse.model_validate(response_payload)
@@ -206,10 +190,8 @@ class RemoteRagGateway:
         del db
         payload = RemoteDeleteDocumentIndexRequest(
             knowledge_base_id=spec.knowledge_base_id,
+            user_id=spec.index_owner_user_id,
             document_ref=spec.document_ref,
-            index_owner_user_id=spec.index_owner_user_id,
-            retriever_config=spec.retriever_config,
-            enabled_index_families=spec.enabled_index_families,
         )
         return await self._post_model("/internal/rag/delete-document-index", payload)
 
@@ -222,8 +204,7 @@ class RemoteRagGateway:
         del db
         payload = RemotePurgeKnowledgeIndexRequest(
             knowledge_base_id=spec.knowledge_base_id,
-            index_owner_user_id=spec.index_owner_user_id,
-            retriever_config=spec.retriever_config,
+            user_id=spec.index_owner_user_id,
         )
         return await self._post_model("/internal/rag/purge-knowledge-index", payload)
 
@@ -236,8 +217,7 @@ class RemoteRagGateway:
         del db
         payload = RemoteDropKnowledgeIndexRequest(
             knowledge_base_id=spec.knowledge_base_id,
-            index_owner_user_id=spec.index_owner_user_id,
-            retriever_config=spec.retriever_config,
+            user_id=spec.index_owner_user_id,
         )
         return await self._post_model("/internal/rag/drop-knowledge-index", payload)
 
@@ -250,8 +230,7 @@ class RemoteRagGateway:
         del db
         payload = RemoteListChunksRequest(
             knowledge_base_id=spec.knowledge_base_id,
-            index_owner_user_id=spec.index_owner_user_id,
-            retriever_config=spec.retriever_config,
+            user_id=spec.index_owner_user_id,
             max_chunks=spec.max_chunks,
             query=spec.query,
             metadata_condition=spec.metadata_condition,
@@ -267,7 +246,10 @@ class RemoteRagGateway:
         db: Session | None = None,
     ) -> dict[str, Any]:
         del db
-        payload = RemoteTestConnectionRequest(retriever_config=spec.retriever_config)
+        payload = RemoteTestConnectionRequest(
+            knowledge_base_id=spec.knowledge_base_id,
+            user_id=spec.user_id,
+        )
         return await self._post_model("/internal/rag/test-connection", payload)
 
 

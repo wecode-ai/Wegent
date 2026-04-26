@@ -116,7 +116,8 @@ class ListChunksRuntimeSpec(RuntimeSpecModel):
 
 
 class ConnectionTestRuntimeSpec(RuntimeSpecModel):
-    retriever_config: RuntimeRetrieverConfig
+    knowledge_base_id: int
+    user_id: int
 
 
 DEFAULT_DIRECT_INJECTION_BUDGET = DirectInjectionBudget()

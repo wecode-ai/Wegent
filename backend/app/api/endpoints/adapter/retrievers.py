@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
 import logging
 from typing import Optional
 
@@ -14,17 +15,12 @@ from app.core.config import settings
 from app.models.user import User
 from app.schemas.kind import Retriever
 from app.services.adapters.retriever_kinds import retriever_kinds_service
-from app.services.rag.gateway_factory import get_query_gateway
-from app.services.rag.local_gateway import LocalRagGateway
-from app.services.rag.remote_gateway import RemoteRagGatewayError
-from app.services.rag.runtime_specs import ConnectionTestRuntimeSpec
 from knowledge_engine.storage.factory import (
     create_storage_backend_from_config,
     get_all_storage_retrieval_methods,
     get_supported_retrieval_methods,
     get_supported_storage_types,
 )
-from shared.models import RuntimeRetrieverConfig
 
 # RAG module is heavy (llama_index, scipy, pandas, grpc) - skip in standalone mode
 
@@ -259,7 +255,7 @@ async def test_retriever_connection(
         }
 
     try:
-        create_storage_backend_from_config(
+        storage_backend = create_storage_backend_from_config(
             storage_type=storage_type,
             url=url,
             username=username,
@@ -268,30 +264,13 @@ async def test_retriever_connection(
             index_strategy={"mode": "per_dataset"},
             ext={},
         )
-        runtime_spec = ConnectionTestRuntimeSpec(
-            retriever_config=RuntimeRetrieverConfig(
-                name="connection-test",
-                namespace="default",
-                storage_config={
-                    "type": storage_type,
-                    "url": url,
-                    "username": username,
-                    "password": password,
-                    "apiKey": api_key,
-                    "indexStrategy": {"mode": "per_dataset"},
-                    "ext": {},
-                },
-            )
-        )
-        gateway = get_query_gateway()
-        try:
-            return await gateway.test_connection(runtime_spec)
-        except RemoteRagGatewayError:
-            return await LocalRagGateway().test_connection(runtime_spec)
-
+        success = await asyncio.to_thread(storage_backend.test_connection)
+        return {
+            "success": success,
+            "message": "Connection successful" if success else "Connection failed",
+        }
     except ValueError as e:
         return {"success": False, "message": str(e)}
-
     except Exception as e:
         logger.error(f"Retriever connection test failed: {str(e)}")
         return {"success": False, "message": f"Connection failed: {str(e)}"}
