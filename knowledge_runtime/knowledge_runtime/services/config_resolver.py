@@ -24,6 +24,7 @@ from shared.models import (
 )
 from shared.models.db import Kind, User
 from shared.utils.crypto import decrypt_api_key
+from shared.utils.placeholder import process_custom_headers_placeholders
 
 logger = logging.getLogger(__name__)
 
@@ -307,7 +308,7 @@ class ConfigResolver:
         protocol = spec.get("protocol") or env.get("model")
         custom_headers = env.get("custom_headers", {})
         if custom_headers and isinstance(custom_headers, dict):
-            custom_headers = _process_custom_headers_placeholders(
+            custom_headers = process_custom_headers_placeholders(
                 custom_headers, user_name
             )
 
@@ -438,30 +439,3 @@ class ConfigResolver:
             return decrypt_api_key(value)
         except Exception:
             return value
-
-
-def _process_custom_headers_placeholders(
-    custom_headers: dict[str, Any],
-    user_name: str | None = None,
-) -> dict[str, Any]:
-    """Process placeholders in custom headers.
-
-    Supports placeholder format: ${user.name}
-    """
-    if not custom_headers or not isinstance(custom_headers, dict):
-        return custom_headers
-
-    data_sources: dict[str, dict[str, Any]] = {
-        "user": {"name": user_name or ""},
-    }
-
-    result = {}
-    for key, value in custom_headers.items():
-        if isinstance(value, str) and "${" in value:
-            for source_name, source_data in data_sources.items():
-                for field_name, field_value in source_data.items():
-                    placeholder = f"${{{source_name}.{field_name}}}"
-                    if placeholder in value:
-                        value = value.replace(placeholder, str(field_value))
-        result[key] = value
-    return result

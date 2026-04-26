@@ -13,13 +13,13 @@ from knowledge_runtime.services.config_resolver import (
     ConfigResolver,
     IndexConfig,
     QueryConfig,
-    _process_custom_headers_placeholders,
 )
 from shared.models import (
     RuntimeEmbeddingModelConfig,
     RuntimeRetrievalConfig,
     RuntimeRetrieverConfig,
 )
+from shared.utils.placeholder import process_custom_headers_placeholders
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -666,7 +666,7 @@ class TestBuildResolvedEmbeddingModelConfig:
                 side_effect=lambda v: f"dec_{v}" if v and v.startswith("sk-enc") else v,
             ),
             patch(
-                "knowledge_runtime.services.config_resolver._process_custom_headers_placeholders",
+                "shared.utils.placeholder.process_custom_headers_placeholders",
                 side_effect=lambda h, u: h,
             ),
         ):
@@ -709,7 +709,7 @@ class TestBuildResolvedEmbeddingModelConfig:
             patch.object(resolver, "_get_model_kind", return_value=model),
             patch.object(resolver, "_decrypt_optional_value", side_effect=lambda v: v),
             patch(
-                "knowledge_runtime.services.config_resolver._process_custom_headers_placeholders",
+                "shared.utils.placeholder.process_custom_headers_placeholders",
                 side_effect=lambda h, u: h,
             ),
         ):
@@ -744,7 +744,7 @@ class TestBuildResolvedEmbeddingModelConfig:
             patch.object(resolver, "_get_model_kind", return_value=model),
             patch.object(resolver, "_decrypt_optional_value", side_effect=lambda v: v),
             patch(
-                "knowledge_runtime.services.config_resolver._process_custom_headers_placeholders",
+                "shared.utils.placeholder.process_custom_headers_placeholders",
                 side_effect=lambda h, u: h,
             ),
         ):
@@ -1047,56 +1047,56 @@ class TestConfigResolutionError:
 
 
 # ---------------------------------------------------------------------------
-# Tests: _process_custom_headers_placeholders
+# Tests: process_custom_headers_placeholders
 # ---------------------------------------------------------------------------
 
 
 class TestProcessCustomHeadersPlaceholders:
-    """Tests for _process_custom_headers_placeholders helper."""
+    """Tests for process_custom_headers_placeholders helper."""
 
     def test_replaces_user_name_placeholder(self) -> None:
         """Test ${user.name} placeholder is replaced."""
         headers = {"X-User": "${user.name}"}
-        result = _process_custom_headers_placeholders(headers, user_name="alice")
+        result = process_custom_headers_placeholders(headers, user_name="alice")
         assert result["X-User"] == "alice"
 
     def test_replaces_in_mixed_string(self) -> None:
         """Test placeholder replacement within a longer string."""
         headers = {"Authorization": "Bearer ${user.name}-token"}
-        result = _process_custom_headers_placeholders(headers, user_name="bob")
+        result = process_custom_headers_placeholders(headers, user_name="bob")
         assert result["Authorization"] == "Bearer bob-token"
 
     def test_no_placeholders(self) -> None:
         """Test headers without placeholders pass through unchanged."""
         headers = {"X-Custom": "static-value"}
-        result = _process_custom_headers_placeholders(headers, user_name="alice")
+        result = process_custom_headers_placeholders(headers, user_name="alice")
         assert result["X-Custom"] == "static-value"
 
     def test_none_user_name(self) -> None:
         """Test placeholder with None user_name uses empty string."""
         headers = {"X-User": "${user.name}"}
-        result = _process_custom_headers_placeholders(headers, user_name=None)
+        result = process_custom_headers_placeholders(headers, user_name=None)
         assert result["X-User"] == ""
 
     def test_empty_headers(self) -> None:
         """Test empty headers dict returns empty dict."""
-        result = _process_custom_headers_placeholders({}, user_name="alice")
+        result = process_custom_headers_placeholders({}, user_name="alice")
         assert result == {}
 
     def test_none_headers(self) -> None:
         """Test None headers returns None."""
-        result = _process_custom_headers_placeholders(None, user_name="alice")
+        result = process_custom_headers_placeholders(None, user_name="alice")
         assert result is None
 
     def test_non_string_values_preserved(self) -> None:
         """Test non-string header values are preserved as-is."""
         headers = {"X-Count": 42, "X-Flag": True}
-        result = _process_custom_headers_placeholders(headers, user_name="alice")
+        result = process_custom_headers_placeholders(headers, user_name="alice")
         assert result["X-Count"] == 42
         assert result["X-Flag"] is True
 
     def test_multiple_placeholders(self) -> None:
         """Test multiple placeholders in the same header value."""
         headers = {"X-Auth": "user=${user.name}&type=bearer"}
-        result = _process_custom_headers_placeholders(headers, user_name="charlie")
+        result = process_custom_headers_placeholders(headers, user_name="charlie")
         assert result["X-Auth"] == "user=charlie&type=bearer"

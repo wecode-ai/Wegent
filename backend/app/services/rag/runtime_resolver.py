@@ -11,7 +11,6 @@ from app.services.knowledge.index_runtime import (
     get_kb_index_info,
     get_kb_index_info_by_record,
 )
-from app.services.rag.embedding.factory import _process_custom_headers_placeholders
 from app.services.rag.runtime_specs import (
     ConnectionTestRuntimeSpec,
     DeleteRuntimeSpec,
@@ -28,6 +27,7 @@ from app.services.rag.runtime_specs import (
     RuntimeRetrieverConfig,
 )
 from shared.utils.crypto import decrypt_api_key
+from shared.utils.placeholder import process_custom_headers_placeholders
 
 
 class RagRuntimeResolver:
@@ -655,7 +655,7 @@ class RagRuntimeResolver:
         protocol = spec.get("protocol") or env.get("model")
         custom_headers = env.get("custom_headers", {})
         if custom_headers and isinstance(custom_headers, dict):
-            custom_headers = _process_custom_headers_placeholders(
+            custom_headers = process_custom_headers_placeholders(
                 custom_headers,
                 user_name,
             )
