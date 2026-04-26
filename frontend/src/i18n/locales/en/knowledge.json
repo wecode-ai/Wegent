@@ -202,7 +202,9 @@
         "date": "Date",
         "status": "Status",
         "indexStatus": "Index",
-        "actions": "Actions"
+        "actions": "Actions",
+        "createdBy": "Created By",
+        "updatedDate": "Updated"
       },
       "type": {
         "table": "Table",
