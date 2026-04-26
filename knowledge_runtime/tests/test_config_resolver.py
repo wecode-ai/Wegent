@@ -418,59 +418,6 @@ class TestResolveQueryConfig:
 
 
 # ---------------------------------------------------------------------------
-# Tests: resolve_retriever_config
-# ---------------------------------------------------------------------------
-
-
-class TestResolveRetrieverConfig:
-    """Tests for ConfigResolver.resolve_retriever_config."""
-
-    def test_success(self, resolver: ConfigResolver, mock_db: MagicMock) -> None:
-        """Test successful retriever config resolution for admin operations."""
-        kb = _make_kb_kind(knowledge_base_id=1, user_id=42)
-
-        with (
-            patch.object(resolver, "_get_knowledge_base", return_value=kb),
-            patch.object(
-                resolver,
-                "_build_resolved_retriever_config",
-                return_value=RuntimeRetrieverConfig(
-                    name="test-retriever",
-                    namespace="default",
-                    storage_config={"type": "qdrant", "url": "http://localhost:6333"},
-                ),
-            ),
-        ):
-            result = resolver.resolve_retriever_config(
-                mock_db,
-                knowledge_base_id=1,
-                user_id=42,
-            )
-
-        assert isinstance(result, RuntimeRetrieverConfig)
-        assert result.name == "test-retriever"
-        assert result.namespace == "default"
-        assert result.storage_config["type"] == "qdrant"
-
-    def test_kb_not_found(self, resolver: ConfigResolver, mock_db: MagicMock) -> None:
-        """Test that ConfigResolutionError is raised when KB is not found."""
-        with patch.object(
-            resolver,
-            "_get_knowledge_base",
-            side_effect=ConfigResolutionError(
-                "config_not_found", "Knowledge base 999 not found"
-            ),
-        ):
-            with pytest.raises(ConfigResolutionError) as exc_info:
-                resolver.resolve_retriever_config(
-                    mock_db,
-                    knowledge_base_id=999,
-                    user_id=42,
-                )
-            assert exc_info.value.code == "config_not_found"
-
-
-# ---------------------------------------------------------------------------
 # Tests: _get_knowledge_base
 # ---------------------------------------------------------------------------
 

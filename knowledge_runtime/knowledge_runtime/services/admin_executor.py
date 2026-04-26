@@ -201,13 +201,14 @@ class AdminExecutor:
         request: RemoteTestConnectionRequest,
     ) -> dict[str, Any]:
         """Test connection to a storage backend."""
-        retriever_config = self._config_resolver.resolve_retriever_config(
-            db=self._db,
+        config = self._config_resolver.resolve_admin_config(
+            self._db,
             knowledge_base_id=request.knowledge_base_id,
-            user_id=request.user_id,
         )
 
-        storage_backend = create_storage_backend_from_runtime_config(retriever_config)
+        storage_backend = create_storage_backend_from_runtime_config(
+            config.retriever_config
+        )
 
         logger.info("Testing storage backend connection")
 

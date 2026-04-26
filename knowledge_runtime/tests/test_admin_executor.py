@@ -245,8 +245,11 @@ class TestAdminExecutor:
             "knowledge_runtime.services.admin_executor.create_storage_backend_from_runtime_config",
             return_value=mock_storage_backend,
         ):
-            admin_executor._config_resolver.resolve_retriever_config = MagicMock(
-                return_value=mock_retriever_config
+            admin_executor._config_resolver.resolve_admin_config = MagicMock(
+                return_value=AdminConfig(
+                    index_owner_user_id=7,
+                    retriever_config=mock_retriever_config,
+                )
             )
 
             result = await admin_executor.test_connection(request)
@@ -273,8 +276,11 @@ class TestAdminExecutor:
             "knowledge_runtime.services.admin_executor.create_storage_backend_from_runtime_config",
             return_value=mock_storage_backend,
         ):
-            admin_executor._config_resolver.resolve_retriever_config = MagicMock(
-                return_value=mock_retriever_config
+            admin_executor._config_resolver.resolve_admin_config = MagicMock(
+                return_value=AdminConfig(
+                    index_owner_user_id=7,
+                    retriever_config=mock_retriever_config,
+                )
             )
 
             result = await admin_executor.test_connection(request)
@@ -315,10 +321,10 @@ class TestAdminExecutor:
         assert call_kwargs["metadata_condition"] == {"doc_ref": "doc_123"}
 
     @pytest.mark.asyncio
-    async def test_test_connection_resolves_retriever_from_db(
+    async def test_test_connection_resolves_admin_config_from_db(
         self, admin_executor, mock_retriever_config
     ) -> None:
-        """Test that test_connection resolves retriever config from database."""
+        """Test that test_connection resolves admin config from database."""
         request = RemoteTestConnectionRequest(
             knowledge_base_id=1,
             user_id=42,
@@ -331,14 +337,18 @@ class TestAdminExecutor:
             "knowledge_runtime.services.admin_executor.create_storage_backend_from_runtime_config",
             return_value=mock_storage_backend,
         ):
-            mock_resolve = MagicMock(return_value=mock_retriever_config)
-            admin_executor._config_resolver.resolve_retriever_config = mock_resolve
+            mock_resolve = MagicMock(
+                return_value=AdminConfig(
+                    index_owner_user_id=7,
+                    retriever_config=mock_retriever_config,
+                )
+            )
+            admin_executor._config_resolver.resolve_admin_config = mock_resolve
 
             await admin_executor.test_connection(request)
 
         # Verify resolver was called with correct args
         mock_resolve.assert_called_once_with(
-            db=admin_executor._db,
+            admin_executor._db,
             knowledge_base_id=1,
-            user_id=42,
         )

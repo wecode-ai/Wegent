@@ -189,24 +189,6 @@ class ConfigResolver:
             retriever_config=retriever_config,
         )
 
-    def resolve_retriever_config(
-        self,
-        db: Session,
-        *,
-        knowledge_base_id: int,
-        user_id: int,
-    ) -> RuntimeRetrieverConfig:
-        """Resolve retriever config for admin operations."""
-        kb = self._get_knowledge_base(db, knowledge_base_id)
-        retrieval_config = self._parse_kb_retrieval_config(kb)
-
-        return self._build_resolved_retriever_config(
-            db=db,
-            user_id=kb.user_id,
-            name=retrieval_config["retriever_name"],
-            namespace=retrieval_config["retriever_namespace"],
-        )
-
     # --- Private methods ---
 
     def _get_knowledge_base(self, db: Session, knowledge_base_id: int) -> Kind:
