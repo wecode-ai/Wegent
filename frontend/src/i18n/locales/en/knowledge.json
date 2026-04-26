@@ -197,9 +197,11 @@
       "download": "Download",
       "columns": {
         "name": "Name",
+        "creator": "Creator",
         "type": "Type",
         "size": "Size",
-        "date": "Date",
+        "date": "Created",
+        "updatedAt": "Updated",
         "status": "Status",
         "indexStatus": "Index",
         "actions": "Actions"

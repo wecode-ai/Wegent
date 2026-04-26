@@ -92,6 +92,13 @@ export function DocumentItem({
     return `${year}/${month}/${day} ${hours}:${minutes}:${seconds}`
   }
 
+  // Check if the document has been modified since creation (compare at second level)
+  const isUnmodified = (() => {
+    const created = new Date(document.created_at).getTime()
+    const updated = new Date(document.updated_at).getTime()
+    return Math.abs(updated - created) < 1000
+  })()
+
   const handleCheckboxChange = (checked: boolean) => {
     onSelect?.(document, checked)
   }
@@ -268,6 +275,14 @@ export function DocumentItem({
                 {formatFileSize(document.file_size)}
               </span>
             )}
+            {/* Creator */}
+            <span className="text-[9px] text-text-muted">
+              {document.user_name || `User ${document.user_id}`}
+            </span>
+            {/* Updated time - show "-" if not modified */}
+            <span className="text-[9px] text-text-muted">
+              {isUnmodified ? '-' : formatDateTime(document.updated_at)}
+            </span>
             {/* Status indicator */}
             {document.is_active ? (
               <span
@@ -379,7 +394,7 @@ export function DocumentItem({
   // Normal mode: Table row layout
   return (
     <div
-      className={`flex items-center gap-4 px-4 py-3 bg-base hover:bg-surface transition-colors group min-w-[800px] ${showBorder ? 'border-b border-border' : ''} ${onViewDetail ? 'cursor-pointer' : ''}`}
+      className={`flex items-center gap-4 px-4 py-3 bg-base hover:bg-surface transition-colors group min-w-[1064px] ${showBorder ? 'border-b border-border' : ''} ${onViewDetail ? 'cursor-pointer' : ''}`}
       onClick={handleRowClick}
     >
       {/* Checkbox for batch selection */}
@@ -471,9 +486,21 @@ export function DocumentItem({
           {isTable || isWeb ? '-' : formatFileSize(document.file_size)}
         </span>
       </div>
-      {/* Upload date with time */}
+      {/* Creator */}
+      <div className="w-24 flex-shrink-0 text-center" data-testid="creator-cell">
+        <span className="text-xs text-text-muted">
+          {document.user_name || `User ${document.user_id}`}
+        </span>
+      </div>
+      {/* Created date with time */}
       <div className="w-40 flex-shrink-0 text-center">
         <span className="text-xs text-text-muted">{formatDateTime(document.created_at)}</span>
+      </div>
+      {/* Updated date with time */}
+      <div className="w-40 flex-shrink-0 text-center" data-testid="updated-at-cell">
+        <span className="text-xs text-text-muted">
+          {isUnmodified ? '-' : formatDateTime(document.updated_at)}
+        </span>
       </div>
 
       {/* Index status (is_active) */}

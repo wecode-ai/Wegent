@@ -353,6 +353,7 @@ class KnowledgeDocumentResponse(BaseModel):
     file_size: int
     status: DocumentStatus
     user_id: int
+    user_name: Optional[str] = Field(None, description="Creator username")
     is_active: bool
     index_status: DocumentIndexStatus
     index_generation: int

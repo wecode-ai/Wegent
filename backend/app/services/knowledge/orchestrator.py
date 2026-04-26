@@ -656,9 +656,24 @@ class KnowledgeOrchestrator:
             user_id=user.id,
         )
 
+        # Batch query user names to avoid N+1 queries
+        user_ids = list({doc.user_id for doc in documents if doc.user_id})
+        user_map: Dict[int, User] = {}
+        if user_ids:
+            users = db.query(User).filter(User.id.in_(user_ids)).all()
+            user_map = {u.id: u for u in users}
+
+        # Build response items with user_name populated
+        items = []
+        for doc in documents:
+            resp = KnowledgeDocumentResponse.model_validate(doc)
+            user_obj = user_map.get(doc.user_id)
+            resp.user_name = user_obj.user_name if user_obj else f"User {doc.user_id}"
+            items.append(resp)
+
         return KnowledgeDocumentListResponse(
             total=len(documents),
-            items=[KnowledgeDocumentResponse.model_validate(doc) for doc in documents],
+            items=items,
         )
 
     def _get_document_with_access_or_raise(
