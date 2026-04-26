@@ -51,6 +51,12 @@ class Settings(BaseSettings):
     # Generate using: openssl rand -hex 32
     internal_service_token: str = ""
 
+    # Database connection for config resolution
+    database_url: str = Field(
+        default="",
+        validation_alias=AliasChoices("KNOWLEDGE_RUNTIME_DATABASE_URL", "DATABASE_URL"),
+    )
+
 
 # Global settings instance
 _settings: Settings | None = None
