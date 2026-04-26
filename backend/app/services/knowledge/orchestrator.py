@@ -636,7 +636,9 @@ class KnowledgeOrchestrator:
             knowledge_base_id: Knowledge base ID
 
         Returns:
-            KnowledgeDocumentListResponse with document list
+            KnowledgeDocumentListResponse with document list.
+            Each document's created_by field is populated with the
+            creator's username from the users table (None if user not found).
 
         Raises:
             ValueError: If knowledge base not found or access denied
