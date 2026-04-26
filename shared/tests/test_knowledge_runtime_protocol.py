@@ -33,7 +33,6 @@ def test_shared_models_exports_knowledge_runtime_protocol_types() -> None:
         "RemoteQueryRequest",
         "RemoteQueryRecord",
         "RemoteQueryResponse",
-        "RemoteTestConnectionRequest",
     ]
 
     for name in exported_names:
@@ -243,20 +242,6 @@ def test_remote_delete_request_accepts_reference_mode() -> None:
     assert request.knowledge_base_id == 101
     assert request.user_id == 303
     assert request.document_ref == "202"
-
-
-def test_remote_test_connection_request_accepts_reference_mode() -> None:
-    remote_test_connection_request = _require_model("RemoteTestConnectionRequest")
-
-    request = remote_test_connection_request.model_validate(
-        {
-            "knowledge_base_id": 5,
-            "user_id": 1,
-        }
-    )
-
-    assert request.knowledge_base_id == 5
-    assert request.user_id == 1
 
 
 def test_remote_purge_knowledge_index_request_accepts_reference_mode() -> None:

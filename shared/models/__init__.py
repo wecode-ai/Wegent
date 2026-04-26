@@ -63,7 +63,6 @@ from .knowledge_runtime_protocol import (
     RemoteQueryRequest,
     RemoteQueryResponse,
     RemoteRagError,
-    RemoteTestConnectionRequest,
 )
 
 # OpenAI Request Converter
@@ -142,7 +141,6 @@ __all__ = [
     "RemoteListChunksRequest",
     "RemoteListChunkRecord",
     "RemoteListChunksResponse",
-    "RemoteTestConnectionRequest",
     "RemoteQueryRequest",
     "RemoteQueryRecord",
     "RemoteQueryResponse",

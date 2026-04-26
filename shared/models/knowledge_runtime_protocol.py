@@ -130,14 +130,6 @@ class RemoteListChunksRequest(KnowledgeRuntimeProtocolModel):
     extensions: dict[str, Any] | None = None
 
 
-class RemoteTestConnectionRequest(KnowledgeRuntimeProtocolModel):
-    """Test-connection request - reference mode."""
-
-    knowledge_base_id: int
-    user_id: int
-    extensions: dict[str, Any] | None = None
-
-
 class RemoteQueryRequest(KnowledgeRuntimeProtocolModel):
     """Query request - reference mode. KR resolves configs from DB."""
 

@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
+from app.services.auth.internal_service_token import verify_internal_service_token
 from app.services.knowledge.protected_mediation import (
     ProtectedKnowledgeMediationResponse,
     protected_knowledge_mediator,
@@ -47,7 +48,11 @@ MAX_READ_DOC_LIMIT = 500_000  # Maximum characters allowed per request
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/rag", tags=["internal-rag"])
+router = APIRouter(
+    prefix="/rag",
+    tags=["internal-rag"],
+    dependencies=[Depends(verify_internal_service_token)],
+)
 runtime_resolver = RagRuntimeResolver()
 
 

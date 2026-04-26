@@ -35,7 +35,7 @@ async def lifespan(app: FastAPI):
 
     # Initialize database connection for config resolution
     if settings.database_url:
-        from knowledge_runtime.db.session import init_db
+        from shared.db.sync_session import init_db
 
         init_db(settings.database_url)
         logger.info("Database initialized for config resolution")

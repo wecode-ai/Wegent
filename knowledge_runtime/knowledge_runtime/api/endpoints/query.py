@@ -9,8 +9,8 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from knowledge_runtime.db.session import get_db
 from knowledge_runtime.services.query_executor import QueryExecutor
+from shared.db.sync_session import get_db
 from shared.models import RemoteQueryRequest, RemoteQueryResponse
 
 router = APIRouter()

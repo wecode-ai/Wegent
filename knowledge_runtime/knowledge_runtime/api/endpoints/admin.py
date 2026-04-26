@@ -11,15 +11,14 @@ from typing import Any
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from knowledge_runtime.db.session import get_db
 from knowledge_runtime.services.admin_executor import AdminExecutor
+from shared.db.sync_session import get_db
 from shared.models import (
     RemoteDeleteDocumentIndexRequest,
     RemoteDropKnowledgeIndexRequest,
     RemoteListChunksRequest,
     RemoteListChunksResponse,
     RemotePurgeKnowledgeIndexRequest,
-    RemoteTestConnectionRequest,
 )
 
 router = APIRouter()
@@ -63,13 +62,3 @@ async def list_chunks(
     """List all chunks in a knowledge base."""
     executor = AdminExecutor(db=db)
     return await executor.list_chunks(request)
-
-
-@router.post("/test-connection")
-async def test_connection(
-    request: RemoteTestConnectionRequest,
-    db: Session = Depends(get_db),
-) -> dict[str, Any]:
-    """Test connection to a storage backend."""
-    executor = AdminExecutor(db=db)
-    return await executor.test_connection(request)

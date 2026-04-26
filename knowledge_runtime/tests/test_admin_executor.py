@@ -9,13 +9,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from knowledge_runtime.services.admin_executor import AdminExecutor
-from knowledge_runtime.services.config_resolver import AdminConfig
+from knowledge_runtime.services.config_resolver import AdminResolvedConfig
 from shared.models import (
     RemoteDeleteDocumentIndexRequest,
     RemoteDropKnowledgeIndexRequest,
     RemoteListChunksRequest,
     RemotePurgeKnowledgeIndexRequest,
-    RemoteTestConnectionRequest,
     RuntimeRetrieverConfig,
 )
 
@@ -65,7 +64,7 @@ class TestAdminExecutor:
             return_value=mock_storage_backend,
         ):
             admin_executor._config_resolver.resolve_admin_config = MagicMock(
-                return_value=AdminConfig(
+                return_value=AdminResolvedConfig(
                     index_owner_user_id=7,
                     retriever_config=mock_retriever_config,
                 )
@@ -102,7 +101,7 @@ class TestAdminExecutor:
             return_value=mock_storage_backend,
         ):
             admin_executor._config_resolver.resolve_admin_config = MagicMock(
-                return_value=AdminConfig(
+                return_value=AdminResolvedConfig(
                     index_owner_user_id=7,
                     retriever_config=mock_retriever_config,
                 )
@@ -135,7 +134,7 @@ class TestAdminExecutor:
             return_value=mock_storage_backend,
         ):
             admin_executor._config_resolver.resolve_admin_config = MagicMock(
-                return_value=AdminConfig(
+                return_value=AdminResolvedConfig(
                     index_owner_user_id=7,
                     retriever_config=mock_retriever_config,
                 )
@@ -184,7 +183,7 @@ class TestAdminExecutor:
             return_value=mock_storage_backend,
         ):
             admin_executor._config_resolver.resolve_admin_config = MagicMock(
-                return_value=AdminConfig(
+                return_value=AdminResolvedConfig(
                     index_owner_user_id=7,
                     retriever_config=mock_retriever_config,
                 )
@@ -217,7 +216,7 @@ class TestAdminExecutor:
             return_value=mock_storage_backend,
         ):
             admin_executor._config_resolver.resolve_admin_config = MagicMock(
-                return_value=AdminConfig(
+                return_value=AdminResolvedConfig(
                     index_owner_user_id=7,
                     retriever_config=mock_retriever_config,
                 )
@@ -227,66 +226,6 @@ class TestAdminExecutor:
 
         assert result.total == 0
         assert len(result.chunks) == 0
-
-    @pytest.mark.asyncio
-    async def test_test_connection_success(
-        self, admin_executor, mock_retriever_config
-    ) -> None:
-        """Test successful connection test."""
-        request = RemoteTestConnectionRequest(
-            knowledge_base_id=1,
-            user_id=42,
-        )
-
-        mock_storage_backend = MagicMock()
-        mock_storage_backend.test_connection.return_value = True
-
-        with patch(
-            "knowledge_runtime.services.admin_executor.create_storage_backend_from_runtime_config",
-            return_value=mock_storage_backend,
-        ):
-            admin_executor._config_resolver.resolve_admin_config = MagicMock(
-                return_value=AdminConfig(
-                    index_owner_user_id=7,
-                    retriever_config=mock_retriever_config,
-                )
-            )
-
-            result = await admin_executor.test_connection(request)
-
-        assert result["success"] is True
-        assert result["message"] == "Connection successful"
-
-    @pytest.mark.asyncio
-    async def test_test_connection_failure(
-        self, admin_executor, mock_retriever_config
-    ) -> None:
-        """Test failed connection test."""
-        request = RemoteTestConnectionRequest(
-            knowledge_base_id=1,
-            user_id=42,
-        )
-
-        mock_storage_backend = MagicMock()
-        mock_storage_backend.test_connection.side_effect = Exception(
-            "Connection refused"
-        )
-
-        with patch(
-            "knowledge_runtime.services.admin_executor.create_storage_backend_from_runtime_config",
-            return_value=mock_storage_backend,
-        ):
-            admin_executor._config_resolver.resolve_admin_config = MagicMock(
-                return_value=AdminConfig(
-                    index_owner_user_id=7,
-                    retriever_config=mock_retriever_config,
-                )
-            )
-
-            result = await admin_executor.test_connection(request)
-
-        assert result["success"] is False
-        assert "Connection refused" in result["message"]
 
     @pytest.mark.asyncio
     async def test_list_chunks_with_metadata_condition(
@@ -308,7 +247,7 @@ class TestAdminExecutor:
             return_value=mock_storage_backend,
         ):
             admin_executor._config_resolver.resolve_admin_config = MagicMock(
-                return_value=AdminConfig(
+                return_value=AdminResolvedConfig(
                     index_owner_user_id=7,
                     retriever_config=mock_retriever_config,
                 )
@@ -319,36 +258,3 @@ class TestAdminExecutor:
         mock_storage_backend.get_all_chunks.assert_called_once()
         call_kwargs = mock_storage_backend.get_all_chunks.call_args.kwargs
         assert call_kwargs["metadata_condition"] == {"doc_ref": "doc_123"}
-
-    @pytest.mark.asyncio
-    async def test_test_connection_resolves_admin_config_from_db(
-        self, admin_executor, mock_retriever_config
-    ) -> None:
-        """Test that test_connection resolves admin config from database."""
-        request = RemoteTestConnectionRequest(
-            knowledge_base_id=1,
-            user_id=42,
-        )
-
-        mock_storage_backend = MagicMock()
-        mock_storage_backend.test_connection.return_value = True
-
-        with patch(
-            "knowledge_runtime.services.admin_executor.create_storage_backend_from_runtime_config",
-            return_value=mock_storage_backend,
-        ):
-            mock_resolve = MagicMock(
-                return_value=AdminConfig(
-                    index_owner_user_id=7,
-                    retriever_config=mock_retriever_config,
-                )
-            )
-            admin_executor._config_resolver.resolve_admin_config = mock_resolve
-
-            await admin_executor.test_connection(request)
-
-        # Verify resolver was called with correct args
-        mock_resolve.assert_called_once_with(
-            admin_executor._db,
-            knowledge_base_id=1,
-        )

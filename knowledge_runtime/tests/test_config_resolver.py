@@ -119,7 +119,7 @@ def _make_model_kind(
 def _make_document(
     document_id: int = 100, splitter_config: dict | None = object()
 ) -> MagicMock:
-    """Create a mock KnowledgeDocumentReadOnly record."""
+    """Create a mock KnowledgeDocument record."""
     doc = MagicMock()
     doc.id = document_id
     # Use sentinel default to distinguish "not passed" from explicit None

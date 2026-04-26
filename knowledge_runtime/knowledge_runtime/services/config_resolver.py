@@ -16,7 +16,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from knowledge_runtime.db.models import KnowledgeDocumentReadOnly
+from knowledge_runtime.models.knowledge_document import KnowledgeDocument
 from shared.models import (
     RuntimeEmbeddingModelConfig,
     RuntimeRetrievalConfig,
@@ -53,7 +53,7 @@ class QueryConfig:
 
 
 @dataclass
-class AdminConfig:
+class AdminResolvedConfig:
     """Resolved configuration for admin operations (delete/purge/drop/list)."""
 
     index_owner_user_id: int
@@ -173,7 +173,7 @@ class ConfigResolver:
         db: Session,
         *,
         knowledge_base_id: int,
-    ) -> AdminConfig:
+    ) -> AdminResolvedConfig:
         """Resolve config for admin operations (delete/purge/drop/list)."""
         kb = self._get_knowledge_base(db, knowledge_base_id)
         retrieval_config = self._parse_kb_retrieval_config(kb)
@@ -185,7 +185,7 @@ class ConfigResolver:
             namespace=retrieval_config["retriever_namespace"],
         )
 
-        return AdminConfig(
+        return AdminResolvedConfig(
             index_owner_user_id=kb.user_id,
             retriever_config=retriever_config,
         )
@@ -414,8 +414,8 @@ class ConfigResolver:
     def _get_splitter_config(self, db: Session, document_id: int) -> dict[str, Any]:
         """Get splitter_config from knowledge_documents table."""
         doc = (
-            db.query(KnowledgeDocumentReadOnly)
-            .filter(KnowledgeDocumentReadOnly.id == document_id)
+            db.query(KnowledgeDocument)
+            .filter(KnowledgeDocument.id == document_id)
             .first()
         )
         if doc is None:

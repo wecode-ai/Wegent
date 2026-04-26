@@ -14,7 +14,10 @@ from sqlalchemy.orm import Session
 
 from knowledge_engine.services.document_service import DocumentService
 from knowledge_engine.storage.factory import create_storage_backend_from_runtime_config
-from knowledge_runtime.services.config_resolver import ConfigResolver
+from knowledge_runtime.services.config_resolver import (
+    AdminResolvedConfig,
+    ConfigResolver,
+)
 from shared.models import (
     RemoteDeleteDocumentIndexRequest,
     RemoteDropKnowledgeIndexRequest,
@@ -22,7 +25,6 @@ from shared.models import (
     RemoteListChunksRequest,
     RemoteListChunksResponse,
     RemotePurgeKnowledgeIndexRequest,
-    RemoteTestConnectionRequest,
 )
 from shared.telemetry.decorators import trace_async
 
@@ -191,36 +193,3 @@ class AdminExecutor:
             chunks=records,
             total=len(records),
         )
-
-    @trace_async(
-        span_name="test_connection",
-        tracer_name="knowledge_runtime.services.admin",
-    )
-    async def test_connection(
-        self,
-        request: RemoteTestConnectionRequest,
-    ) -> dict[str, Any]:
-        """Test connection to a storage backend."""
-        config = self._config_resolver.resolve_admin_config(
-            self._db,
-            knowledge_base_id=request.knowledge_base_id,
-        )
-
-        storage_backend = create_storage_backend_from_runtime_config(
-            config.retriever_config
-        )
-
-        logger.info("Testing storage backend connection")
-
-        try:
-            success = await asyncio.to_thread(storage_backend.test_connection)
-            return {
-                "success": success,
-                "message": "Connection successful" if success else "Connection failed",
-            }
-        except Exception as e:
-            logger.error("Connection test failed: %s", e)
-            return {
-                "success": False,
-                "message": str(e),
-            }

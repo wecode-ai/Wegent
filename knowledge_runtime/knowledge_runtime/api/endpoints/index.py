@@ -11,8 +11,8 @@ from typing import Any
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from knowledge_runtime.db.session import get_db
 from knowledge_runtime.services.index_executor import IndexExecutor
+from shared.db.sync_session import get_db
 from shared.models import RemoteIndexRequest
 
 router = APIRouter()
