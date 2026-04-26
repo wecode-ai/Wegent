@@ -301,6 +301,15 @@ export function DocumentItem({
                 </Tooltip>
               </TooltipProvider>
             )}
+            {/* Creator */}
+            {document.created_by && (
+              <>
+                <span className="text-[9px] text-text-muted">·</span>
+                <span className="text-[9px] text-text-muted truncate max-w-[60px]">
+                  {document.created_by}
+                </span>
+              </>
+            )}
           </div>
         </div>
 
