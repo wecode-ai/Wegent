@@ -489,7 +489,20 @@ export function DocumentItem({
       </div>
       {/* Creator */}
       <div className="w-24 flex-shrink-0 text-center" data-testid="creator-cell">
-        <span className="text-xs text-text-muted truncate">{document.created_by || '-'}</span>
+        <TooltipProvider>
+          <Tooltip delayDuration={300}>
+            <TooltipTrigger asChild>
+              <span className="block text-xs text-text-muted truncate">
+                {document.created_by || '-'}
+              </span>
+            </TooltipTrigger>
+            {document.created_by && (
+              <TooltipContent side="top" className="max-w-xs">
+                <p className="text-xs">{document.created_by}</p>
+              </TooltipContent>
+            )}
+          </Tooltip>
+        </TooltipProvider>
       </div>
       {/* Upload date with time */}
       <div className="w-40 flex-shrink-0 text-center">
