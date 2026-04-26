@@ -6,16 +6,10 @@
 
 from __future__ import annotations
 
-from collections import Counter
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
-
-from .splitter_config import (
-    NormalizedSplitterConfig,
-    build_runtime_default_splitter_config,
-)
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class KnowledgeRuntimeProtocolModel(BaseModel):
@@ -109,60 +103,48 @@ class RemoteKnowledgeBaseQueryConfig(KnowledgeRuntimeProtocolModel):
 
 
 class RemoteIndexRequest(KnowledgeRuntimeProtocolModel):
-    """Index request sent from Backend to knowledge_runtime."""
+    """Index request - reference mode. KR resolves configs from DB."""
 
     knowledge_base_id: int
+    user_id: int
     document_id: int | None = None
-    index_owner_user_id: int
-    retriever_config: RuntimeRetrieverConfig
-    embedding_model_config: RuntimeEmbeddingModelConfig
-    splitter_config: NormalizedSplitterConfig = Field(
-        default_factory=build_runtime_default_splitter_config
-    )
     source_file: str | None = None
     file_extension: str | None = None
-    index_families: list[str] = Field(default_factory=lambda: ["chunk_vector"])
     content_ref: ContentRef
     trace_context: dict[str, Any] | None = None
-    user_name: str | None = None
     extensions: dict[str, Any] | None = None
 
 
 class RemoteDeleteDocumentIndexRequest(KnowledgeRuntimeProtocolModel):
-    """Delete-document-index request sent from Backend to knowledge_runtime."""
+    """Delete-document-index request - reference mode."""
 
     knowledge_base_id: int
+    user_id: int
     document_ref: str
-    index_owner_user_id: int | None = None
-    retriever_config: RuntimeRetrieverConfig
-    enabled_index_families: list[str] = Field(default_factory=lambda: ["chunk_vector"])
     extensions: dict[str, Any] | None = None
 
 
 class RemotePurgeKnowledgeIndexRequest(KnowledgeRuntimeProtocolModel):
-    """Delete-all-chunks request sent from Backend to knowledge_runtime."""
+    """Purge-knowledge-index request - reference mode."""
 
     knowledge_base_id: int
-    index_owner_user_id: int
-    retriever_config: RuntimeRetrieverConfig
+    user_id: int
     extensions: dict[str, Any] | None = None
 
 
 class RemoteDropKnowledgeIndexRequest(KnowledgeRuntimeProtocolModel):
-    """Drop-physical-index request sent from Backend to knowledge_runtime."""
+    """Drop-physical-index request - reference mode."""
 
     knowledge_base_id: int
-    index_owner_user_id: int
-    retriever_config: RuntimeRetrieverConfig
+    user_id: int
     extensions: dict[str, Any] | None = None
 
 
 class RemoteListChunksRequest(KnowledgeRuntimeProtocolModel):
-    """List-chunks request sent from Backend to knowledge_runtime."""
+    """List-chunks request - reference mode."""
 
     knowledge_base_id: int
-    index_owner_user_id: int
-    retriever_config: RuntimeRetrieverConfig
+    user_id: int
     max_chunks: int = Field(default=10000, gt=0, le=10000)
     query: str | None = None
     metadata_condition: dict[str, Any] | None = None
@@ -170,40 +152,23 @@ class RemoteListChunksRequest(KnowledgeRuntimeProtocolModel):
 
 
 class RemoteTestConnectionRequest(KnowledgeRuntimeProtocolModel):
-    """Test-connection request sent from Backend to knowledge_runtime."""
+    """Test-connection request - reference mode."""
 
-    retriever_config: RuntimeRetrieverConfig
+    knowledge_base_id: int
+    user_id: int
     extensions: dict[str, Any] | None = None
 
 
 class RemoteQueryRequest(KnowledgeRuntimeProtocolModel):
-    """Query request sent from Backend to knowledge_runtime."""
+    """Query request - reference mode. KR resolves configs from DB."""
 
     knowledge_base_ids: list[int]
+    user_id: int
     query: str
     max_results: int = Field(default=5, gt=0)
     document_ids: list[int] | None = None
     metadata_condition: dict[str, Any] | None = None
-    user_name: str | None = None
-    knowledge_base_configs: list[RemoteKnowledgeBaseQueryConfig]
-    enabled_index_families: list[str] = Field(default_factory=lambda: ["chunk_vector"])
-    retrieval_policy: RetrievalPolicy = "chunk_only"
     extensions: dict[str, Any] | None = None
-
-    @model_validator(mode="after")
-    def validate_knowledge_base_configs(self) -> "RemoteQueryRequest":
-        if not self.knowledge_base_configs:
-            raise ValueError("knowledge_base_configs must not be empty")
-
-        requested_ids = list(self.knowledge_base_ids)
-        configured_ids = [
-            config.knowledge_base_id for config in self.knowledge_base_configs
-        ]
-        if Counter(requested_ids) != Counter(configured_ids):
-            raise ValueError(
-                "knowledge_base_configs must align with knowledge_base_ids"
-            )
-        return self
 
 
 class RemoteQueryRecord(KnowledgeRuntimeProtocolModel):
