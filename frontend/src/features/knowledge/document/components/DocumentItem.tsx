@@ -379,7 +379,7 @@ export function DocumentItem({
   // Normal mode: Table row layout
   return (
     <div
-      className={`flex items-center gap-4 px-4 py-3 bg-base hover:bg-surface transition-colors group min-w-[800px] ${showBorder ? 'border-b border-border' : ''} ${onViewDetail ? 'cursor-pointer' : ''}`}
+      className={`flex items-center gap-4 px-4 py-3 bg-base hover:bg-surface transition-colors group min-w-[880px] ${showBorder ? 'border-b border-border' : ''} ${onViewDetail ? 'cursor-pointer' : ''}`}
       onClick={handleRowClick}
     >
       {/* Checkbox for batch selection */}
@@ -471,9 +471,17 @@ export function DocumentItem({
           {isTable || isWeb ? '-' : formatFileSize(document.file_size)}
         </span>
       </div>
+      {/* Creator */}
+      <div className="w-24 flex-shrink-0 text-center">
+        <span className="text-xs text-text-muted truncate">{document.created_by || '-'}</span>
+      </div>
       {/* Upload date with time */}
       <div className="w-40 flex-shrink-0 text-center">
         <span className="text-xs text-text-muted">{formatDateTime(document.created_at)}</span>
+      </div>
+      {/* Updated date */}
+      <div className="w-40 flex-shrink-0 text-center">
+        <span className="text-xs text-text-muted">{formatDateTime(document.updated_at)}</span>
       </div>
 
       {/* Index status (is_active) */}
