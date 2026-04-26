@@ -700,11 +700,11 @@ async def purge_knowledge_index(
 ):
     """Delete all indexed chunks for one knowledge base from the local runtime."""
     try:
-        runtime_spec = runtime_resolver.build_internal_purge_index_runtime_spec(
+        runtime_spec = runtime_resolver.build_public_purge_index_runtime_spec(
             db=db,
             knowledge_base_id=request.knowledge_base_id,
-            index_owner_user_id=request.index_owner_user_id,
-            retriever_config=request.retriever_config.model_dump(mode="python"),
+            user_id=request.user_id,
+            user_name=None,
         )
         return await LocalRagGateway().purge_knowledge_index(runtime_spec, db=db)
     except ValueError as e:
@@ -726,11 +726,11 @@ async def drop_knowledge_index(
 ):
     """Physically drop the dedicated index/collection for one knowledge base."""
     try:
-        runtime_spec = runtime_resolver.build_internal_drop_index_runtime_spec(
+        runtime_spec = runtime_resolver.build_public_drop_index_runtime_spec(
             db=db,
             knowledge_base_id=request.knowledge_base_id,
-            index_owner_user_id=request.index_owner_user_id,
-            retriever_config=request.retriever_config.model_dump(mode="python"),
+            user_id=request.user_id,
+            user_name=None,
         )
         return await LocalRagGateway().drop_knowledge_index(runtime_spec, db=db)
     except ValueError as e:
