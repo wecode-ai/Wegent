@@ -10,7 +10,11 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
-from app.schemas.knowledge import DocumentSourceType, KnowledgeDocumentCreate
+from app.schemas.knowledge import (
+    DocumentSourceType,
+    KnowledgeDocumentCreate,
+    KnowledgeDocumentListResponse,
+)
 from app.services.knowledge.indexing import get_rag_indexing_skip_reason
 from app.services.knowledge.orchestrator import (
     KnowledgeOrchestrator,
@@ -1222,3 +1226,176 @@ class TestIndexingPolicy:
             reason
             == "Table documents are queried in real-time and do not support RAG indexing"
         )
+
+
+class TestListDocumentsCreatedBy:
+    """Tests for list_documents created_by field population."""
+
+    def _make_doc(
+        self,
+        doc_id: int,
+        user_id: int,
+        name: str = "doc.pdf",
+        file_extension: str = "pdf",
+        file_size: int = 100,
+    ) -> SimpleNamespace:
+        """Create a mock KnowledgeDocument-like object."""
+        return SimpleNamespace(
+            id=doc_id,
+            kind_id=10,
+            attachment_id=0,
+            name=name,
+            file_extension=file_extension,
+            file_size=file_size,
+            status="enabled",
+            user_id=user_id,
+            is_active=True,
+            index_status="success",
+            index_generation=1,
+            splitter_config=None,
+            source_type="file",
+            source_config={},
+            doc_ref=None,
+            created_at="2026-01-01T00:00:00",
+            updated_at="2026-01-02T00:00:00",
+        )
+
+    def test_list_documents_populates_created_by_from_user_table(self) -> None:
+        """list_documents should populate created_by with user_name from users table."""
+        orchestrator = KnowledgeOrchestrator()
+
+        user = SimpleNamespace(id=1, user_name="testuser")
+
+        doc1 = self._make_doc(doc_id=1, user_id=1, name="doc1.pdf")
+        doc2 = self._make_doc(doc_id=2, user_id=2, name="doc2.md")
+
+        kb_mock = SimpleNamespace(id=10)
+        with (
+            patch(
+                "app.services.knowledge.orchestrator.KnowledgeService.get_knowledge_base",
+                return_value=(kb_mock, True),
+            ),
+            patch(
+                "app.services.knowledge.orchestrator.KnowledgeService.list_documents",
+                return_value=[doc1, doc2],
+            ),
+        ):
+            # Mock db.query for User lookup
+            # db.query(User.id, User.user_name).filter(User.id.in_(...)).all()
+            # SQLAlchemy returns list of tuples for multi-column queries
+            mock_db = MagicMock()
+            user_query = MagicMock()
+            user_query.filter.return_value.all.return_value = [
+                (1, "alice"),
+                (2, "bob"),
+            ]
+            mock_db.query.return_value = user_query
+
+            result = orchestrator.list_documents(
+                db=mock_db, user=user, knowledge_base_id=10,
+            )
+
+        assert isinstance(result, KnowledgeDocumentListResponse)
+        assert result.total == 2
+        # Verify created_by is populated
+        items = result.items
+        created_by_map = {item.id: item.created_by for item in items}
+        assert created_by_map[1] == "alice"
+        assert created_by_map[2] == "bob"
+
+    def test_list_documents_created_by_none_when_user_deleted(self) -> None:
+        """list_documents should set created_by to None when user not found."""
+        orchestrator = KnowledgeOrchestrator()
+
+        user = SimpleNamespace(id=1, user_name="testuser")
+
+        doc = self._make_doc(doc_id=1, user_id=999)
+
+        kb_mock = SimpleNamespace(id=10)
+        with (
+            patch(
+                "app.services.knowledge.orchestrator.KnowledgeService.get_knowledge_base",
+                return_value=(kb_mock, True),
+            ),
+            patch(
+                "app.services.knowledge.orchestrator.KnowledgeService.list_documents",
+                return_value=[doc],
+            ),
+        ):
+            mock_db = MagicMock()
+            # User query returns empty list (user deleted)
+            user_query = MagicMock()
+            user_query.filter.return_value.all.return_value = []
+            mock_db.query.return_value = user_query
+
+            result = orchestrator.list_documents(
+                db=mock_db, user=user, knowledge_base_id=10,
+            )
+
+        assert result.items[0].created_by is None
+
+    def test_list_documents_empty_documents_no_user_query(self) -> None:
+        """list_documents should not query users when no documents exist."""
+        orchestrator = KnowledgeOrchestrator()
+
+        user = SimpleNamespace(id=1, user_name="testuser")
+
+        kb_mock = SimpleNamespace(id=10)
+        with (
+            patch(
+                "app.services.knowledge.orchestrator.KnowledgeService.get_knowledge_base",
+                return_value=(kb_mock, True),
+            ),
+            patch(
+                "app.services.knowledge.orchestrator.KnowledgeService.list_documents",
+                return_value=[],
+            ),
+        ):
+            mock_db = MagicMock()
+
+            result = orchestrator.list_documents(
+                db=mock_db, user=user, knowledge_base_id=10,
+            )
+
+        # No db.query should be called since documents list is empty
+        mock_db.query.assert_not_called()
+        assert result.total == 0
+        assert result.items == []
+
+    def test_list_documents_deduplicates_user_ids(self) -> None:
+        """list_documents should deduplicate user_ids before querying."""
+        orchestrator = KnowledgeOrchestrator()
+
+        user = SimpleNamespace(id=1, user_name="testuser")
+
+        # Two documents from the same user
+        doc1 = self._make_doc(doc_id=1, user_id=1, name="doc1.pdf")
+        doc2 = self._make_doc(doc_id=2, user_id=1, name="doc2.pdf")
+
+        kb_mock = SimpleNamespace(id=10)
+        with (
+            patch(
+                "app.services.knowledge.orchestrator.KnowledgeService.get_knowledge_base",
+                return_value=(kb_mock, True),
+            ),
+            patch(
+                "app.services.knowledge.orchestrator.KnowledgeService.list_documents",
+                return_value=[doc1, doc2],
+            ),
+        ):
+            mock_db = MagicMock()
+            user_query = MagicMock()
+            user_query.filter.return_value.all.return_value = [
+                (1, "alice"),
+            ]
+            mock_db.query.return_value = user_query
+
+            result = orchestrator.list_documents(
+                db=mock_db, user=user, knowledge_base_id=10,
+            )
+
+        # Both documents should have the same created_by
+        assert result.items[0].created_by == "alice"
+        assert result.items[1].created_by == "alice"
+        # Verify db.query was called exactly once (batch query, not per-document)
+        mock_db.query.assert_called_once()

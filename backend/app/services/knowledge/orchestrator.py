@@ -656,9 +656,24 @@ class KnowledgeOrchestrator:
             user_id=user.id,
         )
 
+        # Batch query user names for created_by field
+        user_ids = list({doc.user_id for doc in documents})
+        user_name_map: dict[int, str] = {}
+        if user_ids:
+            user_rows = db.query(User.id, User.user_name).filter(
+                User.id.in_(user_ids)
+            ).all()
+            user_name_map = {uid: uname for uid, uname in user_rows}
+
+        items = []
+        for doc in documents:
+            item = KnowledgeDocumentResponse.model_validate(doc)
+            item.created_by = user_name_map.get(doc.user_id)
+            items.append(item)
+
         return KnowledgeDocumentListResponse(
             total=len(documents),
-            items=[KnowledgeDocumentResponse.model_validate(doc) for doc in documents],
+            items=items,
         )
 
     def _get_document_with_access_or_raise(
