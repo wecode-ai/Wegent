@@ -81,6 +81,6 @@ describe('PublishedAppsPage', () => {
     expect(screen.getByText('comedy-monitor')).toBeInTheDocument()
     expect(screen.getByText('123')).toBeInTheDocument()
     expect(screen.getByText('comedy-monitor.yinlu.wegent.intra.weibo.com')).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Chat' })).toHaveAttribute('href', '/chat?taskId=123')
+    expect(screen.getByRole('link', { name: 'Chat' })).toHaveAttribute('href', '/code?taskId=123')
   })
 })

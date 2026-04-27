@@ -177,7 +177,7 @@ export default function PublishedAppsPage() {
                         {taskId ? (
                           <Button asChild variant="outline" size="sm">
                             <a
-                              href={`/chat?taskId=${encodeURIComponent(taskId)}`}
+                              href={`/code?taskId=${encodeURIComponent(taskId)}`}
                               data-testid={`open-published-app-chat-${taskId}-link`}
                             >
                               <MessageSquare className="h-4 w-4" />
