@@ -114,17 +114,17 @@ You now have access to Wegent Knowledge Base management tools.
 ## Example Workflows for Knowledge Base Management
 
 1. First, list available knowledge bases:
-   ```
+   ```python
    wegent_kb_list_knowledge_bases(scope="all")
    ```
 
 2. List documents in a specific knowledge base:
-   ```
+   ```python
    wegent_kb_list_documents(knowledge_base_id=123)
    ```
 
 3. Create a new knowledge base:
-   ```
+   ```python
    wegent_kb_create_knowledge_base(
      name="My KB",
      description="My personal notes",
@@ -134,7 +134,7 @@ You now have access to Wegent Knowledge Base management tools.
    ```
 
 4. Create a new text document:
-   ```
+   ```python
    wegent_kb_create_document(
      knowledge_base_id=123,
      name="Meeting Notes",
@@ -144,7 +144,7 @@ You now have access to Wegent Knowledge Base management tools.
    ```
 
 5. Update document content:
-   ```text
+   ```python
    wegent_kb_update_document_content(
      document_id=456,
      content="Updated notes with new information...",
@@ -153,7 +153,7 @@ You now have access to Wegent Knowledge Base management tools.
    ```
 
 6. Read long document content incrementally:
-   ```text
+   ```python
    wegent_kb_read_document_content(
      document_id=456,
      offset=0
@@ -161,7 +161,7 @@ You now have access to Wegent Knowledge Base management tools.
    ```
 
 7. Search knowledge base using RAG retrieval:
-   ```text
+   ```python
    wegent_kb_search_knowledge_base(
      knowledge_base_id=123,
      query="How to configure the system?",
@@ -170,7 +170,7 @@ You now have access to Wegent Knowledge Base management tools.
    ```
 
 8. Search within specific documents:
-   ```text
+   ```python
    wegent_kb_search_knowledge_base(
      knowledge_base_id=123,
      query="deployment steps",
@@ -207,7 +207,7 @@ Identify document type from the DingTalk URL:
 **IMPORTANT: Always call get_document_info first!** This returns document metadata including `contentType` and `file_extension` fields which determine which tool to use next.
 
 For docs (dingtalk-docs MCP):
-```
+```python
 dingtalk-docs.get_document_info(document_id="xxx")
 ```
 
@@ -230,7 +230,7 @@ Based on `get_document_info` response, choose the appropriate tool:
 
 ##### Option A: Online Document (adoc) - contentType=ALIDOC, extension=adoc
 Call `get_document_content` to get markdown content:
-```
+```python
 dingtalk-docs.get_document_content(nodeId="xxx")
 ```
 Returns: `{"markdown": "# Title\n\nContent...", ...}`
@@ -239,7 +239,7 @@ Then proceed to Step 4B.
 
 ##### Option B: Spreadsheet (axls) - contentType=ALIDOC, extension=axls
 Use dingtalk-table MCP:
-```
+```python
 # Get all sheets
 dingtalk-table.get_all_sheets(nodeId="xxx")
 # Returns: [{"sheetId": "1", "name": "Sheet1"}, ...]
@@ -250,7 +250,7 @@ dingtalk-table.get_range(nodeId="xxx", sheetId="1", range="A1:Z100")
 
 ##### Option C: AI Table (able) - contentType=ALIDOC, extension=able
 Use dingtalk-ai-table MCP:
-```
+```python
 # Get all tables (nodeId is baseId)
 dingtalk-ai-table.get_tables(nodeId="xxx")
 # Returns: [{"tableId": "1", "name": "Table1"}, ...]
@@ -261,7 +261,7 @@ dingtalk-ai-table.query_records(nodeId="xxx", tableId="1")
 
 ##### Option D: File-based Document - contentType≠ALIDOC, nodeType=file
 Call `download_file` to get download URL:
-```
+```python
 dingtalk-docs.download_file(nodeId="xxx")
 ```
 Returns: `{"download_url": "https://...", "download_token": "..."}`
@@ -373,7 +373,7 @@ Steps:
        name="Specifications",    # REQUIRED: From get_document_info
        source_type="attachment", # REQUIRED
        attachment_id=123,        # REQUIRED: From step 4
-       trigger_indexing=True.    # REQUIRED
+       trigger_indexing=True,    # REQUIRED
    )
    ```
    **Result:** Document is now available in Wegent's knowledge base (NOT in DingTalk).
@@ -403,7 +403,7 @@ Steps:
        name="Specifications",    # REQUIRED: From get_document_info
        source_type="attachment", # REQUIRED
        attachment_id=456,        # REQUIRED: From step 4
-       trigger_indexing=True.    # REQUIRED
+       trigger_indexing=True,    # REQUIRED
    )
    ```
    **Result:** Document is now available in Wegent's knowledge base (NOT in DingTalk).
