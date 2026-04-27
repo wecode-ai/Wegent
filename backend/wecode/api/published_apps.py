@@ -8,7 +8,7 @@ import logging
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.core import security
 from app.models.user import User
@@ -24,19 +24,11 @@ router = APIRouter()
 
 @router.get("")
 async def list_published_apps(
-    username: str = Query(..., min_length=1),
     current_user: User = Depends(security.get_current_user),
 ) -> dict[str, Any]:
     """List published apps for the current user."""
-    requested_username = username.strip()
-    if requested_username != current_user.user_name:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Cannot list published apps for another user",
-        )
-
     try:
-        return await published_apps_service.list_apps(requested_username)
+        return await published_apps_service.list_apps(current_user.user_name)
     except PublishedAppsNotConfiguredError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -46,7 +38,7 @@ async def list_published_apps(
         logger.error(
             "Published apps service returned error: status=%s username=%s",
             exc.response.status_code,
-            requested_username,
+            current_user.user_name,
         )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -55,7 +47,7 @@ async def list_published_apps(
     except httpx.HTTPError as exc:
         logger.error(
             "Failed to request published apps service for username=%s: %s",
-            requested_username,
+            current_user.user_name,
             exc,
         )
         raise HTTPException(

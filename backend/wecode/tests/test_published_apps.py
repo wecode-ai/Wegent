@@ -70,7 +70,7 @@ def test_list_published_apps_proxies_current_user(
         "wecode.service.published_apps.httpx.AsyncClient", return_value=mock_client
     ):
         response = test_client.get(
-            "/api/published-apps?username=testuser",
+            "/api/published-apps",
             headers=auth_headers,
         )
 
@@ -87,13 +87,44 @@ def test_list_published_apps_proxies_current_user(
     )
 
 
-def test_list_published_apps_rejects_other_username(
+def test_list_published_apps_ignores_username_query(
     test_client: TestClient,
     auth_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
 ):
-    response = test_client.get(
-        "/api/published-apps?username=other-user",
-        headers=auth_headers,
-    )
+    monkeypatch.delenv("RUNTIME_PUBLISHED_APPS_API_URL", raising=False)
+    monkeypatch.delenv("RUNTIME_PUBLISHED_APPS_API_TOKEN", raising=False)
+    monkeypatch.setenv("PUBLISHED_APPS_API_URL", "http://published-apps.example.com")
+    monkeypatch.setenv("PUBLISHED_APPS_API_TOKEN", "service-token")
 
-    assert response.status_code == 403
+    mock_response = MagicMock()
+    mock_response.json.return_value = {
+        "code": 0,
+        "message": "success",
+        "data": {"apps": []},
+    }
+    mock_response.raise_for_status = MagicMock()
+
+    mock_client = AsyncMock()
+    mock_client.get.return_value = mock_response
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    with patch(
+        "wecode.service.published_apps.httpx.AsyncClient", return_value=mock_client
+    ):
+        response = test_client.get(
+            "/api/published-apps?username=other-user",
+            headers=auth_headers,
+        )
+
+    assert response.status_code == 200
+    mock_client.get.assert_called_once_with(
+        "http://published-apps.example.com/app/list",
+        params={"username": "testuser"},
+        headers={
+            "accept": "application/json",
+            "Authorization": "Bearer service-token",
+            "Content-Type": "application/json",
+        },
+    )

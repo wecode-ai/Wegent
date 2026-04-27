@@ -4,6 +4,9 @@
 
 export interface PublishedApp {
   app_name: string
+  task_id?: number | string | null
+  taskid?: number | string | null
+  taskId?: number | string | null
   username: string
   namespace: string
   env: string
@@ -42,8 +45,8 @@ const EMPTY_PUBLISHED_APPS: PublishedAppsData = {
   apps: [],
 }
 
-export async function listPublishedApps(username: string): Promise<PublishedAppsData> {
-  const response = await fetch(`/api/published-apps?username=${encodeURIComponent(username)}`, {
+export async function listPublishedApps(): Promise<PublishedAppsData> {
+  const response = await fetch('/api/published-apps', {
     method: 'GET',
     headers: {
       accept: 'application/json',

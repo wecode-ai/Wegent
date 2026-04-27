@@ -26,13 +26,12 @@ jest.mock('@/hooks/useTranslation', () => ({
         'published_apps.description': 'Applications published by yinlu',
         'published_apps.refresh': 'Refresh',
         'published_apps.columns.name': 'Name',
+        'published_apps.columns.task_id': 'Task ID',
+        'published_apps.columns.domain': 'Domain',
         'published_apps.columns.status': 'Status',
-        'published_apps.columns.env': 'Environment',
-        'published_apps.columns.namespace': 'Namespace',
-        'published_apps.columns.pod': 'Pod',
         'published_apps.columns.created_at': 'Created At',
-        'published_apps.columns.last_check_at': 'Last Check',
-        'published_apps.actions.open': 'Open',
+        'published_apps.columns.conversation': 'Conversation',
+        'published_apps.actions.chat': 'Chat',
         'published_apps.status.running': 'Running',
         'published_apps.status.ready': 'Ready',
         'published_apps.status.online': 'Online',
@@ -52,6 +51,7 @@ describe('PublishedAppsPage', () => {
       apps: [
         {
           app_name: 'comedy-monitor',
+          task_id: 123,
           username: 'yinlu',
           namespace: 'wb-plat-ide-quickstart',
           env: 'prod',
@@ -76,14 +76,11 @@ describe('PublishedAppsPage', () => {
   test('renders published apps for the current user', async () => {
     render(<PublishedAppsPage />)
 
-    await waitFor(() => expect(listPublishedApps).toHaveBeenCalledWith('yinlu'))
+    await waitFor(() => expect(listPublishedApps).toHaveBeenCalledWith())
 
     expect(screen.getByText('comedy-monitor')).toBeInTheDocument()
-    expect(screen.getByText('wb-plat-ide-quickstart')).toBeInTheDocument()
-    expect(screen.getByText('prod')).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Open' })).toHaveAttribute(
-      'href',
-      'http://comedy-monitor.yinlu.wegent.intra.weibo.com'
-    )
+    expect(screen.getByText('123')).toBeInTheDocument()
+    expect(screen.getByText('comedy-monitor.yinlu.wegent.intra.weibo.com')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Chat' })).toHaveAttribute('href', '/chat?taskId=123')
   })
 })

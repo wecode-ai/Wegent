@@ -5,9 +5,9 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
-import { AlertCircle, ExternalLink, Loader2, RefreshCw } from 'lucide-react'
+import '@wecode/i18n'
+import { AlertCircle, Loader2, MessageSquare, RefreshCw } from 'lucide-react'
 import { listPublishedApps, type PublishedApp } from '@wecode/api/published-apps'
-import { useUser } from '@/features/common/UserContext'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -27,6 +27,23 @@ function formatUnixTimestamp(value: number): string {
     return '-'
   }
   return new Date(value * 1000).toLocaleString()
+}
+
+function getTaskId(app: PublishedApp): string {
+  const value = app.task_id ?? app.taskid ?? app.taskId
+  return value == null || value === '' ? '' : String(value)
+}
+
+function formatDomain(appUrl: string): string {
+  if (!appUrl) {
+    return '-'
+  }
+
+  try {
+    return new URL(appUrl).host
+  } catch {
+    return appUrl
+  }
 }
 
 function getStatusVariant(app: PublishedApp): 'success' | 'warning' | 'secondary' {
@@ -56,21 +73,16 @@ function PublishedAppStatus({ app }: { app: PublishedApp }) {
 
 export default function PublishedAppsPage() {
   const { t } = useTranslation('wecode')
-  const { user, isLoading: isUserLoading } = useUser()
   const [apps, setApps] = useState<PublishedApp[]>([])
   const [total, setTotal] = useState(0)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const loadApps = useCallback(async () => {
-    if (!user?.user_name) {
-      return
-    }
-
     setIsLoading(true)
     setError(null)
     try {
-      const data = await listPublishedApps(user.user_name)
+      const data = await listPublishedApps()
       setApps(data.apps)
       setTotal(data.total)
     } catch (err) {
@@ -80,24 +92,18 @@ export default function PublishedAppsPage() {
     } finally {
       setIsLoading(false)
     }
-  }, [t, user?.user_name])
+  }, [t])
 
   useEffect(() => {
-    if (!isUserLoading) {
-      loadApps()
-    }
-  }, [isUserLoading, loadApps])
-
-  const loading = isUserLoading || isLoading
+    loadApps()
+  }, [loadApps])
 
   return (
     <div className="space-y-4" data-testid="published-apps-page">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-xl font-semibold text-text-primary">{t('published_apps.title')}</h1>
-          <p className="mt-1 text-sm text-text-secondary">
-            {t('published_apps.description', { username: user?.user_name || '-' })}
-          </p>
+          <p className="mt-1 text-sm text-text-secondary">{t('published_apps.description')}</p>
           <p className="mt-1 text-xs text-text-muted">
             {t('published_apps.summary', { count: total })}
           </p>
@@ -106,11 +112,11 @@ export default function PublishedAppsPage() {
           type="button"
           variant="outline"
           onClick={loadApps}
-          disabled={loading || !user?.user_name}
+          disabled={isLoading}
           className="h-11 min-w-[44px] sm:h-10"
           data-testid="refresh-published-apps-button"
         >
-          {loading ? (
+          {isLoading ? (
             <Loader2 className="h-4 w-4 animate-spin" />
           ) : (
             <RefreshCw className="h-4 w-4" />
@@ -127,7 +133,7 @@ export default function PublishedAppsPage() {
       )}
 
       <Card padding="none" className="overflow-hidden">
-        {loading ? (
+        {isLoading ? (
           <div className="flex h-40 items-center justify-center text-text-muted">
             <Loader2 className="mr-2 h-5 w-5 animate-spin" />
             <span className="text-sm">{t('published_apps.loading')}</span>
@@ -138,54 +144,56 @@ export default function PublishedAppsPage() {
             <p className="mt-1 text-sm text-text-muted">{t('published_apps.empty_hint')}</p>
           </div>
         ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>{t('published_apps.columns.name')}</TableHead>
-                <TableHead>{t('published_apps.columns.status')}</TableHead>
-                <TableHead>{t('published_apps.columns.env')}</TableHead>
-                <TableHead>{t('published_apps.columns.namespace')}</TableHead>
-                <TableHead>{t('published_apps.columns.pod')}</TableHead>
-                <TableHead>{t('published_apps.columns.created_at')}</TableHead>
-                <TableHead>{t('published_apps.columns.last_check_at')}</TableHead>
-                <TableHead className="text-right">{t('published_apps.columns.action')}</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {apps.map(app => (
-                <TableRow key={`${app.namespace}/${app.app_name}`}>
-                  <TableCell className="font-medium">{app.app_name}</TableCell>
-                  <TableCell>
-                    <PublishedAppStatus app={app} />
-                  </TableCell>
-                  <TableCell>{app.env || '-'}</TableCell>
-                  <TableCell>{app.namespace || '-'}</TableCell>
-                  <TableCell className="max-w-[280px] truncate" title={app.pod_name}>
-                    {app.pod_name || '-'}
-                  </TableCell>
-                  <TableCell>{formatUnixTimestamp(app.created_at)}</TableCell>
-                  <TableCell>{formatUnixTimestamp(app.last_check_at)}</TableCell>
-                  <TableCell className="text-right">
-                    {app.app_url ? (
-                      <Button asChild variant="outline" size="sm">
-                        <a
-                          href={app.app_url}
-                          target="_blank"
-                          rel="noreferrer"
-                          data-testid={`open-published-app-${app.app_name}-link`}
-                        >
-                          <ExternalLink className="h-4 w-4" />
-                          {t('published_apps.actions.open')}
-                        </a>
-                      </Button>
-                    ) : (
-                      <span className="text-text-muted">-</span>
-                    )}
-                  </TableCell>
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>{t('published_apps.columns.name')}</TableHead>
+                  <TableHead>{t('published_apps.columns.task_id')}</TableHead>
+                  <TableHead>{t('published_apps.columns.domain')}</TableHead>
+                  <TableHead>{t('published_apps.columns.created_at')}</TableHead>
+                  <TableHead>{t('published_apps.columns.status')}</TableHead>
+                  <TableHead className="text-right">
+                    {t('published_apps.columns.conversation')}
+                  </TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {apps.map(app => {
+                  const taskId = getTaskId(app)
+
+                  return (
+                    <TableRow key={`${app.namespace}/${app.app_name}/${taskId}`}>
+                      <TableCell className="font-medium">{app.app_name}</TableCell>
+                      <TableCell>{taskId || '-'}</TableCell>
+                      <TableCell className="max-w-[360px] truncate" title={app.app_url}>
+                        {formatDomain(app.app_url)}
+                      </TableCell>
+                      <TableCell>{formatUnixTimestamp(app.created_at)}</TableCell>
+                      <TableCell>
+                        <PublishedAppStatus app={app} />
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {taskId ? (
+                          <Button asChild variant="outline" size="sm">
+                            <a
+                              href={`/chat?taskId=${encodeURIComponent(taskId)}`}
+                              data-testid={`open-published-app-chat-${taskId}-link`}
+                            >
+                              <MessageSquare className="h-4 w-4" />
+                              {t('published_apps.actions.chat')}
+                            </a>
+                          </Button>
+                        ) : (
+                          <span className="text-text-muted">-</span>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
+              </TableBody>
+            </Table>
+          </div>
         )}
       </Card>
     </div>

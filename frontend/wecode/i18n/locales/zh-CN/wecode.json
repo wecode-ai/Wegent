@@ -35,7 +35,7 @@
   "published_apps": {
     "tab": "已发布的应用",
     "title": "已发布的应用",
-    "description": "展示用户 {{username}} 已发布的应用",
+    "description": "展示当前登录用户已发布的应用",
     "summary": "共 {{count}} 个应用",
     "refresh": "刷新",
     "loading": "正在加载已发布应用...",
@@ -43,13 +43,16 @@
     "empty_hint": "发布应用后会在这里展示运行状态和访问地址。",
     "columns": {
       "name": "应用",
+      "task_id": "Task ID",
+      "domain": "域名",
       "status": "状态",
       "env": "环境",
       "namespace": "命名空间",
       "pod": "Pod",
       "created_at": "创建时间",
       "last_check_at": "最后检查",
-      "action": "操作"
+      "action": "操作",
+      "conversation": "对话"
     },
     "status": {
       "running": "运行中",
@@ -57,7 +60,8 @@
       "online": "在线"
     },
     "actions": {
-      "open": "打开"
+      "open": "打开",
+      "chat": "对话"
     },
     "errors": {
       "load_failed": "加载已发布应用失败"

@@ -5,6 +5,7 @@
 'use client'
 
 import { useEffect, useRef, useState, useMemo, useCallback } from 'react'
+import '@wecode/i18n'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
   Select,

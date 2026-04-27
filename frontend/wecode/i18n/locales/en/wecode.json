@@ -35,7 +35,7 @@
   "published_apps": {
     "tab": "Published Apps",
     "title": "Published Apps",
-    "description": "Applications published by {{username}}",
+    "description": "Applications published by the current signed-in user",
     "summary": "{{count}} apps",
     "refresh": "Refresh",
     "loading": "Loading published apps...",
@@ -43,13 +43,16 @@
     "empty_hint": "Published apps will appear here with runtime status and access URLs.",
     "columns": {
       "name": "App",
+      "task_id": "Task ID",
+      "domain": "Domain",
       "status": "Status",
       "env": "Env",
       "namespace": "Namespace",
       "pod": "Pod",
       "created_at": "Created At",
       "last_check_at": "Last Check",
-      "action": "Action"
+      "action": "Action",
+      "conversation": "Conversation"
     },
     "status": {
       "running": "Running",
@@ -57,7 +60,8 @@
       "online": "Online"
     },
     "actions": {
-      "open": "Open"
+      "open": "Open",
+      "chat": "Chat"
     },
     "errors": {
       "load_failed": "Failed to load published apps"
