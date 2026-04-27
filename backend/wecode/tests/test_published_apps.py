@@ -153,3 +153,44 @@ def test_list_published_apps_returns_gateway_timeout_on_service_timeout(
 
     assert response.status_code == 504
     assert response.json() == {"detail": "Published apps service request timed out"}
+
+
+def test_delete_published_app_proxies_current_user(
+    test_client: TestClient,
+    auth_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.delenv("RUNTIME_PUBLISHED_APPS_API_URL", raising=False)
+    monkeypatch.delenv("RUNTIME_PUBLISHED_APPS_API_TOKEN", raising=False)
+    monkeypatch.setenv("PUBLISHED_APPS_API_URL", "http://published-apps.example.com")
+    monkeypatch.setenv("PUBLISHED_APPS_API_TOKEN", "service-token")
+
+    response_payload = {"code": 0, "message": "success"}
+    mock_response = MagicMock()
+    mock_response.json.return_value = response_payload
+    mock_response.raise_for_status = MagicMock()
+
+    mock_client = AsyncMock()
+    mock_client.delete.return_value = mock_response
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    with patch(
+        "wecode.service.published_apps.httpx.AsyncClient", return_value=mock_client
+    ):
+        response = test_client.delete(
+            "/api/published-apps/demo-app2",
+            headers=auth_headers,
+        )
+
+    assert response.status_code == 200
+    assert response.json() == response_payload
+    mock_client.delete.assert_called_once_with(
+        "http://published-apps.example.com/app/delete",
+        json={"username": "testuser", "app_name": "demo-app2"},
+        headers={
+            "accept": "application/json",
+            "Authorization": "Bearer service-token",
+            "Content-Type": "application/json",
+        },
+    )

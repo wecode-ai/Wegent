@@ -3,11 +3,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import PublishedAppsPage from '@wecode/components/settings/PublishedAppsPage'
-import { listPublishedApps } from '@wecode/api/published-apps'
+import { deletePublishedApp, listPublishedApps } from '@wecode/api/published-apps'
 
 jest.mock('@wecode/api/published-apps', () => ({
+  deletePublishedApp: jest.fn(),
   listPublishedApps: jest.fn(),
 }))
 
@@ -31,7 +32,11 @@ jest.mock('@/hooks/useTranslation', () => ({
         'published_apps.columns.status': 'Status',
         'published_apps.columns.created_at': 'Created At',
         'published_apps.columns.conversation': 'Conversation',
+        'published_apps.columns.action': 'Action',
         'published_apps.actions.chat': 'Chat',
+        'published_apps.actions.delete': 'Delete',
+        'published_apps.actions.deleting': 'Deleting...',
+        'published_apps.confirm_delete': `Delete ${options?.appName}?`,
         'published_apps.status.running': 'Running',
         'published_apps.status.online': 'Online',
         'published_apps.errors.timeout': 'The published apps service timed out',
@@ -45,6 +50,7 @@ jest.mock('@/hooks/useTranslation', () => ({
 
 describe('PublishedAppsPage', () => {
   beforeEach(() => {
+    jest.clearAllMocks()
     ;(listPublishedApps as jest.Mock).mockResolvedValue({
       total: 1,
       page: 1,
@@ -72,6 +78,7 @@ describe('PublishedAppsPage', () => {
         },
       ],
     })
+    ;(deletePublishedApp as jest.Mock).mockResolvedValue({ code: 0, message: 'success' })
   })
 
   test('renders published apps for the current user', async () => {
@@ -85,6 +92,18 @@ describe('PublishedAppsPage', () => {
     expect(screen.getByText('Running / Online')).toBeInTheDocument()
     expect(screen.queryByText(/Ready/)).not.toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Chat' })).toHaveAttribute('href', '/code?taskId=123')
+  })
+
+  test('deletes a published app after confirmation and reloads the list', async () => {
+    jest.spyOn(window, 'confirm').mockReturnValue(true)
+
+    render(<PublishedAppsPage />)
+
+    await screen.findByText('comedy-monitor')
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+
+    await waitFor(() => expect(deletePublishedApp).toHaveBeenCalledWith('comedy-monitor'))
+    expect(listPublishedApps).toHaveBeenCalledTimes(2)
   })
 
   test('shows a localized timeout error', async () => {

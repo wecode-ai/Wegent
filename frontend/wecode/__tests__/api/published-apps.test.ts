@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { listPublishedApps } from '@wecode/api/published-apps'
+import { deletePublishedApp, listPublishedApps } from '@wecode/api/published-apps'
 
 describe('listPublishedApps', () => {
   const originalFetch = global.fetch
@@ -19,5 +19,21 @@ describe('listPublishedApps', () => {
     } as unknown as Response)
 
     await expect(listPublishedApps()).rejects.toThrow(/^Published apps service request timed out$/)
+  })
+
+  test('deletes a published app by app name', async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: jest.fn().mockResolvedValue({ code: 0, message: 'success' }),
+    } as unknown as Response)
+
+    await deletePublishedApp('demo-app2')
+
+    expect(global.fetch).toHaveBeenCalledWith('/api/published-apps/demo-app2', {
+      method: 'DELETE',
+      headers: {
+        accept: 'application/json',
+      },
+    })
   })
 })

@@ -6,8 +6,12 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import '@wecode/i18n'
-import { AlertCircle, Loader2, MessageSquare, RefreshCw } from 'lucide-react'
-import { listPublishedApps, type PublishedApp } from '@wecode/api/published-apps'
+import { AlertCircle, Loader2, MessageSquare, RefreshCw, Trash2 } from 'lucide-react'
+import {
+  deletePublishedApp,
+  listPublishedApps,
+  type PublishedApp,
+} from '@wecode/api/published-apps'
 import { useWecodeTranslation } from '@wecode/i18n/useWecodeTranslation'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -87,6 +91,7 @@ export default function PublishedAppsPage() {
   const [apps, setApps] = useState<PublishedApp[]>([])
   const [total, setTotal] = useState(0)
   const [isLoading, setIsLoading] = useState(false)
+  const [deletingAppName, setDeletingAppName] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -112,6 +117,26 @@ export default function PublishedAppsPage() {
   useEffect(() => {
     loadApps()
   }, [loadApps])
+
+  const handleDeleteApp = useCallback(
+    async (appName: string) => {
+      if (!window.confirm(translateRef.current('published_apps.confirm_delete', { appName }))) {
+        return
+      }
+
+      setDeletingAppName(appName)
+      setError(null)
+      try {
+        await deletePublishedApp(appName)
+        await loadApps()
+      } catch (err) {
+        setError(getPublishedAppsErrorMessage(err, translateRef.current))
+      } finally {
+        setDeletingAppName(null)
+      }
+    },
+    [loadApps]
+  )
 
   return (
     <div className="space-y-4" data-testid="published-apps-page">
@@ -168,9 +193,7 @@ export default function PublishedAppsPage() {
                   <TableHead>{t('published_apps.columns.domain')}</TableHead>
                   <TableHead>{t('published_apps.columns.created_at')}</TableHead>
                   <TableHead>{t('published_apps.columns.status')}</TableHead>
-                  <TableHead className="text-right">
-                    {t('published_apps.columns.conversation')}
-                  </TableHead>
+                  <TableHead className="text-right">{t('published_apps.columns.action')}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -188,20 +211,37 @@ export default function PublishedAppsPage() {
                       <TableCell>
                         <PublishedAppStatus app={app} />
                       </TableCell>
-                      <TableCell className="text-right">
-                        {taskId ? (
-                          <Button asChild variant="outline" size="sm">
-                            <a
-                              href={`/code?taskId=${encodeURIComponent(taskId)}`}
-                              data-testid={`open-published-app-chat-${taskId}-link`}
-                            >
-                              <MessageSquare className="h-4 w-4" />
-                              {t('published_apps.actions.chat')}
-                            </a>
+                      <TableCell>
+                        <div className="flex justify-end gap-2">
+                          {taskId ? (
+                            <Button asChild variant="outline" size="sm">
+                              <a
+                                href={`/code?taskId=${encodeURIComponent(taskId)}`}
+                                data-testid={`open-published-app-chat-${taskId}-link`}
+                              >
+                                <MessageSquare className="h-4 w-4" />
+                                {t('published_apps.actions.chat')}
+                              </a>
+                            </Button>
+                          ) : null}
+                          <Button
+                            type="button"
+                            variant="destructive"
+                            size="sm"
+                            onClick={() => handleDeleteApp(app.app_name)}
+                            disabled={deletingAppName === app.app_name}
+                            data-testid={`delete-published-app-${app.app_name}-button`}
+                          >
+                            {deletingAppName === app.app_name ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Trash2 className="h-4 w-4" />
+                            )}
+                            {deletingAppName === app.app_name
+                              ? t('published_apps.actions.deleting')
+                              : t('published_apps.actions.delete')}
                           </Button>
-                        ) : (
-                          <span className="text-text-muted">-</span>
-                        )}
+                        </div>
                       </TableCell>
                     </TableRow>
                   )

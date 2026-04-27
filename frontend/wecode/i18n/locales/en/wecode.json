@@ -60,8 +60,11 @@
     },
     "actions": {
       "open": "Open",
-      "chat": "Chat"
+      "chat": "Chat",
+      "delete": "Delete",
+      "deleting": "Deleting..."
     },
+    "confirm_delete": "Delete {{appName}}?",
     "errors": {
       "load_failed": "Failed to load published apps",
       "timeout": "The published apps service timed out"

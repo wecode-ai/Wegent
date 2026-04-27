@@ -25,15 +25,18 @@ class PublishedAppsService:
             )
         return f"Bearer {settings.api_token}"
 
-    async def list_apps(self, username: str) -> dict[str, Any]:
-        """List apps published by a user."""
-        settings = PublishedAppsSettings()
-        url = f"{settings.base_url}/app/list"
-        headers = {
+    def _build_headers(self, settings: PublishedAppsSettings) -> dict[str, str]:
+        return {
             "accept": "application/json",
             "Authorization": self._build_authorization(settings),
             "Content-Type": "application/json",
         }
+
+    async def list_apps(self, username: str) -> dict[str, Any]:
+        """List apps published by a user."""
+        settings = PublishedAppsSettings()
+        url = f"{settings.base_url}/app/list"
+        headers = self._build_headers(settings)
 
         async with httpx.AsyncClient(
             timeout=settings.PUBLISHED_APPS_TIMEOUT_SECONDS
@@ -41,6 +44,23 @@ class PublishedAppsService:
             response = await client.get(
                 url,
                 params={"username": username},
+                headers=headers,
+            )
+            response.raise_for_status()
+            return response.json()
+
+    async def delete_app(self, username: str, app_name: str) -> dict[str, Any]:
+        """Delete a user published app."""
+        settings = PublishedAppsSettings()
+        url = f"{settings.base_url}/app/delete"
+        headers = self._build_headers(settings)
+
+        async with httpx.AsyncClient(
+            timeout=settings.PUBLISHED_APPS_TIMEOUT_SECONDS
+        ) as client:
+            response = await client.delete(
+                url,
+                json={"username": username, "app_name": app_name},
                 headers=headers,
             )
             response.raise_for_status()

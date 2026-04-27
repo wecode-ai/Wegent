@@ -38,6 +38,11 @@ interface PublishedAppsResponse {
   data?: PublishedAppsData
 }
 
+interface PublishedAppsMutationResponse {
+  code: number
+  message: string
+}
+
 interface ErrorResponse {
   detail?: string
   message?: string
@@ -69,6 +74,27 @@ export async function listPublishedApps(): Promise<PublishedAppsData> {
   }
 
   return payload.data || EMPTY_PUBLISHED_APPS
+}
+
+export async function deletePublishedApp(appName: string): Promise<PublishedAppsMutationResponse> {
+  const response = await fetch(`/api/published-apps/${encodeURIComponent(appName)}`, {
+    method: 'DELETE',
+    headers: {
+      accept: 'application/json',
+    },
+  })
+
+  if (!response.ok) {
+    const message = parseErrorMessage(await response.text())
+    throw new Error(message || 'Failed to delete published app')
+  }
+
+  const payload = (await response.json()) as PublishedAppsMutationResponse
+  if (payload.code !== 0) {
+    throw new Error(payload.message || 'Failed to delete published app')
+  }
+
+  return payload
 }
 
 function parseErrorMessage(body: string): string {

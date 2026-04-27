@@ -60,8 +60,11 @@
     },
     "actions": {
       "open": "打开",
-      "chat": "对话"
+      "chat": "对话",
+      "delete": "删除",
+      "deleting": "删除中..."
     },
+    "confirm_delete": "确定删除应用 {{appName}} 吗？",
     "errors": {
       "load_failed": "加载已发布应用失败",
       "timeout": "请求已发布应用服务超时，请确认内网服务可访问后重试"
