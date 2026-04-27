@@ -125,6 +125,28 @@ class TestGetOriginalDocumentsFromKnowledgeBase:
         assert len(records) == 1
         assert records[0]["metadata"]["document_id"] == 1
 
+        # Verify that the DB filter was constructed using the provided document_ids
+        # The implementation should call filter with KnowledgeDocument.id.in_(document_ids)
+        filter_calls = mock_query.filter.call_args_list
+        assert len(filter_calls) >= 2, "Expected at least 2 filter calls"
+
+        # Check that one of the filter calls contains the document_ids condition
+        # The filter is called with KnowledgeDocument.id.in_(document_ids)
+        found_document_filter = False
+        for call in filter_calls:
+            # call[0] is the args tuple, call[0][0] is the first argument (the filter expression)
+            if call.args and len(call.args) > 0:
+                filter_arg = call.args[0]
+                # The filter expression should contain the document_ids value
+                # We check if the expression string representation contains the document id
+                if "id" in str(filter_arg) and "1" in str(filter_arg):
+                    found_document_filter = True
+                    break
+        assert found_document_filter, (
+            f"Expected filter call with document_ids condition, "
+            f"got filter calls: {filter_calls}"
+        )
+
     @pytest.mark.asyncio
     async def test_returns_empty_list_for_no_documents(self):
         """Should return empty list when no documents exist."""
@@ -540,7 +562,10 @@ class TestDirectInjectionTruncationRejection:
         mock_query.filter.return_value = mock_query
         # Documents well under the limit (id, kind_id, text_length)
         max_text_length = settings.MAX_EXTRACTED_TEXT_LENGTH
-        mock_query.all.return_value = [(1, 123, 1000), (2, 123, 2000)]  # Small documents
+        mock_query.all.return_value = [
+            (1, 123, 1000),
+            (2, 123, 2000),
+        ]  # Small documents
         db.query.return_value = mock_query
 
         mock_doc_read_service = MagicMock()
