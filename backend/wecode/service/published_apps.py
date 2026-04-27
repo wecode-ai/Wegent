@@ -58,7 +58,8 @@ class PublishedAppsService:
         async with httpx.AsyncClient(
             timeout=settings.PUBLISHED_APPS_TIMEOUT_SECONDS
         ) as client:
-            response = await client.delete(
+            response = await client.request(
+                "DELETE",
                 url,
                 json={"username": username, "app_name": app_name},
                 headers=headers,
