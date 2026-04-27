@@ -34,12 +34,12 @@ class PublishedAppsService:
 
     async def list_apps(self, username: str) -> dict[str, Any]:
         """List apps published by a user."""
-        settings = PublishedAppsSettings()
-        url = f"{settings.base_url}/app/list"
-        headers = self._build_headers(settings)
+        config = PublishedAppsSettings()
+        url = f"{config.base_url}/app/list"
+        headers = self._build_headers(config)
 
         async with httpx.AsyncClient(
-            timeout=settings.PUBLISHED_APPS_TIMEOUT_SECONDS
+            timeout=config.PUBLISHED_APPS_TIMEOUT_SECONDS
         ) as client:
             response = await client.get(
                 url,
@@ -51,12 +51,12 @@ class PublishedAppsService:
 
     async def delete_app(self, username: str, app_name: str) -> dict[str, Any]:
         """Delete a user published app."""
-        settings = PublishedAppsSettings()
-        url = f"{settings.base_url}/app/delete"
-        headers = self._build_headers(settings)
+        config = PublishedAppsSettings()
+        url = f"{config.base_url}/app/delete"
+        headers = self._build_headers(config)
 
         async with httpx.AsyncClient(
-            timeout=settings.PUBLISHED_APPS_TIMEOUT_SECONDS
+            timeout=config.PUBLISHED_APPS_TIMEOUT_SECONDS
         ) as client:
             response = await client.request(
                 "DELETE",

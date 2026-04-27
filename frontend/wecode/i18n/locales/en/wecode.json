@@ -33,7 +33,7 @@
     "powered_by_suffix": ""
   },
   "published_apps": {
-    "tab": "Published Apps",
+    "tab": "Apps",
     "title": "Published Apps",
     "description": "Applications published by the current signed-in user",
     "summary": "{{count}} apps",

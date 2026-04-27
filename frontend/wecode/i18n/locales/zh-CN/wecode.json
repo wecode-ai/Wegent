@@ -33,7 +33,7 @@
     "powered_by_suffix": "平台提供云算力"
   },
   "published_apps": {
-    "tab": "已发布的应用",
+    "tab": "应用",
     "title": "已发布的应用",
     "description": "展示当前登录用户已发布的应用",
     "summary": "共 {{count}} 个应用",
