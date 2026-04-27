@@ -6,7 +6,7 @@
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-DEFAULT_PUBLISHED_APPS_API_URL = "http://10.37.255.188:3001"
+DEFAULT_PUBLISHED_APPS_API_URL = "https://ai-state-machine.intra.weibo.com"
 DEFAULT_PUBLISHED_APPS_TIMEOUT_SECONDS = 10.0
 
 
