@@ -6,6 +6,7 @@
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -128,3 +129,27 @@ def test_list_published_apps_ignores_username_query(
             "Content-Type": "application/json",
         },
     )
+
+
+def test_list_published_apps_returns_gateway_timeout_on_service_timeout(
+    test_client: TestClient,
+    auth_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.delenv("RUNTIME_PUBLISHED_APPS_API_URL", raising=False)
+    monkeypatch.delenv("RUNTIME_PUBLISHED_APPS_API_TOKEN", raising=False)
+    monkeypatch.setenv("PUBLISHED_APPS_API_URL", "http://published-apps.example.com")
+    monkeypatch.setenv("PUBLISHED_APPS_API_TOKEN", "service-token")
+
+    mock_client = AsyncMock()
+    mock_client.get.side_effect = httpx.TimeoutException("timed out")
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    with patch(
+        "wecode.service.published_apps.httpx.AsyncClient", return_value=mock_client
+    ):
+        response = test_client.get("/api/published-apps", headers=auth_headers)
+
+    assert response.status_code == 504
+    assert response.json() == {"detail": "Published apps service request timed out"}

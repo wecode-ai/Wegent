@@ -35,10 +35,12 @@ jest.mock('@/hooks/useTranslation', () => ({
         'published_apps.status.running': 'Running',
         'published_apps.status.ready': 'Ready',
         'published_apps.status.online': 'Online',
+        'published_apps.errors.timeout': 'The published apps service timed out',
         'published_apps.summary': `${options?.count ?? 0} apps`,
       }
       return translations[key] || key
     },
+    i18n: { language: 'en' },
   }),
 }))
 
@@ -82,5 +84,15 @@ describe('PublishedAppsPage', () => {
     expect(screen.getByText('123')).toBeInTheDocument()
     expect(screen.getByText('comedy-monitor.yinlu.wegent.intra.weibo.com')).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Chat' })).toHaveAttribute('href', '/code?taskId=123')
+  })
+
+  test('shows a localized timeout error', async () => {
+    ;(listPublishedApps as jest.Mock).mockRejectedValue(
+      new Error('Published apps service request timed out')
+    )
+
+    render(<PublishedAppsPage />)
+
+    expect(await screen.findByText('The published apps service timed out')).toBeInTheDocument()
   })
 })

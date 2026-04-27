@@ -64,7 +64,8 @@
       "chat": "对话"
     },
     "errors": {
-      "load_failed": "加载已发布应用失败"
+      "load_failed": "加载已发布应用失败",
+      "timeout": "请求已发布应用服务超时，请确认内网服务可访问后重试"
     }
   },
   "mail_token": {

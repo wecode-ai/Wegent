@@ -4,11 +4,11 @@
 
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import '@wecode/i18n'
 import { AlertCircle, Loader2, MessageSquare, RefreshCw } from 'lucide-react'
 import { listPublishedApps, type PublishedApp } from '@wecode/api/published-apps'
-import { useTranslation } from '@/hooks/useTranslation'
+import { useWecodeTranslation } from '@wecode/i18n/useWecodeTranslation'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -56,8 +56,19 @@ function getStatusVariant(app: PublishedApp): 'success' | 'warning' | 'secondary
   return 'secondary'
 }
 
+function getPublishedAppsErrorMessage(error: unknown, t: (key: string) => string): string {
+  if (error instanceof Error) {
+    if (error.message === 'Published apps service request timed out') {
+      return t('published_apps.errors.timeout')
+    }
+    return error.message
+  }
+
+  return t('published_apps.errors.load_failed')
+}
+
 function PublishedAppStatus({ app }: { app: PublishedApp }) {
-  const { t } = useTranslation('wecode')
+  const { t } = useWecodeTranslation()
   const labels = [
     app.status === 'running' ? t('published_apps.status.running') : app.status,
     app.ready ? t('published_apps.status.ready') : null,
@@ -72,11 +83,16 @@ function PublishedAppStatus({ app }: { app: PublishedApp }) {
 }
 
 export default function PublishedAppsPage() {
-  const { t } = useTranslation('wecode')
+  const { t } = useWecodeTranslation()
+  const translateRef = useRef(t)
   const [apps, setApps] = useState<PublishedApp[]>([])
   const [total, setTotal] = useState(0)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    translateRef.current = t
+  }, [t])
 
   const loadApps = useCallback(async () => {
     setIsLoading(true)
@@ -86,13 +102,13 @@ export default function PublishedAppsPage() {
       setApps(data.apps)
       setTotal(data.total)
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('published_apps.errors.load_failed'))
+      setError(getPublishedAppsErrorMessage(err, translateRef.current))
       setApps([])
       setTotal(0)
     } finally {
       setIsLoading(false)
     }
-  }, [t])
+  }, [])
 
   useEffect(() => {
     loadApps()

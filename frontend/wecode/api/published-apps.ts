@@ -38,6 +38,11 @@ interface PublishedAppsResponse {
   data?: PublishedAppsData
 }
 
+interface ErrorResponse {
+  detail?: string
+  message?: string
+}
+
 const EMPTY_PUBLISHED_APPS: PublishedAppsData = {
   total: 0,
   page: 1,
@@ -54,7 +59,7 @@ export async function listPublishedApps(): Promise<PublishedAppsData> {
   })
 
   if (!response.ok) {
-    const message = await response.text()
+    const message = parseErrorMessage(await response.text())
     throw new Error(message || 'Failed to load published apps')
   }
 
@@ -64,4 +69,17 @@ export async function listPublishedApps(): Promise<PublishedAppsData> {
   }
 
   return payload.data || EMPTY_PUBLISHED_APPS
+}
+
+function parseErrorMessage(body: string): string {
+  if (!body) {
+    return ''
+  }
+
+  try {
+    const payload = JSON.parse(body) as ErrorResponse
+    return payload.detail || payload.message || body
+  } catch {
+    return body
+  }
 }

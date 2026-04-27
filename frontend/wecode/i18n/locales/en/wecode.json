@@ -64,7 +64,8 @@
       "chat": "Chat"
     },
     "errors": {
-      "load_failed": "Failed to load published apps"
+      "load_failed": "Failed to load published apps",
+      "timeout": "The published apps service timed out"
     }
   },
   "mail_token": {

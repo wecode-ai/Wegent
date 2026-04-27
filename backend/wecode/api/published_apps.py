@@ -44,6 +44,15 @@ async def list_published_apps(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Published apps service returned an error",
         ) from exc
+    except httpx.TimeoutException as exc:
+        logger.error(
+            "Published apps service timed out for username=%s",
+            current_user.user_name,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="Published apps service request timed out",
+        ) from exc
     except httpx.HTTPError as exc:
         logger.error(
             "Failed to request published apps service for username=%s: %s",

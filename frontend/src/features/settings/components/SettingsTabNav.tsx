@@ -6,6 +6,7 @@
 
 import { useEffect, useRef, useState, useMemo, useCallback } from 'react'
 import '@wecode/i18n'
+import { useWecodeTranslation } from '@wecode/i18n/useWecodeTranslation'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
   Select,
@@ -79,7 +80,7 @@ export function SettingsTabNav({
   refreshTrigger,
 }: SettingsTabNavProps) {
   const { t } = useTranslation('common')
-  const { t: tWecode } = useTranslation('wecode')
+  const { t: tWecode } = useWecodeTranslation()
   const isMobile = useIsMobile()
   const indicatorContainerRef = useRef<HTMLDivElement | null>(null)
   const itemRefs = useRef<Record<string, HTMLButtonElement | null>>({})
