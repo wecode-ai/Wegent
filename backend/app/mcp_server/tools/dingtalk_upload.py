@@ -16,8 +16,9 @@ import logging
 import os
 import re
 import socket
+import unicodedata
 from typing import Any, Dict, Optional
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 import requests
 from sqlalchemy.orm import Session
@@ -158,21 +159,44 @@ def _download_file_from_url(url: str) -> bytes:
 
 def _get_filename_from_url(url: str, default_filename: str = "document") -> str:
     """
-    Extract filename from URL or use default.
+    Extract and sanitize filename from URL or use default.
+
+    Decodes URL-encoded sequences, removes control/NUL characters, strips
+    unsafe path separators and leading dots, and collapses unsafe characters
+    to produce a safe, predictable filename token.
 
     Args:
         url: The URL to parse
         default_filename: Default filename if not found in URL
 
     Returns:
-        Filename with extension
+        Sanitized filename with extension, or default_filename if result is empty
     """
     parsed = urlparse(url)
     path = parsed.path
     if path:
-        filename = os.path.basename(path)
-        if filename and "." in filename:
-            return filename
+        # URL-decode percent-encoded sequences (e.g. %20 -> space)
+        basename = unquote(os.path.basename(path))
+
+        # Remove NUL bytes and ASCII/Unicode control characters
+        basename = "".join(
+            ch for ch in basename if ch != "\x00" and unicodedata.category(ch) != "Cc"
+        )
+
+        # Strip path separators that could enable directory traversal
+        basename = basename.replace("/", "").replace("\\", "")
+
+        # Strip leading dots to avoid hidden files (e.g. ".bashrc")
+        basename = basename.lstrip(".")
+
+        # Collapse runs of whitespace/unsafe chars to a single underscore,
+        # keeping alphanumerics, hyphens, underscores, dots, and Unicode letters
+        basename = re.sub(r"[^\w\-.]", "_", basename)
+        basename = re.sub(r"_+", "_", basename).strip("_")
+
+        if basename and "." in basename:
+            return basename
+
     return default_filename
 
 

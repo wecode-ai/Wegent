@@ -244,9 +244,11 @@ Use dingtalk-table MCP:
 dingtalk-table.get_all_sheets(nodeId="xxx")
 # Returns: [{"sheetId": "1", "name": "Sheet1"}, ...]
 
-# Read data from specific sheet
-dingtalk-table.get_range(nodeId="xxx", sheetId="1", range="A1:Z100")
+# Read data from specific sheet - use a large range to capture all rows
+dingtalk-table.get_range(nodeId="xxx", sheetId="1", range="A1:Z10000")
 ```
+
+**⚠️ IMPORTANT: Use a sufficiently large row range.** The example `A1:Z100` only fetches 100 rows. For real spreadsheets, use `A1:Z10000` or larger. If the tool returns a `hasMore` or similar field indicating more data exists, keep fetching with an incremented row offset until all rows are retrieved.
 
 ##### Option C: AI Table (able) - contentType=ALIDOC, extension=able
 Use dingtalk-ai-table MCP:
@@ -255,9 +257,20 @@ Use dingtalk-ai-table MCP:
 dingtalk-ai-table.get_tables(nodeId="xxx")
 # Returns: [{"tableId": "1", "name": "Table1"}, ...]
 
-# Query records
-dingtalk-ai-table.query_records(nodeId="xxx", tableId="1")
+# Query records with pagination - MUST loop until all records are fetched
+# First call (no pageToken)
+result = dingtalk-ai-table.query_records(nodeId="xxx", tableId="1")
+all_records = result["records"]
+
+# Continue fetching if there are more pages
+while result.get("pageToken"):
+    result = dingtalk-ai-table.query_records(
+        nodeId="xxx", tableId="1", pageToken=result["pageToken"]
+    )
+    all_records.extend(result["records"])
 ```
+
+**⚠️ IMPORTANT: AI Table pagination is mandatory.** `query_records` returns a `pageToken` field when there are more records. You MUST keep calling `query_records` with the returned `pageToken` until `pageToken` is absent or empty. Uploading only the first page will result in incomplete data.
 
 ##### Option D: File-based Document - contentType≠ALIDOC, nodeType=file
 Call `download_file` to get download URL:
