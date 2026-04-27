@@ -23,6 +23,7 @@ import { SkillListWithScope } from '@/features/settings/components/SkillListWith
 import { TeamListWithScope } from '@/features/settings/components/TeamListWithScope'
 import ApiKeyList from '@/features/settings/components/ApiKeyList'
 import { RetrieverListWithScope } from '@/features/settings/components/RetrieverListWithScope'
+import PublishedAppsPage from '@wecode/components/settings/PublishedAppsPage'
 import { PetSettings } from '@/features/pet/components/PetSettings'
 import { useTranslation } from '@/hooks/useTranslation'
 import { GithubStarButton } from '@/features/layout/GithubStarButton'
@@ -93,7 +94,7 @@ function SettingsContent() {
     if (group !== selectedGroup) {
       setSelectedGroup(group)
     }
-  }, [searchParams])
+  }, [searchParams, activeTab, selectedGroup])
 
   // Mobile sidebar state
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
@@ -216,6 +217,8 @@ function SettingsContent() {
         return <NotificationSettings />
       case 'api-keys':
         return <ApiKeyList />
+      case 'published-apps':
+        return <PublishedAppsPage />
       case 'pet':
         return <PetSettings />
       default:

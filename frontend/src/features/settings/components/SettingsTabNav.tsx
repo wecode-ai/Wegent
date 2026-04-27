@@ -42,6 +42,7 @@ export type SettingsTabId =
   | 'general'
   | 'integrations'
   | 'api-keys'
+  | 'published-apps'
   | 'pet'
 
 // Scope type for resource tabs
@@ -76,7 +77,8 @@ export function SettingsTabNav({
   onGroupChange,
   refreshTrigger,
 }: SettingsTabNavProps) {
-  const { t } = useTranslation(['common', 'groups', 'pet'])
+  const { t } = useTranslation('common')
+  const { t: tWecode } = useTranslation('wecode')
   const isMobile = useIsMobile()
   const indicatorContainerRef = useRef<HTMLDivElement | null>(null)
   const itemRefs = useRef<Record<string, HTMLButtonElement | null>>({})
@@ -148,9 +150,10 @@ export function SettingsTabNav({
       { id: 'general', label: t('settings.sections.general'), category: 'other' },
       { id: 'integrations', label: t('settings.integrations'), category: 'other' },
       { id: 'api-keys', label: t('settings.api_keys'), category: 'other' },
+      { id: 'published-apps', label: tWecode('published_apps.tab'), category: 'other' },
       { id: 'pet', label: t('pet:title'), category: 'other' },
     ],
-    [t]
+    [t, tWecode]
   )
 
   // Handle navigation to group manager
@@ -180,12 +183,12 @@ export function SettingsTabNav({
     }
   }
   // Determine current scope based on active tab
-  const getCurrentScope = (): ResourceScope => {
+  const getCurrentScope = useCallback((): ResourceScope => {
     if (activeTab.startsWith('group-') && activeTab !== 'group-manager') {
       return 'group'
     }
     return 'personal'
-  }
+  }, [activeTab])
 
   const [currentScope, setCurrentScope] = useState<ResourceScope>(getCurrentScope())
 

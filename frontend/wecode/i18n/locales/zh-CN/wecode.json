@@ -32,6 +32,37 @@
     "powered_by_prefix": "由",
     "powered_by_suffix": "平台提供云算力"
   },
+  "published_apps": {
+    "tab": "已发布的应用",
+    "title": "已发布的应用",
+    "description": "展示用户 {{username}} 已发布的应用",
+    "summary": "共 {{count}} 个应用",
+    "refresh": "刷新",
+    "loading": "正在加载已发布应用...",
+    "empty": "暂无已发布应用",
+    "empty_hint": "发布应用后会在这里展示运行状态和访问地址。",
+    "columns": {
+      "name": "应用",
+      "status": "状态",
+      "env": "环境",
+      "namespace": "命名空间",
+      "pod": "Pod",
+      "created_at": "创建时间",
+      "last_check_at": "最后检查",
+      "action": "操作"
+    },
+    "status": {
+      "running": "运行中",
+      "ready": "就绪",
+      "online": "在线"
+    },
+    "actions": {
+      "open": "打开"
+    },
+    "errors": {
+      "load_failed": "加载已发布应用失败"
+    }
+  },
   "mail_token": {
     "title": "公司邮件",
     "description": "配置公司邮件令牌以启用邮件相关功能",

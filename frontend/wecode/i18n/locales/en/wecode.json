@@ -32,6 +32,37 @@
     "powered_by_prefix": "Cloud computing powered by",
     "powered_by_suffix": ""
   },
+  "published_apps": {
+    "tab": "Published Apps",
+    "title": "Published Apps",
+    "description": "Applications published by {{username}}",
+    "summary": "{{count}} apps",
+    "refresh": "Refresh",
+    "loading": "Loading published apps...",
+    "empty": "No published apps",
+    "empty_hint": "Published apps will appear here with runtime status and access URLs.",
+    "columns": {
+      "name": "App",
+      "status": "Status",
+      "env": "Env",
+      "namespace": "Namespace",
+      "pod": "Pod",
+      "created_at": "Created At",
+      "last_check_at": "Last Check",
+      "action": "Action"
+    },
+    "status": {
+      "running": "Running",
+      "ready": "Ready",
+      "online": "Online"
+    },
+    "actions": {
+      "open": "Open"
+    },
+    "errors": {
+      "load_failed": "Failed to load published apps"
+    }
+  },
   "mail_token": {
     "title": "Company Mail",
     "description": "Configure a company mail token to enable email-related features",
