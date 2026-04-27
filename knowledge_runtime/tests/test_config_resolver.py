@@ -116,14 +116,16 @@ def _make_model_kind(
     return model
 
 
+_SENTINEL = object()
+
+
 def _make_document(
-    document_id: int = 100, splitter_config: dict | None = object()
+    document_id: int = 100, splitter_config: dict | None = _SENTINEL
 ) -> MagicMock:
     """Create a mock KnowledgeDocument record."""
     doc = MagicMock()
     doc.id = document_id
-    # Use sentinel default to distinguish "not passed" from explicit None
-    if splitter_config is object():
+    if splitter_config is _SENTINEL:
         splitter_config = {"chunk_size": 512}
     doc.splitter_config = splitter_config
     return doc
