@@ -641,6 +641,10 @@ class Settings(BaseSettings):
     # Cloud device offline alert configuration
     # Enable/disable cloud device offline alert (default: False)
     CLOUD_DEVICE_OFFLINE_ALERT_ENABLED: bool = False
+    # Enable/disable automatic self-healing for sustained cloud device offline state
+    CLOUD_DEVICE_AUTO_HEAL_ENABLED: bool = False
+    # Number of consecutive offline monitor checks required before auto-heal
+    CLOUD_DEVICE_AUTO_HEAL_OFFLINE_THRESHOLD: int = 3
 
     # OpenClaw token usage alert configuration
     # Base URL for OpenClaw stats API

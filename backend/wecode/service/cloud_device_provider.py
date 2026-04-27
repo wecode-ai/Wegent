@@ -86,6 +86,27 @@ class CloudDeviceProvider(BaseDeviceProvider):
         """
         return self._client.is_configured()
 
+    def _get_active_device_kind(
+        self,
+        db: Session,
+        user_id: int,
+        device_id: str,
+    ) -> Optional[Kind]:
+        """Load an active device Kind by user and device ID."""
+        return (
+            db.query(Kind)
+            .filter(
+                and_(
+                    Kind.user_id == user_id,
+                    Kind.kind == "Device",
+                    Kind.namespace == "default",
+                    Kind.name == device_id,
+                    Kind.is_active == True,
+                )
+            )
+            .first()
+        )
+
     async def create_device(
         self,
         db: Session,
@@ -358,19 +379,7 @@ class CloudDeviceProvider(BaseDeviceProvider):
             True if deleted successfully
         """
         # Get device CRD
-        device_kind = (
-            db.query(Kind)
-            .filter(
-                and_(
-                    Kind.user_id == user_id,
-                    Kind.kind == "Device",
-                    Kind.namespace == "default",
-                    Kind.name == device_id,
-                    Kind.is_active == True,
-                )
-            )
-            .first()
-        )
+        device_kind = self._get_active_device_kind(db, user_id, device_id)
 
         if not device_kind:
             logger.warning(
@@ -436,6 +445,40 @@ class CloudDeviceProvider(BaseDeviceProvider):
 
         return True
 
+    async def restart_device(
+        self,
+        db: Session,
+        user_id: int,
+        device_id: str,
+    ) -> Dict[str, Any]:
+        """Restart a cloud device via Nevis API."""
+        device_kind = self._get_active_device_kind(db, user_id, device_id)
+
+        if not device_kind:
+            raise ValueError(
+                f"Cloud device not found: user_id={user_id}, device_id={device_id}"
+            )
+
+        spec = device_kind.json.get("spec", {})
+        if spec.get("deviceType") != DeviceType.CLOUD.value:
+            raise ValueError(f"Device is not a cloud device: device_id={device_id}")
+
+        cloud_config = spec.get("cloudConfig", {})
+        sandbox_id = cloud_config.get("sandboxId")
+        if not sandbox_id:
+            raise ValueError(f"Cloud device missing sandbox ID: device_id={device_id}")
+
+        result = await self._client.restart_sandbox(sandbox_id)
+        logger.info(
+            f"[CloudDeviceProvider] Cloud device restart triggered: "
+            f"user_id={user_id}, device_id={device_id}, sandbox_id={sandbox_id}"
+        )
+        return {
+            "device_id": device_id,
+            "sandbox_id": sandbox_id,
+            "result": result,
+        }
+
     async def get_vm_status(
         self,
         device_id: str,
@@ -496,19 +539,7 @@ class CloudDeviceProvider(BaseDeviceProvider):
             Dict with device 'id' and 'is_default'
         """
         # Find existing cloud device CRD
-        device_kind = (
-            db.query(Kind)
-            .filter(
-                and_(
-                    Kind.user_id == user_id,
-                    Kind.kind == "Device",
-                    Kind.namespace == "default",
-                    Kind.name == device_id,
-                    Kind.is_active == True,
-                )
-            )
-            .first()
-        )
+        device_kind = self._get_active_device_kind(db, user_id, device_id)
 
         if device_kind:
             # Update existing device

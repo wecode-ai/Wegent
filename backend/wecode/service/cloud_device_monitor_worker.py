@@ -47,25 +47,6 @@ async def acquire_monitor_lock(redis_client) -> bool:
         return False
 
 
-async def release_monitor_lock(redis_client) -> bool:
-    """
-    Release distributed lock for cloud device monitor.
-
-    Args:
-        redis_client: Redis client instance
-
-    Returns:
-        bool: Whether lock was successfully released
-    """
-    try:
-        await redis_client.delete(MONITOR_LOCK_KEY)
-        logger.info("[cloud-device-monitor] Released distributed lock")
-        return True
-    except Exception as e:
-        logger.error(f"[cloud-device-monitor] Error releasing lock: {e}")
-        return False
-
-
 def cloud_device_monitor_worker(stop_event: threading.Event):
     """
     Background worker that monitors cloud device status every 10 minutes.
@@ -102,6 +83,7 @@ async def _run_monitor_check():
     from wecode.service.cloud_device_monitor_service import (
         check_cloud_devices_status,
         send_monitoring_report,
+        trigger_auto_heal_for_offline_devices,
     )
     from wecode.service.dingtalk_webhook import (
         DINGTALK_WEBHOOK_URL,
@@ -122,57 +104,64 @@ async def _run_monitor_check():
         if not lock_acquired:
             return  # Another instance is handling this check
 
-        try:
-            with get_db_session() as db:
-                result = await check_cloud_devices_status(db, redis_client)
-
-            logger.info(
-                f"[cloud-device-monitor] Check completed: "
-                f"total={result['total']}, online={result['online_count']}, "
-                f"offline={result['offline_count']}, "
-                f"new_offline={len(result['new_offline'])}, "
-                f"recovered={len(result['recovered'])}"
+        with get_db_session() as db:
+            result = await check_cloud_devices_status(db, redis_client)
+            auto_heal_attempts = await trigger_auto_heal_for_offline_devices(
+                db,
+                redis_client,
+                result,
             )
 
-            # Send notification if there are offline devices or changes
-            should_notify = (
-                result["offline_count"] > 0
-                or result["new_offline"]
-                or result["recovered"]
-            )
+        logger.info(
+            f"[cloud-device-monitor] Check completed: "
+            f"total={result['total']}, online={result['online_count']}, "
+            f"offline={result['offline_count']}, "
+            f"new_offline={len(result['new_offline'])}, "
+            f"recovered={len(result['recovered'])}, "
+            f"auto_heal={len(auto_heal_attempts)}"
+        )
 
-            if should_notify:
-                # Check if webhook URL is configured
-                if DINGTALK_WEBHOOK_URL.endswith("YOUR_TOKEN"):
-                    logger.warning(
-                        "[cloud-device-monitor] DingTalk webhook URL not configured. "
-                        "Please update DINGTALK_WEBHOOK_URL in "
-                        "wecode/service/dingtalk_webhook.py"
+        # Do not release the distributed lock proactively.
+        # Different instances may start this worker at different times, and
+        # releasing early would allow the same monitor window to run again.
+        # We rely on Redis TTL so the lock guards the full interval.
+
+        # Send notification if there are offline devices or changes
+        should_notify = (
+            result["offline_count"] > 0
+            or result["new_offline"]
+            or result["recovered"]
+        )
+
+        if should_notify:
+            # Check if webhook URL is configured
+            if DINGTALK_WEBHOOK_URL.endswith("YOUR_TOKEN"):
+                logger.warning(
+                    "[cloud-device-monitor] DingTalk webhook URL not configured. "
+                    "Please update DINGTALK_WEBHOOK_URL in "
+                    "wecode/service/dingtalk_webhook.py"
+                )
+            else:
+                webhook_sender = DingTalkWebhookSender(
+                    webhook_url=DINGTALK_WEBHOOK_URL,
+                    secret=DINGTALK_WEBHOOK_SECRET,
+                )
+                success = await send_monitoring_report(
+                    redis_client, result, webhook_sender
+                )
+                if success:
+                    logger.info(
+                        "[cloud-device-monitor] Monitoring report sent successfully"
                     )
                 else:
-                    webhook_sender = DingTalkWebhookSender(
-                        webhook_url=DINGTALK_WEBHOOK_URL,
-                        secret=DINGTALK_WEBHOOK_SECRET,
+                    logger.error(
+                        "[cloud-device-monitor] Failed to send monitoring report"
                     )
-                    success = await send_monitoring_report(
-                        redis_client, result, webhook_sender
-                    )
-                    if success:
-                        logger.info(
-                            "[cloud-device-monitor] Monitoring report sent successfully"
-                        )
-                    else:
-                        logger.error(
-                            "[cloud-device-monitor] Failed to send monitoring report"
-                        )
-            else:
-                logger.info(
-                    "[cloud-device-monitor] No offline devices or changes, "
-                    "skipping notification"
-                )
-        finally:
-            # ensure next task exec after 10minute
-            pass
+        else:
+            logger.info(
+                "[cloud-device-monitor] No offline devices or changes, "
+                "skipping notification"
+            )
 
     finally:
         if redis_client:
