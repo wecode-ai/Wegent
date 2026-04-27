@@ -28,6 +28,7 @@ from .decorator import (
     get_registered_mcp_tools,
     mcp_tool,
 )
+from .dingtalk_upload import DINGTALK_UPLOAD_MCP_TOOLS
 from .knowledge import KNOWLEDGE_MCP_TOOLS
 from .silent_exit import silent_exit
 from .subscription import create_subscription, preview_subscription
@@ -35,6 +36,7 @@ from .subscription import create_subscription, preview_subscription
 __all__ = [
     "silent_exit",
     "KNOWLEDGE_MCP_TOOLS",
+    "DINGTALK_UPLOAD_MCP_TOOLS",
     "mcp_tool",
     "get_registered_mcp_tools",
     "build_mcp_tools_dict",

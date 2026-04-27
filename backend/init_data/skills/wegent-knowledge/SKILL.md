@@ -41,6 +41,8 @@ You now have access to Wegent Knowledge Base management tools.
 
 ## Available Tools
 
+### Knowledge Base Management Tools
+
 - **wegent_kb_list_knowledge_bases**: List all knowledge bases accessible to the current user
   - scope: "personal" (your own), "group" (team), or "all" (default)
   - group_name: Specify group name when scope="group"
@@ -58,11 +60,12 @@ You now have access to Wegent Knowledge Base management tools.
 - **wegent_kb_create_document**: Create a new document in a knowledge base
   - knowledge_base_id: Target knowledge base ID
   - name: Document name
-  - source_type: "text" (paste content), "file" (base64 encoded), or "web" (URL to scrape)
+  - source_type: "text" (paste content), "file" (base64 encoded), "web" (URL to scrape), or "attachment" (existing attachment)
   - content: Document content when source_type="text"
   - file_base64: Base64 encoded file when source_type="file"
   - file_extension: File extension when source_type="file"
   - url: URL to fetch when source_type="web"
+  - attachment_id: Existing attachment ID when source_type="attachment"
   - trigger_indexing: Whether to trigger RAG indexing (default: true)
   - trigger_summary: Whether to trigger summary generation (default: true)
 
@@ -82,6 +85,20 @@ You now have access to Wegent Knowledge Base management tools.
   - query: Search query text
   - max_results: Maximum results to return (default: 10, max: 50)
   - document_ids: Optional list of document IDs to filter search scope
+
+### DingTalk Upload Helper Tools
+
+- **dingtalk_upload_file_from_url**: Download a file from URL and upload to Wegent
+  - download_url: The URL to download the file from (e.g., from dingtalk-docs.download_file)
+  - filename: Optional filename with extension. If not provided, will extract from URL
+  - default_extension: Default extension if filename cannot be determined (default: "bin")
+  - returns: attachment_id, filename, size, mime_type, truncated
+
+- **dingtalk_upload_content**: Save content to a file and upload to Wegent
+  - content: The text content to save (e.g., markdown from dingtalk-docs.get_document_content)
+  - filename: Filename with extension (e.g., "document.md")
+  - encoding: Text encoding (default: "utf-8")
+  - returns: attachment_id, filename, size, mime_type, truncated
 
 ## Usage Notes
 
@@ -251,44 +268,41 @@ Returns: `{"download_url": "https://...", "download_token": "..."}`
 
 Then proceed to Step 4A.
 
-#### Step 4A: Download and Upload via Sandbox (for file-based documents)
-**CRITICAL: You MUST use the sandbox `exec` tool to download and upload the file.**
+#### Step 4A: Download and Upload File (for file-based documents)
 
-If you got a `download_url` from Option D:
-1. Use the sandbox `exec` tool to download the file and upload it to Wegent:
-```bash
-# Download the file
-curl -L -o /tmp/{filename}.{ext} "{download_url}"
+If you got a `download_url` from Option D, use the `dingtalk_upload_file_from_url` tool to download the file and upload it to Wegent:
 
-# Upload to Wegent and capture attachment_id
-[ -f /tmp/{filename}.{ext} ] && curl -sS -X POST \
-  -H "Authorization: Bearer ${AUTH_TOKEN}" \
-  -F "file=@/tmp/{filename}.{ext}" \
-  -w "\nHTTP_STATUS:%{http_code}" \
-  "${TASK_API_DOMAIN}/api/attachments/upload"
+```python
+dingtalk_upload_file_from_url(
+    download_url="https://alidocs.dingtalk.com/...",
+    filename="Specifications.docx"
+)
 ```
-Parse the JSON response to extract `attachment_id`.
 
-#### Step 4B: Save Content and Upload via Sandbox (for online documents)
-**CRITICAL: You MUST use the sandbox `exec` tool to save content and upload the file.**
+Returns: `{"attachment_id": 123, "filename": "Specifications.docx", "size": 10240}`
 
-If you got content from adoc or axls or able:
-1. Must Use the sandbox `exec` tool to write the content to a markdown file and upload it to Wegent:
-```bash
-# Write markdown content to file
-cat > /tmp/{filename}.md << 'EOF'
-{markdown_content_from_get_document_content}
-EOF
+**Parameters:**
+- `download_url`: The URL to download the file from (from `dingtalk-docs.download_file`)
+- `filename`: Filename with extension (e.g., "document.docx"). If not provided, will extract from URL
+- `default_extension`: Default extension if filename cannot be determined (default: "bin")
 
-# Upload to Wegent and capture attachment_id
-[ -f /tmp/{filename}.md ] && \
-curl -sS -X POST \
-  -H "Authorization: Bearer ${AUTH_TOKEN}" \
-  -F "file=@/tmp/{filename}.md" \
-  -w "\nHTTP_STATUS:%{http_code}" \
-  "${TASK_API_DOMAIN}/api/attachments/upload"
+#### Step 4B: Save Content and Upload (for online documents)
+
+If you got content from adoc or axls or able, use the `dingtalk_upload_content` tool to save the content to a file and upload it to Wegent:
+
+```python
+dingtalk_upload_content(
+    content="# Title\n\nContent from get_document_content...",
+    filename="Specifications.md"
+)
 ```
-Parse the JSON response to extract `attachment_id`.
+
+Returns: `{"attachment_id": 456, "filename": "Specifications.md", "size": 2048}`
+
+**Parameters:**
+- `content`: The text content to save (e.g., markdown from `dingtalk-docs.get_document_content`)
+- `filename`: Filename with extension (e.g., "document.md")
+- `encoding`: Text encoding (default: "utf-8")
 
 **Important:** The content from `get_document_content` is always in markdown format, so save it with `.md` extension.
 
@@ -344,18 +358,14 @@ Steps:
    - Returns: `{"name": "Specifications", "contentType": "FILE", "file_extension": "docx", "nodeType": "file", ...}`
 3. Since contentType≠ALIDOC and nodeType=file, call dingtalk-docs.download_file(nodeId="nYMoOje9")
    - Returns: `{"download_url": "https://...", "download_token": "..."}`
-4. Use sandbox exec to download and upload:
-   ```bash
-   curl -L -o /tmp/Specifications.docx "https://alidocs.dingtalk.com/..."
-
-   [ -f /tmp/Specifications.docx ] && \
-   curl -sS -X POST \
-     -H "Authorization: Bearer ${AUTH_TOKEN}" \
-     -F "file=@/tmp/Specifications.docx" \
-     -w "\nHTTP_STATUS:%{http_code}" \
-     "${TASK_API_DOMAIN}/api/attachments/upload"
+4. Use **dingtalk_upload_file_from_url** to download and upload:
+   ```python
+   dingtalk_upload_file_from_url(
+       download_url="https://alidocs.dingtalk.com/...",
+       filename="Specifications.docx"
+   )
    ```
-   - Parse response to get `attachment_id: 123`
+   - Returns: `{"attachment_id": 123, ...}`
 5. Call **wegent_kb_create_document** to create document in Wegent knowledge base:
    ```python
    wegent_kb_create_document(
@@ -378,21 +388,14 @@ Steps:
    - Returns: `{"name": "Specifications", "contentType": "ALIDOC", "file_extension": "adoc", ...}`
 3. Since contentType=ALIDOC and extension=adoc, call dingtalk-docs.get_document_content(nodeId="AbCdEfGh")
    - Returns: `{"markdown": "# Title\n\nContent...", ...}`
-4. Use sandbox exec to save content and upload:
-   ```bash
-   cat > /tmp/Specifications.md << 'EOF' && \
-   # Title
-
-   Content...
-   EOF
-   [ -f /tmp/Specifications.md ] && \
-   curl -sS -X POST \
-     -H "Authorization: Bearer ${AUTH_TOKEN}" \
-     -F "file=@/tmp/Specifications.md" \
-     -w "\nHTTP_STATUS:%{http_code}" \
-     "${TASK_API_DOMAIN}/api/attachments/upload"
+4. Use **dingtalk_upload_content** to save and upload:
+   ```python
+   dingtalk_upload_content(
+       content="# Title\n\nContent from DingTalk...",
+       filename="Specifications.md"
+   )
    ```
-   - Parse response to get `attachment_id: 456`
+   - Returns: `{"attachment_id": 456, ...}`
 5. Call **wegent_kb_create_document** to create document in Wegent knowledge base:
    ```python
    wegent_kb_create_document(
