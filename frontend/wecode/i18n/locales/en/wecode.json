@@ -56,7 +56,6 @@
     },
     "status": {
       "running": "Running",
-      "ready": "Ready",
       "online": "Online"
     },
     "actions": {

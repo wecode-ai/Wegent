@@ -56,7 +56,6 @@
     },
     "status": {
       "running": "运行中",
-      "ready": "就绪",
       "online": "在线"
     },
     "actions": {

@@ -71,7 +71,6 @@ function PublishedAppStatus({ app }: { app: PublishedApp }) {
   const { t } = useWecodeTranslation()
   const labels = [
     app.status === 'running' ? t('published_apps.status.running') : app.status,
-    app.ready ? t('published_apps.status.ready') : null,
     app.is_online ? t('published_apps.status.online') : null,
   ].filter(Boolean)
 
