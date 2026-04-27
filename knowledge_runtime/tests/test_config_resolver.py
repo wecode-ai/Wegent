@@ -668,7 +668,7 @@ class TestBuildResolvedEmbeddingModelConfig:
                 side_effect=lambda v: f"dec_{v}" if v and v.startswith("sk-enc") else v,
             ),
             patch(
-                "shared.utils.placeholder.process_custom_headers_placeholders",
+                "knowledge_runtime.services.config_resolver.process_custom_headers_placeholders",
                 side_effect=lambda h, u: h,
             ),
         ):
@@ -711,7 +711,7 @@ class TestBuildResolvedEmbeddingModelConfig:
             patch.object(resolver, "_get_model_kind", return_value=model),
             patch.object(resolver, "_decrypt_optional_value", side_effect=lambda v: v),
             patch(
-                "shared.utils.placeholder.process_custom_headers_placeholders",
+                "knowledge_runtime.services.config_resolver.process_custom_headers_placeholders",
                 side_effect=lambda h, u: h,
             ),
         ):
@@ -746,7 +746,7 @@ class TestBuildResolvedEmbeddingModelConfig:
             patch.object(resolver, "_get_model_kind", return_value=model),
             patch.object(resolver, "_decrypt_optional_value", side_effect=lambda v: v),
             patch(
-                "shared.utils.placeholder.process_custom_headers_placeholders",
+                "knowledge_runtime.services.config_resolver.process_custom_headers_placeholders",
                 side_effect=lambda h, u: h,
             ),
         ):
