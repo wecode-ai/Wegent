@@ -332,7 +332,7 @@ export function NavigationSection({
   onSelectDingtalk,
   totalKbCount,
   dingtalkDocCount,
-  isDingtalkConfigured,
+  isDingtalkConfigured: _isDingtalkConfigured,
 }: NavigationSectionProps) {
   const { t } = useTranslation('knowledge')
   const router = useRouter()

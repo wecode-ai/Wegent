@@ -10,7 +10,7 @@
 
 'use client'
 
-import { ExternalLink, FileText, Folder, Table, FileSpreadsheet } from 'lucide-react'
+import { ExternalLink, FileText, Folder, FileSpreadsheet } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { DingtalkDocNode } from '@/types/dingtalk-doc'
 

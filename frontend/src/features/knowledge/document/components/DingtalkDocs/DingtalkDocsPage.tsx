@@ -11,7 +11,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import { RefreshCw, ExternalLink, FolderOpen } from 'lucide-react'
+import { RefreshCw, FolderOpen } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { dingtalkDocApi } from '@/apis/dingtalk-doc'
 import { Button } from '@/components/ui/button'
@@ -95,21 +95,6 @@ export function DingtalkDocsPage({ isConfigured, onSyncComplete }: DingtalkDocsP
       setIsSyncing(false)
     }
   }, [onSyncComplete])
-
-  // Get all nodes flattened for display
-  const allNodes = useMemo(() => {
-    const result: DingtalkDocNode[] = []
-    const flatten = (nodes: DingtalkDocNode[]) => {
-      for (const node of nodes) {
-        result.push(node)
-        if (node.children) {
-          flatten(node.children)
-        }
-      }
-    }
-    flatten(docTree)
-    return result
-  }, [docTree])
 
   // Get docs for selected folder (or root)
   const displayDocs = useMemo(() => {
