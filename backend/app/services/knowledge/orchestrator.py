@@ -636,7 +636,9 @@ class KnowledgeOrchestrator:
             knowledge_base_id: Knowledge base ID
 
         Returns:
-            KnowledgeDocumentListResponse with document list
+            KnowledgeDocumentListResponse with document list.
+            Each document's created_by field is populated with the
+            creator's username from the users table (None if user not found).
 
         Raises:
             ValueError: If knowledge base not found or access denied
@@ -656,9 +658,24 @@ class KnowledgeOrchestrator:
             user_id=user.id,
         )
 
+        # Batch query user names for created_by field
+        user_ids = list({doc.user_id for doc in documents if doc.user_id})
+        user_name_map: dict[int, str] = {}
+        if user_ids:
+            user_rows = (
+                db.query(User.id, User.user_name).filter(User.id.in_(user_ids)).all()
+            )
+            user_name_map = {uid: uname for uid, uname in user_rows}
+
+        items = []
+        for doc in documents:
+            item = KnowledgeDocumentResponse.model_validate(doc)
+            item.created_by = user_name_map.get(doc.user_id)
+            items.append(item)
+
         return KnowledgeDocumentListResponse(
             total=len(documents),
-            items=[KnowledgeDocumentResponse.model_validate(doc) for doc in documents],
+            items=items,
         )
 
     def _get_document_with_access_or_raise(

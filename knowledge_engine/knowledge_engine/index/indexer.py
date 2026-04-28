@@ -10,12 +10,14 @@ from typing import Any, Dict, List
 
 from llama_index.core import Document, SimpleDirectoryReader
 
+from knowledge_engine.embedding.capabilities import embed_model_supports_image_input
 from knowledge_engine.ingestion.pipeline import (
     build_ingestion_result,
     prepare_ingestion,
 )
 from knowledge_engine.storage.base import BaseStorageBackend
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
+from knowledge_engine.text_sanitizer import sanitize_text_for_indexing
 from shared.telemetry.decorators import add_span_event
 
 logger = logging.getLogger(__name__)
@@ -41,6 +43,32 @@ def sanitize_metadata(metadata: Dict[str, Any]) -> Dict[str, Any]:
             if value is not None:
                 sanitized[key] = str(value) if not isinstance(value, str) else value
     return sanitized
+
+
+def sanitize_documents(
+    documents: List[Document],
+    *,
+    sanitize_inline_images: bool,
+) -> List[Document]:
+    """Sanitize document text before chunking."""
+    for doc in documents:
+        result = sanitize_text_for_indexing(
+            doc.text,
+            sanitize_inline_images=sanitize_inline_images,
+        )
+        if result.replacements_count == 0:
+            continue
+
+        add_span_event(
+            "rag.indexer.documents.sanitized",
+            {
+                "replacements_count": str(result.replacements_count),
+                "replacement_summary": str(result.replacement_summary),
+            },
+        )
+        doc.set_content(result.text)
+
+    return documents
 
 
 class DocumentIndexer:
@@ -126,6 +154,13 @@ class DocumentIndexer:
 
         for doc in documents:
             doc.metadata = sanitize_metadata(doc.metadata)
+
+        documents = sanitize_documents(
+            documents,
+            sanitize_inline_images=not embed_model_supports_image_input(
+                self.embed_model
+            ),
+        )
 
         ingestion_result = build_ingestion_result(
             documents=documents,

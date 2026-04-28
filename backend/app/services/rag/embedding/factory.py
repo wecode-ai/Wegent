@@ -16,41 +16,18 @@ from app.models.kind import Kind
 from app.services.chat.config.model_resolver import (
     build_default_headers_with_placeholders,
 )
+from knowledge_engine.embedding.capabilities import (
+    embedding_supports_image_input,
+    normalize_additional_input_modalities,
+)
 from knowledge_engine.embedding.factory import (
     create_embedding_model_from_runtime_config as engine_create_embedding_model_from_runtime_config,
 )
 from shared.models import RuntimeEmbeddingModelConfig
 from shared.utils.crypto import decrypt_api_key
+from shared.utils.placeholder import process_custom_headers_placeholders
 
 logger = logging.getLogger(__name__)
-
-
-def _process_custom_headers_placeholders(
-    custom_headers: Dict[str, Any], user_name: Optional[str] = None
-) -> Dict[str, Any]:
-    """
-    Process placeholders in custom headers.
-
-    Supports placeholder format: ${user.name}
-
-    Args:
-        custom_headers: Custom headers dict (may contain placeholders)
-        user_name: User name for placeholder replacement
-
-    Returns:
-        Custom headers with placeholders replaced
-    """
-    if not custom_headers or not isinstance(custom_headers, dict):
-        return custom_headers
-
-    # Build data sources for placeholder replacement
-    # Only support ${user.name} for now
-    data_sources: Dict[str, Dict[str, Any]] = {
-        "user": {"name": user_name or ""},
-    }
-
-    # Use existing build_default_headers_with_placeholders function
-    return build_default_headers_with_placeholders(custom_headers, data_sources)
 
 
 def create_embedding_model_from_crd(
@@ -165,7 +142,7 @@ def create_embedding_model_from_crd(
 
     # Process placeholders in custom_headers (e.g., ${user.name})
     if custom_headers and isinstance(custom_headers, dict):
-        custom_headers = _process_custom_headers_placeholders(custom_headers, user_name)
+        custom_headers = process_custom_headers_placeholders(custom_headers, user_name)
         logger.info(
             f"Processed custom_headers placeholders for embedding_model '{model_name}'"
         )
@@ -174,9 +151,22 @@ def create_embedding_model_from_crd(
     # This is used by Milvus to create collections with the correct dimension
     embedding_config = spec.get("embeddingConfig", {})
     dimensions = embedding_config.get("dimensions") if embedding_config else None
+    additional_input_modalities = normalize_additional_input_modalities(
+        embedding_config.get("additional_input_modalities")
+        if embedding_config
+        else None
+    )
     if dimensions:
         logger.info(
             f"[EmbeddingFactory] Model '{model_name}' has configured dimensions: {dimensions}"
+        )
+    if additional_input_modalities:
+        logger.info(
+            "[EmbeddingFactory] Model '%s' additional input modalities: %s "
+            "(supports_image_input=%s)",
+            model_name,
+            additional_input_modalities,
+            embedding_supports_image_input(additional_input_modalities),
         )
 
     return engine_create_embedding_model_from_runtime_config(
@@ -192,6 +182,7 @@ def create_embedding_model_from_crd(
                     custom_headers if isinstance(custom_headers, dict) else {}
                 ),
                 "dimensions": dimensions,
+                "additional_input_modalities": additional_input_modalities,
             },
         )
     )

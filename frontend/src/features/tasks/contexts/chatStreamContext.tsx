@@ -327,7 +327,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
    * Uses task_id from event payload directly
    */
   const handleChatError = useCallback((data: ChatErrorPayload) => {
-    const { subtask_id, error, message_id, task_id: taskId } = data
+    const { subtask_id, error, message_id, task_id: taskId, type: errorType } = data
 
     if (!taskId) {
       console.warn('[ChatStreamContext] Received error without task_id:', subtask_id)
@@ -336,14 +336,19 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
 
     const machine = taskStateManager.get(taskId)
     if (machine) {
-      machine.handleChatError(subtask_id, error, message_id)
+      machine.handleChatError(subtask_id, error, message_id, errorType)
     }
 
     // Call error callback
     const callbacks = callbacksRef.current.get(taskId)
     callbacks?.onError?.(new Error(error))
 
-    console.error('[ChatStreamContext][chat:error]', { task_id: taskId, subtask_id, error })
+    console.error('[ChatStreamContext][chat:error]', {
+      task_id: taskId,
+      subtask_id,
+      error,
+      errorType,
+    })
   }, [])
 
   /**

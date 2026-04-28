@@ -117,15 +117,7 @@ def test_internal_retrieve_returns_restricted_safe_summary(test_client):
 def test_internal_all_chunks_routes_protocol_request_through_local_gateway(test_client):
     payload = {
         "knowledge_base_id": 7,
-        "index_owner_user_id": 9,
-        "retriever_config": {
-            "name": "retriever-a",
-            "namespace": "default",
-            "storage_config": {
-                "type": "qdrant",
-                "url": "http://qdrant:6333",
-            },
-        },
+        "user_id": 9,
         "max_chunks": 1000,
         "query": "list_index_chunks",
         "metadata_condition": {
@@ -138,7 +130,7 @@ def test_internal_all_chunks_routes_protocol_request_through_local_gateway(test_
     runtime_spec = object()
     with (
         patch(
-            "app.api.endpoints.internal.rag.runtime_resolver.build_internal_list_chunks_runtime_spec",
+            "app.api.endpoints.internal.rag.runtime_resolver.build_public_list_chunks_runtime_spec",
             return_value=runtime_spec,
         ) as mock_build_spec,
         patch(
@@ -176,6 +168,8 @@ def test_internal_all_chunks_routes_protocol_request_through_local_gateway(test_
     mock_build_spec.assert_called_once_with(
         db=ANY,
         knowledge_base_id=7,
+        user_id=9,
+        user_name=None,
         max_chunks=1000,
         query="list_index_chunks",
         metadata_condition=payload["metadata_condition"],
@@ -188,20 +182,12 @@ def test_internal_purge_index_routes_protocol_request_through_local_gateway(
 ):
     payload = {
         "knowledge_base_id": 7,
-        "index_owner_user_id": 9,
-        "retriever_config": {
-            "name": "retriever-a",
-            "namespace": "default",
-            "storage_config": {
-                "type": "qdrant",
-                "url": "http://qdrant:6333",
-            },
-        },
+        "user_id": 9,
     }
     runtime_spec = object()
     with (
         patch(
-            "app.api.endpoints.internal.rag.runtime_resolver.build_internal_purge_index_runtime_spec",
+            "app.api.endpoints.internal.rag.runtime_resolver.build_public_purge_index_runtime_spec",
             return_value=runtime_spec,
         ) as mock_build_spec,
         patch(
@@ -228,8 +214,8 @@ def test_internal_purge_index_routes_protocol_request_through_local_gateway(
     mock_build_spec.assert_called_once_with(
         db=ANY,
         knowledge_base_id=7,
-        index_owner_user_id=9,
-        retriever_config=payload["retriever_config"],
+        user_id=9,
+        user_name=None,
     )
     mock_purge.assert_awaited_once_with(runtime_spec, db=ANY)
 
@@ -239,21 +225,12 @@ def test_internal_drop_index_routes_protocol_request_through_local_gateway(
 ):
     payload = {
         "knowledge_base_id": 7,
-        "index_owner_user_id": 9,
-        "retriever_config": {
-            "name": "retriever-a",
-            "namespace": "default",
-            "storage_config": {
-                "type": "qdrant",
-                "url": "http://qdrant:6333",
-                "indexStrategy": {"mode": "per_dataset"},
-            },
-        },
+        "user_id": 9,
     }
     runtime_spec = object()
     with (
         patch(
-            "app.api.endpoints.internal.rag.runtime_resolver.build_internal_drop_index_runtime_spec",
+            "app.api.endpoints.internal.rag.runtime_resolver.build_public_drop_index_runtime_spec",
             return_value=runtime_spec,
         ) as mock_build_spec,
         patch(
@@ -280,8 +257,8 @@ def test_internal_drop_index_routes_protocol_request_through_local_gateway(
     mock_build_spec.assert_called_once_with(
         db=ANY,
         knowledge_base_id=7,
-        index_owner_user_id=9,
-        retriever_config=payload["retriever_config"],
+        user_id=9,
+        user_name=None,
     )
     mock_drop.assert_awaited_once_with(runtime_spec, db=ANY)
 

@@ -144,6 +144,7 @@ async def test_dispatch_raises_when_recovery_returns_false_and_emits_error():
         return MagicMock()
 
     db.query.side_effect = query_side_effect
+    task.json = {}
 
     recovery_service = MagicMock()
     recovery_service.recover = AsyncMock(
@@ -275,3 +276,41 @@ async def test_dispatch_does_not_scan_historical_deleted_subtasks():
 
     recovery_service.recover.assert_not_awaited()
     dispatch_mock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_marks_exception_when_frontend_error_is_emitted():
+    """Dispatch should mark exceptions that already reached the frontend error path."""
+
+    dispatcher = ExecutionDispatcher()
+    request = ExecutionRequest(
+        task_id=4321,
+        subtask_id=9876,
+        message_id=5,
+        user={"id": 7, "name": "user7"},
+        user_id=7,
+        user_name="user7",
+        bot=[{"shell_type": "ClaudeCode"}],
+    )
+    emitter = AsyncMock()
+    target = ExecutionTarget(
+        mode=CommunicationMode.HTTP_CALLBACK,
+        url="http://executor-manager/executor-manager",
+    )
+    dispatch_error = RuntimeError("boom")
+
+    with (
+        patch.object(dispatcher.router, "route", return_value=target),
+        patch.object(dispatcher, "_recover_executor_if_needed", AsyncMock()),
+        patch.object(dispatcher, "_update_subtask_to_running", AsyncMock()),
+        patch.object(
+            dispatcher,
+            "_dispatch_http_callback",
+            AsyncMock(side_effect=dispatch_error),
+        ),
+    ):
+        with pytest.raises(RuntimeError, match="boom"):
+            await dispatcher.dispatch(request, emitter=emitter)
+
+    emitter.emit_error.assert_awaited_once()
+    assert getattr(dispatch_error, "_frontend_error_emitted", False) is True

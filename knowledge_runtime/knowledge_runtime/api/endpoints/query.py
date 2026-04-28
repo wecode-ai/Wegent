@@ -6,28 +6,29 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session
 
 from knowledge_runtime.services.query_executor import QueryExecutor
+from shared.db.sync_session import get_db
 from shared.models import RemoteQueryRequest, RemoteQueryResponse
 
 router = APIRouter()
 
 
 @router.post("/query")
-async def query_documents(request: RemoteQueryRequest) -> RemoteQueryResponse:
+async def query_documents(
+    request: RemoteQueryRequest,
+    db: Session = Depends(get_db),
+) -> RemoteQueryResponse:
     """Query documents for RAG retrieval.
 
-    This endpoint:
-    1. Creates storage backends and embedding models for each KB config
-    2. Executes the query against each knowledge base
-    3. Aggregates and ranks results by score
-
     Args:
-        request: The query request containing query text and KB configs.
+        request: The query request containing query text and knowledge_base_ids.
+        db: Database session for config resolution.
 
     Returns:
         Query response with ranked records.
     """
-    executor = QueryExecutor()
+    executor = QueryExecutor(db=db)
     return await executor.execute(request)

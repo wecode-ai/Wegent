@@ -108,6 +108,11 @@ function getModelKey(model: Model): string {
   return `${model.name}:${model.type || ''}`
 }
 
+/** Get a stable sync key for comparing models across component boundaries */
+function getModelSyncKey(model: Model | null): string | null {
+  return model ? getModelKey(model) : null
+}
+
 // ============================================================================
 // Component
 // ============================================================================
@@ -130,6 +135,7 @@ export default function ModelSelector({
   const { t } = useTranslation()
   const router = useRouter()
   const isMobile = useMediaQuery('(max-width: 767px)')
+  const externalModelKey = getModelSyncKey(externalSelectedModel)
 
   // Use the centralized model selection hook
   const modelSelection = useModelSelection({
@@ -154,19 +160,89 @@ export default function ModelSelector({
     }
   }, [modelCategoryType])
 
-  // Sync external state with internal hook state
-  // This allows the component to work with both legacy and new APIs
-  useEffect(() => {
-    if (modelSelection.selectedModel !== externalSelectedModel) {
-      externalSetSelectedModel(modelSelection.selectedModel)
-    }
-  }, [modelSelection.selectedModel, externalSelectedModel, externalSetSelectedModel])
+  const internalModelKey = getModelSyncKey(modelSelection.selectedModel)
+
+  // Sync selected model between external props and internal hook state.
+  // Only the side that changed in this render cycle is allowed to drive the other side,
+  // which prevents parent/child ping-pong updates when the model objects differ by reference.
+  const prevExternalModelKeyRef = React.useRef<string | null>(externalModelKey)
+  const prevInternalModelKeyRef = React.useRef<string | null>(internalModelKey)
+  const hasSyncedModelRef = React.useRef(false)
 
   useEffect(() => {
-    if (modelSelection.forceOverride !== externalForceOverride) {
+    const previousExternalModelKey = prevExternalModelKeyRef.current
+    const previousInternalModelKey = prevInternalModelKeyRef.current
+    const externalModelChanged = hasSyncedModelRef.current
+      ? previousExternalModelKey !== externalModelKey
+      : externalSelectedModel !== null
+    const internalModelChanged = hasSyncedModelRef.current
+      ? previousInternalModelKey !== internalModelKey
+      : false
+
+    prevExternalModelKeyRef.current = externalModelKey
+    prevInternalModelKeyRef.current = internalModelKey
+    hasSyncedModelRef.current = true
+
+    if (externalModelChanged) {
+      if (externalSelectedModel && externalModelKey !== internalModelKey) {
+        modelSelection.selectModel(externalSelectedModel)
+      } else if (!externalSelectedModel && previousExternalModelKey !== null && internalModelKey) {
+        modelSelection.selectModel(null)
+      }
+      return
+    }
+
+    if (
+      internalModelChanged &&
+      modelSelection.selectedModel &&
+      internalModelKey !== externalModelKey
+    ) {
+      externalSetSelectedModel(modelSelection.selectedModel)
+    }
+  }, [
+    externalModelKey,
+    externalSelectedModel,
+    internalModelKey,
+    modelSelection.selectedModel,
+    modelSelection.selectModel,
+    externalSetSelectedModel,
+  ])
+
+  // Apply the same one-direction-per-change rule for forceOverride to avoid update loops.
+  const prevExternalForceOverrideRef = React.useRef(externalForceOverride)
+  const prevInternalForceOverrideRef = React.useRef(modelSelection.forceOverride)
+  const hasSyncedForceOverrideRef = React.useRef(false)
+
+  useEffect(() => {
+    const previousExternalForceOverride = prevExternalForceOverrideRef.current
+    const previousInternalForceOverride = prevInternalForceOverrideRef.current
+    const externalForceOverrideChanged = hasSyncedForceOverrideRef.current
+      ? previousExternalForceOverride !== externalForceOverride
+      : externalForceOverride
+    const internalForceOverrideChanged = hasSyncedForceOverrideRef.current
+      ? previousInternalForceOverride !== modelSelection.forceOverride
+      : false
+
+    prevExternalForceOverrideRef.current = externalForceOverride
+    prevInternalForceOverrideRef.current = modelSelection.forceOverride
+    hasSyncedForceOverrideRef.current = true
+
+    if (externalForceOverrideChanged) {
+      if (externalForceOverride !== modelSelection.forceOverride) {
+        modelSelection.setForceOverride(externalForceOverride)
+      }
+      return
+    }
+
+    if (internalForceOverrideChanged && modelSelection.forceOverride !== externalForceOverride) {
       externalSetForceOverride(modelSelection.forceOverride)
     }
-  }, [modelSelection.forceOverride, externalForceOverride, externalSetForceOverride])
+  }, [
+    externalForceOverride,
+    modelSelection.forceOverride,
+    modelSelection.setForceOverride,
+    externalSetForceOverride,
+  ])
 
   // Local UI state
   const [isOpen, setIsOpen] = useState(false)

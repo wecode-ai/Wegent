@@ -63,10 +63,6 @@ from .knowledge_runtime_protocol import (
     RemoteQueryRequest,
     RemoteQueryResponse,
     RemoteRagError,
-    RemoteTestConnectionRequest,
-    RuntimeEmbeddingModelConfig,
-    RuntimeRetrievalConfig,
-    RuntimeRetrieverConfig,
 )
 
 # OpenAI Request Converter
@@ -100,6 +96,11 @@ from .responses_api_factory import (
     ThrottledTransport,
     TransportFactory,
     TransportType,
+)
+from .runtime_config import (
+    RuntimeEmbeddingModelConfig,
+    RuntimeRetrievalConfig,
+    RuntimeRetrieverConfig,
 )
 from .splitter_config import (
     FlatChunkConfig,
@@ -140,7 +141,6 @@ __all__ = [
     "RemoteListChunksRequest",
     "RemoteListChunkRecord",
     "RemoteListChunksResponse",
-    "RemoteTestConnectionRequest",
     "RemoteQueryRequest",
     "RemoteQueryRecord",
     "RemoteQueryResponse",

@@ -129,18 +129,19 @@ async def test_local_gateway_test_connection_delegates_to_connection_executor():
     gateway._connection_test_executor = AsyncMock(
         return_value={"success": True, "message": "Connection successful"}
     )
+    db = MagicMock()
     spec = ConnectionTestRuntimeSpec(
         retriever_config=RuntimeRetrieverConfig(
-            name="retriever-a",
+            name="test-retriever",
             namespace="default",
-            storage_config={"type": "qdrant"},
+            storage_config={"type": "qdrant", "url": "http://localhost:6333"},
         )
     )
 
-    result = await gateway.test_connection(spec)
+    result = await gateway.test_connection(spec, db=db)
 
     assert result == {"success": True, "message": "Connection successful"}
-    gateway._connection_test_executor.assert_awaited_once_with(spec, db=None)
+    gateway._connection_test_executor.assert_awaited_once_with(spec, db=db)
 
 
 @pytest.mark.asyncio

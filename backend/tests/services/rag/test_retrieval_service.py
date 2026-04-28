@@ -98,7 +98,7 @@ class TestGetAllChunksFromKnowledgeBase:
 
         with (
             patch(
-                "app.services.rag.retrieval_service.RagRuntimeResolver.build_internal_list_chunks_runtime_spec",
+                "app.services.rag.retrieval_service.RagRuntimeResolver.build_public_list_chunks_runtime_spec",
                 return_value=spec,
             ) as mock_build_spec,
             patch.object(
@@ -111,6 +111,7 @@ class TestGetAllChunksFromKnowledgeBase:
             result = await RetrievalService().get_all_chunks_from_knowledge_base(
                 knowledge_base_id=123,
                 db=db_session,
+                user_id=42,
                 max_chunks=50,
                 query="debug query",
             )
@@ -127,6 +128,8 @@ class TestGetAllChunksFromKnowledgeBase:
         mock_build_spec.assert_called_once_with(
             db=db_session,
             knowledge_base_id=123,
+            user_id=42,
+            user_name=None,
             max_chunks=50,
             query="debug query",
             metadata_condition=None,
@@ -176,7 +179,7 @@ class TestRetrieveForChatShell:
 
     @pytest.mark.asyncio
     async def test_auto_route_returns_direct_injection_records(self):
-        """Backend should route to all-chunks when KB estimate fits context."""
+        """Backend should route to original documents when KB estimate fits context."""
         from app.services.rag.retrieval_service import RetrievalService
 
         db = MagicMock()
@@ -187,13 +190,14 @@ class TestRetrieveForChatShell:
             return_value=100,
         ) as mock_estimate:
             service = RetrievalService()
-            service.get_all_chunks_from_knowledge_base = AsyncMock(
+            service.get_original_documents_from_knowledge_base = AsyncMock(
                 return_value=[
                     {
-                        "content": "chunk",
+                        "content": "full document content",
+                        "score": 1.0,
                         "title": "doc-1",
-                        "doc_ref": "1",
-                        "metadata": {"page": 1},
+                        "metadata": {"document_id": 1, "total_length": 100},
+                        "knowledge_base_id": 123,
                     }
                 ]
             )
@@ -232,13 +236,14 @@ class TestRetrieveForChatShell:
             return_value=100,
         ):
             service = RetrievalService()
-            service.get_all_chunks_from_knowledge_base = AsyncMock(
+            service.get_original_documents_from_knowledge_base = AsyncMock(
                 return_value=[
                     {
-                        "content": "This is a direct injection candidate chunk with enough text to exceed the runtime budget.",
+                        "content": "This is a full document with enough text to exceed the runtime budget.",
+                        "score": 1.0,
                         "title": "doc-1",
-                        "doc_ref": "1",
-                        "metadata": {"page": 1},
+                        "metadata": {"document_id": 1, "total_length": 100},
+                        "knowledge_base_id": 123,
                     }
                 ]
             )
@@ -273,24 +278,26 @@ class TestRetrieveForChatShell:
 
     @pytest.mark.asyncio
     async def test_force_direct_route_respects_max_direct_chunks(self):
-        """Forced direct route should still fallback when chunk cap is exceeded."""
+        """Forced direct route should still fallback when document cap is exceeded."""
         from app.services.rag.retrieval_service import RetrievalService
 
         db = MagicMock()
         service = RetrievalService()
-        service.get_all_chunks_from_knowledge_base = AsyncMock(
+        service.get_original_documents_from_knowledge_base = AsyncMock(
             return_value=[
                 {
-                    "content": "chunk-1",
+                    "content": "document-1",
+                    "score": 1.0,
                     "title": "doc-1",
-                    "doc_ref": "1",
-                    "metadata": {"page": 1},
+                    "metadata": {"document_id": 1, "total_length": 100},
+                    "knowledge_base_id": 123,
                 },
                 {
-                    "content": "chunk-2",
+                    "content": "document-2",
+                    "score": 1.0,
                     "title": "doc-2",
-                    "doc_ref": "2",
-                    "metadata": {"page": 2},
+                    "metadata": {"document_id": 2, "total_length": 100},
+                    "knowledge_base_id": 123,
                 },
             ]
         )
@@ -326,13 +333,14 @@ class TestRetrieveForChatShell:
 
         db = MagicMock()
         service = RetrievalService()
-        service.get_all_chunks_from_knowledge_base = AsyncMock(
+        service.get_original_documents_from_knowledge_base = AsyncMock(
             return_value=[
                 {
-                    "content": "chunk",
+                    "content": "full document content",
+                    "score": 1.0,
                     "title": "doc-1",
-                    "doc_ref": "1",
-                    "metadata": {"page": 1},
+                    "metadata": {"document_id": 1, "total_length": 100},
+                    "knowledge_base_id": 123,
                 }
             ]
         )

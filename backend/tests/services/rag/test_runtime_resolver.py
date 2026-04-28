@@ -623,3 +623,39 @@ def test_build_public_list_chunks_runtime_spec_uses_resolved_owner_scope() -> No
         current_user_id=9,
     )
     assert spec.index_owner_user_id == 7
+
+
+def test_build_resolved_embedding_model_config_preserves_additional_modalities() -> (
+    None
+):
+    resolver = RagRuntimeResolver()
+    db = MagicMock()
+    model_kind = SimpleNamespace(
+        json={
+            "spec": {
+                "protocol": "openai",
+                "modelConfig": {
+                    "env": {
+                        "base_url": "https://api.openai.com/v1",
+                        "model_id": "text-embedding-3-large",
+                    }
+                },
+                "embeddingConfig": {
+                    "dimensions": 3072,
+                    "additional_input_modalities": ["image", "image", "audio"],
+                },
+            }
+        }
+    )
+
+    with patch.object(resolver, "_get_model_kind", return_value=model_kind):
+        config = resolver._build_resolved_embedding_model_config(
+            db=db,
+            user_id=7,
+            model_name="embed-a",
+            model_namespace="default",
+            user_name="alice",
+        )
+
+    assert config.resolved_config["dimensions"] == 3072
+    assert config.resolved_config["additional_input_modalities"] == ["image"]
