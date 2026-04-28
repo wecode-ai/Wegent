@@ -72,6 +72,7 @@
     }
   },
   "admin_published_apps": {
+    "tab_label": "Apps",
     "title": "All Published Apps",
     "description": "View all published apps across all users",
     "summary": "{{count}} apps total",

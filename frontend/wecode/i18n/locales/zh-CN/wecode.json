@@ -72,6 +72,7 @@
     }
   },
   "admin_published_apps": {
+    "tab_label": "应用",
     "title": "所有已发布的应用",
     "description": "展示所有用户已发布的应用",
     "summary": "共 {{count}} 个应用",

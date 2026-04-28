@@ -84,7 +84,7 @@ export function AdminTabNav({ activeTab, onTabChange }: AdminTabNavProps) {
     { id: 'api-keys', label: t('tabs.api_keys'), icon: KeyRound },
     { id: 'system-config', label: t('tabs.system_config'), icon: Settings },
     { id: 'im-channels', label: t('tabs.im_channels'), icon: MessageSquare },
-    { id: 'published-apps', label: t('tabs.published_apps'), icon: Globe },
+    { id: 'published-apps', label: t('wecode:admin_published_apps.tab_label'), icon: Globe },
     { id: 'monitor', label: t('tabs.monitor'), icon: Activity },
     { id: 'device-monitor', label: t('tabs.device_monitor'), icon: Monitor },
     { id: 'transition-pages', label: t('tabs.transition_pages'), icon: FileText },
