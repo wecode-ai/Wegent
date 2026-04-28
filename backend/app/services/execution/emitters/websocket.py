@@ -146,6 +146,7 @@ class WebSocketResultEmitter(BaseResultEmitter):
                 task_id=event.task_id,
                 subtask_id=event.subtask_id,
                 error=event.error or "Unknown error",
+                error_type=event.error_code,
                 message_id=event.message_id,
             )
             # Also emit task:status event to update task list

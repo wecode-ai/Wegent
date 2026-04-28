@@ -113,7 +113,7 @@ interface DocumentListProps {
   isOrganization?: boolean
 }
 
-type SortField = 'name' | 'size' | 'date'
+type SortField = 'name' | 'size' | 'date' | 'updatedAt'
 type SortOrder = 'asc' | 'desc'
 
 export function DocumentList({
@@ -261,6 +261,9 @@ export function DocumentList({
           break
         case 'date':
           comparison = new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+          break
+        case 'updatedAt':
+          comparison = new Date(a.updated_at).getTime() - new Date(b.updated_at).getTime()
           break
       }
       return sortOrder === 'asc' ? comparison : -comparison
@@ -770,7 +773,7 @@ export function DocumentList({
             /* Normal mode: Table layout with folder tree - single bordered container */
             <div className="border border-border rounded-lg overflow-hidden">
               {/* Table header */}
-              <div className="flex items-center gap-4 px-4 py-2.5 bg-surface text-xs text-text-muted font-medium min-w-[800px] border-b border-border">
+              <div className="flex items-center gap-4 px-4 py-2.5 bg-surface text-xs text-text-muted font-medium min-w-[880px] border-b border-border">
                 {/* Checkbox for select all */}
                 {canManageAllDocuments && (
                   <div className="flex-shrink-0">
@@ -813,12 +816,24 @@ export function DocumentList({
                   {t('document.document.columns.size')}
                   <SortIcon field="size" />
                 </div>
+                {/* Creator column header */}
+                <div className="w-24 flex-shrink-0 text-center">
+                  {t('document.document.columns.createdBy')}
+                </div>
                 <div
                   className="w-40 flex-shrink-0 text-center cursor-pointer hover:text-text-primary select-none"
                   onClick={() => handleSort('date')}
                 >
                   {t('document.document.columns.date')}
                   <SortIcon field="date" />
+                </div>
+                {/* Updated date column header */}
+                <div
+                  className="w-40 flex-shrink-0 text-center cursor-pointer hover:text-text-primary select-none"
+                  onClick={() => handleSort('updatedAt')}
+                >
+                  {t('document.document.columns.updatedAt')}
+                  <SortIcon field="updatedAt" />
                 </div>
                 <div className="w-24 flex-shrink-0 text-center">
                   {t('document.document.columns.indexStatus')}

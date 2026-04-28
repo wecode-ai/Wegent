@@ -651,6 +651,20 @@ check_frontend_dependencies() {
 
     echo -e "${GREEN}✓ Frontend dependencies are up to date${NC}"
 }
+
+clean_frontend_cache() {
+    local frontend_cache_dir="$SCRIPT_DIR/frontend/.next"
+
+    echo -e "${BLUE}Cleaning frontend cache...${NC}"
+
+    if [ -d "$frontend_cache_dir" ]; then
+        rm -rf "$frontend_cache_dir"
+        echo -e "  ${GREEN}✓${NC} Removed $frontend_cache_dir"
+    else
+        echo -e "  ${GREEN}✓${NC} Frontend cache is already clean"
+    fi
+}
+
 # Get local IP address (defined early as it's used by default values)
 get_local_ip() {
     # Try to get the local IP address, fallback to localhost if not available
@@ -748,6 +762,7 @@ Options:
   -p, --port PORT               Frontend port (default: $DEFAULT_WEGENT_FRONTEND_PORT)
   -e, --executor-image IMG      Executor image (default: $DEFAULT_EXECUTOR_IMAGE)
   --socket-url URL              Socket direct url (auto-computed from BACKEND_PORT)
+    --clean-frontend-cache        Remove frontend .next cache before starting frontend
   --init                        Interactive configuration initialization
   --stop [services...]          Stop services (default: all). Can specify multiple:
                                 backend|be|api, frontend|fe|ui, chat_shell|cs|chat, executor_manager|em|executor, knowledge_runtime|kr|knowledge
@@ -779,6 +794,7 @@ Configuration File:
 
 Examples:
   $0                                    # Start with default configuration
+    $0 --clean-frontend-cache             # Start after clearing frontend .next cache
   $0 --init                             # Initialize configuration interactively
   $0 -b 8001                            # Specify backend port as 8001
   $0 -c 8101                            # Specify chat shell port as 8101
@@ -808,6 +824,8 @@ CLI_KNOWLEDGE_RUNTIME_PORT=""
 CLI_WEGENT_FRONTEND_PORT=""
 CLI_EXECUTOR_IMAGE=""
 CLI_WEGENT_SOCKET_URL=""
+CLI_CLEAN_FRONTEND_CACHE=""
+CLEAN_FRONTEND_CACHE="false"
 
 while [[ $# -gt 0 ]]; do
 case $1 in
@@ -838,6 +856,11 @@ case $1 in
     --socket-url)
         CLI_WEGENT_SOCKET_URL="$2"
         shift 2
+        ;;
+    --clean-frontend-cache)
+        CLI_CLEAN_FRONTEND_CACHE="true"
+        CLEAN_FRONTEND_CACHE="true"
+        shift
         ;;
     --init)
         ACTION="init"
@@ -895,6 +918,7 @@ load_config
 [ -n "$CLI_WEGENT_FRONTEND_PORT" ] && WEGENT_FRONTEND_PORT="$CLI_WEGENT_FRONTEND_PORT"
 [ -n "$CLI_EXECUTOR_IMAGE" ] && EXECUTOR_IMAGE="$CLI_EXECUTOR_IMAGE"
 [ -n "$CLI_WEGENT_SOCKET_URL" ] && WEGENT_SOCKET_URL="$CLI_WEGENT_SOCKET_URL"
+[ -n "$CLI_CLEAN_FRONTEND_CACHE" ] && CLEAN_FRONTEND_CACHE="$CLI_CLEAN_FRONTEND_CACHE"
 
 # Compute derived URLs based on configured ports (if not already set from config)
 LOCAL_IP=$(get_local_ip)
@@ -1543,6 +1567,11 @@ start_services() {
         echo -e "${BLUE}Checking frontend dependencies...${NC}"
         check_frontend_dependencies
         echo ""
+
+        if [ "$CLEAN_FRONTEND_CACHE" = "true" ]; then
+            clean_frontend_cache
+            echo ""
+        fi
     fi
 
     echo -e "${BLUE}Starting services...${NC}"

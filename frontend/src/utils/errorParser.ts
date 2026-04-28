@@ -3,53 +3,183 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Parse error messages and return user-friendly error information
+ * Parse error messages and return user-friendly error information.
+ *
+ * Supports backend-provided error types (preferred) with string-based
+ * keyword matching as fallback.
  */
 
+export type ErrorType =
+  | 'context_length_exceeded'
+  | 'quota_exceeded'
+  | 'rate_limit'
+  | 'payload_too_large'
+  | 'network_error'
+  | 'timeout_error'
+  | 'llm_error'
+  | 'llm_unsupported'
+  | 'invalid_parameter'
+  | 'forbidden'
+  | 'container_oom'
+  | 'container_error'
+  | 'content_filter'
+  | 'provider_error'
+  | 'image_too_large'
+  | 'model_protocol_error'
+  | 'invalid_role'
+  | 'permission_denied'
+  | 'generic_error'
+
 export interface ParsedError {
-  type:
-    | 'payload_too_large'
-    | 'network_error'
-    | 'timeout_error'
-    | 'llm_error'
-    | 'llm_unsupported'
-    | 'invalid_parameter'
-    | 'forbidden'
-    | 'container_oom'
-    | 'container_error'
-    | 'generic_error'
+  type: ErrorType
   message: string
   originalError?: string
   retryable?: boolean
 }
 
+// Valid backend error type values
+const VALID_BACKEND_TYPES = new Set<string>([
+  'context_length_exceeded',
+  'quota_exceeded',
+  'rate_limit',
+  'llm_error',
+  'model_unavailable',
+  'container_oom',
+  'container_error',
+  'network_error',
+  'timeout_error',
+  'llm_unsupported',
+  'forbidden',
+  'payload_too_large',
+  'invalid_parameter',
+  'content_filter',
+  'provider_error',
+  'image_too_large',
+  'model_protocol_error',
+  'invalid_role',
+  'permission_denied',
+  'generic_error',
+])
+
+// Map backend error codes to frontend ErrorType
+const BACKEND_TYPE_MAP: Record<string, ErrorType> = {
+  context_length_exceeded: 'context_length_exceeded',
+  quota_exceeded: 'quota_exceeded',
+  rate_limit: 'rate_limit',
+  llm_error: 'llm_error',
+  model_unavailable: 'llm_error',
+  container_oom: 'container_oom',
+  container_error: 'container_error',
+  network_error: 'network_error',
+  timeout_error: 'timeout_error',
+  llm_unsupported: 'llm_unsupported',
+  forbidden: 'forbidden',
+  payload_too_large: 'payload_too_large',
+  invalid_parameter: 'invalid_parameter',
+  content_filter: 'content_filter',
+  provider_error: 'provider_error',
+  image_too_large: 'image_too_large',
+  model_protocol_error: 'model_protocol_error',
+  invalid_role: 'invalid_role',
+  permission_denied: 'permission_denied',
+  generic_error: 'generic_error',
+}
+
 /**
- * Parse error and return structured error information
+ * Parse error and return structured error information.
  *
  * @param error - Error object or error message
+ * @param backendType - Optional error type from backend classification
  * @returns Parsed error information
  */
-export function parseError(error: Error | string): ParsedError {
+export function parseError(error: Error | string, backendType?: string): ParsedError {
   const errorMessage = typeof error === 'string' ? error : error.message
-  const lowerMessage = errorMessage.toLowerCase()
 
-  // Check for container OOM (Out of Memory) errors
-  // These errors indicate the executor container was killed due to memory limits
-  if (
-    lowerMessage.includes('out of memory') ||
-    lowerMessage.includes('oom') ||
-    lowerMessage.includes('memory allocation')
-  ) {
+  // Use backend-provided type if valid
+  if (backendType && VALID_BACKEND_TYPES.has(backendType)) {
+    const type = BACKEND_TYPE_MAP[backendType] || 'generic_error'
     return {
-      type: 'container_oom',
+      type,
       message: errorMessage,
       originalError: errorMessage,
-      retryable: false, // OOM errors usually need configuration change, not simple retry
+      retryable: true,
     }
   }
 
-  // Check for container/executor errors
-  // These errors indicate the executor container crashed or disappeared
+  // Fall back to keyword-based string matching
+  return classifyByMessage(errorMessage)
+}
+
+/**
+ * Classify error by keyword matching on the message string.
+ */
+function classifyByMessage(errorMessage: string): ParsedError {
+  const lowerMessage = errorMessage.toLowerCase()
+
+  // Context length exceeded (check before general LLM errors)
+  if (
+    lowerMessage.includes('prompt is too long') ||
+    lowerMessage.includes('context_length_exceeded') ||
+    lowerMessage.includes('context length exceeded') ||
+    lowerMessage.includes('maximum context length') ||
+    lowerMessage.includes('token limit exceeded') ||
+    lowerMessage.includes('tokens exceeds the model') ||
+    lowerMessage.includes('input is too long') ||
+    lowerMessage.includes('maximum number of tokens')
+  ) {
+    return buildResult('context_length_exceeded', errorMessage)
+  }
+
+  // Content filter / safety moderation (check before generic 400 errors)
+  if (
+    lowerMessage.includes('data_inspection_failed') ||
+    lowerMessage.includes('inappropriate content') ||
+    lowerMessage.includes('content filter') ||
+    lowerMessage.includes('content management') ||
+    lowerMessage.includes('content_policy') ||
+    lowerMessage.includes('contentfilter') ||
+    lowerMessage.includes('risky content') ||
+    lowerMessage.includes('content_filtering_policy') ||
+    lowerMessage.includes('responsibleaipolicy') ||
+    lowerMessage.includes('resp_safety_modify_answer')
+  ) {
+    return buildResult('content_filter', errorMessage)
+  }
+
+  // Image too large (check before generic payload errors)
+  if (
+    lowerMessage.includes('image exceeds') ||
+    lowerMessage.includes('image too large') ||
+    lowerMessage.includes('image size exceeds')
+  ) {
+    return buildResult('image_too_large', errorMessage)
+  }
+
+  // Invalid role in messages (model protocol mismatch)
+  if (lowerMessage.includes('invalid role')) {
+    return buildResult('invalid_role', errorMessage)
+  }
+
+  // Model protocol error (model ID not supported by provider)
+  if (
+    lowerMessage.includes('invalid model id') ||
+    lowerMessage.includes('only claude') ||
+    lowerMessage.includes('only thudm') ||
+    lowerMessage.includes('only moonshot')
+  ) {
+    return buildResult('model_protocol_error', errorMessage)
+  }
+
+  // Container OOM
+  if (
+    lowerMessage.includes('out of memory') ||
+    /\boom\b/.test(lowerMessage) ||
+    lowerMessage.includes('memory allocation')
+  ) {
+    return buildResult('container_oom', errorMessage)
+  }
+
+  // Container/executor errors (includes Claude Code shell disconnections)
   if (
     lowerMessage.includes('container') ||
     lowerMessage.includes('executor') ||
@@ -57,33 +187,61 @@ export function parseError(error: Error | string): ParsedError {
     lowerMessage.includes('disappeared unexpectedly') ||
     lowerMessage.includes('no ports mapped') ||
     lowerMessage.includes('crashed unexpectedly') ||
-    lowerMessage.includes('exit code')
+    lowerMessage.includes('exit code') ||
+    lowerMessage.includes('device disconnected') ||
+    lowerMessage.includes('not logged in')
   ) {
-    return {
-      type: 'container_error',
-      message: errorMessage,
-      originalError: errorMessage,
-      retryable: false, // Container errors usually need a fresh task
-    }
+    return buildResult('container_error', errorMessage)
   }
 
-  // Check for forbidden/unauthorized errors
+  // Quota exceeded (check before rate_limit and permission — more specific)
+  if (
+    lowerMessage.includes('quota exceeded') ||
+    lowerMessage.includes('insufficient_quota') ||
+    lowerMessage.includes('billing') ||
+    lowerMessage.includes('credit balance') ||
+    lowerMessage.includes('payment required') ||
+    lowerMessage.includes('insufficient funds') ||
+    lowerMessage.includes('exceeded your current quota')
+  ) {
+    return buildResult('quota_exceeded', errorMessage)
+  }
+
+  // Rate limit (temporary throttling)
+  if (
+    lowerMessage.includes('rate limit') ||
+    lowerMessage.includes('rate_limit') ||
+    lowerMessage.includes('too many requests') ||
+    lowerMessage.includes('throttl')
+  ) {
+    return buildResult('rate_limit', errorMessage)
+  }
+
+  // Permission denied (model access restrictions, check before generic forbidden)
+  if (
+    lowerMessage.includes('permission_denied') ||
+    lowerMessage.includes('permission denied') ||
+    lowerMessage.includes('permission_error')
+  ) {
+    return buildResult('permission_denied', errorMessage)
+  }
+
+  // Forbidden/unauthorized
   if (
     lowerMessage.includes('forbidden') ||
     lowerMessage.includes('not allowed') ||
     lowerMessage.includes('unauthorized') ||
     lowerMessage.includes('403')
   ) {
-    return {
-      type: 'forbidden',
-      message: errorMessage,
-      originalError: errorMessage,
-      retryable: false, // Permission errors are not retryable
-    }
+    return buildResult('forbidden', errorMessage)
   }
 
-  // Check for model unsupported errors (multi-modal, model incompatibility)
-  // These errors indicate the model doesn't support the request format
+  // Provider error (model provider service wrapping)
+  if (lowerMessage.includes('error from provider') || lowerMessage.includes('upstream error')) {
+    return buildResult('provider_error', errorMessage)
+  }
+
+  // Model unsupported (multi-modal, incompatibility)
   if (
     lowerMessage.includes('multi-modal') ||
     lowerMessage.includes('multimodal') ||
@@ -92,18 +250,10 @@ export function parseError(error: Error | string): ParsedError {
     lowerMessage.includes('not support image') ||
     (lowerMessage.includes('llm model') && lowerMessage.includes('received'))
   ) {
-    return {
-      type: 'llm_unsupported',
-      message: errorMessage,
-      originalError: errorMessage,
-      retryable: false, // User should switch model, not retry
-    }
+    return buildResult('llm_unsupported', errorMessage)
   }
 
-  // Check for general LLM errors (model unavailable, not found, etc.)
-  // These are temporary issues that can be retried
-  // Note: Avoid overly broad patterns like 'llm' which can match unrelated strings
-  // (e.g., model_category_type="llm" in backend responses)
+  // General LLM errors (model unavailable, API errors)
   if (
     lowerMessage.includes('model not found') ||
     lowerMessage.includes('model unavailable') ||
@@ -113,66 +263,52 @@ export function parseError(error: Error | string): ParsedError {
     lowerMessage.includes('llm service error') ||
     lowerMessage.includes('model error') ||
     lowerMessage.includes('api rate limit') ||
-    lowerMessage.includes('quota exceeded') ||
     lowerMessage.includes('token limit')
   ) {
-    return {
-      type: 'llm_error',
-      message: errorMessage,
-      originalError: errorMessage,
-      retryable: true,
-    }
+    return buildResult('llm_error', errorMessage)
   }
 
-  // Check for invalid parameter errors (generic)
+  // Invalid parameter
   if (lowerMessage.includes('invalid') && lowerMessage.includes('parameter')) {
-    return {
-      type: 'invalid_parameter',
-      message: errorMessage,
-      originalError: errorMessage,
-      retryable: true, // Allow retry for generic parameter errors
-    }
+    return buildResult('invalid_parameter', errorMessage)
   }
 
-  // Check for 413 Payload Too Large error
+  // Payload too large
   if (lowerMessage.includes('413') || lowerMessage.includes('payload too large')) {
-    return {
-      type: 'payload_too_large',
-      message: errorMessage,
-      originalError: errorMessage,
-      retryable: true, // Allow retry even for large payloads (user might reduce content)
-    }
+    return buildResult('payload_too_large', errorMessage)
   }
 
-  // Check for network errors
+  // Timeout (includes gateway timeouts)
+  if (
+    lowerMessage.includes('timeout') ||
+    lowerMessage.includes('timed out') ||
+    lowerMessage.includes('504 gateway') ||
+    lowerMessage.includes('502 bad gateway') ||
+    lowerMessage.includes('超时')
+  ) {
+    return buildResult('timeout_error', errorMessage)
+  }
+
+  // Network errors (includes upstream connection issues)
   if (
     lowerMessage.includes('network') ||
     lowerMessage.includes('fetch') ||
     lowerMessage.includes('connection') ||
     lowerMessage.includes('not connected') ||
-    lowerMessage.includes('websocket')
+    lowerMessage.includes('websocket') ||
+    lowerMessage.includes('peer closed connection') ||
+    lowerMessage.includes('upstream connection interrupted')
   ) {
-    return {
-      type: 'network_error',
-      message: errorMessage,
-      originalError: errorMessage,
-      retryable: true,
-    }
+    return buildResult('network_error', errorMessage)
   }
 
-  // Check for timeout errors
-  if (lowerMessage.includes('timeout') || lowerMessage.includes('timed out')) {
-    return {
-      type: 'timeout_error',
-      message: errorMessage,
-      originalError: errorMessage,
-      retryable: true,
-    }
-  }
+  // Generic fallback
+  return buildResult('generic_error', errorMessage)
+}
 
-  // Generic error
+function buildResult(type: ErrorType, errorMessage: string): ParsedError {
   return {
-    type: 'generic_error',
+    type,
     message: errorMessage,
     originalError: errorMessage,
     retryable: true,
@@ -180,21 +316,31 @@ export function parseError(error: Error | string): ParsedError {
 }
 
 /**
- * Get user-friendly error message with i18n support
+ * Get user-friendly error message for display in toast/UI.
+ *
+ * Always returns an i18n-translated friendly message for ALL error types.
+ * Raw error details are available separately via parseError().originalError
+ * (shown in the expandable "Error Details" section of ErrorCard).
  *
  * @param error - Error object or error message
  * @param t - i18n translation function
- * @returns User-friendly error message
+ * @param backendType - Optional error type from backend classification
  */
-export function getUserFriendlyErrorMessage(
+export function getErrorDisplayMessage(
   error: Error | string,
-  t: (key: string) => string
+  t: (key: string) => string,
+  backendType?: string
 ): string {
-  const parsed = parseError(error)
+  const parsed = parseError(error, backendType)
 
   switch (parsed.type) {
+    case 'context_length_exceeded':
+      return t('errors.context_length_exceeded')
+    case 'quota_exceeded':
+      return t('errors.quota_exceeded')
+    case 'rate_limit':
+      return t('errors.rate_limit')
     case 'forbidden':
-      // Use dedicated translation key for forbidden errors, fallback to generic if not available
       return t('errors.forbidden') || t('errors.generic_error')
     case 'container_oom':
       return t('errors.container_oom')
@@ -212,37 +358,19 @@ export function getUserFriendlyErrorMessage(
       return t('errors.network_error')
     case 'timeout_error':
       return t('errors.timeout_error')
+    case 'content_filter':
+      return t('errors.content_filter')
+    case 'provider_error':
+      return t('errors.provider_error')
+    case 'image_too_large':
+      return t('errors.image_too_large')
+    case 'model_protocol_error':
+      return t('errors.model_protocol_error')
+    case 'invalid_role':
+      return t('errors.invalid_role')
+    case 'permission_denied':
+      return t('errors.permission_denied')
     default:
       return t('errors.generic_error')
   }
-}
-
-/**
- * Get error message for display in toast/UI
- *
- * Logic:
- * - For specific error types (network, timeout, llm_error, etc.), return friendly translated message
- * - For generic/unclassified errors, return the original error message directly
- *
- * This is the same logic used in useChatStreamHandlers.tsx for consistency
- *
- * @param error - Error object or error message
- * @param t - i18n translation function
- * @param fallbackMessage - Fallback message when originalError is empty
- * @returns Display message for toast/UI
- */
-export function getErrorDisplayMessage(
-  error: Error | string,
-  t: (key: string) => string,
-  fallbackMessage?: string
-): string {
-  const parsedError = parseError(error)
-
-  if (parsedError.type === 'generic_error') {
-    // Show original error message for business errors (e.g., "Team not found")
-    return parsedError.originalError || fallbackMessage || t('errors.generic_error')
-  }
-
-  // Use friendly message for specific error types
-  return getUserFriendlyErrorMessage(error, t)
 }

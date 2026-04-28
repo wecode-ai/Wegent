@@ -51,6 +51,8 @@ export interface DisplayMessage {
   messageId?: number
   /** Error message if status is 'error' */
   error?: string
+  /** Classified error type from backend (e.g., 'context_length_exceeded') */
+  errorType?: string
   /** Attachments array (deprecated, use contexts) */
   attachments?: Attachment[]
   /** Unified contexts (attachments, knowledge bases, etc.) */
@@ -164,6 +166,7 @@ function toDisplayMessage(
     subtaskId: msg.subtaskId,
     messageId: msg.messageId,
     error: msg.error,
+    errorType: msg.errorType,
     attachments,
     contexts,
     botName: msg.botName || team?.name,

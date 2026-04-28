@@ -24,7 +24,6 @@ import {
   XCircle,
   Ban,
   User,
-  RefreshCw,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
@@ -55,13 +54,14 @@ import type {
 } from '@/types/api'
 import type { SourceReference, GeminiAnnotation } from '@/types/socket'
 import type { Model } from '../../hooks/useModelSelection'
+import type { UnifiedModel } from '@/apis/models'
 import type { MessageBlock } from './thinking/types'
 import { useTraceAction } from '@/hooks/useTraceAction'
 import { useMessageFeedback } from '@/hooks/useMessageFeedback'
 import { ShareTokenProvider } from '@/contexts/ShareTokenContext'
 import { SmartLink, SmartImage, SmartTextLine } from '@/components/common/SmartUrlRenderer'
 import { formatDateTime } from '@/utils/dateTime'
-import { parseError, getErrorDisplayMessage } from '@/utils/errorParser'
+import { ErrorCard } from './ErrorCard'
 export interface Message {
   type: 'user' | 'ai'
   content: string
@@ -129,6 +129,8 @@ export interface Message {
   status?: 'pending' | 'streaming' | 'completed' | 'error'
   /** Error message if status is 'error' */
   error?: string
+  /** Classified error type from backend (e.g., 'context_length_exceeded') */
+  errorType?: string
   /** RAG knowledge base sources (top-level for backward compatibility) */
   sources?: SourceReference[]
   /** Reasoning/thinking content from DeepSeek R1 and similar models */
@@ -176,7 +178,12 @@ export interface MessageBubbleProps {
    */
   isCurrentUserMessage?: boolean
   /** Callback when user clicks retry button for failed messages */
-  onRetry?: (message: Message) => void
+  onRetry?: (message: Message) => boolean | void | Promise<boolean | void>
+  /** Callback when user clicks a recommended model button on error card */
+  onRetryWithModel?: (
+    message: Message,
+    model: UnifiedModel
+  ) => boolean | void | Promise<boolean | void>
   /** Message type for feedback storage key differentiation */
   feedbackMessageType?: 'original' | 'correction'
   /** Whether this is a group chat (for enabling message collapsing) */
@@ -473,6 +480,7 @@ const MessageBubble = memo(
     paragraphAction,
     isCurrentUserMessage,
     onRetry,
+    onRetryWithModel,
     feedbackMessageType,
     isGroupChat,
     isPendingConfirmation,
@@ -1770,71 +1778,21 @@ const MessageBubble = memo(
               {/* Show incomplete notice for completed but incomplete messages */}
               {msg.isIncomplete && msg.subtaskStatus !== 'RUNNING' && renderRecoveryNotice()}
 
-              {/* Show error message and retry button for failed messages */}
+              {/* Show error card for failed messages */}
               {!isUserTypeMessage && msg.status === 'error' && msg.error && (
                 <div className="mt-4">
-                  {/* Error message with details */}
-                  <div className="flex items-start gap-2 p-3 rounded-lg bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800">
-                    <AlertCircle className="h-5 w-5 text-red-600 dark:text-red-400 flex-shrink-0 mt-0.5" />
-                    <div className="flex-1 min-w-0">
-                      {/* Error message based on error type */}
-                      <p className="text-sm text-red-800 dark:text-red-200">
-                        {getErrorDisplayMessage(msg.error, (key: string) => t(`chat:${key}`))}
-                      </p>
-                      {/* Detailed error message from backend - only show if different from main message */}
-                      {(() => {
-                        const parsedError = parseError(msg.error)
-                        // Don't show duplicate message for generic errors
-                        if (parsedError.type !== 'generic_error') {
-                          return (
-                            <p className="mt-1 text-xs text-red-600 dark:text-red-300 break-all">
-                              {msg.error}
-                            </p>
-                          )
-                        }
-                        return null
-                      })()}
-                    </div>
-                    {/* Action buttons: Retry and Copy */}
-                    <div className="flex items-center gap-1 flex-shrink-0">
-                      {/* Only show retry button for retryable errors */}
-                      {/* Container errors (OOM, container crash) are not retryable - user should start new task */}
-                      {onRetry &&
-                        (() => {
-                          const parsedError = parseError(msg.error)
-                          const isRetryable =
-                            parsedError.type !== 'container_oom' &&
-                            parsedError.type !== 'container_error'
-                          if (!isRetryable) return null
-                          return (
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  onClick={() => onRetry(msg)}
-                                  className="h-7 w-7 !rounded-md bg-red-100 dark:bg-red-900/30 hover:!bg-red-200 dark:hover:!bg-red-900/50"
-                                >
-                                  <RefreshCw className="h-4 w-4 text-red-600 dark:text-red-400" />
-                                </Button>
-                              </TooltipTrigger>
-                              <TooltipContent>{t('actions.retry') || '重试'}</TooltipContent>
-                            </Tooltip>
-                          )
-                        })()}
-                      <CopyButton
-                        content={msg.error}
-                        className="h-7 w-7 flex-shrink-0 !rounded-md bg-red-100 dark:bg-red-900/30 hover:!bg-red-200 dark:hover:!bg-red-900/50"
-                        tooltip={t('chat:errors.copy_error') || 'Copy error'}
-                        onCopySuccess={() =>
-                          trace.event('error-copy', {
-                            'error.message': msg.error?.substring(0, 100),
-                            ...(msg.subtaskId && { 'subtask.id': msg.subtaskId }),
-                          })
-                        }
-                      />
-                    </div>
-                  </div>
+                  <ErrorCard
+                    error={msg.error}
+                    errorType={msg.errorType}
+                    subtaskId={msg.subtaskId}
+                    taskId={selectedTaskDetail?.id}
+                    timestamp={msg.timestamp || Date.now()}
+                    message={msg}
+                    selectedTeam={selectedTeam}
+                    isLastErrorMessage={isLastAiMessage ?? false}
+                    onRetry={onRetry}
+                    onRetryWithModel={onRetryWithModel}
+                  />
                 </div>
               )}
 
@@ -1933,11 +1891,13 @@ const MessageBubble = memo(
       prevBlocksHash === nextBlocksHash && // CRITICAL: Compare block content changes
       prevProps.msg.status === nextProps.msg.status &&
       prevProps.msg.error === nextProps.msg.error &&
+      prevProps.msg.errorType === nextProps.msg.errorType &&
       prevProps.isPendingConfirmation === nextProps.isPendingConfirmation &&
       prevProps.isEditing === nextProps.isEditing &&
       prevProps.isLastAiMessage === nextProps.isLastAiMessage &&
       prevProps.isRegenerating === nextProps.isRegenerating &&
       prevProps.onUseAsReference === nextProps.onUseAsReference &&
+      prevProps.onRetryWithModel === nextProps.onRetryWithModel &&
       prevProps.onReEdit === nextProps.onReEdit &&
       prevProps.taskType === nextProps.taskType
 

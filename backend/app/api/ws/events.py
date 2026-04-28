@@ -313,6 +313,8 @@ class ChatErrorPayload(BaseModel):
     subtask_id: int
     error: str
     type: Optional[str] = None
+    message_id: Optional[int] = None
+    task_id: Optional[int] = None
 
 
 class ChatCancelledPayload(BaseModel):

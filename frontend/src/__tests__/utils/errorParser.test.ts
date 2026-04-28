@@ -2,11 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import {
-  parseError,
-  getUserFriendlyErrorMessage,
-  getErrorDisplayMessage,
-} from '@/utils/errorParser'
+import { parseError, getErrorDisplayMessage } from '@/utils/errorParser'
 
 describe('errorParser', () => {
   describe('parseError', () => {
@@ -15,25 +11,25 @@ describe('errorParser', () => {
         const error = new Error('forbidden')
         const result = parseError(error)
         expect(result.type).toBe('forbidden')
-        expect(result.retryable).toBe(false)
+        expect(result.retryable).toBe(true)
       })
 
       it('should detect not allowed errors', () => {
         const result = parseError('Request not allowed')
         expect(result.type).toBe('forbidden')
-        expect(result.retryable).toBe(false)
+        expect(result.retryable).toBe(true)
       })
 
       it('should detect unauthorized errors', () => {
         const result = parseError('unauthorized access')
         expect(result.type).toBe('forbidden')
-        expect(result.retryable).toBe(false)
+        expect(result.retryable).toBe(true)
       })
 
       it('should detect 403 errors', () => {
         const result = parseError('403 Forbidden')
         expect(result.type).toBe('forbidden')
-        expect(result.retryable).toBe(false)
+        expect(result.retryable).toBe(true)
       })
     })
 
@@ -41,37 +37,37 @@ describe('errorParser', () => {
       it('should detect multi-modal errors', () => {
         const result = parseError('multi-modal not supported')
         expect(result.type).toBe('llm_unsupported')
-        expect(result.retryable).toBe(false)
+        expect(result.retryable).toBe(true)
       })
 
       it('should detect multimodal errors (no hyphen)', () => {
         const result = parseError('multimodal content not supported')
         expect(result.type).toBe('llm_unsupported')
-        expect(result.retryable).toBe(false)
+        expect(result.retryable).toBe(true)
       })
 
       it('should detect llm model mismatch errors', () => {
         const result = parseError('llm model expected but received')
         expect(result.type).toBe('llm_unsupported')
-        expect(result.retryable).toBe(false)
+        expect(result.retryable).toBe(true)
       })
 
       it('should detect "do not support" errors', () => {
         const result = parseError('Model do not support image input')
         expect(result.type).toBe('llm_unsupported')
-        expect(result.retryable).toBe(false)
+        expect(result.retryable).toBe(true)
       })
 
       it('should detect "does not support" errors', () => {
         const result = parseError('This model does not support image processing')
         expect(result.type).toBe('llm_unsupported')
-        expect(result.retryable).toBe(false)
+        expect(result.retryable).toBe(true)
       })
 
       it('should detect image not supported errors', () => {
         const result = parseError('Model not support image input')
         expect(result.type).toBe('llm_unsupported')
-        expect(result.retryable).toBe(false)
+        expect(result.retryable).toBe(true)
       })
     })
 
@@ -120,13 +116,13 @@ describe('errorParser', () => {
 
       it('should detect api rate limit errors', () => {
         const result = parseError('api rate limit exceeded')
-        expect(result.type).toBe('llm_error')
+        expect(result.type).toBe('rate_limit')
         expect(result.retryable).toBe(true)
       })
 
       it('should detect quota exceeded errors', () => {
         const result = parseError('quota exceeded for this model')
-        expect(result.type).toBe('llm_error')
+        expect(result.type).toBe('quota_exceeded')
         expect(result.retryable).toBe(true)
       })
 
@@ -215,6 +211,20 @@ describe('errorParser', () => {
         expect(result.type).toBe('timeout_error')
         expect(result.retryable).toBe(true)
       })
+
+      it('should detect Chinese timeout errors as timeout_error', () => {
+        const result = parseError('请求超时，请稍后重试')
+        expect(result.type).toBe('timeout_error')
+        expect(result.retryable).toBe(true)
+      })
+    })
+
+    describe('backend-provided error types', () => {
+      it('should accept backend llm_error explicitly', () => {
+        const result = parseError('provider overloaded', 'llm_error')
+        expect(result.type).toBe('llm_error')
+        expect(result.retryable).toBe(true)
+      })
     })
 
     describe('generic errors', () => {
@@ -277,7 +287,7 @@ describe('errorParser', () => {
           'data: {"error":{"code":null,"message":"{\\"error\\":{\\"code\\":\\"InvalidParameter\\",\\"message\\":\\"Model do not support image input. Request id: 021768537375878a77eec5e653ab4759e46069478d0f365166e60\\",\\"param\\":\\"image_url\\",\\"type\\":\\"BadRequest\\"}}, model_id: DeepSeek-V3.2-251201","param":null,"type":"api_error"}}"'
         const result = parseError(error)
         expect(result.type).toBe('llm_unsupported')
-        expect(result.retryable).toBe(false)
+        expect(result.retryable).toBe(true)
       })
 
       it('should detect peer closed connection as network error', () => {
@@ -338,69 +348,6 @@ describe('errorParser', () => {
     })
   })
 
-  describe('getUserFriendlyErrorMessage', () => {
-    const mockT = (key: string) => {
-      const translations: Record<string, string> = {
-        'errors.forbidden': 'Access forbidden',
-        'errors.model_unsupported': 'Model not supported',
-        'errors.llm_unsupported': 'LLM unsupported',
-        'errors.llm_error': 'LLM error',
-        'errors.invalid_parameter': 'Invalid parameter',
-        'errors.payload_too_large': 'Payload too large',
-        'errors.network_error': 'Network error',
-        'errors.timeout_error': 'Timeout error',
-        'errors.generic_error': 'Generic error',
-      }
-      return translations[key] || key
-    }
-
-    it('should return friendly message for forbidden errors', () => {
-      const message = getUserFriendlyErrorMessage('forbidden', mockT)
-      expect(message).toBe('Access forbidden')
-    })
-
-    it('should return friendly message for llm_unsupported errors', () => {
-      const message = getUserFriendlyErrorMessage('multimodal not supported', mockT)
-      expect(message).toBe('LLM unsupported')
-    })
-
-    it('should return friendly message for llm_error', () => {
-      const message = getUserFriendlyErrorMessage('model unavailable', mockT)
-      expect(message).toBe('LLM error')
-    })
-
-    it('should return friendly message for invalid_parameter', () => {
-      const message = getUserFriendlyErrorMessage('invalid parameter', mockT)
-      expect(message).toBe('Invalid parameter')
-    })
-
-    it('should return friendly message for payload_too_large', () => {
-      const message = getUserFriendlyErrorMessage('413 error', mockT)
-      expect(message).toBe('Payload too large')
-    })
-
-    it('should return friendly message for network_error', () => {
-      const message = getUserFriendlyErrorMessage('network failed', mockT)
-      expect(message).toBe('Network error')
-    })
-
-    it('should return friendly message for timeout_error', () => {
-      const message = getUserFriendlyErrorMessage('timeout', mockT)
-      expect(message).toBe('Timeout error')
-    })
-
-    it('should return friendly message for generic_error', () => {
-      const message = getUserFriendlyErrorMessage('unknown error', mockT)
-      expect(message).toBe('Generic error')
-    })
-
-    it('should handle Error objects', () => {
-      const error = new Error('network error')
-      const message = getUserFriendlyErrorMessage(error, mockT)
-      expect(message).toBe('Network error')
-    })
-  })
-
   describe('getErrorDisplayMessage', () => {
     const mockT = (key: string) => {
       const translations: Record<string, string> = {
@@ -443,28 +390,31 @@ describe('errorParser', () => {
       })
     })
 
-    describe('generic errors should return original error message', () => {
-      it('should return original error for "Team not found"', () => {
+    describe('generic errors should return friendly i18n message', () => {
+      it('should return friendly message for "Team not found"', () => {
         const message = getErrorDisplayMessage('Team not found', mockT)
-        expect(message).toBe('Team not found')
+        expect(message).toBe('Generic error')
       })
 
-      it('should return original error for business errors', () => {
+      it('should return friendly message for business errors', () => {
         const message = getErrorDisplayMessage('User does not have permission', mockT)
-        expect(message).toBe('User does not have permission')
+        expect(message).toBe('Generic error')
       })
 
-      it('should return original error for unknown errors', () => {
+      it('should return friendly message for unknown errors', () => {
         const message = getErrorDisplayMessage('Something went wrong', mockT)
-        expect(message).toBe('Something went wrong')
+        expect(message).toBe('Generic error')
       })
 
-      it('should return fallback message when original error is empty', () => {
-        const message = getErrorDisplayMessage('', mockT, 'Fallback message')
-        expect(message).toBe('Fallback message')
+      it('should return friendly message for raw SDK error strings', () => {
+        const message = getErrorDisplayMessage(
+          'Error code: 200 - {"type": "error", "error": {"type": "not_found_error", "message": "resource not found"}}',
+          mockT
+        )
+        expect(message).toBe('Generic error')
       })
 
-      it('should return generic_error translation when no fallback provided', () => {
+      it('should return friendly message when error is empty', () => {
         const message = getErrorDisplayMessage('', mockT)
         expect(message).toBe('Generic error')
       })
@@ -490,9 +440,9 @@ describe('errorParser', () => {
         expect(message).toBe('LLM unsupported')
       })
 
-      it('should handle Team not found as original error', () => {
+      it('should handle Team not found with friendly message', () => {
         const message = getErrorDisplayMessage('Team not found', mockT)
-        expect(message).toBe('Team not found')
+        expect(message).toBe('Generic error')
       })
 
       it('should handle Error objects', () => {

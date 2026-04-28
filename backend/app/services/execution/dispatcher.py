@@ -53,6 +53,8 @@ from .router import CommunicationMode, ExecutionRouter, ExecutionTarget
 
 logger = logging.getLogger(__name__)
 
+_FRONTEND_ERROR_EMITTED_ATTR = "_frontend_error_emitted"
+
 
 class InvalidToolCallEventError(ValueError):
     """Raised when a Responses API tool event is missing its correlation ID."""
@@ -166,6 +168,7 @@ class ResponsesAPIEventParser:
                 task_id=task_id,
                 subtask_id=subtask_id,
                 error=data.get("message", "Unknown error"),
+                error_code=data.get("code"),
                 message_id=message_id,
             )
 
@@ -402,11 +405,19 @@ class ExecutionDispatcher:
             # Try to emit error to frontend if emitter is available
             if wrapped_emitter is not None:
                 try:
+                    from shared.utils.error_classifier import (
+                        classify_error,
+                        format_error_message,
+                    )
+
+                    error_code = classify_error(e)
                     await wrapped_emitter.emit_error(
                         task_id=request.task_id,
                         subtask_id=request.subtask_id,
-                        error=str(e),
+                        error=format_error_message(e),
+                        error_code=error_code,
                     )
+                    setattr(e, _FRONTEND_ERROR_EMITTED_ATTR, True)
                 except Exception as emit_error:
                     logger.error(
                         f"[ExecutionDispatcher] Failed to emit error: {emit_error}"
@@ -1090,13 +1101,9 @@ class ExecutionDispatcher:
                 f"[ExecutionDispatcher] In-process chat error: "
                 f"task_id={request.task_id}, error={e}"
             )
-            # Emit error event
-            await emitter.emit_error(
-                task_id=request.task_id,
-                subtask_id=request.subtask_id,
-                error=str(e),
-                message_id=request.message_id,
-            )
+            # Don't emit_error here — the outer dispatch() handler already
+            # emits a classified error with format_error_message. Emitting
+            # twice causes a race on the frontend.
             raise
 
     async def _dispatch_http_callback(

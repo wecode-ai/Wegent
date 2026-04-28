@@ -2,6 +2,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
+import threading
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -9,7 +11,10 @@ import pytest
 
 from app.models.knowledge import KnowledgeDocument
 from app.services.context import context_service
-from app.services.knowledge.knowledge_service import KnowledgeService
+from app.services.knowledge.knowledge_service import (
+    KnowledgeService,
+    _run_async_in_new_loop,
+)
 
 
 @pytest.mark.unit
@@ -226,9 +231,9 @@ class TestKnowledgeServiceDeleteDocument:
                 return_value=delete_runtime_spec,
             ) as mock_build_delete_runtime_spec,
             patch(
-                "asyncio.run",
+                "app.services.knowledge.knowledge_service._run_async_in_new_loop",
                 return_value={"status": "success"},
-            ),
+            ) as run_async_in_new_loop,
         ):
             KnowledgeService.delete_document(
                 db=db,
@@ -236,6 +241,7 @@ class TestKnowledgeServiceDeleteDocument:
                 user_id=7,
             )
 
+        run_async_in_new_loop.assert_called_once()
         mock_build_delete_runtime_spec.assert_called_once_with(
             db=db,
             knowledge_base_id=10,
@@ -304,14 +310,14 @@ class TestKnowledgeServiceDeleteDocument:
             ),
             patch("logging.getLogger") as mock_logger,
             patch(
-                "asyncio.run",
+                "app.services.knowledge.knowledge_service._run_async_in_new_loop",
                 return_value={
                     "status": "deleted",
                     "deleted_chunks": 3,
                     "deleted_parent_nodes": 1,
                     "index_name": "test_user_42",
                 },
-            ),
+            ) as run_async_in_new_loop,
         ):
             KnowledgeService.delete_document(
                 db=db,
@@ -319,6 +325,7 @@ class TestKnowledgeServiceDeleteDocument:
                 user_id=7,
             )
 
+        run_async_in_new_loop.assert_called_once()
         mock_logger.return_value.info.assert_any_call(
             "Deleted RAG index for doc_ref '%s' in knowledge base %s "
             "(index_owner_user_id=%s, status=%s, deleted_chunks=%s, "
@@ -332,3 +339,44 @@ class TestKnowledgeServiceDeleteDocument:
             "test_user_42",
         )
         mock_logger.return_value.warning.assert_not_called()
+
+
+@pytest.mark.unit
+class TestRunAsyncInNewLoop:
+    def test_cancels_pending_tasks_before_closing_loop(self) -> None:
+        cancelled = threading.Event()
+
+        async def background_task() -> None:
+            try:
+                await asyncio.sleep(3600)
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+
+        async def main_coro() -> str:
+            asyncio.create_task(background_task())
+            return "done"
+
+        result = _run_async_in_new_loop(main_coro())
+
+        assert result == "done"
+        assert cancelled.wait(timeout=1.0)
+
+    def test_cleans_up_pending_tasks_when_main_coro_raises(self) -> None:
+        cancelled = threading.Event()
+
+        async def background_task() -> None:
+            try:
+                await asyncio.sleep(3600)
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+
+        async def failing_coro() -> None:
+            asyncio.create_task(background_task())
+            raise RuntimeError("boom")
+
+        with pytest.raises(RuntimeError, match="boom"):
+            _run_async_in_new_loop(failing_coro())
+
+        assert cancelled.wait(timeout=1.0)

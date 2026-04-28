@@ -533,6 +533,20 @@ class Settings(BaseSettings):
     # "headers": {"X-User": "${{user.name}}"} will be replaced with actual username
     CHAT_MCP_SERVERS: str = "{}"
 
+    # Error model recommendations configuration (platform-level, public models only)
+    # JSON string mapping error types to recommended public model names.
+    # Example: {
+    #   "context_length_exceeded": {
+    #     "description": "Large context models",
+    #     "models": ["model-a", "model-b"]
+    #   },
+    #   "default_errors": {
+    #     "description": "Fallback models for unmapped errors",
+    #     "models": ["model-c"]
+    #   }
+    # }
+    ERROR_MODEL_RECOMMENDATIONS: str = ""
+
     # Maximum time to wait for active streaming requests to complete (seconds)
     # Default: 600 seconds (10 minutes) to allow long-running streaming requests to complete
     GRACEFUL_SHUTDOWN_TIMEOUT: int = 600

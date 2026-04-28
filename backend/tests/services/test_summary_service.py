@@ -548,3 +548,245 @@ class TestKnowledgeServiceBatchDeleteDocuments:
         assert result.result.failed_count == 1
         assert 99999 in result.result.failed_ids
         assert expected_kb_id in result.kb_ids
+
+
+class TestTriggerDocumentSummaryDeletionRace:
+    """Test document summary generation when the document is deleted mid-flight."""
+
+    @pytest.fixture
+    def test_knowledge_base(self, test_db: Session, test_user: User) -> Kind:
+        kb_json = {
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "KnowledgeBase",
+            "metadata": {
+                "name": f"test-kb-summary-race-{test_user.id}",
+                "namespace": "default",
+            },
+            "spec": {
+                "name": "Summary Race KB",
+                "description": "A test knowledge base for summary race handling",
+            },
+            "status": {"state": "Available"},
+        }
+        kb = Kind(
+            user_id=test_user.id,
+            kind="KnowledgeBase",
+            name=f"test-kb-summary-race-{test_user.id}",
+            namespace="default",
+            json=kb_json,
+            created_at=datetime.now(),
+            updated_at=datetime.now(),
+        )
+        test_db.add(kb)
+        test_db.commit()
+        test_db.refresh(kb)
+        return kb
+
+    @pytest.fixture
+    def test_document(
+        self, test_db: Session, test_user: User, test_knowledge_base: Kind
+    ) -> KnowledgeDocument:
+        doc = KnowledgeDocument(
+            kind_id=test_knowledge_base.id,
+            attachment_id=0,
+            name="summary_race.pdf",
+            file_extension="pdf",
+            file_size=1024,
+            user_id=test_user.id,
+            is_active=True,
+            source_type="file",
+            summary={"status": "queued"},
+        )
+        test_db.add(doc)
+        test_db.commit()
+        test_db.refresh(doc)
+        return doc
+
+    @pytest.mark.asyncio
+    async def test_trigger_document_summary_skips_post_write_if_document_deleted(
+        self,
+        test_db: Session,
+        test_user: User,
+        test_document: KnowledgeDocument,
+    ) -> None:
+        summary_service = get_summary_service(test_db)
+        document_id = test_document.id
+
+        async def delete_document_and_return_result(*args, **kwargs):
+            (
+                test_db.query(KnowledgeDocument)
+                .filter(KnowledgeDocument.id == document_id)
+                .delete(synchronize_session=False)
+            )
+            test_db.commit()
+            return MagicMock(
+                success=True,
+                parsed_content={
+                    "short_summary": "short",
+                    "long_summary": "long",
+                    "topics": ["topic"],
+                },
+                task_id=123,
+                error=None,
+            )
+
+        with (
+            patch.object(
+                summary_service,
+                "_get_model_config_from_kb",
+                return_value={
+                    "model_name": "summary-model",
+                    "model_namespace": "default",
+                    "model_type": "llm",
+                },
+            ),
+            patch.object(
+                summary_service,
+                "_get_document_content",
+                AsyncMock(return_value="document content"),
+            ),
+            patch.object(
+                summary_service,
+                "_check_and_trigger_kb_summary",
+                AsyncMock(),
+            ) as mock_check_and_trigger_kb_summary,
+            patch(
+                "app.services.knowledge.summary_service.BackgroundChatExecutor"
+            ) as mock_executor,
+        ):
+            mock_instance = MagicMock()
+            mock_instance.execute = AsyncMock(
+                side_effect=delete_document_and_return_result
+            )
+            mock_executor.return_value = mock_instance
+
+            result = await summary_service.trigger_document_summary(
+                document_id,
+                test_user.id,
+                test_user.user_name,
+            )
+
+        assert result is not None
+        assert result.success is True
+        assert (
+            test_db.query(KnowledgeDocument)
+            .filter(KnowledgeDocument.id == document_id)
+            .first()
+            is None
+        )
+        mock_check_and_trigger_kb_summary.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_trigger_document_summary_handles_deleted_document_in_error_path(
+        self,
+        test_db: Session,
+        test_user: User,
+        test_document: KnowledgeDocument,
+    ) -> None:
+        summary_service = get_summary_service(test_db)
+        document_id = test_document.id
+
+        async def delete_document_and_raise(*args, **kwargs):
+            (
+                test_db.query(KnowledgeDocument)
+                .filter(KnowledgeDocument.id == document_id)
+                .delete(synchronize_session=False)
+            )
+            test_db.commit()
+            raise RuntimeError("summary generation failed")
+
+        with (
+            patch.object(
+                summary_service,
+                "_get_model_config_from_kb",
+                return_value={
+                    "model_name": "summary-model",
+                    "model_namespace": "default",
+                    "model_type": "llm",
+                },
+            ),
+            patch.object(
+                summary_service,
+                "_get_document_content",
+                AsyncMock(return_value="document content"),
+            ),
+            patch(
+                "app.services.knowledge.summary_service.BackgroundChatExecutor"
+            ) as mock_executor,
+        ):
+            mock_instance = MagicMock()
+            mock_instance.execute = AsyncMock(side_effect=delete_document_and_raise)
+            mock_executor.return_value = mock_instance
+
+            result = await summary_service.trigger_document_summary(
+                document_id,
+                test_user.id,
+                test_user.user_name,
+            )
+
+        assert result is None
+        assert (
+            test_db.query(KnowledgeDocument)
+            .filter(KnowledgeDocument.id == document_id)
+            .first()
+            is None
+        )
+
+    @pytest.mark.asyncio
+    async def test_trigger_document_summary_skips_content_fetch_for_deleted_document(
+        self,
+        test_db: Session,
+        test_user: User,
+        test_document: KnowledgeDocument,
+    ) -> None:
+        summary_service = get_summary_service(test_db)
+        document_id = test_document.id
+        original_persist_document_summary = summary_service._persist_document_summary
+        persist_calls = 0
+
+        def persist_and_delete(document_id_arg: int, summary_data: dict) -> bool:
+            nonlocal persist_calls
+            result = original_persist_document_summary(document_id_arg, summary_data)
+            if persist_calls == 0:
+                (
+                    test_db.query(KnowledgeDocument)
+                    .filter(KnowledgeDocument.id == document_id)
+                    .delete(synchronize_session=False)
+                )
+                test_db.commit()
+            persist_calls += 1
+            return result
+
+        with (
+            patch.object(
+                summary_service,
+                "_get_model_config_from_kb",
+                return_value={
+                    "model_name": "summary-model",
+                    "model_namespace": "default",
+                    "model_type": "llm",
+                },
+            ),
+            patch.object(
+                summary_service,
+                "_persist_document_summary",
+                side_effect=persist_and_delete,
+            ),
+            patch(
+                "app.services.knowledge.summary_service.BackgroundChatExecutor"
+            ) as mock_executor,
+        ):
+            result = await summary_service.trigger_document_summary(
+                document_id,
+                test_user.id,
+                test_user.user_name,
+            )
+
+        assert result is None
+        assert (
+            test_db.query(KnowledgeDocument)
+            .filter(KnowledgeDocument.id == document_id)
+            .first()
+            is None
+        )
+        mock_executor.assert_not_called()

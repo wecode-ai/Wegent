@@ -1069,6 +1069,8 @@
     "embedding_dimensions": "Dimensions",
     "embedding_dimensions_hint": "Output dimensions (e.g., 1536)",
     "embedding_encoding_format": "Encoding Format",
+    "embedding_supports_image_input": "Supports Image Input",
+    "embedding_supports_image_input_hint": "Declare that this embedding model accepts image input in addition to text. Current knowledge indexing still uses the text-only pipeline.",
     "rerank_top_n": "Top N Results",
     "rerank_top_n_hint": "Number of top results to return",
     "rerank_return_documents": "Return Documents",

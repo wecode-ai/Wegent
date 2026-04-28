@@ -840,12 +840,30 @@ class ChatNamespace(socketio.AsyncNamespace):
                         logger.exception(
                             f"[WS] chat:send AI trigger failed: task_id={task.id}, error={e}"
                         )
+                        if getattr(e, "_frontend_error_emitted", False):
+                            logger.info(
+                                "[WS] chat:send skipping fallback chat:error because "
+                                "ExecutionDispatcher already emitted it: task_id=%s, subtask_id=%s",
+                                task.id,
+                                assistant_subtask.id,
+                            )
+                            return
+
+                        from shared.utils.error_classifier import (
+                            classify_error,
+                            format_error_message,
+                        )
+
+                        error_code = classify_error(e)
                         # Emit error to frontend so user sees the failure
                         await self.emit(
                             ServerEvents.CHAT_ERROR,
                             ChatErrorPayload(
                                 subtask_id=assistant_subtask.id,
-                                error=str(e),
+                                error=format_error_message(e),
+                                type=error_code,
+                                message_id=assistant_subtask.message_id,
+                                task_id=task.id,
                             ).model_dump(),
                             room=task_room,
                         )
@@ -1281,6 +1299,49 @@ class ChatNamespace(socketio.AsyncNamespace):
                         f"[WS] chat:retry use_model_override=False, no task metadata model, "
                         f"will use bot's default model"
                     )
+
+            # Update task labels with the new model before triggering execution.
+            # build_execution_request reads model from task.json.metadata.labels,
+            # so we must persist the new model here (same as normal send flow).
+            from sqlalchemy.orm.attributes import flag_modified
+
+            if model_id:
+                task_json = task.json or {}
+                labels = task_json.setdefault("metadata", {}).setdefault("labels", {})
+                labels["modelId"] = model_id
+                labels["forceOverrideBotModel"] = "true"
+                if model_type:
+                    labels["forceOverrideBotModelType"] = model_type
+                else:
+                    labels.pop("forceOverrideBotModelType", None)
+                task.json = task_json
+                flag_modified(task, "json")
+                db.commit()
+                db.refresh(task)
+                logger.info(
+                    f"[WS] chat:retry updated task labels: modelId={model_id}, "
+                    f"modelType={model_type}"
+                )
+            elif payload.use_model_override:
+                # "Default Model" retry: clear any stale override labels so
+                # build_execution_request falls back to the bot's default model.
+                task_json = task.json or {}
+                labels = task_json.get("metadata", {}).get("labels", {})
+                changed = False
+                for key in (
+                    "modelId",
+                    "forceOverrideBotModel",
+                    "forceOverrideBotModelType",
+                ):
+                    if key in labels:
+                        del labels[key]
+                        changed = True
+                if changed:
+                    task.json = task_json
+                    flag_modified(task, "json")
+                    db.commit()
+                    db.refresh(task)
+                    logger.info("[WS] chat:retry cleared stale model override labels")
 
             # Build payload for AI trigger (reuse user message content and model override)
             # If model_id exists, use it; otherwise, use None to let the bot use its default model

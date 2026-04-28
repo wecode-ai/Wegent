@@ -45,6 +45,50 @@ async def test_recover_executor_propagates_expired_archive_error():
 
 
 @pytest.mark.asyncio
+async def test_recover_executor_updates_current_subtask_from_recovered_info():
+    """Recovered executor info should be copied onto the current subtask."""
+    db = MagicMock()
+    subtask = MagicMock()
+    subtask.id = 123
+    subtask.executor_name = "old-executor"
+    subtask.executor_namespace = ""
+    subtask.executor_deleted_at = True
+    task = MagicMock()
+    request = ExecutionRequest(
+        task_id=1,
+        subtask_id=123,
+        user={"id": 7, "name": "user7"},
+        user_id=7,
+        user_name="user7",
+        bot=[{"shell_type": "ClaudeCode"}],
+    )
+
+    with patch.object(
+        recovery_service,
+        "recover",
+        AsyncMock(
+            return_value={
+                "executor_name": "new-executor",
+                "executor_namespace": "default",
+            }
+        ),
+    ):
+        result = await _recover_executor(
+            db=db,
+            subtask=subtask,
+            task=task,
+            request=request,
+        )
+
+    assert result is True
+    assert subtask.executor_name == "new-executor"
+    assert subtask.executor_namespace == "default"
+    assert subtask.executor_deleted_at is False
+    db.add.assert_called_once_with(subtask)
+    db.commit.assert_called_once()
+
+
+@pytest.mark.asyncio
 async def test_schedule_marks_subtask_failed_when_recovery_returns_false():
     """Recovery failures should update subtask status in schedule dispatch logic."""
     subtask = MagicMock()
