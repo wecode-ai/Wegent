@@ -32,6 +32,73 @@
     "powered_by_prefix": "Cloud computing powered by",
     "powered_by_suffix": ""
   },
+  "published_apps": {
+    "tab": "Apps",
+    "title": "Published Apps",
+    "description": "Applications published by the current signed-in user",
+    "summary": "{{count}} apps",
+    "refresh": "Refresh",
+    "loading": "Loading published apps...",
+    "empty": "No published apps",
+    "empty_hint": "Published apps will appear here with runtime status and access URLs.",
+    "columns": {
+      "name": "App",
+      "task_id": "Task ID",
+      "domain": "Domain",
+      "status": "Status",
+      "env": "Env",
+      "namespace": "Namespace",
+      "pod": "Pod",
+      "created_at": "Created At",
+      "last_check_at": "Last Check",
+      "action": "Action",
+      "conversation": "Conversation"
+    },
+    "status": {
+      "running": "Running",
+      "online": "Online",
+      "offline": "Offline"
+    },
+    "actions": {
+      "open": "Open",
+      "chat": "Chat",
+      "delete": "Delete",
+      "deleting": "Deleting..."
+    },
+    "confirm_delete": "Delete {{appName}}?",
+    "errors": {
+      "load_failed": "Failed to load published apps",
+      "timeout": "The published apps service timed out"
+    }
+  },
+  "admin_published_apps": {
+    "tab_label": "Apps",
+    "title": "All Published Apps",
+    "description": "View all published apps across all users",
+    "summary": "{{count}} apps total",
+    "refresh": "Refresh",
+    "loading": "Loading...",
+    "empty": "No published apps",
+    "columns": {
+      "username": "User",
+      "name": "App",
+      "task_id": "Task ID",
+      "domain": "Domain",
+      "created_at": "Created At",
+      "status": "Status",
+      "action": "Action"
+    },
+    "actions": {
+      "chat": "Chat",
+      "delete": "Delete",
+      "deleting": "Deleting..."
+    },
+    "confirm_delete": "Delete app {{appName}} owned by {{username}}?",
+    "errors": {
+      "load_failed": "Failed to load apps",
+      "delete_failed": "Failed to delete app"
+    }
+  },
   "mail_token": {
     "title": "Company Mail",
     "description": "Configure a company mail token to enable email-related features",
