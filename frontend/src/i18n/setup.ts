@@ -8,6 +8,32 @@ import { initReactI18next } from 'react-i18next'
 // Supported languages list
 export const supportedLanguages = ['en', 'zh-CN']
 
+const wecodeTranslationLoaders = {
+  en: {
+    wecode: () => import('@wecode/i18n/locales/en/wecode.json'),
+  },
+  'zh-CN': {
+    wecode: () => import('@wecode/i18n/locales/zh-CN/wecode.json'),
+  },
+} as const
+
+async function loadTranslationModule(lng: string, ns: string) {
+  try {
+    return await import(`./locales/${lng}/${ns}.json`)
+  } catch (error) {
+    const wecodeLoader =
+      wecodeTranslationLoaders[lng as keyof typeof wecodeTranslationLoaders]?.[
+        ns as keyof (typeof wecodeTranslationLoaders)['en']
+      ]
+
+    if (wecodeLoader) {
+      return await wecodeLoader()
+    }
+
+    throw error
+  }
+}
+
 // Function to dynamically import translation resources
 async function loadTranslations() {
   const resources: Record<string, Record<string, unknown>> = {}
@@ -35,6 +61,7 @@ async function loadTranslations() {
     'evaluation',
     'promptOptimization',
     'subscription',
+    'wecode',
   ]
 
   for (const lng of supportedLanguages) {
@@ -42,7 +69,7 @@ async function loadTranslations() {
     for (const ns of namespaces) {
       try {
         // Dynamically import JSON file with error handling
-        const translationModule = await import(`./locales/${lng}/${ns}.json`)
+        const translationModule = await loadTranslationModule(lng, ns)
         resources[lng][ns] = translationModule.default
       } catch (error) {
         // If file doesn't exist, use empty object
@@ -93,6 +120,7 @@ export async function initI18n() {
       'evaluation',
       'promptOptimization',
       'subscription',
+      'wecode',
     ],
   })
 

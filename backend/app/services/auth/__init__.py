@@ -4,6 +4,9 @@
 
 """Authentication services."""
 
+from app.services.auth.internal_service_token import (
+    verify_internal_service_token,
+)
 from app.services.auth.rag_download_token import (
     RagDownloadTokenInfo,
     create_rag_download_token,
@@ -24,6 +27,7 @@ from app.services.auth.task_token import (
 )
 
 __all__ = [
+    "verify_internal_service_token",
     "TaskTokenData",
     "TaskTokenInfo",
     "create_task_token",

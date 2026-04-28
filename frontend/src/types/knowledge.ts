@@ -361,6 +361,7 @@ export interface KnowledgeDocument {
   file_size: number
   status: DocumentStatus
   user_id: number
+  created_by?: string | null
   is_active: boolean
   index_status: DocumentIndexStatus
   index_generation: number

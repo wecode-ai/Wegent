@@ -4,27 +4,23 @@
 
 from unittest.mock import AsyncMock, patch
 
-from app.services.rag.runtime_specs import ConnectionTestRuntimeSpec
-
 
 def _auth_header(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-def test_retriever_test_connection_uses_gateway_runtime_spec(
+def test_retriever_test_connection_tests_storage_directly(
     test_client,
     test_token: str,
 ):
-    gateway = AsyncMock()
-    gateway.test_connection.return_value = {
-        "success": True,
-        "message": "Connection successful",
-    }
+    mock_backend = AsyncMock()
+    # test_connection is called via asyncio.to_thread, so it must be a sync function
+    mock_backend.test_connection = lambda: True
 
     with patch(
-        "app.api.endpoints.adapter.retrievers.get_query_gateway",
-        return_value=gateway,
-    ) as mock_get_gateway:
+        "app.api.endpoints.adapter.retrievers.create_storage_backend_from_config",
+        return_value=mock_backend,
+    ) as mock_create:
         response = test_client.post(
             "/api/retrievers/test-connection",
             headers=_auth_header(test_token),
@@ -42,20 +38,15 @@ def test_retriever_test_connection_uses_gateway_runtime_spec(
         "success": True,
         "message": "Connection successful",
     }
-    mock_get_gateway.assert_called_once()
-    gateway.test_connection.assert_awaited_once()
-
-    runtime_spec = gateway.test_connection.await_args.args[0]
-    assert isinstance(runtime_spec, ConnectionTestRuntimeSpec)
-    assert runtime_spec.retriever_config.storage_config == {
-        "type": "qdrant",
-        "url": "http://qdrant:6333",
-        "username": "alice",
-        "password": "secret",
-        "apiKey": "api-token",
-        "indexStrategy": {"mode": "per_dataset"},
-        "ext": {},
-    }
+    mock_create.assert_called_once_with(
+        storage_type="qdrant",
+        url="http://qdrant:6333",
+        username="alice",
+        password="secret",
+        api_key="api-token",
+        index_strategy={"mode": "per_dataset"},
+        ext={},
+    )
 
 
 def test_retriever_test_connection_validates_required_fields(

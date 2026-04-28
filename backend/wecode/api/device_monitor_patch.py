@@ -25,7 +25,8 @@ try:
     from app.models.user import User
     from app.schemas.device import DeviceType
     from app.services.device_service import DeviceService as device_service
-    from wecode.service.nevis_client import NevisClientError, nevis_client
+    from wecode.service.cloud_device_provider import cloud_device_provider
+    from wecode.service.nevis_client import NevisClientError
 except Exception:
     device_monitor_module = None  # type: ignore
 
@@ -66,18 +67,14 @@ async def restart_device_patched(
             detail="Only cloud devices can be restarted",
         )
 
-    # 3. Get sandbox_id from cloudConfig
-    cloud_config = spec.get("cloudConfig", {})
-    sandbox_id = cloud_config.get("sandboxId")
-    if not sandbox_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Cloud device missing sandbox ID",
-        )
-
-    # 4. Call Nevis API to restart sandbox
+    # 3. Restart the cloud device using the shared provider logic
     try:
-        await nevis_client.restart_sandbox(sandbox_id)
+        restart_result = await cloud_device_provider.restart_device(
+            db=db,
+            user_id=user_id,
+            device_id=device_id,
+        )
+        sandbox_id = restart_result["sandbox_id"]
         logger.info(
             f"[Admin Device Restart] Success: "
             f"admin={current_user.user_name}, user_id={user_id}, "

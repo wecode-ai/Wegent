@@ -487,6 +487,8 @@ function ChatAreaContent({
     selectedTeam: chatState.selectedTeam,
     selectedModel: effectiveSelectedModel,
     forceOverride: chatState.forceOverride,
+    setSelectedModel: chatState.setSelectedModel,
+    setForceOverride: chatState.setForceOverride,
     selectedRepo: chatState.selectedRepo,
     selectedBranch: chatState.selectedBranch,
     showRepositorySelector,
@@ -642,6 +644,9 @@ function ChatAreaContent({
   const handleRetryRef = useRef(streamHandlers.handleRetry)
   handleRetryRef.current = streamHandlers.handleRetry
 
+  const handleRetryWithModelRef = useRef(streamHandlers.handleRetryWithModel)
+  handleRetryWithModelRef.current = streamHandlers.handleRetryWithModel
+
   const setTaskInputMessage = chatState.setTaskInputMessage
   const setSelectedContexts = chatState.setSelectedContexts
   const resetAttachment = chatState.resetAttachment
@@ -729,6 +734,16 @@ function ChatAreaContent({
   const handleRetryFromMessagesArea = useCallback(
     (message: import('../message/MessageBubble').Message) => {
       void handleRetryRef.current(message)
+    },
+    []
+  )
+
+  const handleRetryWithModelFromMessagesArea = useCallback(
+    (
+      message: import('../message/MessageBubble').Message,
+      model: import('@/apis/models').UnifiedModel
+    ) => {
+      void handleRetryWithModelRef.current(message, model)
     },
     []
   )
@@ -1153,6 +1168,7 @@ function ChatAreaContent({
               onSendMessageWithModel={handleSendMessageWithModelFromChild}
               isGroupChat={selectedTaskDetail?.is_group_chat || false}
               onRetry={handleRetryFromMessagesArea}
+              onRetryWithModel={handleRetryWithModelFromMessagesArea}
               enableCorrectionMode={chatState.enableCorrectionMode}
               correctionModelId={chatState.correctionModelId}
               enableCorrectionWebSearch={chatState.enableCorrectionWebSearch}

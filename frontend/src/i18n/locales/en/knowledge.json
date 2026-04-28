@@ -199,10 +199,12 @@
         "name": "Name",
         "type": "Type",
         "size": "Size",
-        "date": "Date",
+        "date": "Created",
         "status": "Status",
         "indexStatus": "Index",
-        "actions": "Actions"
+        "actions": "Actions",
+        "createdBy": "Created By",
+        "updatedAt": "Updated"
       },
       "type": {
         "table": "Table",

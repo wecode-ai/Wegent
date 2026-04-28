@@ -123,7 +123,7 @@ export interface UseModelSelectionReturn {
 // ============================================================================
 
 /** Convert UnifiedModel to Model */
-function unifiedToModel(unified: UnifiedModel): Model {
+export function unifiedToModel(unified: UnifiedModel): Model {
   return {
     name: unified.name,
     provider: unified.provider || 'claude',

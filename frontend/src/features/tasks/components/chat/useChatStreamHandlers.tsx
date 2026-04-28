@@ -16,10 +16,11 @@ import { parseError, getErrorDisplayMessage } from '@/utils/errorParser'
 import { taskApis } from '@/apis/tasks'
 import { isChatShell, teamRequiresWorkspace } from '../../service/messageService'
 import { Button } from '@/components/ui/button'
-import { DEFAULT_MODEL_NAME } from '../selector/ModelSelector'
+import { DEFAULT_MODEL_NAME, unifiedToModel } from '../../hooks/useModelSelection'
 import { useTaskStateMachine } from '../../hooks/useTaskStateMachine'
 import { getStreamingJoinWarningKey } from './streamingJoinWarning'
 import type { Model } from '../selector/ModelSelector'
+import type { UnifiedModel } from '@/apis/models'
 import type {
   Team,
   GitRepoInfo,
@@ -36,6 +37,8 @@ export interface UseChatStreamHandlersOptions {
   selectedTeam: Team | null
   selectedModel: Model | null
   forceOverride: boolean
+  setSelectedModel: (model: Model | null) => void
+  setForceOverride: (value: boolean) => void
 
   // Repository
   selectedRepo: GitRepoInfo | null
@@ -140,7 +143,8 @@ export interface ChatStreamHandlers {
     type: string
     error?: string
     subtaskId?: number
-  }) => Promise<void>
+  }) => Promise<boolean>
+  handleRetryWithModel: (message: { subtaskId?: number }, model: UnifiedModel) => Promise<boolean>
   handleCancelTask: () => Promise<void>
   stopStream: () => Promise<void>
   resetStreamingState: () => void
@@ -171,6 +175,8 @@ export function useChatStreamHandlers({
   selectedTeam,
   selectedModel,
   forceOverride,
+  setSelectedModel,
+  setForceOverride,
   selectedRepo,
   selectedBranch,
   showRepositorySelector,
@@ -1049,7 +1055,7 @@ export function useChatStreamHandlers({
           title: t('chat:errors.generic_error'),
           description: 'Subtask ID not found',
         })
-        return
+        return false
       }
 
       if (!selectedTaskDetail?.id) {
@@ -1058,10 +1064,10 @@ export function useChatStreamHandlers({
           title: t('chat:errors.generic_error'),
           description: 'Task ID not found',
         })
-        return
+        return false
       }
 
-      await traceAction(
+      return traceAction(
         'chat-retry-message',
         {
           'action.type': 'retry',
@@ -1091,7 +1097,10 @@ export function useChatStreamHandlers({
                 variant: 'destructive',
                 title: errorMessage,
               })
+              return false
             }
+
+            return true
           } catch (error) {
             console.error('[ChatStreamHandlers] Retry failed:', error)
             const errorMessage = getErrorDisplayMessage(error as Error, (key: string) =>
@@ -1101,12 +1110,63 @@ export function useChatStreamHandlers({
               variant: 'destructive',
               title: errorMessage,
             })
-            throw error
+            return false
           }
         }
       )
     },
     [retryMessage, selectedTaskDetail?.id, selectedModel, forceOverride, t, toast, traceAction]
+  )
+
+  // Handle retry with a specific model (from error card recommendation)
+  const handleRetryWithModel = useCallback(
+    async (message: { subtaskId?: number }, model: UnifiedModel) => {
+      if (!message.subtaskId || !selectedTaskDetail?.id) {
+        return false
+      }
+
+      try {
+        const result = await retryMessage(
+          selectedTaskDetail.id,
+          message.subtaskId,
+          model.name,
+          model.type,
+          true // forceOverride = true to permanently switch in task metadata
+        )
+
+        if (result.error) {
+          const errorMessage = getErrorDisplayMessage(result.error, (key: string) =>
+            t(`chat:${key}`)
+          )
+          toast({ variant: 'destructive', title: errorMessage })
+          return false
+        } else {
+          // Switch frontend model state after the backend accepts the retry request.
+          setSelectedModel(unifiedToModel(model))
+          setForceOverride(true)
+
+          // Refresh task detail to pick up the new model configuration from backend
+          refreshSelectedTaskDetail(false)
+          return true
+        }
+      } catch (error) {
+        console.error('[ChatStreamHandlers] RetryWithModel failed:', error)
+        const errorMessage = getErrorDisplayMessage(error as Error, (key: string) =>
+          t(`chat:${key}`)
+        )
+        toast({ variant: 'destructive', title: errorMessage })
+        return false
+      }
+    },
+    [
+      retryMessage,
+      selectedTaskDetail?.id,
+      setSelectedModel,
+      setForceOverride,
+      refreshSelectedTaskDetail,
+      t,
+      toast,
+    ]
   )
 
   // Handle cancel task
@@ -1177,6 +1237,7 @@ export function useChatStreamHandlers({
     handleSendMessage,
     handleSendMessageWithModel,
     handleRetry,
+    handleRetryWithModel,
     handleCancelTask,
     stopStream,
     resetStreamingState,

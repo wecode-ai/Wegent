@@ -27,6 +27,7 @@ import BackgroundExecutionMonitorPanel from '@/features/admin/components/Backgro
 import DeviceMonitorPanel from '@/features/admin/components/DeviceMonitorPanel'
 import GlobalAdminSetupWizard from '@/features/admin/components/GlobalAdminSetupWizard'
 import IMChannelList from '@/features/admin/components/IMChannelList'
+import AdminPublishedAppsPage from '@wecode/components/settings/AdminPublishedAppsPage'
 import { UserProvider, useUser } from '@/features/common/UserContext'
 import { TaskContextProvider } from '@/features/tasks/contexts/taskContext'
 import { ChatStreamProvider } from '@/features/tasks/contexts/chatStreamContext'
@@ -85,6 +86,7 @@ function AdminContent() {
         'api-keys',
         'system-config',
         'im-channels',
+        'published-apps',
         'monitor',
         'device-monitor',
       ].includes(tab)
@@ -154,6 +156,8 @@ function AdminContent() {
         return <SystemConfigPanel />
       case 'im-channels':
         return <IMChannelList />
+      case 'published-apps':
+        return <AdminPublishedAppsPage />
       case 'monitor':
         return <BackgroundExecutionMonitorPanel />
       case 'device-monitor':

@@ -102,6 +102,35 @@ class SummaryService:
     def __init__(self, db: Session):
         self.db = db
 
+    def _persist_document_summary(
+        self,
+        document_id: int,
+        summary_data: dict[str, Any],
+    ) -> bool:
+        """Persist document summary if the document still exists."""
+        updated_rows = (
+            self.db.query(KnowledgeDocument)
+            .filter(KnowledgeDocument.id == document_id)
+            .update(
+                {
+                    KnowledgeDocument.summary: summary_data,
+                    KnowledgeDocument.updated_at: datetime.now(),
+                },
+                synchronize_session=False,
+            )
+        )
+        if updated_rows == 0:
+            self.db.rollback()
+            logger.info(
+                "[SummaryService] Skipping summary persistence for deleted document: "
+                "document_id=%s",
+                document_id,
+            )
+            return False
+
+        self.db.commit()
+        return True
+
     # ==================== Model Configuration ====================
 
     def _get_model_config_from_kb(
@@ -334,15 +363,16 @@ class SummaryService:
             model_config.get("model_namespace"),
             model_config.get("model_type"),
         )
+        document_kind_id = document.kind_id
+        existing_summary = dict(document.summary or {})
 
         try:
             # 6. Update status to generating
-            summary_data = document.summary or {}
+            summary_data = existing_summary
             summary_data["status"] = "generating"
             summary_data["updated_at"] = datetime.now().isoformat()
-            document.summary = summary_data
-            flag_modified(document, "summary")
-            self.db.commit()
+            if not self._persist_document_summary(document_id, summary_data):
+                return None
 
             logger.info(
                 f"[SummaryService] Document summary status set to generating: "
@@ -350,8 +380,13 @@ class SummaryService:
             )
 
             # 7. Get document content
-            content = await self._get_document_content(document)
+            content = await self._get_document_content(document_id)
             if not content:
+                logger.info(
+                    "[SummaryService] Document content unavailable for summary: "
+                    "document_id=%s",
+                    document_id,
+                )
                 raise Exception("Failed to get document content")
 
             logger.info(
@@ -375,7 +410,7 @@ class SummaryService:
                     task_type="summary",
                     summary_type="document",
                     document_id=document_id,
-                    knowledge_base_id=document.kind_id,
+                    knowledge_base_id=document_kind_id,
                     model_config=model_config,
                 ),
                 parse_json=True,
@@ -405,17 +440,21 @@ class SummaryService:
                     f"document_id={document_id}, error={result.error}"
                 )
 
-            document.summary = summary_data
-            flag_modified(document, "summary")
-            self.db.commit()
+            if not self._persist_document_summary(document_id, summary_data):
+                logger.info(
+                    "[SummaryService] Document deleted before summary completion: "
+                    "document_id=%s",
+                    document_id,
+                )
+                return result
 
             # 10. Check if knowledge base summary needs to be triggered
             if result.success:
                 logger.info(
-                    f"[SummaryService] Checking KB summary trigger: kb_id={document.kind_id}"
+                    f"[SummaryService] Checking KB summary trigger: kb_id={document_kind_id}"
                 )
                 await self._check_and_trigger_kb_summary(
-                    document.kind_id, user_id, user_name
+                    document_kind_id, user_id, user_name
                 )
 
             return result
@@ -432,9 +471,7 @@ class SummaryService:
                     "error": str(e),
                     "updated_at": datetime.now().isoformat(),
                 }
-                document.summary = summary_data
-                flag_modified(document, "summary")
-                self.db.commit()
+                self._persist_document_summary(document_id, summary_data)
             except Exception as commit_error:
                 logger.warning(
                     f"[SummaryService] Failed to save error status: {commit_error}"
@@ -717,7 +754,7 @@ class SummaryService:
                 f"kb_id={kb_id}, completed_count={completed_count}"
             )
 
-    async def _get_document_content(self, document: KnowledgeDocument) -> Optional[str]:
+    async def _get_document_content(self, document_id: int) -> Optional[str]:
         """
         Get document content.
 
@@ -727,10 +764,27 @@ class SummaryService:
 
         # Try to get extracted text from attachment context
         try:
-            if document.attachment_id:
+            document = (
+                self.db.query(KnowledgeDocument)
+                .filter(
+                    KnowledgeDocument.id == document_id,
+                    KnowledgeDocument.is_active.is_(True),
+                )
+                .first()
+            )
+            if not document:
+                logger.info(
+                    "[SummaryService] Document unavailable during content fetch: "
+                    "document_id=%s",
+                    document_id,
+                )
+                return None
+
+            attachment_id = document.attachment_id
+            if attachment_id:
                 context = (
                     self.db.query(SubtaskContext)
-                    .filter(SubtaskContext.id == document.attachment_id)
+                    .filter(SubtaskContext.id == attachment_id)
                     .first()
                 )
 

@@ -9,19 +9,19 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from knowledge_runtime.services.admin_executor import AdminExecutor
+from knowledge_runtime.services.config_resolver import AdminResolvedConfig
 from shared.models import (
     RemoteDeleteDocumentIndexRequest,
     RemoteDropKnowledgeIndexRequest,
     RemoteListChunksRequest,
     RemotePurgeKnowledgeIndexRequest,
-    RemoteTestConnectionRequest,
     RuntimeRetrieverConfig,
 )
 
 
 @pytest.fixture
-def retriever_config():
-    """Create a sample retriever config."""
+def mock_retriever_config():
+    """Create a sample resolved retriever config."""
     return RuntimeRetrieverConfig(
         name="test-retriever",
         namespace="default",
@@ -34,8 +34,9 @@ def retriever_config():
 
 @pytest.fixture
 def admin_executor():
-    """Create an AdminExecutor instance."""
-    return AdminExecutor()
+    """Create an AdminExecutor instance with a mock db session."""
+    mock_db = MagicMock()
+    return AdminExecutor(db=mock_db)
 
 
 class TestAdminExecutor:
@@ -43,14 +44,13 @@ class TestAdminExecutor:
 
     @pytest.mark.asyncio
     async def test_delete_document_index_success(
-        self, admin_executor, retriever_config
+        self, admin_executor, mock_retriever_config
     ) -> None:
         """Test successful document index deletion."""
         request = RemoteDeleteDocumentIndexRequest(
             knowledge_base_id=1,
+            user_id=42,
             document_ref="doc_123",
-            index_owner_user_id=7,
-            retriever_config=retriever_config,
         )
 
         mock_storage_backend = MagicMock()
@@ -63,6 +63,13 @@ class TestAdminExecutor:
             "knowledge_runtime.services.admin_executor.create_storage_backend_from_runtime_config",
             return_value=mock_storage_backend,
         ):
+            admin_executor._config_resolver.resolve_admin_config = MagicMock(
+                return_value=AdminResolvedConfig(
+                    index_owner_user_id=7,
+                    retriever_config=mock_retriever_config,
+                )
+            )
+
             result = await admin_executor.delete_document_index(request)
 
         assert result["status"] == "success"
@@ -75,13 +82,12 @@ class TestAdminExecutor:
 
     @pytest.mark.asyncio
     async def test_purge_knowledge_index_success(
-        self, admin_executor, retriever_config
+        self, admin_executor, mock_retriever_config
     ) -> None:
         """Test successful knowledge base purge."""
         request = RemotePurgeKnowledgeIndexRequest(
             knowledge_base_id=1,
-            index_owner_user_id=7,
-            retriever_config=retriever_config,
+            user_id=42,
         )
 
         mock_storage_backend = MagicMock()
@@ -94,6 +100,13 @@ class TestAdminExecutor:
             "knowledge_runtime.services.admin_executor.create_storage_backend_from_runtime_config",
             return_value=mock_storage_backend,
         ):
+            admin_executor._config_resolver.resolve_admin_config = MagicMock(
+                return_value=AdminResolvedConfig(
+                    index_owner_user_id=7,
+                    retriever_config=mock_retriever_config,
+                )
+            )
+
             result = await admin_executor.purge_knowledge_index(request)
 
         assert result["status"] == "success"
@@ -105,13 +118,12 @@ class TestAdminExecutor:
 
     @pytest.mark.asyncio
     async def test_drop_knowledge_index_success(
-        self, admin_executor, retriever_config
+        self, admin_executor, mock_retriever_config
     ) -> None:
         """Test successful knowledge base index drop."""
         request = RemoteDropKnowledgeIndexRequest(
             knowledge_base_id=1,
-            index_owner_user_id=7,
-            retriever_config=retriever_config,
+            user_id=42,
         )
 
         mock_storage_backend = MagicMock()
@@ -121,6 +133,13 @@ class TestAdminExecutor:
             "knowledge_runtime.services.admin_executor.create_storage_backend_from_runtime_config",
             return_value=mock_storage_backend,
         ):
+            admin_executor._config_resolver.resolve_admin_config = MagicMock(
+                return_value=AdminResolvedConfig(
+                    index_owner_user_id=7,
+                    retriever_config=mock_retriever_config,
+                )
+            )
+
             result = await admin_executor.drop_knowledge_index(request)
 
         assert result["status"] == "success"
@@ -130,12 +149,13 @@ class TestAdminExecutor:
         )
 
     @pytest.mark.asyncio
-    async def test_list_chunks_success(self, admin_executor, retriever_config) -> None:
+    async def test_list_chunks_success(
+        self, admin_executor, mock_retriever_config
+    ) -> None:
         """Test successful chunk listing."""
         request = RemoteListChunksRequest(
             knowledge_base_id=1,
-            index_owner_user_id=7,
-            retriever_config=retriever_config,
+            user_id=42,
             max_chunks=100,
         )
 
@@ -162,6 +182,13 @@ class TestAdminExecutor:
             "knowledge_runtime.services.admin_executor.create_storage_backend_from_runtime_config",
             return_value=mock_storage_backend,
         ):
+            admin_executor._config_resolver.resolve_admin_config = MagicMock(
+                return_value=AdminResolvedConfig(
+                    index_owner_user_id=7,
+                    retriever_config=mock_retriever_config,
+                )
+            )
+
             result = await admin_executor.list_chunks(request)
 
         assert result.total == 2
@@ -171,12 +198,13 @@ class TestAdminExecutor:
         assert result.chunks[1].content == "Chunk 2 content"
 
     @pytest.mark.asyncio
-    async def test_list_chunks_empty(self, admin_executor, retriever_config) -> None:
+    async def test_list_chunks_empty(
+        self, admin_executor, mock_retriever_config
+    ) -> None:
         """Test empty chunk listing."""
         request = RemoteListChunksRequest(
             knowledge_base_id=1,
-            index_owner_user_id=7,
-            retriever_config=retriever_config,
+            user_id=42,
         )
 
         mock_storage_backend = MagicMock()
@@ -187,60 +215,26 @@ class TestAdminExecutor:
             "knowledge_runtime.services.admin_executor.create_storage_backend_from_runtime_config",
             return_value=mock_storage_backend,
         ):
+            admin_executor._config_resolver.resolve_admin_config = MagicMock(
+                return_value=AdminResolvedConfig(
+                    index_owner_user_id=7,
+                    retriever_config=mock_retriever_config,
+                )
+            )
+
             result = await admin_executor.list_chunks(request)
 
         assert result.total == 0
         assert len(result.chunks) == 0
 
     @pytest.mark.asyncio
-    async def test_test_connection_success(
-        self, admin_executor, retriever_config
-    ) -> None:
-        """Test successful connection test."""
-        request = RemoteTestConnectionRequest(retriever_config=retriever_config)
-
-        mock_storage_backend = MagicMock()
-        mock_storage_backend.test_connection.return_value = True
-
-        with patch(
-            "knowledge_runtime.services.admin_executor.create_storage_backend_from_runtime_config",
-            return_value=mock_storage_backend,
-        ):
-            result = await admin_executor.test_connection(request)
-
-        assert result["success"] is True
-        assert result["message"] == "Connection successful"
-
-    @pytest.mark.asyncio
-    async def test_test_connection_failure(
-        self, admin_executor, retriever_config
-    ) -> None:
-        """Test failed connection test."""
-        request = RemoteTestConnectionRequest(retriever_config=retriever_config)
-
-        mock_storage_backend = MagicMock()
-        mock_storage_backend.test_connection.side_effect = Exception(
-            "Connection refused"
-        )
-
-        with patch(
-            "knowledge_runtime.services.admin_executor.create_storage_backend_from_runtime_config",
-            return_value=mock_storage_backend,
-        ):
-            result = await admin_executor.test_connection(request)
-
-        assert result["success"] is False
-        assert "Connection refused" in result["message"]
-
-    @pytest.mark.asyncio
     async def test_list_chunks_with_metadata_condition(
-        self, admin_executor, retriever_config
+        self, admin_executor, mock_retriever_config
     ) -> None:
         """Test chunk listing with metadata condition filter."""
         request = RemoteListChunksRequest(
             knowledge_base_id=1,
-            index_owner_user_id=7,
-            retriever_config=retriever_config,
+            user_id=42,
             metadata_condition={"doc_ref": "doc_123"},
         )
 
@@ -252,6 +246,13 @@ class TestAdminExecutor:
             "knowledge_runtime.services.admin_executor.create_storage_backend_from_runtime_config",
             return_value=mock_storage_backend,
         ):
+            admin_executor._config_resolver.resolve_admin_config = MagicMock(
+                return_value=AdminResolvedConfig(
+                    index_owner_user_id=7,
+                    retriever_config=mock_retriever_config,
+                )
+            )
+
             await admin_executor.list_chunks(request)
 
         mock_storage_backend.get_all_chunks.assert_called_once()

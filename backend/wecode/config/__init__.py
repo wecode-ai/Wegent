@@ -7,5 +7,6 @@ WeCode configuration package.
 """
 
 from wecode.config.nevis_config import nevis_settings
+from wecode.config.published_apps_config import PublishedAppsSettings
 
-__all__ = ["nevis_settings"]
+__all__ = ["PublishedAppsSettings", "nevis_settings"]

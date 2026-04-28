@@ -284,6 +284,8 @@ services:
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       # Internal service token (uncomment to enable, must match Backend's INTERNAL_SERVICE_TOKEN)
       # - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:-your-secure-token-here}
+      # Database connection for config resolution (reference-mode)
+      - DATABASE_URL=mysql+pymysql://${MYSQL_USER:-task_user}:${MYSQL_PASSWORD:-task_password}@mysql:3306/${MYSQL_DATABASE:-task_manager}
       # OpenTelemetry Configuration (uncomment to enable)
       # - OTEL_ENABLED=true
       # - OTEL_SERVICE_NAME=wegent-knowledge-runtime

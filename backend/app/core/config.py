@@ -543,6 +543,20 @@ class Settings(BaseSettings):
     # "headers": {"X-User": "${{user.name}}"} will be replaced with actual username
     CHAT_MCP_SERVERS: str = "{}"
 
+    # Error model recommendations configuration (platform-level, public models only)
+    # JSON string mapping error types to recommended public model names.
+    # Example: {
+    #   "context_length_exceeded": {
+    #     "description": "Large context models",
+    #     "models": ["model-a", "model-b"]
+    #   },
+    #   "default_errors": {
+    #     "description": "Fallback models for unmapped errors",
+    #     "models": ["model-c"]
+    #   }
+    # }
+    ERROR_MODEL_RECOMMENDATIONS: str = ""
+
     # Maximum time to wait for active streaming requests to complete (seconds)
     # Default: 600 seconds (10 minutes) to allow long-running streaming requests to complete
     GRACEFUL_SHUTDOWN_TIMEOUT: int = 600
@@ -641,6 +655,10 @@ class Settings(BaseSettings):
     # Cloud device offline alert configuration
     # Enable/disable cloud device offline alert (default: False)
     CLOUD_DEVICE_OFFLINE_ALERT_ENABLED: bool = False
+    # Enable/disable automatic self-healing for sustained cloud device offline state
+    CLOUD_DEVICE_AUTO_HEAL_ENABLED: bool = False
+    # Number of consecutive offline monitor checks required before auto-heal
+    CLOUD_DEVICE_AUTO_HEAL_OFFLINE_THRESHOLD: int = 3
 
     # OpenClaw token usage alert configuration
     # Base URL for OpenClaw stats API

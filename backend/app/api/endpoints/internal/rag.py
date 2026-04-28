@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
+from app.services.auth.internal_service_token import verify_internal_service_token
 from app.services.knowledge.protected_mediation import (
     ProtectedKnowledgeMediationResponse,
     protected_knowledge_mediator,
@@ -47,7 +48,11 @@ MAX_READ_DOC_LIMIT = 500_000  # Maximum characters allowed per request
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/rag", tags=["internal-rag"])
+router = APIRouter(
+    prefix="/rag",
+    tags=["internal-rag"],
+    dependencies=[Depends(verify_internal_service_token)],
+)
 runtime_resolver = RagRuntimeResolver()
 
 
@@ -647,9 +652,11 @@ async def get_all_chunks(
         All chunks from the knowledge base
     """
     try:
-        runtime_spec = runtime_resolver.build_internal_list_chunks_runtime_spec(
+        runtime_spec = runtime_resolver.build_public_list_chunks_runtime_spec(
             db=db,
             knowledge_base_id=request.knowledge_base_id,
+            user_id=request.user_id,
+            user_name=None,
             max_chunks=request.max_chunks,
             query=request.query,
             metadata_condition=request.metadata_condition,
@@ -700,11 +707,11 @@ async def purge_knowledge_index(
 ):
     """Delete all indexed chunks for one knowledge base from the local runtime."""
     try:
-        runtime_spec = runtime_resolver.build_internal_purge_index_runtime_spec(
+        runtime_spec = runtime_resolver.build_public_purge_index_runtime_spec(
             db=db,
             knowledge_base_id=request.knowledge_base_id,
-            index_owner_user_id=request.index_owner_user_id,
-            retriever_config=request.retriever_config.model_dump(mode="python"),
+            user_id=request.user_id,
+            user_name=None,
         )
         return await LocalRagGateway().purge_knowledge_index(runtime_spec, db=db)
     except ValueError as e:
@@ -726,11 +733,11 @@ async def drop_knowledge_index(
 ):
     """Physically drop the dedicated index/collection for one knowledge base."""
     try:
-        runtime_spec = runtime_resolver.build_internal_drop_index_runtime_spec(
+        runtime_spec = runtime_resolver.build_public_drop_index_runtime_spec(
             db=db,
             knowledge_base_id=request.knowledge_base_id,
-            index_owner_user_id=request.index_owner_user_id,
-            retriever_config=request.retriever_config.model_dump(mode="python"),
+            user_id=request.user_id,
+            user_name=None,
         )
         return await LocalRagGateway().drop_knowledge_index(runtime_spec, db=db)
     except ValueError as e:

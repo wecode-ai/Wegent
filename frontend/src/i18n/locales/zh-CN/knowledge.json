@@ -202,7 +202,9 @@
         "date": "创建时间",
         "status": "状态",
         "indexStatus": "索引",
-        "actions": "操作"
+        "actions": "操作",
+        "createdBy": "创建人",
+        "updatedAt": "更新时间"
       },
       "type": {
         "table": "表格",

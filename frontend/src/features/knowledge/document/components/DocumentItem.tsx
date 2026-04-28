@@ -28,6 +28,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { downloadAttachment } from '@/apis/attachments'
 import type { KnowledgeDocument } from '@/types/knowledge'
 import { useTranslation } from '@/hooks/useTranslation'
+import { formatDate } from '@/utils/dateTime'
 import { toast } from '@/hooks/use-toast'
 
 interface DocumentItemProps {
@@ -91,6 +92,9 @@ export function DocumentItem({
     const seconds = String(date.getSeconds()).padStart(2, '0')
     return `${year}/${month}/${day} ${hours}:${minutes}:${seconds}`
   }
+
+  // Check if the document has been modified since creation
+  const isUnmodified = document.updated_at === document.created_at
 
   const handleCheckboxChange = (checked: boolean) => {
     onSelect?.(document, checked)
@@ -239,68 +243,80 @@ export function DocumentItem({
               </button>
             )}
           </div>
-          <div className="flex items-center gap-1.5 mt-0.5">
-            {/* Type badge */}
-            {isTable ? (
-              <Badge
-                variant="default"
-                size="sm"
-                className="bg-blue-500/10 text-blue-600 border-blue-500/20 text-[9px] px-1 py-0"
-              >
-                {t('knowledge:document.document.type.table')}
-              </Badge>
-            ) : isWeb ? (
-              <Badge
-                variant="default"
-                size="sm"
-                className="bg-green-500/10 text-green-600 border-green-500/20 text-[9px] px-1 py-0"
-              >
-                {t('knowledge:document.document.type.web')}
-              </Badge>
-            ) : (
-              <span className="text-[9px] text-text-muted uppercase">
-                {document.file_extension}
-              </span>
-            )}
-            {/* Size */}
-            {!isTable && !isWeb && (
+          <div className="flex items-center justify-between mt-0.5">
+            <div className="flex items-center gap-1.5 min-w-0">
+              {/* Type badge */}
+              {isTable ? (
+                <Badge
+                  variant="default"
+                  size="sm"
+                  className="bg-blue-500/10 text-blue-600 border-blue-500/20 text-[9px] px-1 py-0"
+                >
+                  {t('knowledge:document.document.type.table')}
+                </Badge>
+              ) : isWeb ? (
+                <Badge
+                  variant="default"
+                  size="sm"
+                  className="bg-green-500/10 text-green-600 border-green-500/20 text-[9px] px-1 py-0"
+                >
+                  {t('knowledge:document.document.type.web')}
+                </Badge>
+              ) : (
+                <span className="text-[9px] text-text-muted uppercase">
+                  {document.file_extension}
+                </span>
+              )}
+              {/* Size */}
+              {!isTable && !isWeb && (
+                <span className="text-[9px] text-text-muted">
+                  {formatFileSize(document.file_size)}
+                </span>
+              )}
+              {/* Status indicator */}
+              {document.is_active ? (
+                <span
+                  className="w-1 h-1 rounded-full flex-shrink-0 bg-green-500"
+                  title={t('knowledge:document.document.indexStatus.available')}
+                />
+              ) : showIndexingState ? (
+                <TooltipProvider>
+                  <Tooltip delayDuration={200}>
+                    <TooltipTrigger asChild>
+                      <span className="w-1 h-1 rounded-full flex-shrink-0 bg-blue-500 cursor-help animate-pulse" />
+                    </TooltipTrigger>
+                    <TooltipContent side="top" className="max-w-xs">
+                      <p className="text-xs">
+                        {t('knowledge:document.document.indexStatus.indexingHint')}
+                      </p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              ) : (
+                <TooltipProvider>
+                  <Tooltip delayDuration={200}>
+                    <TooltipTrigger asChild>
+                      <span
+                        className={`w-1 h-1 rounded-full flex-shrink-0 cursor-help ${unavailableDotColor}`}
+                      />
+                    </TooltipTrigger>
+                    <TooltipContent side="top" className="max-w-xs">
+                      <p className="text-xs">{unavailableHint}</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              )}
+            </div>
+            <div className="flex items-center gap-1.5 flex-shrink-0">
+              {document.created_by && (
+                <span className="text-[9px] text-text-muted truncate max-w-[60px]">
+                  {document.created_by}
+                </span>
+              )}
               <span className="text-[9px] text-text-muted">
-                {formatFileSize(document.file_size)}
+                {isUnmodified ? '-' : formatDate(document.updated_at)}
               </span>
-            )}
-            {/* Status indicator */}
-            {document.is_active ? (
-              <span
-                className="w-1 h-1 rounded-full flex-shrink-0 bg-green-500"
-                title={t('knowledge:document.document.indexStatus.available')}
-              />
-            ) : showIndexingState ? (
-              <TooltipProvider>
-                <Tooltip delayDuration={200}>
-                  <TooltipTrigger asChild>
-                    <span className="w-1 h-1 rounded-full flex-shrink-0 bg-blue-500 cursor-help animate-pulse" />
-                  </TooltipTrigger>
-                  <TooltipContent side="top" className="max-w-xs">
-                    <p className="text-xs">
-                      {t('knowledge:document.document.indexStatus.indexingHint')}
-                    </p>
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-            ) : (
-              <TooltipProvider>
-                <Tooltip delayDuration={200}>
-                  <TooltipTrigger asChild>
-                    <span
-                      className={`w-1 h-1 rounded-full flex-shrink-0 cursor-help ${unavailableDotColor}`}
-                    />
-                  </TooltipTrigger>
-                  <TooltipContent side="top" className="max-w-xs">
-                    <p className="text-xs">{unavailableHint}</p>
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-            )}
+            </div>
           </div>
         </div>
 
@@ -379,7 +395,7 @@ export function DocumentItem({
   // Normal mode: Table row layout
   return (
     <div
-      className={`flex items-center gap-4 px-4 py-3 bg-base hover:bg-surface transition-colors group min-w-[800px] ${showBorder ? 'border-b border-border' : ''} ${onViewDetail ? 'cursor-pointer' : ''}`}
+      className={`flex items-center gap-4 px-4 py-3 bg-base hover:bg-surface transition-colors group min-w-[880px] ${showBorder ? 'border-b border-border' : ''} ${onViewDetail ? 'cursor-pointer' : ''}`}
       onClick={handleRowClick}
     >
       {/* Checkbox for batch selection */}
@@ -471,9 +487,32 @@ export function DocumentItem({
           {isTable || isWeb ? '-' : formatFileSize(document.file_size)}
         </span>
       </div>
+      {/* Creator */}
+      <div className="w-24 flex-shrink-0 text-center" data-testid="creator-cell">
+        <TooltipProvider>
+          <Tooltip delayDuration={300}>
+            <TooltipTrigger asChild>
+              <span className="block text-xs text-text-muted truncate">
+                {document.created_by || '-'}
+              </span>
+            </TooltipTrigger>
+            {document.created_by && (
+              <TooltipContent side="top" className="max-w-xs">
+                <p className="text-xs">{document.created_by}</p>
+              </TooltipContent>
+            )}
+          </Tooltip>
+        </TooltipProvider>
+      </div>
       {/* Upload date with time */}
       <div className="w-40 flex-shrink-0 text-center">
         <span className="text-xs text-text-muted">{formatDateTime(document.created_at)}</span>
+      </div>
+      {/* Updated date */}
+      <div className="w-40 flex-shrink-0 text-center" data-testid="updated-at-cell">
+        <span className="text-xs text-text-muted">
+          {isUnmodified ? '-' : formatDateTime(document.updated_at)}
+        </span>
       </div>
 
       {/* Index status (is_active) */}

@@ -189,7 +189,8 @@ class StatusUpdatingEmitter(ResultEmitter):
     ) -> None:
         """Update status to FAILED and forward error event."""
         if not self._status_updated:
-            await self._update_status_failed(error)
+            error_code = kwargs.get("error_code")
+            await self._update_status_failed(error, error_code=error_code)
         await self._wrapped.emit_error(task_id, subtask_id, error, **kwargs)
 
     async def emit_cancelled(
@@ -228,7 +229,7 @@ class StatusUpdatingEmitter(ResultEmitter):
             return
 
         error_message = event.error or "Unknown error"
-        await self._update_status_failed(error_message)
+        await self._update_status_failed(error_message, error_code=event.error_code)
 
     async def _handle_cancelled(self, event: ExecutionEvent) -> None:
         """Handle CANCELLED event - update status to CANCELLED.
@@ -341,7 +342,9 @@ class StatusUpdatingEmitter(ResultEmitter):
                 exc_info=True,
             )
 
-    async def _update_status_failed(self, error_message: str) -> None:
+    async def _update_status_failed(
+        self, error_message: str, error_code: Optional[str] = None
+    ) -> None:
         """Update subtask and task status to FAILED.
 
         Also publishes TaskCompletedEvent for unified handling by subscription
@@ -349,6 +352,7 @@ class StatusUpdatingEmitter(ResultEmitter):
 
         Args:
             error_message: Error message
+            error_code: Classified error code (e.g., 'context_length_exceeded')
         """
         from app.services.chat.storage import session_manager
         from app.services.chat.storage.db import db_handler
@@ -372,6 +376,18 @@ class StatusUpdatingEmitter(ResultEmitter):
                     f"[StatusUpdatingEmitter] Added {len(blocks)} blocks to failed result "
                     f"for subtask {self._subtask_id}"
                 )
+
+            # Store classified error type and HTTP status code in result for frontend recovery
+            if error_code:
+                if result is None:
+                    result = {}
+                result["error_type"] = error_code
+
+                from shared.utils.error_classifier import extract_http_status_code
+
+                http_code = extract_http_status_code(error_message)
+                if http_code is not None:
+                    result["error_code"] = http_code
 
             # Update subtask status to FAILED with executor info for container reuse
             await db_handler.update_subtask_status(

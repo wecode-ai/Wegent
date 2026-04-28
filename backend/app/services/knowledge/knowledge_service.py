@@ -6,6 +6,7 @@
 Knowledge base and document service using kinds table.
 """
 
+import asyncio
 from dataclasses import dataclass
 from typing import Optional
 
@@ -74,6 +75,29 @@ def _get_delete_gateway():
     from app.services.rag.gateway_factory import get_delete_gateway
 
     return get_delete_gateway()
+
+
+def _run_async_in_new_loop(coro):
+    """Execute a coroutine in a dedicated event loop for sync call sites."""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        try:
+            return loop.run_until_complete(coro)
+        finally:
+            pending = asyncio.all_tasks(loop)
+            current_task = asyncio.current_task(loop=loop)
+            pending = {task for task in pending if task is not current_task}
+            for task in pending:
+                task.cancel()
+            if pending:
+                loop.run_until_complete(
+                    asyncio.gather(*pending, return_exceptions=True)
+                )
+            loop.run_until_complete(loop.shutdown_asyncgens())
+    finally:
+        asyncio.set_event_loop(None)
+        loop.close()
 
 
 @dataclass
@@ -1269,7 +1293,7 @@ class KnowledgeService:
                                 index_owner_user_id=kb_info.index_owner_user_id,
                             )
                         )
-                        result = asyncio.run(
+                        result = _run_async_in_new_loop(
                             rag_gateway.delete_document_index(
                                 delete_runtime_spec, db=db
                             )

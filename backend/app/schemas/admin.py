@@ -108,8 +108,8 @@ class PublicModelResponse(BaseModel):
     model_json: dict = Field(..., alias="json", serialization_alias="json")
     is_active: bool
     is_advanced: bool = False
-    created_at: datetime
-    updated_at: datetime
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True

@@ -18,8 +18,10 @@ from redis.asyncio import Redis
 from sqlalchemy import and_
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from shared.models.db.kind import Kind
 from shared.models.db.user import User
+from wecode.service.cloud_device_provider import cloud_device_provider
 from wecode.service.dingtalk_webhook import DingTalkWebhookSender
 from wecode.service.nevis_client import nevis_client
 from wecode.service.ping_utils import ping_device_ip
@@ -29,6 +31,9 @@ logger = logging.getLogger(__name__)
 DEVICE_ONLINE_KEY_PREFIX = "device:online:"
 REDIS_OFFLINE_DEVICES_KEY = "cloud_device_monitor:offline_devices"
 REDIS_KEY_TTL_SECONDS = 900  # 15 minutes
+REDIS_OFFLINE_STREAK_KEY_PREFIX = "cloud_device_monitor:offline_streak:"
+REDIS_AUTO_HEAL_ATTEMPTED_KEY_PREFIX = "cloud_device_monitor:auto_heal_attempted:"
+OFFLINE_STREAK_KEY_TTL_SECONDS = 86400  # 24 hours
 
 # Minimum device age (in minutes) before triggering offline alert
 # Devices created within this window will not trigger alerts
@@ -46,6 +51,121 @@ def sort_devices_by_priority(devices: List[Dict[str, Any]]) -> List[Dict[str, An
             d.get("user_name", "").lower(),
         ),
     )
+
+
+def _get_device_state_key(device: Dict[str, Any]) -> str:
+    """Build a stable Redis key suffix for a device."""
+    sandbox_id = device.get("sandbox_id")
+    stable_id = sandbox_id if sandbox_id and sandbox_id != "-" else device["device_id"]
+    return f"{device['user_id']}:{stable_id}"
+
+
+def _get_offline_streak_key(device: Dict[str, Any]) -> str:
+    """Get Redis key for tracking consecutive offline checks."""
+    return f"{REDIS_OFFLINE_STREAK_KEY_PREFIX}{_get_device_state_key(device)}"
+
+
+def _get_auto_heal_attempted_key(device: Dict[str, Any]) -> str:
+    """Get Redis key marking that this offline incident has been auto-healed."""
+    return f"{REDIS_AUTO_HEAL_ATTEMPTED_KEY_PREFIX}{_get_device_state_key(device)}"
+
+
+async def _update_offline_streaks(
+    redis_client: Redis,
+    online_devices: List[Dict[str, Any]],
+    offline_devices: List[Dict[str, Any]],
+) -> None:
+    """Refresh per-device offline streak counters."""
+    for device in online_devices:
+        await redis_client.delete(
+            _get_offline_streak_key(device),
+            _get_auto_heal_attempted_key(device),
+        )
+        device["offline_streak"] = 0
+
+    for device in offline_devices:
+        streak = await redis_client.incr(_get_offline_streak_key(device))
+        await redis_client.expire(
+            _get_offline_streak_key(device), OFFLINE_STREAK_KEY_TTL_SECONDS
+        )
+        device["offline_streak"] = int(streak)
+
+
+async def trigger_auto_heal_for_offline_devices(
+    db: Session,
+    redis_client: Redis,
+    check_result: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    """Restart cloud devices that have stayed offline for long enough."""
+    await _update_offline_streaks(
+        redis_client,
+        check_result["online_devices"],
+        check_result["offline_devices"],
+    )
+
+    attempts: List[Dict[str, Any]] = []
+    check_result["auto_heal_attempts"] = attempts
+
+    if not settings.CLOUD_DEVICE_AUTO_HEAL_ENABLED:
+        return attempts
+
+    offline_threshold = max(settings.CLOUD_DEVICE_AUTO_HEAL_OFFLINE_THRESHOLD, 1)
+    for device in sort_devices_by_priority(check_result["offline_devices"]):
+        offline_streak = int(device.get("offline_streak") or 0)
+        if offline_streak < offline_threshold:
+            continue
+
+        attempted_key = _get_auto_heal_attempted_key(device)
+        if await redis_client.get(attempted_key):
+            continue
+
+        attempted_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        attempt = {
+            "user_name": device["user_name"],
+            "user_id": device["user_id"],
+            "device_id": device["device_id"],
+            "sandbox_id": device.get("sandbox_id", "-"),
+            "client_ip": device.get("client_ip", "-"),
+            "offline_streak": offline_streak,
+            "attempted_at": attempted_at,
+        }
+
+        try:
+            restart_result = await cloud_device_provider.restart_device(
+                db=db,
+                user_id=device["user_id"],
+                device_id=device["device_id"],
+            )
+            attempt["sandbox_id"] = restart_result["sandbox_id"]
+            attempt["status"] = "triggered"
+            attempt["message"] = "已触发重启"
+            logger.info(
+                f"[cloud-device-monitor] Auto-heal triggered: "
+                f"user_id={device['user_id']}, device_id={device['device_id']}, "
+                f"sandbox_id={restart_result['sandbox_id']}, offline_streak={offline_streak}"
+            )
+        except Exception as e:
+            attempt["status"] = "failed"
+            attempt["message"] = str(e).replace("|", "/")
+            logger.exception(
+                f"[cloud-device-monitor] Auto-heal failed: "
+                f"user_id={device['user_id']}, device_id={device['device_id']}, "
+                f"offline_streak={offline_streak}, error={e}"
+            )
+
+        await redis_client.set(
+            attempted_key,
+            json.dumps(
+                {
+                    "attempted_at": attempted_at,
+                    "status": attempt["status"],
+                }
+            ),
+            ex=OFFLINE_STREAK_KEY_TTL_SECONDS,
+        )
+        attempts.append(attempt)
+
+    return attempts
 
 
 async def check_cloud_devices_status(
@@ -351,6 +471,23 @@ def format_device_table_with_ping(devices: List[Dict[str, Any]]) -> str:
     return "\n".join(rows)
 
 
+def format_auto_heal_table(attempts: List[Dict[str, Any]]) -> str:
+    """Format auto-heal attempts as markdown table."""
+    if not attempts:
+        return "_无_"
+
+    rows = []
+    for attempt in sort_devices_by_priority(attempts):
+        sandbox_id = attempt.get("sandbox_id", "-") or "-"
+        message = str(attempt.get("message", "-")).replace("|", "/")
+        rows.append(
+            f"| {attempt['user_name']} | {attempt['user_id']} | "
+            f"{attempt['device_id']} | {sandbox_id} | "
+            f"{attempt.get('offline_streak', 0)} | {message} |"
+        )
+    return "\n".join(rows)
+
+
 async def send_monitoring_report(
     redis_client: Redis,
     check_result: Dict[str, Any],
@@ -378,6 +515,8 @@ async def send_monitoring_report(
     sections.append(f"- 总设备数: {check_result['total']}")
     sections.append(f"- 在线: {check_result['online_count']} ✅")
     sections.append(f"- 离线: {check_result['offline_count']} ⚠️")
+    auto_heal_attempts = check_result.get("auto_heal_attempts", [])
+    sections.append(f"- 自动自愈触发: {len(auto_heal_attempts)}")
     sections.append("")
 
     # New offline devices
@@ -404,6 +543,17 @@ async def send_monitoring_report(
         sections.append("| User Name | User ID | Device ID | SandboxId | IP | Ping |")
         sections.append("|-----------|---------|-----------|-----------|----|------|")
         sections.append(format_device_table_with_ping(recovered_devices))
+        sections.append("")
+
+    if auto_heal_attempts:
+        sections.append(f"**自动自愈操作 🔧 ({len(auto_heal_attempts)} 个)**")
+        sections.append(
+            "| User Name | User ID | Device ID | SandboxId | Offline Checks | Result |"
+        )
+        sections.append(
+            "|-----------|---------|-----------|-----------|----------------|--------|"
+        )
+        sections.append(format_auto_heal_table(auto_heal_attempts))
         sections.append("")
 
     # Current offline devices list

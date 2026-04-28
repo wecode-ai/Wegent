@@ -9,13 +9,15 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from sqlalchemy.orm import Session
+
 from knowledge_engine.embedding.factory import (
     create_embedding_model_from_runtime_config,
 )
 from knowledge_engine.query.executor import QueryExecutor as KnowledgeQueryExecutor
 from knowledge_engine.storage.factory import create_storage_backend_from_runtime_config
+from knowledge_runtime.services.config_resolver import ConfigResolver
 from shared.models import (
-    RemoteKnowledgeBaseQueryConfig,
     RemoteQueryRecord,
     RemoteQueryRequest,
     RemoteQueryResponse,
@@ -28,27 +30,32 @@ class QueryExecutor:
     """Executes RAG query operations.
 
     This executor:
-    1. Creates storage backends and embedding models for each knowledge base
-    2. Executes queries against each KB
-    3. Aggregates and sorts results by score
+    1. Resolves configs for each knowledge base from the database
+    2. Creates storage backends and embedding models for each KB
+    3. Executes queries against each KB
+    4. Aggregates and sorts results by score
     """
+
+    def __init__(self, db: Session) -> None:
+        self._db = db
+        self._config_resolver = ConfigResolver()
 
     async def execute(self, request: RemoteQueryRequest) -> RemoteQueryResponse:
         """Execute the query operation.
 
         Args:
-            request: The query request containing query text and KB configs.
+            request: The query request (reference mode - configs resolved from DB).
 
         Returns:
             Query response with ranked records.
         """
         all_records: list[RemoteQueryRecord] = []
 
-        # Query each knowledge base
-        for kb_config in request.knowledge_base_configs:
+        # Resolve configs for each knowledge base
+        for knowledge_base_id in request.knowledge_base_ids:
             records = await self._query_knowledge_base(
                 request=request,
-                kb_config=kb_config,
+                knowledge_base_id=knowledge_base_id,
             )
             all_records.extend(records)
 
@@ -62,8 +69,10 @@ class QueryExecutor:
         )
 
         logger.info(
-            f"Query complete: query='{request.query[:50]}...', "
-            f"total_results={len(all_records)}, returned={len(limited_records)}"
+            "Query complete: query='%s...', total_results=%d, returned=%d",
+            request.query[:50],
+            len(all_records),
+            len(limited_records),
         )
 
         return RemoteQueryResponse(
@@ -75,25 +84,30 @@ class QueryExecutor:
     async def _query_knowledge_base(
         self,
         request: RemoteQueryRequest,
-        kb_config: RemoteKnowledgeBaseQueryConfig,
+        knowledge_base_id: int,
     ) -> list[RemoteQueryRecord]:
         """Query a single knowledge base.
 
         Args:
             request: The original query request.
-            kb_config: Configuration for this specific knowledge base.
+            knowledge_base_id: ID of the knowledge base to query.
 
         Returns:
             List of records from this knowledge base.
         """
-        # Create storage backend
-        storage_backend = create_storage_backend_from_runtime_config(
-            kb_config.retriever_config
+        # Resolve config from database
+        config = self._config_resolver.resolve_query_config(
+            db=self._db,
+            knowledge_base_id=knowledge_base_id,
+            user_id=request.user_id,
         )
 
-        # Create embedding model
+        # Create storage backend and embedding model
+        storage_backend = create_storage_backend_from_runtime_config(
+            config.retriever_config
+        )
         embed_model = create_embedding_model_from_runtime_config(
-            kb_config.embedding_model_config
+            config.embedding_model_config
         )
 
         # Create query executor
@@ -102,16 +116,14 @@ class QueryExecutor:
             embed_model=embed_model,
         )
 
-        # Build knowledge_id
-        knowledge_id = str(kb_config.knowledge_base_id)
-
         # Execute query
+        knowledge_id = str(knowledge_base_id)
         result = await executor.execute(
             knowledge_id=knowledge_id,
             query=request.query,
-            retrieval_config=kb_config.retrieval_config,
+            retrieval_config=config.retrieval_config,
             metadata_condition=request.metadata_condition,
-            user_id=kb_config.index_owner_user_id,
+            user_id=config.index_owner_user_id,
         )
 
         # Convert to RemoteQueryRecord format
@@ -123,32 +135,25 @@ class QueryExecutor:
                     title=record.get("title", ""),
                     score=record.get("score"),
                     metadata=record.get("metadata"),
-                    knowledge_base_id=kb_config.knowledge_base_id,
+                    knowledge_base_id=knowledge_base_id,
                     document_id=self._extract_document_id(record),
                 )
             )
 
         logger.info(
-            f"Queried KB: knowledge_base_id={kb_config.knowledge_base_id}, "
-            f"records={len(records)}"
+            "Queried KB: knowledge_base_id=%d, records=%d",
+            knowledge_base_id,
+            len(records),
         )
 
         return records
 
     def _extract_document_id(self, record: dict[str, Any]) -> int | None:
-        """Extract document ID from record metadata.
-
-        Args:
-            record: Query result record.
-
-        Returns:
-            Document ID if found, None otherwise.
-        """
+        """Extract document ID from record metadata."""
         metadata = record.get("metadata") or {}
         doc_ref = metadata.get("doc_ref")
         if doc_ref and isinstance(doc_ref, str):
             try:
-                # doc_ref format is typically "doc_xxx" or numeric string
                 if doc_ref.startswith("doc_"):
                     return int(doc_ref[4:])
                 return int(doc_ref)
@@ -157,14 +162,5 @@ class QueryExecutor:
         return None
 
     def _estimate_tokens(self, text: str) -> int:
-        """Estimate token count for text.
-
-        Uses a simple heuristic: ~4 characters per token.
-
-        Args:
-            text: Text to estimate tokens for.
-
-        Returns:
-            Estimated token count.
-        """
+        """Estimate token count (~4 characters per token)."""
         return len(text) // 4

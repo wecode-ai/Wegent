@@ -62,6 +62,7 @@ import CorrectionProgressIndicator, {
 import { useSocket } from '@/contexts/SocketContext'
 import type { CorrectionStage, CorrectionField } from '@/types/socket'
 import type { Model } from '../../hooks/useModelSelection'
+import type { UnifiedModel } from '@/apis/models'
 
 /**
  * Component to render a streaming message with typewriter effect.
@@ -177,7 +178,11 @@ interface MessagesAreaProps {
     existingContexts?: import('@/types/api').SubtaskContextBrief[]
   ) => void
   isGroupChat?: boolean
-  onRetry?: (message: Message) => void
+  onRetry?: (message: Message) => boolean | void | Promise<boolean | void>
+  onRetryWithModel?: (
+    message: Message,
+    model: UnifiedModel
+  ) => boolean | void | Promise<boolean | void>
   // Correction mode props
   enableCorrectionMode?: boolean
   correctionModelId?: string | null
@@ -215,6 +220,7 @@ function MessagesArea({
   onSendMessageWithModel,
   isGroupChat = false,
   onRetry,
+  onRetryWithModel,
   enableCorrectionMode = false,
   correctionModelId = null,
   enableCorrectionWebSearch = false,
@@ -1304,6 +1310,7 @@ function MessagesArea({
                   onAskUserSubmit={handleAskUserSubmit}
                   isCurrentUserMessage={isCurrentUserMessage}
                   onRetry={onRetry}
+                  onRetryWithModel={onRetryWithModel}
                   isGroupChat={isGroupChat}
                   isPendingConfirmation={isPendingConfirmation}
                   onContextReselect={onContextReselect}

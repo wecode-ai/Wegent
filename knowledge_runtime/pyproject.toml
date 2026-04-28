@@ -15,6 +15,7 @@ dependencies = [
     "httpx[brotli,socks]>=0.26.0",
     "python-dotenv>=1.0.0",
     "tenacity>=8.2.3",
+    "sqlalchemy>=2.0.0",
     "wegent-knowledge-engine",
     "wegent-shared",
 ]
