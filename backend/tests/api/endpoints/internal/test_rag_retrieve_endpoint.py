@@ -130,7 +130,7 @@ def test_internal_all_chunks_routes_protocol_request_through_local_gateway(test_
     runtime_spec = object()
     with (
         patch(
-            "app.api.endpoints.internal.rag.runtime_resolver.build_internal_list_chunks_runtime_spec",
+            "app.api.endpoints.internal.rag.runtime_resolver.build_public_list_chunks_runtime_spec",
             return_value=runtime_spec,
         ) as mock_build_spec,
         patch(
@@ -168,6 +168,8 @@ def test_internal_all_chunks_routes_protocol_request_through_local_gateway(test_
     mock_build_spec.assert_called_once_with(
         db=ANY,
         knowledge_base_id=7,
+        user_id=9,
+        user_name=None,
         max_chunks=1000,
         query="list_index_chunks",
         metadata_condition=payload["metadata_condition"],

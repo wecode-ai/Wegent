@@ -98,7 +98,7 @@ class TestGetAllChunksFromKnowledgeBase:
 
         with (
             patch(
-                "app.services.rag.retrieval_service.RagRuntimeResolver.build_internal_list_chunks_runtime_spec",
+                "app.services.rag.retrieval_service.RagRuntimeResolver.build_public_list_chunks_runtime_spec",
                 return_value=spec,
             ) as mock_build_spec,
             patch.object(
@@ -111,6 +111,7 @@ class TestGetAllChunksFromKnowledgeBase:
             result = await RetrievalService().get_all_chunks_from_knowledge_base(
                 knowledge_base_id=123,
                 db=db_session,
+                user_id=42,
                 max_chunks=50,
                 query="debug query",
             )
@@ -127,6 +128,8 @@ class TestGetAllChunksFromKnowledgeBase:
         mock_build_spec.assert_called_once_with(
             db=db_session,
             knowledge_base_id=123,
+            user_id=42,
+            user_name=None,
             max_chunks=50,
             query="debug query",
             metadata_condition=None,

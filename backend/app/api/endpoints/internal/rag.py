@@ -652,9 +652,11 @@ async def get_all_chunks(
         All chunks from the knowledge base
     """
     try:
-        runtime_spec = runtime_resolver.build_internal_list_chunks_runtime_spec(
+        runtime_spec = runtime_resolver.build_public_list_chunks_runtime_spec(
             db=db,
             knowledge_base_id=request.knowledge_base_id,
+            user_id=request.user_id,
+            user_name=None,
             max_chunks=request.max_chunks,
             query=request.query,
             metadata_condition=request.metadata_condition,

@@ -938,11 +938,12 @@ class RetrievalService:
         self,
         knowledge_base_id: int,
         db: Session,
+        user_id: int,
         max_chunks: int = 10000,
         query: Optional[str] = None,
         metadata_condition: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
-        """Get all chunks from a knowledge base without permission check.
+        """Get all chunks from a knowledge base with permission check.
 
         This method is used for smart context injection where we need all
         chunks from a knowledge base to determine if direct injection is possible.
@@ -953,6 +954,7 @@ class RetrievalService:
         Args:
             knowledge_base_id: Knowledge base ID
             db: Database session
+            user_id: User ID for permission check
             max_chunks: Maximum number of chunks to retrieve (safety limit)
             query: Optional query string for logging purposes
             metadata_condition: Optional metadata filter conditions
@@ -961,16 +963,18 @@ class RetrievalService:
             List of chunk dicts with content, title, chunk_id, doc_ref, metadata
 
         Raises:
-            ValueError: If knowledge base not found or configuration invalid
+            ValueError: If knowledge base not found, access denied, or configuration invalid
         """
         from app.services.rag.gateway_factory import get_list_chunks_gateway
         from app.services.rag.runtime_resolver import RagRuntimeResolver
 
         # Build runtime spec via resolver
         runtime_resolver = RagRuntimeResolver()
-        spec = runtime_resolver.build_internal_list_chunks_runtime_spec(
+        spec = runtime_resolver.build_public_list_chunks_runtime_spec(
             db=db,
             knowledge_base_id=knowledge_base_id,
+            user_id=user_id,
+            user_name=None,
             max_chunks=max_chunks,
             query=query,
             metadata_condition=metadata_condition,
