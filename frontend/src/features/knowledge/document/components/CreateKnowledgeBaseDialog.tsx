@@ -242,9 +242,11 @@ export function CreateKnowledgeBaseDialog({
   const selectedGroup = availableGroups?.find(g => g.id === selectedGroupId)
   // Map dingtalk to personal scope since KBs cannot be created in dingtalk scope
   const mapScope = (
-    t: 'personal' | 'group' | 'organization' | 'dingtalk'
-  ): 'personal' | 'organization' | 'group' | 'all' =>
-    t === 'dingtalk' ? 'personal' : t
+    t: 'personal' | 'group' | 'organization' | 'dingtalk' | 'all' | undefined
+  ): 'personal' | 'organization' | 'group' | 'all' => {
+    if (t === 'dingtalk') return 'personal'
+    return t || 'personal'
+  }
   const effectiveScope = mapScope(
     showGroupSelector && selectedGroup ? selectedGroup.type : scope
   )
