@@ -64,7 +64,7 @@ interface TabItem {
 }
 
 export function AdminTabNav({ activeTab, onTabChange }: AdminTabNavProps) {
-  const { t } = useTranslation()
+  const { t } = useTranslation('admin')
   const isMobile = useIsMobile()
   const indicatorContainerRef = useRef<HTMLDivElement | null>(null)
   const itemRefs = useRef<Record<string, HTMLButtonElement | null>>({})
@@ -72,22 +72,22 @@ export function AdminTabNav({ activeTab, onTabChange }: AdminTabNavProps) {
 
   // Tab items
   const tabs: TabItem[] = [
-    { id: 'users', label: t('admin:tabs.users'), icon: Users },
-    { id: 'public-models', label: t('admin:tabs.public_models'), icon: Cpu },
-    { id: 'public-retrievers', label: t('admin:tabs.public_retrievers'), icon: Database },
-    { id: 'public-skills', label: t('admin:tabs.public_skills'), icon: Sparkles },
-    { id: 'public-ghosts', label: t('admin:tabs.public_ghosts'), icon: Ghost },
-    { id: 'public-shells', label: t('admin:tabs.public_shells'), icon: Terminal },
-    { id: 'public-teams', label: t('admin:tabs.public_teams'), icon: UsersRound },
-    { id: 'public-bots', label: t('admin:tabs.public_bots'), icon: Bot },
-    { id: 'templates', label: t('admin:tabs.templates'), icon: LayoutTemplate },
-    { id: 'api-keys', label: t('admin:tabs.api_keys'), icon: KeyRound },
-    { id: 'system-config', label: t('admin:tabs.system_config'), icon: Settings },
-    { id: 'im-channels', label: t('admin:tabs.im_channels'), icon: MessageSquare },
-    { id: 'published-apps', label: t('admin:tabs.published_apps'), icon: Globe },
-    { id: 'monitor', label: t('admin:tabs.monitor'), icon: Activity },
-    { id: 'device-monitor', label: t('admin:tabs.device_monitor'), icon: Monitor },
-    { id: 'transition-pages', label: t('admin:tabs.transition_pages'), icon: FileText },
+    { id: 'users', label: t('tabs.users'), icon: Users },
+    { id: 'public-models', label: t('tabs.public_models'), icon: Cpu },
+    { id: 'public-retrievers', label: t('tabs.public_retrievers'), icon: Database },
+    { id: 'public-skills', label: t('tabs.public_skills'), icon: Sparkles },
+    { id: 'public-ghosts', label: t('tabs.public_ghosts'), icon: Ghost },
+    { id: 'public-shells', label: t('tabs.public_shells'), icon: Terminal },
+    { id: 'public-teams', label: t('tabs.public_teams'), icon: UsersRound },
+    { id: 'public-bots', label: t('tabs.public_bots'), icon: Bot },
+    { id: 'templates', label: t('tabs.templates'), icon: LayoutTemplate },
+    { id: 'api-keys', label: t('tabs.api_keys'), icon: KeyRound },
+    { id: 'system-config', label: t('tabs.system_config'), icon: Settings },
+    { id: 'im-channels', label: t('tabs.im_channels'), icon: MessageSquare },
+    { id: 'published-apps', label: t('tabs.published_apps'), icon: Globe },
+    { id: 'monitor', label: t('tabs.monitor'), icon: Activity },
+    { id: 'device-monitor', label: t('tabs.device_monitor'), icon: Monitor },
+    { id: 'transition-pages', label: t('tabs.transition_pages'), icon: FileText },
   ]
   // Update the indicator position when the active tab changes
   useEffect(() => {
@@ -124,7 +124,7 @@ export function AdminTabNav({ activeTab, onTabChange }: AdminTabNavProps) {
       <div className="px-4 py-2 border-t border-border bg-base">
         <Select value={activeTab} onValueChange={value => onTabChange(value as AdminTabId)}>
           <SelectTrigger className="w-full">
-            <SelectValue placeholder={t('admin:tabs.users')} />
+            <SelectValue placeholder={t('tabs.users')} />
           </SelectTrigger>
           <SelectContent>
             <SelectGroup>
