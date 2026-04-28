@@ -31,7 +31,7 @@ export interface AvailableGroup {
   id: string
   name: string
   displayName: string
-  type: 'personal' | 'group' | 'organization'
+  type: 'personal' | 'group' | 'organization' | 'dingtalk'
   canCreate: boolean
 }
 
