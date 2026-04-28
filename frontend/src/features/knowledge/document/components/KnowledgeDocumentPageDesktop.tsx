@@ -27,6 +27,7 @@ import { useNamespaceRoleMap } from '../hooks/useNamespaceRoleMap'
 import { KnowledgeSidebar } from './KnowledgeSidebar'
 import { KnowledgeDetailPanel } from './KnowledgeDetailPanel'
 import { KnowledgeGroupListPage, type KbDataItem } from './KnowledgeGroupListPage'
+import { DingtalkDocsPage } from './DingtalkDocs'
 import { CreateKnowledgeBaseDialog, type AvailableGroup } from './CreateKnowledgeBaseDialog'
 import { EditKnowledgeBaseDialog } from './EditKnowledgeBaseDialog'
 import { DeleteKnowledgeBaseDialog } from './DeleteKnowledgeBaseDialog'
@@ -747,6 +748,13 @@ export function KnowledgeDocumentPageDesktop({
     updateUrlParams({ kb: null, group: 'all-groups' })
   }, [sidebar, updateUrlParams])
 
+  // Handle "DingTalk" selection - show DingTalk documents
+  const handleSelectDingtalk = useCallback(() => {
+    sidebar.selectDingtalk()
+    // Update URL with dingtalk parameter
+    updateUrlParams({ kb: null, group: 'dingtalk' })
+  }, [sidebar, updateUrlParams])
+
   // Handle create KB from "All" page
   const handleCreateKbFromAll = useCallback((kbType: KnowledgeBaseType) => {
     // Show group selector when creating from "All" page
@@ -824,6 +832,16 @@ export function KnowledgeDocumentPageDesktop({
   )
 
   const renderMainContent = () => {
+    // If DingTalk docs mode is selected, show DingTalk docs page
+    if (sidebar.viewMode === 'dingtalk') {
+      return (
+        <DingtalkDocsPage
+          isConfigured={sidebar.isDingtalkConfigured}
+          onSyncComplete={() => sidebar.refreshAll()}
+        />
+      )
+    }
+
     // If a KB is selected, show detail panel
     if (sidebar.selectedKb) {
       return (
@@ -1015,7 +1033,10 @@ export function KnowledgeDocumentPageDesktop({
             onSelectGroup={handleSelectGroup}
             onSelectAll={handleSelectAll}
             onSelectGroups={handleSelectGroups}
+            onSelectDingtalk={handleSelectDingtalk}
             onCollapse={() => updateSidebarCollapsed(true)}
+            dingtalkDocCount={sidebar.dingtalkDocCount}
+            isDingtalkConfigured={sidebar.isDingtalkConfigured}
           />
         </div>
       )}
