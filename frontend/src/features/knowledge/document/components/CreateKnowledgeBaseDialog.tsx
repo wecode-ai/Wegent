@@ -5,7 +5,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { BookOpen, Database, User, Building2, Users } from 'lucide-react'
+import { BookOpen, Database, User, Building2, Users, FileText } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
@@ -70,12 +70,14 @@ interface CreateKnowledgeBaseDialogProps {
 }
 
 /** Get icon for group type */
-function GroupTypeIcon({ type }: { type: 'personal' | 'group' | 'organization' }) {
+function GroupTypeIcon({ type }: { type: 'personal' | 'group' | 'organization' | 'dingtalk' }) {
   switch (type) {
     case 'personal':
       return <User className="w-4 h-4" />
     case 'organization':
       return <Building2 className="w-4 h-4" />
+    case 'dingtalk':
+      return <FileText className="w-4 h-4" />
     case 'group':
     default:
       return <Users className="w-4 h-4" />
@@ -238,7 +240,14 @@ export function CreateKnowledgeBaseDialog({
 
   // Get the selected group for retrieval scope
   const selectedGroup = availableGroups?.find(g => g.id === selectedGroupId)
-  const effectiveScope = showGroupSelector && selectedGroup ? selectedGroup.type : scope
+  // Map dingtalk to personal scope since KBs cannot be created in dingtalk scope
+  const mapScope = (
+    t: 'personal' | 'group' | 'organization' | 'dingtalk'
+  ): 'personal' | 'organization' | 'group' | 'all' =>
+    t === 'dingtalk' ? 'personal' : t
+  const effectiveScope = mapScope(
+    showGroupSelector && selectedGroup ? selectedGroup.type : scope
+  )
   const effectiveGroupName =
     showGroupSelector && selectedGroup && selectedGroup.type === 'group'
       ? selectedGroup.name
