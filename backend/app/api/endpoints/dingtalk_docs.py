@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
@@ -22,6 +24,8 @@ from app.schemas.dingtalk_doc import (
 from app.services.dingtalk_doc_service import DingTalkDocService
 
 router = APIRouter()
+
+logger = logging.getLogger(__name__)
 
 
 def _build_tree(nodes: list[DingtalkDocNode]) -> list[DingtalkDocNodeWithChildren]:
@@ -102,9 +106,10 @@ async def sync_dingtalk_docs(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
+        logger.exception("Failed to sync DingTalk documents: %s", e)
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to sync DingTalk documents: {str(e)}",
+            detail="Failed to sync DingTalk documents",
         )
 
 

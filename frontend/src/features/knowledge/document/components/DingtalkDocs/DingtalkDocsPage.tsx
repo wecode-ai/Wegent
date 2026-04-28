@@ -18,7 +18,7 @@ import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { DingtalkDocTree } from './DingtalkDocTree'
 import { DingtalkDocList } from './DingtalkDocList'
-import { DingtalkNotConfigured } from './DingtalkNotConfigured'
+import { DingtalkNotConfigured } from './dingtalk-not-configured'
 import type { DingtalkDocNode, DingtalkSyncStatus } from '@/types/dingtalk-doc'
 
 interface DingtalkDocsPageProps {
@@ -148,6 +148,7 @@ export function DingtalkDocsPage({ isConfigured, onSyncComplete }: DingtalkDocsP
             size="sm"
             onClick={handleSync}
             disabled={isSyncing}
+            className="h-11 min-w-[44px]"
             data-testid="dingtalk-sync-button"
           >
             {isSyncing ? (
@@ -179,7 +180,12 @@ export function DingtalkDocsPage({ isConfigured, onSyncComplete }: DingtalkDocsP
           <p className="text-sm text-text-muted mb-4">
             {t('document.dingtalk.syncHint', '点击同步按钮从钉钉拉取文档列表')}
           </p>
-          <Button variant="primary" onClick={handleSync} disabled={isSyncing}>
+          <Button
+            variant="primary"
+            onClick={handleSync}
+            disabled={isSyncing}
+            className="h-11 min-w-[44px]"
+          >
             {isSyncing ? (
               <>
                 <Spinner size="sm" className="mr-1" />

@@ -213,6 +213,7 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
     } catch {
       // Not critical - DingTalk may not be configured
       setIsDingtalkConfigured(false)
+      setDingtalkDocCount(0)
     }
   }, [])
 

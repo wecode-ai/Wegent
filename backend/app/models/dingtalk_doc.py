@@ -22,7 +22,7 @@ class DingtalkSyncedNode(Base):
 
     __tablename__ = "dingtalk_synced_nodes"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True)
     user_id = Column(Integer, nullable=False, index=True)
     # DingTalk node ID (dentryUuid, 32-char alphanumeric string)
     dingtalk_node_id = Column(String(64), nullable=False)

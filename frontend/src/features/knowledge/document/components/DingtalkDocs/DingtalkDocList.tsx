@@ -43,33 +43,27 @@ function formatExtension(extension: string | null): string {
   return `.${extension}`
 }
 
-export function DingtalkDocList({
-  docs,
-  selectedFolderId,
-  onNavigateBack,
-}: DingtalkDocListProps) {
+export function DingtalkDocList({ docs, selectedFolderId, onNavigateBack }: DingtalkDocListProps) {
   const { t } = useTranslation('knowledge')
-
-  if (docs.length === 0) {
-    return (
-      <div className="flex items-center justify-center h-full text-text-muted text-sm p-8">
-        {t('document.dingtalk.noDocsInFolder', '此文件夹下暂无文档')}
-      </div>
-    )
-  }
 
   return (
     <div className="p-4" data-testid="dingtalk-doc-list">
-      {/* Back button when inside a folder */}
+      {/* Back button when inside a folder - always rendered before empty check */}
       {selectedFolderId && onNavigateBack && (
         <button
           type="button"
           onClick={onNavigateBack}
-          className="mb-3 text-sm text-primary hover:underline flex items-center gap-1"
+          className="mb-3 h-11 min-w-[44px] text-sm text-primary hover:underline flex items-center gap-1"
           data-testid="dingtalk-back-button"
         >
           ← {t('document.dingtalk.backToParent', '返回上级')}
         </button>
+      )}
+
+      {docs.length === 0 && (
+        <div className="flex items-center justify-center h-full text-text-muted text-sm p-8">
+          {t('document.dingtalk.noDocsInFolder', '此文件夹下暂无文档')}
+        </div>
       )}
 
       {/* Document table */}
@@ -114,9 +108,7 @@ export function DingtalkDocList({
                   )}
                 </div>
               </td>
-              <td className="py-2.5 px-3 text-text-muted">
-                {formatExtension(doc.extension)}
-              </td>
+              <td className="py-2.5 px-3 text-text-muted">{formatExtension(doc.extension)}</td>
               <td className="py-2.5 px-3 text-text-muted">
                 {new Date(doc.last_synced_at).toLocaleDateString()}
               </td>
@@ -126,7 +118,7 @@ export function DingtalkDocList({
                     href={doc.doc_url}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex items-center justify-center w-7 h-7 rounded-md hover:bg-surface-hover text-text-muted hover:text-primary transition-colors"
+                    className="inline-flex items-center justify-center h-11 min-w-[44px] rounded-md hover:bg-surface-hover text-text-muted hover:text-primary transition-colors"
                     title={t('document.dingtalk.openInDingtalk', '在钉钉中打开')}
                     data-testid={`dingtalk-open-${doc.dingtalk_node_id}`}
                   >

@@ -37,7 +37,8 @@ export function DingtalkNotConfigured() {
       <Button
         variant="primary"
         onClick={() => router.push('/settings?tab=integrations')}
-        data-testid="dingtalk-go-to-settings"
+        className="h-11 min-w-[44px]"
+        data-testid="dingtalk-go-to-settings-button"
       >
         <Settings className="w-4 h-4 mr-2" />
         {t('document.dingtalk.goToSettings', '前往设置')}

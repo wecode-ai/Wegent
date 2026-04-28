@@ -156,7 +156,9 @@ class DingTalkDocService:
             result = await session.call_tool(MCP_TOOL_LIST_NODES, args)
 
             # Parse the result - MCP returns content items
-            nodes_data = DingTalkDocService._parse_list_nodes_result(result)
+            nodes_data, parsed_page_token = DingTalkDocService._parse_list_nodes_result(
+                result
+            )
             all_nodes.extend(nodes_data)
 
             # Recursively traverse folders
@@ -172,24 +174,28 @@ class DingTalkDocService:
                         depth=depth + 1,
                     )
 
-            # Check for more pages
-            page_token = None
-            # The pagination info may be in the result metadata
-            if hasattr(result, "meta") and result.meta:
+            # Check for more pages: prefer token from parsed payload, fall back to result.meta
+            page_token = parsed_page_token
+            if not page_token and hasattr(result, "meta") and result.meta:
                 page_token = result.meta.get("nextPageToken")
             if not page_token:
                 break
 
     @staticmethod
-    def _parse_list_nodes_result(result: Any) -> list[dict[str, Any]]:
+    def _parse_list_nodes_result(
+        result: Any,
+    ) -> tuple[list[dict[str, Any]], str | None]:
         """Parse the result from MCP list_nodes tool call.
 
         The MCP tool returns content items that contain the node list data.
+
+        Returns a tuple of (nodes, next_page_token).
         """
         nodes: list[dict[str, Any]] = []
+        next_page_token: str | None = None
 
         if not hasattr(result, "content") or not result.content:
-            return nodes
+            return nodes, next_page_token
 
         for content_item in result.content:
             # Text content contains JSON data
@@ -205,14 +211,14 @@ class DingTalkDocService:
                         items = data.get("items") or data.get("nodes") or []
                         if isinstance(items, list):
                             nodes.extend(items)
-                        # Also check for pagination token
-                        if "nextPageToken" in data:
-                            # Store for parent to handle
-                            pass
+                        # Extract pagination token from payload
+                        token = data.get("nextPageToken")
+                        if token:
+                            next_page_token = token
                 except (json.JSONDecodeError, TypeError):
                     logger.warning("Failed to parse list_nodes result content")
 
-        return nodes
+        return nodes, next_page_token
 
     @staticmethod
     def _sync_nodes_to_db(
@@ -253,6 +259,24 @@ class DingTalkDocService:
                 existing.updated_at = sync_time
                 deleted += 1
 
+        # Collect all non-empty node IDs for a single batch lookup (avoids N+1 queries)
+        node_ids = [
+            node_data.get("nodeId", "")
+            for node_data in nodes
+            if node_data.get("nodeId", "")
+        ]
+        existing_nodes_map: dict[str, DingtalkSyncedNode] = {}
+        if node_ids:
+            existing_rows = (
+                db.query(DingtalkSyncedNode)
+                .filter(
+                    DingtalkSyncedNode.user_id == user_id,
+                    DingtalkSyncedNode.dingtalk_node_id.in_(node_ids),
+                )
+                .all()
+            )
+            existing_nodes_map = {row.dingtalk_node_id: row for row in existing_rows}
+
         # Upsert nodes from DingTalk
         for node_data in nodes:
             node_id = node_data.get("nodeId", "")
@@ -282,15 +306,8 @@ class DingTalkDocService:
             content_type = node_data.get("contentType")
             extension = node_data.get("extension")
 
-            # Check if node already exists
-            existing = (
-                db.query(DingtalkSyncedNode)
-                .filter(
-                    DingtalkSyncedNode.user_id == user_id,
-                    DingtalkSyncedNode.dingtalk_node_id == node_id,
-                )
-                .first()
-            )
+            # Look up existing node from pre-fetched map (avoids per-node DB query)
+            existing = existing_nodes_map.get(node_id)
 
             if existing:
                 # Update existing node

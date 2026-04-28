@@ -43,10 +43,20 @@ function TreeNode({
     }
   }, [isFolder, node.dingtalk_node_id, onSelectFolder])
 
-  const handleToggle = useCallback((e: React.MouseEvent) => {
+  const handleToggle = useCallback((e: React.MouseEvent | React.KeyboardEvent) => {
     e.stopPropagation()
     setIsExpanded(prev => !prev)
   }, [])
+
+  const handleToggleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault()
+        handleToggle(e)
+      }
+    },
+    [handleToggle]
+  )
 
   // Only render folders in the tree (docs shown in list)
   if (!isFolder) return null
@@ -68,16 +78,22 @@ function TreeNode({
       >
         {/* Expand toggle */}
         {hasChildren ? (
-          <span
-            className="flex-shrink-0 w-4 h-4 flex items-center justify-center cursor-pointer hover:bg-muted rounded"
+          <button
+            type="button"
+            role="button"
+            tabIndex={0}
+            aria-expanded={isExpanded}
+            aria-controls={`dingtalk-tree-children-${node.dingtalk_node_id}`}
+            className="flex-shrink-0 h-11 min-w-[44px] flex items-center justify-center cursor-pointer hover:bg-muted rounded"
             onClick={handleToggle}
+            onKeyDown={handleToggleKeyDown}
           >
             {isExpanded ? (
               <ChevronDown className="w-3 h-3" />
             ) : (
               <ChevronRight className="w-3 h-3" />
             )}
-          </span>
+          </button>
         ) : (
           <span className="flex-shrink-0 w-4 h-4" />
         )}
@@ -95,7 +111,7 @@ function TreeNode({
 
       {/* Children */}
       {hasChildren && isExpanded && (
-        <div className="mt-0.5">
+        <div id={`dingtalk-tree-children-${node.dingtalk_node_id}`} className="mt-0.5">
           {node.children!.map(child => (
             <TreeNode
               key={child.dingtalk_node_id}
@@ -111,11 +127,7 @@ function TreeNode({
   )
 }
 
-export function DingtalkDocTree({
-  nodes,
-  selectedFolderId,
-  onSelectFolder,
-}: DingtalkDocTreeProps) {
+export function DingtalkDocTree({ nodes, selectedFolderId, onSelectFolder }: DingtalkDocTreeProps) {
   const { t } = useTranslation('knowledge')
 
   return (
