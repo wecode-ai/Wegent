@@ -56,7 +56,8 @@
     },
     "status": {
       "running": "运行中",
-      "online": "在线"
+      "online": "在线",
+      "offline": "离线"
     },
     "actions": {
       "open": "打开",
@@ -68,6 +69,33 @@
     "errors": {
       "load_failed": "加载已发布应用失败",
       "timeout": "请求已发布应用服务超时，请确认内网服务可访问后重试"
+    }
+  },
+  "admin_published_apps": {
+    "title": "所有已发布的应用",
+    "description": "展示所有用户已发布的应用",
+    "summary": "共 {{count}} 个应用",
+    "refresh": "刷新",
+    "loading": "正在加载...",
+    "empty": "暂无已发布应用",
+    "columns": {
+      "username": "用户",
+      "name": "应用",
+      "task_id": "Task ID",
+      "domain": "域名",
+      "created_at": "创建时间",
+      "status": "状态",
+      "action": "操作"
+    },
+    "actions": {
+      "chat": "对话",
+      "delete": "删除",
+      "deleting": "删除中..."
+    },
+    "confirm_delete": "确定删除用户 {{username}} 的应用 {{appName}} 吗？",
+    "errors": {
+      "load_failed": "加载应用列表失败",
+      "delete_failed": "删除应用失败"
     }
   },
   "mail_token": {

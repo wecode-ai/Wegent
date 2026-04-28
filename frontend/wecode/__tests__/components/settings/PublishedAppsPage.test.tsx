@@ -39,6 +39,7 @@ jest.mock('@/hooks/useTranslation', () => ({
         'published_apps.confirm_delete': `Delete ${options?.appName}?`,
         'published_apps.status.running': 'Running',
         'published_apps.status.online': 'Online',
+        'published_apps.status.offline': 'Offline',
         'published_apps.errors.timeout': 'The published apps service timed out',
         'published_apps.summary': `${options?.count ?? 0} apps`,
       }
@@ -89,7 +90,7 @@ describe('PublishedAppsPage', () => {
     expect(screen.getByText('comedy-monitor')).toBeInTheDocument()
     expect(screen.getByText('123')).toBeInTheDocument()
     expect(screen.getByText('comedy-monitor.yinlu.wegent.intra.weibo.com')).toBeInTheDocument()
-    expect(screen.getByText('Running / Online')).toBeInTheDocument()
+    expect(screen.getByText('Online')).toBeInTheDocument()
     expect(screen.queryByText(/Ready/)).not.toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Chat' })).toHaveAttribute('href', '/code?taskId=123')
   })

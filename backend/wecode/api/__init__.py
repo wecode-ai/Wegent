@@ -34,7 +34,9 @@ import wecode.service.local_device_patch  # noqa: F401  register LocalDeviceProv
 import wecode.service.openclaw_token_monitor_patch  # noqa: F401  register OpenClaw token monitor background worker
 import wecode.service.request_builder_patch  # noqa: F401  patch TaskRequestBuilder.build to replace ${WECODE_USER_API_KEY} (new dispatcher flow)
 import wecode.service.storage_backend_patch  # noqa: F401  register MinIO/S3 storage backends for attachment service
+from app.api.endpoints.admin.router import router as admin_router
 from app.api.router import api_router
+from wecode.api.admin_published_apps import router as admin_published_apps_router
 from wecode.api.apikey import router as apikey_router
 from wecode.api.auth import router as auth_router
 from wecode.api.cloud_devices import router as cloud_devices_router
@@ -61,6 +63,8 @@ api_router.include_router(
 api_router.include_router(
     transition_page_router, prefix="/v1", tags=["transition-pages"]
 )
+
+admin_router.include_router(admin_published_apps_router, tags=["admin-published-apps"])
 
 
 def finalize_patches() -> None:

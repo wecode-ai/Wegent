@@ -56,7 +56,8 @@
     },
     "status": {
       "running": "Running",
-      "online": "Online"
+      "online": "Online",
+      "offline": "Offline"
     },
     "actions": {
       "open": "Open",
@@ -68,6 +69,33 @@
     "errors": {
       "load_failed": "Failed to load published apps",
       "timeout": "The published apps service timed out"
+    }
+  },
+  "admin_published_apps": {
+    "title": "All Published Apps",
+    "description": "View all published apps across all users",
+    "summary": "{{count}} apps total",
+    "refresh": "Refresh",
+    "loading": "Loading...",
+    "empty": "No published apps",
+    "columns": {
+      "username": "User",
+      "name": "App",
+      "task_id": "Task ID",
+      "domain": "Domain",
+      "created_at": "Created At",
+      "status": "Status",
+      "action": "Action"
+    },
+    "actions": {
+      "chat": "Chat",
+      "delete": "Delete",
+      "deleting": "Deleting..."
+    },
+    "confirm_delete": "Delete app {{appName}} owned by {{username}}?",
+    "errors": {
+      "load_failed": "Failed to load apps",
+      "delete_failed": "Failed to delete app"
     }
   },
   "mail_token": {

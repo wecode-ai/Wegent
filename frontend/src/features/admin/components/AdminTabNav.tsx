@@ -31,6 +31,7 @@ import {
   Monitor,
   LayoutTemplate,
   FileText,
+  Globe,
 } from 'lucide-react'
 
 export type AdminTabId =
@@ -46,6 +47,7 @@ export type AdminTabId =
   | 'api-keys'
   | 'system-config'
   | 'im-channels'
+  | 'published-apps'
   | 'monitor'
   | 'device-monitor'
   | 'transition-pages'
@@ -82,6 +84,7 @@ export function AdminTabNav({ activeTab, onTabChange }: AdminTabNavProps) {
     { id: 'api-keys', label: t('admin:tabs.api_keys'), icon: KeyRound },
     { id: 'system-config', label: t('admin:tabs.system_config'), icon: Settings },
     { id: 'im-channels', label: t('admin:tabs.im_channels'), icon: MessageSquare },
+    { id: 'published-apps', label: t('admin:tabs.published_apps'), icon: Globe },
     { id: 'monitor', label: t('admin:tabs.monitor'), icon: Activity },
     { id: 'device-monitor', label: t('admin:tabs.device_monitor'), icon: Monitor },
     { id: 'transition-pages', label: t('admin:tabs.transition_pages'), icon: FileText },

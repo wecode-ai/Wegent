@@ -32,6 +32,19 @@ class PublishedAppsService:
             "Content-Type": "application/json",
         }
 
+    async def list_all_apps(self) -> dict[str, Any]:
+        """List all published apps across all users (admin only)."""
+        config = PublishedAppsSettings()
+        url = f"{config.base_url}/app/list"
+        headers = self._build_headers(config)
+
+        async with httpx.AsyncClient(
+            timeout=config.PUBLISHED_APPS_TIMEOUT_SECONDS
+        ) as client:
+            response = await client.get(url, headers=headers)
+            response.raise_for_status()
+            return response.json()
+
     async def list_apps(self, username: str) -> dict[str, Any]:
         """List apps published by a user."""
         config = PublishedAppsSettings()

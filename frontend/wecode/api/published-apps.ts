@@ -97,6 +97,55 @@ export async function deletePublishedApp(appName: string): Promise<PublishedApps
   return payload
 }
 
+export async function listAllPublishedApps(): Promise<PublishedAppsData> {
+  const response = await fetch('/api/admin/published-apps', {
+    method: 'GET',
+    headers: {
+      accept: 'application/json',
+    },
+  })
+
+  if (!response.ok) {
+    const message = parseErrorMessage(await response.text())
+    throw new Error(message || 'Failed to load published apps')
+  }
+
+  const payload = (await response.json()) as PublishedAppsResponse
+  if (payload.code !== 0) {
+    throw new Error(payload.message || 'Failed to load published apps')
+  }
+
+  return payload.data || EMPTY_PUBLISHED_APPS
+}
+
+export async function deletePublishedAppAdmin(
+  appName: string,
+  username: string
+): Promise<PublishedAppsMutationResponse> {
+  const params = new URLSearchParams({ username })
+  const response = await fetch(
+    `/api/admin/published-apps/${encodeURIComponent(appName)}?${params}`,
+    {
+      method: 'DELETE',
+      headers: {
+        accept: 'application/json',
+      },
+    }
+  )
+
+  if (!response.ok) {
+    const message = parseErrorMessage(await response.text())
+    throw new Error(message || 'Failed to delete published app')
+  }
+
+  const payload = (await response.json()) as PublishedAppsMutationResponse
+  if (payload.code !== 0) {
+    throw new Error(payload.message || 'Failed to delete published app')
+  }
+
+  return payload
+}
+
 function parseErrorMessage(body: string): string {
   if (!body) {
     return ''

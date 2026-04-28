@@ -14,6 +14,7 @@
     "api_keys": "密钥管理",
     "system_config": "系统配置",
     "im_channels": "IM 渠道",
+    "published_apps": "应用",
     "monitor": "订阅监控",
     "device_monitor": "设备监控",
     "transition_pages": "过渡页面"
