@@ -45,11 +45,6 @@ interface PublishedAppsMutationResponse {
   message: string
 }
 
-interface ErrorResponse {
-  detail?: string
-  message?: string
-}
-
 const EMPTY_PUBLISHED_APPS: PublishedAppsData = {
   total: 0,
   page: 1,
@@ -58,44 +53,20 @@ const EMPTY_PUBLISHED_APPS: PublishedAppsData = {
 }
 
 export async function listPublishedApps(): Promise<PublishedAppsData> {
-  const response = await fetch('/api/published-apps', {
-    method: 'GET',
-    headers: {
-      accept: 'application/json',
-    },
-  })
-
-  if (!response.ok) {
-    const message = parseErrorMessage(await response.text())
-    throw new Error(message || 'Failed to load published apps')
-  }
-
-  const payload = (await response.json()) as PublishedAppsResponse
+  const payload = await apiClient.get<PublishedAppsResponse>('/published-apps')
   if (payload.code !== 0) {
     throw new Error(payload.message || 'Failed to load published apps')
   }
-
   return payload.data || EMPTY_PUBLISHED_APPS
 }
 
 export async function deletePublishedApp(appName: string): Promise<PublishedAppsMutationResponse> {
-  const response = await fetch(`/api/published-apps/${encodeURIComponent(appName)}`, {
-    method: 'DELETE',
-    headers: {
-      accept: 'application/json',
-    },
-  })
-
-  if (!response.ok) {
-    const message = parseErrorMessage(await response.text())
-    throw new Error(message || 'Failed to delete published app')
-  }
-
-  const payload = (await response.json()) as PublishedAppsMutationResponse
+  const payload = await apiClient.delete<PublishedAppsMutationResponse>(
+    `/published-apps/${encodeURIComponent(appName)}`
+  )
   if (payload.code !== 0) {
     throw new Error(payload.message || 'Failed to delete published app')
   }
-
   return payload
 }
 
@@ -119,17 +90,4 @@ export async function deletePublishedAppAdmin(
     throw new Error(payload.message || 'Failed to delete published app')
   }
   return payload
-}
-
-function parseErrorMessage(body: string): string {
-  if (!body) {
-    return ''
-  }
-
-  try {
-    const payload = JSON.parse(body) as ErrorResponse
-    return payload.detail || payload.message || body
-  } catch {
-    return body
-  }
 }
