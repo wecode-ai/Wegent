@@ -5,19 +5,19 @@
 /**
  * DingtalkDocsPage - Main page component for DingTalk document browsing.
  *
- * Layout: left folder tree + right document list, with sync button at top.
+ * Layout: header with sync button + full-width document tree view.
  */
 
 'use client'
 
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { RefreshCw, FolderOpen } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
+import { formatDateTime } from '@/utils/dateTime'
 import { dingtalkDocApi } from '@/apis/dingtalk-doc'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
-import { DingtalkDocTree } from './DingtalkDocTree'
-import { DingtalkDocList } from './DingtalkDocList'
+import { DingtalkDocTreeView } from './DingtalkDocTreeView'
 import { DingtalkNotConfigured } from './dingtalk-not-configured'
 import type { DingtalkDocNode, DingtalkSyncStatus } from '@/types/dingtalk-doc'
 
@@ -39,9 +39,6 @@ export function DingtalkDocsPage({ isConfigured, onSyncComplete }: DingtalkDocsP
   // Loading states
   const [isLoadingDocs, setIsLoadingDocs] = useState(false)
   const [isSyncing, setIsSyncing] = useState(false)
-
-  // Selected folder
-  const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null)
 
   // Load sync status on mount
   useEffect(() => {
@@ -96,28 +93,6 @@ export function DingtalkDocsPage({ isConfigured, onSyncComplete }: DingtalkDocsP
     }
   }, [onSyncComplete])
 
-  // Get docs for selected folder (or root)
-  const displayDocs = useMemo(() => {
-    if (!selectedFolderId) {
-      // Show root-level items
-      return docTree
-    }
-    // Find the selected folder and show its children
-    const findFolder = (nodes: DingtalkDocNode[]): DingtalkDocNode[] | null => {
-      for (const node of nodes) {
-        if (node.dingtalk_node_id === selectedFolderId) {
-          return node.children || []
-        }
-        if (node.children) {
-          const found = findFolder(node.children)
-          if (found !== null) return found
-        }
-      }
-      return null
-    }
-    return findFolder(docTree) || []
-  }, [docTree, selectedFolderId])
-
   // Not configured state
   if (!isConfigured) {
     return <DingtalkNotConfigured />
@@ -140,7 +115,7 @@ export function DingtalkDocsPage({ isConfigured, onSyncComplete }: DingtalkDocsP
           {syncStatus?.last_synced_at && (
             <span className="text-xs text-text-muted">
               {t('document.dingtalk.lastSynced', '上次同步')}:{' '}
-              {new Date(syncStatus.last_synced_at).toLocaleString()}
+              {formatDateTime(new Date(syncStatus.last_synced_at).getTime())}
             </span>
           )}
           <Button
@@ -200,48 +175,8 @@ export function DingtalkDocsPage({ isConfigured, onSyncComplete }: DingtalkDocsP
           </Button>
         </div>
       ) : (
-        <div className="flex-1 flex min-h-0">
-          {/* Left: Folder tree */}
-          <div className="w-56 border-r border-border overflow-y-auto custom-scrollbar p-2">
-            <DingtalkDocTree
-              nodes={docTree}
-              selectedFolderId={selectedFolderId}
-              onSelectFolder={setSelectedFolderId}
-            />
-          </div>
-          {/* Right: Document list */}
-          <div className="flex-1 overflow-y-auto custom-scrollbar">
-            <DingtalkDocList
-              docs={displayDocs}
-              selectedFolderId={selectedFolderId}
-              onNavigateBack={
-                selectedFolderId
-                  ? () => {
-                      // Find parent folder
-                      const findParent = (
-                        nodes: DingtalkDocNode[],
-                        targetId: string
-                      ): string | null => {
-                        for (const node of nodes) {
-                          if (node.children) {
-                            for (const child of node.children) {
-                              if (child.dingtalk_node_id === targetId) {
-                                return node.dingtalk_node_id
-                              }
-                            }
-                            const found = findParent(node.children, targetId)
-                            if (found !== null) return found
-                          }
-                        }
-                        return null
-                      }
-                      const parentId = findParent(docTree, selectedFolderId)
-                      setSelectedFolderId(parentId)
-                    }
-                  : undefined
-              }
-            />
-          </div>
+        <div className="flex-1 overflow-y-auto custom-scrollbar">
+          <DingtalkDocTreeView nodes={docTree} />
         </div>
       )}
     </div>

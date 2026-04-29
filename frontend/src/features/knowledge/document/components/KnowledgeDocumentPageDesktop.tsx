@@ -27,6 +27,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { FolderOpen } from 'lucide-react'
+import { Spinner } from '@/components/ui/spinner'
 import { userApis } from '@/apis/user'
 import { teamService } from '@/features/tasks/service/teamService'
 import { getModelFromConfig } from '@/features/settings/services/bots'
@@ -529,6 +530,14 @@ export function KnowledgeDocumentPageDesktop({
 
   const renderMainContent = () => {
     if (sidebar.viewMode === 'dingtalk') {
+      // Wait for DingTalk status to finish loading before rendering
+      if (sidebar.isDingtalkLoading) {
+        return (
+          <div className="flex-1 flex items-center justify-center">
+            <Spinner size="lg" />
+          </div>
+        )
+      }
       return (
         <DingtalkDocsPage
           isConfigured={sidebar.isDingtalkConfigured}

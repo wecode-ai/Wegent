@@ -66,7 +66,9 @@ class TestGetUserDingtalkMcpUrl:
         assert result is None
 
     @patch("app.services.dingtalk_doc_service.UserMCPService")
-    def test_returns_none_when_url_is_whitespace(self, mock_mcp_service: MagicMock) -> None:
+    def test_returns_none_when_url_is_whitespace(
+        self, mock_mcp_service: MagicMock
+    ) -> None:
         """Returns None when URL is only whitespace."""
         mock_mcp_service.get_provider_service_config.return_value = {
             "enabled": True,
@@ -80,7 +82,9 @@ class TestGetUserDingtalkMcpUrl:
         assert result is None
 
     @patch("app.services.dingtalk_doc_service.UserMCPService")
-    def test_returns_none_when_config_missing(self, mock_mcp_service: MagicMock) -> None:
+    def test_returns_none_when_config_missing(
+        self, mock_mcp_service: MagicMock
+    ) -> None:
         """Returns None when no config is returned (no URL key)."""
         mock_mcp_service.get_provider_service_config.return_value = {
             "enabled": True,
@@ -97,9 +101,7 @@ class TestIsConfigured:
     """Tests for is_configured."""
 
     @patch.object(DingTalkDocService, "get_user_dingtalk_mcp_url")
-    def test_returns_true_when_url_configured(
-        self, mock_get_url: MagicMock
-    ) -> None:
+    def test_returns_true_when_url_configured(self, mock_get_url: MagicMock) -> None:
         """Returns True when MCP URL is configured."""
         mock_get_url.return_value = "https://mcp.example.com/dingtalk"
         mock_user = MagicMock()
@@ -152,9 +154,7 @@ class TestSyncNodesToDb:
             },
         ]
 
-        result = DingTalkDocService._sync_nodes_to_db(
-            test_user.id, nodes, now, test_db
-        )
+        result = DingTalkDocService._sync_nodes_to_db(test_user.id, nodes, now, test_db)
 
         assert result["added"] == 2
         assert result["updated"] == 0
@@ -169,9 +169,7 @@ class TestSyncNodesToDb:
         )
         assert len(db_nodes) == 2
 
-    def test_updates_existing_nodes(
-        self, test_db: Session, test_user: User
-    ) -> None:
+    def test_updates_existing_nodes(self, test_db: Session, test_user: User) -> None:
         """Existing nodes are updated when data changes."""
         now = datetime.now(timezone.utc)
         dingtalk_node_id = "abc123abc123abc123abc123abc12303"
@@ -186,7 +184,6 @@ class TestSyncNodesToDb:
             node_type="doc",
             workspace_id="ws001",
             content_type="ALIDOC",
-            extension="adoc",
             is_active=True,
             last_synced_at=now,
         )
@@ -225,16 +222,21 @@ class TestSyncNodesToDb:
         self, test_db: Session, test_user: User
     ) -> None:
         """Nodes not in the sync list are marked as inactive."""
-        now = datetime.now(timezone.utc)
+        # Use local time (no timezone) to match how _parse_update_time works
+        now = datetime.now()
 
-        # Create existing nodes
+        # Create existing nodes with empty strings for parent_node_id
+        # to match how sync processes nodes without parentId
         node1 = DingtalkSyncedNode(
             user_id=test_user.id,
             dingtalk_node_id="abc123abc123abc123abc123abc12304",
             name="Keep This",
             doc_url="https://alidocs.dingtalk.com/i/nodes/abc123abc123abc123abc123abc12304",
-            parent_node_id=None,
+            parent_node_id="",
             node_type="doc",
+            workspace_id="",
+            content_type="",
+            content_updated_at=now,
             is_active=True,
             last_synced_at=now,
         )
@@ -243,21 +245,25 @@ class TestSyncNodesToDb:
             dingtalk_node_id="abc123abc123abc123abc123abc12305",
             name="Remove This",
             doc_url="https://alidocs.dingtalk.com/i/nodes/abc123abc123abc123abc123abc12305",
-            parent_node_id=None,
+            parent_node_id="",
             node_type="doc",
+            workspace_id="",
+            content_type="",
+            content_updated_at=now,
             is_active=True,
             last_synced_at=now,
         )
         test_db.add_all([node1, node2])
         test_db.commit()
 
-        # Sync with only node1 present
-        new_now = datetime.now(timezone.utc)
+        # Sync with only node1 present - use updateTime to match content_updated_at
+        new_now = datetime.now()
         nodes = [
             {
                 "nodeId": "abc123abc123abc123abc123abc12304",
                 "name": "Keep This",
                 "nodeType": "doc",
+                "updateTime": now.timestamp(),  # Match existing content_updated_at
             },
         ]
 
@@ -274,9 +280,7 @@ class TestSyncNodesToDb:
         test_db.refresh(node2)
         assert node2.is_active is False
 
-    def test_reactivates_inactive_node(
-        self, test_db: Session, test_user: User
-    ) -> None:
+    def test_reactivates_inactive_node(self, test_db: Session, test_user: User) -> None:
         """Previously inactive nodes are reactivated when they reappear in sync."""
         now = datetime.now(timezone.utc)
         dingtalk_node_id = "abc123abc123abc123abc123abc12306"
@@ -326,9 +330,7 @@ class TestSyncNodesToDb:
             {"nodeId": "", "name": "Empty Node ID", "nodeType": "doc"},
         ]
 
-        result = DingTalkDocService._sync_nodes_to_db(
-            test_user.id, nodes, now, test_db
-        )
+        result = DingTalkDocService._sync_nodes_to_db(test_user.id, nodes, now, test_db)
 
         assert result["added"] == 0
         assert result["total"] == 0
@@ -356,11 +358,12 @@ class TestSyncNodesToDb:
             .first()
         )
         assert db_node is not None
-        assert db_node.doc_url == f"https://alidocs.dingtalk.com/i/nodes/{dingtalk_node_id}"
+        assert (
+            db_node.doc_url
+            == f"https://alidocs.dingtalk.com/i/nodes/{dingtalk_node_id}"
+        )
 
-    def test_maps_node_types_correctly(
-        self, test_db: Session, test_user: User
-    ) -> None:
+    def test_maps_node_types_correctly(self, test_db: Session, test_user: User) -> None:
         """Node types are mapped correctly from DingTalk data."""
         now = datetime.now(timezone.utc)
         nodes = [
@@ -372,24 +375,32 @@ class TestSyncNodesToDb:
 
         DingTalkDocService._sync_nodes_to_db(test_user.id, nodes, now, test_db)
 
-        folder = test_db.query(DingtalkSyncedNode).filter(
-            DingtalkSyncedNode.dingtalk_node_id == "a" * 32
-        ).first()
+        folder = (
+            test_db.query(DingtalkSyncedNode)
+            .filter(DingtalkSyncedNode.dingtalk_node_id == "a" * 32)
+            .first()
+        )
         assert folder.node_type == "folder"
 
-        file = test_db.query(DingtalkSyncedNode).filter(
-            DingtalkSyncedNode.dingtalk_node_id == "b" * 32
-        ).first()
+        file = (
+            test_db.query(DingtalkSyncedNode)
+            .filter(DingtalkSyncedNode.dingtalk_node_id == "b" * 32)
+            .first()
+        )
         assert file.node_type == "file"
 
-        doc = test_db.query(DingtalkSyncedNode).filter(
-            DingtalkSyncedNode.dingtalk_node_id == "c" * 32
-        ).first()
+        doc = (
+            test_db.query(DingtalkSyncedNode)
+            .filter(DingtalkSyncedNode.dingtalk_node_id == "c" * 32)
+            .first()
+        )
         assert doc.node_type == "doc"
 
-        other = test_db.query(DingtalkSyncedNode).filter(
-            DingtalkSyncedNode.dingtalk_node_id == "d" * 32
-        ).first()
+        other = (
+            test_db.query(DingtalkSyncedNode)
+            .filter(DingtalkSyncedNode.dingtalk_node_id == "d" * 32)
+            .first()
+        )
         # Unknown types default to "doc"
         assert other.node_type == "doc"
 
@@ -397,7 +408,8 @@ class TestSyncNodesToDb:
         self, test_db: Session, test_user: User
     ) -> None:
         """Existing node with no field changes is counted as neither added nor updated."""
-        now = datetime.now(timezone.utc)
+        # Use local time (no timezone) to match how _parse_update_time works
+        now = datetime.now()
         dingtalk_node_id = "abc123abc123abc123abc123abc12308"
 
         existing = DingtalkSyncedNode(
@@ -405,24 +417,25 @@ class TestSyncNodesToDb:
             dingtalk_node_id=dingtalk_node_id,
             name="Stable Doc",
             doc_url=f"https://alidocs.dingtalk.com/i/nodes/{dingtalk_node_id}",
-            parent_node_id=None,
+            parent_node_id="",
             node_type="doc",
-            workspace_id=None,
-            content_type=None,
-            extension=None,
+            workspace_id="",
+            content_type="",
+            content_updated_at=now,
             is_active=True,
             last_synced_at=now,
         )
         test_db.add(existing)
         test_db.commit()
 
-        # Sync same data
-        new_now = datetime.now(timezone.utc)
+        # Sync same data with matching content_updated_at (via updateTime)
+        new_now = datetime.now()
         nodes = [
             {
                 "nodeId": dingtalk_node_id,
                 "name": "Stable Doc",
                 "nodeType": "doc",
+                "updateTime": now.timestamp(),  # Match existing content_updated_at
             },
         ]
 
@@ -434,18 +447,15 @@ class TestSyncNodesToDb:
         assert result["updated"] == 0
         assert result["total"] == 1
 
-        # last_synced_at should still be updated (compare naive datetimes
-        # since SQLite stores datetime without timezone info)
+        # last_synced_at should still be updated
         test_db.refresh(existing)
-        assert existing.last_synced_at.replace(tzinfo=None) == new_now.replace(tzinfo=None)
+        assert existing.last_synced_at == new_now
 
 
 class TestGetDingtalkDocs:
     """Tests for get_dingtalk_docs."""
 
-    def test_returns_only_active_nodes(
-        self, test_db: Session, test_user: User
-    ) -> None:
+    def test_returns_only_active_nodes(self, test_db: Session, test_user: User) -> None:
         """Only active nodes are returned."""
         now = datetime.now(timezone.utc)
 
@@ -522,9 +532,7 @@ class TestGetDingtalkDocs:
         assert result[1].node_type == "folder"
         assert result[1].name == "Alpha Folder"
 
-    def test_filters_by_user_id(
-        self, test_db: Session, test_user: User
-    ) -> None:
+    def test_filters_by_user_id(self, test_db: Session, test_user: User) -> None:
         """Only nodes belonging to the specified user are returned."""
         now = datetime.now(timezone.utc)
 
@@ -633,12 +641,205 @@ class TestGetSyncStatus:
         assert status["total_nodes"] == 1
 
 
+class TestListNodesRecursive:
+    """Tests for _list_nodes_recursive - verifies folder traversal behavior."""
+
+    @pytest.mark.asyncio
+    async def test_recurses_into_folder_without_has_children_flag(self) -> None:
+        """Folders are recursed into even when hasChildren is absent or False.
+
+        This is the key regression test: previously the code required
+        node.get("hasChildren") to be truthy, which caused child nodes to be
+        missed when the DingTalk MCP API omitted or set hasChildren=False.
+        """
+        import json
+
+        call_log: list[str | None] = []
+
+        root_folder_node = {
+            "nodeId": "folder001",
+            "name": "Root Folder",
+            "nodeType": "folder",
+            # hasChildren intentionally omitted
+        }
+
+        async def mock_call_tool_with_data(tool_name: str, args: dict) -> MagicMock:
+            folder_id = args.get("folderId")
+            call_log.append(folder_id)
+            result = MagicMock()
+            result.meta = None
+            if folder_id is None:
+                # Root call: return a folder without hasChildren
+                content_item = MagicMock()
+                content_item.type = "text"
+                content_item.text = json.dumps([root_folder_node])
+                result.content = [content_item]
+            else:
+                # Folder call: return empty
+                result.content = []
+            return result
+
+        mock_session = MagicMock()
+        mock_session.call_tool = mock_call_tool_with_data
+
+        all_nodes: list = []
+        await DingTalkDocService._list_nodes_recursive(
+            mock_session,
+            folder_id=None,
+            workspace_id=None,
+            all_nodes=all_nodes,
+            depth=0,
+        )
+
+        # Should have called list_nodes for root AND for the folder
+        assert None in call_log, "Root call (folderId=None) should have been made"
+        assert (
+            "folder001" in call_log
+        ), "Folder 'folder001' should have been recursed into even without hasChildren flag"
+        assert len(all_nodes) == 1
+        assert all_nodes[0]["nodeId"] == "folder001"
+
+    @pytest.mark.asyncio
+    async def test_recurses_into_folder_with_has_children_false(self) -> None:
+        """Folders are recursed into even when hasChildren is explicitly False."""
+        import json
+
+        call_log: list[str | None] = []
+
+        folder_node = {
+            "nodeId": "folder002",
+            "name": "Folder With False HasChildren",
+            "nodeType": "folder",
+            "hasChildren": False,  # Explicitly False - old code would skip this
+        }
+
+        async def mock_call_tool(tool_name: str, args: dict) -> MagicMock:
+            folder_id = args.get("folderId")
+            call_log.append(folder_id)
+            result = MagicMock()
+            result.meta = None
+            if folder_id is None:
+                content_item = MagicMock()
+                content_item.type = "text"
+                content_item.text = json.dumps([folder_node])
+                result.content = [content_item]
+            else:
+                result.content = []
+            return result
+
+        mock_session = MagicMock()
+        mock_session.call_tool = mock_call_tool
+
+        all_nodes: list = []
+        await DingTalkDocService._list_nodes_recursive(
+            mock_session,
+            folder_id=None,
+            workspace_id=None,
+            all_nodes=all_nodes,
+            depth=0,
+        )
+
+        assert (
+            "folder002" in call_log
+        ), "Folder should be recursed into even when hasChildren=False"
+
+    @pytest.mark.asyncio
+    async def test_injects_parent_id_into_child_nodes(self) -> None:
+        """Child nodes get parentId injected from the calling folder_id.
+
+        The DingTalk MCP list_nodes API does NOT return parent node information.
+        When we call list_nodes(folderId=X), the returned nodes are children of X,
+        so we must inject parentId=X into each returned node to preserve the
+        tree structure in the database.
+        """
+        import json
+
+        folder_id = "folder_parent_001"
+        child_doc = {
+            "nodeId": "doc_child_001",
+            "name": "Child Document",
+            "nodeType": "doc",
+            # No parentId in the MCP response
+        }
+
+        async def mock_call_tool(tool_name: str, args: dict) -> MagicMock:
+            fid = args.get("folderId")
+            result = MagicMock()
+            result.meta = None
+            if fid == folder_id:
+                content_item = MagicMock()
+                content_item.type = "text"
+                content_item.text = json.dumps([child_doc])
+                result.content = [content_item]
+            else:
+                result.content = []
+            return result
+
+        mock_session = MagicMock()
+        mock_session.call_tool = mock_call_tool
+
+        all_nodes: list = []
+        await DingTalkDocService._list_nodes_recursive(
+            mock_session,
+            folder_id=folder_id,
+            workspace_id=None,
+            all_nodes=all_nodes,
+            depth=0,
+        )
+
+        assert len(all_nodes) == 1
+        assert all_nodes[0]["nodeId"] == "doc_child_001"
+        assert all_nodes[0]["parentId"] == folder_id, (
+            "parentId should be injected from the folder_id parameter "
+            "since DingTalk MCP does not return parent info"
+        )
+
+    @pytest.mark.asyncio
+    async def test_root_nodes_have_no_parent_id_injected(self) -> None:
+        """Root-level nodes (folder_id=None) do not get a parentId injected."""
+        import json
+
+        root_doc = {
+            "nodeId": "doc_root_001",
+            "name": "Root Document",
+            "nodeType": "doc",
+        }
+
+        async def mock_call_tool(tool_name: str, args: dict) -> MagicMock:
+            result = MagicMock()
+            result.meta = None
+            if args.get("folderId") is None:
+                content_item = MagicMock()
+                content_item.type = "text"
+                content_item.text = json.dumps([root_doc])
+                result.content = [content_item]
+            else:
+                result.content = []
+            return result
+
+        mock_session = MagicMock()
+        mock_session.call_tool = mock_call_tool
+
+        all_nodes: list = []
+        await DingTalkDocService._list_nodes_recursive(
+            mock_session,
+            folder_id=None,
+            workspace_id=None,
+            all_nodes=all_nodes,
+            depth=0,
+        )
+
+        assert len(all_nodes) == 1
+        # Root nodes should not have parentId injected (folder_id is None)
+        assert (
+            all_nodes[0].get("parentId") is None
+        ), "Root-level nodes should not have parentId injected"
+
+
 class TestDeleteSyncedNode:
     """Tests for delete_synced_node."""
 
-    def test_deletes_existing_node(
-        self, test_db: Session, test_user: User
-    ) -> None:
+    def test_deletes_existing_node(self, test_db: Session, test_user: User) -> None:
         """Deletes a node that belongs to the user."""
         now = datetime.now(timezone.utc)
         node = DingtalkSyncedNode(

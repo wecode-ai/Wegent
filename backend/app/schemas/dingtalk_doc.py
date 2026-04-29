@@ -18,11 +18,11 @@ class DingtalkDocNodeBase(BaseModel):
     dingtalk_node_id: str
     name: str
     doc_url: str
-    parent_node_id: Optional[str] = None
+    parent_node_id: str = ""
     node_type: str  # folder, doc, file
-    workspace_id: Optional[str] = None
-    content_type: Optional[str] = None
-    extension: Optional[str] = None
+    workspace_id: str = ""
+    content_type: str = ""
+    content_updated_at: datetime
 
 
 class DingtalkDocNode(DingtalkDocNodeBase):

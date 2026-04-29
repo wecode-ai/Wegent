@@ -107,6 +107,7 @@ export interface UseKnowledgeSidebarReturn {
   // DingTalk docs
   dingtalkDocCount: number
   isDingtalkConfigured: boolean
+  isDingtalkLoading: boolean
 
   // Refresh
   refreshAll: () => Promise<void>
@@ -184,6 +185,7 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
   // DingTalk docs state
   const [dingtalkDocCount, setDingtalkDocCount] = useState(0)
   const [isDingtalkConfigured, setIsDingtalkConfigured] = useState(false)
+  const [isDingtalkLoading, setIsDingtalkLoading] = useState(true)
 
   // Load initial data using the optimized all-grouped API
   const loadInitialData = useCallback(async () => {
@@ -206,6 +208,7 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
 
   // Load DingTalk docs sync status
   const loadDingtalkStatus = useCallback(async () => {
+    setIsDingtalkLoading(true)
     try {
       const status = await dingtalkDocApi.getSyncStatus()
       setDingtalkDocCount(status.total_nodes)
@@ -214,6 +217,8 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
       // Not critical - DingTalk may not be configured
       setIsDingtalkConfigured(false)
       setDingtalkDocCount(0)
+    } finally {
+      setIsDingtalkLoading(false)
     }
   }, [])
 
@@ -535,6 +540,7 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
     // DingTalk docs
     dingtalkDocCount,
     isDingtalkConfigured,
+    isDingtalkLoading,
 
     // Refresh
     refreshAll,

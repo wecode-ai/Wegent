@@ -11,10 +11,12 @@ Create Date: 2026-04-28
 Add dingtalk_synced_nodes table for storing DingTalk document
 nodes synced from the user's MCP server. Stores document name,
 URL, folder hierarchy, and metadata for each synced node.
+content_updated_at stores the updateTime from list_nodes response.
 """
 
-from alembic import op
 import sqlalchemy as sa
+
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = "b2c3d4e5f707"
@@ -31,18 +33,28 @@ def upgrade() -> None:
         sa.Column("dingtalk_node_id", sa.String(64), nullable=False),
         sa.Column("name", sa.String(500), nullable=False),
         sa.Column("doc_url", sa.String(1024), nullable=False),
-        sa.Column("parent_node_id", sa.String(64), nullable=True),
+        sa.Column(
+            "parent_node_id",
+            sa.String(64),
+            nullable=False,
+            server_default=sa.text("''"),
+        ),
         sa.Column("node_type", sa.String(32), nullable=False),
-        sa.Column("workspace_id", sa.String(64), nullable=True),
-        sa.Column("content_type", sa.String(32), nullable=True),
-        sa.Column("extension", sa.String(16), nullable=True),
-        sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.text("1")),
+        sa.Column(
+            "workspace_id", sa.String(64), nullable=False, server_default=sa.text("''")
+        ),
+        sa.Column(
+            "content_type", sa.String(32), nullable=False, server_default=sa.text("''")
+        ),
+        sa.Column("content_updated_at", sa.DateTime(), nullable=False),
+        sa.Column(
+            "is_active", sa.Boolean(), nullable=False, server_default=sa.text("1")
+        ),
         sa.Column("last_synced_at", sa.DateTime(), nullable=False),
         sa.Column("created_at", sa.DateTime(), nullable=False),
         sa.Column("updated_at", sa.DateTime(), nullable=False),
         sa.PrimaryKeyConstraint("id"),
         mysql_charset="utf8mb4",
-        mysql_collation="utf8mb4_unicode_ci",
         mysql_engine="InnoDB",
         comment="DingTalk synced document nodes",
     )
@@ -67,7 +79,9 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_index(op.f("ix_dingtalk_synced_nodes_id"), table_name="dingtalk_synced_nodes")
+    op.drop_index(
+        op.f("ix_dingtalk_synced_nodes_id"), table_name="dingtalk_synced_nodes"
+    )
     op.drop_index("ix_dingtalk_nodes_user_parent", table_name="dingtalk_synced_nodes")
     op.drop_index("ix_dingtalk_nodes_user_node", table_name="dingtalk_synced_nodes")
     op.drop_table("dingtalk_synced_nodes")

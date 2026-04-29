@@ -99,9 +99,11 @@
       "backToParent": "Back to parent",
       "columnName": "Name",
       "columnType": "Type",
+      "columnContentUpdatedAt": "Doc Updated At",
       "columnSyncedAt": "Synced At",
       "columnActions": "Actions",
-      "openInDingtalk": "Open in DingTalk"
+      "openInDingtalk": "Open in DingTalk",
+      "lastModified": "Last modified"
     },
     "groupFilter": {
       "all": "All Groups"

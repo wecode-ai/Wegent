@@ -18,6 +18,7 @@ class DingtalkSyncedNode(Base):
 
     Stores DingTalk document/folder nodes synced from the DingTalk Docs MCP server.
     Each node represents a document, folder, or file visible to the user.
+    content_updated_at stores the updateTime returned by the list_nodes MCP tool.
     """
 
     __tablename__ = "dingtalk_synced_nodes"
@@ -30,16 +31,16 @@ class DingtalkSyncedNode(Base):
     name = Column(String(500), nullable=False)
     # Full DingTalk document URL
     doc_url = Column(String(1024), nullable=False)
-    # Parent folder's dingtalk_node_id (null for root-level nodes)
-    parent_node_id = Column(String(64), nullable=True)
+    # Parent folder's dingtalk_node_id (empty string for root-level nodes)
+    parent_node_id = Column(String(64), nullable=False, default="")
     # Node type: folder, doc, file
     node_type = Column(String(32), nullable=False)
     # DingTalk workspace (knowledge base) ID
-    workspace_id = Column(String(64), nullable=True)
+    workspace_id = Column(String(64), nullable=False, default="")
     # Content type (e.g., ALIDOC)
-    content_type = Column(String(32), nullable=True)
-    # File extension (e.g., adoc, axls, pdf)
-    extension = Column(String(16), nullable=True)
+    content_type = Column(String(32), nullable=False, default="")
+    # Document content last updated time from list_nodes updateTime field
+    content_updated_at = Column(DateTime, nullable=False, default=func.now())
     is_active = Column(Boolean, nullable=False, default=True)
     last_synced_at = Column(DateTime, nullable=False, default=func.now())
     created_at = Column(DateTime, nullable=False, default=func.now())

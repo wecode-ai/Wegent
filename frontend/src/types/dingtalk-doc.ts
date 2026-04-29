@@ -11,11 +11,11 @@ export interface DingtalkDocNode {
   dingtalk_node_id: string
   name: string
   doc_url: string
-  parent_node_id: string | null
+  parent_node_id: string
   node_type: 'folder' | 'doc' | 'file'
-  workspace_id: string | null
-  content_type: string | null
-  extension: string | null
+  workspace_id: string
+  content_type: string
+  content_updated_at: string
   is_active: boolean
   last_synced_at: string
   created_at: string

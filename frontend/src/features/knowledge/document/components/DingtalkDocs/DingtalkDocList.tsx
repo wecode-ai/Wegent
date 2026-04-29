@@ -10,9 +10,17 @@
 
 'use client'
 
-import { ExternalLink, FileText, Folder, FileSpreadsheet } from 'lucide-react'
+import { ExternalLink, FileText, Folder } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
+import { formatDateTime } from '@/utils/dateTime'
 import type { DingtalkDocNode } from '@/types/dingtalk-doc'
+
+/** Convert ISO date string to millisecond timestamp */
+function isoToMs(dateStr: string): number | undefined {
+  if (!dateStr) return undefined
+  const ms = new Date(dateStr).getTime()
+  return isNaN(ms) ? undefined : ms
+}
 
 interface DingtalkDocListProps {
   docs: DingtalkDocNode[]
@@ -20,27 +28,12 @@ interface DingtalkDocListProps {
   onNavigateBack?: () => void
 }
 
-/** Get icon for a document based on its extension */
-function DocIcon({ extension, nodeType }: { extension: string | null; nodeType: string }) {
+/** Get icon for a document based on node type */
+function DocIcon({ nodeType }: { nodeType: string }) {
   if (nodeType === 'folder') {
     return <Folder className="w-4 h-4 text-text-secondary" />
   }
-  switch (extension) {
-    case 'axls':
-      return <FileSpreadsheet className="w-4 h-4 text-green-500" />
-    case 'appt':
-      return <FileText className="w-4 h-4 text-orange-500" />
-    case 'pdf':
-      return <FileText className="w-4 h-4 text-red-500" />
-    default:
-      return <FileText className="w-4 h-4 text-primary" />
-  }
-}
-
-/** Format file extension for display */
-function formatExtension(extension: string | null): string {
-  if (!extension) return '-'
-  return `.${extension}`
+  return <FileText className="w-4 h-4 text-primary" />
 }
 
 export function DingtalkDocList({ docs, selectedFolderId, onNavigateBack }: DingtalkDocListProps) {
@@ -73,8 +66,8 @@ export function DingtalkDocList({ docs, selectedFolderId, onNavigateBack }: Ding
             <th className="text-left py-2 px-3 font-medium">
               {t('document.dingtalk.columnName', '名称')}
             </th>
-            <th className="text-left py-2 px-3 font-medium w-24">
-              {t('document.dingtalk.columnType', '类型')}
+            <th className="text-left py-2 px-3 font-medium w-40">
+              {t('document.dingtalk.columnContentUpdatedAt', '文档更新时间')}
             </th>
             <th className="text-left py-2 px-3 font-medium w-40">
               {t('document.dingtalk.columnSyncedAt', '同步时间')}
@@ -93,7 +86,7 @@ export function DingtalkDocList({ docs, selectedFolderId, onNavigateBack }: Ding
             >
               <td className="py-2.5 px-3">
                 <div className="flex items-center gap-2">
-                  <DocIcon extension={doc.extension} nodeType={doc.node_type} />
+                  <DocIcon nodeType={doc.node_type} />
                   {doc.node_type === 'doc' || doc.node_type === 'file' ? (
                     <a
                       href={doc.doc_url}
@@ -108,9 +101,11 @@ export function DingtalkDocList({ docs, selectedFolderId, onNavigateBack }: Ding
                   )}
                 </div>
               </td>
-              <td className="py-2.5 px-3 text-text-muted">{formatExtension(doc.extension)}</td>
               <td className="py-2.5 px-3 text-text-muted">
-                {new Date(doc.last_synced_at).toLocaleDateString()}
+                {formatDateTime(isoToMs(doc.content_updated_at))}
+              </td>
+              <td className="py-2.5 px-3 text-text-muted">
+                {formatDateTime(isoToMs(doc.last_synced_at))}
               </td>
               <td className="py-2.5 px-3 text-right">
                 {(doc.node_type === 'doc' || doc.node_type === 'file') && (

@@ -99,9 +99,11 @@
       "backToParent": "返回上级",
       "columnName": "名称",
       "columnType": "类型",
+      "columnContentUpdatedAt": "文档更新时间",
       "columnSyncedAt": "同步时间",
       "columnActions": "操作",
-      "openInDingtalk": "在钉钉中打开"
+      "openInDingtalk": "在钉钉中打开",
+      "lastModified": "最近修改"
     },
     "groupFilter": {
       "all": "全部分组"

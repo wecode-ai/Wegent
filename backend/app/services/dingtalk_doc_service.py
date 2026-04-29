@@ -11,7 +11,7 @@ Uses the MCP client protocol to connect to the user's DingTalk Docs MCP server U
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -82,8 +82,8 @@ class DingTalkDocService:
             )
             all_nodes = all_nodes[:MAX_NODES_PER_SYNC]
 
-        # Sync to database
-        now = datetime.now(timezone.utc)
+        # Sync to database - use local time (no timezone) consistent with created_at
+        now = datetime.now()
         stats = DingTalkDocService._sync_nodes_to_db(user.id, all_nodes, now, db)
 
         return stats
@@ -133,6 +133,12 @@ class DingTalkDocService:
         """Recursively list nodes from the MCP server.
 
         Traverses folders by calling list_nodes for each folder found.
+
+        The DingTalk MCP list_nodes tool does NOT return parent node information
+        in the node data. Instead, the parent relationship is implicit: when we
+        call list_nodes(folderId=X), all returned nodes are children of X.
+        We therefore inject the parentId manually into each returned node so
+        that _sync_nodes_to_db can persist the correct parent_node_id.
         """
         if depth > MAX_RECURSION_DEPTH:
             logger.warning(
@@ -159,11 +165,21 @@ class DingTalkDocService:
             nodes_data, parsed_page_token = DingTalkDocService._parse_list_nodes_result(
                 result
             )
+
+            # Inject parentId into each node: the MCP API does not return parent
+            # information, but we know the parent because we called list_nodes
+            # with folderId=folder_id. Root-level nodes have folder_id=None.
+            for node in nodes_data:
+                if folder_id and not node.get("parentId"):
+                    node["parentId"] = folder_id
+
             all_nodes.extend(nodes_data)
 
-            # Recursively traverse folders
+            # Recursively traverse all folders regardless of hasChildren flag,
+            # because the DingTalk MCP API may not reliably set hasChildren=True
+            # even when a folder contains children.
             for node in nodes_data:
-                if node.get("nodeType") == "folder" and node.get("hasChildren"):
+                if node.get("nodeType") == "folder":
                     node_id = node.get("nodeId", "")
                     ws_id = node.get("workspaceId") or workspace_id
                     await DingTalkDocService._list_nodes_recursive(
@@ -299,12 +315,14 @@ class DingTalkDocService:
             if not doc_url:
                 doc_url = f"https://alidocs.dingtalk.com/i/nodes/{node_id}"
 
-            parent_node_id = node_data.get("parentId") or node_data.get(
-                "parentDentryUuid"
+            parent_node_id = (
+                node_data.get("parentId") or node_data.get("parentDentryUuid") or ""
             )
-            workspace_id = node_data.get("workspaceId")
-            content_type = node_data.get("contentType")
-            extension = node_data.get("extension")
+            workspace_id = node_data.get("workspaceId") or ""
+            content_type = node_data.get("contentType") or ""
+            content_updated_at = DingTalkDocService._parse_update_time(
+                node_data.get("updateTime"), sync_time
+            )
 
             # Look up existing node from pre-fetched map (avoids per-node DB query)
             existing = existing_nodes_map.get(node_id)
@@ -330,8 +348,8 @@ class DingTalkDocService:
                 if existing.content_type != content_type:
                     existing.content_type = content_type
                     changed = True
-                if existing.extension != extension:
-                    existing.extension = extension
+                if existing.content_updated_at != content_updated_at:
+                    existing.content_updated_at = content_updated_at
                     changed = True
                 if not existing.is_active:
                     existing.is_active = True
@@ -354,7 +372,7 @@ class DingTalkDocService:
                     node_type=node_type,
                     workspace_id=workspace_id,
                     content_type=content_type,
-                    extension=extension,
+                    content_updated_at=content_updated_at,
                     is_active=True,
                     last_synced_at=sync_time,
                 )
@@ -379,6 +397,38 @@ class DingTalkDocService:
             "total": total,
             "sync_time": sync_time,
         }
+
+    @staticmethod
+    def _parse_update_time(update_time: Any, fallback: datetime) -> datetime:
+        """Parse updateTime from list_nodes response into a datetime (local time).
+
+        The DingTalk MCP API may return updateTime as a Unix timestamp (int/float,
+        in seconds or milliseconds) or as an ISO 8601 string. The result is
+        converted to local time (no tzinfo) to be consistent with created_at.
+        Falls back to the provided fallback datetime if parsing fails or absent.
+        """
+        if update_time is None:
+            return fallback
+        try:
+            if isinstance(update_time, (int, float)):
+                # Treat values > 1e10 as milliseconds, otherwise seconds
+                ts = float(update_time)
+                if ts > 1e10:
+                    ts = ts / 1000.0
+                # fromtimestamp without tz converts to local time directly
+                return datetime.fromtimestamp(ts)
+            if isinstance(update_time, str):
+                # Try ISO 8601 parse, then convert to local time
+                from datetime import timezone as _tz
+
+                dt = datetime.fromisoformat(update_time.replace("Z", "+00:00"))
+                if dt.tzinfo is not None:
+                    # Convert to local time and strip tzinfo
+                    dt = dt.astimezone().replace(tzinfo=None)
+                return dt
+        except (ValueError, OSError, OverflowError):
+            logger.warning("Failed to parse updateTime value: %r", update_time)
+        return fallback
 
     @staticmethod
     def get_dingtalk_docs(user_id: int, db: Session) -> list[DingtalkSyncedNode]:

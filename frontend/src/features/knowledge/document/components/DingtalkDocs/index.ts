@@ -9,4 +9,5 @@
 export { DingtalkDocsPage } from './DingtalkDocsPage'
 export { DingtalkDocTree } from './DingtalkDocTree'
 export { DingtalkDocList } from './DingtalkDocList'
+export { DingtalkDocTreeView } from './DingtalkDocTreeView'
 export { DingtalkNotConfigured } from './dingtalk-not-configured'
