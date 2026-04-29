@@ -317,11 +317,73 @@ export function DocumentDetailDialog({
   })
 
   // Check if document is editable (for both notebook and classic KB types, TEXT type or plain text files)
+  const editableExtensions = [
+    'adoc',
+    'asciidoc',
+    'asm',
+    'bat',
+    'c',
+    'cc',
+    'cpp',
+    'css',
+    'csv',
+    'conf',
+    'config',
+    'dart',
+    'env',
+    'go',
+    'gradle',
+    'groovy',
+    'h',
+    'html',
+    'ini',
+    'java',
+    'js',
+    'json',
+    'jsx',
+    'kotlin',
+    'less',
+    'license',
+    'log',
+    'lua',
+    'markdown',
+    'md',
+    'mjs',
+    'php',
+    'pl',
+    'properties',
+    'ps1',
+    'py',
+    'rb',
+    'readme',
+    'rst',
+    'rust',
+    'sass',
+    'scala',
+    'scss',
+    'sh',
+    'sql',
+    'srt',
+    'styl',
+    'svg',
+    'swift',
+    'textile',
+    'toml',
+    'ts',
+    'tsx',
+    'tsv',
+    'txt',
+    'vue',
+    'wiki',
+    'xml',
+    'yaml',
+    'yml',
+  ]
   const isEditable =
     canEdit &&
     (document?.source_type === 'text' ||
       (document?.source_type === 'file' &&
-        ['txt', 'md', 'markdown'].includes(document?.file_extension?.toLowerCase() || '')))
+        editableExtensions.includes(document?.file_extension?.toLowerCase() || '')))
 
   // Track if content has changed
   const hasChanges = editedContent !== (detail?.content || '')

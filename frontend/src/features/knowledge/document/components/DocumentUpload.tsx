@@ -740,7 +740,7 @@ export function DocumentUpload({
             type="file"
             className="hidden"
             multiple
-            accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.csv,.txt,.md"
+            accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.csv,.txt,.md,.markdown,.adoc,.asciidoc,.asm,.bat,.c,.cc,.cpp,.css,.conf,.config,.dart,.env,.go,.gradle,.groovy,.h,.html,.ini,.java,.js,.json,.jsx,.kotlin,.less,.license,.log,.lua,.mjs,.php,.pl,.properties,.ps1,.py,.rb,.readme,.rst,.rust,.sass,.scala,.scss,.sh,.sql,.srt,.styl,.svg,.swift,.textile,.toml,.ts,.tsx,.tsv,.vue,.wiki,.xml,.yaml,.yml"
             onChange={handleFileChange}
             disabled={state.isUploading}
           />

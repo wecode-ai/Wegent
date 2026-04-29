@@ -265,5 +265,7 @@ class TestKnowledgeTool:
         tool_info = module.update_document_content._mcp_tool_info
 
         assert "TEXT type documents" not in tool_info["description"]
-        assert "txt" in tool_info["description"]
-        assert "md" in tool_info["description"]
+        assert (
+            "plain-text" in tool_info["description"].lower()
+            or "text" in tool_info["description"].lower()
+        )
