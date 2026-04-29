@@ -35,19 +35,18 @@ class BaseIntentAnalyzer:
         """
         from openai import AsyncOpenAI
 
-        client = AsyncOpenAI(
+        async with AsyncOpenAI(
             api_key=model_config.get("api_key"),
             base_url=model_config.get("base_url"),
-        )
-
-        try:
-            response = await client.chat.completions.create(
-                model=model_config.get("model_id", "gpt-4o-mini"),
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0,
-                response_format={"type": "json_object"},
-            )
-            return json.loads(response.choices[0].message.content)
-        except Exception as e:
-            logger.exception(f"[{self.__class__.__name__}] LLM call failed: {e}")
-            return None
+        ) as client:
+            try:
+                response = await client.chat.completions.create(
+                    model=model_config.get("model_id", "gpt-4o-mini"),
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0,
+                    response_format={"type": "json_object"},
+                )
+                return json.loads(response.choices[0].message.content)
+            except Exception as e:
+                logger.exception(f"[{self.__class__.__name__}] LLM call failed: {e}")
+                return None
