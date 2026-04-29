@@ -104,12 +104,7 @@ def download_and_deploy_skills(
     try:
         from executor.services.api_client import SkillDownloader
 
-        # Extract skills list from bot_config and execution request metadata.
-        # Final download set is unique(skills ∪ preload_skills).
-        skill_set = set(bot_config.get("skills", []))
-        skill_set.update(task_data.skill_names or [])
-        skill_set.update(task_data.preload_skills or [])
-        skills = list(skill_set)
+        skills = collect_skill_names_for_deployment(bot_config, task_data)
         if not skills:
             logger.debug("No skills configured for this bot")
             return
@@ -168,6 +163,30 @@ def download_and_deploy_skills(
     except Exception as e:
         logger.error(f"Error in download_and_deploy_skills: {str(e)}")
         # Don't raise - skills deployment failure shouldn't block task execution
+
+
+def collect_skill_names_for_deployment(
+    bot_config: Dict[str, Any],
+    task_data: ExecutionRequest,
+) -> List[str]:
+    """Collect skill names that must be present in the Claude Code skills dir."""
+    skill_names: list[str] = []
+
+    def add_names(names: Any) -> None:
+        for name in names or []:
+            if isinstance(name, str) and name not in skill_names:
+                skill_names.append(name)
+
+    add_names(bot_config.get("skills", []))
+
+    if task_data.mode == "coordinate":
+        for bot in task_data.bot or []:
+            if isinstance(bot, dict):
+                add_names(bot.get("skills", []))
+
+    add_names(task_data.skill_names or [])
+    add_names(task_data.preload_skills or [])
+    return skill_names
 
 
 def build_skill_emphasis_prompt(user_selected_skills: List[str]) -> str:
