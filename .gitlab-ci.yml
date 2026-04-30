@@ -501,3 +501,71 @@ auto-create-develop-to-main-mr:
   rules:
     - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "develop"'
       when: on_success
+
+wegent-knowledge:
+  stage: package
+  retry: 1
+  variables:
+    SERVICE: wegent-knowledge-web
+    DOCKERFILE_PATH: wecode/docker/knowledge
+  script:
+    - build_image
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "develop"'
+      when: never
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      changes:
+        - knowledge/**/*
+        - wecode/docker/knowledge/**/*
+        - shared/**/*
+        - knowledge_engine/**/*
+    - changes:
+        - knowledge/**/*
+        - wecode/docker/knowledge/**/*
+        - shared/**/*
+        - knowledge_engine/**/*
+
+trigger_update_knowledge_web:
+  stage: production
+  variables:
+    APP: wegent-knowledge-runtime-web;beta-wegent-knowledge-web
+    SERVICE: wegent-knowledge-web
+    IMAGE_NAME: wegent-knowledge-web
+    UPSTREAM_CI_PROJECT_ID: $CI_PROJECT_ID
+    UPSTREAM_CI_PIPELINE_ID: $CI_PIPELINE_ID
+    UPSTREAM_CI_COMMIT_REF_NAME: $CI_COMMIT_REF_NAME
+    UPSTREAM_CI_COMMIT_SHA: $CI_COMMIT_SHA
+    MASTER_BRANCH: master
+  trigger:
+    project: weibo_rd/cloudnative/aigc_gitops_manifest
+    branch: master
+    strategy: depend
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      changes:
+        - knowledge/**/*
+        - wecode/docker/knowledge/**/*
+        - shared/**/*
+        - knowledge_engine/**/*
+
+trigger_update_simulation_knowledge_web:
+  stage: production
+  variables:
+    APP: simulation-wegent-knowledge-web
+    SERVICE: wegent-knowledge-web
+    IMAGE_NAME: wegent-knowledge-web
+    MASTER_BRANCH: master
+    UPSTREAM_CI_PROJECT_ID: $CI_PROJECT_ID
+    UPSTREAM_CI_PIPELINE_ID: $CI_PIPELINE_ID
+    UPSTREAM_CI_COMMIT_REF_NAME: $CI_COMMIT_REF_NAME
+    UPSTREAM_CI_COMMIT_SHA: $CI_COMMIT_SHA
+    CD_AUTO_PRODUCTION: 1
+  trigger:
+    project: weibo_rd/cloudnative/aigc_gitops_manifest
+    branch: master
+    strategy: depend
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME == "develop" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main"'
+      changes:
+        - knowledge/**/*
+        - wecode/docker/knowledge/**/*

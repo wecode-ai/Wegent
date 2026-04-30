@@ -30,26 +30,37 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("KNOWLEDGE_RUNTIME_PORT", "PORT"),
     )
 
-    # Backend URL for fetching content
-    backend_internal_url: str = Field(
-        default="http://localhost:8000",
+    # Content fetching timeout in seconds
+    content_fetch_timeout: int = Field(
+        default=120,
         validation_alias=AliasChoices(
-            "KNOWLEDGE_RUNTIME_BACKEND_INTERNAL_URL", "BACKEND_INTERNAL_URL"
+            "KNOWLEDGE_RUNTIME_CONTENT_FETCH_TIMEOUT", "CONTENT_FETCH_TIMEOUT"
         ),
     )
 
-    # Content fetching timeout in seconds
-    content_fetch_timeout: int = 120
-
     # Logging configuration
-    log_file_enabled: bool = True  # Enable file logging by default
-    log_dir: str = "./logs"  # Directory for log files
-    log_level: str = "INFO"  # Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+    log_file_enabled: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("KNOWLEDGE_RUNTIME_LOG_FILE_ENABLED", "LOG_FILE_ENABLED"),
+    )
+    log_dir: str = Field(
+        default="./logs",
+        validation_alias=AliasChoices("KNOWLEDGE_RUNTIME_LOG_DIR", "LOG_DIR"),
+    )
+    log_level: str = Field(
+        default="INFO",
+        validation_alias=AliasChoices("KNOWLEDGE_RUNTIME_LOG_LEVEL", "LOG_LEVEL"),
+    )
 
     # Internal service authentication token
     # When set, all /internal/rag/* endpoints (except health) require this token
     # Generate using: openssl rand -hex 32
-    internal_service_token: str = ""
+    internal_service_token: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "KNOWLEDGE_RUNTIME_INTERNAL_SERVICE_TOKEN", "INTERNAL_SERVICE_TOKEN"
+        ),
+    )
 
     # Database connection for config resolution
     database_url: str = Field(
