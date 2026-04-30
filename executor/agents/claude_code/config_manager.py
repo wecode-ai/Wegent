@@ -279,6 +279,69 @@ def _convert_mcp_servers_list_to_dict(mcp_servers: Any) -> Dict[str, Any]:
     return {}
 
 
+def _append_mcp_servers(
+    target: list[dict[str, Any]],
+    mcp_servers: Any,
+    source: str,
+) -> None:
+    """Append MCP servers in list or dict format to target."""
+    if not mcp_servers:
+        return
+
+    if isinstance(mcp_servers, dict):
+        for server_name, server_config in mcp_servers.items():
+            if not isinstance(server_config, dict):
+                logger.warning(
+                    "[MCP] Skipping non-dict MCP server config from %s: %s",
+                    source,
+                    server_name,
+                )
+                continue
+            target.append({"name": server_name, **server_config})
+        return
+
+    if isinstance(mcp_servers, list):
+        for server in mcp_servers:
+            if not isinstance(server, dict) or "name" not in server:
+                logger.warning(
+                    "[MCP] Skipping invalid MCP server entry from %s: %s",
+                    source,
+                    server,
+                )
+                continue
+            target.append(server.copy())
+        return
+
+    logger.warning(
+        "[MCP] Skipping unsupported MCP server config from %s: %s",
+        source,
+        type(mcp_servers).__name__,
+    )
+
+
+def _collect_mcp_servers_for_claude(
+    task_data: ExecutionRequest,
+    primary_bot_config: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Collect MCP servers for the single Claude SDK session."""
+    collected: list[dict[str, Any]] = []
+
+    bots = task_data.bot or []
+    if task_data.mode == "coordinate" and len(bots) > 1:
+        for index, bot in enumerate(bots):
+            if not isinstance(bot, dict):
+                continue
+            mcp_servers = bot.get("mcp_servers") or bot.get("mcpServers")
+            _append_mcp_servers(collected, mcp_servers, f"bot[{index}]")
+        return collected
+
+    mcp_servers = primary_bot_config.get("mcp_servers") or primary_bot_config.get(
+        "mcpServers"
+    )
+    _append_mcp_servers(collected, mcp_servers, "bot[0]")
+    return collected
+
+
 def extract_claude_options(task_data: ExecutionRequest) -> Dict[str, Any]:
     """Extract Claude Code options from task data.
 
@@ -292,10 +355,7 @@ def extract_claude_options(task_data: ExecutionRequest) -> Dict[str, Any]:
     Returns:
         Dict containing valid Claude Code options
     """
-    from executor.utils.mcp_utils import (
-        extract_mcp_servers_config,
-        replace_mcp_server_variables,
-    )
+    from executor.utils.mcp_utils import replace_mcp_server_variables
 
     # List of valid options for ClaudeAgentOptions
     valid_options = [
@@ -333,12 +393,14 @@ def extract_claude_options(task_data: ExecutionRequest) -> Dict[str, Any]:
         # Create a shallow copy of bot_config to avoid modifying the original
         bot_config = bot_config.copy()
 
-        # Extract Ghost-level MCP servers configuration
-        logger.info("[MCP] Extracting Ghost-level MCP servers from bot_config...")
-        mcp_servers = extract_mcp_servers_config(bot_config)
+        # Extract MCP servers. Claude Code subagents share the parent SDK
+        # session, so coordinate mode must register member bot MCP servers on
+        # that same session.
+        logger.info("[MCP] Extracting MCP servers for Claude Code session...")
+        mcp_servers = _collect_mcp_servers_for_claude(task_data, bot_config)
         if mcp_servers:
             logger.info(
-                "[MCP] Ghost-level raw MCP servers: %s",
+                "[MCP] Raw MCP servers for Claude Code: %s",
                 (
                     list(mcp_servers.keys())
                     if isinstance(mcp_servers, dict)
@@ -367,11 +429,11 @@ def extract_claude_options(task_data: ExecutionRequest) -> Dict[str, Any]:
                     list(cfg.get("headers", {}).keys()),
                 )
             logger.info(
-                "[MCP] Ghost-level MCP servers after processing: %s",
+                "[MCP] MCP servers after processing: %s",
                 list(mcp_servers.keys()),
             )
         else:
-            logger.info("[MCP] No Ghost-level MCP servers configured")
+            logger.info("[MCP] No MCP servers configured")
 
         # Add wegent MCP server for subscription tasks
         if task_data.is_subscription:

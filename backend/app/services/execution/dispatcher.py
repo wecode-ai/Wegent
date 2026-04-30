@@ -17,10 +17,8 @@ For SSE mode (Chat shell), uses OpenAI AsyncClient to consume the
 OpenAI Responses API compatible endpoint.
 """
 
-import asyncio
 import json
 import logging
-from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, List, Optional
 
 if TYPE_CHECKING:
@@ -41,7 +39,6 @@ from shared.models.responses_api import ResponsesAPIStreamEvents
 from shared.utils.http_client import traced_async_client
 
 from .emitters import (
-    CompositeResultEmitter,
     ResultEmitter,
     ResultEmitterFactory,
     StatusUpdatingEmitter,
@@ -748,7 +745,16 @@ class ExecutionDispatcher:
             f"[ExecutionDispatcher] About to call client.responses.create: "
             f"task_id={request.task_id}, subtask_id={request.subtask_id}"
         )
-        stream = await client.responses.create(
+        # Use async with to ensure stream is properly closed on exit.
+        # Without this, breaking out of the stream loop leaves the underlying
+        # httpx Response open. When GC eventually collects it, httpcore's
+        # AsyncShieldCancellation enters an anyio CancelScope at an unexpected
+        # time, corrupting the scope stack of whichever asyncio Task happens
+        # to be running. If that task belongs to an MCP session manager, the
+        # corrupted scope stack causes a RuntimeError ("Attempted to exit a
+        # cancel scope that isn't the current task's current cancel scope")
+        # that cascades through all nested MCP session managers.
+        async with await client.responses.create(
             model=openai_request.get("model", ""),
             input=openai_request.get("input", ""),
             instructions=openai_request.get("instructions"),
@@ -758,129 +764,134 @@ class ExecutionDispatcher:
                 "metadata": openai_request.get("metadata", {}),
                 "model_config": openai_request.get("model_config", {}),
             },
-        )
-        logger.info(
-            f"[ExecutionDispatcher] Stream created, starting to iterate events: "
-            f"task_id={request.task_id}, subtask_id={request.subtask_id}"
-        )
+        ) as stream:
+            logger.info(
+                f"[ExecutionDispatcher] Stream created, starting to iterate events: "
+                f"task_id={request.task_id}, subtask_id={request.subtask_id}"
+            )
 
-        event_count = 0
-        last_cancel_check = 0
-        cancelled = False
-        terminal_event_type = ""
+            event_count = 0
+            last_cancel_check = 0
+            cancelled = False
+            terminal_event_type = ""
 
-        try:
-            # Process streaming events
-            async for event in stream:
-                event_count += 1
+            try:
+                # Process streaming events
+                async for event in stream:
+                    event_count += 1
 
-                # Check for cancellation every 10 events (to avoid too frequent Redis calls)
-                if event_count - last_cancel_check >= 10:
-                    last_cancel_check = event_count
-                    if await session_manager.is_cancelled(request.subtask_id):
+                    # Check for cancellation every 10 events (to avoid too frequent Redis calls)
+                    if event_count - last_cancel_check >= 10:
+                        last_cancel_check = event_count
+                        if await session_manager.is_cancelled(request.subtask_id):
+                            logger.info(
+                                f"[ExecutionDispatcher] Cancellation detected via Redis, "
+                                f"breaking stream loop: task_id={request.task_id}, "
+                                f"subtask_id={request.subtask_id}"
+                            )
+                            cancelled = True
+                            break
+
+                    # Also check local event (fast path, no Redis call)
+                    if cancel_event.is_set():
                         logger.info(
-                            f"[ExecutionDispatcher] Cancellation detected via Redis, "
+                            f"[ExecutionDispatcher] Cancellation detected via local event, "
                             f"breaking stream loop: task_id={request.task_id}, "
                             f"subtask_id={request.subtask_id}"
                         )
                         cancelled = True
                         break
 
-                # Also check local event (fast path, no Redis call)
-                if cancel_event.is_set():
-                    logger.info(
-                        f"[ExecutionDispatcher] Cancellation detected via local event, "
-                        f"breaking stream loop: task_id={request.task_id}, "
-                        f"subtask_id={request.subtask_id}"
+                    # Get event type from the event object
+                    event_type = getattr(event, "type", None)
+                    if not event_type:
+                        continue
+
+                    # Log every event for debugging
+                    if event_count <= 5 or event_type in (
+                        "response.completed",
+                        "error",
+                    ):
+                        logger.info(
+                            f"[ExecutionDispatcher] SSE event #{event_count}: type={event_type}, "
+                            f"task_id={request.task_id}, subtask_id={request.subtask_id}"
+                        )
+
+                    # Convert event to dict for parsing
+                    event_data = (
+                        event.model_dump()
+                        if hasattr(event, "model_dump")
+                        else vars(event)
                     )
-                    cancelled = True
-                    break
 
-                # Get event type from the event object
-                event_type = getattr(event, "type", None)
-                if not event_type:
-                    continue
-
-                # Log every event for debugging
-                if event_count <= 5 or event_type in ("response.completed", "error"):
-                    logger.info(
-                        f"[ExecutionDispatcher] SSE event #{event_count}: type={event_type}, "
-                        f"task_id={request.task_id}, subtask_id={request.subtask_id}"
-                    )
-
-                # Convert event to dict for parsing
-                event_data = (
-                    event.model_dump() if hasattr(event, "model_dump") else vars(event)
-                )
-
-                # Parse event using shared parser
-                parsed_event = self.event_parser.parse(
-                    task_id=request.task_id,
-                    subtask_id=request.subtask_id,
-                    message_id=request.message_id,
-                    event_type=event_type,
-                    data=event_data,
-                )
-
-                if parsed_event:
-                    logger.info(
-                        "[ExecutionDispatcher] Parsed SSE event -> internal event: "
-                        "task_id=%d, subtask_id=%d, request_id=%s, sse_event=%s, internal_event=%s",
-                        request.task_id,
-                        request.subtask_id,
-                        request_id,
-                        event_type,
-                        parsed_event.type,
-                    )
-                    await emitter.emit(parsed_event)
-
-                # Break out of loop on terminal events
-                # OpenAI SDK's stream iterator doesn't auto-exit after response.completed,
-                # so we need to manually break to avoid hanging
-                if event_type in (
-                    ResponsesAPIStreamEvents.RESPONSE_COMPLETED.value,
-                    ResponsesAPIStreamEvents.ERROR.value,
-                    ResponsesAPIStreamEvents.RESPONSE_INCOMPLETE.value,
-                ):
-                    terminal_event_type = event_type
-                    logger.info(
-                        f"[ExecutionDispatcher] Terminal event received, breaking stream loop: "
-                        f"task_id={request.task_id}, subtask_id={request.subtask_id}, "
-                        f"event_type={event_type}, request_id={request_id}"
-                    )
-                    break
-
-            # If cancelled, emit CANCELLED event
-            if cancelled:
-                await emitter.emit(
-                    ExecutionEvent(
-                        type=EventType.CANCELLED,
+                    # Parse event using shared parser
+                    parsed_event = self.event_parser.parse(
                         task_id=request.task_id,
                         subtask_id=request.subtask_id,
                         message_id=request.message_id,
+                        event_type=event_type,
+                        data=event_data,
                     )
-                )
 
-            if not cancelled and not terminal_event_type:
-                logger.warning(
-                    "[ExecutionDispatcher] SSE stream ended without terminal event: "
-                    "task_id=%d, subtask_id=%d, request_id=%s, total_events=%d",
-                    request.task_id,
-                    request.subtask_id,
-                    request_id,
-                    event_count,
-                )
+                    if parsed_event:
+                        logger.info(
+                            "[ExecutionDispatcher] Parsed SSE event -> internal event: "
+                            "task_id=%d, subtask_id=%d, request_id=%s, sse_event=%s, internal_event=%s",
+                            request.task_id,
+                            request.subtask_id,
+                            request_id,
+                            event_type,
+                            parsed_event.type,
+                        )
+                        await emitter.emit(parsed_event)
 
-            # Log when stream iteration completes
-            logger.info(
-                f"[ExecutionDispatcher] SSE stream completed: "
-                f"task_id={request.task_id}, subtask_id={request.subtask_id}, "
-                f"total_events={event_count}, cancelled={cancelled}, "
-                f"terminal_event_type={terminal_event_type or 'none'}, request_id={request_id}"
-            )
-        finally:
-            # Unregister stream to clean up
-            await session_manager.unregister_stream(request.subtask_id)
+                    # Break out of loop on terminal events
+                    # OpenAI SDK's stream iterator doesn't auto-exit after response.completed,
+                    # so we need to manually break to avoid hanging
+                    if event_type in (
+                        ResponsesAPIStreamEvents.RESPONSE_COMPLETED.value,
+                        ResponsesAPIStreamEvents.ERROR.value,
+                        ResponsesAPIStreamEvents.RESPONSE_INCOMPLETE.value,
+                    ):
+                        terminal_event_type = event_type
+                        logger.info(
+                            f"[ExecutionDispatcher] Terminal event received, breaking stream loop: "
+                            f"task_id={request.task_id}, subtask_id={request.subtask_id}, "
+                            f"event_type={event_type}, request_id={request_id}"
+                        )
+                        break
+
+                # If cancelled, emit CANCELLED event
+                if cancelled:
+                    await emitter.emit(
+                        ExecutionEvent(
+                            type=EventType.CANCELLED,
+                            task_id=request.task_id,
+                            subtask_id=request.subtask_id,
+                            message_id=request.message_id,
+                        )
+                    )
+
+                if not cancelled and not terminal_event_type:
+                    logger.warning(
+                        "[ExecutionDispatcher] SSE stream ended without terminal event: "
+                        "task_id=%d, subtask_id=%d, request_id=%s, total_events=%d",
+                        request.task_id,
+                        request.subtask_id,
+                        request_id,
+                        event_count,
+                    )
+
+                # Log when stream iteration completes
+                logger.info(
+                    f"[ExecutionDispatcher] SSE stream completed: "
+                    f"task_id={request.task_id}, subtask_id={request.subtask_id}, "
+                    f"total_events={event_count}, cancelled={cancelled}, "
+                    f"terminal_event_type={terminal_event_type or 'none'}, request_id={request_id}"
+                )
+            finally:
+                # Unregister stream to clean up
+                await session_manager.unregister_stream(request.subtask_id)
 
     async def _dispatch_image_generation(
         self,

@@ -962,6 +962,91 @@ tags: ["public", "api", "test"]
         assert data["version"] == "2.0.0"
         assert data["is_public"] is True
 
+    def test_update_public_skill_metadata_persists_visibility(
+        self, test_client: TestClient, test_admin_token: str
+    ):
+        """Test public skill metadata update persists visibility changes."""
+        create_response = test_client.post(
+            "/api/v1/kinds/skills/public",
+            headers={"Authorization": f"Bearer {test_admin_token}"},
+            json={
+                "name": "visibility-public-test",
+                "description": "Visibility test",
+            },
+        )
+        assert create_response.status_code == 201
+        skill_id = create_response.json()["id"]
+
+        update_response = test_client.put(
+            f"/api/v1/kinds/skills/public/{skill_id}",
+            headers={"Authorization": f"Bearer {test_admin_token}"},
+            json={"visible": False},
+        )
+        assert update_response.status_code == 200
+        assert update_response.json()["visible"] is False
+
+        list_response = test_client.get(
+            "/api/v1/kinds/skills/public/list",
+            headers={"Authorization": f"Bearer {test_admin_token}"},
+        )
+        assert list_response.status_code == 200
+        updated_skill = next(
+            skill for skill in list_response.json() if skill["id"] == skill_id
+        )
+        assert updated_skill["visible"] is False
+
+    def test_unified_skills_returns_hidden_public_skill_with_visible_flag(
+        self,
+        test_client: TestClient,
+        test_admin_token: str,
+        test_token: str,
+    ):
+        """Test unified list returns hidden public skills for frontend filtering."""
+        skill_md = """---
+description: "Hidden public skill"
+displayName: "隐藏公共技能"
+visible: false
+---
+
+"""
+        zip_content = self.create_test_zip(skill_md, "hidden-public-unified")
+
+        upload_response = test_client.post(
+            "/api/v1/kinds/skills/public/upload",
+            headers={"Authorization": f"Bearer {test_admin_token}"},
+            data={"name": "hidden-public-unified"},
+            files={
+                "file": (
+                    "hidden-public-unified.zip",
+                    io.BytesIO(zip_content),
+                    "application/zip",
+                )
+            },
+        )
+        assert upload_response.status_code == 201
+        skill_id = upload_response.json()["id"]
+
+        update_response = test_client.put(
+            f"/api/v1/kinds/skills/public/{skill_id}",
+            headers={"Authorization": f"Bearer {test_admin_token}"},
+            json={"visible": False},
+        )
+        assert update_response.status_code == 200
+
+        unified_response = test_client.get(
+            "/api/v1/kinds/skills/unified",
+            headers={"Authorization": f"Bearer {test_token}"},
+        )
+
+        assert unified_response.status_code == 200
+        hidden_skill = next(
+            skill
+            for skill in unified_response.json()
+            if skill["name"] == "hidden-public-unified"
+        )
+        assert hidden_skill["displayName"] == "隐藏公共技能"
+        assert hidden_skill["visible"] is False
+
     def test_update_public_skill_non_admin_forbidden(
         self, test_client: TestClient, test_admin_token: str, test_token: str
     ):

@@ -9,6 +9,7 @@ import { fetchUnifiedSkillsList, UnifiedSkill } from '@/apis/skills'
 import { fetchTeamSkills, TeamSkillsResponse } from '@/apis/team'
 import type { Team } from '@/types/api'
 import { isChatShell } from '../service/messageService'
+import { filterVisibleSkills } from '@/utils/skillVisibility'
 
 /**
  * Skill reference with full identification info for backend
@@ -114,7 +115,7 @@ export function useSkillSelector({
       setError(null)
       try {
         const skills = await fetchUnifiedSkillsList({ scope: 'all' })
-        setAvailableSkills(skills)
+        setAvailableSkills(filterVisibleSkills(skills))
       } catch (err) {
         console.error('[useSkillSelector] Failed to fetch skills:', err)
         setError(err instanceof Error ? err : new Error('Failed to fetch skills'))

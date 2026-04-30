@@ -72,3 +72,42 @@ class TestExtractClaudeOptionsWithMcp:
         task_data = ExecutionRequest(task_id=1, bot=[])
         options = extract_claude_options(task_data)
         assert "mcp_servers" not in options
+
+    def test_coordinate_mode_includes_member_bot_mcp_servers(self):
+        """Coordinate mode exposes member bot MCP servers to Claude SDK."""
+        task_data = ExecutionRequest(
+            task_id=1,
+            mode="coordinate",
+            bot=[
+                {
+                    "name": "leader",
+                    "mcp_servers": [
+                        {
+                            "name": "leader-server",
+                            "type": "http",
+                            "url": "http://leader.example.com/mcp",
+                        }
+                    ],
+                },
+                {
+                    "name": "dubhe_bot",
+                    "mcp_servers": [
+                        {
+                            "name": "dube-mcp",
+                            "type": "http",
+                            "url": "http://10.185.16.187:8121/mcp",
+                            "headers": {"Mcp-Proxy-User-Name": "wangyu29"},
+                        }
+                    ],
+                },
+            ],
+        )
+
+        options = extract_claude_options(task_data)
+
+        assert "mcp_servers" in options
+        assert "leader-server" in options["mcp_servers"]
+        assert "dube-mcp" in options["mcp_servers"]
+        assert options["mcp_servers"]["dube-mcp"]["url"] == (
+            "http://10.185.16.187:8121/mcp"
+        )

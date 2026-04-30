@@ -33,6 +33,10 @@ from app.services.channels.callback import (
     ChannelType,
 )
 from app.services.channels.commands import (
+    AGENT_ITEM_TEMPLATE,
+    AGENTS_EMPTY,
+    AGENTS_FOOTER,
+    AGENTS_HEADER,
     DEVICE_ITEM_TEMPLATE,
     DEVICES_EMPTY,
     DEVICES_FOOTER,
@@ -430,6 +434,52 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
         return team
 
+    async def _get_selected_or_default_team(
+        self, db: Session, user_id: int
+    ) -> Optional[Kind]:
+        """Get user's selected team or fall back to default team.
+
+        This method checks if the user has manually selected a team via /agents
+        command. If so, returns that team. Otherwise, falls back to the
+        channel's configured default team.
+
+        Args:
+            db: Database session
+            user_id: User ID
+
+        Returns:
+            Team Kind object or None
+        """
+        from app.services.channels.team_selection import team_selection_manager
+
+        # Check if user has a manually selected team
+        selection = await team_selection_manager.get_selection(user_id)
+        if selection:
+            team = (
+                db.query(Kind)
+                .filter(
+                    Kind.id == selection.team_id,
+                    Kind.kind == "Team",
+                    Kind.is_active == True,
+                )
+                .first()
+            )
+            if team:
+                self.logger.info(
+                    f"[{self._channel_type.value}Handler] Using user-selected team: "
+                    f"{team.name} (id={team.id})"
+                )
+                return team
+            else:
+                self.logger.warning(
+                    f"[{self._channel_type.value}Handler] User-selected team not found "
+                    f"or inactive: id={selection.team_id}, clearing selection"
+                )
+                await team_selection_manager.clear_selection(user_id)
+
+        # Fall back to default team
+        return self._get_default_team(db, user_id)
+
     async def _get_user_model_override(
         self, user_id: int
     ) -> tuple[Optional[str], Optional[str]]:
@@ -633,6 +683,11 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
         elif command.command == CommandType.MODELS:
             await self._handle_model_command(
+                db, user, command.argument, message_context
+            )
+
+        elif command.command == CommandType.AGENTS:
+            await self._handle_agent_command(
                 db, user, command.argument, message_context
             )
 
@@ -1083,8 +1138,43 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             mode = "☁️ 云端执行模式"
             device_info = ""
 
-        team = self._get_default_team(db, user.id)
-        team_name = team.name if team else "未配置"
+        # Get team - prioritize user selection over default
+        from app.services.channels.team_selection import team_selection_manager
+
+        team_selection = await team_selection_manager.get_selection(user.id)
+        if team_selection:
+            team = (
+                db.query(Kind)
+                .filter(
+                    Kind.id == team_selection.team_id,
+                    Kind.kind == "Team",
+                    Kind.is_active == True,
+                )
+                .first()
+            )
+            if team:
+                team_json = team.json or {}
+                team_spec = team_json.get("spec", {})
+                display = team_spec.get("displayName") or team.name
+                team_name = f"{display} (用户选择)"
+            else:
+                # Selected team no longer exists, clear it
+                await team_selection_manager.clear_selection(user.id)
+                team = self._get_default_team(db, user.id)
+                if team:
+                    team_json = team.json or {}
+                    team_spec = team_json.get("spec", {})
+                    team_name = team_spec.get("displayName") or team.name
+                else:
+                    team_name = "未配置"
+        else:
+            team = self._get_default_team(db, user.id)
+            if team:
+                team_json = team.json or {}
+                team_spec = team_json.get("spec", {})
+                team_name = team_spec.get("displayName") or team.name
+            else:
+                team_name = "未配置"
 
         # Get model selection
         # For device mode, show the actual model that will be used (may be default device model)
@@ -1289,6 +1379,167 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             message_context,
             f"✅ 已切换到模型 **{display_name}**\n\n现在的对话将使用该模型",
         )
+
+    async def _handle_agent_command(
+        self,
+        db: Session,
+        user: User,
+        argument: Optional[str],
+        message_context: MessageContext,
+    ) -> None:
+        """Handle /agents command - list teams or switch to a team.
+
+        This command allows users to view and select from their available
+        teams/agents. Users can switch between personal teams, shared teams,
+        and system teams at any time during the conversation.
+
+        Args:
+            db: Database session
+            user: Wegent user
+            argument: Optional argument (team index, name, or 'default')
+            message_context: Message context
+        """
+        from app.services.adapters.team_kinds import team_kinds_service
+        from app.services.channels.team_selection import (
+            TeamSelection,
+            team_selection_manager,
+        )
+
+        # Get all user's teams (personal + shared + system)
+        teams = team_kinds_service.get_user_teams(
+            db=db,
+            user_id=user.id,
+            scope="all",
+        )
+
+        if not teams:
+            await self.send_text_reply(
+                message_context,
+                AGENTS_HEADER
+                + AGENTS_EMPTY
+                + "\n\n💡 您也可以尝试使用 `/agents default` 使用系统默认智能体",
+            )
+            return
+
+        # With argument - switch to specified team
+        if argument:
+            argument = argument.strip().lower()
+
+            # Support "default" to revert to system default
+            if argument == "default":
+                await team_selection_manager.clear_selection(user.id)
+                await self._delete_conversation_task_id(
+                    message_context.conversation_id, user.id
+                )
+
+                default_team = self._get_default_team(db, user.id)
+                if default_team:
+                    team_json = default_team.json or {}
+                    team_spec = team_json.get("spec", {})
+                    display_name = team_spec.get("displayName") or default_team.name
+                    await self.send_text_reply(
+                        message_context,
+                        f"✅ 已恢复使用系统默认智能体: **{display_name}**\n\n"
+                        "💡 现在开始使用系统配置的智能体进行对话",
+                    )
+                else:
+                    await self.send_text_reply(
+                        message_context,
+                        "✅ 已清除智能体选择\n\n"
+                        "⚠️ 注意: 系统未配置默认智能体，请先使用 `/agents <序号>` 选择智能体",
+                    )
+                return
+
+            matched_team = None
+
+            # Check if argument is a number (team index)
+            if argument.isdigit():
+                team_index = int(argument)
+                if 1 <= team_index <= len(teams):
+                    matched_team = teams[team_index - 1]
+                else:
+                    await self.send_text_reply(
+                        message_context,
+                        f"❌ 无效的智能体序号: {argument}\n\n"
+                        f"当前有 {len(teams)} 个智能体，请使用 `/agents` 查看列表",
+                    )
+                    return
+            else:
+                # Match by name (case-insensitive)
+                argument_lower = argument.lower()
+                for team in teams:
+                    team_name = team.get("name", "").lower()
+                    if team_name == argument_lower:
+                        matched_team = team
+                        break
+
+            if not matched_team:
+                await self.send_text_reply(
+                    message_context,
+                    f"❌ 未找到智能体: `{argument}`\n\n使用 `/agents` 查看可用智能体列表",
+                )
+                return
+
+            # Save selection to Redis
+            # matched_team is a dictionary from team_kinds_service.get_user_teams()
+            display_name = matched_team.get("name") or "Unnamed"
+            matched_team_id = matched_team.get("id")
+            matched_team_name = matched_team.get("name") or "Unnamed"
+            matched_team_namespace = matched_team.get("namespace") or "default"
+
+            await team_selection_manager.set_selection(
+                user.id,
+                TeamSelection(
+                    team_id=matched_team_id,
+                    team_name=matched_team_name,
+                    team_namespace=matched_team_namespace,
+                    display_name=display_name,
+                ),
+            )
+
+            # Clear conversation cache to start fresh with new team
+            await self._delete_conversation_task_id(
+                message_context.conversation_id, user.id
+            )
+
+            await self.send_text_reply(
+                message_context,
+                f"✅ 已切换到智能体: **{display_name}**\n\n"
+                f"命名空间: `{matched_team_namespace}`\n"
+                f"💡 现在开始使用新智能体进行对话",
+            )
+            return
+
+        # No argument - list teams
+        current_selection = await team_selection_manager.get_selection(user.id)
+        current_team_id = current_selection.team_id if current_selection else None
+
+        message = AGENTS_HEADER + "\n"
+
+        for idx, team in enumerate(teams, start=1):
+            # team is a dictionary from team_kinds_service.get_user_teams()
+            display_name = team.get("name") or "Unnamed"
+            namespace = team.get("namespace") or "default"
+            team_id = team.get("id")
+
+            # Build status string
+            status_parts = []
+            if team_id == current_team_id:
+                status_parts.append("⭐ 当前")
+            if team_id == self.default_team_id:
+                status_parts.append("系统默认")
+
+            status_str = " - " + ", ".join(status_parts) if status_parts else ""
+
+            message += AGENT_ITEM_TEMPLATE.format(
+                index=idx,
+                name=display_name,
+                namespace=namespace,
+                status=status_str,
+            )
+
+        message += AGENTS_FOOTER
+        await self.send_text_reply(message_context, message)
 
     async def _process_chat_message(
         self,
@@ -1597,6 +1848,10 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         conversation_id = message_context.conversation_id
 
         display_text = self._get_display_text(message_context)
+
+        # Get user's model selection (type not needed for chat mode)
+        override_model_name, _ = await self._get_user_model_override(user.id)
+
         params = TaskCreationParams(
             message=display_text,
             title=(
@@ -1606,10 +1861,9 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             ),
             is_group_chat=False,
             task_type="chat",
+            model_id=override_model_name,
+            force_override_bot_model=override_model_name is not None,
         )
-
-        # Get user's model selection (type not needed for chat mode)
-        override_model_name, _ = await self._get_user_model_override(user.id)
 
         # Try to reuse existing task
         existing_task_id = None
@@ -1624,7 +1878,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         # Prevent attribute expiration after commit so ORM objects remain usable
         db.expire_on_commit = False
         try:
-            team = self._get_default_team(db, user.id)
+            team = await self._get_selected_or_default_team(db, user.id)
             if not team:
                 return "配置错误: 未配置默认智能体"
 

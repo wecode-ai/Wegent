@@ -266,15 +266,6 @@ if [ ! -f ".env" ]; then
     fi
     cp .env.example .env
     echo -e "${GREEN}✓ Created .env from .env.example${NC}"
-
-    # Update backend URL in .env
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-        # macOS
-        sed -i '' "s|BACKEND_INTERNAL_URL=.*|BACKEND_INTERNAL_URL=$BACKEND_URL|g" .env
-    else
-        # Linux
-        sed -i "s|BACKEND_INTERNAL_URL=.*|BACKEND_INTERNAL_URL=$BACKEND_URL|g" .env
-    fi
     echo -e "${YELLOW}Note: Please review and update .env file with your actual configuration${NC}"
 else
     echo -e "${GREEN}✓ .env file already exists${NC}"

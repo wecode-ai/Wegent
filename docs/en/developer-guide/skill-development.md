@@ -277,6 +277,14 @@ CREATE TABLE skill_binaries (
 | `/skills/{skill_id}` | DELETE | Delete Skill (checks references) |
 | `/api/tasks/{task_id}/skills` | GET | Get task-associated Skills (used by Claude Code) |
 
+### Public Skill Visibility
+
+The `spec.visible` field on public Skills controls whether the Skill is shown in regular user-facing entry points:
+
+- `visible: true` or unset: visible in regular skill selectors, subscription configuration, and skill lists.
+- `visible: false`: hidden from regular entry points, but still returned by `/skills/unified` so Bot/Team configurations that already reference it can render and save correctly.
+- When admins edit public Agents in system management, the skill selector includes hidden public Skills so existing references remain maintainable.
+
 ---
 
 ## Key Source Files

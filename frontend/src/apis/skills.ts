@@ -307,6 +307,8 @@ export interface UnifiedSkill {
   tags?: string[]
   /** List of shell types this skill is compatible with (e.g., 'ClaudeCode', 'Agno', 'Dify', 'Chat') */
   bindShells?: string[]
+  /** Whether this skill is visible in user-facing skill lists */
+  visible?: boolean
   is_active: boolean
   is_public: boolean
   user_id: number // ID of the user who uploaded this skill
@@ -519,6 +521,43 @@ export async function updatePublicSkillWithUpload(
     xhr.setRequestHeader('Authorization', `Bearer ${token}`)
     xhr.send(formData)
   })
+}
+
+/**
+ * Update public skill metadata (Admin only)
+ */
+export interface UpdatePublicSkillRequest {
+  description?: string
+  prompt?: string
+  version?: string
+  author?: string
+  tags?: string[]
+  visible?: boolean
+}
+
+export async function updatePublicSkill(
+  skillId: number,
+  data: UpdatePublicSkillRequest
+): Promise<UnifiedSkill> {
+  const token = getToken()
+  if (!token) throw new Error('No authentication token')
+
+  const url = `${getApiUrl()}/v1/kinds/skills/public/${skillId}`
+  const response = await fetch(url, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(data),
+  })
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Failed to update public skill' }))
+    throw new Error(error.detail || 'Failed to update public skill')
+  }
+
+  return response.json()
 }
 
 /**

@@ -250,6 +250,9 @@ class TaskRequestBuilder:
             force_override=force_override,
         )
 
+        # Get collaboration model
+        collaboration_model = team_crd.spec.collaborationModel or "solo"
+
         # Merge user-selected skills into bot_config so Executor downloads them
         if bot_config and resolved_skills:
             all_skill_names = [s["name"] for s in resolved_skills]
@@ -263,6 +266,15 @@ class TaskRequestBuilder:
         if bot_config:
             shell_type = bot_config[0].get("shell_type", "")
             if shell_type == "ClaudeCode":
+                if collaboration_model == "coordinate":
+                    self._extend_resolved_skills_from_bot_configs(
+                        bot_configs=bot_config,
+                        resolved_skills=resolved_skills,
+                        skill_refs=skill_refs,
+                        team=team,
+                        user=user,
+                    )
+                    self._merge_coordinate_capabilities_into_leader(bot_config)
                 self._prepare_mcp_for_claude_code(bot_config[0], resolved_skills)
 
         # Generate auth token first (needed for MCP server authentication)
@@ -277,9 +289,6 @@ class TaskRequestBuilder:
             is_subscription=is_subscription,
             auth_token=auth_token,
         )
-
-        # Get collaboration model
-        collaboration_model = team_crd.spec.collaborationModel or "solo"
 
         # Determine if group chat
         is_group_chat = self._is_group_chat(task)
@@ -1428,6 +1437,7 @@ Response template:
             ghost_system_prompt = ""
             ghost_mcp_servers = []
             ghost_skills = []
+            ghost_skill_refs = {}
 
             if bot_spec and bot_spec.ghostRef:
                 ghost = kindReader.get_by_name_and_namespace(
@@ -1447,6 +1457,10 @@ Response template:
                         for name, config in mcp_servers_dict.items()
                     ]
                     ghost_skills = ghost_crd.spec.skills or []
+                    ghost_skill_refs = {
+                        name: ref.model_dump()
+                        for name, ref in (ghost_crd.spec.skill_refs or {}).items()
+                    }
 
             # Resolve agent_config from model binding
             agent_config = build_agent_config_for_bot(
@@ -1465,6 +1479,7 @@ Response template:
                 "system_prompt": ghost_system_prompt,
                 "mcp_servers": ghost_mcp_servers,
                 "skills": ghost_skills,
+                "skill_refs": ghost_skill_refs,
                 "role": member.role or "worker",
                 "base_image": base_image,
             }
@@ -1481,6 +1496,7 @@ Response template:
                     "system_prompt": "",
                     "mcp_servers": [],
                     "skills": [],
+                    "skill_refs": {},
                     "role": "worker",
                     "base_image": None,
                 }
@@ -1840,6 +1856,89 @@ Response template:
         bot_config["mcp_servers"] = self._filter_reachable_mcp_servers(mcp_list)
         if not bot_config["mcp_servers"]:
             logger.warning("[MCP-CLAUDE] All MCP servers unreachable, removed")
+
+    @staticmethod
+    def _merge_coordinate_capabilities_into_leader(bot_configs: list[dict]) -> None:
+        """Merge member Bot capabilities into the Leader Claude Code config."""
+        if len(bot_configs) <= 1:
+            return
+
+        leader = bot_configs[0]
+
+        leader_mcp_servers = leader.setdefault("mcp_servers", [])
+        seen_mcp_names = {
+            server.get("name")
+            for server in leader_mcp_servers
+            if isinstance(server, dict) and server.get("name")
+        }
+        for bot_config in bot_configs[1:]:
+            for server in bot_config.get("mcp_servers", []) or []:
+                if not isinstance(server, dict):
+                    continue
+                server_name = server.get("name")
+                if not server_name or server_name in seen_mcp_names:
+                    continue
+                leader_mcp_servers.append(server.copy())
+                seen_mcp_names.add(server_name)
+
+        leader_skills = leader.setdefault("skills", [])
+        seen_skill_names = {name for name in leader_skills if isinstance(name, str)}
+        for bot_config in bot_configs[1:]:
+            for skill_name in bot_config.get("skills", []) or []:
+                if not isinstance(skill_name, str) or skill_name in seen_skill_names:
+                    continue
+                leader_skills.append(skill_name)
+                seen_skill_names.add(skill_name)
+
+    def _extend_resolved_skills_from_bot_configs(
+        self,
+        *,
+        bot_configs: list[dict],
+        resolved_skills: list[dict],
+        skill_refs: dict[str, dict],
+        team: Kind,
+        user: User,
+    ) -> None:
+        """Resolve skill metadata for skills that only exist on member Bots."""
+        existing_skill_names = {
+            skill.get("name")
+            for skill in resolved_skills
+            if isinstance(skill, dict) and skill.get("name")
+        }
+
+        for bot_config in bot_configs:
+            for skill_name in bot_config.get("skills", []) or []:
+                if (
+                    not isinstance(skill_name, str)
+                    or skill_name in existing_skill_names
+                ):
+                    continue
+
+                skill_ref = (bot_config.get("skill_refs") or {}).get(skill_name)
+                if skill_ref:
+                    skill = self._find_skill_by_ref(
+                        skill_name,
+                        skill_ref.get("namespace", "default"),
+                        skill_ref.get("is_public", False),
+                        user.id,
+                        team_namespace=team.namespace or "default",
+                    )
+                else:
+                    skill = self._find_skill(skill_name, team)
+                if not skill:
+                    logger.warning(
+                        "[MCP-CLAUDE] Coordinate member skill not found: %s",
+                        skill_name,
+                    )
+                    continue
+
+                resolved_skills.append(self._build_skill_data(skill, user=user))
+                existing_skill_names.add(skill_name)
+                skill_refs[skill_name] = {
+                    "skill_id": getattr(skill, "id", None),
+                    "namespace": getattr(skill, "namespace", "default"),
+                    "is_public": getattr(skill, "user_id", 1) == 0,
+                }
 
     @staticmethod
     def _extract_skill_mcp_to_list(skill_configs: list) -> list:

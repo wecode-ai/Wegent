@@ -295,25 +295,24 @@ async def stream_prompt_text_generation(
         json.dumps(metadata, ensure_ascii=False),
         safe_model_config_for_logging(model_config),
     )
-    stream = await chat_shell_model_service.create_response(
+    async with chat_shell_model_service.create_streaming_response(
         model=model_id,
         input_messages=input_messages,
         instructions=prompt_instructions,
         metadata=metadata,
         model_config=model_config,
-        stream=True,
-    )
-    async for event in stream:
-        event_type = getattr(event, "type", None)
-        if not event_type and hasattr(event, "model_dump"):
-            event_type = event.model_dump().get("type")
-        if event_type != "response.output_text.delta":
-            continue
-        delta = getattr(event, "delta", None)
-        if not isinstance(delta, str) and hasattr(event, "model_dump"):
-            delta = event.model_dump().get("delta")
-        if isinstance(delta, str) and delta:
-            yield delta
+    ) as stream:
+        async for event in stream:
+            event_type = getattr(event, "type", None)
+            if not event_type and hasattr(event, "model_dump"):
+                event_type = event.model_dump().get("type")
+            if event_type != "response.output_text.delta":
+                continue
+            delta = getattr(event, "delta", None)
+            if not isinstance(delta, str) and hasattr(event, "model_dump"):
+                delta = event.model_dump().get("delta")
+            if isinstance(delta, str) and delta:
+                yield delta
 
 
 async def generate_title_text(

@@ -68,15 +68,13 @@ async def stream_response(
     metadata: dict[str, Any] | None = None,
     tools: list[dict[str, Any]] | None = None,
 ) -> AsyncIterator[str]:
-    stream = await chat_shell_model_service.create_response(
+    async with chat_shell_model_service.create_streaming_response(
         model=model,
         input_messages=normalize_input_messages(input_data),
         instructions=instructions,
         model_config=model_config,
         metadata=metadata,
         tools=tools,
-        stream=True,
-    )
-
-    async for event in stream:
-        yield serialize_stream_event(event)
+    ) as stream:
+        async for event in stream:
+            yield serialize_stream_event(event)

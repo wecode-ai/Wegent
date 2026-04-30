@@ -53,6 +53,7 @@ import { publicResourceApis, PublicBotFormData } from '@/apis/publicResources'
 import { useTranslation } from '@/hooks/useTranslation'
 import { adaptMcpConfigForAgent, isValidAgentType } from '../utils/mcpTypeAdapter'
 import { buildSkillRefsFromSelection } from '../utils/skillRefResolver'
+import { filterVisibleSkills } from '@/utils/skillVisibility'
 
 /** Agent types supported by the system */
 export type AgentType = 'ClaudeCode' | 'Agno' | 'Dify'
@@ -281,6 +282,13 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     return skills
   }, [])
 
+  const filterSelectableSkills = useCallback(
+    (skills: UnifiedSkill[]): UnifiedSkill[] => {
+      return scope === 'public' ? skills : filterVisibleSkills(skills)
+    },
+    [scope]
+  )
+
   useEffect(() => {
     // Only fetch skills when agent supports skills (ClaudeCode or Chat)
     if (!supportsSkills) {
@@ -303,7 +311,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
               })
         setAllSkills(skillsData)
         // Filter skills based on current shell type
-        setAvailableSkills(filterSkillsByShellType(skillsData))
+        setAvailableSkills(filterSkillsByShellType(filterSelectableSkills(skillsData)))
       } catch {
         toast({
           variant: 'destructive',
@@ -314,14 +322,14 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
       }
     }
     fetchSkills()
-  }, [supportsSkills, toast, t, filterSkillsByShellType, scope, groupName])
+  }, [supportsSkills, toast, t, filterSkillsByShellType, filterSelectableSkills, scope, groupName])
 
   // Re-filter available skills when shell type changes
   useEffect(() => {
     if (allSkills.length > 0) {
-      setAvailableSkills(filterSkillsByShellType(allSkills))
+      setAvailableSkills(filterSkillsByShellType(filterSelectableSkills(allSkills)))
     }
-  }, [allSkills, filterSkillsByShellType])
+  }, [allSkills, filterSkillsByShellType, filterSelectableSkills])
 
   // Fetch corresponding model list when agentName changes
   useEffect(() => {
@@ -623,7 +631,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
       skill_refs: buildSkillRefsFromSelection(
         selectedSkills,
         selectedSkillRefs,
-        availableSkills,
+        allSkills,
         scope,
         groupName
       ),
@@ -631,7 +639,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
       preload_skill_refs: buildSkillRefsFromSelection(
         preloadSkills,
         selectedSkillRefs,
-        availableSkills,
+        allSkills,
         scope,
         groupName
       ),
@@ -652,7 +660,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     selectedSkills,
     selectedSkillRefs,
     preloadSkills,
-    availableSkills,
+    allSkills,
     scope,
     groupName,
     selectedModelNamespace,
@@ -862,7 +870,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
           skill_refs: buildSkillRefsFromSelection(
             selectedSkills,
             selectedSkillRefs,
-            availableSkills,
+            allSkills,
             scope,
             groupName
           ),
@@ -870,7 +878,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
           preload_skill_refs: buildSkillRefsFromSelection(
             preloadSkills,
             selectedSkillRefs,
-            availableSkills,
+            allSkills,
             scope,
             groupName
           ),
@@ -1323,41 +1331,43 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                       <div className="text-sm text-text-muted">
                         {t('common:skills.loading_skills')}
                       </div>
-                    ) : availableSkills.length === 0 ? (
+                    ) : availableSkills.length === 0 && selectedSkills.length === 0 ? (
                       <div className="text-sm text-text-muted">
                         {t('common:skills.no_skills_available')}
                       </div>
                     ) : (
                       <div className="space-y-2">
-                        <RichSkillSelector
-                          skills={availableSkills}
-                          selectedSkillNames={selectedSkills}
-                          onSelectSkill={skill => {
-                            if (readOnly) return
-                            if (skill && !selectedSkills.includes(skill.name)) {
-                              setSelectedSkills([...selectedSkills, skill.name])
-                              setSelectedSkillRefs(prev => ({
-                                ...prev,
-                                [skill.name]: {
-                                  skill_id: skill.id,
-                                  namespace: skill.namespace || 'default',
-                                  is_public: skill.is_public || false,
-                                },
-                              }))
-                            }
-                          }}
-                          placeholder={t('common:skills.select_skill_to_add')}
-                          disabled={readOnly}
-                          readOnly={readOnly}
-                        />
+                        {availableSkills.length > 0 && (
+                          <RichSkillSelector
+                            skills={availableSkills}
+                            selectedSkillNames={selectedSkills}
+                            onSelectSkill={skill => {
+                              if (readOnly) return
+                              if (skill && !selectedSkills.includes(skill.name)) {
+                                setSelectedSkills([...selectedSkills, skill.name])
+                                setSelectedSkillRefs(prev => ({
+                                  ...prev,
+                                  [skill.name]: {
+                                    skill_id: skill.id,
+                                    namespace: skill.namespace || 'default',
+                                    is_public: skill.is_public || false,
+                                  },
+                                }))
+                              }
+                            }}
+                            placeholder={t('common:skills.select_skill_to_add')}
+                            disabled={readOnly}
+                            readOnly={readOnly}
+                          />
+                        )}
 
                         {selectedSkills.length > 0 && (
                           <div className="flex flex-wrap gap-1.5">
                             {selectedSkills.map(skillName => {
                               const skillRef = selectedSkillRefs[skillName]
                               const skill =
-                                availableSkills.find(s => s.id === skillRef?.skill_id) ||
-                                availableSkills.find(s => s.name === skillName)
+                                allSkills.find(s => s.id === skillRef?.skill_id) ||
+                                allSkills.find(s => s.name === skillName)
                               const isPreloaded = preloadSkills.includes(skillName)
                               // All skills can be preloaded when shell supports it
                               const canPreload = supportsPreloadSkills
@@ -1528,7 +1538,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                     })
               setAllSkills(skillsData)
               // Filter skills based on current shell type
-              setAvailableSkills(filterSkillsByShellType(skillsData))
+              setAvailableSkills(filterSkillsByShellType(filterSelectableSkills(skillsData)))
             } catch {
               toast({
                 variant: 'destructive',

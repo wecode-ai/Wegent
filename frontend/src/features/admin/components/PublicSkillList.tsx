@@ -18,6 +18,7 @@ import {
   TrashIcon,
   ArrowDownTrayIcon,
   EyeIcon,
+  Cog6ToothIcon,
 } from '@heroicons/react/24/outline'
 import { Loader2, UploadIcon, FileIcon, AlertCircle } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
@@ -44,11 +45,13 @@ import {
   fetchPublicSkillsList,
   uploadPublicSkill,
   updatePublicSkillWithUpload,
+  updatePublicSkill,
   deletePublicSkill,
   downloadPublicSkill,
   getPublicSkillContent,
   UnifiedSkill,
 } from '@/apis/skills'
+import { Switch } from '@/components/ui/switch'
 import UnifiedAddButton from '@/components/common/UnifiedAddButton'
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10MB
@@ -63,6 +66,7 @@ const PublicSkillList: React.FC = () => {
   const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false)
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
   const [isViewContentDialogOpen, setIsViewContentDialogOpen] = useState(false)
+  const [isMetadataDialogOpen, setIsMetadataDialogOpen] = useState(false)
   const [selectedSkill, setSelectedSkill] = useState<UnifiedSkill | null>(null)
   const [skillContent, setSkillContent] = useState<string>('')
   const [loadingContent, setLoadingContent] = useState(false)
@@ -76,6 +80,16 @@ const PublicSkillList: React.FC = () => {
   const [dragActive, setDragActive] = useState(false)
   const [isEditMode, setIsEditMode] = useState(false)
 
+  // Metadata edit form states
+  const [metadataForm, setMetadataForm] = useState({
+    description: '',
+    version: '',
+    author: '',
+    tags: '',
+    visible: true,
+  })
+  const [updatingMetadata, setUpdatingMetadata] = useState(false)
+
   const fetchSkills = useCallback(async () => {
     setLoading(true)
     try {
@@ -84,7 +98,7 @@ const PublicSkillList: React.FC = () => {
     } catch (_error) {
       toast({
         variant: 'destructive',
-        title: t('public_skills.errors.load_failed'),
+        title: t('admin:public_skills.errors.load_failed'),
       })
     } finally {
       setLoading(false)
@@ -175,10 +189,10 @@ const PublicSkillList: React.FC = () => {
     try {
       if (isEditMode && selectedSkill) {
         await updatePublicSkillWithUpload(selectedSkill.id, selectedFile, setUploadProgress)
-        toast({ title: t('public_skills.success.updated') })
+        toast({ title: t('admin:public_skills.success.updated') })
       } else {
         await uploadPublicSkill(selectedFile, skillName.trim(), setUploadProgress)
-        toast({ title: t('public_skills.success.uploaded') })
+        toast({ title: t('admin:public_skills.success.uploaded') })
       }
       setIsUploadDialogOpen(false)
       resetUploadForm()
@@ -189,8 +203,8 @@ const PublicSkillList: React.FC = () => {
       toast({
         variant: 'destructive',
         title: isEditMode
-          ? t('public_skills.errors.update_failed')
-          : t('public_skills.errors.upload_failed'),
+          ? t('admin:public_skills.errors.update_failed')
+          : t('admin:public_skills.errors.upload_failed'),
         description: errorMessage,
       })
     } finally {
@@ -203,14 +217,14 @@ const PublicSkillList: React.FC = () => {
 
     try {
       await deletePublicSkill(selectedSkill.id)
-      toast({ title: t('public_skills.success.deleted') })
+      toast({ title: t('admin:public_skills.success.deleted') })
       setIsDeleteDialogOpen(false)
       setSelectedSkill(null)
       fetchSkills()
     } catch (error) {
       toast({
         variant: 'destructive',
-        title: t('public_skills.errors.delete_failed'),
+        title: t('admin:public_skills.errors.delete_failed'),
         description: (error as Error).message,
       })
     }
@@ -222,7 +236,7 @@ const PublicSkillList: React.FC = () => {
     } catch (error) {
       toast({
         variant: 'destructive',
-        title: t('public_skills.errors.download_failed'),
+        title: t('admin:public_skills.errors.download_failed'),
         description: (error as Error).message,
       })
     }
@@ -240,7 +254,7 @@ const PublicSkillList: React.FC = () => {
     } catch (err) {
       toast({
         variant: 'destructive',
-        title: t('public_skills.errors.view_content_failed'),
+        title: t('admin:public_skills.errors.view_content_failed'),
         description: (err as Error).message,
       })
       setSkillContent('')
@@ -269,6 +283,47 @@ const PublicSkillList: React.FC = () => {
     setIsUploadDialogOpen(true)
   }
 
+  const openMetadataDialog = (skill: UnifiedSkill) => {
+    setSelectedSkill(skill)
+    setMetadataForm({
+      description: skill.description || '',
+      version: skill.version || '',
+      author: skill.author || '',
+      tags: skill.tags?.join(', ') || '',
+      visible: skill.visible !== false, // default to true if undefined
+    })
+    setIsMetadataDialogOpen(true)
+  }
+
+  const handleUpdateMetadata = async () => {
+    if (!selectedSkill) return
+
+    setUpdatingMetadata(true)
+    try {
+      await updatePublicSkill(selectedSkill.id, {
+        description: metadataForm.description,
+        version: metadataForm.version,
+        author: metadataForm.author,
+        tags: metadataForm.tags
+          .split(',')
+          .map(t => t.trim())
+          .filter(Boolean),
+        visible: metadataForm.visible,
+      })
+      toast({ title: t('admin:public_skills.success.metadata_updated') })
+      setIsMetadataDialogOpen(false)
+      fetchSkills()
+    } catch (err) {
+      toast({
+        variant: 'destructive',
+        title: t('admin:public_skills.errors.metadata_update_failed'),
+        description: (err as Error).message,
+      })
+    } finally {
+      setUpdatingMetadata(false)
+    }
+  }
+
   const handleCloseUploadDialog = () => {
     if (!uploading) {
       setIsUploadDialogOpen(false)
@@ -285,8 +340,10 @@ const PublicSkillList: React.FC = () => {
     <div className="space-y-3">
       {/* Header */}
       <div>
-        <h2 className="text-xl font-semibold text-text-primary mb-1">{t('public_skills.title')}</h2>
-        <p className="text-sm text-text-muted">{t('public_skills.description')}</p>
+        <h2 className="text-xl font-semibold text-text-primary mb-1">
+          {t('admin:public_skills.title')}
+        </h2>
+        <p className="text-sm text-text-muted">{t('admin:public_skills.description')}</p>
       </div>
 
       {/* Content Container */}
@@ -302,7 +359,7 @@ const PublicSkillList: React.FC = () => {
         {!loading && skills.length === 0 && (
           <div className="flex flex-col items-center justify-center py-12 text-center">
             <SparklesIcon className="w-12 h-12 text-text-muted mb-4" />
-            <p className="text-text-muted">{t('public_skills.no_skills')}</p>
+            <p className="text-text-muted">{t('admin:public_skills.no_skills')}</p>
           </div>
         )}
 
@@ -323,6 +380,9 @@ const PublicSkillList: React.FC = () => {
                           {skill.displayName || skill.name}
                         </h3>
                         {skill.version && <Tag variant="info">v{skill.version}</Tag>}
+                        {skill.visible === false && (
+                          <Tag variant="warning">{t('admin:public_skills.hidden')}</Tag>
+                        )}
                         {skill.tags?.map(tag => (
                           <Tag key={tag} variant="default">
                             {tag}
@@ -339,13 +399,14 @@ const PublicSkillList: React.FC = () => {
                         {skill.author && (
                           <>
                             <span>
-                              {t('public_skills.columns.author')}: {skill.author}
+                              {t('admin:public_skills.columns.author')}: {skill.author}
                             </span>
                             <span>•</span>
                           </>
                         )}
                         <span>
-                          {t('public_skills.columns.created_at')}: {formatDate(skill.created_at)}
+                          {t('admin:public_skills.columns.created_at')}:{' '}
+                          {formatDate(skill.created_at)}
                         </span>
                       </div>
                     </div>
@@ -356,7 +417,7 @@ const PublicSkillList: React.FC = () => {
                       size="icon"
                       className="h-8 w-8"
                       onClick={() => handleViewContent(skill)}
-                      title={t('public_skills.view_content')}
+                      title={t('admin:public_skills.view_content')}
                     >
                       <EyeIcon className="w-4 h-4" />
                     </Button>
@@ -364,8 +425,17 @@ const PublicSkillList: React.FC = () => {
                       variant="ghost"
                       size="icon"
                       className="h-8 w-8"
+                      onClick={() => openMetadataDialog(skill)}
+                      title={t('admin:public_skills.edit_metadata')}
+                    >
+                      <Cog6ToothIcon className="w-4 h-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8"
                       onClick={() => openUploadDialog(skill)}
-                      title={t('public_skills.update_skill')}
+                      title={t('admin:public_skills.update_skill')}
                     >
                       <PencilIcon className="w-4 h-4" />
                     </Button>
@@ -374,7 +444,7 @@ const PublicSkillList: React.FC = () => {
                       size="icon"
                       className="h-8 w-8"
                       onClick={() => handleDownloadSkill(skill)}
-                      title={t('public_skills.download_skill')}
+                      title={t('admin:public_skills.download_skill')}
                     >
                       <ArrowDownTrayIcon className="w-4 h-4" />
                     </Button>
@@ -386,7 +456,7 @@ const PublicSkillList: React.FC = () => {
                         setSelectedSkill(skill)
                         setIsDeleteDialogOpen(true)
                       }}
-                      title={t('public_skills.delete_skill')}
+                      title={t('admin:public_skills.delete_skill')}
                     >
                       <TrashIcon className="w-4 h-4" />
                     </Button>
@@ -402,7 +472,7 @@ const PublicSkillList: React.FC = () => {
           <div className="border-t border-border pt-3 mt-3 bg-base">
             <div className="flex justify-center">
               <UnifiedAddButton onClick={() => openUploadDialog()}>
-                {t('public_skills.upload_skill')}
+                {t('admin:public_skills.upload_skill')}
               </UnifiedAddButton>
             </div>
           </div>
@@ -414,25 +484,27 @@ const PublicSkillList: React.FC = () => {
         <DialogContent className="sm:max-w-[500px] bg-surface">
           <DialogHeader>
             <DialogTitle>
-              {isEditMode ? t('public_skills.update_skill') : t('public_skills.upload_skill')}
+              {isEditMode
+                ? t('admin:public_skills.update_skill')
+                : t('admin:public_skills.upload_skill')}
             </DialogTitle>
             <DialogDescription>
               {isEditMode
                 ? `Update the ZIP package for skill "${selectedSkill?.displayName || selectedSkill?.name}"`
                 : 'Upload a new public skill ZIP package'}
-              <div className="mt-2 text-xs text-text-muted">
-                <strong>Expected structure:</strong>
-                <div className="font-mono bg-muted p-2 rounded mt-1">
-                  my-skill.zip
-                  <br />
-                  └── my-skill/
-                  <br />
-                  &nbsp;&nbsp;&nbsp;&nbsp;├── SKILL.md
-                  <br />
-                  &nbsp;&nbsp;&nbsp;&nbsp;└── resources/
-                </div>
-              </div>
             </DialogDescription>
+            <div className="mt-2 text-xs text-text-muted">
+              <strong>Expected structure:</strong>
+              <div className="font-mono bg-muted p-2 rounded mt-1">
+                my-skill.zip
+                <br />
+                └── my-skill/
+                <br />
+                &nbsp;&nbsp;&nbsp;&nbsp;├── SKILL.md
+                <br />
+                &nbsp;&nbsp;&nbsp;&nbsp;└── resources/
+              </div>
+            </div>
           </DialogHeader>
           <div className="space-y-4 py-4">
             {/* Skill Name Input (only for create mode) */}
@@ -532,7 +604,7 @@ const PublicSkillList: React.FC = () => {
 
           <DialogFooter>
             <Button variant="outline" onClick={handleCloseUploadDialog} disabled={uploading}>
-              {t('common.cancel')}
+              {t('admin:common.cancel')}
             </Button>
             <Button
               variant="primary"
@@ -545,9 +617,9 @@ const PublicSkillList: React.FC = () => {
                   Uploading...
                 </>
               ) : isEditMode ? (
-                t('public_skills.update_skill')
+                t('admin:public_skills.update_skill')
               ) : (
-                t('public_skills.upload_skill')
+                t('admin:public_skills.upload_skill')
               )}
             </Button>
           </DialogFooter>
@@ -558,15 +630,15 @@ const PublicSkillList: React.FC = () => {
       <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{t('public_skills.confirm.delete_title')}</AlertDialogTitle>
+            <AlertDialogTitle>{t('admin:public_skills.confirm.delete_title')}</AlertDialogTitle>
             <AlertDialogDescription>
-              {t('public_skills.confirm.delete_message', { name: selectedSkill?.name })}
+              {t('admin:public_skills.confirm.delete_message', { name: selectedSkill?.name })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
+            <AlertDialogCancel>{t('admin:common.cancel')}</AlertDialogCancel>
             <AlertDialogAction onClick={handleDeleteSkill} className="bg-error hover:bg-error/90">
-              {t('common.delete')}
+              {t('admin:common.delete')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -578,9 +650,11 @@ const PublicSkillList: React.FC = () => {
           <DialogHeader>
             <DialogTitle>
               {selectedSkill?.displayName || selectedSkill?.name} -{' '}
-              {t('public_skills.skill_content')}
+              {t('admin:public_skills.skill_content')}
             </DialogTitle>
-            <DialogDescription>{t('public_skills.view_content_description')}</DialogDescription>
+            <DialogDescription>
+              {t('admin:public_skills.view_content_description')}
+            </DialogDescription>
           </DialogHeader>
           <div className="py-4">
             {loadingContent ? (
@@ -595,13 +669,115 @@ const PublicSkillList: React.FC = () => {
               </div>
             ) : (
               <div className="text-center py-8 text-text-muted">
-                {t('public_skills.no_content')}
+                {t('admin:public_skills.no_content')}
               </div>
             )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsViewContentDialogOpen(false)}>
-              {t('common.cancel')}
+              {t('admin:common.cancel')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Metadata Dialog */}
+      <Dialog open={isMetadataDialogOpen} onOpenChange={setIsMetadataDialogOpen}>
+        <DialogContent className="sm:max-w-[500px] bg-surface">
+          <DialogHeader>
+            <DialogTitle>{t('admin:public_skills.edit_metadata_title')}</DialogTitle>
+            <DialogDescription>
+              {t('admin:public_skills.edit_metadata_description', {
+                name: selectedSkill?.displayName || selectedSkill?.name,
+              })}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            {/* Description */}
+            <div className="space-y-2">
+              <Label htmlFor="skill-description">
+                {t('admin:public_skills.fields.description')}
+              </Label>
+              <Input
+                id="skill-description"
+                placeholder={t('admin:public_skills.placeholders.description')}
+                value={metadataForm.description}
+                onChange={e => setMetadataForm({ ...metadataForm, description: e.target.value })}
+                disabled={updatingMetadata}
+              />
+            </div>
+
+            {/* Version */}
+            <div className="space-y-2">
+              <Label htmlFor="skill-version">{t('admin:public_skills.fields.version')}</Label>
+              <Input
+                id="skill-version"
+                placeholder={t('admin:public_skills.placeholders.version')}
+                value={metadataForm.version}
+                onChange={e => setMetadataForm({ ...metadataForm, version: e.target.value })}
+                disabled={updatingMetadata}
+              />
+            </div>
+
+            {/* Author */}
+            <div className="space-y-2">
+              <Label htmlFor="skill-author">{t('admin:public_skills.fields.author')}</Label>
+              <Input
+                id="skill-author"
+                placeholder={t('admin:public_skills.placeholders.author')}
+                value={metadataForm.author}
+                onChange={e => setMetadataForm({ ...metadataForm, author: e.target.value })}
+                disabled={updatingMetadata}
+              />
+            </div>
+
+            {/* Tags */}
+            <div className="space-y-2">
+              <Label htmlFor="skill-tags">{t('admin:public_skills.fields.tags')}</Label>
+              <Input
+                id="skill-tags"
+                placeholder={t('admin:public_skills.placeholders.tags')}
+                value={metadataForm.tags}
+                onChange={e => setMetadataForm({ ...metadataForm, tags: e.target.value })}
+                disabled={updatingMetadata}
+              />
+              <p className="text-xs text-text-muted">{t('admin:public_skills.hints.tags')}</p>
+            </div>
+
+            {/* Visible Toggle */}
+            <div className="flex items-center justify-between space-y-0 rounded-lg border border-border p-4">
+              <div className="space-y-0.5">
+                <Label htmlFor="skill-visible" className="text-base">
+                  {t('admin:public_skills.fields.visible')}
+                </Label>
+                <p className="text-xs text-text-muted">{t('admin:public_skills.hints.visible')}</p>
+              </div>
+              <Switch
+                id="skill-visible"
+                checked={metadataForm.visible}
+                onCheckedChange={checked => setMetadataForm({ ...metadataForm, visible: checked })}
+                disabled={updatingMetadata}
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setIsMetadataDialogOpen(false)}
+              disabled={updatingMetadata}
+            >
+              {t('admin:common.cancel')}
+            </Button>
+            <Button variant="primary" onClick={handleUpdateMetadata} disabled={updatingMetadata}>
+              {updatingMetadata ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  {t('admin:common.saving')}
+                </>
+              ) : (
+                t('admin:common.save')
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>

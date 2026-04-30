@@ -23,6 +23,7 @@ import { checkSkillMarketAvailable, SkillMarketAvailability } from '@/apis/skill
 import { getGroup } from '@/apis/groups'
 import { Group } from '@/types/group'
 import { canDelete } from '@/types/base-role'
+import { filterVisibleSkills } from '@/utils/skillVisibility'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -143,7 +144,7 @@ export function SkillListWithScope({ scope, selectedGroup }: SkillListWithScopeP
         scope: scope,
         groupName: selectedGroup || undefined,
       })
-      setSkills(data)
+      setSkills(filterVisibleSkills(data))
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load skills')
     } finally {

@@ -277,6 +277,14 @@ CREATE TABLE skill_binaries (
 | `/skills/{skill_id}` | DELETE | 删除 Skill（检查引用） |
 | `/api/tasks/{task_id}/skills` | GET | 获取任务关联的 Skills（Claude Code 使用） |
 
+### 公共 Skill 可见性
+
+公共 Skill 的 `spec.visible` 字段控制普通用户入口是否展示该 Skill：
+
+- `visible: true` 或未设置：普通技能选择器、订阅配置和技能列表可见。
+- `visible: false`：普通入口隐藏，但 `/skills/unified` 仍会返回该 Skill，便于已引用它的 Bot/Team 正常显示和保存。
+- 系统管理页面编辑公共智能体时，技能选择器会展示隐藏公共 Skill，管理员可以继续维护已有引用。
+
 ---
 
 ## 关键源文件
