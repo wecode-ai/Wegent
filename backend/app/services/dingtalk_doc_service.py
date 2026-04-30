@@ -140,7 +140,7 @@ class DingTalkDocService:
         We therefore inject the parentId manually into each returned node so
         that _sync_nodes_to_db can persist the correct parent_node_id.
         """
-        if depth > MAX_RECURSION_DEPTH:
+        if depth >= MAX_RECURSION_DEPTH:
             logger.warning(
                 "Max recursion depth %d reached at folder %s",
                 depth,

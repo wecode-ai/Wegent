@@ -67,6 +67,7 @@ export function useGroupKbs({
   useEffect(() => {
     if (!selectedGroupId) {
       setGroupKbs([])
+      setIsGroupKbsLoading(false)
       return
     }
 

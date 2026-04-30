@@ -392,15 +392,16 @@ export function KnowledgeDocumentPageDesktop({
   )
 
   // Toggle favorite
+  const { addFavorite, removeFavorite } = sidebar
   const handleToggleFavorite = useCallback(
     async (kbId: number, shouldFavorite: boolean) => {
       if (shouldFavorite) {
-        await sidebar.addFavorite(kbId)
+        await addFavorite(kbId)
       } else {
-        await sidebar.removeFavorite(kbId)
+        await removeFavorite(kbId)
       }
     },
-    [sidebar]
+    [addFavorite, removeFavorite]
   )
 
   // Dialog state and CRUD handlers via extracted hook

@@ -137,28 +137,75 @@ export function useKnowledgeDialogs(props: KnowledgeDialogsProps): KnowledgeDial
   const openShare = useCallback((kb: KnowledgeBase) => setSharingKb(kb), [])
   const openMigrate = useCallback((kb: KnowledgeBase) => setMigratingKb(kb), [])
 
+  // Resolve the namespace for KB creation based on scope/group selection
+  const resolveNamespaceForCreate = useCallback(
+    (
+      dataSelectedGroupId: string | undefined,
+      scope: 'personal' | 'group' | 'organization',
+      groupName: string | undefined
+    ): string => {
+      if (dataSelectedGroupId) {
+        const group = groups.find(g => g.id === dataSelectedGroupId)
+        if (group) {
+          return group.type === 'personal' ? 'default' : group.name
+        }
+      } else if (scope === 'organization') {
+        const orgGroup = groups.find(g => g.type === 'organization')
+        return orgGroup?.name || 'organization'
+      } else if (groupName) {
+        return groupName
+      }
+      return 'default'
+    },
+    [groups]
+  )
+
+  // Perform the actual KB creation API call
+  const performCreateKb = useCallback(async (payload: KnowledgeBaseCreate) => {
+    const { createKnowledgeBase } = await import('@/apis/knowledge')
+    await createKnowledgeBase(payload)
+  }, [])
+
+  // Reload KBs for the currently selected group after a create operation
+  const reloadSelectedGroupKbs = useCallback(
+    async (currentSelectedGroupId: string | null) => {
+      if (!currentSelectedGroupId) return
+      const selectedGroup = groups.find(g => g.id === currentSelectedGroupId)
+      if (!selectedGroup) return
+      let kbs: KnowledgeBase[] = []
+      if (selectedGroup.type === 'organization') {
+        const res = await listKnowledgeBases('organization')
+        kbs = res.items || []
+      } else if (selectedGroup.type === 'group' && selectedGroup.name) {
+        const res = await listKnowledgeBases('group', selectedGroup.name)
+        kbs = res.items || []
+      }
+      onReloadGroupKbs(kbs)
+    },
+    [groups, onReloadGroupKbs]
+  )
+
+  // Reset all create-dialog-related state
+  const resetCreateState = useCallback(() => {
+    setShowCreateDialog(false)
+    setCreateGroupName(undefined)
+    setCreateScope('personal')
+    setCreateKbType('notebook')
+  }, [])
+
   // CRUD handlers
   const handleCreate = useCallback(
     async (data: Omit<KnowledgeBaseCreate, 'namespace'> & { selectedGroupId?: string }) => {
       setIsCreating(true)
       try {
-        let namespace = 'default'
-
-        if (data.selectedGroupId) {
-          const group = groups.find(g => g.id === data.selectedGroupId)
-          if (group) {
-            namespace = group.type === 'personal' ? 'default' : group.name
-          }
-        } else if (createScope === 'organization') {
-          const orgGroup = groups.find(g => g.type === 'organization')
-          namespace = orgGroup?.name || 'organization'
-        } else if (createGroupName) {
-          namespace = createGroupName
-        }
-
+        const namespace = resolveNamespaceForCreate(
+          data.selectedGroupId,
+          createScope,
+          createGroupName
+        )
         const kbType = data.kb_type || createKbType
-        const { createKnowledgeBase } = await import('@/apis/knowledge')
-        await createKnowledgeBase({
+
+        await performCreateKb({
           name: data.name,
           description: data.description,
           namespace,
@@ -175,28 +222,15 @@ export function useKnowledgeDialogs(props: KnowledgeDialogsProps): KnowledgeDial
           saveSummaryModelToPreference(data.summary_model_ref)
         }
 
-        setShowCreateDialog(false)
+        resetCreateState()
         await onCreated()
 
-        // Reload group KBs if a group is selected
-        if (selectedGroupId) {
-          const selectedGroup = groups.find(g => g.id === selectedGroupId)
-          if (selectedGroup) {
-            let kbs: KnowledgeBase[] = []
-            if (selectedGroup.type === 'organization') {
-              const res = await listKnowledgeBases('organization')
-              kbs = res.items || []
-            } else if (selectedGroup.type === 'group' && selectedGroup.name) {
-              const res = await listKnowledgeBases('group', selectedGroup.name)
-              kbs = res.items || []
-            }
-            onReloadGroupKbs(kbs)
-          }
+        // Reload group KBs if a group is selected - errors here must not fail the create flow
+        try {
+          await reloadSelectedGroupKbs(selectedGroupId)
+        } catch (reloadError) {
+          console.error('Failed to reload group KBs after create:', reloadError)
         }
-
-        setCreateGroupName(undefined)
-        setCreateScope('personal')
-        setCreateKbType('notebook')
       } finally {
         setIsCreating(false)
       }
@@ -205,11 +239,13 @@ export function useKnowledgeDialogs(props: KnowledgeDialogsProps): KnowledgeDial
       createScope,
       createGroupName,
       createKbType,
-      groups,
       selectedGroupId,
       saveSummaryModelToPreference,
       onCreated,
-      onReloadGroupKbs,
+      resolveNamespaceForCreate,
+      performCreateKb,
+      reloadSelectedGroupKbs,
+      resetCreateState,
     ]
   )
 

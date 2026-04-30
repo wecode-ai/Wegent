@@ -12,6 +12,7 @@
 'use client'
 
 import { useState, useCallback } from 'react'
+import type { MouseEvent, KeyboardEvent } from 'react'
 import { Folder, FolderOpen, ChevronRight, ChevronDown, FileText, ExternalLink } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -49,7 +50,7 @@ function TreeViewNode({ node, level }: { node: DingtalkDocNode; level: number })
   const [isExpanded, setIsExpanded] = useState(level === 0)
 
   const handleToggle = useCallback(
-    (e: React.MouseEvent) => {
+    (e: MouseEvent) => {
       if (isFolder) {
         e.preventDefault()
         setIsExpanded(prev => !prev)
@@ -59,7 +60,7 @@ function TreeViewNode({ node, level }: { node: DingtalkDocNode; level: number })
   )
 
   const handleToggleKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
+    (e: KeyboardEvent) => {
       if (isFolder && (e.key === 'Enter' || e.key === ' ')) {
         e.preventDefault()
         setIsExpanded(prev => !prev)
@@ -78,7 +79,7 @@ function TreeViewNode({ node, level }: { node: DingtalkDocNode; level: number })
           onClick={handleToggle}
           onKeyDown={handleToggleKeyDown}
           className={cn(
-            'w-full flex items-center gap-1.5 py-1.5 rounded-md text-sm transition-colors',
+            'w-full flex items-center gap-1.5 py-2 min-h-[44px] rounded-md text-sm transition-colors',
             'hover:bg-surface-hover text-text-primary'
           )}
           style={{ paddingLeft: `${indentPx}px`, paddingRight: '8px' }}
@@ -122,25 +123,32 @@ function TreeViewNode({ node, level }: { node: DingtalkDocNode; level: number })
 
   // Document / file node - two-line layout: name on top, updated time below
   const updatedTime = formatDateTime(isoToMs(node.content_updated_at))
-  return (
-    <a
-      href={node.doc_url}
-      target="_blank"
-      rel="noopener noreferrer"
-      className={cn(
-        'w-full py-1.5 px-2 rounded-md text-sm transition-colors block',
-        'hover:bg-surface-hover text-text-primary group'
-      )}
-      style={{ paddingLeft: `${indentPx}px`, paddingRight: '8px' }}
-      data-testid={`dingtalk-tree-doc-${node.dingtalk_node_id}`}
-    >
+
+  // Validate doc_url to only allow safe protocols (http/https)
+  const safeDocUrl = (() => {
+    if (!node.doc_url) return null
+    try {
+      const parsed = new URL(node.doc_url)
+      if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+        return node.doc_url
+      }
+      return null
+    } catch {
+      return null
+    }
+  })()
+
+  const nodeContent = (
+    <>
       {/* First row: icon + name + external link */}
       <div className="flex items-center gap-1.5">
         {/* Indent spacer */}
         <span className="flex-shrink-0 w-4 h-4" />
         <NodeIcon nodeType={node.node_type} />
         <span className="flex-1 truncate hover:text-primary hover:underline">{node.name}</span>
-        <ExternalLink className="w-3.5 h-3.5 flex-shrink-0 text-text-muted opacity-0 group-hover:opacity-100 transition-opacity" />
+        {safeDocUrl && (
+          <ExternalLink className="w-3.5 h-3.5 flex-shrink-0 text-text-muted opacity-0 group-hover:opacity-100 transition-opacity" />
+        )}
       </div>
       {/* Second row: last modified time */}
       {updatedTime && (
@@ -148,7 +156,35 @@ function TreeViewNode({ node, level }: { node: DingtalkDocNode; level: number })
           {t('document.dingtalk.lastModified', 'Last modified')}: {updatedTime}
         </div>
       )}
-    </a>
+    </>
+  )
+
+  if (safeDocUrl) {
+    return (
+      <a
+        href={safeDocUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        className={cn(
+          'w-full py-1.5 px-2 rounded-md text-sm transition-colors block',
+          'hover:bg-surface-hover text-text-primary group'
+        )}
+        style={{ paddingLeft: `${indentPx}px`, paddingRight: '8px' }}
+        data-testid={`dingtalk-tree-doc-${node.dingtalk_node_id}`}
+      >
+        {nodeContent}
+      </a>
+    )
+  }
+
+  return (
+    <div
+      className={cn('w-full py-1.5 px-2 rounded-md text-sm block', 'text-text-primary')}
+      style={{ paddingLeft: `${indentPx}px`, paddingRight: '8px' }}
+      data-testid={`dingtalk-tree-doc-${node.dingtalk_node_id}`}
+    >
+      {nodeContent}
+    </div>
   )
 }
 
