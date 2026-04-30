@@ -36,6 +36,7 @@ class PublicSkillAdapter:
             "author": spec.get("author"),
             "tags": spec.get("tags"),
             "bindShells": spec.get("bindShells"),
+            "visible": spec.get("visible", True),
             "is_active": kind.is_active,
             "is_public": True,
             "user_id": kind.user_id,
@@ -171,6 +172,7 @@ class PublicSkillService:
         version: Optional[str] = None,
         author: Optional[str] = None,
         tags: Optional[List[str]] = None,
+        visible: Optional[bool] = None,
     ) -> Dict[str, Any]:
         """Update a public skill"""
         skill = (
@@ -187,18 +189,22 @@ class PublicSkillService:
             raise HTTPException(status_code=404, detail="Skill not found")
 
         # Update spec fields
-        skill_json = skill.json
+        skill_json = dict(skill.json or {})
+        spec = dict(skill_json.get("spec") or {})
         if description is not None:
-            skill_json["spec"]["description"] = description
+            spec["description"] = description
         if prompt is not None:
-            skill_json["spec"]["prompt"] = prompt
+            spec["prompt"] = prompt
         if version is not None:
-            skill_json["spec"]["version"] = version
+            spec["version"] = version
         if author is not None:
-            skill_json["spec"]["author"] = author
+            spec["author"] = author
         if tags is not None:
-            skill_json["spec"]["tags"] = tags
+            spec["tags"] = tags
+        if visible is not None:
+            spec["visible"] = visible
 
+        skill_json["spec"] = spec
         skill.json = skill_json
         db.commit()
         db.refresh(skill)
@@ -229,13 +235,15 @@ class PublicSkillService:
 
         if existing:
             # Update existing
-            existing.json["spec"] = {
+            existing_json = dict(existing.json or {})
+            existing_json["spec"] = {
                 "description": description,
                 "prompt": prompt,
                 "version": version,
                 "author": author,
                 "tags": tags,
             }
+            existing.json = existing_json
             existing.is_active = True
             db.commit()
             db.refresh(existing)
