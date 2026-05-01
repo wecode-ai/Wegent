@@ -229,6 +229,8 @@ class ResponsesAPIEmitter:
         name: str,
         arguments: Optional[dict] = None,
         display_name: Optional[str] = None,
+        tool_protocol: str = "function_call",
+        server_label: Optional[str] = None,
     ) -> Any:
         """Emit function call start events.
 
@@ -250,6 +252,31 @@ class ResponsesAPIEmitter:
         if hasattr(self.transport, "start_collecting"):
             self.transport.start_collecting()
 
+        if tool_protocol == "mcp":
+            added_data = self.builder.mcp_call_added(
+                item_id=call_id,
+                name=name,
+                server_label=server_label or "",
+            )
+            await self._emit(
+                ResponsesAPIStreamEvents.OUTPUT_ITEM_ADDED.value, added_data
+            )
+
+            if arguments is not None:
+                args_done_data = self.builder.mcp_call_arguments_done(
+                    call_id, arguments
+                )
+                await self._emit(
+                    ResponsesAPIStreamEvents.MCP_CALL_ARGUMENTS_DONE.value,
+                    args_done_data,
+                )
+
+            in_progress_data = self.builder.mcp_call_in_progress(call_id)
+            return await self._emit(
+                ResponsesAPIStreamEvents.MCP_CALL_IN_PROGRESS.value,
+                in_progress_data,
+            )
+
         # Send function call added
         added_data = self.builder.function_call_added(call_id, name, display_name)
         await self._emit(ResponsesAPIStreamEvents.OUTPUT_ITEM_ADDED.value, added_data)
@@ -266,6 +293,10 @@ class ResponsesAPIEmitter:
         name: str,
         arguments: Optional[dict] = None,
         output: Optional[str] = None,
+        tool_protocol: str = "function_call",
+        server_label: Optional[str] = None,
+        status: str = "completed",
+        error: Optional[str] = None,
     ) -> Any:
         """Emit function call done events.
 
@@ -286,6 +317,40 @@ class ResponsesAPIEmitter:
         # Enable collecting mode for GeneratorTransport
         if hasattr(self.transport, "start_collecting"):
             self.transport.start_collecting()
+
+        if tool_protocol == "mcp":
+            if arguments is not None:
+                args_done_data = self.builder.mcp_call_arguments_done(
+                    call_id, arguments
+                )
+                await self._emit(
+                    ResponsesAPIStreamEvents.MCP_CALL_ARGUMENTS_DONE.value,
+                    args_done_data,
+                )
+
+            if status == "failed":
+                failed_data = self.builder.mcp_call_failed(call_id, error=error)
+                await self._emit(
+                    ResponsesAPIStreamEvents.MCP_CALL_FAILED.value,
+                    failed_data,
+                )
+            else:
+                completed_data = self.builder.mcp_call_completed(call_id)
+                await self._emit(
+                    ResponsesAPIStreamEvents.MCP_CALL_COMPLETED.value,
+                    completed_data,
+                )
+
+            item_done_data = self.builder.mcp_call_done(
+                item_id=call_id,
+                name=name,
+                server_label=server_label or "",
+                arguments=arguments,
+                status=status,
+            )
+            return await self._emit(
+                ResponsesAPIStreamEvents.OUTPUT_ITEM_DONE.value, item_done_data
+            )
 
         # Send arguments done (with output for tool result)
         done_data = self.builder.function_call_arguments_done(

@@ -187,3 +187,115 @@ class TestStreamingServiceReasoning:
         output = completed_event["response"]["output"]
         assert len(output) == 1
         assert output[0]["content"][0]["type"] == "reasoning"
+
+    @pytest.mark.asyncio
+    async def test_function_call_stream(self, streaming_service):
+        async def function_call_stream():
+            yield StreamingChunk(
+                type="function_call_added",
+                data={
+                    "call_id": "call_123",
+                    "name": "knowledge_base_search",
+                    "arguments": '{"query": "timeout"}',
+                    "output_index": 0,
+                },
+            )
+            yield StreamingChunk(
+                type="function_call_done",
+                data={
+                    "call_id": "call_123",
+                    "name": "knowledge_base_search",
+                    "arguments": '{"query": "timeout"}',
+                    "output_index": 0,
+                },
+            )
+            yield StreamingChunk(type="text", content="done")
+
+        events = []
+        async for event in streaming_service.create_streaming_response(
+            response_id="resp_123",
+            model_string="gpt-4",
+            chat_stream=function_call_stream(),
+            created_at=1234567890,
+        ):
+            events.append(json.loads(event.replace("data: ", "").strip()))
+
+        event_types = [e["type"] for e in events]
+        assert "response.output_item.added" in event_types
+        assert "response.function_call_arguments.done" in event_types
+        assert "response.output_item.done" in event_types
+        assert "response.output_text.delta" in event_types
+
+        function_added = next(
+            e
+            for e in events
+            if e["type"] == "response.output_item.added"
+            and e["item"]["type"] == "function_call"
+        )
+        assert function_added["item"]["name"] == "knowledge_base_search"
+
+    @pytest.mark.asyncio
+    async def test_mcp_call_stream(self, streaming_service):
+        async def mcp_call_stream():
+            yield StreamingChunk(
+                type="mcp_call_added",
+                data={
+                    "item_id": "mcp_123",
+                    "name": "search_docs",
+                    "server_label": "wegent-knowledge",
+                    "output_index": 0,
+                },
+            )
+            yield StreamingChunk(
+                type="mcp_call_done",
+                data={
+                    "item_id": "mcp_123",
+                    "name": "search_docs",
+                    "server_label": "wegent-knowledge",
+                    "arguments": '{"query": "SSE timeout"}',
+                    "output_index": 0,
+                    "status": "completed",
+                },
+            )
+            yield StreamingChunk(type="text", content="resolved")
+
+        events = []
+        async for event in streaming_service.create_streaming_response(
+            response_id="resp_123",
+            model_string="gpt-4",
+            chat_stream=mcp_call_stream(),
+            created_at=1234567890,
+        ):
+            events.append(json.loads(event.replace("data: ", "").strip()))
+
+        event_types = [e["type"] for e in events]
+        assert "response.mcp_call.in_progress" in event_types
+        assert "response.mcp_call_arguments.done" in event_types
+        assert "response.mcp_call.completed" in event_types
+
+        mcp_added = next(
+            e
+            for e in events
+            if e["type"] == "response.output_item.added"
+            and e["item"]["type"] == "mcp_call"
+        )
+        assert mcp_added["item"]["server_label"] == "wegent-knowledge"
+
+    @pytest.mark.asyncio
+    async def test_task_context_extension(self, streaming_service):
+        async def text_stream():
+            yield StreamingChunk(type="text", content="hello")
+
+        events = []
+        async for event in streaming_service.create_streaming_response(
+            response_id="resp_123",
+            model_string="gpt-4",
+            chat_stream=text_stream(),
+            created_at=1234567890,
+            task_context={"task_id": 123, "task_path": "/chat?task_id=123"},
+        ):
+            events.append(json.loads(event.replace("data: ", "").strip()))
+
+        task_context = next(e for e in events if e["type"] == "response.task_context")
+        assert task_context["task_id"] == 123
+        assert task_context["task_path"] == "/chat?task_id=123"

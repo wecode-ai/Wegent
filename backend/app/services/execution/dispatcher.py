@@ -108,8 +108,11 @@ class ResponsesAPIEventParser:
     It converts OpenAI Responses API events to internal ExecutionEvent format.
     """
 
-    @staticmethod
+    def __init__(self) -> None:
+        self._tool_contexts: dict[str, dict[str, Any]] = {}
+
     def parse(
+        self,
         task_id: int,
         subtask_id: int,
         message_id: Optional[int],
@@ -191,6 +194,7 @@ class ResponsesAPIEventParser:
                 data.get("call_id") or data.get("item_id"),
                 context="function_call_arguments.done",
             )
+            tool_context = self._tool_contexts.pop(tool_use_id, {})
             # Parse arguments from the event data to get tool_input
             arguments_str = data.get("arguments", "")
             tool_input = None
@@ -203,10 +207,14 @@ class ResponsesAPIEventParser:
                 type=EventType.TOOL_RESULT,
                 task_id=task_id,
                 subtask_id=subtask_id,
+                tool_name=tool_context.get("name"),
                 tool_use_id=tool_use_id,
-                tool_input=tool_input,
+                tool_input=tool_input or tool_context.get("arguments"),
                 tool_output=data.get("output"),
-                data={"blocks": data.get("blocks", [])},
+                data={
+                    "blocks": data.get("blocks", []),
+                    "tool_protocol": "function_call",
+                },
                 message_id=message_id,
             )
 
@@ -242,6 +250,11 @@ class ResponsesAPIEventParser:
                         arguments = json.loads(arguments_str)
                     except (json.JSONDecodeError, TypeError):
                         pass
+                self._tool_contexts[call_id] = {
+                    "protocol": "function_call",
+                    "name": name,
+                    "arguments": arguments,
+                }
 
                 return ExecutionEvent(
                     type=EventType.TOOL_START,
@@ -253,11 +266,95 @@ class ResponsesAPIEventParser:
                     data={
                         "blocks": data.get("blocks", []),
                         "display_name": data.get("display_name"),
+                        "tool_protocol": "function_call",
+                    },
+                    message_id=message_id,
+                )
+            if item.get("type") == "mcp_call":
+                item_id = _require_non_empty_tool_use_id(
+                    item.get("id"),
+                    context="response.output_item.added(mcp_call)",
+                )
+                server_label = item.get("server_label", "")
+                name = item.get("name", "")
+                self._tool_contexts[item_id] = {
+                    "protocol": "mcp",
+                    "name": name,
+                    "server_label": server_label,
+                }
+                return ExecutionEvent(
+                    type=EventType.TOOL_START,
+                    task_id=task_id,
+                    subtask_id=subtask_id,
+                    tool_use_id=item_id,
+                    tool_name=name,
+                    data={
+                        "tool_protocol": "mcp",
+                        "server_label": server_label,
                     },
                     message_id=message_id,
                 )
             # Other item types (message) are lifecycle events, skip
             return None
+
+        elif event_type == ResponsesAPIStreamEvents.MCP_CALL_ARGUMENTS_DONE.value:
+            item_id = _require_non_empty_tool_use_id(
+                data.get("item_id"),
+                context="response.mcp_call_arguments.done",
+            )
+            tool_context = self._tool_contexts.setdefault(item_id, {"protocol": "mcp"})
+            arguments_str = data.get("arguments", "")
+            tool_input = None
+            if arguments_str:
+                try:
+                    tool_input = json.loads(arguments_str)
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            tool_context["arguments"] = tool_input
+            return ExecutionEvent(
+                type=EventType.TOOL,
+                task_id=task_id,
+                subtask_id=subtask_id,
+                tool_use_id=item_id,
+                tool_input=tool_input,
+                data={
+                    "tool_protocol": "mcp",
+                    "phase": "arguments_done",
+                },
+                message_id=message_id,
+            )
+
+        elif event_type == ResponsesAPIStreamEvents.MCP_CALL_IN_PROGRESS.value:
+            return None
+
+        elif event_type in (
+            ResponsesAPIStreamEvents.MCP_CALL_COMPLETED.value,
+            ResponsesAPIStreamEvents.MCP_CALL_FAILED.value,
+        ):
+            item_id = _require_non_empty_tool_use_id(
+                data.get("item_id"),
+                context=event_type,
+            )
+            tool_context = self._tool_contexts.pop(item_id, {})
+            return ExecutionEvent(
+                type=EventType.TOOL_RESULT,
+                task_id=task_id,
+                subtask_id=subtask_id,
+                tool_name=tool_context.get("name"),
+                tool_use_id=item_id,
+                tool_input=tool_context.get("arguments"),
+                data={
+                    "tool_protocol": "mcp",
+                    "server_label": tool_context.get("server_label", ""),
+                    "status": (
+                        "failed"
+                        if event_type == ResponsesAPIStreamEvents.MCP_CALL_FAILED.value
+                        else "completed"
+                    ),
+                    "error": data.get("error"),
+                },
+                message_id=message_id,
+            )
 
         elif event_type in (
             ResponsesAPIStreamEvents.RESPONSE_CREATED.value,
@@ -266,6 +363,7 @@ class ResponsesAPIEventParser:
             ResponsesAPIStreamEvents.CONTENT_PART_ADDED.value,
             ResponsesAPIStreamEvents.CONTENT_PART_DONE.value,
             ResponsesAPIStreamEvents.OUTPUT_TEXT_DONE.value,
+            ResponsesAPIStreamEvents.MCP_CALL_ARGUMENTS_DELTA.value,
         ):
             # These are lifecycle events, skip them
             return None

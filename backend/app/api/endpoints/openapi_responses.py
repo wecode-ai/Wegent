@@ -12,6 +12,7 @@ This module uses the unified trigger architecture:
 - execution_dispatcher.dispatch: Unified dispatch with SSEResultEmitter for streaming
 """
 
+import json
 import logging
 from datetime import datetime
 from typing import Any, Dict, Optional
@@ -753,6 +754,8 @@ async def _create_streaming_response_unified(
 
         accumulated_content = ""
         accumulated_reasoning = ""
+        tool_states: Dict[str, Dict[str, Any]] = {}
+        next_tool_output_index = 0
 
         try:
             cancel_event = await session_manager.register_stream(assistant_subtask_id)
@@ -790,10 +793,124 @@ async def _create_streaming_response_unified(
                         if reasoning:
                             accumulated_reasoning += reasoning
                             yield StreamingChunk(type="reasoning", content=reasoning)
+                    elif event.type == EventType.TOOL_START.value:
+                        tool_use_id = event.tool_use_id or ""
+                        if not tool_use_id:
+                            continue
+
+                        tool_protocol = (
+                            event.data.get("tool_protocol", "function_call")
+                            if event.data
+                            else "function_call"
+                        )
+                        tool_name = event.tool_name or ""
+                        tool_input = event.tool_input or {}
+                        tool_state = {
+                            "protocol": tool_protocol,
+                            "name": tool_name,
+                            "arguments": tool_input,
+                            "output_index": next_tool_output_index,
+                        }
+                        if event.data and event.data.get("server_label"):
+                            tool_state["server_label"] = event.data["server_label"]
+                        tool_states[tool_use_id] = tool_state
+                        next_tool_output_index += 1
+
+                        if tool_protocol == "mcp":
+                            yield StreamingChunk(
+                                type="mcp_call_added",
+                                data={
+                                    "item_id": tool_use_id,
+                                    "name": tool_name,
+                                    "server_label": tool_state.get("server_label", ""),
+                                    "output_index": tool_state["output_index"],
+                                },
+                            )
+                        else:
+                            yield StreamingChunk(
+                                type="function_call_added",
+                                data={
+                                    "call_id": tool_use_id,
+                                    "name": tool_name,
+                                    "arguments": (
+                                        json.dumps(tool_input, ensure_ascii=False)
+                                        if tool_input
+                                        else ""
+                                    ),
+                                    "output_index": tool_state["output_index"],
+                                },
+                            )
+                    elif event.type == EventType.TOOL.value:
+                        tool_use_id = event.tool_use_id or ""
+                        if not tool_use_id:
+                            continue
+                        tool_state = tool_states.get(tool_use_id)
+                        if not tool_state:
+                            continue
+                        if tool_state.get("protocol") == "mcp":
+                            tool_state["arguments"] = event.tool_input or {}
                     elif event.type == EventType.ERROR.value:
                         error_msg = event.error or "Unknown error"
                         logger.error(f"[OPENAPI] Error from execution: {error_msg}")
                         raise Exception(error_msg)
+                    elif event.type == EventType.TOOL_RESULT.value:
+                        tool_use_id = event.tool_use_id or ""
+                        if not tool_use_id:
+                            continue
+                        tool_state = tool_states.pop(tool_use_id, {})
+                        tool_protocol = tool_state.get(
+                            "protocol",
+                            (
+                                event.data.get("tool_protocol", "function_call")
+                                if event.data
+                                else "function_call"
+                            ),
+                        )
+                        tool_name = tool_state.get("name") or event.tool_name or ""
+                        arguments = (
+                            event.tool_input or tool_state.get("arguments") or {}
+                        )
+                        output_index = tool_state.get("output_index", 0)
+
+                        if tool_protocol == "mcp":
+                            yield StreamingChunk(
+                                type="mcp_call_done",
+                                data={
+                                    "item_id": tool_use_id,
+                                    "name": tool_name,
+                                    "server_label": tool_state.get("server_label", ""),
+                                    "arguments": (
+                                        json.dumps(arguments, ensure_ascii=False)
+                                        if arguments
+                                        else ""
+                                    ),
+                                    "output_index": output_index,
+                                    "status": (
+                                        "failed"
+                                        if event.data
+                                        and event.data.get("status") == "failed"
+                                        else "completed"
+                                    ),
+                                    "error": event.error
+                                    or (
+                                        event.data.get("error") if event.data else None
+                                    ),
+                                },
+                            )
+                        else:
+                            yield StreamingChunk(
+                                type="function_call_done",
+                                data={
+                                    "call_id": tool_use_id,
+                                    "name": tool_name,
+                                    "arguments": (
+                                        json.dumps(arguments, ensure_ascii=False)
+                                        if arguments
+                                        else ""
+                                    ),
+                                    "output_index": output_index,
+                                },
+                            )
                     elif event.type == EventType.DONE.value:
                         logger.info(
                             f"[OPENAPI] Stream completed for subtask {assistant_subtask_id}"
@@ -874,6 +991,15 @@ async def _create_streaming_response_unified(
                 chat_stream=raw_chat_stream(),
                 created_at=created_at,
                 previous_response_id=request_body.previous_response_id,
+                task_context=(
+                    {
+                        "task_id": setup.task_id,
+                        "task_path": f"/chat?task_id={setup.task_id}",
+                    }
+                    if request_body.wegent_options
+                    and request_body.wegent_options.include_task_context
+                    else None
+                ),
             ):
                 yield event
         except NotImplementedError as e:

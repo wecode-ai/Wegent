@@ -819,6 +819,99 @@ class ResponsesAPIEventBuilder:
         }
 
     # ============================================================
+    # MCP Call Events
+    # ============================================================
+
+    def mcp_call_added(
+        self,
+        item_id: str,
+        name: str,
+        server_label: str,
+    ) -> dict:
+        """Create response.output_item.added event for MCP call."""
+        return {
+            "type": ResponsesAPIStreamEvents.OUTPUT_ITEM_ADDED.value,
+            "response_id": self.response_id,
+            "output_index": self._tool_output_index,
+            "item": {
+                "type": "mcp_call",
+                "id": item_id,
+                "name": name,
+                "server_label": server_label,
+                "arguments": "",
+            },
+        }
+
+    def mcp_call_arguments_done(
+        self,
+        item_id: str,
+        arguments: Optional[dict] = None,
+    ) -> dict:
+        """Create response.mcp_call_arguments.done event."""
+        return {
+            "type": ResponsesAPIStreamEvents.MCP_CALL_ARGUMENTS_DONE.value,
+            "response_id": self.response_id,
+            "item_id": item_id,
+            "output_index": self._tool_output_index,
+            "arguments": json.dumps(arguments) if arguments else "",
+        }
+
+    def mcp_call_in_progress(self, item_id: str) -> dict:
+        """Create response.mcp_call.in_progress event."""
+        return {
+            "type": ResponsesAPIStreamEvents.MCP_CALL_IN_PROGRESS.value,
+            "response_id": self.response_id,
+            "item_id": item_id,
+            "output_index": self._tool_output_index,
+        }
+
+    def mcp_call_completed(self, item_id: str) -> dict:
+        """Create response.mcp_call.completed event."""
+        return {
+            "type": ResponsesAPIStreamEvents.MCP_CALL_COMPLETED.value,
+            "response_id": self.response_id,
+            "item_id": item_id,
+            "output_index": self._tool_output_index,
+        }
+
+    def mcp_call_failed(self, item_id: str, error: Optional[str] = None) -> dict:
+        """Create response.mcp_call.failed event."""
+        data = {
+            "type": ResponsesAPIStreamEvents.MCP_CALL_FAILED.value,
+            "response_id": self.response_id,
+            "item_id": item_id,
+            "output_index": self._tool_output_index,
+        }
+        if error:
+            data["error"] = error
+        return data
+
+    def mcp_call_done(
+        self,
+        item_id: str,
+        name: str,
+        server_label: str,
+        arguments: Optional[dict] = None,
+        status: str = "completed",
+    ) -> dict:
+        """Create response.output_item.done event for MCP call."""
+        output_index = self._tool_output_index
+        self._tool_output_index += 1
+        return {
+            "type": ResponsesAPIStreamEvents.OUTPUT_ITEM_DONE.value,
+            "response_id": self.response_id,
+            "output_index": output_index,
+            "item": {
+                "type": "mcp_call",
+                "id": item_id,
+                "name": name,
+                "server_label": server_label,
+                "arguments": json.dumps(arguments) if arguments else "",
+                "status": status,
+            },
+        }
+
+    # ============================================================
     # Reasoning Events
     # ============================================================
 

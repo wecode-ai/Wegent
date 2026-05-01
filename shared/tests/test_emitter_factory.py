@@ -343,3 +343,32 @@ class TestRedisTransport:
         assert published_data["subtask_id"] == 2
         assert published_data["data"] == {"test": "data"}
         assert published_data["message_id"] == 3
+
+
+class TestResponsesAPIEmitter:
+    @pytest.mark.asyncio
+    async def test_mcp_tool_done_failed_emits_failed_terminal_events(self):
+        transport = GeneratorTransport()
+        emitter = EmitterBuilder().with_task(1, 2).with_transport(transport).build()
+
+        await emitter.tool_done(
+            call_id="mcp_123",
+            name="search_docs",
+            arguments={"query": "timeout"},
+            output="MCP tool 'search_docs' timed out after 180.0s",
+            tool_protocol="mcp",
+            server_label="wegent-knowledge",
+            status="failed",
+            error="MCP tool 'search_docs' timed out after 180.0s",
+        )
+
+        events = transport.get_events()
+        event_types = [event_type for event_type, _ in events]
+
+        assert event_types == [
+            "response.mcp_call_arguments.done",
+            "response.mcp_call.failed",
+            "response.output_item.done",
+        ]
+        assert events[1][1]["error"] == "MCP tool 'search_docs' timed out after 180.0s"
+        assert events[2][1]["item"]["status"] == "failed"
