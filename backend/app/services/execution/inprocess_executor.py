@@ -16,6 +16,7 @@ Design:
 """
 
 import asyncio
+import json
 import logging
 from typing import Optional
 
@@ -63,6 +64,15 @@ class EmitterBridgeTransport(EventTransport):
         self.message_id = message_id
         self._offset = 0  # Track cumulative text offset
         self._tool_contexts: dict[str, dict] = {}
+
+    def _pop_tool_context(self, tool_use_id: str) -> dict:
+        """Return tracked tool context or fail fast for invalid tool lifecycles."""
+        tool_context = self._tool_contexts.pop(tool_use_id, None)
+        if tool_context is None:
+            raise ValueError(
+                f"Received tool completion event for unknown tool: {tool_use_id}"
+            )
+        return tool_context
 
     async def send(
         self,
@@ -163,8 +173,6 @@ class EmitterBridgeTransport(EventTransport):
         elif event_type == ResponsesAPIStreamEvents.OUTPUT_ITEM_ADDED.value:
             item = data.get("item", {})
             if item.get("type") == "function_call":
-                import json
-
                 call_id = _require_non_empty_tool_use_id(
                     item.get("call_id") or item.get("id"),
                     context="response.output_item.added(function_call)",
@@ -229,7 +237,7 @@ class EmitterBridgeTransport(EventTransport):
                 data.get("call_id") or data.get("item_id"),
                 context="function_call_arguments.done",
             )
-            tool_context = self._tool_contexts.pop(tool_use_id, {})
+            tool_context = self._pop_tool_context(tool_use_id)
             arguments = tool_context.get("arguments")
             arguments_str = data.get("arguments", "")
             if arguments is None and arguments_str:
@@ -287,7 +295,7 @@ class EmitterBridgeTransport(EventTransport):
                 data.get("item_id"),
                 context=event_type,
             )
-            tool_context = self._tool_contexts.pop(item_id, {})
+            tool_context = self._pop_tool_context(item_id)
             return ExecutionEvent(
                 type=EventType.TOOL_RESULT.value,
                 task_id=self.task_id,

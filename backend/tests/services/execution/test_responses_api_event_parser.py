@@ -58,6 +58,21 @@ class TestResponsesAPIEventParserToolIds:
         """Test that function_call_arguments.done event parses arguments as tool_input."""
         parser = ResponsesAPIEventParser()
 
+        parser.parse(
+            task_id=1,
+            subtask_id=2,
+            message_id=3,
+            event_type=ResponsesAPIStreamEvents.OUTPUT_ITEM_ADDED.value,
+            data={
+                "item": {
+                    "type": "function_call",
+                    "id": "tool_123",
+                    "name": "write_file",
+                    "arguments": '{"path": "/test/file.py", "content": "hello"}',
+                }
+            },
+        )
+
         result = parser.parse(
             task_id=1,
             subtask_id=2,
@@ -74,10 +89,26 @@ class TestResponsesAPIEventParserToolIds:
         assert result.tool_use_id == "tool_123"
         assert result.tool_output == "File created successfully"
         assert result.tool_input == {"path": "/test/file.py", "content": "hello"}
+        assert result.tool_name == "write_file"
 
     def test_tool_result_with_empty_arguments(self):
         """Test that function_call_arguments.done event handles empty arguments."""
         parser = ResponsesAPIEventParser()
+
+        parser.parse(
+            task_id=1,
+            subtask_id=2,
+            message_id=3,
+            event_type=ResponsesAPIStreamEvents.OUTPUT_ITEM_ADDED.value,
+            data={
+                "item": {
+                    "type": "function_call",
+                    "id": "tool_456",
+                    "name": "search",
+                    "arguments": "",
+                }
+            },
+        )
 
         result = parser.parse(
             task_id=1,
@@ -94,11 +125,26 @@ class TestResponsesAPIEventParserToolIds:
         assert result is not None
         assert result.tool_use_id == "tool_456"
         assert result.tool_output == "Success"
-        assert result.tool_input is None
+        assert result.tool_input == {}
 
     def test_tool_result_without_arguments(self):
         """Test that function_call_arguments.done event handles missing arguments."""
         parser = ResponsesAPIEventParser()
+
+        parser.parse(
+            task_id=1,
+            subtask_id=2,
+            message_id=3,
+            event_type=ResponsesAPIStreamEvents.OUTPUT_ITEM_ADDED.value,
+            data={
+                "item": {
+                    "type": "function_call",
+                    "id": "tool_789",
+                    "name": "search",
+                    "arguments": "",
+                }
+            },
+        )
 
         result = parser.parse(
             task_id=1,
@@ -114,7 +160,7 @@ class TestResponsesAPIEventParserToolIds:
         assert result is not None
         assert result.tool_use_id == "tool_789"
         assert result.tool_output == "Done"
-        assert result.tool_input is None
+        assert result.tool_input == {}
 
     def test_mcp_tool_start_and_completion(self):
         parser = ResponsesAPIEventParser()
@@ -202,6 +248,75 @@ class TestResponsesAPIEventParserToolIds:
         assert failed.data["status"] == "failed"
         assert failed.data["error"] == "timeout"
 
+    def test_tool_result_without_context_is_skipped(self):
+        parser = ResponsesAPIEventParser()
+
+        result = parser.parse(
+            task_id=1,
+            subtask_id=2,
+            message_id=3,
+            event_type=ResponsesAPIStreamEvents.FUNCTION_CALL_ARGUMENTS_DONE.value,
+            data={
+                "call_id": "missing_tool",
+                "arguments": '{"path": "/tmp/test.py"}',
+                "output": "done",
+            },
+        )
+
+        assert result is None
+
+    def test_tool_context_is_scoped_by_task_and_subtask(self):
+        parser = ResponsesAPIEventParser()
+
+        parser.parse(
+            task_id=1,
+            subtask_id=10,
+            message_id=3,
+            event_type=ResponsesAPIStreamEvents.OUTPUT_ITEM_ADDED.value,
+            data={
+                "item": {
+                    "type": "function_call",
+                    "id": "shared_tool",
+                    "name": "tool_for_task_1",
+                    "arguments": "{}",
+                }
+            },
+        )
+        parser.parse(
+            task_id=2,
+            subtask_id=20,
+            message_id=4,
+            event_type=ResponsesAPIStreamEvents.OUTPUT_ITEM_ADDED.value,
+            data={
+                "item": {
+                    "type": "function_call",
+                    "id": "shared_tool",
+                    "name": "tool_for_task_2",
+                    "arguments": "{}",
+                }
+            },
+        )
+
+        first = parser.parse(
+            task_id=1,
+            subtask_id=10,
+            message_id=3,
+            event_type=ResponsesAPIStreamEvents.FUNCTION_CALL_ARGUMENTS_DONE.value,
+            data={"call_id": "shared_tool", "output": "done-1"},
+        )
+        second = parser.parse(
+            task_id=2,
+            subtask_id=20,
+            message_id=4,
+            event_type=ResponsesAPIStreamEvents.FUNCTION_CALL_ARGUMENTS_DONE.value,
+            data={"call_id": "shared_tool", "output": "done-2"},
+        )
+
+        assert first is not None
+        assert first.tool_name == "tool_for_task_1"
+        assert second is not None
+        assert second.tool_name == "tool_for_task_2"
+
     def test_inprocess_bridge_reuses_same_fail_fast_validation(self):
         transport = EmitterBridgeTransport(
             emitter=AsyncMock(),
@@ -223,6 +338,27 @@ class TestResponsesAPIEventParserToolIds:
                         "name": "search",
                         "arguments": "{}",
                     }
+                },
+                message_id=3,
+            )
+
+    def test_inprocess_bridge_raises_for_unknown_tool_completion(self):
+        transport = EmitterBridgeTransport(
+            emitter=AsyncMock(),
+            task_id=1,
+            subtask_id=2,
+            message_id=3,
+        )
+
+        with pytest.raises(
+            ValueError, match="Received tool completion event for unknown tool"
+        ):
+            transport._convert_event(
+                ResponsesAPIStreamEvents.FUNCTION_CALL_ARGUMENTS_DONE.value,
+                {
+                    "call_id": "missing_tool",
+                    "arguments": '{"path": "/tmp/test.py"}',
+                    "output": "done",
                 },
                 message_id=3,
             )

@@ -111,6 +111,11 @@ class ResponsesAPIEventParser:
     def __init__(self) -> None:
         self._tool_contexts: dict[str, dict[str, Any]] = {}
 
+    @staticmethod
+    def _tool_key(task_id: int, subtask_id: int, tool_use_id: str) -> str:
+        """Build a stable context key scoped to the request lifecycle."""
+        return f"{task_id}:{subtask_id}:{tool_use_id}"
+
     def parse(
         self,
         task_id: int,
@@ -194,7 +199,14 @@ class ResponsesAPIEventParser:
                 data.get("call_id") or data.get("item_id"),
                 context="function_call_arguments.done",
             )
-            tool_context = self._tool_contexts.pop(tool_use_id, {})
+            tool_key = self._tool_key(task_id, subtask_id, tool_use_id)
+            tool_context = self._tool_contexts.pop(tool_key, None)
+            if tool_context is None:
+                logger.warning(
+                    "[ResponsesAPIEventParser] Missing function_call context for %s",
+                    tool_key,
+                )
+                return None
             # Parse arguments from the event data to get tool_input
             arguments_str = data.get("arguments", "")
             tool_input = None
@@ -250,7 +262,8 @@ class ResponsesAPIEventParser:
                         arguments = json.loads(arguments_str)
                     except (json.JSONDecodeError, TypeError):
                         pass
-                self._tool_contexts[call_id] = {
+                tool_key = self._tool_key(task_id, subtask_id, call_id)
+                self._tool_contexts[tool_key] = {
                     "protocol": "function_call",
                     "name": name,
                     "arguments": arguments,
@@ -277,7 +290,8 @@ class ResponsesAPIEventParser:
                 )
                 server_label = item.get("server_label", "")
                 name = item.get("name", "")
-                self._tool_contexts[item_id] = {
+                tool_key = self._tool_key(task_id, subtask_id, item_id)
+                self._tool_contexts[tool_key] = {
                     "protocol": "mcp",
                     "name": name,
                     "server_label": server_label,
@@ -302,7 +316,14 @@ class ResponsesAPIEventParser:
                 data.get("item_id"),
                 context="response.mcp_call_arguments.done",
             )
-            tool_context = self._tool_contexts.setdefault(item_id, {"protocol": "mcp"})
+            tool_key = self._tool_key(task_id, subtask_id, item_id)
+            tool_context = self._tool_contexts.get(tool_key)
+            if tool_context is None:
+                logger.warning(
+                    "[ResponsesAPIEventParser] Missing mcp_call context for %s during arguments.done",
+                    tool_key,
+                )
+                return None
             arguments_str = data.get("arguments", "")
             tool_input = None
             if arguments_str:
@@ -335,7 +356,14 @@ class ResponsesAPIEventParser:
                 data.get("item_id"),
                 context=event_type,
             )
-            tool_context = self._tool_contexts.pop(item_id, {})
+            tool_key = self._tool_key(task_id, subtask_id, item_id)
+            tool_context = self._tool_contexts.pop(tool_key, None)
+            if tool_context is None:
+                logger.warning(
+                    "[ResponsesAPIEventParser] Missing mcp_call completion context for %s",
+                    tool_key,
+                )
+                return None
             return ExecutionEvent(
                 type=EventType.TOOL_RESULT,
                 task_id=task_id,

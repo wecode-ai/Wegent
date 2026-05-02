@@ -857,7 +857,21 @@ async def _create_streaming_response_unified(
                         tool_use_id = event.tool_use_id or ""
                         if not tool_use_id:
                             continue
-                        tool_state = tool_states.pop(tool_use_id, {})
+                        tool_state = tool_states.pop(tool_use_id, None)
+                        if tool_state is None:
+                            tool_state = {
+                                "protocol": (
+                                    event.data.get("tool_protocol", "function_call")
+                                    if event.data
+                                    else "function_call"
+                                ),
+                                "name": event.tool_name or "",
+                                "arguments": event.tool_input or {},
+                                "output_index": next_tool_output_index,
+                            }
+                            if event.data and event.data.get("server_label"):
+                                tool_state["server_label"] = event.data["server_label"]
+                            next_tool_output_index += 1
                         tool_protocol = tool_state.get(
                             "protocol",
                             (
@@ -870,7 +884,7 @@ async def _create_streaming_response_unified(
                         arguments = (
                             event.tool_input or tool_state.get("arguments") or {}
                         )
-                        output_index = tool_state.get("output_index", 0)
+                        output_index = tool_state["output_index"]
 
                         if tool_protocol == "mcp":
                             yield StreamingChunk(

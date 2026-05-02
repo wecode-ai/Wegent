@@ -76,7 +76,18 @@ class FunctionCallItem(TypedDict, total=False):
     arguments: str
 
 
-OutputItem = Union[MessageItem, FunctionCallItem]
+class MCPCallItem(TypedDict, total=False):
+    """MCP call output item."""
+
+    type: Literal["mcp_call"]
+    id: str
+    name: str
+    server_label: str
+    arguments: str
+    status: str
+
+
+OutputItem = Union[MessageItem, FunctionCallItem, MCPCallItem]
 
 
 class ResponsesAPIResponse(TypedDict, total=False):
