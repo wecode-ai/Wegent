@@ -362,3 +362,57 @@ class TestResponsesAPIEventParserToolIds:
                 },
                 message_id=3,
             )
+
+    def test_inprocess_bridge_function_call_done_uses_final_arguments_payload(self):
+        transport = EmitterBridgeTransport(
+            emitter=AsyncMock(),
+            task_id=1,
+            subtask_id=2,
+            message_id=3,
+        )
+
+        transport._convert_event(
+            ResponsesAPIStreamEvents.OUTPUT_ITEM_ADDED.value,
+            {
+                "item": {
+                    "type": "function_call",
+                    "id": "tool_123",
+                    "name": "write_file",
+                    "arguments": "",
+                }
+            },
+            message_id=3,
+        )
+
+        result = transport._convert_event(
+            ResponsesAPIStreamEvents.FUNCTION_CALL_ARGUMENTS_DONE.value,
+            {
+                "call_id": "tool_123",
+                "arguments": '{"path": "/tmp/test.py", "content": "hello"}',
+                "output": "done",
+            },
+            message_id=3,
+        )
+
+        assert result is not None
+        assert result.tool_input == {"path": "/tmp/test.py", "content": "hello"}
+
+    def test_inprocess_bridge_raises_for_unknown_mcp_arguments_event(self):
+        transport = EmitterBridgeTransport(
+            emitter=AsyncMock(),
+            task_id=1,
+            subtask_id=2,
+            message_id=3,
+        )
+
+        with pytest.raises(
+            ValueError, match="Received tool arguments event for unknown tool"
+        ):
+            transport._convert_event(
+                ResponsesAPIStreamEvents.MCP_CALL_ARGUMENTS_DONE.value,
+                {
+                    "item_id": "missing_mcp_tool",
+                    "arguments": '{"query": "SSE timeout"}',
+                },
+                message_id=3,
+            )

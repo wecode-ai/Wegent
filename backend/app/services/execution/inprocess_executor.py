@@ -240,11 +240,11 @@ class EmitterBridgeTransport(EventTransport):
             tool_context = self._pop_tool_context(tool_use_id)
             arguments = tool_context.get("arguments")
             arguments_str = data.get("arguments", "")
-            if arguments is None and arguments_str:
+            if arguments_str:
                 try:
                     arguments = json.loads(arguments_str)
                 except (json.JSONDecodeError, TypeError):
-                    arguments = None
+                    pass
             return ExecutionEvent(
                 type=EventType.TOOL_RESULT.value,
                 task_id=self.task_id,
@@ -265,7 +265,11 @@ class EmitterBridgeTransport(EventTransport):
                 data.get("item_id"),
                 context="response.mcp_call_arguments.done",
             )
-            tool_context = self._tool_contexts.setdefault(item_id, {"protocol": "mcp"})
+            tool_context = self._tool_contexts.get(item_id)
+            if tool_context is None:
+                raise ValueError(
+                    f"Received tool arguments event for unknown tool: {item_id}"
+                )
             arguments_str = data.get("arguments", "")
             arguments = None
             if arguments_str:
