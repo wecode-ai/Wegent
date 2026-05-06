@@ -613,7 +613,7 @@
     "no_models": "暂无可用的图片模型"
   },
   "new_conversation_notification": {
-    "content": "- [Wegent使用指南](https://wegent.intra.weibo.com/knowledge/sina/Wegent使用指南)知识库已开放，Wegent使用问题可以直接在知识库中提问\n- 下载 [Weibo AI Toolbox]({{downloadUrl}})，快速安装和配置本机 Claude、OpenClaw、WeiboAP 等 AI 助手应用",
+    "content": "- [Wegent使用指南](https://wegent.intra.weibo.com/knowledge/sina/Wegent使用指南)知识库已开放，Wegent使用问题可以直接在知识库中提问\n- 下载 [Weibo AI Toolbox]({{downloadUrl}})，快速安装和配置本机 Claude、OpenClaw、WeiboAP 等 AI 助手应用\n- 安装 [Wegent Browser Power](https://chromewebstore.google.com/detail/wegent-browser-power/ambidpbogbcdlephgniokkakghccheoi) ，一款面向开发者与产品经理的 AI 浏览器插件，无缝连接 GitLab、Jira、钉钉等平台，让 AI 能力直达工作流。",
     "action": "下载 Weibo AI Toolbox",
     "reopen": "显示通知"
   },
