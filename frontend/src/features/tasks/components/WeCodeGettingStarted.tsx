@@ -10,6 +10,7 @@ import {
   CodeBracketIcon,
   CloudIcon,
   ClipboardDocumentCheckIcon,
+  PuzzlePieceIcon,
 } from '@heroicons/react/24/outline';
 import DiscountNotification from './DiscountNotification';
 
@@ -32,6 +33,12 @@ export default function WeCodeGettingStarted({ className = '' }: WeCodeGettingSt
       title: '使用WeCode云IDE',
       description: '基于云端的集成开发环境，随时随地开始编码',
       link: 'https://space.intra.weibo.com/develop/code-server',
+    },
+    {
+      icon: <PuzzlePieceIcon className="w-6 h-6" />,
+      title: 'Wegent Browser Power',
+      description: '嵌入GitLab、Jira、钉钉，一键解决BUG，轻松完成文档评审和技术评估',
+      link: 'https://chromewebstore.google.com/detail/wegent-browser-power/ambidpbogbcdlephgniokkakghccheoi',
     },
     {
       icon: <ClipboardDocumentCheckIcon className="w-6 h-6" />,
@@ -118,7 +125,7 @@ export default function WeCodeGettingStarted({ className = '' }: WeCodeGettingSt
         </div>
 
         {/* 桌面端网格布局 */}
-        <div className="hidden sm:grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="hidden sm:grid grid-cols-1 lg:grid-cols-4 gap-6">
           {gettingStartedItems.map((item, index) => (
             <Card
               key={index}
