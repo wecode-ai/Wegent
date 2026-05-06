@@ -1158,6 +1158,15 @@ async def get_document_detail(
     include_summary: bool = Query(
         default=True, description="Include document summary in response"
     ),
+    offset: int = Query(
+        default=0, ge=0, description="Content read offset (for pagination)"
+    ),
+    limit: int = Query(
+        default=MAX_DOCUMENT_READ_LIMIT,
+        ge=1,
+        le=MAX_DOCUMENT_READ_LIMIT,
+        description=f"Content read limit (max: {MAX_DOCUMENT_READ_LIMIT})",
+    ),
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -1167,12 +1176,14 @@ async def get_document_detail(
     Query parameters:
     - include_content: Whether to include extracted text content (default: true)
     - include_summary: Whether to include AI-generated summary (default: true)
+    - offset: Content read offset for pagination (default: 0)
+    - limit: Maximum characters to return (default: 100000, max: 100000)
 
     Returns:
     - document_id: Document ID
     - content: Extracted text content (if include_content=true)
-    - content_length: Length of content in characters (if include_content=true)
-    - truncated: Whether content was truncated (if include_content=true)
+    - content_length: Total length of content in characters (if include_content=true)
+    - truncated: Whether more content is available (if include_content=true)
     - summary: Document summary object (if include_summary=true)
     """
     from app.models.knowledge import KnowledgeDocument
@@ -1204,8 +1215,8 @@ async def get_document_detail(
             document_id=doc_id,
             include_content=include_content,
             include_summary=include_summary,
-            offset=0,
-            limit=MAX_DOCUMENT_READ_LIMIT,
+            offset=offset,
+            limit=limit,
         )
     except ValueError as error:
         _raise_document_detail_http_error(error)

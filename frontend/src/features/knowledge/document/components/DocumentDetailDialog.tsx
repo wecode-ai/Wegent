@@ -116,6 +116,44 @@ function isMarkdownFileExtension(extension: string | undefined): boolean {
   return mdExtensions.includes(extension.toLowerCase())
 }
 
+/**
+ * Check if file extension indicates JSON content
+ */
+function isJsonFileExtension(extension: string | undefined): boolean {
+  if (!extension) return false
+  const jsonExtensions = ['json', 'jsonl', 'json5']
+  return jsonExtensions.includes(extension.toLowerCase())
+}
+
+/**
+ * Try to parse and format JSON content
+ * Returns formatted JSON string if valid, null if invalid
+ */
+function formatJsonContent(content: string): string | null {
+  if (!content) return null
+  try {
+    // Try to parse as JSON
+    const parsed = JSON.parse(content)
+    // Format with 2-space indentation
+    return JSON.stringify(parsed, null, 2)
+  } catch {
+    // Not valid JSON
+    return null
+  }
+}
+
+/**
+ * Check if content appears to be JSON (even if file extension doesn't indicate it)
+ */
+function looksLikeJson(content: string): boolean {
+  if (!content) return false
+  const trimmed = content.trim()
+  return (
+    (trimmed.startsWith('{') && trimmed.endsWith('}')) ||
+    (trimmed.startsWith('[') && trimmed.endsWith(']'))
+  )
+}
+
 interface DocumentDetailDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -291,7 +329,9 @@ export function DocumentDetailDialog({
   const [editedContent, setEditedContent] = useState('')
   const [isSaving, setIsSaving] = useState(false)
   const [showDiscardDialog, setShowDiscardDialog] = useState(false)
-  // View mode: 'preview' for markdown rendering, 'raw' for plain text
+  // Loading state for loading full content before editing
+  const [isLoadingFullContent, setIsLoadingFullContent] = useState(false)
+  // View mode: 'preview' for markdown rendering/formatted JSON, 'raw' for plain text
   const [viewMode, setViewMode] = useState<'preview' | 'raw'>('preview')
   // Fullscreen mode for editing
   const [isFullscreen, setIsFullscreen] = useState(false)
@@ -310,11 +350,33 @@ export function DocumentDetailDialog({
       })
   }, [])
 
-  const { detail, loading, error, refresh } = useDocumentDetail({
+  const {
+    detail,
+    loading,
+    error,
+    refresh,
+    loadingMore,
+    hasMoreContent,
+    fullContent,
+    loadMore,
+    loadAllContent,
+  } = useDocumentDetail({
     kbId: knowledgeBaseId,
     docId: document?.id || 0,
     enabled: open && !!document,
   })
+
+  // Check if content is JSON (by file extension or content detection)
+  const isJsonContent = useMemo(() => {
+    if (!fullContent) return false
+    return isJsonFileExtension(document?.file_extension) || looksLikeJson(fullContent)
+  }, [fullContent, document?.file_extension])
+
+  // Format JSON content for display
+  const formattedJsonContent = useMemo(() => {
+    if (!isJsonContent || !fullContent) return null
+    return formatJsonContent(fullContent)
+  }, [isJsonContent, fullContent])
 
   // Check if document is editable (for both notebook and classic KB types, TEXT type or plain text files)
   const editableExtensions = [
@@ -457,10 +519,20 @@ export function DocumentDetailDialog({
     refresh()
   }
 
-  const handleEdit = () => {
+  const handleEdit = async () => {
     if (!isEditable) return
 
-    setEditedContent(detail?.content || '')
+    // If there's more content to load, load it first before editing
+    if (hasMoreContent) {
+      setIsLoadingFullContent(true)
+      try {
+        await loadAllContent()
+      } finally {
+        setIsLoadingFullContent(false)
+      }
+    }
+
+    setEditedContent(fullContent || '')
     setIsEditing(true)
   }
 
@@ -688,7 +760,7 @@ export function DocumentDetailDialog({
                         </span>
                       )}
                       <div className="flex items-center gap-2">
-                        {!isEditing && detail.truncated && (
+                        {!isEditing && hasMoreContent && (
                           <Badge variant="warning" size="sm">
                             {t('document.document.detail.truncated')}
                           </Badge>
@@ -740,8 +812,8 @@ export function DocumentDetailDialog({
                           </>
                         ) : (
                           <>
-                            {/* View mode toggle - only show when content is markdown */}
-                            {isMarkdownContent && detail.content && (
+                            {/* View mode toggle - show for markdown or JSON content */}
+                            {(isMarkdownContent || isJsonContent) && detail.content && (
                               <Tooltip>
                                 <TooltipTrigger asChild>
                                   <Button
@@ -803,9 +875,25 @@ export function DocumentDetailDialog({
                               </Tooltip>
                             )}
                             {isEditable && (
-                              <Button variant="outline" size="sm" onClick={handleEdit}>
-                                <Pencil className="w-3.5 h-3.5 mr-1" />
-                                {t('document.document.detail.edit')}
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={handleEdit}
+                                disabled={isLoadingFullContent}
+                              >
+                                {isLoadingFullContent ? (
+                                  <>
+                                    <Spinner className="w-3.5 h-3.5 mr-1" />
+                                    {t('document.document.detail.loading', {
+                                      defaultValue: 'Loading...',
+                                    })}
+                                  </>
+                                ) : (
+                                  <>
+                                    <Pencil className="w-3.5 h-3.5 mr-1" />
+                                    {t('document.document.detail.edit')}
+                                  </>
+                                )}
                               </Button>
                             )}
                             {detail.content && (
@@ -847,12 +935,12 @@ export function DocumentDetailDialog({
                           className={cn(isFullscreen ? 'flex-1' : 'min-h-[400px]')}
                         />
                       </div>
-                    ) : detail.content ? (
+                    ) : fullContent ? (
                       <div className="p-4 bg-white rounded-lg border border-border">
-                        {/* Use markdown preview if content is markdown and viewMode is preview */}
+                        {/* Render based on content type and view mode */}
                         {isMarkdownContent && viewMode === 'preview' ? (
                           <EnhancedMarkdown
-                            source={detail.content}
+                            source={fullContent}
                             theme={theme}
                             components={{
                               a: ({
@@ -923,16 +1011,53 @@ export function DocumentDetailDialog({
                           />
                         ) : (
                           <pre className="text-xs text-text-secondary whitespace-pre-wrap break-words font-mono leading-relaxed">
-                            {detail.content}
+                            {/* For JSON content in preview mode, show formatted JSON if valid */}
+                            {/* For JSON content in raw mode, show raw content */}
+                            {/* For other content, always show raw */}
+                            {isJsonContent && viewMode === 'preview' && formattedJsonContent
+                              ? formattedJsonContent
+                              : fullContent}
                           </pre>
                         )}
-                        {detail.content_length !== undefined && (
-                          <div className="mt-3 pt-3 border-t border-border text-xs text-text-muted">
-                            {t('document.document.detail.contentLength')}:{' '}
-                            {detail.content_length.toLocaleString()}{' '}
-                            {t('document.document.detail.characters')}
-                          </div>
-                        )}
+                        {/* Content length and truncation info */}
+                        <div className="mt-3 pt-3 border-t border-border text-xs text-text-muted flex items-center justify-between">
+                          <span>
+                            {detail?.content_length !== undefined && (
+                              <>
+                                {t('document.document.detail.contentLength')}:{' '}
+                                {fullContent.length.toLocaleString()}
+                                {hasMoreContent && detail.content_length > fullContent.length
+                                  ? ` / ${detail.content_length.toLocaleString()}`
+                                  : ''}{' '}
+                                {t('document.document.detail.characters')}
+                              </>
+                            )}
+                          </span>
+                          {/* Load more button */}
+                          {hasMoreContent && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={loadMore}
+                              disabled={loadingMore}
+                            >
+                              {loadingMore ? (
+                                <>
+                                  <Spinner className="w-3 h-3 mr-1" />
+                                  {t('document.document.detail.loadingMore', {
+                                    defaultValue: 'Loading...',
+                                  })}
+                                </>
+                              ) : (
+                                <>
+                                  {t('document.document.detail.loadMore', {
+                                    defaultValue: 'Load More',
+                                  })}
+                                </>
+                              )}
+                            </Button>
+                          )}
+                        </div>
                       </div>
                     ) : (
                       <div className="p-4 bg-surface rounded-lg border border-border text-center text-sm text-text-muted">

@@ -17,7 +17,7 @@ import { toast } from 'sonner'
 
 const VIM_MODE_STORAGE_KEY = 'editor-vim-mode'
 
-interface WysiwygEditorProps {
+export interface WysiwygEditorProps {
   initialContent: string
   onChange?: (content: string) => void
   onSave?: (content: string) => void
@@ -25,6 +25,26 @@ interface WysiwygEditorProps {
   className?: string
   readOnly?: boolean
   defaultVimMode?: boolean
+  /** Language mode for syntax highlighting */
+  language?:
+    | 'markdown'
+    | 'json'
+    | 'javascript'
+    | 'typescript'
+    | 'jsx'
+    | 'tsx'
+    | 'python'
+    | 'html'
+    | 'css'
+    | 'yaml'
+    | 'sql'
+    | 'xml'
+    | 'cpp'
+    | 'c'
+    | 'go'
+    | 'java'
+    | 'rust'
+    | 'text'
 }
 
 type ViewMode = 'edit' | 'preview' | 'split'
@@ -57,6 +77,7 @@ export function WysiwygEditor({
   className,
   readOnly = false,
   defaultVimMode,
+  language = 'markdown',
 }: WysiwygEditorProps) {
   const [content, setContent] = useState(initialContent)
   const [viewMode, setViewMode] = useState<ViewMode>(readOnly ? 'preview' : 'split')
@@ -257,7 +278,8 @@ export function WysiwygEditor({
           readOnly={readOnly}
           onVimModeChange={setVimMode}
           className="flex-1"
-          placeholder="Enter markdown content..."
+          placeholder={`Enter ${language} content...`}
+          language={language}
         />
       ) : (
         <textarea
