@@ -1713,7 +1713,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
 
             logger.debug(f"[_get_bot_summary] Model found: {model is not None}")
 
-            if model:
+            if model and model.json:
                 model_crd = Model.model_validate(model.json)
                 is_custom_config = model_crd.spec.isCustomConfig
                 # Determine if this is a user's private model or public model
