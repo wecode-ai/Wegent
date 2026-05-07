@@ -402,3 +402,32 @@ class TestResponsesAPIEmitter:
         assert events[0][1]["item"]["action"]["commands"] == ["ls -la"]
         assert events[1][1]["item"]["type"] == "shell_call"
         assert events[1][1]["item"]["status"] == "completed"
+
+    @pytest.mark.asyncio
+    async def test_exec_tool_infers_shell_call_and_reuses_context(self):
+        transport = GeneratorTransport()
+        emitter = EmitterBuilder().with_task(1, 2).with_transport(transport).build()
+
+        await emitter.tool_start(
+            call_id="shell_456",
+            name="exec",
+            arguments={"command": "python hello.py", "timeout_seconds": 30},
+        )
+        await emitter.tool_done(
+            call_id="shell_456",
+            name="",
+            arguments=None,
+        )
+
+        events = transport.get_events()
+        assert [event_type for event_type, _ in events] == [
+            "response.output_item.added",
+            "response.output_item.done",
+        ]
+        assert events[0][1]["item"]["type"] == "shell_call"
+        assert events[1][1]["item"]["type"] == "shell_call"
+        assert events[1][1]["item"]["name"] == "exec"
+        assert events[1][1]["item"]["input"] == {
+            "command": "python hello.py",
+            "timeout_seconds": 30,
+        }

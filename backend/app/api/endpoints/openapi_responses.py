@@ -757,10 +757,14 @@ async def _create_streaming_response_unified(
         tool_states: Dict[str, Dict[str, Any]] = {}
         next_tool_output_index = 0
 
-        def _normalize_protocol_type(value: str | None) -> str:
+        def _normalize_protocol_type(
+            value: str | None, tool_name: str | None = None
+        ) -> str:
             if value in {"mcp", "mcp_call"}:
                 return "mcp_call"
             if value == "shell_call":
+                return "shell_call"
+            if tool_name == "exec":
                 return "shell_call"
             return "function_call"
 
@@ -806,7 +810,8 @@ async def _create_streaming_response_unified(
                             continue
 
                         tool_protocol = _normalize_protocol_type(
-                            event.data.get("tool_protocol") if event.data else None
+                            event.data.get("tool_protocol") if event.data else None,
+                            event.tool_name,
                         )
                         tool_name = event.tool_name or ""
                         tool_input = event.tool_input or {}
@@ -876,9 +881,12 @@ async def _create_streaming_response_unified(
                         if tool_state is None:
                             tool_state = {
                                 "protocol": _normalize_protocol_type(
-                                    event.data.get("tool_protocol")
-                                    if event.data
-                                    else None
+                                    (
+                                        event.data.get("tool_protocol")
+                                        if event.data
+                                        else None
+                                    ),
+                                    event.tool_name,
                                 ),
                                 "name": event.tool_name or "",
                                 "arguments": event.tool_input or {},
@@ -889,7 +897,10 @@ async def _create_streaming_response_unified(
                             next_tool_output_index += 1
                         tool_protocol = _normalize_protocol_type(
                             tool_state.get("protocol")
-                            or (event.data.get("tool_protocol") if event.data else None)
+                            or (
+                                event.data.get("tool_protocol") if event.data else None
+                            ),
+                            tool_state.get("name") or event.tool_name,
                         )
                         tool_name = tool_state.get("name") or event.tool_name or ""
                         arguments = (
