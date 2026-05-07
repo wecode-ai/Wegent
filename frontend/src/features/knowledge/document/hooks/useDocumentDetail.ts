@@ -43,7 +43,7 @@ interface UseDocumentDetailReturn {
   /** Load more content (for truncated documents) */
   loadMore: () => Promise<void>
   /** Load all remaining content (for editing) */
-  loadAllContent: () => Promise<void>
+  loadAllContent: () => Promise<{ content: string; hasMore: boolean; loading: boolean } | undefined>
 }
 
 /**
@@ -158,10 +158,13 @@ export function useDocumentDetail({
   /**
    * Load all remaining content (for editing truncated documents)
    * This will keep loading until all content is fetched
+   * Returns the final content and state flags to avoid stale closure issues
    */
   const loadAllContent = useCallback(async () => {
     // Guard against concurrent execution with loadMore or another loadAllContent call
-    if (loadingMore || !hasMoreContent) return
+    if (loadingMore || !hasMoreContent) {
+      return { content: fullContent, hasMore: hasMoreContent, loading: loadingMore }
+    }
 
     try {
       setLoadingMore(true)
@@ -197,9 +200,14 @@ export function useDocumentDetail({
       setCurrentOffset(offset)
       setHasMoreContent(false)
       setDetail(prev => (prev ? { ...prev, truncated: false } : null))
+
+      // Return the final content and state for immediate use by callers
+      return { content: accumulatedContent, hasMore: false, loading: false }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to load all content'
       toast.error(errorMessage)
+      // Return current state on error
+      return { content: fullContent, hasMore: hasMoreContent, loading: false }
     } finally {
       setLoadingMore(false)
     }

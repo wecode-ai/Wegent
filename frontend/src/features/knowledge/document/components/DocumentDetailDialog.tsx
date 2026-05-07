@@ -519,11 +519,9 @@ export function DocumentDetailDialog({
 
   // Check if content should be rendered as markdown (based on file extension or content detection)
   const isMarkdownContent = useMemo(() => {
-    if (!detail?.content) return false
-    return (
-      isMarkdownFileExtension(document?.file_extension) || containsMarkdownSyntax(detail.content)
-    )
-  }, [detail?.content, document?.file_extension])
+    if (!fullContent) return false
+    return isMarkdownFileExtension(document?.file_extension) || containsMarkdownSyntax(fullContent)
+  }, [fullContent, document?.file_extension])
 
   // Reset editing state when dialog closes or document changes
   useEffect(() => {
@@ -640,6 +638,8 @@ export function DocumentDetailDialog({
         await knowledgeBaseApi.updateDocumentContent(document.id, content)
         // Update local state to match saved content
         setEditedContent(content)
+        // Update the edit start content ref so hasChanges becomes false
+        editStartContentRef.current = content
         toast.success(t('document.document.detail.saveSuccess'))
         // Refresh to get the updated content
         refresh()
@@ -1117,6 +1117,8 @@ export function DocumentDetailDialog({
                               size="sm"
                               onClick={loadMore}
                               disabled={loadingMore}
+                              data-testid="load-more-button"
+                              className="h-11 min-w-[44px]"
                             >
                               {loadingMore ? (
                                 <>
