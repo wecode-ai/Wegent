@@ -183,7 +183,7 @@ class TestResponsesAPIEventParserToolIds:
         assert start.type == "tool_start"
         assert start.tool_use_id == "mcp_123"
         assert start.tool_name == "search_docs"
-        assert start.data["tool_protocol"] == "mcp"
+        assert start.data["tool_protocol"] == "mcp_call"
         assert start.data["server_label"] == "wegent-knowledge"
 
         args_done = parser.parse(
@@ -213,7 +213,7 @@ class TestResponsesAPIEventParserToolIds:
         assert done.tool_use_id == "mcp_123"
         assert done.tool_name == "search_docs"
         assert done.tool_input == {"query": "SSE timeout"}
-        assert done.data["tool_protocol"] == "mcp"
+        assert done.data["tool_protocol"] == "mcp_call"
         assert done.data["status"] == "completed"
 
     def test_mcp_tool_failed_carries_error(self):
@@ -244,9 +244,69 @@ class TestResponsesAPIEventParserToolIds:
 
         assert failed is not None
         assert failed.type == "tool_result"
-        assert failed.data["tool_protocol"] == "mcp"
+        assert failed.data["tool_protocol"] == "mcp_call"
         assert failed.data["status"] == "failed"
         assert failed.data["error"] == "timeout"
+
+    def test_shell_tool_start_and_completion(self):
+        parser = ResponsesAPIEventParser()
+
+        start = parser.parse(
+            task_id=1,
+            subtask_id=2,
+            message_id=3,
+            event_type=ResponsesAPIStreamEvents.OUTPUT_ITEM_ADDED.value,
+            data={
+                "item": {
+                    "type": "shell_call",
+                    "id": "shell_123",
+                    "call_id": "shell_123",
+                    "name": "exec",
+                    "status": "in_progress",
+                    "input": {"working_directory": "/tmp"},
+                    "action": {"commands": ["ls -la"], "timeout_ms": 5000},
+                }
+            },
+        )
+        assert start is not None
+        assert start.type == "tool_start"
+        assert start.tool_use_id == "shell_123"
+        assert start.tool_name == "exec"
+        assert start.tool_input == {
+            "working_directory": "/tmp",
+            "command": "ls -la",
+            "timeout_seconds": 5,
+        }
+        assert start.data["tool_protocol"] == "shell_call"
+
+        done = parser.parse(
+            task_id=1,
+            subtask_id=2,
+            message_id=3,
+            event_type=ResponsesAPIStreamEvents.OUTPUT_ITEM_DONE.value,
+            data={
+                "item": {
+                    "type": "shell_call",
+                    "id": "shell_123",
+                    "call_id": "shell_123",
+                    "name": "exec",
+                    "status": "completed",
+                    "input": {"working_directory": "/tmp"},
+                    "action": {"commands": ["ls -la"], "timeout_ms": 5000},
+                }
+            },
+        )
+        assert done is not None
+        assert done.type == "tool_result"
+        assert done.tool_use_id == "shell_123"
+        assert done.tool_name == "exec"
+        assert done.tool_input == {
+            "working_directory": "/tmp",
+            "command": "ls -la",
+            "timeout_seconds": 5,
+        }
+        assert done.data["tool_protocol"] == "shell_call"
+        assert done.data["status"] == "completed"
 
     def test_tool_result_without_context_is_skipped(self):
         parser = ResponsesAPIEventParser()
@@ -416,3 +476,58 @@ class TestResponsesAPIEventParserToolIds:
                 },
                 message_id=3,
             )
+
+    def test_inprocess_bridge_shell_call_lifecycle(self):
+        transport = EmitterBridgeTransport(
+            emitter=AsyncMock(),
+            task_id=1,
+            subtask_id=2,
+            message_id=3,
+        )
+
+        start = transport._convert_event(
+            ResponsesAPIStreamEvents.OUTPUT_ITEM_ADDED.value,
+            {
+                "item": {
+                    "type": "shell_call",
+                    "id": "shell_123",
+                    "call_id": "shell_123",
+                    "name": "exec",
+                    "status": "in_progress",
+                    "input": {"working_directory": "/tmp"},
+                    "action": {"commands": ["ls -la"], "timeout_ms": 5000},
+                }
+            },
+            message_id=3,
+        )
+        assert start is not None
+        assert start.type == "tool_start"
+        assert start.tool_input == {
+            "working_directory": "/tmp",
+            "command": "ls -la",
+            "timeout_seconds": 5,
+        }
+
+        done = transport._convert_event(
+            ResponsesAPIStreamEvents.OUTPUT_ITEM_DONE.value,
+            {
+                "item": {
+                    "type": "shell_call",
+                    "id": "shell_123",
+                    "call_id": "shell_123",
+                    "name": "exec",
+                    "status": "completed",
+                    "input": {"working_directory": "/tmp"},
+                    "action": {"commands": ["ls -la"], "timeout_ms": 5000},
+                }
+            },
+            message_id=3,
+        )
+        assert done is not None
+        assert done.type == "tool_result"
+        assert done.tool_input == {
+            "working_directory": "/tmp",
+            "command": "ls -la",
+            "timeout_seconds": 5,
+        }
+        assert done.data["tool_protocol"] == "shell_call"

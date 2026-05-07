@@ -68,7 +68,7 @@ async def test_mcp_tool_end_error_emits_failed_status(monkeypatch):
         name="search_docs",
         arguments=None,
         output=error_output,
-        tool_protocol="mcp",
+        tool_protocol="mcp_call",
         server_label="wegent-knowledge",
         status="failed",
         error=error_output,

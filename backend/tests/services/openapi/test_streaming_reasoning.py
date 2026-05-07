@@ -282,6 +282,59 @@ class TestStreamingServiceReasoning:
         assert mcp_added["item"]["server_label"] == "wegent-knowledge"
 
     @pytest.mark.asyncio
+    async def test_shell_call_stream(self, streaming_service):
+        async def shell_call_stream():
+            yield StreamingChunk(
+                type="shell_call_added",
+                data={
+                    "call_id": "shell_123",
+                    "name": "exec",
+                    "arguments": {"command": "ls -la", "timeout_seconds": 5},
+                    "output_index": 0,
+                },
+            )
+            yield StreamingChunk(
+                type="shell_call_done",
+                data={
+                    "call_id": "shell_123",
+                    "name": "exec",
+                    "arguments": {"command": "ls -la", "timeout_seconds": 5},
+                    "output_index": 0,
+                    "status": "completed",
+                },
+            )
+            yield StreamingChunk(type="text", content="done")
+
+        events = []
+        async for event in streaming_service.create_streaming_response(
+            response_id="resp_123",
+            model_string="gpt-4",
+            chat_stream=shell_call_stream(),
+            created_at=1234567890,
+        ):
+            events.append(json.loads(event.replace("data: ", "").strip()))
+
+        event_types = [e["type"] for e in events]
+        assert event_types.count("response.output_item.added") >= 1
+        assert event_types.count("response.output_item.done") >= 1
+
+        shell_added = next(
+            e
+            for e in events
+            if e["type"] == "response.output_item.added"
+            and e["item"]["type"] == "shell_call"
+        )
+        assert shell_added["item"]["action"]["commands"] == ["ls -la"]
+
+        shell_done = next(
+            e
+            for e in events
+            if e["type"] == "response.output_item.done"
+            and e["item"]["type"] == "shell_call"
+        )
+        assert shell_done["item"]["status"] == "completed"
+
+    @pytest.mark.asyncio
     async def test_task_context_extension(self, streaming_service):
         async def text_stream():
             yield StreamingChunk(type="text", content="hello")

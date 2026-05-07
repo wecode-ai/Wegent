@@ -336,7 +336,7 @@ class MCPClient:
                 # Wrap tools with protection and store by server name
                 protected_tools = [wrap_tool_with_protection(tool) for tool in tools]
                 for tool in protected_tools:
-                    setattr(tool, "_wegent_tool_protocol", "mcp")
+                    setattr(tool, "_wegent_tool_protocol", "mcp_call")
                     setattr(tool, "_wegent_mcp_server_label", server_name)
                 self._tools[server_name] = protected_tools
                 total_tools += len(protected_tools)

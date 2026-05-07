@@ -22,6 +22,14 @@ from shared.telemetry.decorators import add_span_event
 logger = logging.getLogger(__name__)
 
 
+def _normalize_protocol_type(tool_protocol: str | None) -> str:
+    if tool_protocol in {"mcp", "mcp_call"}:
+        return "mcp_call"
+    if tool_protocol == "shell_call":
+        return "shell_call"
+    return "function_call"
+
+
 def _infer_tool_completion(
     tool_protocol: str, serializable_output: Any
 ) -> tuple[str, str | None]:
@@ -31,7 +39,7 @@ def _infer_tool_completion(
     Convert those back into a failed terminal state so `v1/responses` can emit
     `response.mcp_call.failed` instead of always reporting completed.
     """
-    if tool_protocol != "mcp":
+    if tool_protocol != "mcp_call":
         return ("completed", None)
 
     output_text = (
@@ -145,7 +153,9 @@ def _handle_tool_start(
         getattr(tool_instance, "display_name", None) if tool_instance else None
     )
     tool_protocol = (
-        getattr(tool_instance, "_wegent_tool_protocol", "function_call")
+        _normalize_protocol_type(
+            getattr(tool_instance, "_wegent_tool_protocol", "function_call")
+        )
         if tool_instance
         else "function_call"
     )
@@ -251,7 +261,9 @@ def _handle_tool_end(
     arguments = tool_input if should_display_tool_details(tool_name) else None
     tool_instance = _get_tool_instance(agent_builder, tool_name)
     tool_protocol = (
-        getattr(tool_instance, "_wegent_tool_protocol", "function_call")
+        _normalize_protocol_type(
+            getattr(tool_instance, "_wegent_tool_protocol", "function_call")
+        )
         if tool_instance
         else "function_call"
     )

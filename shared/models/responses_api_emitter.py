@@ -223,6 +223,14 @@ class ResponsesAPIEmitter:
     # Function Call Events
     # ============================================================
 
+    @staticmethod
+    def _normalize_protocol_type(tool_protocol: str) -> str:
+        if tool_protocol in {"mcp", "mcp_call"}:
+            return "mcp_call"
+        if tool_protocol == "shell_call":
+            return "shell_call"
+        return "function_call"
+
     async def tool_start(
         self,
         call_id: str,
@@ -252,7 +260,9 @@ class ResponsesAPIEmitter:
         if hasattr(self.transport, "start_collecting"):
             self.transport.start_collecting()
 
-        if tool_protocol == "mcp":
+        protocol_type = self._normalize_protocol_type(tool_protocol)
+
+        if protocol_type == "mcp_call":
             added_data = self.builder.mcp_call_added(
                 item_id=call_id,
                 name=name,
@@ -275,6 +285,17 @@ class ResponsesAPIEmitter:
             return await self._emit(
                 ResponsesAPIStreamEvents.MCP_CALL_IN_PROGRESS.value,
                 in_progress_data,
+            )
+
+        if protocol_type == "shell_call":
+            added_data = self.builder.shell_call_added(
+                call_id=call_id,
+                name=name,
+                arguments=arguments,
+                display_name=display_name,
+            )
+            return await self._emit(
+                ResponsesAPIStreamEvents.OUTPUT_ITEM_ADDED.value, added_data
             )
 
         # Send function call added
@@ -318,7 +339,9 @@ class ResponsesAPIEmitter:
         if hasattr(self.transport, "start_collecting"):
             self.transport.start_collecting()
 
-        if tool_protocol == "mcp":
+        protocol_type = self._normalize_protocol_type(tool_protocol)
+
+        if protocol_type == "mcp_call":
             if arguments is not None:
                 args_done_data = self.builder.mcp_call_arguments_done(
                     call_id, arguments
@@ -345,6 +368,17 @@ class ResponsesAPIEmitter:
                 item_id=call_id,
                 name=name,
                 server_label=server_label or "",
+                arguments=arguments,
+                status=status,
+            )
+            return await self._emit(
+                ResponsesAPIStreamEvents.OUTPUT_ITEM_DONE.value, item_done_data
+            )
+
+        if protocol_type == "shell_call":
+            item_done_data = self.builder.shell_call_done(
+                call_id=call_id,
+                name=name,
                 arguments=arguments,
                 status=status,
             )

@@ -372,3 +372,33 @@ class TestResponsesAPIEmitter:
         ]
         assert events[1][1]["error"] == "MCP tool 'search_docs' timed out after 180.0s"
         assert events[2][1]["item"]["status"] == "failed"
+
+    @pytest.mark.asyncio
+    async def test_shell_tool_emits_output_item_lifecycle_only(self):
+        transport = GeneratorTransport()
+        emitter = EmitterBuilder().with_task(1, 2).with_transport(transport).build()
+
+        await emitter.tool_start(
+            call_id="shell_123",
+            name="exec",
+            arguments={"command": "ls -la", "timeout_seconds": 5},
+            tool_protocol="shell_call",
+        )
+        await emitter.tool_done(
+            call_id="shell_123",
+            name="exec",
+            arguments={"command": "ls -la", "timeout_seconds": 5},
+            tool_protocol="shell_call",
+        )
+
+        events = transport.get_events()
+        event_types = [event_type for event_type, _ in events]
+
+        assert event_types == [
+            "response.output_item.added",
+            "response.output_item.done",
+        ]
+        assert events[0][1]["item"]["type"] == "shell_call"
+        assert events[0][1]["item"]["action"]["commands"] == ["ls -la"]
+        assert events[1][1]["item"]["type"] == "shell_call"
+        assert events[1][1]["item"]["status"] == "completed"

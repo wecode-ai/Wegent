@@ -87,7 +87,28 @@ class MCPCallItem(TypedDict, total=False):
     status: str
 
 
-OutputItem = Union[MessageItem, FunctionCallItem, MCPCallItem]
+class ShellCallAction(TypedDict, total=False):
+    """Shell call action payload."""
+
+    commands: List[str]
+    timeout_ms: int
+    max_output_length: int
+
+
+class ShellCallItem(TypedDict, total=False):
+    """Shell call output item."""
+
+    type: Literal["shell_call"]
+    id: str
+    call_id: str
+    status: str
+    action: ShellCallAction
+    # Wegent extensions
+    name: str
+    input: dict[str, Any]
+
+
+OutputItem = Union[MessageItem, FunctionCallItem, MCPCallItem, ShellCallItem]
 
 
 class ResponsesAPIResponse(TypedDict, total=False):
@@ -353,6 +374,8 @@ __all__ = [
     "ReasoningContent",
     "MessageItem",
     "FunctionCallItem",
+    "MCPCallItem",
+    "ShellCallItem",
     "OutputItem",
     # Individual event types (TypedDict)
     "ResponseCreatedEvent",
@@ -414,6 +437,25 @@ class ResponsesAPIEventBuilder:
         self.content_index = 0
         self._tool_output_index = 1  # Tool calls start at index 1
         self._text_offset = 0  # Track cumulative text offset for streaming
+
+    @staticmethod
+    def _json_arguments(arguments: Optional[dict]) -> str:
+        return json.dumps(arguments) if arguments else ""
+
+    @staticmethod
+    def _shell_action(arguments: Optional[dict]) -> ShellCallAction:
+        arguments = arguments or {}
+        action: ShellCallAction = {
+            "commands": (
+                [arguments["command"]]
+                if isinstance(arguments.get("command"), str) and arguments["command"]
+                else []
+            ),
+        }
+        timeout_seconds = arguments.get("timeout_seconds")
+        if isinstance(timeout_seconds, int) and timeout_seconds > 0:
+            action["timeout_ms"] = timeout_seconds * 1000
+        return action
 
     # ============================================================
     # Response Lifecycle Events
@@ -759,7 +801,7 @@ class ResponsesAPIEventBuilder:
         Returns:
             Event data dictionary
         """
-        delta = json.dumps(arguments) if arguments else ""
+        delta = self._json_arguments(arguments)
         return {
             "type": ResponsesAPIStreamEvents.FUNCTION_CALL_ARGUMENTS_DELTA.value,
             "response_id": self.response_id,
@@ -784,7 +826,7 @@ class ResponsesAPIEventBuilder:
         Returns:
             Event data dictionary
         """
-        args_str = json.dumps(arguments) if arguments else ""
+        args_str = self._json_arguments(arguments)
         data = {
             "type": ResponsesAPIStreamEvents.FUNCTION_CALL_ARGUMENTS_DONE.value,
             "response_id": self.response_id,
@@ -813,7 +855,7 @@ class ResponsesAPIEventBuilder:
         Returns:
             Event data dictionary
         """
-        args_str = json.dumps(arguments) if arguments else ""
+        args_str = self._json_arguments(arguments)
         output_index = self._tool_output_index
         self._tool_output_index += 1  # Increment for next tool call
         return {
@@ -864,7 +906,7 @@ class ResponsesAPIEventBuilder:
             "response_id": self.response_id,
             "item_id": item_id,
             "output_index": self._tool_output_index,
-            "arguments": json.dumps(arguments) if arguments else "",
+            "arguments": self._json_arguments(arguments),
         }
 
     def mcp_call_in_progress(self, item_id: str) -> dict:
@@ -917,8 +959,64 @@ class ResponsesAPIEventBuilder:
                 "id": item_id,
                 "name": name,
                 "server_label": server_label,
-                "arguments": json.dumps(arguments) if arguments else "",
+                "arguments": self._json_arguments(arguments),
                 "status": status,
+            },
+        }
+
+    # ============================================================
+    # Shell Call Events
+    # ============================================================
+
+    def shell_call_added(
+        self,
+        call_id: str,
+        name: str,
+        arguments: Optional[dict] = None,
+        display_name: Optional[str] = None,
+    ) -> dict:
+        """Create response.output_item.added event for shell call."""
+        output_index = self._tool_output_index
+        data = {
+            "type": ResponsesAPIStreamEvents.OUTPUT_ITEM_ADDED.value,
+            "response_id": self.response_id,
+            "output_index": output_index,
+            "item": {
+                "type": "shell_call",
+                "id": call_id,
+                "call_id": call_id,
+                "status": "in_progress",
+                "action": self._shell_action(arguments),
+                "name": name,
+                "input": arguments or {},
+            },
+        }
+        if display_name:
+            data["display_name"] = display_name
+        return data
+
+    def shell_call_done(
+        self,
+        call_id: str,
+        name: str,
+        arguments: Optional[dict] = None,
+        status: str = "completed",
+    ) -> dict:
+        """Create response.output_item.done event for shell call."""
+        output_index = self._tool_output_index
+        self._tool_output_index += 1
+        return {
+            "type": ResponsesAPIStreamEvents.OUTPUT_ITEM_DONE.value,
+            "response_id": self.response_id,
+            "output_index": output_index,
+            "item": {
+                "type": "shell_call",
+                "id": call_id,
+                "call_id": call_id,
+                "status": status,
+                "action": self._shell_action(arguments),
+                "name": name,
+                "input": arguments or {},
             },
         }
 

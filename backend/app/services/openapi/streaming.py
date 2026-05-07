@@ -49,6 +49,38 @@ def _format_sse_event(data: Dict[str, Any]) -> str:
     return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
+def _build_shell_call_action(arguments: Dict[str, Any]) -> Dict[str, Any]:
+    action = {
+        "commands": (
+            [arguments["command"]]
+            if isinstance(arguments.get("command"), str) and arguments["command"]
+            else []
+        ),
+    }
+    timeout_seconds = arguments.get("timeout_seconds")
+    if isinstance(timeout_seconds, int) and timeout_seconds > 0:
+        action["timeout_ms"] = timeout_seconds * 1000
+    return action
+
+
+def _build_shell_call_item(
+    call_id: str,
+    name: str,
+    arguments: Dict[str, Any],
+    *,
+    status: str,
+) -> Dict[str, Any]:
+    return {
+        "type": "shell_call",
+        "id": call_id,
+        "call_id": call_id,
+        "status": status,
+        "action": _build_shell_call_action(arguments),
+        "name": name,
+        "input": arguments,
+    }
+
+
 @dataclass
 class StreamingChunk:
     """A chunk of streaming data for Responses API streaming."""
@@ -302,6 +334,47 @@ class OpenAPIStreamingService:
                                     "name": name,
                                     "arguments": arguments,
                                 },
+                            }
+                        )
+                        sequence_number += 1
+                    elif chunk.type == "shell_call_added":
+                        call_id = chunk.data["call_id"]
+                        name = chunk.data["name"]
+                        arguments = chunk.data.get("arguments") or {}
+                        output_index = max(output_index, chunk.data["output_index"] + 1)
+                        yield _format_sse_event(
+                            {
+                                "type": "response.output_item.added",
+                                "response_id": response_id,
+                                "output_index": chunk.data["output_index"],
+                                "sequence_number": sequence_number,
+                                "item": _build_shell_call_item(
+                                    call_id,
+                                    name,
+                                    arguments,
+                                    status="in_progress",
+                                ),
+                            }
+                        )
+                        sequence_number += 1
+                    elif chunk.type == "shell_call_done":
+                        call_id = chunk.data["call_id"]
+                        name = chunk.data["name"]
+                        arguments = chunk.data.get("arguments") or {}
+                        tool_output_index = chunk.data["output_index"]
+                        output_index = max(output_index, tool_output_index + 1)
+                        yield _format_sse_event(
+                            {
+                                "type": "response.output_item.done",
+                                "response_id": response_id,
+                                "output_index": tool_output_index,
+                                "sequence_number": sequence_number,
+                                "item": _build_shell_call_item(
+                                    call_id,
+                                    name,
+                                    arguments,
+                                    status=chunk.data.get("status", "completed"),
+                                ),
                             }
                         )
                         sequence_number += 1

@@ -757,6 +757,13 @@ async def _create_streaming_response_unified(
         tool_states: Dict[str, Dict[str, Any]] = {}
         next_tool_output_index = 0
 
+        def _normalize_protocol_type(value: str | None) -> str:
+            if value in {"mcp", "mcp_call"}:
+                return "mcp_call"
+            if value == "shell_call":
+                return "shell_call"
+            return "function_call"
+
         try:
             cancel_event = await session_manager.register_stream(assistant_subtask_id)
 
@@ -798,10 +805,8 @@ async def _create_streaming_response_unified(
                         if not tool_use_id:
                             continue
 
-                        tool_protocol = (
-                            event.data.get("tool_protocol", "function_call")
-                            if event.data
-                            else "function_call"
+                        tool_protocol = _normalize_protocol_type(
+                            event.data.get("tool_protocol") if event.data else None
                         )
                         tool_name = event.tool_name or ""
                         tool_input = event.tool_input or {}
@@ -816,13 +821,23 @@ async def _create_streaming_response_unified(
                         tool_states[tool_use_id] = tool_state
                         next_tool_output_index += 1
 
-                        if tool_protocol == "mcp":
+                        if tool_protocol == "mcp_call":
                             yield StreamingChunk(
                                 type="mcp_call_added",
                                 data={
                                     "item_id": tool_use_id,
                                     "name": tool_name,
                                     "server_label": tool_state.get("server_label", ""),
+                                    "output_index": tool_state["output_index"],
+                                },
+                            )
+                        elif tool_protocol == "shell_call":
+                            yield StreamingChunk(
+                                type="shell_call_added",
+                                data={
+                                    "call_id": tool_use_id,
+                                    "name": tool_name,
+                                    "arguments": tool_input,
                                     "output_index": tool_state["output_index"],
                                 },
                             )
@@ -847,7 +862,7 @@ async def _create_streaming_response_unified(
                         tool_state = tool_states.get(tool_use_id)
                         if not tool_state:
                             continue
-                        if tool_state.get("protocol") == "mcp":
+                        if tool_state.get("protocol") == "mcp_call":
                             tool_state["arguments"] = event.tool_input or {}
                     elif event.type == EventType.ERROR.value:
                         error_msg = event.error or "Unknown error"
@@ -860,10 +875,10 @@ async def _create_streaming_response_unified(
                         tool_state = tool_states.pop(tool_use_id, None)
                         if tool_state is None:
                             tool_state = {
-                                "protocol": (
-                                    event.data.get("tool_protocol", "function_call")
+                                "protocol": _normalize_protocol_type(
+                                    event.data.get("tool_protocol")
                                     if event.data
-                                    else "function_call"
+                                    else None
                                 ),
                                 "name": event.tool_name or "",
                                 "arguments": event.tool_input or {},
@@ -872,13 +887,9 @@ async def _create_streaming_response_unified(
                             if event.data and event.data.get("server_label"):
                                 tool_state["server_label"] = event.data["server_label"]
                             next_tool_output_index += 1
-                        tool_protocol = tool_state.get(
-                            "protocol",
-                            (
-                                event.data.get("tool_protocol", "function_call")
-                                if event.data
-                                else "function_call"
-                            ),
+                        tool_protocol = _normalize_protocol_type(
+                            tool_state.get("protocol")
+                            or (event.data.get("tool_protocol") if event.data else None)
                         )
                         tool_name = tool_state.get("name") or event.tool_name or ""
                         arguments = (
@@ -886,7 +897,7 @@ async def _create_streaming_response_unified(
                         )
                         output_index = tool_state["output_index"]
 
-                        if tool_protocol == "mcp":
+                        if tool_protocol == "mcp_call":
                             yield StreamingChunk(
                                 type="mcp_call_done",
                                 data={
@@ -908,6 +919,22 @@ async def _create_streaming_response_unified(
                                     "error": event.error
                                     or (
                                         event.data.get("error") if event.data else None
+                                    ),
+                                },
+                            )
+                        elif tool_protocol == "shell_call":
+                            yield StreamingChunk(
+                                type="shell_call_done",
+                                data={
+                                    "call_id": tool_use_id,
+                                    "name": tool_name,
+                                    "arguments": arguments,
+                                    "output_index": output_index,
+                                    "status": (
+                                        "failed"
+                                        if event.data
+                                        and event.data.get("status") == "failed"
+                                        else "completed"
                                     ),
                                 },
                             )

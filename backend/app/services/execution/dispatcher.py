@@ -72,6 +72,39 @@ def _require_non_empty_tool_use_id(tool_use_id: Any, *, context: str) -> str:
     return value
 
 
+def _extract_shell_call_input(item: dict[str, Any]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    shell_input = item.get("input")
+    if isinstance(shell_input, dict):
+        result.update(shell_input)
+
+    action = item.get("action", {})
+    if not isinstance(action, dict):
+        return result
+
+    commands = action.get("commands") or []
+    if "command" not in result and isinstance(commands, list):
+        command = next(
+            (value for value in commands if isinstance(value, str) and value.strip()),
+            None,
+        )
+        if command:
+            result["command"] = command
+    if "timeout_seconds" not in result:
+        timeout_ms = action.get("timeout_ms")
+        if isinstance(timeout_ms, int) and timeout_ms > 0:
+            result["timeout_seconds"] = timeout_ms // 1000
+    return result
+
+
+def _build_shell_call_context(item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "protocol": "shell_call",
+        "name": item.get("name", ""),
+        "arguments": _extract_shell_call_input(item),
+    }
+
+
 def extract_completed_result(response_data: dict) -> dict:
     """Build a result dict from a ``response.completed`` payload.
 
@@ -292,7 +325,7 @@ class ResponsesAPIEventParser:
                 name = item.get("name", "")
                 tool_key = self._tool_key(task_id, subtask_id, item_id)
                 self._tool_contexts[tool_key] = {
-                    "protocol": "mcp",
+                    "protocol": "mcp_call",
                     "name": name,
                     "server_label": server_label,
                 }
@@ -303,8 +336,30 @@ class ResponsesAPIEventParser:
                     tool_use_id=item_id,
                     tool_name=name,
                     data={
-                        "tool_protocol": "mcp",
+                        "tool_protocol": "mcp_call",
                         "server_label": server_label,
+                    },
+                    message_id=message_id,
+                )
+            if item.get("type") == "shell_call":
+                call_id = _require_non_empty_tool_use_id(
+                    item.get("call_id") or item.get("id"),
+                    context="response.output_item.added(shell_call)",
+                )
+                tool_context = _build_shell_call_context(item)
+                tool_key = self._tool_key(task_id, subtask_id, call_id)
+                self._tool_contexts[tool_key] = tool_context
+                return ExecutionEvent(
+                    type=EventType.TOOL_START,
+                    task_id=task_id,
+                    subtask_id=subtask_id,
+                    tool_use_id=call_id,
+                    tool_name=tool_context["name"],
+                    tool_input=tool_context["arguments"],
+                    data={
+                        "blocks": data.get("blocks", []),
+                        "display_name": data.get("display_name"),
+                        "tool_protocol": "shell_call",
                     },
                     message_id=message_id,
                 )
@@ -339,7 +394,7 @@ class ResponsesAPIEventParser:
                 tool_use_id=item_id,
                 tool_input=tool_input,
                 data={
-                    "tool_protocol": "mcp",
+                    "tool_protocol": "mcp_call",
                     "phase": "arguments_done",
                 },
                 message_id=message_id,
@@ -372,7 +427,7 @@ class ResponsesAPIEventParser:
                 tool_use_id=item_id,
                 tool_input=tool_context.get("arguments"),
                 data={
-                    "tool_protocol": "mcp",
+                    "tool_protocol": "mcp_call",
                     "server_label": tool_context.get("server_label", ""),
                     "status": (
                         "failed"
@@ -384,10 +439,42 @@ class ResponsesAPIEventParser:
                 message_id=message_id,
             )
 
+        elif event_type == ResponsesAPIStreamEvents.OUTPUT_ITEM_DONE.value:
+            item = data.get("item", {})
+            if item.get("type") != "shell_call":
+                return None
+            call_id = _require_non_empty_tool_use_id(
+                item.get("call_id") or item.get("id"),
+                context="response.output_item.done(shell_call)",
+            )
+            tool_key = self._tool_key(task_id, subtask_id, call_id)
+            tool_context = self._tool_contexts.pop(tool_key, None)
+            if tool_context is None:
+                logger.warning(
+                    "[ResponsesAPIEventParser] Missing shell_call completion context for %s",
+                    tool_key,
+                )
+                return None
+            tool_input = _extract_shell_call_input(item) or tool_context.get(
+                "arguments"
+            )
+            return ExecutionEvent(
+                type=EventType.TOOL_RESULT,
+                task_id=task_id,
+                subtask_id=subtask_id,
+                tool_name=tool_context.get("name"),
+                tool_use_id=call_id,
+                tool_input=tool_input,
+                data={
+                    "tool_protocol": "shell_call",
+                    "status": item.get("status", "completed"),
+                },
+                message_id=message_id,
+            )
+
         elif event_type in (
             ResponsesAPIStreamEvents.RESPONSE_CREATED.value,
             ResponsesAPIStreamEvents.RESPONSE_IN_PROGRESS.value,
-            ResponsesAPIStreamEvents.OUTPUT_ITEM_DONE.value,
             ResponsesAPIStreamEvents.CONTENT_PART_ADDED.value,
             ResponsesAPIStreamEvents.CONTENT_PART_DONE.value,
             ResponsesAPIStreamEvents.OUTPUT_TEXT_DONE.value,
