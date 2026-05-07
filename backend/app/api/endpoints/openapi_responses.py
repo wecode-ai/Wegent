@@ -755,7 +755,15 @@ async def _create_streaming_response_unified(
         accumulated_content = ""
         accumulated_reasoning = ""
         tool_states: Dict[str, Dict[str, Any]] = {}
-        next_tool_output_index = 0
+        next_output_index = 0
+        reasoning_output_started = False
+        message_output_started = False
+
+        def allocate_output_index() -> int:
+            nonlocal next_output_index
+            assigned = next_output_index
+            next_output_index += 1
+            return assigned
 
         def _normalize_protocol_type(
             value: str | None, tool_name: str | None = None
@@ -796,12 +804,18 @@ async def _create_streaming_response_unified(
                     if event.type == EventType.CHUNK.value:
                         content = event.content or ""
                         if content:
+                            if not message_output_started:
+                                message_output_started = True
+                                allocate_output_index()
                             accumulated_content += content
                             yield StreamingChunk(type="text", content=content)
                     elif event.type == EventType.THINKING.value:
                         # Handle reasoning/thinking content
                         reasoning = event.content or ""
                         if reasoning:
+                            if not reasoning_output_started:
+                                reasoning_output_started = True
+                                allocate_output_index()
                             accumulated_reasoning += reasoning
                             yield StreamingChunk(type="reasoning", content=reasoning)
                     elif event.type == EventType.TOOL_START.value:
@@ -819,12 +833,11 @@ async def _create_streaming_response_unified(
                             "protocol": tool_protocol,
                             "name": tool_name,
                             "arguments": tool_input,
-                            "output_index": next_tool_output_index,
+                            "output_index": allocate_output_index(),
                         }
                         if event.data and event.data.get("server_label"):
                             tool_state["server_label"] = event.data["server_label"]
                         tool_states[tool_use_id] = tool_state
-                        next_tool_output_index += 1
 
                         if tool_protocol == "mcp_call":
                             yield StreamingChunk(
@@ -890,11 +903,10 @@ async def _create_streaming_response_unified(
                                 ),
                                 "name": event.tool_name or "",
                                 "arguments": event.tool_input or {},
-                                "output_index": next_tool_output_index,
+                                "output_index": allocate_output_index(),
                             }
                             if event.data and event.data.get("server_label"):
                                 tool_state["server_label"] = event.data["server_label"]
-                            next_tool_output_index += 1
                         tool_protocol = _normalize_protocol_type(
                             tool_state.get("protocol")
                             or (

@@ -137,7 +137,26 @@ class OpenAPIStreamingService:
         reasoning_started = False
         reasoning_complete = False
         output_index = 0
+        next_output_index = 0
         message_started = False
+        tool_output_indexes: Dict[str, int] = {}
+
+        def allocate_output_index() -> int:
+            nonlocal next_output_index
+            assigned = next_output_index
+            next_output_index += 1
+            return assigned
+
+        def get_tool_output_index(tool_key: str) -> int:
+            if tool_key not in tool_output_indexes:
+                tool_output_indexes[tool_key] = allocate_output_index()
+            return tool_output_indexes[tool_key]
+
+        def pop_tool_output_index(tool_key: str) -> int:
+            existing = tool_output_indexes.pop(tool_key, None)
+            if existing is not None:
+                return existing
+            return allocate_output_index()
 
         try:
             # Event 1: response.created
@@ -181,6 +200,8 @@ class OpenAPIStreamingService:
             async for chunk in chat_stream:
                 if chunk is None:
                     continue
+                if isinstance(chunk, str):
+                    chunk = StreamingChunk(type="text", content=chunk)
 
                 # Handle StreamingChunk objects
                 if isinstance(chunk, StreamingChunk):
@@ -188,6 +209,7 @@ class OpenAPIStreamingService:
                         # Start reasoning output if not started
                         if not reasoning_started:
                             reasoning_started = True
+                            output_index = allocate_output_index()
                             # Official OpenAI event: response.reasoning_summary_part.added
                             yield _format_sse_event(
                                 {
@@ -227,7 +249,6 @@ class OpenAPIStreamingService:
                             # If we had reasoning before, close it first
                             if reasoning_started and not reasoning_complete:
                                 reasoning_complete = True
-                                output_index += 1
                                 # Note: OpenAI doesn't have explicit reasoning "done" event
                                 # We transition directly to text output
 
@@ -236,6 +257,7 @@ class OpenAPIStreamingService:
                             # Start text output if this is the first text chunk
                             if not message_started:
                                 message_started = True
+                                output_index = allocate_output_index()
                                 # Official OpenAI event: response.output_item.added
                                 yield _format_sse_event(
                                     {
@@ -286,12 +308,12 @@ class OpenAPIStreamingService:
                         call_id = chunk.data["call_id"]
                         name = chunk.data["name"]
                         arguments = chunk.data.get("arguments") or ""
-                        output_index = max(output_index, chunk.data["output_index"] + 1)
+                        tool_output_index = get_tool_output_index(f"function:{call_id}")
                         yield _format_sse_event(
                             {
                                 "type": "response.output_item.added",
                                 "response_id": response_id,
-                                "output_index": chunk.data["output_index"],
+                                "output_index": tool_output_index,
                                 "sequence_number": sequence_number,
                                 "item": {
                                     "type": "function_call",
@@ -307,8 +329,7 @@ class OpenAPIStreamingService:
                         call_id = chunk.data["call_id"]
                         name = chunk.data["name"]
                         arguments = chunk.data.get("arguments") or ""
-                        tool_output_index = chunk.data["output_index"]
-                        output_index = max(output_index, tool_output_index + 1)
+                        tool_output_index = pop_tool_output_index(f"function:{call_id}")
                         yield _format_sse_event(
                             {
                                 "type": "response.function_call_arguments.done",
@@ -341,12 +362,12 @@ class OpenAPIStreamingService:
                         call_id = chunk.data["call_id"]
                         name = chunk.data["name"]
                         arguments = chunk.data.get("arguments") or {}
-                        output_index = max(output_index, chunk.data["output_index"] + 1)
+                        tool_output_index = get_tool_output_index(f"shell:{call_id}")
                         yield _format_sse_event(
                             {
                                 "type": "response.output_item.added",
                                 "response_id": response_id,
-                                "output_index": chunk.data["output_index"],
+                                "output_index": tool_output_index,
                                 "sequence_number": sequence_number,
                                 "item": _build_shell_call_item(
                                     call_id,
@@ -361,8 +382,7 @@ class OpenAPIStreamingService:
                         call_id = chunk.data["call_id"]
                         name = chunk.data["name"]
                         arguments = chunk.data.get("arguments") or {}
-                        tool_output_index = chunk.data["output_index"]
-                        output_index = max(output_index, tool_output_index + 1)
+                        tool_output_index = pop_tool_output_index(f"shell:{call_id}")
                         yield _format_sse_event(
                             {
                                 "type": "response.output_item.done",
@@ -382,12 +402,12 @@ class OpenAPIStreamingService:
                         item_id = chunk.data["item_id"]
                         name = chunk.data["name"]
                         server_label = chunk.data["server_label"]
-                        output_index = max(output_index, chunk.data["output_index"] + 1)
+                        tool_output_index = get_tool_output_index(f"mcp:{item_id}")
                         yield _format_sse_event(
                             {
                                 "type": "response.output_item.added",
                                 "response_id": response_id,
-                                "output_index": chunk.data["output_index"],
+                                "output_index": tool_output_index,
                                 "sequence_number": sequence_number,
                                 "item": {
                                     "type": "mcp_call",
@@ -404,7 +424,7 @@ class OpenAPIStreamingService:
                                 "type": "response.mcp_call.in_progress",
                                 "response_id": response_id,
                                 "item_id": item_id,
-                                "output_index": chunk.data["output_index"],
+                                "output_index": tool_output_index,
                                 "sequence_number": sequence_number,
                             }
                         )
@@ -414,8 +434,7 @@ class OpenAPIStreamingService:
                         name = chunk.data["name"]
                         server_label = chunk.data["server_label"]
                         arguments = chunk.data.get("arguments") or ""
-                        tool_output_index = chunk.data["output_index"]
-                        output_index = max(output_index, tool_output_index + 1)
+                        tool_output_index = pop_tool_output_index(f"mcp:{item_id}")
                         yield _format_sse_event(
                             {
                                 "type": "response.mcp_call_arguments.done",
@@ -463,23 +482,6 @@ class OpenAPIStreamingService:
                                         else "completed"
                                     ),
                                 },
-                            }
-                        )
-                        sequence_number += 1
-
-                else:
-                    # Handle plain string (backward compatibility)
-                    if chunk:
-                        accumulated_text += chunk
-                        # Official OpenAI event: response.output_text.delta
-                        yield _format_sse_event(
-                            {
-                                "content_index": 0,
-                                "delta": chunk,
-                                "item_id": message_id,
-                                "output_index": 0,
-                                "sequence_number": sequence_number,
-                                "type": "response.output_text.delta",
                             }
                         )
                         sequence_number += 1

@@ -431,3 +431,31 @@ class TestResponsesAPIEmitter:
             "command": "python hello.py",
             "timeout_seconds": 30,
         }
+
+    @pytest.mark.asyncio
+    async def test_mcp_tool_done_uses_cached_protocol_without_duplicate_arguments(self):
+        transport = GeneratorTransport()
+        emitter = EmitterBuilder().with_task(1, 2).with_transport(transport).build()
+
+        await emitter.tool_start(
+            call_id="mcp_456",
+            name="search_docs",
+            arguments={"query": "timeout"},
+            tool_protocol="mcp_call",
+            server_label="wegent-knowledge",
+        )
+        await emitter.tool_done(
+            call_id="mcp_456",
+            name="",
+            arguments=None,
+        )
+
+        events = transport.get_events()
+        assert [event_type for event_type, _ in events] == [
+            "response.output_item.added",
+            "response.mcp_call_arguments.done",
+            "response.mcp_call.in_progress",
+            "response.mcp_call.completed",
+            "response.output_item.done",
+        ]
+        assert events[-1][1]["item"]["type"] == "mcp_call"

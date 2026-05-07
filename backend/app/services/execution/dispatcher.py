@@ -93,7 +93,7 @@ def _extract_shell_call_input(item: dict[str, Any]) -> dict[str, Any]:
     if "timeout_seconds" not in result:
         timeout_ms = action.get("timeout_ms")
         if isinstance(timeout_ms, int) and timeout_ms > 0:
-            result["timeout_seconds"] = timeout_ms // 1000
+            result["timeout_seconds"] = max(1, (timeout_ms + 999) // 1000)
     return result
 
 
@@ -149,6 +149,12 @@ class ResponsesAPIEventParser:
         """Build a stable context key scoped to the request lifecycle."""
         return f"{task_id}:{subtask_id}:{tool_use_id}"
 
+    def _clear_task_contexts(self, task_id: int, subtask_id: int) -> None:
+        prefix = f"{task_id}:{subtask_id}:"
+        stale_keys = [key for key in self._tool_contexts if key.startswith(prefix)]
+        for key in stale_keys:
+            self._tool_contexts.pop(key, None)
+
     def parse(
         self,
         task_id: int,
@@ -190,6 +196,7 @@ class ResponsesAPIEventParser:
         elif event_type == ResponsesAPIStreamEvents.RESPONSE_COMPLETED.value:
             # response.completed -> DONE
             response_data = data.get("response", {})
+            self._clear_task_contexts(task_id, subtask_id)
             return ExecutionEvent(
                 type=EventType.DONE,
                 task_id=task_id,
@@ -201,6 +208,7 @@ class ResponsesAPIEventParser:
 
         elif event_type == ResponsesAPIStreamEvents.ERROR.value:
             # error -> ERROR
+            self._clear_task_contexts(task_id, subtask_id)
             return ExecutionEvent(
                 type=EventType.ERROR,
                 task_id=task_id,
@@ -212,6 +220,7 @@ class ResponsesAPIEventParser:
 
         elif event_type == ResponsesAPIStreamEvents.RESPONSE_INCOMPLETE.value:
             # response.incomplete -> CANCELLED
+            self._clear_task_contexts(task_id, subtask_id)
             return ExecutionEvent(
                 type=EventType.CANCELLED,
                 task_id=task_id,

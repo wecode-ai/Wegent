@@ -352,3 +352,60 @@ class TestStreamingServiceReasoning:
         task_context = next(e for e in events if e["type"] == "response.task_context")
         assert task_context["task_id"] == 123
         assert task_context["task_path"] == "/chat?task_id=123"
+
+    @pytest.mark.asyncio
+    async def test_mixed_stream_output_indexes_are_unique(self, streaming_service):
+        async def mixed_stream():
+            yield StreamingChunk(type="reasoning", content="Thinking...")
+            yield StreamingChunk(
+                type="shell_call_added",
+                data={
+                    "call_id": "shell_123",
+                    "name": "exec",
+                    "arguments": {"command": "ls -la"},
+                    "output_index": 0,
+                },
+            )
+            yield StreamingChunk(
+                type="shell_call_done",
+                data={
+                    "call_id": "shell_123",
+                    "name": "exec",
+                    "arguments": {"command": "ls -la"},
+                    "output_index": 0,
+                    "status": "completed",
+                },
+            )
+            yield "done"
+
+        events = []
+        async for event in streaming_service.create_streaming_response(
+            response_id="resp_123",
+            model_string="gpt-4",
+            chat_stream=mixed_stream(),
+            created_at=1234567890,
+        ):
+            events.append(json.loads(event.replace("data: ", "").strip()))
+
+        reasoning_event = next(
+            e for e in events if e["type"] == "response.reasoning_summary_part.added"
+        )
+        shell_added = next(
+            e
+            for e in events
+            if e["type"] == "response.output_item.added"
+            and e["item"]["type"] == "shell_call"
+        )
+        message_added = next(
+            e
+            for e in events
+            if e["type"] == "response.output_item.added"
+            and e["item"]["type"] == "message"
+        )
+
+        indexes = {
+            reasoning_event["output_index"],
+            shell_added["output_index"],
+            message_added["output_index"],
+        }
+        assert len(indexes) == 3

@@ -531,3 +531,32 @@ class TestResponsesAPIEventParserToolIds:
             "timeout_seconds": 5,
         }
         assert done.data["tool_protocol"] == "shell_call"
+
+    def test_terminal_events_clear_scoped_tool_contexts(self):
+        parser = ResponsesAPIEventParser()
+        parser.parse(
+            task_id=1,
+            subtask_id=2,
+            message_id=3,
+            event_type=ResponsesAPIStreamEvents.OUTPUT_ITEM_ADDED.value,
+            data={
+                "item": {
+                    "type": "function_call",
+                    "id": "call_123",
+                    "call_id": "call_123",
+                    "name": "load_skill",
+                    "arguments": "{}",
+                }
+            },
+        )
+        assert parser._tool_contexts
+
+        parser.parse(
+            task_id=1,
+            subtask_id=2,
+            message_id=3,
+            event_type=ResponsesAPIStreamEvents.RESPONSE_INCOMPLETE.value,
+            data={},
+        )
+
+        assert parser._tool_contexts == {}

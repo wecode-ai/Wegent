@@ -270,6 +270,7 @@ class ResponsesAPIEmitter:
             "name": name,
             "arguments": arguments,
             "server_label": server_label,
+            "arguments_emitted": False,
         }
 
         if protocol_type == "mcp_call":
@@ -290,6 +291,7 @@ class ResponsesAPIEmitter:
                     ResponsesAPIStreamEvents.MCP_CALL_ARGUMENTS_DONE.value,
                     args_done_data,
                 )
+                self._tool_contexts[call_id]["arguments_emitted"] = True
 
             in_progress_data = self.builder.mcp_call_in_progress(call_id)
             return await self._emit(
@@ -324,7 +326,7 @@ class ResponsesAPIEmitter:
         name: str,
         arguments: Optional[dict] = None,
         output: Optional[str] = None,
-        tool_protocol: str = "function_call",
+        tool_protocol: Optional[str] = None,
         server_label: Optional[str] = None,
         status: str = "completed",
         error: Optional[str] = None,
@@ -355,12 +357,18 @@ class ResponsesAPIEmitter:
             arguments if arguments is not None else tool_context.get("arguments")
         )
         resolved_server_label = server_label or tool_context.get("server_label")
-        protocol_type = self._normalize_protocol_type(
-            resolved_name, tool_protocol or tool_context.get("protocol_type", "")
+        cached_protocol = tool_context.get("protocol_type")
+        protocol_hint = (
+            cached_protocol
+            if tool_protocol in (None, "function_call") and cached_protocol
+            else tool_protocol or cached_protocol or ""
         )
+        protocol_type = self._normalize_protocol_type(resolved_name, protocol_hint)
 
         if protocol_type == "mcp_call":
-            if resolved_arguments is not None:
+            if resolved_arguments is not None and not tool_context.get(
+                "arguments_emitted", False
+            ):
                 args_done_data = self.builder.mcp_call_arguments_done(
                     call_id, resolved_arguments
                 )
