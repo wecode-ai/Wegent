@@ -103,7 +103,7 @@ class TestSandboxImageViewerTool:
         assert "image/jpeg" in result[0]["image_url"]["url"]
 
     @pytest.mark.asyncio
-    async def test_returns_text_for_non_image(self):
+    async def test_returns_error_for_text_file(self):
         tool = self._make_tool()
         mock_response = MagicMock()
         mock_response.status_code = 200
@@ -121,7 +121,32 @@ class TestSandboxImageViewerTool:
 
             result = await tool._arun(path="/home/user/readme.txt")
 
-        assert result == "hello world"
+        parsed = json.loads(result)
+        assert "error" in parsed
+        assert "not an image" in parsed["error"].lower()
+
+    @pytest.mark.asyncio
+    async def test_returns_error_for_binary_non_image(self):
+        tool = self._make_tool()
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.headers = {"content-type": "application/pdf"}
+        mock_response.content = b"%PDF binary content"
+        mock_response.raise_for_status = MagicMock()
+
+        with patch("httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client_cls.return_value.__aenter__ = AsyncMock(
+                return_value=mock_client
+            )
+            mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+            mock_client.get = AsyncMock(return_value=mock_response)
+
+            result = await tool._arun(path="/home/user/doc.pdf")
+
+        parsed = json.loads(result)
+        assert "error" in parsed
+        assert "not an image" in parsed["error"].lower()
 
     @pytest.mark.asyncio
     async def test_returns_error_json_on_404(self):
@@ -145,7 +170,7 @@ class TestSandboxImageViewerTool:
 
     def test_tool_metadata(self):
         tool = self._make_tool()
-        assert tool.name == "view_sandbox_file"
+        assert tool.name == "view_sandbox_image_file"
         assert tool.task_id == 42
         assert tool.executor_manager_url == "http://exec-mgr:8001"
         assert tool.auth_token == "tok123"

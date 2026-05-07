@@ -1,10 +1,9 @@
-"""Sandbox file viewer tool for reading files from sandbox containers."""
+"""Sandbox image viewer tool for reading image files from sandbox containers."""
 
 import base64
 import json
 import logging
 import mimetypes
-import os
 from typing import Any
 
 import httpx
@@ -32,38 +31,34 @@ IMAGE_MIME_TYPES = frozenset(
 )
 
 
-class SandboxFileViewerInput(BaseModel):
-    """Input schema for sandbox file viewer tool."""
+class SandboxImageViewerInput(BaseModel):
+    """Input schema for sandbox image viewer tool."""
 
     path: str = Field(
         description=(
-            "Absolute file path in the sandbox (e.g., /home/user/image.png). "
-            "Use this to view images or text files that have been downloaded or "
-            "created in the sandbox."
+            "Absolute path to an image file in the sandbox "
+            "(e.g., /home/user/image.png). "
+            "Supported formats: jpg, png, gif, webp, bmp, tiff."
         )
     )
 
 
 class SandboxImageViewerTool(BaseTool):
-    """Read a file from the sandbox container and return its content.
-
-    For image files, returns the visual content so the model can see it.
-    For text files, returns the text content.
+    """Read an image file from the sandbox and return its visual content.
 
     Chat Shell sandboxes are E2B containers accessed via the executor_manager
     E2B proxy at: /executor-manager/e2b/proxy/{sandbox_id}/{envd_port}/files
     The sandbox_id equals str(task_id).
     """
 
-    name: str = "view_sandbox_file"
-    display_name: str = "查看沙箱文件"
+    name: str = "view_sandbox_image_file"
+    display_name: str = "查看沙箱图片"
     description: str = (
-        "Read a file from the sandbox filesystem. "
-        "For images (jpg, png, gif, webp, etc.), returns the visual content so you can see it. "
-        "For text files, returns the text content. "
-        "Use this after downloading or creating a file in the sandbox to view its contents."
+        "View an image file from the sandbox filesystem. "
+        "Supported formats: jpg, png, gif, webp, bmp, tiff. "
+        "Returns the visual content so you can see the image. "
     )
-    args_schema: type[BaseModel] = SandboxFileViewerInput
+    args_schema: type[BaseModel] = SandboxImageViewerInput
 
     task_id: int = 0
     executor_manager_url: str = DEFAULT_EXECUTOR_MANAGER_URL
@@ -105,20 +100,24 @@ class SandboxImageViewerTool(BaseTool):
                 if guessed:
                     content_type = guessed
 
-            if content_type in IMAGE_MIME_TYPES:
-                b64_data = base64.b64encode(response.content).decode("utf-8")
-                return [
+            if content_type not in IMAGE_MIME_TYPES:
+                return json.dumps(
                     {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:{content_type};base64,{b64_data}"},
+                        "error": (
+                            f"Not an image file: {path} "
+                            f"(type: {content_type or 'unknown'}). "
+                            "Use the sandbox shell to read non-image files."
+                        )
                     }
-                ]
+                )
 
-            # Return as text
-            try:
-                return response.content.decode("utf-8")
-            except UnicodeDecodeError:
-                return response.content.decode("latin-1")
+            b64_data = base64.b64encode(response.content).decode("utf-8")
+            return [
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{content_type};base64,{b64_data}"},
+                }
+            ]
 
         except httpx.HTTPStatusError as e:
             logger.warning(
