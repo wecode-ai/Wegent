@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useState, useCallback, useEffect, useMemo } from 'react'
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import {
   FileText,
   RefreshCw,
@@ -51,6 +51,9 @@ import { toast } from 'sonner'
 import dynamic from 'next/dynamic'
 import { useTheme } from '@/features/theme/ThemeProvider'
 import { useRouter } from 'next/navigation'
+// Import WysiwygEditorProps type for language prop
+import type { WysiwygEditorProps } from '@/components/common/WysiwygEditor'
+
 // Dynamically import the WYSIWYG editor to avoid SSR issues
 const WysiwygEditor = dynamic(
   () => import('@/components/common/WysiwygEditor').then(mod => mod.WysiwygEditor),
@@ -123,6 +126,68 @@ function isJsonFileExtension(extension: string | undefined): boolean {
   if (!extension) return false
   const jsonExtensions = ['json', 'jsonl', 'json5']
   return jsonExtensions.includes(extension.toLowerCase())
+}
+
+/**
+ * Map file extension to editor language for syntax highlighting
+ */
+function getEditorLanguage(extension: string | undefined): WysiwygEditorProps['language'] {
+  if (!extension) return 'markdown'
+
+  const ext = extension.toLowerCase()
+
+  const languageMap: Record<string, WysiwygEditorProps['language']> = {
+    // Markdown
+    md: 'markdown',
+    markdown: 'markdown',
+    mdx: 'markdown',
+    mdown: 'markdown',
+    mkd: 'markdown',
+    mkdn: 'markdown',
+    // JSON
+    json: 'json',
+    jsonl: 'json',
+    json5: 'json',
+    // JavaScript
+    js: 'javascript',
+    mjs: 'javascript',
+    jsx: 'jsx',
+    // TypeScript
+    ts: 'typescript',
+    tsx: 'tsx',
+    // Python
+    py: 'python',
+    // HTML
+    html: 'html',
+    htm: 'html',
+    // CSS
+    css: 'css',
+    scss: 'css',
+    sass: 'css',
+    less: 'css',
+    // YAML
+    yaml: 'yaml',
+    yml: 'yaml',
+    // SQL
+    sql: 'sql',
+    // XML
+    xml: 'xml',
+    svg: 'xml',
+    // C/C++
+    c: 'c',
+    h: 'c',
+    cpp: 'cpp',
+    cc: 'cpp',
+    // Go
+    go: 'go',
+    // Java
+    java: 'java',
+    // Rust
+    rs: 'rust',
+    rust: 'rust',
+  }
+
+  return languageMap[ext] || 'text'
 }
 
 /**
@@ -331,6 +396,8 @@ export function DocumentDetailDialog({
   const [showDiscardDialog, setShowDiscardDialog] = useState(false)
   // Loading state for loading full content before editing
   const [isLoadingFullContent, setIsLoadingFullContent] = useState(false)
+  // Ref to store the content at the start of editing for accurate change detection
+  const editStartContentRef = useRef<string>('')
   // View mode: 'preview' for markdown rendering/formatted JSON, 'raw' for plain text
   const [viewMode, setViewMode] = useState<'preview' | 'raw'>('preview')
   // Fullscreen mode for editing
@@ -447,8 +514,8 @@ export function DocumentDetailDialog({
       (document?.source_type === 'file' &&
         editableExtensions.includes(document?.file_extension?.toLowerCase() || '')))
 
-  // Track if content has changed
-  const hasChanges = editedContent !== (detail?.content || '')
+  // Track if content has changed (compare against content at edit start)
+  const hasChanges = editedContent !== (editStartContentRef.current || detail?.content || '')
 
   // Check if content should be rendered as markdown (based on file extension or content detection)
   const isMarkdownContent = useMemo(() => {
@@ -474,12 +541,6 @@ export function DocumentDetailDialog({
     }
   }, [isEditing])
 
-  // Initialize edited content when entering edit mode
-  useEffect(() => {
-    if (isEditing && detail?.content) {
-      setEditedContent(detail.content)
-    }
-  }, [isEditing, detail?.content])
   // Build the full accessible URL using virtual path (no kbId):
   // Uses buildKbUrl to generate the correct format based on KB type:
   //   - personal (namespace="default"): /knowledge/default/{kbName}/{docPath}
@@ -504,9 +565,11 @@ export function DocumentDetailDialog({
   }
 
   const handleCopyContent = async () => {
-    if (!detail?.content) return
+    // Prefer fullContent when available, fall back to detail.content
+    const contentToCopy = fullContent || detail?.content
+    if (!contentToCopy) return
     try {
-      await navigator.clipboard.writeText(detail.content)
+      await navigator.clipboard.writeText(contentToCopy)
       setCopiedContent(true)
       toast.success(t('document.document.detail.copySuccess'))
       setTimeout(() => setCopiedContent(false), 2000)
@@ -519,7 +582,7 @@ export function DocumentDetailDialog({
     refresh()
   }
 
-  const handleEdit = async () => {
+  const handleEdit = useCallback(async () => {
     if (!isEditable) return
 
     // If there's more content to load, load it first before editing
@@ -532,9 +595,14 @@ export function DocumentDetailDialog({
       }
     }
 
-    setEditedContent(fullContent || '')
+    // Use the current fullContent (which may have been updated by loadAllContent)
+    // or fall back to detail.content if fullContent is empty
+    const contentToEdit = fullContent || detail?.content || ''
+    setEditedContent(contentToEdit)
+    // Store the content at edit start for accurate change detection
+    editStartContentRef.current = contentToEdit
     setIsEditing(true)
-  }
+  }, [isEditable, hasMoreContent, loadAllContent, fullContent, detail?.content])
 
   const handleSave = async () => {
     if (!document || !isEditable) return
@@ -591,6 +659,7 @@ export function DocumentDetailDialog({
     setShowDiscardDialog(false)
     setIsEditing(false)
     setEditedContent('')
+    editStartContentRef.current = ''
   }
 
   const handleContentChange = useCallback((content: string) => {
@@ -933,6 +1002,7 @@ export function DocumentDetailDialog({
                           onChange={handleContentChange}
                           onSave={handleVimSave}
                           className={cn(isFullscreen ? 'flex-1' : 'min-h-[400px]')}
+                          language={getEditorLanguage(document.file_extension)}
                         />
                       </div>
                     ) : fullContent ? (

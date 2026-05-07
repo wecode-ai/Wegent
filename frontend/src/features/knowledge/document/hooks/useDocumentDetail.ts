@@ -164,10 +164,12 @@ export function useDocumentDetail({
    * This will keep loading until all content is fetched
    */
   const loadAllContent = useCallback(async () => {
-    if (!hasMoreContent) return
+    // Guard against concurrent execution with loadMore or another loadAllContent call
+    if (loadingMore || !hasMoreContent) return
 
     try {
       setLoadingMore(true)
+      // Read state into local variables to avoid stale closure issues
       let offset = currentOffset
       let hasMore: boolean = hasMoreContent
       let accumulatedContent = fullContent
@@ -192,10 +194,10 @@ export function useDocumentDetail({
         }
       }
 
-      // Update state with all loaded content
-      setFullContent(accumulatedContent)
-      setCurrentOffset(offset)
-      setHasMoreContent(false)
+      // Update state with all loaded content using functional updaters to avoid races
+      setFullContent(() => accumulatedContent)
+      setCurrentOffset(() => offset)
+      setHasMoreContent(() => false)
       setDetail(prev => (prev ? { ...prev, truncated: false } : null))
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to load all content'
@@ -203,7 +205,7 @@ export function useDocumentDetail({
     } finally {
       setLoadingMore(false)
     }
-  }, [kbId, docId, currentOffset, hasMoreContent, fullContent])
+  }, [kbId, docId, currentOffset, hasMoreContent, fullContent, loadingMore])
 
   /**
    * Refresh document summary
