@@ -12,7 +12,7 @@ It converts internal chat streaming to the OpenAI-compatible event format.
 import json
 import logging
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 
@@ -49,12 +49,45 @@ def _format_sse_event(data: Dict[str, Any]) -> str:
     return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
+def _build_shell_call_action(arguments: Dict[str, Any]) -> Dict[str, Any]:
+    action = {
+        "commands": (
+            [arguments["command"]]
+            if isinstance(arguments.get("command"), str) and arguments["command"]
+            else []
+        ),
+    }
+    timeout_seconds = arguments.get("timeout_seconds")
+    if isinstance(timeout_seconds, int) and timeout_seconds > 0:
+        action["timeout_ms"] = timeout_seconds * 1000
+    return action
+
+
+def _build_shell_call_item(
+    call_id: str,
+    name: str,
+    arguments: Dict[str, Any],
+    *,
+    status: str,
+) -> Dict[str, Any]:
+    return {
+        "type": "shell_call",
+        "id": call_id,
+        "call_id": call_id,
+        "status": status,
+        "action": _build_shell_call_action(arguments),
+        "name": name,
+        "input": arguments,
+    }
+
+
 @dataclass
 class StreamingChunk:
-    """A chunk of streaming data, either text or reasoning."""
+    """A chunk of streaming data for Responses API streaming."""
 
-    type: str  # "text" or "reasoning"
-    content: str
+    type: str
+    content: str = ""
+    data: Dict[str, Any] = field(default_factory=dict)
 
 
 class OpenAPIStreamingService:
@@ -76,6 +109,7 @@ class OpenAPIStreamingService:
         chat_stream: AsyncGenerator[Union[str, StreamingChunk], None],
         created_at: Optional[int] = None,
         previous_response_id: Optional[str] = None,
+        task_context: Optional[Dict[str, Any]] = None,
     ) -> AsyncGenerator[str, None]:
         """
         Create a streaming response generator in OpenAI v1/responses format.
@@ -103,6 +137,26 @@ class OpenAPIStreamingService:
         reasoning_started = False
         reasoning_complete = False
         output_index = 0
+        next_output_index = 0
+        message_started = False
+        tool_output_indexes: Dict[str, int] = {}
+
+        def allocate_output_index() -> int:
+            nonlocal next_output_index
+            assigned = next_output_index
+            next_output_index += 1
+            return assigned
+
+        def get_tool_output_index(tool_key: str) -> int:
+            if tool_key not in tool_output_indexes:
+                tool_output_indexes[tool_key] = allocate_output_index()
+            return tool_output_indexes[tool_key]
+
+        def pop_tool_output_index(tool_key: str) -> int:
+            existing = tool_output_indexes.pop(tool_key, None)
+            if existing is not None:
+                return existing
+            return allocate_output_index()
 
         try:
             # Event 1: response.created
@@ -133,10 +187,21 @@ class OpenAPIStreamingService:
             )
             sequence_number += 1
 
+            if task_context:
+                yield _format_sse_event(
+                    {
+                        "type": "response.task_context",
+                        "response_id": response_id,
+                        **task_context,
+                    }
+                )
+
             # Process stream chunks
             async for chunk in chat_stream:
                 if chunk is None:
                     continue
+                if isinstance(chunk, str):
+                    chunk = StreamingChunk(type="text", content=chunk)
 
                 # Handle StreamingChunk objects
                 if isinstance(chunk, StreamingChunk):
@@ -144,7 +209,7 @@ class OpenAPIStreamingService:
                         # Start reasoning output if not started
                         if not reasoning_started:
                             reasoning_started = True
-                            output_index = 0
+                            output_index = allocate_output_index()
                             # Official OpenAI event: response.reasoning_summary_part.added
                             yield _format_sse_event(
                                 {
@@ -184,19 +249,15 @@ class OpenAPIStreamingService:
                             # If we had reasoning before, close it first
                             if reasoning_started and not reasoning_complete:
                                 reasoning_complete = True
-                                output_index += 1
                                 # Note: OpenAI doesn't have explicit reasoning "done" event
                                 # We transition directly to text output
 
                             accumulated_text += chunk.content
 
                             # Start text output if this is the first text chunk
-                            if output_index == 0 or (
-                                reasoning_started and output_index == 1
-                            ):
-                                if output_index == 0:
-                                    output_index = 0
-
+                            if not message_started:
+                                message_started = True
+                                output_index = allocate_output_index()
                                 # Official OpenAI event: response.output_item.added
                                 yield _format_sse_event(
                                     {
@@ -243,20 +304,184 @@ class OpenAPIStreamingService:
                                 }
                             )
                             sequence_number += 1
-
-                else:
-                    # Handle plain string (backward compatibility)
-                    if chunk:
-                        accumulated_text += chunk
-                        # Official OpenAI event: response.output_text.delta
+                    elif chunk.type == "function_call_added":
+                        call_id = chunk.data["call_id"]
+                        name = chunk.data["name"]
+                        arguments = chunk.data.get("arguments") or ""
+                        tool_output_index = get_tool_output_index(f"function:{call_id}")
                         yield _format_sse_event(
                             {
-                                "content_index": 0,
-                                "delta": chunk,
-                                "item_id": message_id,
-                                "output_index": 0,
+                                "type": "response.output_item.added",
+                                "response_id": response_id,
+                                "output_index": tool_output_index,
                                 "sequence_number": sequence_number,
-                                "type": "response.output_text.delta",
+                                "item": {
+                                    "type": "function_call",
+                                    "id": call_id,
+                                    "call_id": call_id,
+                                    "name": name,
+                                    "arguments": arguments,
+                                },
+                            }
+                        )
+                        sequence_number += 1
+                    elif chunk.type == "function_call_done":
+                        call_id = chunk.data["call_id"]
+                        name = chunk.data["name"]
+                        arguments = chunk.data.get("arguments") or ""
+                        tool_output_index = pop_tool_output_index(f"function:{call_id}")
+                        yield _format_sse_event(
+                            {
+                                "type": "response.function_call_arguments.done",
+                                "response_id": response_id,
+                                "item_id": call_id,
+                                "call_id": call_id,
+                                "output_index": tool_output_index,
+                                "sequence_number": sequence_number,
+                                "arguments": arguments,
+                            }
+                        )
+                        sequence_number += 1
+                        yield _format_sse_event(
+                            {
+                                "type": "response.output_item.done",
+                                "response_id": response_id,
+                                "output_index": tool_output_index,
+                                "sequence_number": sequence_number,
+                                "item": {
+                                    "type": "function_call",
+                                    "id": call_id,
+                                    "call_id": call_id,
+                                    "name": name,
+                                    "arguments": arguments,
+                                },
+                            }
+                        )
+                        sequence_number += 1
+                    elif chunk.type == "shell_call_added":
+                        call_id = chunk.data["call_id"]
+                        name = chunk.data["name"]
+                        arguments = chunk.data.get("arguments") or {}
+                        tool_output_index = get_tool_output_index(f"shell:{call_id}")
+                        yield _format_sse_event(
+                            {
+                                "type": "response.output_item.added",
+                                "response_id": response_id,
+                                "output_index": tool_output_index,
+                                "sequence_number": sequence_number,
+                                "item": _build_shell_call_item(
+                                    call_id,
+                                    name,
+                                    arguments,
+                                    status="in_progress",
+                                ),
+                            }
+                        )
+                        sequence_number += 1
+                    elif chunk.type == "shell_call_done":
+                        call_id = chunk.data["call_id"]
+                        name = chunk.data["name"]
+                        arguments = chunk.data.get("arguments") or {}
+                        tool_output_index = pop_tool_output_index(f"shell:{call_id}")
+                        yield _format_sse_event(
+                            {
+                                "type": "response.output_item.done",
+                                "response_id": response_id,
+                                "output_index": tool_output_index,
+                                "sequence_number": sequence_number,
+                                "item": _build_shell_call_item(
+                                    call_id,
+                                    name,
+                                    arguments,
+                                    status=chunk.data.get("status", "completed"),
+                                ),
+                            }
+                        )
+                        sequence_number += 1
+                    elif chunk.type == "mcp_call_added":
+                        item_id = chunk.data["item_id"]
+                        name = chunk.data["name"]
+                        server_label = chunk.data["server_label"]
+                        tool_output_index = get_tool_output_index(f"mcp:{item_id}")
+                        yield _format_sse_event(
+                            {
+                                "type": "response.output_item.added",
+                                "response_id": response_id,
+                                "output_index": tool_output_index,
+                                "sequence_number": sequence_number,
+                                "item": {
+                                    "type": "mcp_call",
+                                    "id": item_id,
+                                    "name": name,
+                                    "server_label": server_label,
+                                    "arguments": "",
+                                },
+                            }
+                        )
+                        sequence_number += 1
+                        yield _format_sse_event(
+                            {
+                                "type": "response.mcp_call.in_progress",
+                                "response_id": response_id,
+                                "item_id": item_id,
+                                "output_index": tool_output_index,
+                                "sequence_number": sequence_number,
+                            }
+                        )
+                        sequence_number += 1
+                    elif chunk.type == "mcp_call_done":
+                        item_id = chunk.data["item_id"]
+                        name = chunk.data["name"]
+                        server_label = chunk.data["server_label"]
+                        arguments = chunk.data.get("arguments") or ""
+                        tool_output_index = pop_tool_output_index(f"mcp:{item_id}")
+                        yield _format_sse_event(
+                            {
+                                "type": "response.mcp_call_arguments.done",
+                                "response_id": response_id,
+                                "item_id": item_id,
+                                "output_index": tool_output_index,
+                                "sequence_number": sequence_number,
+                                "arguments": arguments,
+                            }
+                        )
+                        sequence_number += 1
+                        terminal_type = (
+                            "response.mcp_call.failed"
+                            if chunk.data.get("status") == "failed"
+                            else "response.mcp_call.completed"
+                        )
+                        terminal_payload = {
+                            "type": terminal_type,
+                            "response_id": response_id,
+                            "item_id": item_id,
+                            "output_index": tool_output_index,
+                            "sequence_number": sequence_number,
+                        }
+                        if chunk.data.get("status") == "failed" and chunk.data.get(
+                            "error"
+                        ):
+                            terminal_payload["error"] = chunk.data["error"]
+                        yield _format_sse_event(terminal_payload)
+                        sequence_number += 1
+                        yield _format_sse_event(
+                            {
+                                "type": "response.output_item.done",
+                                "response_id": response_id,
+                                "output_index": tool_output_index,
+                                "sequence_number": sequence_number,
+                                "item": {
+                                    "type": "mcp_call",
+                                    "id": item_id,
+                                    "name": name,
+                                    "server_label": server_label,
+                                    "arguments": arguments,
+                                    "status": (
+                                        "failed"
+                                        if chunk.data.get("status") == "failed"
+                                        else "completed"
+                                    ),
+                                },
                             }
                         )
                         sequence_number += 1
