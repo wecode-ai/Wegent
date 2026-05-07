@@ -584,30 +584,29 @@ export function DocumentDetailDialog({
     if (!isEditable) return
 
     // If there's more content to load, load it first before editing
+    let contentToEdit = fullContent || detail?.content || ''
     if (hasMoreContent) {
       setIsLoadingFullContent(true)
       try {
-        await loadAllContent()
+        const result = await loadAllContent()
+        if (result) {
+          // Use fresh values from result to avoid stale closure issues
+          if (result.hasMore || result.loading) {
+            // Content is still incomplete, bail out without opening editor
+            return
+          }
+          contentToEdit = result.content
+        }
       } finally {
         setIsLoadingFullContent(false)
       }
-
-      // Re-check if content is still incomplete after loading
-      // loadAllContent is a no-op when loadingMore is true, so we need to verify
-      if (loadingMore || hasMoreContent) {
-        // Content is still incomplete, bail out without opening editor
-        return
-      }
     }
 
-    // Use the current fullContent (which may have been updated by loadAllContent)
-    // or fall back to detail.content if fullContent is empty
-    const contentToEdit = fullContent || detail?.content || ''
     setEditedContent(contentToEdit)
     // Store the content at edit start for accurate change detection
     editStartContentRef.current = contentToEdit
     setIsEditing(true)
-  }, [isEditable, hasMoreContent, loadAllContent, fullContent, detail?.content, loadingMore])
+  }, [isEditable, hasMoreContent, loadAllContent, fullContent, detail?.content])
 
   const handleSave = async () => {
     if (!document || !isEditable) return
@@ -889,7 +888,7 @@ export function DocumentDetailDialog({
                         ) : (
                           <>
                             {/* View mode toggle - show for markdown or JSON content */}
-                            {(isMarkdownContent || isJsonContent) && detail.content && (
+                            {(isMarkdownContent || isJsonContent) && fullContent && (
                               <Tooltip>
                                 <TooltipTrigger asChild>
                                   <Button
