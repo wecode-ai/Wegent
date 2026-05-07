@@ -20,7 +20,7 @@ import type { SkillSelectorPopoverRef } from '../selector/SkillSelectorPopover'
 
 export interface ChatInputCardProps extends Omit<
   ChatInputControlsProps,
-  'taskInputMessage' | 'taskType'
+  'taskInputMessage' | 'taskType' | 'setTaskInputMessage'
 > {
   // Input message
   taskInputMessage: string
@@ -384,6 +384,7 @@ export function ChatInputCard({
             isModelSelectionRequired={isModelSelectionRequired}
             isAttachmentReadyToSend={isAttachmentReadyToSend}
             taskInputMessage={taskInputMessage}
+            setTaskInputMessage={setTaskInputMessage}
             isSubtaskStreaming={isSubtaskStreaming}
             onStopStream={onStopStream}
             onSendMessage={onSendMessage}
