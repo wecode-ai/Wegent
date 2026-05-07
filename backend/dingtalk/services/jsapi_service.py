@@ -92,7 +92,8 @@ class JsapiService:
 
         access_token = data.get("accessToken")
         if not access_token:
-            raise ValueError(f"Failed to get access token for JSAPI: {data}")
+            logger.info(f"Failed to get access token for JSAPI: {data}")
+            return None 
 
         expire_in = data.get("expireIn", 7200)
         ttl = max(expire_in - 600, 600)  # Refresh 10 minutes before expiry
@@ -122,7 +123,8 @@ class JsapiService:
 
         ticket = data.get("jsapiTicket")
         if not ticket:
-            raise ValueError(f"Failed to get JSAPI ticket: {data}")
+            logger.info(f"Failed to get JSAPI ticket: {data}")
+            return None
 
         expire_in = data.get("expireIn", 7200)
         ttl = max(expire_in - 600, 600)
