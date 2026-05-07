@@ -48,6 +48,16 @@ def contains_api_error(text: str) -> bool:
     return any(pattern in text for pattern in API_ERROR_PATTERNS)
 
 
+def _tool_result_completion(block: ToolResultBlock) -> tuple[str, str | None]:
+    """Translate Claude tool result errors into emitter terminal status."""
+    if not block.is_error:
+        return ("completed", None)
+
+    if isinstance(block.content, (dict, list)):
+        return ("failed", json.dumps(block.content, ensure_ascii=False))
+    return ("failed", str(block.content))
+
+
 async def process_response(
     client: ClaudeSDKClient,
     state_manager,
@@ -437,11 +447,14 @@ async def _handle_user_message(
                         if isinstance(block.content, (dict, list))
                         else str(block.content)
                     )
+                    status, error = _tool_result_completion(block)
                     await emitter.tool_done(
                         call_id=block.tool_use_id,
                         name="",  # Tool name not available in ToolResultBlock
                         arguments=None,  # Arguments not available in ToolResultBlock
                         output=tool_output,
+                        status=status,
+                        error=error,
                     )
                     logger.info(
                         f"Sent tool_result event for tool_use_id {block.tool_use_id}"

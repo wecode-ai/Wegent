@@ -105,10 +105,10 @@ def _apply_backend_format(logger: logging.Logger) -> None:
 
     # Attach file handler if enabled and not already present
     if settings.LOG_FILE_ENABLED:
-        from logging.handlers import TimedRotatingFileHandler
+        from app.core.logging import HourlyRotatingFileHandler
 
         already_has_file = any(
-            isinstance(h, TimedRotatingFileHandler) for h in logger.handlers
+            isinstance(h, HourlyRotatingFileHandler) for h in logger.handlers
         )
         if not already_has_file:
             file_handler = _create_file_handler(log_format, datefmt)

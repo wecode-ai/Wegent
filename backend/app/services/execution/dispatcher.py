@@ -72,6 +72,39 @@ def _require_non_empty_tool_use_id(tool_use_id: Any, *, context: str) -> str:
     return value
 
 
+def _extract_shell_call_input(item: dict[str, Any]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    shell_input = item.get("input")
+    if isinstance(shell_input, dict):
+        result.update(shell_input)
+
+    action = item.get("action", {})
+    if not isinstance(action, dict):
+        return result
+
+    commands = action.get("commands") or []
+    if "command" not in result and isinstance(commands, list):
+        command = next(
+            (value for value in commands if isinstance(value, str) and value.strip()),
+            None,
+        )
+        if command:
+            result["command"] = command
+    if "timeout_seconds" not in result:
+        timeout_ms = action.get("timeout_ms")
+        if isinstance(timeout_ms, int) and timeout_ms > 0:
+            result["timeout_seconds"] = max(1, (timeout_ms + 999) // 1000)
+    return result
+
+
+def _build_shell_call_context(item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "protocol": "shell_call",
+        "name": item.get("name", ""),
+        "arguments": _extract_shell_call_input(item),
+    }
+
+
 def extract_completed_result(response_data: dict) -> dict:
     """Build a result dict from a ``response.completed`` payload.
 
@@ -108,8 +141,22 @@ class ResponsesAPIEventParser:
     It converts OpenAI Responses API events to internal ExecutionEvent format.
     """
 
+    def __init__(self) -> None:
+        self._tool_contexts: dict[str, dict[str, Any]] = {}
+
     @staticmethod
+    def _tool_key(task_id: int, subtask_id: int, tool_use_id: str) -> str:
+        """Build a stable context key scoped to the request lifecycle."""
+        return f"{task_id}:{subtask_id}:{tool_use_id}"
+
+    def _clear_task_contexts(self, task_id: int, subtask_id: int) -> None:
+        prefix = f"{task_id}:{subtask_id}:"
+        stale_keys = [key for key in self._tool_contexts if key.startswith(prefix)]
+        for key in stale_keys:
+            self._tool_contexts.pop(key, None)
+
     def parse(
+        self,
         task_id: int,
         subtask_id: int,
         message_id: Optional[int],
@@ -149,6 +196,7 @@ class ResponsesAPIEventParser:
         elif event_type == ResponsesAPIStreamEvents.RESPONSE_COMPLETED.value:
             # response.completed -> DONE
             response_data = data.get("response", {})
+            self._clear_task_contexts(task_id, subtask_id)
             return ExecutionEvent(
                 type=EventType.DONE,
                 task_id=task_id,
@@ -160,6 +208,7 @@ class ResponsesAPIEventParser:
 
         elif event_type == ResponsesAPIStreamEvents.ERROR.value:
             # error -> ERROR
+            self._clear_task_contexts(task_id, subtask_id)
             return ExecutionEvent(
                 type=EventType.ERROR,
                 task_id=task_id,
@@ -171,6 +220,7 @@ class ResponsesAPIEventParser:
 
         elif event_type == ResponsesAPIStreamEvents.RESPONSE_INCOMPLETE.value:
             # response.incomplete -> CANCELLED
+            self._clear_task_contexts(task_id, subtask_id)
             return ExecutionEvent(
                 type=EventType.CANCELLED,
                 task_id=task_id,
@@ -191,6 +241,14 @@ class ResponsesAPIEventParser:
                 data.get("call_id") or data.get("item_id"),
                 context="function_call_arguments.done",
             )
+            tool_key = self._tool_key(task_id, subtask_id, tool_use_id)
+            tool_context = self._tool_contexts.pop(tool_key, None)
+            if tool_context is None:
+                logger.warning(
+                    "[ResponsesAPIEventParser] Missing function_call context for %s",
+                    tool_key,
+                )
+                return None
             # Parse arguments from the event data to get tool_input
             arguments_str = data.get("arguments", "")
             tool_input = None
@@ -203,10 +261,14 @@ class ResponsesAPIEventParser:
                 type=EventType.TOOL_RESULT,
                 task_id=task_id,
                 subtask_id=subtask_id,
+                tool_name=tool_context.get("name"),
                 tool_use_id=tool_use_id,
-                tool_input=tool_input,
+                tool_input=tool_input or tool_context.get("arguments"),
                 tool_output=data.get("output"),
-                data={"blocks": data.get("blocks", [])},
+                data={
+                    "blocks": data.get("blocks", []),
+                    "tool_protocol": "function_call",
+                },
                 message_id=message_id,
             )
 
@@ -242,6 +304,12 @@ class ResponsesAPIEventParser:
                         arguments = json.loads(arguments_str)
                     except (json.JSONDecodeError, TypeError):
                         pass
+                tool_key = self._tool_key(task_id, subtask_id, call_id)
+                self._tool_contexts[tool_key] = {
+                    "protocol": "function_call",
+                    "name": name,
+                    "arguments": arguments,
+                }
 
                 return ExecutionEvent(
                     type=EventType.TOOL_START,
@@ -253,19 +321,173 @@ class ResponsesAPIEventParser:
                     data={
                         "blocks": data.get("blocks", []),
                         "display_name": data.get("display_name"),
+                        "tool_protocol": "function_call",
+                    },
+                    message_id=message_id,
+                )
+            if item.get("type") == "mcp_call":
+                item_id = _require_non_empty_tool_use_id(
+                    item.get("id"),
+                    context="response.output_item.added(mcp_call)",
+                )
+                server_label = item.get("server_label", "")
+                name = item.get("name", "")
+                tool_key = self._tool_key(task_id, subtask_id, item_id)
+                self._tool_contexts[tool_key] = {
+                    "protocol": "mcp_call",
+                    "name": name,
+                    "server_label": server_label,
+                }
+                return ExecutionEvent(
+                    type=EventType.TOOL_START,
+                    task_id=task_id,
+                    subtask_id=subtask_id,
+                    tool_use_id=item_id,
+                    tool_name=name,
+                    data={
+                        "tool_protocol": "mcp_call",
+                        "server_label": server_label,
+                    },
+                    message_id=message_id,
+                )
+            if item.get("type") == "shell_call":
+                call_id = _require_non_empty_tool_use_id(
+                    item.get("call_id") or item.get("id"),
+                    context="response.output_item.added(shell_call)",
+                )
+                tool_context = _build_shell_call_context(item)
+                tool_key = self._tool_key(task_id, subtask_id, call_id)
+                self._tool_contexts[tool_key] = tool_context
+                return ExecutionEvent(
+                    type=EventType.TOOL_START,
+                    task_id=task_id,
+                    subtask_id=subtask_id,
+                    tool_use_id=call_id,
+                    tool_name=tool_context["name"],
+                    tool_input=tool_context["arguments"],
+                    data={
+                        "blocks": data.get("blocks", []),
+                        "display_name": data.get("display_name"),
+                        "tool_protocol": "shell_call",
                     },
                     message_id=message_id,
                 )
             # Other item types (message) are lifecycle events, skip
             return None
 
+        elif event_type == ResponsesAPIStreamEvents.MCP_CALL_ARGUMENTS_DONE.value:
+            item_id = _require_non_empty_tool_use_id(
+                data.get("item_id"),
+                context="response.mcp_call_arguments.done",
+            )
+            tool_key = self._tool_key(task_id, subtask_id, item_id)
+            tool_context = self._tool_contexts.get(tool_key)
+            if tool_context is None:
+                logger.warning(
+                    "[ResponsesAPIEventParser] Missing mcp_call context for %s during arguments.done",
+                    tool_key,
+                )
+                return None
+            arguments_str = data.get("arguments", "")
+            tool_input = None
+            if arguments_str:
+                try:
+                    tool_input = json.loads(arguments_str)
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            tool_context["arguments"] = tool_input
+            return ExecutionEvent(
+                type=EventType.TOOL,
+                task_id=task_id,
+                subtask_id=subtask_id,
+                tool_use_id=item_id,
+                tool_input=tool_input,
+                data={
+                    "tool_protocol": "mcp_call",
+                    "phase": "arguments_done",
+                },
+                message_id=message_id,
+            )
+
+        elif event_type == ResponsesAPIStreamEvents.MCP_CALL_IN_PROGRESS.value:
+            return None
+
+        elif event_type in (
+            ResponsesAPIStreamEvents.MCP_CALL_COMPLETED.value,
+            ResponsesAPIStreamEvents.MCP_CALL_FAILED.value,
+        ):
+            item_id = _require_non_empty_tool_use_id(
+                data.get("item_id"),
+                context=event_type,
+            )
+            tool_key = self._tool_key(task_id, subtask_id, item_id)
+            tool_context = self._tool_contexts.pop(tool_key, None)
+            if tool_context is None:
+                logger.warning(
+                    "[ResponsesAPIEventParser] Missing mcp_call completion context for %s",
+                    tool_key,
+                )
+                return None
+            return ExecutionEvent(
+                type=EventType.TOOL_RESULT,
+                task_id=task_id,
+                subtask_id=subtask_id,
+                tool_name=tool_context.get("name"),
+                tool_use_id=item_id,
+                tool_input=tool_context.get("arguments"),
+                data={
+                    "tool_protocol": "mcp_call",
+                    "server_label": tool_context.get("server_label", ""),
+                    "status": (
+                        "failed"
+                        if event_type == ResponsesAPIStreamEvents.MCP_CALL_FAILED.value
+                        else "completed"
+                    ),
+                    "error": data.get("error"),
+                },
+                message_id=message_id,
+            )
+
+        elif event_type == ResponsesAPIStreamEvents.OUTPUT_ITEM_DONE.value:
+            item = data.get("item", {})
+            if item.get("type") != "shell_call":
+                return None
+            call_id = _require_non_empty_tool_use_id(
+                item.get("call_id") or item.get("id"),
+                context="response.output_item.done(shell_call)",
+            )
+            tool_key = self._tool_key(task_id, subtask_id, call_id)
+            tool_context = self._tool_contexts.pop(tool_key, None)
+            if tool_context is None:
+                logger.warning(
+                    "[ResponsesAPIEventParser] Missing shell_call completion context for %s",
+                    tool_key,
+                )
+                return None
+            tool_input = _extract_shell_call_input(item) or tool_context.get(
+                "arguments"
+            )
+            return ExecutionEvent(
+                type=EventType.TOOL_RESULT,
+                task_id=task_id,
+                subtask_id=subtask_id,
+                tool_name=tool_context.get("name"),
+                tool_use_id=call_id,
+                tool_input=tool_input,
+                data={
+                    "tool_protocol": "shell_call",
+                    "status": item.get("status", "completed"),
+                },
+                message_id=message_id,
+            )
+
         elif event_type in (
             ResponsesAPIStreamEvents.RESPONSE_CREATED.value,
             ResponsesAPIStreamEvents.RESPONSE_IN_PROGRESS.value,
-            ResponsesAPIStreamEvents.OUTPUT_ITEM_DONE.value,
             ResponsesAPIStreamEvents.CONTENT_PART_ADDED.value,
             ResponsesAPIStreamEvents.CONTENT_PART_DONE.value,
             ResponsesAPIStreamEvents.OUTPUT_TEXT_DONE.value,
+            ResponsesAPIStreamEvents.MCP_CALL_ARGUMENTS_DELTA.value,
         ):
             # These are lifecycle events, skip them
             return None

@@ -5,9 +5,76 @@
 """Logging configuration for Chat Shell Service."""
 
 import logging
+import math
 import os
 import sys
+import time
 from logging.handlers import TimedRotatingFileHandler
+
+
+class HourlyRotatingFileHandler(TimedRotatingFileHandler):
+    """
+    TimedRotatingFileHandler with two improvements over the stdlib default:
+
+    1. Clock-snapped rotation: rolls over exactly on the hour boundary (HH:00:00)
+       instead of startTime + 3600, so log files reliably map to a single clock-hour
+       regardless of when the process started.
+
+    2. Multi-process safety: acquires an exclusive flock before rotating so that
+       concurrent workers sharing the same log file do not corrupt each other's output
+       or produce duplicate rotated files.
+    """
+
+    def computeRollover(self, currentTime: float) -> float:
+        """Snap to the start of the next local clock hour."""
+        if self.utc:
+            offset = 0
+        else:
+            offset = -time.timezone
+            if time.daylight and time.localtime(currentTime).tm_isdst:
+                offset = -time.altzone
+        local_time = currentTime + offset
+        next_hour = (math.floor(local_time / 3600) + 1) * 3600
+        return next_hour - offset
+
+    def doRollover(self) -> None:
+        """Rotate with an exclusive file lock to handle concurrent processes."""
+        import fcntl
+
+        lock_path = self.baseFilename + ".lock"
+        with open(lock_path, "a") as lock_file:
+            fcntl.flock(lock_file, fcntl.LOCK_EX)
+            try:
+                self._do_rollover_locked()
+            finally:
+                fcntl.flock(lock_file, fcntl.LOCK_UN)
+
+    def _do_rollover_locked(self) -> None:
+        """Inner rotation logic, called while holding the exclusive lock."""
+        if self.stream:
+            self.stream.close()
+            self.stream = None
+
+        # Compute destination filename (mirrors stdlib logic)
+        t = self.rolloverAt - self.interval
+        timeTuple = time.localtime(t) if not self.utc else time.gmtime(t)
+        dfn = self.rotation_filename(
+            self.baseFilename + "." + time.strftime(self.suffix, timeTuple)
+        )
+
+        if not os.path.exists(dfn):
+            # This process wins the race: perform the actual rename.
+            self.rotate(self.baseFilename, dfn)
+        # else: another process already rotated; just reopen below.
+
+        # Reopen stream on the (possibly new) base file and advance rolloverAt.
+        self.stream = self._open()
+        now = int(time.time())
+        new_rollover = self.computeRollover(now)
+        # Guard against clock skew right on the boundary
+        while new_rollover <= now:
+            new_rollover += self.interval
+        self.rolloverAt = new_rollover
 
 
 class RelativePathFormatter(logging.Formatter):
@@ -83,7 +150,7 @@ def _create_file_handler(
         return None
 
     log_file = os.path.join(log_dir, "info.log")
-    file_handler = TimedRotatingFileHandler(
+    file_handler = HourlyRotatingFileHandler(
         filename=log_file,
         when="h",
         interval=1,

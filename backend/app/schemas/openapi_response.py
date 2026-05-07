@@ -154,6 +154,15 @@ class ReasoningConfig(BaseModel):
     )
 
 
+class WegentOptions(BaseModel):
+    """Wegent-specific request options for Responses API."""
+
+    include_task_context: bool = Field(
+        default=False,
+        description="Whether to emit the Wegent extension event response.task_context in streaming mode.",
+    )
+
+
 class ResponseCreateInput(BaseModel):
     """Request schema for creating a response."""
 
@@ -189,6 +198,10 @@ class ResponseCreateInput(BaseModel):
             "Attachments will be linked to this request and included in the context. "
             f"Maximum {MAX_ATTACHMENT_IDS} attachments, each ID must be a positive integer.",
         )
+    )
+    wegent_options: Optional[WegentOptions] = Field(
+        default=None,
+        description="Optional Wegent-specific extensions for the Responses API.",
     )
 
 

@@ -368,7 +368,7 @@ class DingTalkRobotSender:
             }
 
         except Exception as e:
-            logger.error(f"[DingTalkSender] Error creating AI card: {e}")
+            logger.error(f"[DingTalkSender] Error creating AI card: {e}", exc_info=True)
             return {
                 "success": False,
                 "error": str(e),

@@ -137,7 +137,7 @@ class DataMapper:
             return None
         value = self._extract_by_path(item, field)
         if isinstance(value, list):
-            return value
+            return [str(v) for v in value if v is not None]
         return None
 
     def _extract_url(self, item: Dict[str, Any], config: Any) -> Optional[str]:
