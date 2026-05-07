@@ -27,6 +27,7 @@ import { teamApis } from '@/apis/team'
 import { modelApis, UnifiedModel } from '@/apis/models'
 import { userApis } from '@/apis/user'
 import { fetchUnifiedSkillsList, type UnifiedSkill } from '@/apis/skills'
+import { filterVisibleSkills } from '@/utils/skillVisibility'
 import type { Team, GitRepoInfo, GitBranch, SearchUser } from '@/types/api'
 import type {
   NotificationChannelBindingConfig,
@@ -480,7 +481,7 @@ export function SubscriptionForm({
       try {
         // Use scope='all' to include personal + group + public skills
         const response = await fetchUnifiedSkillsList({ scope: 'all' })
-        setAvailableSkills(response)
+        setAvailableSkills(filterVisibleSkills(response))
       } catch (error) {
         console.error('Failed to load skills:', error)
       } finally {

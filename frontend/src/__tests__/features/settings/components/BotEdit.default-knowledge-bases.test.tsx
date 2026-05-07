@@ -10,8 +10,10 @@ import BotEdit from '@/features/settings/components/BotEdit'
 import { botApis } from '@/apis/bots'
 import { knowledgeBaseApi } from '@/apis/knowledge-base'
 import { modelApis } from '@/apis/models'
+import { publicResourceApis } from '@/apis/publicResources'
 import { shellApis } from '@/apis/shells'
-import { fetchUnifiedSkillsList } from '@/apis/skills'
+import { fetchPublicSkillsList, fetchUnifiedSkillsList } from '@/apis/skills'
+import type { Bot } from '@/types/api'
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
@@ -86,6 +88,16 @@ jest.mock('@/apis/skills', () => ({
   fetchPublicSkillsList: jest.fn(),
 }))
 
+jest.mock('@/apis/publicResources', () => ({
+  publicResourceApis: {
+    getPublicShells: jest.fn(),
+    getPublicModels: jest.fn(),
+    updatePublicBot: jest.fn(),
+    createPublicBot: jest.fn(),
+    getPublicBots: jest.fn(),
+  },
+}))
+
 jest.mock('@/features/settings/components/McpConfigSection', () => {
   function MockMcpConfigSection() {
     return <div data-testid="mcp-config-section" />
@@ -101,8 +113,18 @@ jest.mock('@/features/settings/components/skills/SkillManagementModal', () => {
   return MockSkillManagementModal
 })
 jest.mock('@/features/settings/components/skills/RichSkillSelector', () => ({
-  RichSkillSelector: function MockRichSkillSelector() {
-    return <div data-testid="rich-skill-selector" />
+  RichSkillSelector: function MockRichSkillSelector({
+    skills,
+  }: {
+    skills: Array<{ name: string; displayName?: string }>
+  }) {
+    return (
+      <div data-testid="rich-skill-selector">
+        {skills.map(skill => (
+          <span key={skill.name}>{skill.displayName || skill.name}</span>
+        ))}
+      </div>
+    )
   },
 }))
 jest.mock('@/features/settings/components/DifyBotConfig', () => {
@@ -167,8 +189,14 @@ const mockedKnowledgeBaseGrouped = knowledgeBaseApi.getAllGrouped as jest.Mock
 const mockedGetUnifiedModels = modelApis.getUnifiedModels as jest.Mock
 const mockedGetUnifiedShells = shellApis.getUnifiedShells as jest.Mock
 const mockedFetchUnifiedSkillsList = fetchUnifiedSkillsList as jest.Mock
+const mockedFetchPublicSkillsList = fetchPublicSkillsList as jest.Mock
+const mockedGetPublicShells = publicResourceApis.getPublicShells as jest.Mock
+const mockedGetPublicModels = publicResourceApis.getPublicModels as jest.Mock
 
-function renderBotEdit() {
+function renderBotEdit(
+  botOverrides: Partial<Bot> = {},
+  props: { scope?: 'personal' | 'group' | 'all' | 'public' } = {}
+) {
   const bot = {
     id: 7,
     name: 'Bot Alpha',
@@ -186,6 +214,7 @@ function renderBotEdit() {
     is_active: true,
     created_at: '2026-04-02T00:00:00Z',
     updated_at: '2026-04-02T00:00:00Z',
+    ...botOverrides,
   }
 
   const setBots = jest.fn()
@@ -200,7 +229,7 @@ function renderBotEdit() {
       cloningBot={null}
       onClose={onClose}
       toast={toast}
-      scope="personal"
+      scope={props.scope || 'personal'}
     />
   )
 
@@ -214,14 +243,22 @@ describe('BotEdit default knowledge bases', () => {
     mockedGetUnifiedModels.mockReset()
     mockedGetUnifiedShells.mockReset()
     mockedFetchUnifiedSkillsList.mockReset()
+    mockedFetchPublicSkillsList.mockReset()
+    mockedGetPublicShells.mockReset()
+    mockedGetPublicModels.mockReset()
 
     mockedGetUnifiedShells.mockResolvedValue({
       data: [{ name: 'ClaudeCode', type: 'public', shellType: 'ClaudeCode' }],
     })
+    mockedGetPublicShells.mockResolvedValue([
+      { name: 'ClaudeCode', type: 'public', shellType: 'ClaudeCode' },
+    ])
     mockedGetUnifiedModels.mockResolvedValue({
       data: [{ name: 'gpt-4.1', type: 'public', namespace: 'default' }],
     })
+    mockedGetPublicModels.mockResolvedValue([{ name: 'gpt-4.1', type: 'public' }])
     mockedFetchUnifiedSkillsList.mockResolvedValue([])
+    mockedFetchPublicSkillsList.mockResolvedValue([])
     mockedKnowledgeBaseGrouped.mockResolvedValue({
       personal: {
         created_by_me: [
@@ -333,6 +370,57 @@ describe('BotEdit default knowledge bases', () => {
 
     expect(await screen.findByTestId('default-knowledge-base-chip-101')).toBeInTheDocument()
     expect(screen.getByText('Product Docs')).toBeInTheDocument()
+  })
+
+  test('renders selected hidden skill display name without exposing it as selectable', async () => {
+    mockedFetchUnifiedSkillsList.mockResolvedValue([
+      {
+        id: 909,
+        name: 'interactive-form-question',
+        namespace: 'default',
+        description: 'Hidden skill',
+        displayName: '交互式表单提问',
+        visible: false,
+        is_active: true,
+        is_public: true,
+        user_id: 0,
+      },
+    ])
+
+    renderBotEdit({
+      skills: ['interactive-form-question'],
+      skill_refs: {
+        'interactive-form-question': {
+          skill_id: 909,
+          namespace: 'default',
+          is_public: true,
+        },
+      },
+    })
+
+    expect(await screen.findByText('交互式表单提问')).toBeInTheDocument()
+    expect(screen.queryByTestId('rich-skill-selector')).not.toBeInTheDocument()
+  })
+
+  test('shows hidden public skills as selectable when editing public bots', async () => {
+    mockedFetchPublicSkillsList.mockResolvedValue([
+      {
+        id: 910,
+        name: 'hidden-public-skill',
+        namespace: 'default',
+        description: 'Hidden public skill',
+        displayName: '隐藏公共技能',
+        visible: false,
+        is_active: true,
+        is_public: true,
+        user_id: 0,
+      },
+    ])
+
+    renderBotEdit({}, { scope: 'public' })
+
+    expect(await screen.findByTestId('rich-skill-selector')).toBeInTheDocument()
+    expect(screen.getByText('隐藏公共技能')).toBeInTheDocument()
   })
 
   test('renders popover-based selector with grouped metadata', async () => {

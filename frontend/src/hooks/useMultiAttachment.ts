@@ -283,10 +283,7 @@ export function useMultiAttachment(options?: {
   }, [])
 
   const isUploading = state.uploadingFiles.size > 0
-  const isReadyToSend =
-    !isUploading &&
-    state.attachments.every(att => att.status === 'ready') &&
-    state.errors.size === 0
+  const isReadyToSend = !isUploading && state.attachments.every(att => att.status === 'ready')
 
   return {
     state,

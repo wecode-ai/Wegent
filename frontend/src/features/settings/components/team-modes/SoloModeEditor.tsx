@@ -249,12 +249,12 @@ export default function SoloModeEditor({
                 <ChevronDown className="h-4 w-4" />
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-56">
+            <DropdownMenuContent align="end" className="w-56 max-h-64 overflow-y-auto">
               {/* Create new bot option */}
               <DropdownMenuItem onClick={handleCreateBot} className="gap-2">
                 <Plus className="h-4 w-4" />
-                <span>{t('common:bots.new_bot')}</span>
-                {isCreatingBot && <Check className="h-4 w-4 ml-auto" />}
+                <span className="truncate">{t('common:bots.new_bot')}</span>
+                {isCreatingBot && <Check className="h-4 w-4 ml-auto flex-shrink-0" />}
               </DropdownMenuItem>
 
               {bots.length > 0 && <DropdownMenuSeparator />}
@@ -266,10 +266,12 @@ export default function SoloModeEditor({
                   onClick={() => handleBotChange(bot.id)}
                   className="gap-2"
                 >
-                  <RiRobot2Line className="h-4 w-4 text-text-muted" />
+                  <RiRobot2Line className="h-4 w-4 text-text-muted flex-shrink-0" />
                   <div className="flex flex-col flex-1 min-w-0">
-                    <span className="truncate">{bot.name}</span>
-                    <span className="text-xs text-text-muted">{bot.shell_type}</span>
+                    <span className="truncate max-w-[120px]">{bot.name}</span>
+                    <span className="text-xs text-text-muted truncate max-w-[120px]">
+                      {bot.shell_type}
+                    </span>
                   </div>
                   {selectedBotId === bot.id && !isCreatingBot && (
                     <Check className="h-4 w-4 ml-auto flex-shrink-0" />

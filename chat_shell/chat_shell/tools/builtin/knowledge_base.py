@@ -715,9 +715,15 @@ class KnowledgeBaseTool(BaseTool):
 
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
+                headers = {}
+                auth_token = getattr(settings, "INTERNAL_SERVICE_TOKEN", "") or self.auth_token
+                if auth_token:
+                    headers["Authorization"] = f"Bearer {auth_token}"
+
                 response = await client.post(
                     f"{backend_url}/api/internal/rag/kb-size",
                     json={"knowledge_base_ids": self.knowledge_base_ids},
+                    headers=headers,
                 )
 
                 if response.status_code == 200:
@@ -990,10 +996,16 @@ class KnowledgeBaseTool(BaseTool):
         if self.user_name is not None:
             payload["user_name"] = self.user_name
 
+        headers = {}
+        auth_token = getattr(settings, "INTERNAL_SERVICE_TOKEN", "") or self.auth_token
+        if auth_token:
+            headers["Authorization"] = f"Bearer {auth_token}"
+
         async with httpx.AsyncClient(timeout=60.0) as client:
             response = await client.post(
                 f"{backend_url}/api/internal/rag/retrieve",
                 json=payload,
+                headers=headers,
             )
 
             if response.status_code != 200:

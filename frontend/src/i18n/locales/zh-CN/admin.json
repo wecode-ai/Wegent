@@ -200,7 +200,8 @@
     "success": {
       "uploaded": "公共技能上传成功",
       "updated": "公共技能更新成功",
-      "deleted": "公共技能删除成功"
+      "deleted": "公共技能删除成功",
+      "metadata_updated": "元数据更新成功"
     },
     "errors": {
       "load_failed": "加载公共技能失败",
@@ -208,7 +209,29 @@
       "update_failed": "更新公共技能失败",
       "delete_failed": "删除公共技能失败",
       "download_failed": "下载公共技能失败",
-      "view_content_failed": "获取技能内容失败"
+      "view_content_failed": "获取技能内容失败",
+      "metadata_update_failed": "元数据更新失败"
+    },
+    "hidden": "隐藏",
+    "edit_metadata": "编辑元数据",
+    "edit_metadata_title": "编辑技能元数据",
+    "edit_metadata_description": "编辑 \"{{name}}\" 的元数据信息",
+    "fields": {
+      "description": "描述",
+      "version": "版本",
+      "author": "作者",
+      "tags": "标签",
+      "visible": "可见性"
+    },
+    "placeholders": {
+      "description": "请输入技能描述",
+      "version": "请输入版本号",
+      "author": "请输入作者",
+      "tags": "标签1, 标签2, 标签3"
+    },
+    "hints": {
+      "tags": "多个标签用逗号分隔",
+      "visible": "关闭后该技能不会出现在用户的技能列表中，但已绑定的智能体仍可正常使用"
     }
   },
   "public_retrievers": {
