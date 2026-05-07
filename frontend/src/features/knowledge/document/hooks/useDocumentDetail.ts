@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { knowledgeBaseApi } from '@/apis/knowledge-base'
 import type { DocumentDetailResponse } from '@/types/knowledge'
 import { toast } from 'sonner'
@@ -75,9 +75,6 @@ export function useDocumentDetail({
   const [hasMoreContent, setHasMoreContent] = useState(false)
   const [fullContent, setFullContent] = useState('')
 
-  // Track if this is the initial load
-  const isInitialLoad = useRef(true)
-
   /**
    * Fetch document detail (initial load or full refresh)
    */
@@ -116,7 +113,6 @@ export function useDocumentDetail({
       toast.error(t('document.detail.content.error'))
     } finally {
       setLoading(false)
-      isInitialLoad.current = false
     }
   }, [kbId, docId, includeContent, includeSummary, t])
 
@@ -194,10 +190,12 @@ export function useDocumentDetail({
         }
       }
 
-      // Update state with all loaded content using functional updaters to avoid races
-      setFullContent(() => accumulatedContent)
-      setCurrentOffset(() => offset)
-      setHasMoreContent(() => false)
+      // Update state with all loaded content
+      // Note: The loadingMore guard at the function start prevents concurrent execution,
+      // so direct state updates are safe here
+      setFullContent(accumulatedContent)
+      setCurrentOffset(offset)
+      setHasMoreContent(false)
       setDetail(prev => (prev ? { ...prev, truncated: false } : null))
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to load all content'
@@ -237,7 +235,10 @@ export function useDocumentDetail({
     setFullContent('')
     setCurrentOffset(0)
     setHasMoreContent(false)
-    isInitialLoad.current = true
+    // Clear transient flags to avoid stale UI state from previous document
+    setLoadingMore(false)
+    setError(null)
+    setRefreshing(false)
   }, [kbId, docId])
 
   return {

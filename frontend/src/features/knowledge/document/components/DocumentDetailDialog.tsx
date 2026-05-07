@@ -593,6 +593,13 @@ export function DocumentDetailDialog({
       } finally {
         setIsLoadingFullContent(false)
       }
+
+      // Re-check if content is still incomplete after loading
+      // loadAllContent is a no-op when loadingMore is true, so we need to verify
+      if (loadingMore || hasMoreContent) {
+        // Content is still incomplete, bail out without opening editor
+        return
+      }
     }
 
     // Use the current fullContent (which may have been updated by loadAllContent)
@@ -602,7 +609,7 @@ export function DocumentDetailDialog({
     // Store the content at edit start for accurate change detection
     editStartContentRef.current = contentToEdit
     setIsEditing(true)
-  }, [isEditable, hasMoreContent, loadAllContent, fullContent, detail?.content])
+  }, [isEditable, hasMoreContent, loadAllContent, fullContent, detail?.content, loadingMore])
 
   const handleSave = async () => {
     if (!document || !isEditable) return
@@ -948,9 +955,9 @@ export function DocumentDetailDialog({
                                 variant="outline"
                                 size="sm"
                                 onClick={handleEdit}
-                                disabled={isLoadingFullContent}
+                                disabled={isLoadingFullContent || loadingMore}
                               >
-                                {isLoadingFullContent ? (
+                                {isLoadingFullContent || loadingMore ? (
                                   <>
                                     <Spinner className="w-3.5 h-3.5 mr-1" />
                                     {t('document.document.detail.loading', {
