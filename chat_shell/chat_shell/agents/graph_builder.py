@@ -310,6 +310,21 @@ def _normalize_content_for_storage(msg: AIMessage) -> str | list:
     return msg.content
 
 
+def _strip_image_data_for_storage(blocks: list) -> list:
+    """Replace image content blocks with a text placeholder for storage.
+
+    Image base64 data is too large to persist and would be corrupted by
+    truncation. When loading history, the model sees the placeholder instead.
+    """
+    result = []
+    for block in blocks:
+        if isinstance(block, dict) and block.get("type") == "image_url":
+            result.append({"type": "text", "text": "[image content - not stored]"})
+        else:
+            result.append(block)
+    return result
+
+
 def _truncate_tool_result_for_storage(content: str) -> str:
     """Truncate a tool result string if it exceeds the configured maximum length.
 
@@ -382,9 +397,16 @@ def _serialize_messages_chain(
                 ]
             chain.append(entry)
         elif isinstance(msg, ToolMessage):
-            content_str = (
-                msg.content if isinstance(msg.content, str) else json.dumps(msg.content)
-            )
+            if isinstance(msg.content, list):
+                # Strip image data before serializing - base64 is too large to store
+                stripped = _strip_image_data_for_storage(msg.content)
+                content_str = json.dumps(stripped)
+            else:
+                content_str = (
+                    msg.content
+                    if isinstance(msg.content, str)
+                    else json.dumps(msg.content)
+                )
             content_str = _truncate_tool_result_for_storage(content_str)
             entry = {
                 "role": "tool",
