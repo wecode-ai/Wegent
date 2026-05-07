@@ -203,6 +203,25 @@ def delete_team(
     return {"message": "Team deactivated successfully"}
 
 
+@router.post(
+    "/{team_id}/copy", response_model=TeamInDB, status_code=status.HTTP_201_CREATED
+)
+def copy_team(
+    team_id: int,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Copy a team.
+
+    Solo mode: deep copy — clones the leader bot and creates a new team.
+    Non-solo mode: shallow copy — creates a new team referencing the same bots.
+
+    New team name: 'Copy of {original_name}'.
+    """
+    return team_kinds_service.copy_team(db=db, team_id=team_id, user_id=current_user.id)
+
+
 @router.get("/{team_id}/running-tasks")
 def check_team_running_tasks(
     team_id: int,

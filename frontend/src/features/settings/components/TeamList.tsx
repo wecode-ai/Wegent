@@ -19,7 +19,13 @@ import {
   SparklesIcon,
 } from '@heroicons/react/24/outline'
 import { Bot, Team } from '@/types/api'
-import { fetchTeamsList, deleteTeam, shareTeam, checkTeamRunningTasks } from '../services/teams'
+import {
+  fetchTeamsList,
+  deleteTeam,
+  shareTeam,
+  checkTeamRunningTasks,
+  copyTeam,
+} from '../services/teams'
 import { CheckRunningTasksResponse } from '@/apis/common'
 import { fetchBotsList } from '../services/bots'
 import TeamEditDialog from './TeamEditDialog'
@@ -35,6 +41,7 @@ import { isGroupTeam, isPublicTeam, isSharedTeam } from '@/utils/team-permission
 import type { BaseRole } from '@/types/base-role'
 import { sortBotsByUpdatedAt } from '@/utils/bot'
 import { useRouter } from 'next/navigation'
+import { Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import {
@@ -86,6 +93,7 @@ export default function TeamList({
   const [editDialogOpen, setEditDialogOpen] = useState(false)
   const [modeFilter, setModeFilter] = useState<ModeFilter>('all')
   const [wizardOpen, setWizardOpen] = useState(false)
+  const [copyingTeamId, setCopyingTeamId] = useState<number | null>(null)
   const router = useRouter()
 
   const setTeamsSorted = useCallback<React.Dispatch<React.SetStateAction<Team[]>>>(
@@ -164,15 +172,26 @@ export default function TeamList({
     setEditDialogOpen(true)
   }
 
-  const handleCopyTeam = (team: Team) => {
-    const clone: Team = {
-      ...team,
-      bots: team.bots.map(bot => ({ ...bot })),
-      workflow: team.workflow ? { ...team.workflow } : {},
+  const handleCopyTeam = async (team: Team) => {
+    setCopyingTeamId(team.id)
+    try {
+      const copied = await copyTeam(team.id)
+      setTeamsSorted(prev => [copied, ...prev])
+      // Refresh bots so the cloned bot (solo mode) is available in edit dialog
+      fetchBotsList(scope, groupName)
+        .then(setBotsSorted)
+        .catch(() => {})
+      toast({
+        title: t('teams.copy_success'),
+      })
+    } catch (error) {
+      toast({
+        variant: 'destructive',
+        title: (error as Error)?.message || t('teams.copy_failed'),
+      })
+    } finally {
+      setCopyingTeamId(null)
     }
-    setPrefillTeam(clone)
-    setEditingTeamId(0)
-    setEditDialogOpen(true)
   }
 
   const handleCloseEditDialog = () => {
@@ -406,8 +425,9 @@ export default function TeamList({
 
   // Check if copy button should be shown (same permission as create)
   const shouldShowCopy = (team: Team) => {
-    // For public teams, copy is allowed for personal use
-    if (isPublicTeam(team)) return true
+    // Read-only teams (public or shared from others) cannot be copied
+    if (isPublicTeam(team)) return false
+    if (isSharedTeam(team)) return false
     // For group teams, check group permissions (need create permission)
     if (isGroupTeam(team)) {
       return canDeleteGroupResource(team.namespace!) // Maintainer/Owner can create
@@ -584,10 +604,16 @@ export default function TeamList({
                               variant="ghost"
                               size="icon"
                               onClick={() => handleCopyTeam(team)}
+                              disabled={copyingTeamId === team.id}
                               title={t('teams.copy')}
                               className="h-7 w-7 sm:h-8 sm:w-8"
+                              data-testid={`copy-team-button-${team.id}`}
                             >
-                              <DocumentDuplicateIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                              {copyingTeamId === team.id ? (
+                                <Loader2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 animate-spin" />
+                              ) : (
+                                <DocumentDuplicateIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                              )}
                             </Button>
                           )}
                           {shouldShowShare(team) && (

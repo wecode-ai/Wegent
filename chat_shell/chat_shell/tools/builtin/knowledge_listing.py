@@ -139,6 +139,9 @@ class KbLsTool(BaseTool):
     # Database session (optional, used in package mode)
     db_session: Optional[Any] = None
 
+    # User JWT for backend internal API calls that require authentication
+    auth_token: str = ""
+
     # Shared call counter (set when creating the tool, shared with kb_head)
     _call_counter: Optional[KBToolCallCounter] = PrivateAttr(default=None)
 
@@ -281,10 +284,18 @@ class KbLsTool(BaseTool):
 
         try:
             add_span_event("http_request_started")
+            from chat_shell.core.config import settings
+
+            headers = {}
+            auth_token = getattr(settings, "INTERNAL_SERVICE_TOKEN", "") or self.auth_token
+            if auth_token:
+                headers["Authorization"] = f"Bearer {auth_token}"
+
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(
                     f"{backend_url}/api/internal/rag/list-docs",
                     json={"knowledge_base_id": knowledge_base_id},
+                    headers=headers,
                 )
 
                 if response.status_code != 200:
@@ -381,6 +392,9 @@ class KbHeadTool(BaseTool):
 
     # User subtask ID for persistence (optional, enables kb_head tracking)
     user_subtask_id: Optional[int] = None
+
+    # User JWT for backend internal API calls that require authentication
+    auth_token: str = ""
 
     # Shared call counter (set when creating the tool, shared with kb_ls)
     _call_counter: Optional[KBToolCallCounter] = PrivateAttr(default=None)
@@ -531,10 +545,18 @@ class KbHeadTool(BaseTool):
             }
 
         add_span_event("http_request_started")
+        from chat_shell.core.config import settings
+
+        headers = {}
+        auth_token = getattr(settings, "INTERNAL_SERVICE_TOKEN", "") or self.auth_token
+        if auth_token:
+            headers["Authorization"] = f"Bearer {auth_token}"
+
         async with httpx.AsyncClient(timeout=60.0) as client:
             response = await client.post(
                 f"{backend_url}/api/internal/rag/read-docs",
                 json=request_data,
+                headers=headers,
             )
 
             if response.status_code != 200:

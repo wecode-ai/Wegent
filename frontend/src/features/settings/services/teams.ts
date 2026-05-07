@@ -27,6 +27,13 @@ export async function createTeam(teamData: CreateTeamRequest): Promise<Team> {
 }
 
 /**
+ * Copy team
+ */
+export async function copyTeam(id: number): Promise<Team> {
+  return await teamApis.copyTeam(id)
+}
+
+/**
  * Delete team
  * @param teamId - Team ID
  * @param force - Force delete even if team has running tasks

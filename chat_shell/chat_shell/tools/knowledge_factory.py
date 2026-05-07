@@ -132,6 +132,7 @@ async def prepare_knowledge_base_tools(
         kb_ls_tool = KbLsTool(
             knowledge_base_ids=knowledge_base_ids,
             db_session=db,
+            auth_token=auth_token,
         )
         kb_ls_tool._call_counter = exploration_call_counter
 
@@ -140,6 +141,7 @@ async def prepare_knowledge_base_tools(
             user_id=user_id,
             db_session=db,
             user_subtask_id=user_subtask_id,
+            auth_token=auth_token,
         )
         kb_head_tool._call_counter = exploration_call_counter
 
@@ -252,8 +254,10 @@ async def _check_any_kb_has_rag_enabled(
 
         add_span_event("querying_backend_api")
         headers = {}
-        if auth_token:
-            headers["Authorization"] = f"Bearer {auth_token}"
+        # Priority: INTERNAL_SERVICE_TOKEN (service-to-service) > auth_token (task token)
+        token = getattr(settings, "INTERNAL_SERVICE_TOKEN", "") or auth_token
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
             set_span_attribute("auth_token_provided", True)
         else:
             set_span_attribute("auth_token_provided", False)

@@ -32,7 +32,7 @@ export default function TeamShareModal({
     try {
       await navigator.clipboard.writeText(shareUrl)
       toast({
-        title: t('common:teams.copy_success'),
+        title: t('common:teams.copy_link_success'),
       })
       onClose()
     } catch {
@@ -44,7 +44,7 @@ export default function TeamShareModal({
       document.execCommand('copy')
       document.body.removeChild(textArea)
       toast({
-        title: t('common:teams.copy_success'),
+        title: t('common:teams.copy_link_success'),
       })
       onClose()
     }

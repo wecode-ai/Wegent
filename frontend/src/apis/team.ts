@@ -99,6 +99,9 @@ export const teamApis = {
   async createTeam(data: CreateTeamRequest): Promise<Team> {
     return apiClient.post('/teams', data)
   },
+  async copyTeam(id: number): Promise<Team> {
+    return apiClient.post(`/teams/${id}/copy`)
+  },
   async deleteTeam(id: number, force: boolean = false): Promise<void> {
     const queryParams = force ? '?force=true' : ''
     await apiClient.delete(`/teams/${id}${queryParams}`)
