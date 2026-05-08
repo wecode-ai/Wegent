@@ -566,9 +566,15 @@ class BaseChannelCallbackService(ABC, Generic[T]):
                         error=error_message or "Task failed",
                     )
                 else:
+                    # Pass result content to emitter so it can use the actual
+                    # AI response instead of stale accumulated content.
+                    # This is essential for device mode where executor events
+                    # arrive via device WebSocket rather than /callback.
+                    result = {"value": content} if content else None
                     await emitter.emit_done(
                         task_id=task_id,
                         subtask_id=subtask_id,
+                        result=result,
                     )
                 logger.info(
                     f"[{self._channel_type.value}Callback] Finished streaming for task {task_id}"
