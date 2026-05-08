@@ -79,6 +79,12 @@ class TaskCreationParams:
     skip_status_check: bool = False
     # Device ID for local device execution (saved at task creation to avoid race condition)
     device_id: Optional[str] = None
+    # Task source label (e.g. chat_shell, responses_api)
+    source: str = "chat_shell"
+    # Whether the task originates from API-compatible surfaces
+    is_api_call: bool = False
+    # Optional API key name for tracing/audit
+    api_key_name: Optional[str] = None
     # Video generation parameters (user-selected at generation time)
     # Used to save video_config to user subtask.result for display
     generate_params: Optional[Dict[str, Any]] = None
@@ -320,7 +326,8 @@ def create_new_task(
                 "type": "online",
                 "taskType": task_type,
                 "autoDeleteExecutor": "false",
-                "source": "chat_shell",
+                "source": params.source,
+                **({"is_api_call": "true"} if params.is_api_call else {}),
                 **({"modelId": params.model_id} if params.model_id else {}),
                 **(
                     {"forceOverrideBotModel": "true"}
@@ -331,6 +338,9 @@ def create_new_task(
                     {"forceOverrideBotModelType": params.force_override_bot_model_type}
                     if params.force_override_bot_model_type
                     else {}
+                ),
+                **(
+                    {"api_key_name": params.api_key_name} if params.api_key_name else {}
                 ),
                 **build_task_skill_labels(params.additional_skills),
             },

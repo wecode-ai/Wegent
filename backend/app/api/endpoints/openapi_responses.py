@@ -40,6 +40,10 @@ from app.schemas.openapi_response import (
 )
 from app.services.adapters.task_kinds import task_kinds_service
 from app.services.chat.preprocessing.contexts import link_contexts_to_subtask
+from app.services.chat.trigger.lifecycle import (
+    collect_completed_result,
+    persist_completed_result,
+)
 from app.services.openapi.helpers import (
     extract_input_text,
     parse_model_string,
@@ -359,14 +363,13 @@ async def _create_non_streaming_response_unified(
     """
     import asyncio
 
-    from sqlalchemy.orm.attributes import flag_modified
-
     from app.db.session import SessionLocal
-    from app.services.chat.storage import db_handler, session_manager
+    from app.services.chat.storage import session_manager
     from app.services.chat.trigger.unified import build_execution_request
     from app.services.execution import execution_dispatcher
     from app.services.execution.emitters import SSEResultEmitter
     from app.services.openapi.chat_session import setup_chat_session
+    from shared.models import EventType
 
     # Set up chat session (creates task and subtasks)
     setup = setup_chat_session(
@@ -409,6 +412,24 @@ async def _create_non_streaming_response_unified(
             f"to subtask {setup.user_subtask.id}"
         )
 
+    async def _persist_terminal_failure(
+        error_message: str,
+        error_code: Optional[str] = None,
+    ) -> None:
+        result = await collect_completed_result(
+            assistant_subtask_id,
+            status="FAILED",
+            error_message=error_message,
+            error_code=error_code,
+        )
+        await persist_completed_result(
+            subtask_id=assistant_subtask_id,
+            task_id=task_kind_id,
+            status="FAILED",
+            result=result,
+            error=error_message,
+        )
+
     # Convert reasoning config from Pydantic model to dict
     reasoning_config = None
     if request_body.reasoning:
@@ -432,6 +453,7 @@ async def _create_non_streaming_response_unified(
         )
     except Exception as e:
         logger.error(f"Failed to build execution request: {e}")
+        await _persist_terminal_failure(str(e))
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to build execution request: {str(e)}",
@@ -446,7 +468,7 @@ async def _create_non_streaming_response_unified(
         db.close()
 
     # Helper: execute and collect content using SSEResultEmitter
-    async def _execute_and_collect() -> str:
+    async def _execute_and_collect() -> tuple[str, Optional[Any]]:
         emitter = SSEResultEmitter(
             task_id=execution_request.task_id,
             subtask_id=execution_request.subtask_id,
@@ -454,70 +476,19 @@ async def _create_non_streaming_response_unified(
         dispatch_task = asyncio.create_task(
             execution_dispatcher.dispatch(execution_request, emitter=emitter)
         )
-        accumulated_content, _ = await emitter.collect()
+        accumulated_content, final_event = await emitter.collect()
+        dispatch_error = None
         try:
             await dispatch_task
-        except Exception:
-            pass
-        return accumulated_content
+        except Exception as exc:
+            dispatch_error = exc
 
-    # Helper: handle successful completion
-    async def _handle_completion(accumulated_content: str):
-        result = {"value": accumulated_content}
-        await db_handler.update_subtask_status(
-            assistant_subtask_id, "COMPLETED", result=result
-        )
-        await session_manager.append_user_and_assistant_messages(
-            task_kind_id, input_text, accumulated_content
-        )
-        update_db = SessionLocal()
-        try:
-            task_resource = (
-                update_db.query(TaskResource)
-                .filter(TaskResource.id == task_kind_id)
-                .first()
-            )
-            if task_resource:
-                task_crd = Task.model_validate(task_resource.json)
-                if task_crd.status:
-                    task_crd.status.status = "COMPLETED"
-                    task_crd.status.updatedAt = datetime.now()
-                    task_crd.status.completedAt = datetime.now()
-                    task_crd.status.result = result
-                    task_resource.json = task_crd.model_dump(mode="json")
-                    task_resource.updated_at = datetime.now()
-                    flag_modified(task_resource, "json")
-                    update_db.commit()
-        finally:
-            update_db.close()
+        if final_event and final_event.type == EventType.ERROR.value:
+            raise RuntimeError(final_event.error or "Unknown error")
+        if dispatch_error is not None and final_event is None:
+            raise dispatch_error
 
-    # Helper: handle failure
-    async def _handle_failure(error_message: str):
-        try:
-            await db_handler.update_subtask_status(
-                assistant_subtask_id, "FAILED", error=error_message
-            )
-        except Exception:
-            pass
-        error_db = SessionLocal()
-        try:
-            task_resource = (
-                error_db.query(TaskResource)
-                .filter(TaskResource.id == task_kind_id)
-                .first()
-            )
-            if task_resource:
-                task_crd = Task.model_validate(task_resource.json)
-                if task_crd.status:
-                    task_crd.status.status = "FAILED"
-                    task_crd.status.errorMessage = error_message
-                    task_crd.status.updatedAt = datetime.now()
-                    task_resource.json = task_crd.model_dump(mode="json")
-                    task_resource.updated_at = datetime.now()
-                    flag_modified(task_resource, "json")
-                    error_db.commit()
-        finally:
-            error_db.close()
+        return accumulated_content, final_event
 
     # Helper: build output messages from subtasks
     def _build_output(subtasks, assistant_status: str, assistant_content: str = ""):
@@ -592,15 +563,13 @@ async def _create_non_streaming_response_unified(
 
         async def _run_background_task():
             try:
-                accumulated_content = await _execute_and_collect()
+                accumulated_content, _ = await _execute_and_collect()
                 logger.info(
                     f"[BACKGROUND] Task completed: task_id={task_kind_id}, "
-                    f"subtask_id={assistant_subtask_id}"
+                    f"subtask_id={assistant_subtask_id}, content_len={len(accumulated_content)}"
                 )
-                await _handle_completion(accumulated_content)
             except Exception as e:
                 logger.exception(f"[BACKGROUND] Error in background task: {e}")
-                await _handle_failure(str(e))
 
         asyncio.create_task(_run_background_task())
         logger.info(
@@ -620,12 +589,10 @@ async def _create_non_streaming_response_unified(
     # SSE mode with background=False: sync wait for completion
     _close_db()
     try:
-        accumulated_content = await _execute_and_collect()
+        accumulated_content, _ = await _execute_and_collect()
         logger.info(f"[OPENAPI] Sync completed for subtask {assistant_subtask_id}")
-        await _handle_completion(accumulated_content)
     except Exception as e:
         logger.exception(f"Error in sync chat response: {e}")
-        await _handle_failure(str(e))
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"LLM request failed: {str(e)}",
@@ -664,8 +631,7 @@ async def _create_streaming_response_unified(
     Uses build_execution_request + dispatch_sse_stream for streaming.
     Raises NotImplementedError if the shell type doesn't support streaming.
     """
-    from app.db.session import SessionLocal
-    from app.services.chat.storage import db_handler, session_manager
+    from app.services.chat.storage import session_manager
     from app.services.chat.trigger.unified import build_execution_request
     from app.services.execution import execution_dispatcher
     from app.services.openapi.chat_session import setup_chat_session
@@ -716,6 +682,24 @@ async def _create_streaming_response_unified(
             f"to subtask {setup.user_subtask.id}"
         )
 
+    async def _persist_terminal_failure(
+        error_message: str,
+        error_code: Optional[str] = None,
+    ) -> None:
+        result = await collect_completed_result(
+            assistant_subtask_id,
+            status="FAILED",
+            error_message=error_message,
+            error_code=error_code,
+        )
+        await persist_completed_result(
+            subtask_id=assistant_subtask_id,
+            task_id=task_kind_id,
+            status="FAILED",
+            result=result,
+            error=error_message,
+        )
+
     # Convert reasoning config from Pydantic model to dict
     reasoning_config = None
     if request_body.reasoning:
@@ -737,6 +721,13 @@ async def _create_streaming_response_unified(
             knowledge_base_names=knowledge_base_names,
             reasoning_config=reasoning_config,
         )
+    except Exception as e:
+        logger.error(f"Failed to build execution request: {e}")
+        await _persist_terminal_failure(str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to build execution request: {str(e)}",
+        )
     finally:
         # Close the database session before streaming starts
         try:
@@ -744,6 +735,14 @@ async def _create_streaming_response_unified(
         except Exception:
             pass
         db.close()
+
+    if not execution_dispatcher.supports_streaming(execution_request):
+        error_message = "Streaming not supported for this shell type"
+        await _persist_terminal_failure(
+            error_message,
+            error_code="not_implemented",
+        )
+        raise NotImplementedError(error_message)
 
     async def raw_chat_stream():
         """Generate raw text and reasoning chunks from ExecutionDispatcher."""
@@ -986,62 +985,12 @@ async def _create_streaming_response_unified(
                 except Exception:
                     pass  # Error already handled via emitter
 
-            # Stream completed (not cancelled)
-            if not cancel_event.is_set() and not await session_manager.is_cancelled(
-                assistant_subtask_id
-            ):
-                # Include reasoning in result if present
-                result = {"value": accumulated_content}
-                if accumulated_reasoning:
-                    result["reasoning"] = accumulated_reasoning
-
-                await session_manager.save_streaming_content(
-                    assistant_subtask_id, accumulated_content
-                )
-                await session_manager.append_user_and_assistant_messages(
-                    task_kind_id, input_text, accumulated_content
-                )
-                await db_handler.update_subtask_status(
-                    assistant_subtask_id, "COMPLETED", result=result
-                )
-
-                # Update task status
-                stream_db = SessionLocal()
-                try:
-                    task_resource = (
-                        stream_db.query(TaskResource)
-                        .filter(TaskResource.id == task_kind_id)
-                        .first()
-                    )
-                    if task_resource:
-                        task_crd = Task.model_validate(task_resource.json)
-                        if task_crd.status:
-                            task_crd.status.status = "COMPLETED"
-                            task_crd.status.updatedAt = datetime.now()
-                            task_crd.status.completedAt = datetime.now()
-                            task_resource.json = task_crd.model_dump(mode="json")
-                            from sqlalchemy.orm.attributes import flag_modified
-
-                            flag_modified(task_resource, "json")
-                            stream_db.commit()
-                finally:
-                    stream_db.close()
-
         except NotImplementedError as e:
             # Streaming not supported for this shell type
             logger.error(f"[OPENAPI] Streaming not supported: {e}")
-            await db_handler.update_subtask_status(
-                assistant_subtask_id, "FAILED", error=str(e)
-            )
             raise
         except Exception as e:
             logger.exception(f"Error in streaming: {e}")
-            try:
-                await db_handler.update_subtask_status(
-                    assistant_subtask_id, "FAILED", error=str(e)
-                )
-            except Exception:
-                pass
             raise
         finally:
             await session_manager.unregister_stream(assistant_subtask_id)

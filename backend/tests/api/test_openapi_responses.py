@@ -554,13 +554,6 @@ class TestOpenAPIResponsesCreate:
         """Follow-up assistant subtask should inherit previous executor metadata."""
         from app.services.openapi.chat_session import setup_chat_session
 
-        mock_execution_request = SimpleNamespace(
-            model_config={},
-            system_prompt="",
-            preload_skills=[],
-            skill_names=[],
-            skill_configs=[],
-        )
         previous_user = Subtask(
             user_id=test_user.id,
             task_id=test_task.id,
@@ -605,19 +598,15 @@ class TestOpenAPIResponsesCreate:
         test_db.add(previous_assistant)
         test_db.commit()
 
-        with patch(
-            "app.services.execution.TaskRequestBuilder.build",
-            return_value=mock_execution_request,
-        ):
-            setup = setup_chat_session(
-                db=test_db,
-                user=test_user,
-                team=test_team,
-                model_info={"namespace": "default", "team_name": "test-team"},
-                input_text="Make it blue",
-                tool_settings={},
-                task_id=test_task.id,
-            )
+        setup = setup_chat_session(
+            db=test_db,
+            user=test_user,
+            team=test_team,
+            model_info={"namespace": "default", "team_name": "test-team"},
+            input_text="Make it blue",
+            tool_settings={},
+            task_id=test_task.id,
+        )
 
         assert setup.assistant_subtask.executor_name == "executor-123"
         assert setup.assistant_subtask.executor_namespace == "default"
