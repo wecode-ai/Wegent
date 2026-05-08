@@ -203,11 +203,40 @@ def delete_team(
     return {"message": "Team deactivated successfully"}
 
 
+@router.get("/{team_id}/copy-preflight")
+def get_copy_preflight(
+    team_id: int,
+    target_namespace: str = Query(..., description="Target namespace to copy into"),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Return personal skills that would need to be copied when copying this team
+    to the given target namespace.
+
+    Returns: { personal_skills: [{id, name, description}] }
+    """
+    return team_kinds_service.get_copy_preflight(
+        db=db,
+        team_id=team_id,
+        user_id=current_user.id,
+        target_namespace=target_namespace,
+    )
+
+
 @router.post(
     "/{team_id}/copy", response_model=TeamInDB, status_code=status.HTTP_201_CREATED
 )
 def copy_team(
     team_id: int,
+    target_namespace: Optional[str] = Query(
+        None,
+        description="Target namespace to copy into. Defaults to the original team's namespace. Use 'default' for personal space or a group name for group space.",
+    ),
+    copy_skills: bool = Query(
+        False,
+        description="If true, personal skills referenced by the team's bots are also copied to target_namespace.",
+    ),
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -218,8 +247,17 @@ def copy_team(
     Non-solo mode: shallow copy — creates a new team referencing the same bots.
 
     New team name: 'Copy of {original_name}'.
+
+    If target_namespace is provided, the copy is placed in that namespace instead of the original.
+    User must have Developer+ permission in the target group namespace.
     """
-    return team_kinds_service.copy_team(db=db, team_id=team_id, user_id=current_user.id)
+    return team_kinds_service.copy_team(
+        db=db,
+        team_id=team_id,
+        user_id=current_user.id,
+        target_namespace=target_namespace,
+        copy_skills=copy_skills,
+    )
 
 
 @router.get("/{team_id}/running-tasks")
