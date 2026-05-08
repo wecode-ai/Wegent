@@ -7,7 +7,7 @@ import json
 import logging
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -24,6 +24,7 @@ from dingtalk.middleware.security import (
     check_referer,
 )
 from dingtalk.services.dingtalk_service import dingtalk_service
+from dingtalk.services.jsapi_service import jsapi_service
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +53,18 @@ class DingTalkConfigResponse(BaseModel):
     corp_id: str
     client_id: str
     fallback_url: str
+
+
+class JsapiSignResponse(BaseModel):
+    """JSAPI signature response for dd.config.
+
+    Only timeStamp and signature are returned from backend.
+    Other dd.config params (agentId, corpId, nonceStr, jsApiList)
+    are read from frontend environment variables.
+    """
+
+    timeStamp: int
+    signature: str
 
 
 @router.get("/config")
@@ -174,3 +187,26 @@ async def dingtalk_login(
             "auth_source": user.auth_source,
         },
     )
+
+
+@router.get("/jsapi-sign")
+async def get_jsapi_sign(
+    url: str = Query(..., description="Current page URL for dd.config signature"),
+) -> JsapiSignResponse:
+    """
+    Get JSAPI signature parameters for dd.config authentication.
+
+    The frontend calls this endpoint to get the signature needed for
+    dd.config({ agentId, corpId, timeStamp, nonceStr, signature, jsApiList }).
+
+    The URL parameter must be the exact current page URL (without fragment).
+    """
+    try:
+        sign_data = await jsapi_service.get_jsapi_sign(url)
+        return JsapiSignResponse(**sign_data)
+    except Exception as e:
+        logger.error(f"[DingTalk JSAPI] Failed to get JSAPI sign: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get JSAPI signature: {str(e)}",
+        )

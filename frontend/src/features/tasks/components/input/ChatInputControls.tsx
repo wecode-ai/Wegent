@@ -154,6 +154,13 @@ export interface ChatInputControlsProps {
 
   /** When true, hide all selectors - only show send button + quota */
   hideSelectors?: boolean
+
+  /**
+   * Callback to set the input message text.
+   * Used by DingTalkAudioRecordButton to write voice-to-text result into the input.
+   * Only needed on mobile (passed to MobileChatInputControls).
+   */
+  setTaskInputMessage?: (message: string) => void
 }
 
 /**
@@ -249,6 +256,7 @@ export function ChatInputControls({
   onGenerateModeChange,
   // Hide all selectors (for OpenClaw devices)
   hideSelectors,
+  setTaskInputMessage,
 }: ChatInputControlsProps) {
   // Check if we're in video or image mode
   const isVideoMode = taskType === 'video'
@@ -376,6 +384,7 @@ export function ChatInputControls({
         selectedSkillNames={selectedSkillNames}
         onToggleSkill={onToggleSkill}
         hideSelectors={hideSelectors}
+        onVoiceTextResult={setTaskInputMessage}
       />
     )
   }

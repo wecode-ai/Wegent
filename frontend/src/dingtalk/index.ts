@@ -5,7 +5,16 @@
 /**
  * DingTalk authentication module exports.
  */
-export { isDingTalkEnvironment, requestAuthCode } from './lib/dingtalk-sdk'
+export {
+  isDingTalkEnvironment,
+  requestAuthCode,
+  isDingTalkAudioSupported,
+  configureDingTalkJsapi,
+  startDingTalkRecord,
+  stopDingTalkRecord,
+  translateDingTalkVoice,
+} from './lib/dingtalk-sdk'
+export type { JsapiSignData, AudioRecordResult } from './lib/dingtalk-sdk'
 export {
   getDingTalkConfig,
   isAuthModeDingTalk,
