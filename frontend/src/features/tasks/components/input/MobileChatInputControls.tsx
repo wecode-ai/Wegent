@@ -225,7 +225,9 @@ export function MobileChatInputControls({
       !isSubtaskStreaming &&
       selectedTaskDetail?.is_group_chat
     ) {
-      return <SendButton onClick={onSendMessage} disabled={isDisabled} isLoading={isLoading} compact />
+      return (
+        <SendButton onClick={onSendMessage} disabled={isDisabled} isLoading={isLoading} compact />
+      )
     }
 
     if (selectedTaskDetail?.status === 'PENDING') {
@@ -246,7 +248,9 @@ export function MobileChatInputControls({
       )
     }
 
-    return <SendButton onClick={onSendMessage} disabled={isDisabled} isLoading={isLoading} compact />
+    return (
+      <SendButton onClick={onSendMessage} disabled={isDisabled} isLoading={isLoading} compact />
+    )
   }
 
   const shouldHideSideControls = !!hideSelectors || isVoiceMode

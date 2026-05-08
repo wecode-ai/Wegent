@@ -194,8 +194,8 @@ export default function DingTalkAudioRecordButton({
       }
       if (topLabelRef.current) {
         topLabelRef.current.textContent = isCancel
-          ? topLabelRef.current.dataset.cancelText ?? ''
-          : topLabelRef.current.dataset.recordingText ?? ''
+          ? (topLabelRef.current.dataset.cancelText ?? '')
+          : (topLabelRef.current.dataset.recordingText ?? '')
         topLabelRef.current.style.color = isCancel ? 'rgb(239 68 68)' : '#1677FF'
       }
       if (countdownLabelRef.current) {
@@ -216,92 +216,127 @@ export default function DingTalkAudioRecordButton({
 
     return { x: e.clientX, y: e.clientY }
   }
-const finishRecording = useCallback(
-  async (cancelledByGesture: boolean) => {
-    console.log('[finishRecording] called, cancelledByGesture:', cancelledByGesture, '| recordStateRef.current:', recordStateRef.current, '| isProcessingRef.current:', isProcessingRef.current)
+  const finishRecording = useCallback(
+    async (cancelledByGesture: boolean) => {
+      console.log(
+        '[finishRecording] called, cancelledByGesture:',
+        cancelledByGesture,
+        '| recordStateRef.current:',
+        recordStateRef.current,
+        '| isProcessingRef.current:',
+        isProcessingRef.current
+      )
 
-    // Use ref to read the latest recordState, avoiding stale closure issues
-    if (recordStateRef.current !== 'recording' || !isProcessingRef.current) {
-      console.log('[finishRecording] early return - guard check failed. recordStateRef.current:', recordStateRef.current, 'isProcessingRef.current:', isProcessingRef.current)
-      return
-    }
-
-    isProcessingRef.current = false
-    clearTimers()
-    const duration = Date.now() - recordStartTimeRef.current
-    console.log('[finishRecording] recording duration ms:', duration, '| MIN_RECORD_DURATION_MS:', MIN_RECORD_DURATION_MS)
-
-    if (cancelledByGesture || duration < MIN_RECORD_DURATION_MS) {
-      console.log('[finishRecording] stopping without convert - cancelledByGesture:', cancelledByGesture, 'duration too short:', duration < MIN_RECORD_DURATION_MS)
-      try {
-        await stopDingTalkRecord()
-        console.log('[finishRecording] stopDingTalkRecord (cancel/short) succeeded')
-      } catch (err) {
-        console.error('[finishRecording] stopRecord (cancelled/short) failed:', err)
-      } finally {
-        setRecordStateSync('idle')
-        resetRecordingUi()
+      // Use ref to read the latest recordState, avoiding stale closure issues
+      if (recordStateRef.current !== 'recording' || !isProcessingRef.current) {
+        console.log(
+          '[finishRecording] early return - guard check failed. recordStateRef.current:',
+          recordStateRef.current,
+          'isProcessingRef.current:',
+          isProcessingRef.current
+        )
+        return
       }
-      return
-    }
 
-    console.log('[finishRecording] proceeding to convert voice to text')
-    setRecordStateSync('converting')
-    // Show converting state via DOM: keep waveform visible, update top label
-    if (topLabelRef.current) {
-      topLabelRef.current.style.display = ''
-      topLabelRef.current.textContent = t('dingtalk_audio.converting_to_text', { defaultValue: '正在转文字...' })
-      topLabelRef.current.style.color = '#1677FF'
-    }
-    if (countdownLabelRef.current) {
-      countdownLabelRef.current.textContent = t('dingtalk_audio.processing_wait', { defaultValue: '正在识别语音，请稍候' })
-      countdownLabelRef.current.style.display = ''
-    }
+      isProcessingRef.current = false
+      clearTimers()
+      const duration = Date.now() - recordStartTimeRef.current
+      console.log(
+        '[finishRecording] recording duration ms:',
+        duration,
+        '| MIN_RECORD_DURATION_MS:',
+        MIN_RECORD_DURATION_MS
+      )
 
-    try {
-      console.log('[finishRecording] calling stopDingTalkRecord...')
-      const recordResult = await stopDingTalkRecord()
-      console.log('[finishRecording] stopDingTalkRecord succeeded, mediaId:', recordResult.mediaId, 'duration:', recordResult.duration)
-      try {
-        console.log('[finishRecording] calling translateDingTalkVoice...')
-        const text = await translateDingTalkVoice(recordResult.mediaId, recordResult.duration)
-        console.log('[finishRecording] translateDingTalkVoice succeeded, text:', text)
-        if (text) {
-          onTextResult(text)
+      if (cancelledByGesture || duration < MIN_RECORD_DURATION_MS) {
+        console.log(
+          '[finishRecording] stopping without convert - cancelledByGesture:',
+          cancelledByGesture,
+          'duration too short:',
+          duration < MIN_RECORD_DURATION_MS
+        )
+        try {
+          await stopDingTalkRecord()
+          console.log('[finishRecording] stopDingTalkRecord (cancel/short) succeeded')
+        } catch (err) {
+          console.error('[finishRecording] stopRecord (cancelled/short) failed:', err)
+        } finally {
+          setRecordStateSync('idle')
+          resetRecordingUi()
         }
-      } catch (translateErr) {
-        const msg = translateErr instanceof Error ? translateErr.message : String(translateErr)
-        console.error('[finishRecording] translateVoice failed:', translateErr)
+        return
+      }
+
+      console.log('[finishRecording] proceeding to convert voice to text')
+      setRecordStateSync('converting')
+      // Show converting state via DOM: keep waveform visible, update top label
+      if (topLabelRef.current) {
+        topLabelRef.current.style.display = ''
+        topLabelRef.current.textContent = t('dingtalk_audio.converting_to_text', {
+          defaultValue: '正在转文字...',
+        })
+        topLabelRef.current.style.color = '#1677FF'
+      }
+      if (countdownLabelRef.current) {
+        countdownLabelRef.current.textContent = t('dingtalk_audio.processing_wait', {
+          defaultValue: '正在识别语音，请稍候',
+        })
+        countdownLabelRef.current.style.display = ''
+      }
+
+      try {
+        console.log('[finishRecording] calling stopDingTalkRecord...')
+        const recordResult = await stopDingTalkRecord()
+        console.log(
+          '[finishRecording] stopDingTalkRecord succeeded, mediaId:',
+          recordResult.mediaId,
+          'duration:',
+          recordResult.duration
+        )
+        try {
+          console.log('[finishRecording] calling translateDingTalkVoice...')
+          const text = await translateDingTalkVoice(recordResult.mediaId, recordResult.duration)
+          console.log('[finishRecording] translateDingTalkVoice succeeded, text:', text)
+          if (text) {
+            onTextResult(text)
+          }
+        } catch (translateErr) {
+          const msg = translateErr instanceof Error ? translateErr.message : String(translateErr)
+          console.error('[finishRecording] translateVoice failed:', translateErr)
+          toast({
+            variant: 'destructive',
+            title: t('dingtalk_audio.translate_failed', { defaultValue: '语音转文字失败' }),
+            description: msg,
+          })
+        }
+      } catch (stopErr) {
+        const msg = stopErr instanceof Error ? stopErr.message : String(stopErr)
+        console.error('[finishRecording] stopRecord failed:', stopErr)
         toast({
           variant: 'destructive',
-          title: t('dingtalk_audio.translate_failed', { defaultValue: '语音转文字失败' }),
+          title: t('dingtalk_audio.stop_failed', { defaultValue: '停止录音失败' }),
           description: msg,
         })
+      } finally {
+        console.log('[finishRecording] finally: resetting state to idle')
+        setRecordStateSync('idle')
+        setVoiceMode('voice')
+        resetRecordingUi()
       }
-    } catch (stopErr) {
-      const msg = stopErr instanceof Error ? stopErr.message : String(stopErr)
-      console.error('[finishRecording] stopRecord failed:', stopErr)
-      toast({
-        variant: 'destructive',
-        title: t('dingtalk_audio.stop_failed', { defaultValue: '停止录音失败' }),
-        description: msg,
-      })
-    } finally {
-      console.log('[finishRecording] finally: resetting state to idle')
-      setRecordStateSync('idle')
-      setVoiceMode('voice')
-      resetRecordingUi()
-    }
-  },
-  [clearTimers, onTextResult, resetRecordingUi, setRecordStateSync, t, toast]
-)
+    },
+    [clearTimers, onTextResult, resetRecordingUi, setRecordStateSync, t, toast]
+  )
 
   // Stable ref holding the latest finishRecording and updateCancelStateByPoint to avoid
   // re-registering document listeners on every render.
   const finishRecordingRef = useRef(finishRecording)
   const updateCancelStateByPointRef = useRef(updateCancelStateByPoint)
-  useEffect(() => { finishRecordingRef.current = finishRecording }, [finishRecording])
-  useEffect(() => { updateCancelStateByPointRef.current = updateCancelStateByPoint }, [updateCancelStateByPoint])
+  useEffect(() => {
+    finishRecordingRef.current = finishRecording
+  }, [finishRecording])
+  useEffect(() => {
+    updateCancelStateByPointRef.current = updateCancelStateByPoint
+  }, [updateCancelStateByPoint])
 
   // Register native document-level listeners so touchend/mouseup are never lost during re-renders
   // in DingTalk WebView where React synthetic events can be dropped after re-renders.
@@ -310,7 +345,14 @@ const finishRecording = useCallback(
       // Only handle if we are actively recording
       if (recordStateRef.current !== 'recording' || !isProcessingRef.current) return
 
-      console.log('[finishRecording] handlePressEnd triggered, event type:', e.type, '| shouldCancelRef.current:', shouldCancelRef.current, '| recordStateRef.current:', recordStateRef.current)
+      console.log(
+        '[finishRecording] handlePressEnd triggered, event type:',
+        e.type,
+        '| shouldCancelRef.current:',
+        shouldCancelRef.current,
+        '| recordStateRef.current:',
+        recordStateRef.current
+      )
 
       if (e instanceof TouchEvent) {
         const touch = e.changedTouches[0]
@@ -321,7 +363,10 @@ const finishRecording = useCallback(
         updateCancelStateByPointRef.current(e.clientY)
       }
 
-      console.log('[finishRecording] handlePressEnd after updateCancelStateByPoint, shouldCancelRef.current:', shouldCancelRef.current)
+      console.log(
+        '[finishRecording] handlePressEnd after updateCancelStateByPoint, shouldCancelRef.current:',
+        shouldCancelRef.current
+      )
       void finishRecordingRef.current(shouldCancelRef.current)
     }
 
@@ -380,7 +425,10 @@ const finishRecording = useCallback(
         if (countdownLabelRef.current) {
           countdownLabelRef.current.style.display = ''
           const template = countdownLabelRef.current.dataset.template ?? '{{seconds}} 秒后自动结束'
-          countdownLabelRef.current.textContent = template.replace('{{seconds}}', String(MAX_RECORD_SECONDS))
+          countdownLabelRef.current.textContent = template.replace(
+            '{{seconds}}',
+            String(MAX_RECORD_SECONDS)
+          )
         }
 
         autoStopTimerRef.current = window.setTimeout(() => {
@@ -393,8 +441,12 @@ const finishRecording = useCallback(
           const elapsedSeconds = Math.floor((Date.now() - recordStartTimeRef.current) / 1000)
           const remaining = Math.max(MAX_RECORD_SECONDS - elapsedSeconds, 0)
           if (countdownLabelRef.current) {
-            const template = countdownLabelRef.current.dataset.template ?? '{{seconds}} 秒后自动结束'
-            countdownLabelRef.current.textContent = template.replace('{{seconds}}', String(remaining))
+            const template =
+              countdownLabelRef.current.dataset.template ?? '{{seconds}} 秒后自动结束'
+            countdownLabelRef.current.textContent = template.replace(
+              '{{seconds}}',
+              String(remaining)
+            )
           }
         }, 1000)
       } catch (err) {
@@ -413,13 +465,16 @@ const finishRecording = useCallback(
     [disabled, finishRecording, jsapiReady, resetRecordingUi, setRecordStateSync, t, toast]
   )
 
-  const handlePressMove = useCallback((e: React.TouchEvent | React.MouseEvent) => {
-    // Use ref to read the latest recordState, avoiding stale closure issues
-    if (recordStateRef.current !== 'recording') return
-    const point = extractClientPoint(e)
-    if (!point) return
-    updateCancelStateByPoint(point.y)
-  }, [updateCancelStateByPoint])
+  const handlePressMove = useCallback(
+    (e: React.TouchEvent | React.MouseEvent) => {
+      // Use ref to read the latest recordState, avoiding stale closure issues
+      if (recordStateRef.current !== 'recording') return
+      const point = extractClientPoint(e)
+      if (!point) return
+      updateCancelStateByPoint(point.y)
+    },
+    [updateCancelStateByPoint]
+  )
 
   const handleModeToggle = useCallback(() => {
     if (disabled || recordStateRef.current !== 'idle') return
@@ -468,7 +523,11 @@ const finishRecording = useCallback(
           }
           data-testid="dingtalk-audio-mode-toggle-button"
         >
-          {isVoiceMode ? <Keyboard className="h-4 w-4" strokeWidth={2.3} /> : <Volume2 className="h-4 w-4" strokeWidth={2.3} />}
+          {isVoiceMode ? (
+            <Keyboard className="h-4 w-4" strokeWidth={2.3} />
+          ) : (
+            <Volume2 className="h-4 w-4" strokeWidth={2.3} />
+          )}
         </button>
 
         {isVoiceMode && (
