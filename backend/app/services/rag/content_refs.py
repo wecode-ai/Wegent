@@ -45,9 +45,12 @@ def build_content_ref_for_attachment(
     )
     if presigned_url:
         # Get encryption status from context.type_data
-        is_encrypted = False
-        if context.type_data and isinstance(context.type_data, dict):
-            is_encrypted = context.type_data.get("is_encrypted", False)
+        # Only True yields True; None/False/other values become False
+        is_encrypted = (
+            context.type_data.get("is_encrypted") is True
+            if context.type_data and isinstance(context.type_data, dict)
+            else False
+        )
 
         return PresignedUrlContentRef(
             kind="presigned_url",
