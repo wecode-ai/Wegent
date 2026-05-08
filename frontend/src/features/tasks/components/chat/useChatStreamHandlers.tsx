@@ -571,7 +571,7 @@ export function useChatStreamHandlers({
               return `- [${docCtx.name}](${docCtx.doc_url})`
             })
             .join('\n')
-          const dingtalkPrefix = `**Referenced DingTalk Documents:**\n${docRefs}\n\n---\n\n`
+          const dingtalkPrefix = `**${t('chat:dingtalkDocs.referencedDocsLabel')}**\n${docRefs}\n\n---\n\n`
           messageWithQueueContent = `${dingtalkPrefix}${messageWithQueueContent}`
         }
 
@@ -812,6 +812,7 @@ export function useChatStreamHandlers({
       effectiveRequiresWorkspace,
       additionalSkills,
       generateParams,
+      t,
     ]
   )
   /**

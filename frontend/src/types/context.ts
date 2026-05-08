@@ -83,10 +83,9 @@ export interface QueueMessageContext extends BaseContextItem {
    * Built from snapshot.attachments when processing inbox messages. */
   inboxAttachments?: InboxAttachment[]
 }
-
 /**
  * DingTalk document context item
- * 钉钉文档上下文项 - references a synced DingTalk document node by title and URL
+ * References a synced DingTalk document node by title and URL.
  */
 export interface DingTalkDocContext extends BaseContextItem {
   type: 'dingtalk_doc'

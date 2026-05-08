@@ -163,6 +163,7 @@ export default function ContextSelector({
   const [searchValue, setSearchValue] = useState('')
   const [activeTab, setActiveTab] = useState('knowledge')
   const [dingtalkNodes, setDingtalkNodes] = useState<DingtalkDocNode[]>([])
+  const [hasFetchedDingtalk, setHasFetchedDingtalk] = useState(false)
   const [dingtalkLoading, setDingtalkLoading] = useState(false)
   const [dingtalkSyncing, setDingtalkSyncing] = useState(false)
   const [dingtalkError, setDingtalkError] = useState<string | null>(null)
@@ -270,9 +271,16 @@ export default function ContextSelector({
     }
   }, [fetchDingtalkDocs, t])
 
-  useEffect(() => {
-    fetchDingtalkDocs()
-  }, [fetchDingtalkDocs])
+  const handleTabChange = useCallback(
+    (value: string) => {
+      setActiveTab(value)
+      if (value === 'dingtalk' && !hasFetchedDingtalk) {
+        fetchDingtalkDocs()
+        setHasFetchedDingtalk(true)
+      }
+    },
+    [fetchDingtalkDocs, hasFetchedDingtalk]
+  )
 
   // Group knowledge bases by category (personal, group, organization)
   // and exclude bound ones and current notebook KB from user list
@@ -538,7 +546,7 @@ export default function ContextSelector({
       >
         <Tabs
           value={activeTab}
-          onValueChange={setActiveTab}
+          onValueChange={handleTabChange}
           className="flex flex-col flex-1 min-h-0"
         >
           {/* Tab list: Knowledge | Table | DingTalk — fixed height, no flex tricks needed */}
@@ -948,12 +956,12 @@ export default function ContextSelector({
               ) : !dingtalkConfigured ? (
                 <div className="py-6 px-4 text-center space-y-3">
                   <p className="text-sm text-text-muted">{t('chat:dingtalkDocs.notConfigured')}</p>
-                  <a
+                  <Link
                     href="/settings/integrations"
                     className="inline-flex items-center gap-1.5 text-sm text-primary hover:text-primary/80 font-medium transition-colors"
                   >
                     {t('chat:dingtalkDocs.goToConfigure')}
-                  </a>
+                  </Link>
                 </div>
               ) : dingtalkError ? (
                 <div className="py-6 px-4 text-center space-y-2">

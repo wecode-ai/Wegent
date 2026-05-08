@@ -651,7 +651,6 @@
     "custom_input": "Custom Input",
     "custom_placeholder": "Enter custom input..."
   },
-  "scroll_to_bottom": "Scroll to bottom",
   "dingtalkDocs": {
     "tabTitle": "DingTalk Docs",
     "sync": "Sync",
@@ -666,6 +665,7 @@
     "notConfigured": "DingTalk Docs MCP is not configured. Please enable it in Settings > Integrations.",
     "goToConfigure": "Go to configure",
     "docBadgeHint": "DingTalk Doc",
-    "searchPlaceholder": "Search documents..."
+    "searchPlaceholder": "Search documents...",
+    "referencedDocsLabel": "Referenced DingTalk Documents:"
   }
 }

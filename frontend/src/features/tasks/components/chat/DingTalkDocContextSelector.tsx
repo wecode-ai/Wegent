@@ -12,6 +12,7 @@
 'use client'
 
 import React, { useState, useCallback, useEffect, useMemo } from 'react'
+import Link from 'next/link'
 import {
   Folder,
   FolderOpen,
@@ -100,9 +101,13 @@ export function DingtalkContextTreeNode({
   )
 
   // Filter by search query
-  const matchesSearch = !searchQuery || node.name.toLowerCase().includes(searchQuery.toLowerCase())
-  const childrenMatchSearch =
-    searchQuery && node.children?.some(child => collectDescendants(child).length > 0)
+  const normalizedQuery = searchQuery.toLowerCase()
+  const matchesSearch = !searchQuery || node.name.toLowerCase().includes(normalizedQuery)
+  const hasDescendantMatch = (descendant: DingtalkDocNode): boolean => {
+    if (descendant.name.toLowerCase().includes(normalizedQuery)) return true
+    return descendant.children ? descendant.children.some(hasDescendantMatch) : false
+  }
+  const childrenMatchSearch = searchQuery && node.children?.some(hasDescendantMatch)
 
   if (!matchesSearch && !childrenMatchSearch && !isFolder) return null
   if (!matchesSearch && !childrenMatchSearch && isFolder) {
@@ -362,13 +367,13 @@ export function DingTalkDocContextSelector({
     return (
       <div className="py-6 px-4 text-center space-y-3">
         <p className="text-sm text-text-muted">{t('chat:dingtalkDocs.notConfigured')}</p>
-        <a
+        <Link
           href="/settings/integrations"
           className="inline-flex items-center gap-1.5 text-sm text-primary hover:text-primary/80 font-medium transition-colors"
         >
           {t('chat:dingtalkDocs.goToConfigure')}
           <ExternalLink className="w-3.5 h-3.5" />
-        </a>
+        </Link>
       </div>
     )
   }
