@@ -13,7 +13,7 @@ from typing import Any, Dict, List, NamedTuple, Optional
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
-from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
+from app.models.subtask import Subtask
 from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.kind import Task
@@ -179,19 +179,3 @@ def setup_chat_session(
         bot_name=session.bot_name,
         bot_namespace=session.bot_namespace,
     )
-
-
-def build_chat_history(existing_subtasks: List[Subtask]) -> List[Dict[str, str]]:
-    """Build chat history from existing subtasks."""
-    history = []
-    sorted_subtasks = sorted(existing_subtasks, key=lambda s: s.message_id)
-    for st in sorted_subtasks:
-        if st.status == SubtaskStatus.COMPLETED:
-            if st.role == SubtaskRole.USER and st.prompt:
-                history.append({"role": "user", "content": st.prompt})
-            elif st.role == SubtaskRole.ASSISTANT and st.result:
-                if isinstance(st.result, dict):
-                    content = st.result.get("value", "")
-                    if content:
-                        history.append({"role": "assistant", "content": content})
-    return history

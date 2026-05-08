@@ -31,8 +31,6 @@ from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.kind import Bot, Task, Team
 from app.schemas.openapi_response import (
-    OutputMessage,
-    OutputTextContent,
     ResponseCreateInput,
     ResponseDeletedObject,
     ResponseError,
@@ -48,11 +46,10 @@ from app.services.openapi.helpers import (
     extract_input_text,
     parse_model_string,
     parse_wegent_tools,
-    subtask_status_to_message_status,
     wegent_status_to_openai_status,
 )
+from app.services.openapi.output_builder import build_response_output
 from app.services.readers.kinds import KindType, kindReader
-from app.utils.prompt_utils import extract_display_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -79,35 +76,9 @@ def _task_to_response_object(
     else:
         created_at_unix = int(datetime.now().timestamp())
 
-    # Build output from subtasks
     output = []
     if subtasks:
-        for subtask in subtasks:
-            if subtask.role == SubtaskRole.USER:
-                msg = OutputMessage(
-                    id=f"msg_{subtask.id}",
-                    status=subtask_status_to_message_status(subtask.status.value),
-                    content=[
-                        OutputTextContent(text=extract_display_prompt(subtask.prompt))
-                    ],
-                    role="user",
-                )
-                output.append(msg)
-
-            if subtask.role == SubtaskRole.ASSISTANT:
-                result_text = ""
-                if isinstance(subtask.result, dict):
-                    result_text = subtask.result.get("value", str(subtask.result))
-                elif isinstance(subtask.result, str):
-                    result_text = subtask.result
-
-                msg = OutputMessage(
-                    id=f"msg_{subtask.id}",
-                    status=subtask_status_to_message_status(subtask.status.value),
-                    content=[OutputTextContent(text=result_text)],
-                    role="assistant",
-                )
-                output.append(msg)
+        output = build_response_output(subtasks)
 
     # Build error if failed
     error = None
@@ -490,37 +461,6 @@ async def _create_non_streaming_response_unified(
 
         return accumulated_content, final_event
 
-    # Helper: build output messages from subtasks
-    def _build_output(subtasks, assistant_status: str, assistant_content: str = ""):
-        output = []
-        for subtask in subtasks:
-            if subtask.role == SubtaskRole.USER:
-                output.append(
-                    OutputMessage(
-                        id=f"msg_{subtask.id}",
-                        status="completed",
-                        content=[
-                            OutputTextContent(
-                                text=extract_display_prompt(subtask.prompt)
-                            )
-                        ],
-                        role="user",
-                    )
-                )
-            elif subtask.role == SubtaskRole.ASSISTANT:
-                content = assistant_content
-                if not content and subtask.result and isinstance(subtask.result, dict):
-                    content = subtask.result.get("value", "")
-                output.append(
-                    OutputMessage(
-                        id=f"msg_{subtask.id}",
-                        status=assistant_status,
-                        content=[OutputTextContent(text=content)],
-                        role="assistant",
-                    )
-                )
-        return output
-
     # Helper: query subtasks
     def _query_subtasks():
         query_db = SessionLocal()
@@ -553,7 +493,11 @@ async def _create_non_streaming_response_unified(
             created_at=created_at,
             status="queued",
             model=request_body.model,
-            output=_build_output(subtasks, "in_progress"),
+            output=build_response_output(
+                subtasks,
+                active_assistant_subtask_id=assistant_subtask_id,
+                active_assistant_status="in_progress",
+            ),
             previous_response_id=request_body.previous_response_id,
         )
 
@@ -582,7 +526,11 @@ async def _create_non_streaming_response_unified(
             created_at=created_at,
             status="in_progress",
             model=request_body.model,
-            output=_build_output(subtasks, "in_progress"),
+            output=build_response_output(
+                subtasks,
+                active_assistant_subtask_id=assistant_subtask_id,
+                active_assistant_status="in_progress",
+            ),
             previous_response_id=request_body.previous_response_id,
         )
 
@@ -598,19 +546,18 @@ async def _create_non_streaming_response_unified(
             detail=f"LLM request failed: {str(e)}",
         )
 
+    subtasks = _query_subtasks()
     return ResponseObject(
         id=response_id,
         created_at=created_at,
         status="completed",
         model=request_body.model,
-        output=[
-            OutputMessage(
-                id=f"msg_{assistant_subtask_id}",
-                status="completed",
-                role="assistant",
-                content=[OutputTextContent(text=accumulated_content)],
-            )
-        ],
+        output=build_response_output(
+            subtasks,
+            active_assistant_subtask_id=assistant_subtask_id,
+            active_assistant_status="completed",
+            active_assistant_content=accumulated_content,
+        ),
         previous_response_id=request_body.previous_response_id,
     )
 

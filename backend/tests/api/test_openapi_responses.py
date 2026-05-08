@@ -669,7 +669,9 @@ class TestOpenAPIResponsesGet:
         data = response.json()
         assert data["id"] == f"resp_{test_task.id}"
         assert data["status"] == "completed"
-        assert len(data["output"]) == 2  # user + assistant messages
+        assert len(data["output"]) == 1
+        assert data["output"][0]["type"] == "message"
+        assert data["output"][0]["role"] == "assistant"
 
     def test_get_response_user_isolation(
         self,

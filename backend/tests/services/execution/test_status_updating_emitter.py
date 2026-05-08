@@ -26,6 +26,10 @@ async def test_emit_error_persists_partial_result_and_blocks():
     with (
         patch("app.services.chat.storage.session_manager", mock_session_manager),
         patch("app.services.chat.storage.db.db_handler", mock_db_handler),
+        patch(
+            "app.services.chat.trigger.lifecycle._get_existing_subtask_result",
+            new=AsyncMock(return_value={}),
+        ),
         patch.object(emitter, "_publish_task_completed_event", new=AsyncMock()),
     ):
         await emitter.emit_error(task_id=101, subtask_id=202, error="model error")
