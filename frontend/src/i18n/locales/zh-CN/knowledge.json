@@ -73,6 +73,7 @@
       "clearRecent": "清除记录",
       "personal": "个人",
       "organization": "公司",
+      "dingtalk": "钉钉文档",
       "groupSettings": "组设置",
       "justNow": "刚刚",
       "minutesAgo": "{{count}}分钟前",
@@ -81,6 +82,29 @@
       "daysAgo": "{{count}}天前"
     },
     "allKnowledgeBases": "全部知识库",
+    "dingtalk": {
+      "sync": "同步",
+      "syncing": "同步中...",
+      "syncSuccess": "同步完成",
+      "syncFailed": "同步失败",
+      "syncHint": "点击同步按钮从钉钉拉取文档列表",
+      "notConfigured": "未配置钉钉文档",
+      "configureHint": "请先在设置中启用并配置钉钉文档 MCP 服务，然后即可在此处浏览和同步钉钉文档。",
+      "goToSettings": "前往设置",
+      "emptyState": "暂无文档",
+      "lastSynced": "上次同步",
+      "docCount": "{{count}} 个文档",
+      "allDocs": "全部文档",
+      "noDocsInFolder": "此文件夹下暂无文档",
+      "backToParent": "返回上级",
+      "columnName": "名称",
+      "columnType": "类型",
+      "columnContentUpdatedAt": "文档更新时间",
+      "columnSyncedAt": "同步时间",
+      "columnActions": "操作",
+      "openInDingtalk": "在钉钉中打开",
+      "lastModified": "最近修改"
+    },
     "groupFilter": {
       "all": "全部分组"
     },
