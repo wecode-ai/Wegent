@@ -113,7 +113,7 @@ class TestGerritProviderAuthType:
 
         gerrit_provider._make_request(
             method="GET",
-            url="https://gerrit.example.com/a/accounts/self",
+            url="https://gerrit.example.com/a/accounts/self/",
             username="testuser",
             http_password="testpassword",
             # No auth_type specified - should default to digest
@@ -139,7 +139,7 @@ class TestGerritProviderAuthType:
 
         gerrit_provider._make_request(
             method="GET",
-            url="https://gerrit.example.com/a/accounts/self",
+            url="https://gerrit.example.com/a/accounts/self/",
             username="testuser",
             http_password="testpassword",
             auth_type="digest",
@@ -161,7 +161,7 @@ class TestGerritProviderAuthType:
 
         gerrit_provider._make_request(
             method="GET",
-            url="https://gerrit.example.com/a/accounts/self",
+            url="https://gerrit.example.com/a/accounts/self/",
             username="testuser",
             http_password="testpassword",
             auth_type="basic",
