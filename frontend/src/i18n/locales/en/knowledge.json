@@ -73,6 +73,7 @@
       "clearRecent": "Clear history",
       "personal": "Personal",
       "organization": "Organization",
+      "dingtalk": "DingTalk Docs",
       "groupSettings": "Group Settings",
       "justNow": "Just now",
       "minutesAgo": "{{count}} min ago",
@@ -81,6 +82,29 @@
       "daysAgo": "{{count}} days ago"
     },
     "allKnowledgeBases": "All Knowledge Bases",
+    "dingtalk": {
+      "sync": "Sync",
+      "syncing": "Syncing...",
+      "syncSuccess": "Sync completed",
+      "syncFailed": "Sync failed",
+      "syncHint": "Click the sync button to fetch documents from DingTalk",
+      "notConfigured": "DingTalk Docs Not Configured",
+      "configureHint": "Please enable and configure the DingTalk Docs MCP service in Settings first, then you can browse and sync DingTalk documents here.",
+      "goToSettings": "Go to Settings",
+      "emptyState": "No Documents",
+      "lastSynced": "Last synced",
+      "docCount": "{{count}} documents",
+      "allDocs": "All Documents",
+      "noDocsInFolder": "No documents in this folder",
+      "backToParent": "Back to parent",
+      "columnName": "Name",
+      "columnType": "Type",
+      "columnContentUpdatedAt": "Doc Updated At",
+      "columnSyncedAt": "Synced At",
+      "columnActions": "Actions",
+      "openInDingtalk": "Open in DingTalk",
+      "lastModified": "Last modified"
+    },
     "groupFilter": {
       "all": "All Groups"
     },

@@ -629,5 +629,21 @@
     "custom_input": "自定义输入",
     "custom_placeholder": "请输入您的自定义内容..."
   },
-  "scroll_to_bottom": "滚动到底部"
+  "dingtalkDocs": {
+    "tabTitle": "钉钉文档",
+    "sync": "同步",
+    "syncing": "同步中...",
+    "syncNow": "立即同步",
+    "lastSynced": "上次同步：{{time}}",
+    "neverSynced": "尚未同步",
+    "selectedCount": "已选 {{count}} 个",
+    "empty": "暂无已同步的钉钉文档",
+    "loadFailed": "加载钉钉文档失败",
+    "syncFailed": "同步钉钉文档失败",
+    "notConfigured": "未配置钉钉文档 MCP，请先在集成设置中启用",
+    "goToConfigure": "前往配置",
+    "docBadgeHint": "钉钉文档",
+    "searchPlaceholder": "搜索文档...",
+    "referencedDocsLabel": "引用的钉钉文档："
+  }
 }

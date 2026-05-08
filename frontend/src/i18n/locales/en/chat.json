@@ -651,5 +651,21 @@
     "custom_input": "Custom Input",
     "custom_placeholder": "Enter custom input..."
   },
-  "scroll_to_bottom": "Scroll to bottom"
+  "dingtalkDocs": {
+    "tabTitle": "DingTalk Docs",
+    "sync": "Sync",
+    "syncing": "Syncing...",
+    "syncNow": "Sync Now",
+    "lastSynced": "Last synced: {{time}}",
+    "neverSynced": "Never synced",
+    "selectedCount": "{{count}} selected",
+    "empty": "No DingTalk documents synced yet",
+    "loadFailed": "Failed to load DingTalk documents",
+    "syncFailed": "Failed to sync DingTalk documents",
+    "notConfigured": "DingTalk Docs MCP is not configured. Please enable it in Settings > Integrations.",
+    "goToConfigure": "Go to configure",
+    "docBadgeHint": "DingTalk Doc",
+    "searchPlaceholder": "Search documents...",
+    "referencedDocsLabel": "Referenced DingTalk Documents:"
+  }
 }

@@ -343,3 +343,119 @@ class TestRedisTransport:
         assert published_data["subtask_id"] == 2
         assert published_data["data"] == {"test": "data"}
         assert published_data["message_id"] == 3
+
+
+class TestResponsesAPIEmitter:
+    @pytest.mark.asyncio
+    async def test_mcp_tool_done_failed_emits_failed_terminal_events(self):
+        transport = GeneratorTransport()
+        emitter = EmitterBuilder().with_task(1, 2).with_transport(transport).build()
+
+        await emitter.tool_done(
+            call_id="mcp_123",
+            name="search_docs",
+            arguments={"query": "timeout"},
+            output="MCP tool 'search_docs' timed out after 180.0s",
+            tool_protocol="mcp",
+            server_label="wegent-knowledge",
+            status="failed",
+            error="MCP tool 'search_docs' timed out after 180.0s",
+        )
+
+        events = transport.get_events()
+        event_types = [event_type for event_type, _ in events]
+
+        assert event_types == [
+            "response.mcp_call_arguments.done",
+            "response.mcp_call.failed",
+            "response.output_item.done",
+        ]
+        assert events[1][1]["error"] == "MCP tool 'search_docs' timed out after 180.0s"
+        assert events[2][1]["item"]["status"] == "failed"
+
+    @pytest.mark.asyncio
+    async def test_shell_tool_emits_output_item_lifecycle_only(self):
+        transport = GeneratorTransport()
+        emitter = EmitterBuilder().with_task(1, 2).with_transport(transport).build()
+
+        await emitter.tool_start(
+            call_id="shell_123",
+            name="exec",
+            arguments={"command": "ls -la", "timeout_seconds": 5},
+            tool_protocol="shell_call",
+        )
+        await emitter.tool_done(
+            call_id="shell_123",
+            name="exec",
+            arguments={"command": "ls -la", "timeout_seconds": 5},
+            tool_protocol="shell_call",
+        )
+
+        events = transport.get_events()
+        event_types = [event_type for event_type, _ in events]
+
+        assert event_types == [
+            "response.output_item.added",
+            "response.output_item.done",
+        ]
+        assert events[0][1]["item"]["type"] == "shell_call"
+        assert events[0][1]["item"]["action"]["commands"] == ["ls -la"]
+        assert events[1][1]["item"]["type"] == "shell_call"
+        assert events[1][1]["item"]["status"] == "completed"
+
+    @pytest.mark.asyncio
+    async def test_exec_tool_infers_shell_call_and_reuses_context(self):
+        transport = GeneratorTransport()
+        emitter = EmitterBuilder().with_task(1, 2).with_transport(transport).build()
+
+        await emitter.tool_start(
+            call_id="shell_456",
+            name="exec",
+            arguments={"command": "python hello.py", "timeout_seconds": 30},
+        )
+        await emitter.tool_done(
+            call_id="shell_456",
+            name="",
+            arguments=None,
+        )
+
+        events = transport.get_events()
+        assert [event_type for event_type, _ in events] == [
+            "response.output_item.added",
+            "response.output_item.done",
+        ]
+        assert events[0][1]["item"]["type"] == "shell_call"
+        assert events[1][1]["item"]["type"] == "shell_call"
+        assert events[1][1]["item"]["name"] == "exec"
+        assert events[1][1]["item"]["input"] == {
+            "command": "python hello.py",
+            "timeout_seconds": 30,
+        }
+
+    @pytest.mark.asyncio
+    async def test_mcp_tool_done_uses_cached_protocol_without_duplicate_arguments(self):
+        transport = GeneratorTransport()
+        emitter = EmitterBuilder().with_task(1, 2).with_transport(transport).build()
+
+        await emitter.tool_start(
+            call_id="mcp_456",
+            name="search_docs",
+            arguments={"query": "timeout"},
+            tool_protocol="mcp_call",
+            server_label="wegent-knowledge",
+        )
+        await emitter.tool_done(
+            call_id="mcp_456",
+            name="",
+            arguments=None,
+        )
+
+        events = transport.get_events()
+        assert [event_type for event_type, _ in events] == [
+            "response.output_item.added",
+            "response.mcp_call_arguments.done",
+            "response.mcp_call.in_progress",
+            "response.mcp_call.completed",
+            "response.output_item.done",
+        ]
+        assert events[-1][1]["item"]["type"] == "mcp_call"

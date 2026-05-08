@@ -22,6 +22,38 @@ from shared.telemetry.decorators import add_span_event
 logger = logging.getLogger(__name__)
 
 
+def _normalize_protocol_type(tool_protocol: str | None) -> str:
+    if tool_protocol in {"mcp", "mcp_call"}:
+        return "mcp_call"
+    if tool_protocol == "shell_call":
+        return "shell_call"
+    return "function_call"
+
+
+def _infer_tool_completion(
+    tool_protocol: str, serializable_output: Any
+) -> tuple[str, str | None]:
+    """Infer tool completion status from tool output.
+
+    MCP wrappers currently swallow exceptions and return formatted error strings.
+    Convert those back into a failed terminal state so `v1/responses` can emit
+    `response.mcp_call.failed` instead of always reporting completed.
+    """
+    if tool_protocol != "mcp_call":
+        return ("completed", None)
+
+    output_text = (
+        serializable_output
+        if isinstance(serializable_output, str)
+        else str(serializable_output)
+    )
+    if "MCP tool '" in output_text and (
+        " timed out after " in output_text or " failed: " in output_text
+    ):
+        return ("failed", output_text)
+    return ("completed", None)
+
+
 def create_tool_event_handler(
     state: Any,
     emitter: ResponsesAPIEmitter,
@@ -120,6 +152,18 @@ def _handle_tool_start(
     display_name = (
         getattr(tool_instance, "display_name", None) if tool_instance else None
     )
+    tool_protocol = (
+        _normalize_protocol_type(
+            getattr(tool_instance, "_wegent_tool_protocol", "function_call")
+        )
+        if tool_instance
+        else "function_call"
+    )
+    server_label = (
+        getattr(tool_instance, "_wegent_mcp_server_label", None)
+        if tool_instance
+        else None
+    )
 
     # Emit tool_start event via ResponsesAPIEmitter
     # Only include arguments if tool is in whitelist
@@ -131,6 +175,8 @@ def _handle_tool_start(
             name=tool_name,
             arguments=arguments,
             display_name=display_name,
+            tool_protocol=tool_protocol,
+            server_label=server_label,
         )
     )
 
@@ -173,22 +219,7 @@ def _handle_tool_end(
                 tool_use_id,
             )
 
-    # Add OpenTelemetry span event for tool end
     output_str = str(serializable_output)
-    log_large_attribute(
-        "tool.output",
-        serializable_output,
-        max_attr_length=100,
-        max_event_length=5000,
-        event_name=f"tool_end:{tool_name}",
-        extra_attributes={
-            "tool.name": tool_name,
-            "tool.run_id": run_id,
-            "tool.tool_use_id": tool_use_id,
-            "tool.output_length": len(output_str),
-            "tool.status": "completed",
-        },
-    )
 
     logger.info(f"[TOOL_END] {tool_name} (run_id={run_id}, tool_use_id={tool_use_id})")
 
@@ -228,6 +259,35 @@ def _handle_tool_end(
     # Emit tool_done event via ResponsesAPIEmitter
     # Only include arguments if tool is in whitelist
     arguments = tool_input if should_display_tool_details(tool_name) else None
+    tool_instance = _get_tool_instance(agent_builder, tool_name)
+    tool_protocol = (
+        _normalize_protocol_type(
+            getattr(tool_instance, "_wegent_tool_protocol", "function_call")
+        )
+        if tool_instance
+        else "function_call"
+    )
+    server_label = (
+        getattr(tool_instance, "_wegent_mcp_server_label", None)
+        if tool_instance
+        else None
+    )
+    status, error = _infer_tool_completion(tool_protocol, serializable_output)
+
+    log_large_attribute(
+        "tool.output",
+        serializable_output,
+        max_attr_length=100,
+        max_event_length=5000,
+        event_name=f"tool_end:{tool_name}",
+        extra_attributes={
+            "tool.name": tool_name,
+            "tool.run_id": run_id,
+            "tool.tool_use_id": tool_use_id,
+            "tool.output_length": len(output_str),
+            "tool.status": status,
+        },
+    )
 
     _run_async(
         emitter.tool_done(
@@ -235,6 +295,10 @@ def _handle_tool_end(
             name=tool_name,
             arguments=arguments,
             output=serializable_output,
+            tool_protocol=tool_protocol,
+            server_label=server_label,
+            status=status,
+            error=error,
         )
     )
 
