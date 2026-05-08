@@ -26,6 +26,12 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.models.task import TaskResource
+
+# Import channel callback modules to ensure they register with
+# ChannelCallbackRegistry in this worker process. Without these imports,
+# the registry may be empty when /callback is handled by a different worker
+# than the one that processed the original IM message.
+from app.services.channels.dingtalk import callback as _dingtalk_cb  # noqa: F401
 from app.services.execution.dispatcher import ResponsesAPIEventParser
 from app.services.execution.emitters.status_updating import StatusUpdatingEmitter
 from app.services.execution.emitters.websocket import WebSocketResultEmitter
@@ -147,6 +153,32 @@ async def handle_callback(
             f"task_id={request.task_id}, subtask_id={request.subtask_id}"
         )
 
+        # Forward non-terminal events to registered channel callback services
+        # (e.g., DingTalk AI Card streaming). Terminal events (DONE, ERROR,
+        # CANCELLED) are handled by TaskCompletedEvent via send_task_result().
+        from app.services.channels.callback import get_callback_registry
+
+        registry = get_callback_registry()
+        for channel_type, service in registry._services.items():
+            try:
+                callback_info = await service.get_callback_info(request.task_id)
+                if callback_info:
+                    forwarded = await service.emit_event(
+                        task_id=request.task_id,
+                        subtask_id=request.subtask_id,
+                        event=event,
+                    )
+                    if forwarded:
+                        logger.debug(
+                            f"[Callback] Forwarded event {event.type} to "
+                            f"{channel_type.value} for task {request.task_id}"
+                        )
+            except Exception as e:
+                logger.warning(
+                    f"[Callback] Failed to forward event to {channel_type.value} "
+                    f"for task {request.task_id}: {e}"
+                )
+
         # Note: TaskCompletedEvent is now published by StatusUpdatingEmitter
         # for unified handling across all execution modes
 
@@ -238,8 +270,29 @@ async def handle_batch_callback(
             await emitter.emit(event)
             await emitter.close()
 
-            # Note: TaskCompletedEvent is now published by StatusUpdatingEmitter
-            # for unified handling across all execution modes
+            # Forward non-terminal events to registered channel callback services
+            from app.services.channels.callback import get_callback_registry
+
+            registry = get_callback_registry()
+            for channel_type, service in registry._services.items():
+                try:
+                    callback_info = await service.get_callback_info(request.task_id)
+                    if callback_info:
+                        forwarded = await service.emit_event(
+                            task_id=request.task_id,
+                            subtask_id=request.subtask_id,
+                            event=event,
+                        )
+                        if forwarded:
+                            logger.debug(
+                                f"[Callback] Forwarded event {event.type} to "
+                                f"{channel_type.value} for task {request.task_id}"
+                            )
+                except Exception as e:
+                    logger.warning(
+                        f"[Callback] Failed to forward event to {channel_type.value} "
+                        f"for task {request.task_id}: {e}"
+                    )
 
             processed += 1
 

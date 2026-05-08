@@ -1957,6 +1957,20 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         else:
             response_emitter = sync_emitter
 
+        # Register streaming emitter for callback events.
+        # In HTTP_CALLBACK mode, executor events arrive via /callback rather than
+        # through the emitter passed to dispatch(). Registering the emitter here
+        # allows the callback endpoint to forward events to the same AI Card.
+        callback_service = self.get_callback_service()
+        if callback_service and streaming_emitter:
+            callback_info = self.create_callback_info(message_context)
+            await callback_service.save_callback_info(
+                task_id=task_id, callback_info=callback_info
+            )
+            callback_service.register_emitter(
+                task_id=task_id, emitter=streaming_emitter
+            )
+
         # Notify user if auto-starting new conversation due to timeout
         if auto_new_conversation:
             from app.core.config import settings
@@ -1993,24 +2007,22 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             result_emitter=response_emitter,
         )
 
-        # Wait for AI response (no db session held)
+        # When a streaming emitter is available (e.g., DingTalk AI Card), rely on
+        # it for real-time updates. In HTTP_CALLBACK/WebSocket mode, sync_emitter
+        # will never receive DONE (events arrive via /callback or device WebSocket),
+        # so waiting would only block for 120s and delay the IM channel ACK.
+        # The streaming emitter is updated by /callback events and closed by
+        # TaskCompletedEvent, so we can return immediately here.
+        if streaming_emitter:
+            return None
+
+        # For channels without streaming support, wait for the complete response.
         try:
             response = await asyncio.wait_for(
                 sync_emitter.wait_for_response(),
                 timeout=120.0,
             )
-
-            if (
-                streaming_emitter
-                and hasattr(streaming_emitter, "_started")
-                and streaming_emitter._started
-                and hasattr(streaming_emitter, "_finished")
-                and streaming_emitter._finished
-            ):
-                return None
-            else:
-                return response
-
+            return response
         except asyncio.TimeoutError:
             self.logger.warning(
                 f"[{self._channel_type.value}Handler] Response timeout for task {task_id}"
@@ -2135,8 +2147,9 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 f"⏰ 距离上次对话已超过 {timeout_minutes} 分钟，已自动开始新对话",
             )
 
-        # Send acknowledgment BEFORE routing to device
-        # This ensures the "task sent" card appears before the result card
+        # Send acknowledgment BEFORE routing to device.
+        # Do NOT call emit_done() here - keep the AI Card open so that
+        # streaming events from the executor can update the same card.
         streaming_emitter = await self.create_streaming_emitter(message_context)
         if streaming_emitter:
             await streaming_emitter.emit_start(
@@ -2153,11 +2166,6 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                     "状态: 正在执行\n\n"
                     "任务完成后将自动发送结果。"
                 ),
-                offset=0,
-            )
-            await streaming_emitter.emit_done(
-                task_id=result.task.id,
-                subtask_id=result.assistant_subtask.id,
                 offset=0,
             )
 
@@ -2183,7 +2191,8 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 attachments=file_attachment_metas or None,
             )
 
-            # Save callback info
+            # Save callback info and register the streaming emitter so that
+            # executor callback events can update the same AI Card.
             callback_service = self.get_callback_service()
             if callback_service:
                 callback_info = self.create_callback_info(message_context)
@@ -2191,6 +2200,10 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                     task_id=result.task.id,
                     callback_info=callback_info,
                 )
+                if streaming_emitter:
+                    callback_service.register_emitter(
+                        task_id=result.task.id, emitter=streaming_emitter
+                    )
 
             return None
 
@@ -2293,8 +2306,17 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
         schedule_dispatch(result.task.id)
 
-        # Send acknowledgment
-        # Send acknowledgment
+        # Save callback info for task completion notification
+        callback_service = self.get_callback_service()
+        if callback_service:
+            callback_info = self.create_callback_info(message_context)
+            await callback_service.save_callback_info(
+                task_id=result.task.id,
+                callback_info=callback_info,
+            )
+
+        # Send acknowledgment. Do NOT call emit_done() here - keep the AI Card
+        # open so that streaming events from the executor can update it.
         streaming_emitter = await self.create_streaming_emitter(message_context)
         if streaming_emitter:
             await streaming_emitter.emit_start(
@@ -2309,15 +2331,15 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                     "⏳ 任务已提交到云端执行队列\n\n"
                     f"任务 ID: {result.task.id}\n"
                     "状态: 等待执行\n\n"
-                    "任务完成后��收到通知。"
+                    "任务完成后将收到通知。"
                 ),
                 offset=0,
             )
-            await streaming_emitter.emit_done(
-                task_id=result.task.id,
-                subtask_id=result.assistant_subtask.id,
-                offset=0,
-            )
+            # Register emitter so callback events reuse the same AI Card
+            if callback_service:
+                callback_service.register_emitter(
+                    task_id=result.task.id, emitter=streaming_emitter
+                )
         else:
             return (
                 f"✅ 任务已提交到云端执行队列\n\n"

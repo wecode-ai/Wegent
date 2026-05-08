@@ -25,6 +25,7 @@ from app.core.cache import cache_manager
 
 if TYPE_CHECKING:
     from app.services.execution.emitters import ResultEmitter
+    from shared.models import ExecutionEvent
 
 logger = logging.getLogger(__name__)
 
@@ -254,6 +255,66 @@ class BaseChannelCallbackService(ABC, Generic[T]):
         self._remove_lock_for_task(task_id)
         # Clean up offset tracking
         self._last_emitted_offsets.pop(task_id, None)
+
+    def register_emitter(self, task_id: int, emitter: "ResultEmitter") -> None:
+        """Register an externally created emitter for a task.
+
+        This allows channel handlers to reuse an existing streaming emitter
+        (e.g., an AI Card already started for an acknowledgment message)
+        instead of creating a new one when callback events arrive.
+
+        Args:
+            task_id: Task ID
+            emitter: ResultEmitter instance to register
+        """
+        self._active_emitters[task_id] = emitter
+        logger.info(
+            f"[{self._channel_type.value}Callback] Registered external emitter for task {task_id}"
+        )
+
+    async def emit_event(
+        self, task_id: int, subtask_id: int, event: "ExecutionEvent"
+    ) -> bool:
+        """Emit a single execution event to the channel.
+
+        Forwards non-terminal events (START, CHUNK, THINKING, etc.) to the
+        channel's streaming emitter. Terminal events (DONE, ERROR, CANCELLED)
+        are skipped and should be handled by send_task_result() via
+        TaskCompletedEvent to ensure proper cleanup.
+
+        Args:
+            task_id: Task ID
+            subtask_id: Subtask ID
+            event: Execution event to emit
+
+        Returns:
+            True if the event was forwarded, False otherwise
+        """
+        from shared.models import EventType
+
+        # Skip terminal events - let TaskCompletedEvent handle them for cleanup
+        if event.type in (
+            EventType.DONE.value,
+            EventType.ERROR.value,
+            EventType.CANCEL.value,
+            EventType.CANCELLED.value,
+        ):
+            return False
+
+        try:
+            emitter = await self._get_or_create_emitter(task_id, subtask_id)
+            if not emitter:
+                return False
+
+            await emitter.emit(event)
+            return True
+
+        except Exception as e:
+            logger.warning(
+                f"[{self._channel_type.value}Callback] Failed to emit event "
+                f"{event.type} for task {task_id}: {e}"
+            )
+            return False
 
     async def send_progress(
         self,
