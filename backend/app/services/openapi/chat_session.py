@@ -17,6 +17,7 @@ from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.kind import Task
+from app.services.chat.storage.task_manager import TaskCreationParams
 from app.services.chat.trigger.lifecycle import prepare_execution_session
 
 logger = logging.getLogger(__name__)
@@ -60,17 +61,29 @@ def setup_chat_session(
     Returns:
         ChatSessionSetup with task, subtasks, and config
     """
+    workspace_data = tool_settings.get("workspace") or {}
+    task_params = TaskCreationParams(
+        message=input_text,
+        model_id=model_info.get("model_id"),
+        force_override_bot_model=model_info.get("model_id") is not None,
+        git_url=workspace_data.get("git_url"),
+        git_repo=workspace_data.get("git_repo"),
+        git_domain=workspace_data.get("git_domain"),
+        branch_name=workspace_data.get("branch"),
+        task_type="code" if workspace_data.get("git_url") else "chat",
+        source="chat_shell",
+        is_api_call=True,
+        api_key_name=api_key_name,
+    )
+
     session = prepare_execution_session(
         db=db,
         user=user,
         team=team,
         input_text=input_text,
-        model_info=model_info,
-        tool_settings=tool_settings,
+        task_params=task_params,
         task_id=task_id,
-        source="chat_shell",
-        is_api_call=True,
-        api_key_name=api_key_name,
+        should_trigger_ai=True,
     )
 
     # Store user message in long-term memory (fire-and-forget)

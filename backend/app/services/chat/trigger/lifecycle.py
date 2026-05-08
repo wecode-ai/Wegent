@@ -20,6 +20,7 @@ from app.models.user import User
 from app.schemas.kind import Team
 from app.services.chat.storage.task_manager import (
     TaskCreationParams,
+    check_task_status,
     create_assistant_subtask,
     create_new_task,
     create_user_subtask,
@@ -38,7 +39,7 @@ class ExecutionSessionSetup:
     task: TaskResource
     task_id: int
     user_subtask: Subtask
-    assistant_subtask: Subtask
+    assistant_subtask: Optional[Subtask]
     existing_subtasks: List[Subtask]
     bot_ids: List[int]
     bot_name: str
@@ -46,64 +47,41 @@ class ExecutionSessionSetup:
     subtask_user_id: int
 
 
+def _load_team_crd(team: Kind) -> Optional[Team]:
+    """Best-effort load of Team CRD from ORM or lightweight test doubles."""
+    team_json = getattr(team, "json", None)
+    if team_json is None:
+        return None
+    return Team.model_validate(team_json)
+
+
 def prepare_execution_session(
     db: Session,
     user: User,
     team: Kind,
     input_text: str,
-    model_info: Dict[str, Any],
-    tool_settings: Dict[str, Any],
+    task_params: Optional[TaskCreationParams] = None,
+    model_info: Optional[Dict[str, Any]] = None,
+    tool_settings: Optional[Dict[str, Any]] = None,
     task_id: Optional[int] = None,
     source: str = "chat_shell",
     is_api_call: bool = False,
     api_key_name: Optional[str] = None,
+    should_trigger_ai: bool = True,
+    bot_ids_override: Optional[List[int]] = None,
+    video_config: Optional[Dict[str, Any]] = None,
 ) -> ExecutionSessionSetup:
     """Create or reuse task/session state before building an execution request."""
+    from app.services.task_status import mark_task_pending
 
-    team_crd = Team.model_validate(team.json)
-    if not team_crd.spec.members:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Team has no members configured",
-        )
-
-    bot_ids = get_bot_ids_from_team(db, team)
-
-    first_bot_name = ""
-    first_bot_namespace = "default"
-    for member in team_crd.spec.members:
-        member_bot = kindReader.get_by_name_and_namespace(
-            db,
-            team.user_id,
-            KindType.BOT,
-            member.botRef.namespace,
-            member.botRef.name,
-        )
-        if member_bot:
-            first_bot_name = member.botRef.name
-            first_bot_namespace = member.botRef.namespace
-            break
-
-    if not first_bot_name:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No valid bots found in team",
-        )
-
-    workspace_data = tool_settings.get("workspace") or {}
-    task = None
-    subtask_user_id = user.id
-
-    if task_id:
-        task, subtask_user_id = get_task_with_access_check(db, task_id, user.id)
-        if not task:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Task {task_id} not found",
-            )
-
-    if not task:
-        params = TaskCreationParams(
+    resolved_task_params = task_params
+    if resolved_task_params is None:
+        if model_info is None:
+            model_info = {}
+        if tool_settings is None:
+            tool_settings = {}
+        workspace_data = tool_settings.get("workspace") or {}
+        resolved_task_params = TaskCreationParams(
             message=input_text,
             model_id=model_info.get("model_id"),
             force_override_bot_model=model_info.get("model_id") is not None,
@@ -116,7 +94,79 @@ def prepare_execution_session(
             is_api_call=is_api_call,
             api_key_name=api_key_name,
         )
-        task = create_new_task(db, user, team, params)
+
+    team_crd = _load_team_crd(team)
+    if team_crd is not None and not team_crd.spec.members:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Team has no members configured",
+        )
+
+    bot_ids = bot_ids_override or get_bot_ids_from_team(db, team)
+
+    first_bot_name = getattr(team, "name", "") or ""
+    first_bot_namespace = getattr(team, "namespace", "default") or "default"
+    if team_crd is not None:
+        first_bot_name = ""
+        first_bot_namespace = "default"
+        for member in team_crd.spec.members:
+            member_bot = kindReader.get_by_name_and_namespace(
+                db,
+                team.user_id,
+                KindType.BOT,
+                member.botRef.namespace,
+                member.botRef.name,
+            )
+            if member_bot:
+                first_bot_name = member.botRef.name
+                first_bot_namespace = member.botRef.namespace
+                break
+
+    if not first_bot_name:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No valid bots found in team",
+        )
+
+    task = None
+    subtask_user_id = user.id
+
+    if task_id:
+        task, subtask_user_id = get_task_with_access_check(db, task_id, user.id)
+        if not task:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Task {task_id} not found",
+            )
+        if not resolved_task_params.skip_status_check:
+            check_task_status(db, task)
+        if should_trigger_ai:
+            mark_task_pending(task)
+        if resolved_task_params.model_id:
+            from sqlalchemy.orm.attributes import flag_modified
+
+            from app.schemas.kind import Task
+
+            task_crd = Task.model_validate(task.json)
+            if not task_crd.metadata.labels:
+                task_crd.metadata.labels = {}
+            task_crd.metadata.labels["modelId"] = resolved_task_params.model_id
+            if resolved_task_params.force_override_bot_model:
+                task_crd.metadata.labels["forceOverrideBotModel"] = "true"
+            if resolved_task_params.force_override_bot_model_type:
+                task_crd.metadata.labels["forceOverrideBotModelType"] = (
+                    resolved_task_params.force_override_bot_model_type
+                )
+            task.json = task_crd.model_dump(mode="json")
+            flag_modified(task, "json")
+            logger.info(
+                "[prepare_execution_session] Updated model override metadata for existing task %s to modelId=%s",
+                task.id,
+                resolved_task_params.model_id,
+            )
+
+    if not task:
+        task = create_new_task(db, user, team, resolved_task_params)
         subtask_user_id = user.id
 
     existing_subtasks = (
@@ -142,21 +192,25 @@ def prepare_execution_session(
         message=input_text,
         next_message_id=next_message_id,
         parent_id=parent_id,
+        video_config=video_config,
     )
-    assistant_subtask = create_assistant_subtask(
-        db=db,
-        subtask_user_id=subtask_user_id,
-        task_id=task.id,
-        team_id=team.id,
-        bot_ids=bot_ids,
-        next_message_id=next_message_id + 1,
-        parent_id=next_message_id,
-    )
+    assistant_subtask = None
+    if should_trigger_ai:
+        assistant_subtask = create_assistant_subtask(
+            db=db,
+            subtask_user_id=subtask_user_id,
+            task_id=task.id,
+            team_id=team.id,
+            bot_ids=bot_ids,
+            next_message_id=next_message_id + 1,
+            parent_id=next_message_id,
+        )
 
     db.commit()
     db.refresh(task)
     db.refresh(user_subtask)
-    db.refresh(assistant_subtask)
+    if assistant_subtask is not None:
+        db.refresh(assistant_subtask)
 
     return ExecutionSessionSetup(
         task=task,
