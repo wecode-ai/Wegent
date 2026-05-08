@@ -285,12 +285,9 @@ async def handle_batch_callback(
             await emitter.emit(event)
             await emitter.close()
 
-            # Forward non-terminal events to registered channel callback services
-            await _forward_event_to_channels(
-                task_id=request.task_id,
-                subtask_id=request.subtask_id,
-                event=event,
-            )
+            # Note: batch callback events are typically terminal (DONE/ERROR).
+            # Terminal events are handled by TaskCompletedEvent via
+            # StatusUpdatingEmitter, so no need to forward to channels here.
 
             processed += 1
 

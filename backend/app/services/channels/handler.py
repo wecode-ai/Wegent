@@ -275,6 +275,40 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         """
         pass
 
+    async def _register_streaming_emitter(
+        self,
+        task_id: int,
+        streaming_emitter: Any,
+        message_context: MessageContext,
+    ) -> None:
+        """Register a streaming emitter for callback event forwarding.
+
+        Saves callback info (including card_instance_id for cross-worker
+        reconstruction) and registers the emitter so that executor callback
+        events can update the same AI Card.
+
+        Args:
+            task_id: Task ID
+            streaming_emitter: Streaming emitter instance
+            message_context: Message context
+        """
+        callback_service = self.get_callback_service()
+        if not callback_service or not streaming_emitter:
+            return
+
+        callback_info = self.create_callback_info(message_context)
+        # Persist card_instance_id for cross-worker emitter reconstruction
+        if hasattr(streaming_emitter, "card_instance_id"):
+            card_id = streaming_emitter.card_instance_id
+            if card_id:
+                callback_info.card_instance_id = card_id
+        await callback_service.save_callback_info(
+            task_id=task_id, callback_info=callback_info
+        )
+        await callback_service.register_emitter(
+            task_id=task_id, emitter=streaming_emitter
+        )
+
     # ==================== Common Methods ====================
 
     async def _get_conversation_task_id(
@@ -1960,20 +1994,11 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         # In HTTP_CALLBACK mode, executor events arrive via /callback rather than
         # through the emitter passed to dispatch(). Registering the emitter here
         # allows the callback endpoint to forward events to the same AI Card.
-        callback_service = self.get_callback_service()
-        if callback_service and streaming_emitter:
-            callback_info = self.create_callback_info(message_context)
-            # Persist card_instance_id for cross-worker emitter reconstruction
-            if hasattr(streaming_emitter, "card_instance_id"):
-                card_id = streaming_emitter.card_instance_id
-                if card_id:
-                    callback_info.card_instance_id = card_id
-            await callback_service.save_callback_info(
-                task_id=task_id, callback_info=callback_info
-            )
-            callback_service.register_emitter(
-                task_id=task_id, emitter=streaming_emitter
-            )
+        await self._register_streaming_emitter(
+            task_id=task_id,
+            streaming_emitter=streaming_emitter,
+            message_context=message_context,
+        )
 
         # Notify user if auto-starting new conversation due to timeout
         if auto_new_conversation:
@@ -2197,22 +2222,11 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
             # Save callback info and register the streaming emitter so that
             # executor callback events can update the same AI Card.
-            callback_service = self.get_callback_service()
-            if callback_service:
-                callback_info = self.create_callback_info(message_context)
-                # Persist card_instance_id for cross-worker emitter reconstruction
-                if streaming_emitter and hasattr(streaming_emitter, "card_instance_id"):
-                    card_id = streaming_emitter.card_instance_id
-                    if card_id:
-                        callback_info.card_instance_id = card_id
-                await callback_service.save_callback_info(
-                    task_id=result.task.id,
-                    callback_info=callback_info,
-                )
-                if streaming_emitter:
-                    callback_service.register_emitter(
-                        task_id=result.task.id, emitter=streaming_emitter
-                    )
+            await self._register_streaming_emitter(
+                task_id=result.task.id,
+                streaming_emitter=streaming_emitter,
+                message_context=message_context,
+            )
 
             return None
 
@@ -2315,15 +2329,6 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
         schedule_dispatch(result.task.id)
 
-        # Save callback info for task completion notification
-        callback_service = self.get_callback_service()
-        if callback_service:
-            callback_info = self.create_callback_info(message_context)
-            await callback_service.save_callback_info(
-                task_id=result.task.id,
-                callback_info=callback_info,
-            )
-
         # Send acknowledgment. Do NOT call emit_done() here - keep the AI Card
         # open so that streaming events from the executor can update it.
         streaming_emitter = await self.create_streaming_emitter(message_context)
@@ -2345,19 +2350,11 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 offset=0,
             )
             # Register emitter so callback events reuse the same AI Card
-            if callback_service:
-                # Update callback_info with card_instance_id for cross-worker recovery
-                if hasattr(streaming_emitter, "card_instance_id"):
-                    card_id = streaming_emitter.card_instance_id
-                    if card_id:
-                        callback_info.card_instance_id = card_id
-                        await callback_service.save_callback_info(
-                            task_id=result.task.id,
-                            callback_info=callback_info,
-                        )
-                callback_service.register_emitter(
-                    task_id=result.task.id, emitter=streaming_emitter
-                )
+            await self._register_streaming_emitter(
+                task_id=result.task.id,
+                streaming_emitter=streaming_emitter,
+                message_context=message_context,
+            )
         else:
             return (
                 f"✅ 任务已提交到云端执行队列\n\n"

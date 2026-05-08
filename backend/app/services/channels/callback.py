@@ -201,7 +201,7 @@ class BaseChannelCallbackService(ABC, Generic[T]):
             ResultEmitter or None if callback info not found
         """
         # Clean up expired emitters to prevent memory leaks
-        self._cleanup_expired_emitters()
+        await self._cleanup_expired_emitters()
 
         # Quick check without lock - if emitter exists, return it
         if task_id in self._active_emitters:
@@ -257,15 +257,26 @@ class BaseChannelCallbackService(ABC, Generic[T]):
                 )
                 return None
 
-    def _remove_emitter(self, task_id: int) -> None:
-        """Remove emitter, lock, and offset tracking from cache."""
-        self._active_emitters.pop(task_id, None)
+    async def _remove_emitter(self, task_id: int) -> None:
+        """Remove emitter, lock, and offset tracking from cache.
+
+        Closes the emitter if it has a close() method to release resources.
+        """
+        emitter = self._active_emitters.pop(task_id, None)
+        if emitter and hasattr(emitter, "close"):
+            try:
+                await emitter.close()
+            except Exception:
+                logger.exception(
+                    f"[{self._channel_type.value}Callback] Failed to close emitter "
+                    f"for task {task_id}"
+                )
         self._remove_lock_for_task(task_id)
         # Clean up offset tracking
         self._last_emitted_offsets.pop(task_id, None)
         self._emitter_created_at.pop(task_id, None)
 
-    def _cleanup_expired_emitters(self) -> None:
+    async def _cleanup_expired_emitters(self) -> None:
         """Remove emitters that have exceeded the TTL to prevent memory leaks."""
         now = time.time()
         expired = [
@@ -278,19 +289,31 @@ class BaseChannelCallbackService(ABC, Generic[T]):
                 f"[{self._channel_type.value}Callback] Emitter for task {task_id} "
                 f"expired after {self._emitter_ttl}s, cleaning up"
             )
-            self._remove_emitter(task_id)
+            await self._remove_emitter(task_id)
 
-    def register_emitter(self, task_id: int, emitter: "ResultEmitter") -> None:
+    async def register_emitter(self, task_id: int, emitter: "ResultEmitter") -> None:
         """Register an externally created emitter for a task.
 
         This allows channel handlers to reuse an existing streaming emitter
         (e.g., an AI Card already started for an acknowledgment message)
         instead of creating a new one when callback events arrive.
 
+        If an emitter already exists for the task, it is closed before replacing.
+
         Args:
             task_id: Task ID
             emitter: ResultEmitter instance to register
         """
+        if task_id in self._active_emitters:
+            old_emitter = self._active_emitters[task_id]
+            if old_emitter is not emitter and hasattr(old_emitter, "close"):
+                try:
+                    await old_emitter.close()
+                except Exception:
+                    logger.exception(
+                        f"[{self._channel_type.value}Callback] Failed to close old emitter "
+                        f"for task {task_id}"
+                    )
         self._active_emitters[task_id] = emitter
         self._emitter_created_at[task_id] = time.time()
         logger.info(
@@ -338,10 +361,10 @@ class BaseChannelCallbackService(ABC, Generic[T]):
             await emitter.emit(event)
             return True
 
-        except Exception as e:
-            logger.warning(
+        except Exception:
+            logger.exception(
                 f"[{self._channel_type.value}Callback] Failed to emit event "
-                f"{event.type} for task {task_id}: {e}"
+                f"{event.type} for task {task_id}"
             )
             return False
 
@@ -595,7 +618,7 @@ class BaseChannelCallbackService(ABC, Generic[T]):
                 )
 
             # Clean up
-            self._remove_emitter(task_id)
+            await self._remove_emitter(task_id)
             await self.delete_callback_info(task_id)
             return True
 
@@ -604,7 +627,7 @@ class BaseChannelCallbackService(ABC, Generic[T]):
                 f"[{self._channel_type.value}Callback] Failed to send result for task {task_id}: {e}"
             )
             # Clean up on error
-            self._remove_emitter(task_id)
+            await self._remove_emitter(task_id)
             return False
 
 
