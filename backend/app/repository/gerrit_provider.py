@@ -520,10 +520,10 @@ class GerritProvider(RepositoryProvider):
 
         try:
             # Validate by getting account info
-            # GET /accounts/self
+            # GET /accounts/self/
             response = self._make_request(
                 method="GET",
-                url=f"{api_base_url}/accounts/self",
+                url=f"{api_base_url}/accounts/self/",
                 username=user_name,
                 http_password=decrypt_token,
                 auth_type=auth_type,

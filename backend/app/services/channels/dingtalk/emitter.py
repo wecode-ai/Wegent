@@ -50,12 +50,15 @@ class StreamingResponseEmitter(ResultEmitter):
         self,
         dingtalk_client: "DingTalkStreamClient",
         incoming_message: "ChatbotMessage",
+        existing_card_instance_id: Optional[str] = None,
     ):
         """Initialize StreamingResponseEmitter.
 
         Args:
             dingtalk_client: DingTalk stream client instance
             incoming_message: The incoming message to reply to
+            existing_card_instance_id: Existing card instance ID to reconnect to
+                (used when reconstructing emitter in a different worker)
         """
         from dingtalk_stream import AIMarkdownCardInstance
 
@@ -68,8 +71,14 @@ class StreamingResponseEmitter(ResultEmitter):
         self._full_content = ""
         self._last_update_time = 0.0
         self._pending_content = ""
-        self._started = False
         self._finished = False
+
+        if existing_card_instance_id:
+            # Reconnect to an existing AI Card (cross-worker scenario)
+            self._card.card_instance_id = existing_card_instance_id
+            self._started = True
+        else:
+            self._started = False
 
     async def _ensure_card_started(self) -> bool:
         """Ensure the AI card is created and started.
@@ -101,6 +110,11 @@ class StreamingResponseEmitter(ResultEmitter):
         except Exception as e:
             logger.exception(f"[StreamingEmitter] Failed to start AI card: {e}")
             return False
+
+    @property
+    def card_instance_id(self) -> Optional[str]:
+        """Get the card instance ID if the card has been started."""
+        return self._card.card_instance_id if self._card else None
 
     async def _send_streaming_update(self, content: str, force: bool = False) -> None:
         """Send a streaming update to the AI card.
@@ -219,9 +233,23 @@ class StreamingResponseEmitter(ResultEmitter):
             logger.warning("[StreamingEmitter] emit_done called but already finished")
             return
 
+        # Use result content if provided and longer than accumulated content.
+        # This is critical for device mode where executor events arrive via
+        # device WebSocket rather than /callback, so the emitter's internal
+        # _full_content only contains the initial acknowledgment message.
+        final_content = self._full_content
+        if result and isinstance(result, dict):
+            result_value = result.get("value", "")
+            if result_value and len(result_value) > len(final_content):
+                final_content = result_value
+                logger.info(
+                    f"[StreamingEmitter] Using result.value ({len(result_value)} chars) "
+                    f"instead of accumulated content ({len(self._full_content)} chars)"
+                )
+
         logger.info(
             f"[StreamingEmitter] done task={task_id} subtask={subtask_id} "
-            f"full_content_len={len(self._full_content)}, pending_len={len(self._pending_content)}"
+            f"final_content_len={len(final_content)}, pending_len={len(self._pending_content)}"
         )
 
         try:
@@ -232,19 +260,19 @@ class StreamingResponseEmitter(ResultEmitter):
 
             # Send any remaining pending content
             if self._pending_content:
-                self._full_content += self._pending_content
+                final_content += self._pending_content
                 self._pending_content = ""
 
             # IMPORTANT: Send the final complete content via ai_streaming before ai_finish
             # DingTalk AI Card requires the last streaming update to contain the full content
             # before calling ai_finish, otherwise the card may show truncated content
-            self._card.ai_streaming(self._full_content, append=False)
+            self._card.ai_streaming(final_content, append=False)
 
             # Small delay to ensure streaming update is processed before finish
             await asyncio.sleep(0.1)
 
             # Finalize the card using official SDK
-            self._card.ai_finish(self._full_content)
+            self._card.ai_finish(final_content)
             self._finished = True
             logger.info("[StreamingEmitter] AI card finished successfully")
 

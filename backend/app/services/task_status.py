@@ -52,6 +52,26 @@ def mark_task_failed(task: TaskResource, error_message: str) -> None:
         pass
 
 
+def mark_task_completed(task: TaskResource) -> None:
+    """Mark a task CRD as COMPLETED (e.g. when no AI response is needed)."""
+    task_json = task.json or {}
+    status = task_json.setdefault("status", {})
+    now = datetime.now().isoformat()
+
+    status["status"] = "COMPLETED"
+    status["progress"] = 100
+    status["errorMessage"] = ""
+    status["updatedAt"] = now
+    status["completedAt"] = now
+
+    task.json = task_json
+    task.updated_at = datetime.now()
+    try:
+        flag_modified(task, "json")
+    except Exception:
+        pass
+
+
 def extract_task_error(task: TaskResource) -> Optional[str]:
     """Return the current task-level error message if present."""
     status = (task.json or {}).get("status", {})

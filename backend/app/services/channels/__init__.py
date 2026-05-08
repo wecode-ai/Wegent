@@ -25,7 +25,7 @@ Architecture:
 Generic Utilities (channel-agnostic):
 - commands: Command parsing (/new, /help, /devices, /use, /status)
 - device_selection: Device selection management (chat/local/cloud modes)
-- emitter: Response emitters (SyncResponseEmitter, CompositeEmitter)
+- emitter: Response emitters (SyncResponseEmitter)
 """
 
 from app.services.channels.base import BaseChannelProvider
@@ -54,7 +54,7 @@ from app.services.channels.device_selection import (
     DeviceType,
     device_selection_manager,
 )
-from app.services.channels.emitter import CompositeEmitter, SyncResponseEmitter
+from app.services.channels.emitter import SyncResponseEmitter
 from app.services.channels.handler import (
     BaseChannelHandler,
     MessageContext,
@@ -84,7 +84,6 @@ __all__ = [
     "device_selection_manager",
     # Emitters
     "SyncResponseEmitter",
-    "CompositeEmitter",
     # Command utilities
     "parse_command",
     "HELP_MESSAGE",

@@ -27,7 +27,7 @@ from app.services.chat.task_default_knowledge_bases import (
 )
 from app.services.readers import KindType, kindReader
 from app.services.task_skill_selection import build_task_skill_labels
-from app.services.task_status import mark_task_pending
+from app.services.task_status import mark_task_completed, mark_task_pending
 
 logger = logging.getLogger(__name__)
 
@@ -774,6 +774,19 @@ async def create_task_and_subtasks(
     # Update task.updated_at for group chat messages (even without AI trigger)
     if is_task_group_chat(task, params.is_group_chat):
         update_task_timestamp(db, task)
+
+    # If no AI is triggered for a group chat message, mark task as COMPLETED so
+    # subsequent messages are not blocked by the "Task is still running" check.
+    # This covers new group tasks created without an @mention (no assistant subtask
+    # will ever update the status, leaving the task stuck at PENDING).
+    if not should_trigger_ai:
+        task_crd_status = (task.json or {}).get("status", {}).get("status")
+        if task_crd_status in ("PENDING", "RUNNING"):
+            mark_task_completed(task)
+            logger.info(
+                f"[create_task_and_subtasks] Marked task {task.id} as COMPLETED "
+                f"(no AI triggered for group chat message)"
+            )
 
     db.commit()
     db.refresh(task)
