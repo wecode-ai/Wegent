@@ -28,9 +28,16 @@ export async function createTeam(teamData: CreateTeamRequest): Promise<Team> {
 
 /**
  * Copy team
+ * @param id - Team ID to copy
+ * @param targetNamespace - Target namespace ('default' for personal, group name for group). Defaults to same namespace.
+ * @param copySkills - Whether to copy personal skills to the target namespace
  */
-export async function copyTeam(id: number): Promise<Team> {
-  return await teamApis.copyTeam(id)
+export async function copyTeam(
+  id: number,
+  targetNamespace?: string,
+  copySkills?: boolean
+): Promise<Team> {
+  return await teamApis.copyTeam(id, targetNamespace, copySkills)
 }
 
 /**

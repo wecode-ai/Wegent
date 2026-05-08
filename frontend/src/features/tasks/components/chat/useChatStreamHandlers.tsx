@@ -521,12 +521,13 @@ export function useChatStreamHandlers({
       try {
         // Convert selected contexts to backend format
         // Each context item contains type and data fields
-        // Note: queue_message contexts are handled separately - their content is prepended to the message
+        // Note: queue_message and dingtalk_doc contexts are handled separately -
+        //       their content is prepended to the message text
         const contextItems: Array<{
           type: 'knowledge_base' | 'table' | 'selected_documents'
           data: Record<string, unknown>
         }> = selectedContexts
-          .filter(ctx => ctx.type !== 'queue_message')
+          .filter(ctx => ctx.type !== 'queue_message' && ctx.type !== 'dingtalk_doc')
           .map(ctx => {
             if (ctx.type === 'knowledge_base') {
               return {
@@ -558,6 +559,20 @@ export function useChatStreamHandlers({
             .map(ctx => (ctx as import('@/types/context').QueueMessageContext).fullContent)
             .join('\n\n---\n\n')
           messageWithQueueContent = `${queueContents}\n\n---\n\n${finalMessage}`
+        }
+
+        // Handle dingtalk_doc contexts - prepend document references to the message
+        // This allows the AI to know which DingTalk documents are being referenced
+        const dingtalkDocContexts = selectedContexts.filter(ctx => ctx.type === 'dingtalk_doc')
+        if (dingtalkDocContexts.length > 0) {
+          const docRefs = dingtalkDocContexts
+            .map(ctx => {
+              const docCtx = ctx as import('@/types/context').DingTalkDocContext
+              return `- [${docCtx.name}](${docCtx.doc_url})`
+            })
+            .join('\n')
+          const dingtalkPrefix = `**${t('chat:dingtalkDocs.referencedDocsLabel')}**\n${docRefs}\n\n---\n\n`
+          messageWithQueueContent = `${dingtalkPrefix}${messageWithQueueContent}`
         }
 
         // Collect attachment context IDs from queue_message contexts so the AI
@@ -797,6 +812,7 @@ export function useChatStreamHandlers({
       effectiveRequiresWorkspace,
       additionalSkills,
       generateParams,
+      t,
     ]
   )
   /**

@@ -1997,7 +1997,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         try:
             response = await asyncio.wait_for(
                 sync_emitter.wait_for_response(),
-                timeout=120.0,
+                timeout=600.0,
             )
 
             if (

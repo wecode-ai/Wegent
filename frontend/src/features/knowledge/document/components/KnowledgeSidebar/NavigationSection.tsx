@@ -26,6 +26,7 @@ import {
   ChevronRight,
   ChevronDown,
   Settings,
+  FileText,
 } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -61,6 +62,8 @@ export interface NavigationSectionProps {
   isAllSelected: boolean
   /** Whether "Groups" is selected (show all groups list) */
   isGroupsSelected: boolean
+  /** Whether "DingTalk" is selected */
+  isDingtalkSelected: boolean
   /** Whether section is expanded */
   isExpanded: boolean
   /** Toggle expand/collapse */
@@ -71,8 +74,14 @@ export interface NavigationSectionProps {
   onSelectGroup: (groupId: string) => void
   /** Select "Groups" to show all groups list */
   onSelectGroups: () => void
+  /** Select "DingTalk" docs */
+  onSelectDingtalk: () => void
   /** Total KB count */
   totalKbCount: number
+  /** DingTalk synced doc count */
+  dingtalkDocCount: number
+  /** Whether DingTalk MCP is configured */
+  isDingtalkConfigured: boolean
 }
 
 /**
@@ -314,12 +323,16 @@ export function NavigationSection({
   selectedGroupId,
   isAllSelected,
   isGroupsSelected,
+  isDingtalkSelected,
   isExpanded: _isExpanded,
   onToggle: _onToggle,
   onSelectAll,
   onSelectGroup,
   onSelectGroups,
+  onSelectDingtalk,
   totalKbCount,
+  dingtalkDocCount,
+  isDingtalkConfigured: _isDingtalkConfigured,
 }: NavigationSectionProps) {
   const { t } = useTranslation('knowledge')
   const router = useRouter()
@@ -414,6 +427,16 @@ export function NavigationSection({
           testId="nav-organization-item"
         />
       )}
+
+      {/* DingTalk Docs (钉钉文档) */}
+      <NavItem
+        icon={<FileText className="w-4 h-4" />}
+        label={t('document.sidebar.dingtalk', '钉钉文档')}
+        count={dingtalkDocCount}
+        isSelected={isDingtalkSelected}
+        onClick={onSelectDingtalk}
+        testId="nav-dingtalk-item"
+      />
 
       {/* Groups (组) - with tree structure, always expanded without collapse arrow */}
       <NavItem

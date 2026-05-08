@@ -6,7 +6,6 @@
 
 import React, { useCallback, useEffect, useState, useMemo } from 'react'
 import '@/features/common/scrollbar.css'
-import { RiRobot2Line } from 'react-icons/ri'
 import LoadingState from '@/features/common/LoadingState'
 import {
   PencilIcon,
@@ -26,6 +25,7 @@ import {
   checkTeamRunningTasks,
   copyTeam,
 } from '../services/teams'
+import { teamApis } from '@/apis/team'
 import { CheckRunningTasksResponse } from '@/apis/common'
 import { fetchBotsList } from '../services/bots'
 import TeamEditDialog from './TeamEditDialog'
@@ -41,7 +41,7 @@ import { isGroupTeam, isPublicTeam, isSharedTeam } from '@/utils/team-permission
 import type { BaseRole } from '@/types/base-role'
 import { sortBotsByUpdatedAt } from '@/utils/bot'
 import { useRouter } from 'next/navigation'
-import { Loader2 } from 'lucide-react'
+import { Loader2, Bot as BotIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import {
@@ -55,6 +55,14 @@ import {
 import { ResourceListItem } from '@/components/common/ResourceListItem'
 import { TeamIconDisplay } from './teams/TeamIconDisplay'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown'
+import { listGroups } from '@/apis/groups'
+import type { Group } from '@/types/group'
 
 interface TeamListProps {
   scope?: 'personal' | 'group' | 'all'
@@ -94,6 +102,14 @@ export default function TeamList({
   const [modeFilter, setModeFilter] = useState<ModeFilter>('all')
   const [wizardOpen, setWizardOpen] = useState(false)
   const [copyingTeamId, setCopyingTeamId] = useState<number | null>(null)
+  const [skillsDialogOpen, setSkillsDialogOpen] = useState(false)
+  const [pendingCopy, setPendingCopy] = useState<{
+    team: Team
+    targetNamespace: string
+    personalSkills: Array<{ id: number; name: string; description: string }>
+  } | null>(null)
+  // Groups where user has at least Developer role (for copy target selection)
+  const [writableGroups, setWritableGroups] = useState<Group[]>([])
   const router = useRouter()
 
   const setTeamsSorted = useCallback<React.Dispatch<React.SetStateAction<Team[]>>>(
@@ -140,6 +156,18 @@ export default function TeamList({
     loadData()
   }, [toast, setBotsSorted, setTeamsSorted, t, scope, groupName])
 
+  // Load groups where user has at least Developer role (for copy target selection)
+  useEffect(() => {
+    listGroups({ limit: 100 })
+      .then(data => {
+        const writable = (data.items || []).filter(
+          g => g.my_role === 'Owner' || g.my_role === 'Maintainer' || g.my_role === 'Developer'
+        )
+        setWritableGroups(writable)
+      })
+      .catch(() => {})
+  }, [])
+
   useEffect(() => {
     if (editingTeamId === null) {
       setPrefillTeam(null)
@@ -172,11 +200,16 @@ export default function TeamList({
     setEditDialogOpen(true)
   }
 
-  const handleCopyTeam = async (team: Team) => {
+  const executeCopyTeam = async (team: Team, targetNamespace: string, copySkills: boolean) => {
     setCopyingTeamId(team.id)
     try {
-      const copied = await copyTeam(team.id)
-      setTeamsSorted(prev => [copied, ...prev])
+      const copied = await copyTeam(team.id, targetNamespace, copySkills)
+      // Only update local list if copying to the same namespace we're currently viewing
+      const currentNamespace = scope === 'group' ? groupName : 'default'
+      const copiedNamespace = copied.namespace || 'default'
+      if (copiedNamespace === currentNamespace) {
+        setTeamsSorted(prev => [copied, ...prev])
+      }
       // Refresh bots so the cloned bot (solo mode) is available in edit dialog
       fetchBotsList(scope, groupName)
         .then(setBotsSorted)
@@ -194,13 +227,45 @@ export default function TeamList({
     }
   }
 
+  const handleSkillsDialogConfirm = async (copySkills: boolean) => {
+    setSkillsDialogOpen(false)
+    if (!pendingCopy) return
+    await executeCopyTeam(pendingCopy.team, pendingCopy.targetNamespace, copySkills)
+    setPendingCopy(null)
+  }
+
+  const handleCopyTeam = async (team: Team, targetNamespace?: string) => {
+    const resolvedNamespace = targetNamespace ?? 'default'
+    try {
+      // Only do preflight when copying to a group namespace (not personal)
+      if (resolvedNamespace !== 'default') {
+        const preflight = await teamApis.copyPreflight(team.id, resolvedNamespace)
+        if (preflight.personal_skills.length > 0) {
+          setPendingCopy({
+            team,
+            targetNamespace: resolvedNamespace,
+            personalSkills: preflight.personal_skills,
+          })
+          setSkillsDialogOpen(true)
+          return
+        }
+      }
+      // No personal skills or copying to personal — copy directly
+      await executeCopyTeam(team, resolvedNamespace, false)
+    } catch (error) {
+      console.error('Copy preflight failed:', error)
+      // Still try copying even if preflight fails
+      await executeCopyTeam(team, resolvedNamespace, false)
+    }
+  }
+
   const handleCloseEditDialog = () => {
     setEditDialogOpen(false)
     setEditingTeamId(null)
     setPrefillTeam(null)
   }
 
-  const handleWizardSuccess = async (teamId: number, teamName: string) => {
+  const handleWizardSuccess = async (_teamId: number, teamName: string) => {
     toast({
       title: t('wizard:create_agent'),
       description: `${teamName}`,
@@ -600,21 +665,80 @@ export default function TeamList({
                             </Button>
                           )}
                           {shouldShowCopy(team) && (
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => handleCopyTeam(team)}
-                              disabled={copyingTeamId === team.id}
-                              title={t('teams.copy')}
-                              className="h-7 w-7 sm:h-8 sm:w-8"
-                              data-testid={`copy-team-button-${team.id}`}
-                            >
-                              {copyingTeamId === team.id ? (
-                                <Loader2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 animate-spin" />
-                              ) : (
-                                <DocumentDuplicateIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                              )}
-                            </Button>
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  disabled={copyingTeamId === team.id}
+                                  title={t('teams.copy')}
+                                  className="h-7 w-7 sm:h-8 sm:w-8"
+                                  data-testid={`copy-team-button-${team.id}`}
+                                >
+                                  {copyingTeamId === team.id ? (
+                                    <Loader2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 animate-spin" />
+                                  ) : (
+                                    <DocumentDuplicateIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                                  )}
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent
+                                align="end"
+                                className="w-44 max-h-64 overflow-y-auto py-1"
+                                style={{ boxShadow: 'var(--shadow-popover)' }}
+                              >
+                                {/* Section label */}
+                                <div className="px-2.5 pb-1 pt-0.5 text-[10px] font-medium uppercase tracking-wide text-text-muted">
+                                  {t('teams.copy_to_label')}
+                                </div>
+                                {/* Personal space */}
+                                <DropdownMenuItem
+                                  onClick={() => handleCopyTeam(team, 'default')}
+                                  className="gap-2 px-2.5 py-1.5 text-xs focus:bg-muted"
+                                  data-testid={`copy-team-to-personal-${team.id}`}
+                                >
+                                  <div className="flex h-[18px] w-[18px] flex-shrink-0 items-center justify-center rounded-[4px] bg-primary/10 text-primary">
+                                    <svg
+                                      className="h-3 w-3"
+                                      fill="none"
+                                      stroke="currentColor"
+                                      strokeWidth="1.5"
+                                      viewBox="0 0 24 24"
+                                    >
+                                      <path
+                                        strokeLinecap="round"
+                                        strokeLinejoin="round"
+                                        d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z"
+                                      />
+                                    </svg>
+                                  </div>
+                                  <span className="truncate">{t('teams.copy_to_personal')}</span>
+                                </DropdownMenuItem>
+                                {/* Groups */}
+                                {writableGroups.length > 0 && (
+                                  <>
+                                    <div className="my-1 h-px bg-border/60" />
+                                    {writableGroups.map(group => {
+                                      const label = group.display_name || group.name
+                                      const initials = label.slice(0, 2).toUpperCase()
+                                      return (
+                                        <DropdownMenuItem
+                                          key={group.name}
+                                          onClick={() => handleCopyTeam(team, group.name)}
+                                          className="gap-2 px-2.5 py-1.5 text-xs focus:bg-muted"
+                                          data-testid={`copy-team-to-group-${team.id}-${group.name}`}
+                                        >
+                                          <div className="flex h-[18px] w-[18px] flex-shrink-0 items-center justify-center rounded-[4px] bg-primary/10 text-[9px] font-semibold text-primary">
+                                            {initials}
+                                          </div>
+                                          <span className="truncate">{label}</span>
+                                        </DropdownMenuItem>
+                                      )
+                                    })}
+                                  </>
+                                )}
+                              </DropdownMenuContent>
+                            </DropdownMenu>
                           )}
                           {shouldShowShare(team) && (
                             <Button
@@ -684,7 +808,7 @@ export default function TeamList({
                   <UnifiedAddButton
                     variant="outline"
                     onClick={() => setBotListVisible(true)}
-                    icon={<RiRobot2Line className="w-4 h-4" />}
+                    icon={<BotIcon className="w-4 h-4" />}
                   >
                     {t('bots.manage_bots')}
                   </UnifiedAddButton>
@@ -870,6 +994,38 @@ export default function TeamList({
         scope={scope === 'all' ? undefined : scope}
         groupName={groupName}
       />
+
+      {/* Copy Skills Confirmation Dialog */}
+      <Dialog open={skillsDialogOpen} onOpenChange={setSkillsDialogOpen}>
+        <DialogContent className="flex flex-col max-h-[85vh]">
+          <DialogHeader className="flex-shrink-0">
+            <DialogTitle>{t('teams.copy_skills_dialog_title')}</DialogTitle>
+            <DialogDescription>{t('teams.copy_skills_dialog_desc')}</DialogDescription>
+          </DialogHeader>
+          {pendingCopy && (
+            <ul className="overflow-y-auto flex-1 mt-2 space-y-1 text-sm text-text-secondary">
+              {pendingCopy.personalSkills.map(s => (
+                <li key={s.id} className="flex items-center gap-2">
+                  <span className="w-1.5 h-1.5 rounded-full bg-primary flex-shrink-0" />
+                  <span className="font-medium">{s.name}</span>
+                  {s.description && (
+                    <span className="text-text-muted truncate">— {s.description}</span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+          <DialogFooter className="mt-4 flex-shrink-0">
+            <Button variant="outline" onClick={() => handleSkillsDialogConfirm(false)}>
+              {t('teams.copy_skills_skip')}
+            </Button>
+            <Button variant="primary" onClick={() => handleSkillsDialogConfirm(true)}>
+              {t('teams.copy_skills_with')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Error prompt unified with antd message, no local rendering */}
     </>
   )

@@ -21,7 +21,7 @@ import type { KnowledgeBase } from '@/types/knowledge'
 // Re-export KnowledgeGroup type for use in this file
 export interface KnowledgeGroup {
   id: string
-  type: 'personal' | 'group' | 'organization'
+  type: 'personal' | 'group' | 'organization' | 'dingtalk'
   name: string
   displayName: string
   kbCount: number

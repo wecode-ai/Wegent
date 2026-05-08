@@ -68,6 +68,11 @@ export interface TeamSkillsResponse {
   preload_skills: string[] // Skills to preload
 }
 
+// Team Copy Preflight Response Type
+export interface CopyPreflightResponse {
+  personal_skills: Array<{ id: number; name: string; description: string }>
+}
+
 export const teamApis = {
   /**
    * Get teams list
@@ -99,8 +104,17 @@ export const teamApis = {
   async createTeam(data: CreateTeamRequest): Promise<Team> {
     return apiClient.post('/teams', data)
   },
-  async copyTeam(id: number): Promise<Team> {
-    return apiClient.post(`/teams/${id}/copy`)
+  async copyPreflight(id: number, targetNamespace: string): Promise<CopyPreflightResponse> {
+    return apiClient.get(
+      `/teams/${id}/copy-preflight?target_namespace=${encodeURIComponent(targetNamespace)}`
+    )
+  },
+  async copyTeam(id: number, targetNamespace?: string, copySkills?: boolean): Promise<Team> {
+    const params = new URLSearchParams()
+    if (targetNamespace) params.append('target_namespace', targetNamespace)
+    if (copySkills !== undefined) params.append('copy_skills', String(copySkills))
+    const query = params.toString() ? `?${params.toString()}` : ''
+    return apiClient.post(`/teams/${id}/copy${query}`)
   },
   async deleteTeam(id: number, force: boolean = false): Promise<void> {
     const queryParams = force ? '?force=true' : ''

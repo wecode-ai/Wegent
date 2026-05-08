@@ -812,6 +812,27 @@ class ChatContext:
             self._request.subtask_id,
         )
 
+        # Add SandboxImageViewerTool when a task sandbox is available
+        if self._request.task_id:
+            import os
+
+            from chat_shell.tools.builtin import SandboxImageViewerTool
+
+            executor_manager_url = os.getenv(
+                "EXECUTOR_MANAGER_URL", "http://localhost:8001"
+            )
+            extra_tools.append(
+                SandboxImageViewerTool(
+                    task_id=self._request.task_id,
+                    executor_manager_url=executor_manager_url,
+                    auth_token=self._request.auth_token,
+                )
+            )
+            logger.debug(
+                "[CHAT_CONTEXT] Added SandboxImageViewerTool for task_id=%d",
+                self._request.task_id,
+            )
+
         # === External Tools ===
 
         # Add KB tools
