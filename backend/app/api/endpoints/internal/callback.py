@@ -18,7 +18,7 @@ For terminal events (DONE, ERROR, CANCELLED), StatusUpdatingEmitter handles:
 """
 
 import logging
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -42,6 +42,38 @@ router = APIRouter(prefix="/callback", tags=["execution-callback"])
 
 # Shared event parser instance
 _event_parser = ResponsesAPIEventParser()
+
+
+async def _forward_event_to_channels(
+    task_id: int,
+    subtask_id: int,
+    event: Any,
+) -> None:
+    """Forward a non-terminal event to registered channel callback services.
+
+    Each channel service checks if it has callback info for the task and
+    forwards the event to the appropriate streaming emitter.
+    """
+    from app.services.channels.callback import get_callback_registry
+
+    registry = get_callback_registry()
+    for channel_type, service in registry.iter_services():
+        try:
+            forwarded = await service.emit_event(
+                task_id=task_id,
+                subtask_id=subtask_id,
+                event=event,
+            )
+            if forwarded:
+                logger.debug(
+                    f"[Callback] Forwarded event {event.type} to "
+                    f"{channel_type.value} for task {task_id}"
+                )
+        except Exception as e:
+            logger.warning(
+                f"[Callback] Failed to forward event to {channel_type.value} "
+                f"for task {task_id}: {e}"
+            )
 
 
 class CallbackRequest(BaseModel):
@@ -156,28 +188,11 @@ async def handle_callback(
         # Forward non-terminal events to registered channel callback services
         # (e.g., DingTalk AI Card streaming). Terminal events (DONE, ERROR,
         # CANCELLED) are handled by TaskCompletedEvent via send_task_result().
-        from app.services.channels.callback import get_callback_registry
-
-        registry = get_callback_registry()
-        for channel_type, service in registry._services.items():
-            try:
-                callback_info = await service.get_callback_info(request.task_id)
-                if callback_info:
-                    forwarded = await service.emit_event(
-                        task_id=request.task_id,
-                        subtask_id=request.subtask_id,
-                        event=event,
-                    )
-                    if forwarded:
-                        logger.debug(
-                            f"[Callback] Forwarded event {event.type} to "
-                            f"{channel_type.value} for task {request.task_id}"
-                        )
-            except Exception as e:
-                logger.warning(
-                    f"[Callback] Failed to forward event to {channel_type.value} "
-                    f"for task {request.task_id}: {e}"
-                )
+        await _forward_event_to_channels(
+            task_id=request.task_id,
+            subtask_id=request.subtask_id,
+            event=event,
+        )
 
         # Note: TaskCompletedEvent is now published by StatusUpdatingEmitter
         # for unified handling across all execution modes
@@ -271,28 +286,11 @@ async def handle_batch_callback(
             await emitter.close()
 
             # Forward non-terminal events to registered channel callback services
-            from app.services.channels.callback import get_callback_registry
-
-            registry = get_callback_registry()
-            for channel_type, service in registry._services.items():
-                try:
-                    callback_info = await service.get_callback_info(request.task_id)
-                    if callback_info:
-                        forwarded = await service.emit_event(
-                            task_id=request.task_id,
-                            subtask_id=request.subtask_id,
-                            event=event,
-                        )
-                        if forwarded:
-                            logger.debug(
-                                f"[Callback] Forwarded event {event.type} to "
-                                f"{channel_type.value} for task {request.task_id}"
-                            )
-                except Exception as e:
-                    logger.warning(
-                        f"[Callback] Failed to forward event to {channel_type.value} "
-                        f"for task {request.task_id}: {e}"
-                    )
+            await _forward_event_to_channels(
+                task_id=request.task_id,
+                subtask_id=request.subtask_id,
+                event=event,
+            )
 
             processed += 1
 

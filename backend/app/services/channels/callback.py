@@ -16,10 +16,11 @@ its own callback logic while sharing common infrastructure.
 import asyncio
 import json
 import logging
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Dict, Generic, Optional, TypeVar
+from typing import TYPE_CHECKING, Any, Dict, Generic, Iterator, Optional, Tuple, TypeVar
 
 from app.core.cache import cache_manager
 
@@ -109,6 +110,10 @@ class BaseChannelCallbackService(ABC, Generic[T]):
         self._locks_lock = asyncio.Lock()
         # Track last emitted content offset for each task to calculate delta
         self._last_emitted_offsets: Dict[int, int] = {}
+        # Track emitter creation time for TTL cleanup
+        self._emitter_created_at: Dict[int, float] = {}
+        # Emitter TTL in seconds (30 minutes)
+        self._emitter_ttl = 30 * 60
 
     @property
     def channel_type(self) -> ChannelType:
@@ -186,7 +191,7 @@ class BaseChannelCallbackService(ABC, Generic[T]):
         """Get existing emitter or create a new one for streaming.
 
         Uses per-task locking to prevent concurrent creation of multiple emitters
-        for the same task.
+        for the same task. Automatically cleans up expired emitters before lookup.
 
         Args:
             task_id: Task ID
@@ -195,6 +200,9 @@ class BaseChannelCallbackService(ABC, Generic[T]):
         Returns:
             ResultEmitter or None if callback info not found
         """
+        # Clean up expired emitters to prevent memory leaks
+        self._cleanup_expired_emitters()
+
         # Quick check without lock - if emitter exists, return it
         if task_id in self._active_emitters:
             logger.debug(
@@ -234,8 +242,9 @@ class BaseChannelCallbackService(ABC, Generic[T]):
                     subtask_id=subtask_id,
                 )
 
-                # Cache the emitter
+                # Cache the emitter and track creation time
                 self._active_emitters[task_id] = emitter
+                self._emitter_created_at[task_id] = time.time()
                 logger.info(
                     f"[{self._channel_type.value}Callback] Created streaming emitter for task {task_id}"
                 )
@@ -250,11 +259,26 @@ class BaseChannelCallbackService(ABC, Generic[T]):
 
     def _remove_emitter(self, task_id: int) -> None:
         """Remove emitter, lock, and offset tracking from cache."""
-        if task_id in self._active_emitters:
-            del self._active_emitters[task_id]
+        self._active_emitters.pop(task_id, None)
         self._remove_lock_for_task(task_id)
         # Clean up offset tracking
         self._last_emitted_offsets.pop(task_id, None)
+        self._emitter_created_at.pop(task_id, None)
+
+    def _cleanup_expired_emitters(self) -> None:
+        """Remove emitters that have exceeded the TTL to prevent memory leaks."""
+        now = time.time()
+        expired = [
+            task_id
+            for task_id, created_at in self._emitter_created_at.items()
+            if now - created_at > self._emitter_ttl
+        ]
+        for task_id in expired:
+            logger.warning(
+                f"[{self._channel_type.value}Callback] Emitter for task {task_id} "
+                f"expired after {self._emitter_ttl}s, cleaning up"
+            )
+            self._remove_emitter(task_id)
 
     def register_emitter(self, task_id: int, emitter: "ResultEmitter") -> None:
         """Register an externally created emitter for a task.
@@ -268,6 +292,7 @@ class BaseChannelCallbackService(ABC, Generic[T]):
             emitter: ResultEmitter instance to register
         """
         self._active_emitters[task_id] = emitter
+        self._emitter_created_at[task_id] = time.time()
         logger.info(
             f"[{self._channel_type.value}Callback] Registered external emitter for task {task_id}"
         )
@@ -299,6 +324,10 @@ class BaseChannelCallbackService(ABC, Generic[T]):
             EventType.CANCEL.value,
             EventType.CANCELLED.value,
         ):
+            return False
+
+        # Fast path: skip if no callback info exists for this task
+        if not await self.has_callback_info(task_id):
             return False
 
         try:
@@ -445,6 +474,19 @@ class BaseChannelCallbackService(ABC, Generic[T]):
                     f"[{self._channel_type.value}Callback] Failed to parse callback info for task {task_id}: {e}"
                 )
         return None
+
+    async def has_callback_info(self, task_id: int) -> bool:
+        """Check if callback info exists for a task without full deserialization.
+
+        Args:
+            task_id: Task ID
+
+        Returns:
+            True if callback info exists, False otherwise
+        """
+        key = f"{self.redis_key_prefix}{task_id}"
+        data = await cache_manager.get(key)
+        return data is not None
 
     async def delete_callback_info(self, task_id: int) -> None:
         """Delete callback info for a task.
@@ -616,6 +658,16 @@ class ChannelCallbackRegistry:
             The callback service or None if not registered
         """
         return self._services.get(channel_type)
+
+    def iter_services(
+        self,
+    ) -> Iterator[Tuple[ChannelType, BaseChannelCallbackService]]:
+        """Iterate over all registered callback services.
+
+        Yields:
+            Tuples of (channel_type, service)
+        """
+        yield from self._services.items()
 
     def get_service_by_name(
         self, channel_type_name: str

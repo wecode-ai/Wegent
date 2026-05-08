@@ -50,12 +50,15 @@ class StreamingResponseEmitter(ResultEmitter):
         self,
         dingtalk_client: "DingTalkStreamClient",
         incoming_message: "ChatbotMessage",
+        existing_card_instance_id: Optional[str] = None,
     ):
         """Initialize StreamingResponseEmitter.
 
         Args:
             dingtalk_client: DingTalk stream client instance
             incoming_message: The incoming message to reply to
+            existing_card_instance_id: Existing card instance ID to reconnect to
+                (used when reconstructing emitter in a different worker)
         """
         from dingtalk_stream import AIMarkdownCardInstance
 
@@ -68,8 +71,14 @@ class StreamingResponseEmitter(ResultEmitter):
         self._full_content = ""
         self._last_update_time = 0.0
         self._pending_content = ""
-        self._started = False
         self._finished = False
+
+        if existing_card_instance_id:
+            # Reconnect to an existing AI Card (cross-worker scenario)
+            self._card.card_instance_id = existing_card_instance_id
+            self._started = True
+        else:
+            self._started = False
 
     async def _ensure_card_started(self) -> bool:
         """Ensure the AI card is created and started.
@@ -101,6 +110,11 @@ class StreamingResponseEmitter(ResultEmitter):
         except Exception as e:
             logger.exception(f"[StreamingEmitter] Failed to start AI card: {e}")
             return False
+
+    @property
+    def card_instance_id(self) -> Optional[str]:
+        """Get the card instance ID if the card has been started."""
+        return self._card.card_instance_id if self._card else None
 
     async def _send_streaming_update(self, content: str, force: bool = False) -> None:
         """Send a streaming update to the AI card.

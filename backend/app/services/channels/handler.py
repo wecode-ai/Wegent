@@ -56,7 +56,7 @@ from app.services.channels.device_selection import (
     DeviceType,
     device_selection_manager,
 )
-from app.services.channels.emitter import CompositeEmitter, SyncResponseEmitter
+from app.services.channels.emitter import SyncResponseEmitter
 from app.services.channels.model_selection import (
     ModelSelection,
     is_claude_provider,
@@ -1949,13 +1949,12 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             db.close()
 
         # Create emitters (outside db session)
-        sync_emitter = SyncResponseEmitter()
         streaming_emitter = await self.create_streaming_emitter(message_context)
 
         if streaming_emitter:
-            response_emitter = CompositeEmitter(streaming_emitter, sync_emitter)
+            response_emitter = streaming_emitter
         else:
-            response_emitter = sync_emitter
+            response_emitter = SyncResponseEmitter()
 
         # Register streaming emitter for callback events.
         # In HTTP_CALLBACK mode, executor events arrive via /callback rather than
@@ -1964,6 +1963,11 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         callback_service = self.get_callback_service()
         if callback_service and streaming_emitter:
             callback_info = self.create_callback_info(message_context)
+            # Persist card_instance_id for cross-worker emitter reconstruction
+            if hasattr(streaming_emitter, "card_instance_id"):
+                card_id = streaming_emitter.card_instance_id
+                if card_id:
+                    callback_info.card_instance_id = card_id
             await callback_service.save_callback_info(
                 task_id=task_id, callback_info=callback_info
             )
@@ -2019,7 +2023,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         # For channels without streaming support, wait for the complete response.
         try:
             response = await asyncio.wait_for(
-                sync_emitter.wait_for_response(),
+                response_emitter.wait_for_response(),
                 timeout=120.0,
             )
             return response
@@ -2196,6 +2200,11 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             callback_service = self.get_callback_service()
             if callback_service:
                 callback_info = self.create_callback_info(message_context)
+                # Persist card_instance_id for cross-worker emitter reconstruction
+                if streaming_emitter and hasattr(streaming_emitter, "card_instance_id"):
+                    card_id = streaming_emitter.card_instance_id
+                    if card_id:
+                        callback_info.card_instance_id = card_id
                 await callback_service.save_callback_info(
                     task_id=result.task.id,
                     callback_info=callback_info,
@@ -2337,6 +2346,15 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             )
             # Register emitter so callback events reuse the same AI Card
             if callback_service:
+                # Update callback_info with card_instance_id for cross-worker recovery
+                if hasattr(streaming_emitter, "card_instance_id"):
+                    card_id = streaming_emitter.card_instance_id
+                    if card_id:
+                        callback_info.card_instance_id = card_id
+                        await callback_service.save_callback_info(
+                            task_id=result.task.id,
+                            callback_info=callback_info,
+                        )
                 callback_service.register_emitter(
                     task_id=result.task.id, emitter=streaming_emitter
                 )
