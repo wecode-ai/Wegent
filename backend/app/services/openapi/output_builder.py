@@ -12,12 +12,14 @@ from typing import Any, Iterable, Optional
 from app.models.subtask import Subtask, SubtaskRole
 from app.schemas.openapi_response import (
     FunctionCallOutputItem,
+    MCPCallOutputItem,
     OutputMessage,
     OutputTextContent,
     ResponseOutputItem,
     ShellCallAction,
     ShellCallOutputItem,
 )
+from app.services.openapi.helpers import subtask_status_to_message_status
 
 SHELL_TOOL_NAMES = {"exec", "command_tool"}
 
@@ -77,6 +79,13 @@ def _normalize_tool_protocol(
     tool_name: str,
     block: Optional[dict[str, Any]],
 ) -> str:
+    if isinstance(block, dict):
+        block_protocol = str(block.get("tool_protocol") or "").strip().lower()
+        if block_protocol in {"mcp", "mcp_call"}:
+            return "mcp_call"
+        if block_protocol == "shell_call":
+            return "shell_call"
+
     block_name = ""
     if isinstance(block, dict):
         block_name = str(block.get("tool_name") or "")
@@ -87,13 +96,67 @@ def _normalize_tool_protocol(
     return "function_call"
 
 
-def _next_tool_block(
-    tool_blocks: list[dict[str, Any]],
-    tool_index: int,
-) -> tuple[Optional[dict[str, Any]], int]:
-    if tool_index >= len(tool_blocks):
-        return None, tool_index
-    return tool_blocks[tool_index], tool_index + 1
+def _message_status(
+    subtask: Subtask,
+    status_override: Optional[str],
+) -> str:
+    if status_override is not None:
+        return status_override
+    raw_status = subtask.status
+    normalized_status = getattr(raw_status, "value", raw_status) or ""
+    return subtask_status_to_message_status(str(normalized_status))
+
+
+def _shell_call_status(block: Optional[dict[str, Any]]) -> str:
+    block_status = str(block.get("status") or "") if isinstance(block, dict) else ""
+    if block_status == "error":
+        return "failed"
+    if block_status == "pending":
+        return "in_progress"
+    return "completed"
+
+
+def _index_tool_blocks(
+    blocks: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    indexed: dict[str, dict[str, Any]] = {}
+    for block in blocks:
+        if not isinstance(block, dict) or block.get("type") != "tool":
+            continue
+        block_id = str(block.get("tool_use_id") or block.get("id") or "")
+        if block_id and block_id not in indexed:
+            indexed[block_id] = block
+    return indexed
+
+
+def _find_tool_block_for_tool_call(
+    *,
+    tool_call: dict[str, Any],
+    tool_blocks_by_id: dict[str, dict[str, Any]],
+    blocks: list[dict[str, Any]],
+) -> Optional[dict[str, Any]]:
+    tool_call_id = str(tool_call.get("id") or "")
+    if tool_call_id:
+        matched = tool_blocks_by_id.get(tool_call_id)
+        if matched is not None:
+            return matched
+
+    function = tool_call.get("function") or {}
+    tool_name = str(function.get("name") or "")
+    if not tool_name:
+        return None
+
+    candidates = [
+        block
+        for block in blocks
+        if isinstance(block, dict)
+        and block.get("type") == "tool"
+        and str(block.get("tool_name") or "") == tool_name
+        and str(block.get("tool_protocol") or "") in {"mcp", "mcp_call"}
+    ]
+    if len(candidates) == 1:
+        return candidates[0]
+    return None
 
 
 def _build_tool_item_from_tool_call(
@@ -130,10 +193,20 @@ def _build_tool_item_from_tool_call(
             type="shell_call",
             id=call_id or f"shell_{tool_name}",
             call_id=call_id or f"shell_{tool_name}",
-            status="completed",
+            status=_shell_call_status(block),
             action=action,
             name=tool_name or "exec",
             input=parsed_args,
+        )
+
+    if protocol == "mcp_call":
+        return MCPCallOutputItem(
+            type="mcp_call",
+            id=call_id or f"mcp_{tool_name}",
+            name=tool_name,
+            server_label=str((block or {}).get("server_label") or ""),
+            arguments=arguments,
+            status=_shell_call_status(block),
         )
 
     return FunctionCallOutputItem(
@@ -166,7 +239,7 @@ def _build_tool_item_from_block(block: dict[str, Any]) -> ResponseOutputItem:
             type="shell_call",
             id=tool_use_id or f"shell_{tool_name}",
             call_id=tool_use_id or f"shell_{tool_name}",
-            status="failed" if block.get("status") == "error" else "completed",
+            status=_shell_call_status(block),
             action=ShellCallAction(
                 commands=commands,
                 timeout_ms=timeout_ms,
@@ -174,6 +247,16 @@ def _build_tool_item_from_block(block: dict[str, Any]) -> ResponseOutputItem:
             ),
             name=tool_name or "exec",
             input=tool_input if isinstance(tool_input, dict) else {},
+        )
+
+    if protocol == "mcp_call":
+        return MCPCallOutputItem(
+            type="mcp_call",
+            id=tool_use_id or f"mcp_{tool_name}",
+            name=tool_name,
+            server_label=str(block.get("server_label") or ""),
+            arguments=_dump_arguments(tool_input),
+            status=_shell_call_status(block),
         )
 
     return FunctionCallOutputItem(
@@ -197,12 +280,7 @@ def _build_items_from_messages_chain(
         return []
 
     blocks = result.get("blocks") if isinstance(result.get("blocks"), list) else []
-    tool_blocks = [
-        block
-        for block in blocks
-        if isinstance(block, dict) and block.get("type") == "tool"
-    ]
-    tool_block_index = 0
+    tool_blocks_by_id = _index_tool_blocks(blocks)
     output: list[ResponseOutputItem] = []
     built_message = False
 
@@ -215,8 +293,10 @@ def _build_items_from_messages_chain(
         for tool_call in msg.get("tool_calls") or []:
             if not isinstance(tool_call, dict):
                 continue
-            tool_block, tool_block_index = _next_tool_block(
-                tool_blocks, tool_block_index
+            tool_block = _find_tool_block_for_tool_call(
+                tool_call=tool_call,
+                tool_blocks_by_id=tool_blocks_by_id,
+                blocks=blocks,
             )
             output.append(
                 _build_tool_item_from_tool_call(tool_call=tool_call, block=tool_block)
@@ -232,7 +312,7 @@ def _build_items_from_messages_chain(
             OutputMessage(
                 type="message",
                 id=f"msg_{subtask.id}_{len(output)}",
-                status=status_override or "completed",
+                status=_message_status(subtask, status_override),
                 role="assistant",
                 content=_build_message_content(text=text, reasoning=reasoning),
             )
@@ -246,7 +326,7 @@ def _build_items_from_messages_chain(
                 OutputMessage(
                     type="message",
                     id=f"msg_{subtask.id}",
-                    status=status_override or "completed",
+                    status=_message_status(subtask, status_override),
                     role="assistant",
                     content=_build_message_content(
                         text=final_text,
@@ -290,7 +370,7 @@ def _build_items_from_blocks(
             OutputMessage(
                 type="message",
                 id=f"msg_{subtask.id}",
-                status=status_override or "completed",
+                status=_message_status(subtask, status_override),
                 role="assistant",
                 content=_build_message_content(
                     text=final_text,
@@ -342,7 +422,7 @@ def build_output_items_for_subtask(
         OutputMessage(
             type="message",
             id=f"msg_{subtask.id}",
-            status=status_override or "completed",
+            status=_message_status(subtask, status_override),
             role="assistant",
             content=_build_message_content(text=text, reasoning=reasoning),
         )

@@ -107,12 +107,16 @@ class StatusUpdatingEmitter(ResultEmitter):
         if event.type == EventType.TOOL_START.value:
             # When a tool starts, finalize any current text block and add tool block
             display_name = event.data.get("display_name") if event.data else None
+            tool_protocol = event.data.get("tool_protocol") if event.data else None
+            server_label = event.data.get("server_label") if event.data else None
             await session_manager.add_tool_block(
                 subtask_id=self._subtask_id,
                 tool_use_id=event.tool_use_id or "",
                 tool_name=event.tool_name or "",
                 tool_input=event.tool_input,
                 display_name=display_name,
+                tool_protocol=tool_protocol,
+                server_label=server_label,
             )
         elif event.type == EventType.TOOL_RESULT.value:
             # Update tool block status when result arrives
@@ -120,12 +124,16 @@ class StatusUpdatingEmitter(ResultEmitter):
                 tool_status = (
                     "error" if (event.data or {}).get("status") == "failed" else "done"
                 )
+                tool_protocol = event.data.get("tool_protocol") if event.data else None
+                server_label = event.data.get("server_label") if event.data else None
                 await session_manager.update_tool_block_status(
                     subtask_id=self._subtask_id,
                     tool_use_id=event.tool_use_id,
                     status=tool_status,
                     tool_output=event.tool_output,
                     tool_input=event.tool_input,
+                    tool_protocol=tool_protocol,
+                    server_label=server_label,
                 )
         elif event.type == EventType.CHUNK.value:
             # Accumulate content and track text blocks

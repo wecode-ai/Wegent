@@ -47,6 +47,30 @@ class ExecutionSessionSetup:
     subtask_user_id: int
 
 
+def _merge_blocks(
+    existing_blocks: Any,
+    new_blocks: Any,
+) -> list[dict[str, Any]]:
+    """Merge persisted and in-memory blocks while preserving first-seen order."""
+    merged: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+
+    for candidate in (existing_blocks, new_blocks):
+        if not isinstance(candidate, list):
+            continue
+        for block in candidate:
+            if not isinstance(block, dict):
+                continue
+            block_id = str(block.get("id") or "")
+            if block_id and block_id in seen_ids:
+                continue
+            if block_id:
+                seen_ids.add(block_id)
+            merged.append(block)
+
+    return merged
+
+
 def _load_team_crd(team: Kind) -> Optional[Team]:
     """Best-effort load of Team CRD from ORM or lightweight test doubles."""
     team_json = getattr(team, "json", None)
@@ -289,6 +313,11 @@ async def collect_completed_result(
     final_result: Dict[str, Any] = dict(runtime_result)
 
     for key, value in existing_result.items():
+        if key == "blocks":
+            merged_blocks = _merge_blocks(value, final_result.get("blocks"))
+            if merged_blocks:
+                final_result["blocks"] = merged_blocks
+            continue
         current_value = final_result.get(key)
         if (
             key not in final_result
@@ -302,8 +331,10 @@ async def collect_completed_result(
     ):
         final_result["value"] = accumulated_content
 
-    if blocks and not final_result.get("blocks"):
-        final_result["blocks"] = blocks
+    if blocks:
+        merged_blocks = _merge_blocks(final_result.get("blocks"), blocks)
+        if merged_blocks:
+            final_result["blocks"] = merged_blocks
         logger.info(
             "[CompletedResult] Added %d blocks to %s result for subtask %s",
             len(blocks),
@@ -339,28 +370,26 @@ async def persist_completed_result(
 
     normalized_status = status.upper()
 
+    await chat_db.db_handler.update_subtask_status(
+        subtask_id,
+        normalized_status,
+        result=result,
+        error=error,
+        executor_name=executor_name,
+        executor_namespace=executor_namespace,
+    )
     try:
-        await chat_db.db_handler.update_subtask_status(
+        await chat_storage.session_manager.cleanup_streaming_state(
             subtask_id,
-            normalized_status,
-            result=result,
-            error=error,
-            executor_name=executor_name,
-            executor_namespace=executor_namespace,
+            task_id=task_id,
         )
-    finally:
-        try:
-            await chat_storage.session_manager.cleanup_streaming_state(
-                subtask_id,
-                task_id=task_id,
-            )
-        except Exception as exc:
-            logger.warning(
-                "[CompletedResult] Failed to cleanup streaming state for subtask %s: %s",
-                subtask_id,
-                exc,
-                exc_info=True,
-            )
+    except Exception as exc:
+        logger.warning(
+            "[CompletedResult] Failed to cleanup streaming state for subtask %s: %s",
+            subtask_id,
+            exc,
+            exc_info=True,
+        )
 
 
 __all__ = [

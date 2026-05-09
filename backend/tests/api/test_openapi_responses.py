@@ -14,6 +14,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from app.api.endpoints.openapi_responses import _filter_current_assistant_turn
 from app.models.kind import Kind
 from app.models.subtask import SenderType, Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
@@ -391,6 +392,43 @@ class TestOpenAPIResponsesCreate:
         assert data["id"] == "resp_123"
         assert data["status"] == "completed"
         assert len(data["output"]) == 1
+
+    def test_filter_current_assistant_turn_only_returns_active_subtask(
+        self,
+        test_subtasks: list,
+    ):
+        current_assistant = next(
+            subtask
+            for subtask in test_subtasks
+            if subtask.role == SubtaskRole.ASSISTANT
+        )
+        previous_assistant = Subtask(
+            user_id=current_assistant.user_id,
+            task_id=current_assistant.task_id,
+            team_id=current_assistant.team_id,
+            title="Previous assistant",
+            bot_ids=current_assistant.bot_ids,
+            role=SubtaskRole.ASSISTANT,
+            executor_namespace="",
+            executor_name="",
+            prompt="Earlier reply",
+            status=SubtaskStatus.COMPLETED,
+            progress=100,
+            message_id=current_assistant.message_id - 1,
+            parent_id=0,
+            error_message="",
+            completed_at=datetime.now(),
+            result={"value": "Earlier reply"},
+            sender_type=SenderType.TEAM,
+            sender_user_id=0,
+        )
+
+        filtered = _filter_current_assistant_turn(
+            [previous_assistant, current_assistant],
+            current_assistant.id,
+        )
+
+        assert filtered == [current_assistant]
 
     @patch("app.api.endpoints.openapi_responses._create_streaming_response_unified")
     def test_create_response_streaming_not_supported_for_executor(

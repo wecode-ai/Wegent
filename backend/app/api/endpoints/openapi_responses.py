@@ -97,6 +97,13 @@ def _task_to_response_object(
     )
 
 
+def _filter_current_assistant_turn(
+    subtasks: list[Subtask],
+    assistant_subtask_id: int,
+) -> list[Subtask]:
+    return [subtask for subtask in subtasks if subtask.id == assistant_subtask_id]
+
+
 @router.post("")
 @limiter.limit(settings.RATE_LIMIT_CREATE_RESPONSE)
 async def create_response(
@@ -487,7 +494,10 @@ async def _create_non_streaming_response_unified(
             f"[OPENAPI] Dispatched non-SSE task: task_id={task_kind_id}, "
             f"subtask_id={assistant_subtask_id}"
         )
-        subtasks = _query_subtasks()
+        subtasks = _filter_current_assistant_turn(
+            _query_subtasks(),
+            assistant_subtask_id,
+        )
         return ResponseObject(
             id=response_id,
             created_at=created_at,
@@ -520,7 +530,10 @@ async def _create_non_streaming_response_unified(
             f"[BACKGROUND] Task started: task_id={task_kind_id}, "
             f"subtask_id={assistant_subtask_id}"
         )
-        subtasks = _query_subtasks()
+        subtasks = _filter_current_assistant_turn(
+            _query_subtasks(),
+            assistant_subtask_id,
+        )
         return ResponseObject(
             id=response_id,
             created_at=created_at,
@@ -546,7 +559,10 @@ async def _create_non_streaming_response_unified(
             detail=f"LLM request failed: {str(e)}",
         )
 
-    subtasks = _query_subtasks()
+    subtasks = _filter_current_assistant_turn(
+        _query_subtasks(),
+        assistant_subtask_id,
+    )
     return ResponseObject(
         id=response_id,
         created_at=created_at,
