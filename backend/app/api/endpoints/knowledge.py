@@ -947,10 +947,7 @@ def create_folder(
             data=data,
         )
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        )
+        _raise_document_detail_http_error(e)
 
 
 @router.get(
@@ -998,10 +995,7 @@ def update_folder(
             data=data,
         )
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        )
+        _raise_document_detail_http_error(e)
 
 
 @router.delete(
@@ -1023,10 +1017,7 @@ def delete_folder(
         )
         return result
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        )
+        _raise_document_detail_http_error(e)
 
 
 # ============== Document Move Endpoint ==============
@@ -1053,10 +1044,7 @@ def move_document(
         )
         return KnowledgeDocumentResponse.model_validate(doc)
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        )
+        _raise_document_detail_http_error(e)
 
 
 @document_router.post("/batch/enable", response_model=BatchOperationResult)

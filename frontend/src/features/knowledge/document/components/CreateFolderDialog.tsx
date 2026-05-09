@@ -49,7 +49,6 @@ export function CreateFolderDialog({
     const trimmed = name.trim()
     if (!trimmed) return
     onSubmit(trimmed)
-    setName('')
   }
 
   const handleClose = () => {
