@@ -43,6 +43,7 @@ celery_app = Celery(
     include=[
         "app.tasks.subscription_tasks",
         "app.tasks.knowledge_tasks",
+        "app.tasks.conversion_tasks",
     ],
 )
 
@@ -67,6 +68,12 @@ celery_app.conf.update(
     task_default_retry_delay=60,  # 1 minute default retry delay
     # Default queue configuration
     task_default_queue=settings.CELERY_TASK_DEFAULT_QUEUE,
+    # Task routing - conversion tasks go to dedicated queue
+    task_routes={
+        "app.tasks.conversion_tasks.*": {
+            "queue": settings.KNOWLEDGE_CONVERSION_QUEUE,
+        },
+    },
     # Beat schedule for periodic tasks
     beat_schedule={
         "check-due-subscriptions": {

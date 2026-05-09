@@ -16,7 +16,13 @@ export type DocumentStatus = 'enabled' | 'disabled'
 
 export type DocumentSourceType = 'file' | 'text' | 'table' | 'web'
 
-export type DocumentIndexStatus = 'not_indexed' | 'queued' | 'indexing' | 'success' | 'failed'
+export type DocumentIndexStatus =
+  | 'not_indexed'
+  | 'queued'
+  | 'converting'
+  | 'indexing'
+  | 'success'
+  | 'failed'
 
 export type KnowledgeResourceScope = 'personal' | 'organization' | 'group' | 'all'
 

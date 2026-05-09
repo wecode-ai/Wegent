@@ -209,7 +209,9 @@
         "unavailable": "Index Unavailable",
         "unavailableHint": "AI will use other tools to browse documents (slightly less efficient than quick retrieval)",
         "indexing": "Indexing",
-        "indexingHint": "Index is being generated. Refresh the page later to check the latest status."
+        "indexingHint": "Index is being generated. Refresh the page later to check the latest status.",
+        "converting": "Converting",
+        "convertingHint": "Document is being converted to a searchable format. This may take a few minutes."
       },
       "reindex": "Reindex",
       "index": "Start Indexing",

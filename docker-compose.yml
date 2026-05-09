@@ -303,6 +303,34 @@ services:
       retries: 3
       start_period: 10s
 
+  conversion_worker:
+    build:
+      context: .
+      dockerfile: docker/conversion/Dockerfile
+    container_name: wegent-conversion-worker
+    restart: always
+    depends_on:
+      redis:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: mysql+pymysql://${MYSQL_USER:-task_user}:${MYSQL_PASSWORD:-task_password}@mysql:3306/${MYSQL_DATABASE:-task_manager}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      KNOWLEDGE_CONVERSION_ENABLED: "true"
+      KNOWLEDGE_CONVERSION_FILE_TYPES: ${KNOWLEDGE_CONVERSION_FILE_TYPES:-pdf,docx,pptx,xlsx}
+      MINERU_API_BASE_URL: ${MINERU_API_BASE_URL:-}
+      WORKER_CONVERSION_S3_ENABLED: ${WORKER_CONVERSION_S3_ENABLED:-false}
+      WORKER_CONVERSION_S3_ENDPOINT: ${WORKER_CONVERSION_S3_ENDPOINT:-}
+      WORKER_CONVERSION_S3_ACCESS_KEY: ${WORKER_CONVERSION_S3_ACCESS_KEY:-}
+      WORKER_CONVERSION_S3_SECRET_KEY: ${WORKER_CONVERSION_S3_SECRET_KEY:-}
+      WORKER_CONVERSION_S3_BUCKET_NAME: ${WORKER_CONVERSION_S3_BUCKET_NAME:-}
+      WORKER_CONVERSION_S3_REGION_NAME: ${WORKER_CONVERSION_S3_REGION_NAME:-us-east-1}
+    volumes:
+      - ./logs/conversion_worker:/app/logs
+    networks:
+      - wegent-network
+
 volumes:
   mysql_data:
     driver: local

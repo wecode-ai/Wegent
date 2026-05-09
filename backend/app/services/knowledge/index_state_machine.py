@@ -45,6 +45,7 @@ class IndexExecutionDecision:
 
 ACTIVE_INDEX_STATUSES = {
     DocumentIndexStatus.QUEUED,
+    DocumentIndexStatus.CONVERTING,
     DocumentIndexStatus.INDEXING,
 }
 
@@ -73,6 +74,12 @@ def _get_active_index_stale_reason(
         and age_seconds >= settings.KNOWLEDGE_INDEX_STALE_INDEXING_SECONDS
     ):
         return "stale_indexing"
+
+    if (
+        document.index_status == DocumentIndexStatus.CONVERTING
+        and age_seconds >= settings.KNOWLEDGE_INDEX_STALE_CONVERTING_SECONDS
+    ):
+        return "stale_converting"
 
     return None
 
@@ -455,5 +462,114 @@ def mark_document_index_failed(
         document_id=document_id,
         generation=generation,
         reason="finalized" if updated > 0 else "stale_or_already_finalized",
+    )
+    return updated > 0
+
+
+@trace_sync(
+    span_name="knowledge.mark_document_conversion_started",
+    tracer_name="knowledge.state_machine",
+    extract_attributes=lambda db, document_id, generation: {
+        "knowledge.document_id": document_id,
+        "knowledge.index_generation": generation,
+    },
+)
+def mark_document_conversion_started(
+    db: Session,
+    document_id: int,
+    generation: int,
+) -> IndexExecutionDecision:
+    """Transition QUEUED -> CONVERTING when conversion worker picks up the task."""
+    document = (
+        db.query(KnowledgeDocument)
+        .filter(KnowledgeDocument.id == document_id)
+        .with_for_update()
+        .first()
+    )
+    if document is None:
+        db.rollback()
+        _record_transition(
+            "knowledge.conversion.start.skipped",
+            document_id=document_id,
+            generation=generation,
+            reason="document_not_found",
+        )
+        return IndexExecutionDecision(should_execute=False, reason="document_not_found")
+
+    if document.index_generation != generation:
+        db.rollback()
+        _record_transition(
+            "knowledge.conversion.start.skipped",
+            document_id=document_id,
+            generation=generation,
+            reason="stale_generation",
+            previous_status=document.index_status,
+        )
+        return IndexExecutionDecision(should_execute=False, reason="stale_generation")
+
+    current_status = document.index_status or DocumentIndexStatus.NOT_INDEXED
+    if current_status != DocumentIndexStatus.QUEUED:
+        db.rollback()
+        _record_transition(
+            "knowledge.conversion.start.skipped",
+            document_id=document_id,
+            generation=generation,
+            reason=f"unexpected_status_{current_status.value}",
+            previous_status=current_status,
+        )
+        return IndexExecutionDecision(
+            should_execute=False,
+            reason=f"unexpected_status_{current_status.value}",
+        )
+
+    document.index_status = DocumentIndexStatus.CONVERTING
+    document.updated_at = _utcnow()
+    db.commit()
+    _record_transition(
+        "knowledge.conversion.start.accepted",
+        document_id=document_id,
+        generation=generation,
+        reason="conversion_started",
+        previous_status=current_status,
+    )
+    return IndexExecutionDecision(should_execute=True, reason="conversion_started")
+
+
+@trace_sync(
+    span_name="knowledge.mark_document_conversion_succeeded",
+    tracer_name="knowledge.state_machine",
+    extract_attributes=lambda db, document_id, generation: {
+        "knowledge.document_id": document_id,
+        "knowledge.index_generation": generation,
+    },
+)
+def mark_document_conversion_succeeded(
+    db: Session,
+    document_id: int,
+    generation: int,
+) -> bool:
+    """Transition CONVERTING -> QUEUED after successful conversion."""
+    updated = (
+        db.query(KnowledgeDocument)
+        .filter(
+            KnowledgeDocument.id == document_id,
+            KnowledgeDocument.index_generation == generation,
+            KnowledgeDocument.index_status == DocumentIndexStatus.CONVERTING,
+        )
+        .update(
+            {
+                KnowledgeDocument.index_status: DocumentIndexStatus.QUEUED,
+                KnowledgeDocument.updated_at: _utcnow(),
+            },
+            synchronize_session=False,
+        )
+    )
+    db.commit()
+
+    _record_transition(
+        "knowledge.conversion.finalize.success",
+        document_id=document_id,
+        generation=generation,
+        reason="converted" if updated > 0 else "stale_or_already_finalized",
     )
     return updated > 0

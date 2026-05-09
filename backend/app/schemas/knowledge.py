@@ -48,6 +48,7 @@ class DocumentIndexStatus(str, Enum):
 
     NOT_INDEXED = "not_indexed"
     QUEUED = "queued"
+    CONVERTING = "converting"
     INDEXING = "indexing"
     SUCCESS = "success"
     FAILED = "failed"

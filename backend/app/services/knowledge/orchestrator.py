@@ -25,6 +25,7 @@ from typing import Any, Dict, List, Literal, Optional
 
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.models.kind import Kind
 from app.models.knowledge import KnowledgeDocument
 from app.models.task import TaskResource
@@ -1632,20 +1633,63 @@ class KnowledgeOrchestrator:
             raise RuntimeError(message)
 
         try:
-            async_result = index_document_task.delay(
-                knowledge_base_id=str(knowledge_base.id),
-                attachment_id=document.attachment_id,
-                retriever_name=retriever_name,
-                retriever_namespace=retriever_namespace,
-                embedding_model_name=embedding_model_name,
-                embedding_model_namespace=embedding_model_namespace,
-                user_id=index_owner_user_id,
-                user_name=user.user_name,
-                document_id=document.id,
-                index_generation=generation,
-                splitter_config_dict=splitter_config,
-                trigger_summary=trigger_summary,
-            )
+            normalized_extension = _normalize_file_extension(document.file_extension)
+            if settings.needs_conversion(normalized_extension):
+                # File type requires conversion before indexing
+                from app.models.subtask_context import ContextType, SubtaskContext
+                from app.tasks.conversion_tasks import convert_document_task
+
+                attachment = (
+                    db.query(SubtaskContext)
+                    .filter(
+                        SubtaskContext.id == document.attachment_id,
+                        SubtaskContext.context_type == ContextType.ATTACHMENT.value,
+                    )
+                    .first()
+                )
+                original_filename = (
+                    attachment.original_filename if attachment else document.name
+                )
+
+                async_result = convert_document_task.delay(
+                    document_id=document.id,
+                    attachment_id=document.attachment_id,
+                    knowledge_base_id=str(knowledge_base.id),
+                    knowledge_base_name=knowledge_base.name,
+                    index_generation=generation,
+                    user_id=index_owner_user_id,
+                    user_name=user.user_name,
+                    file_extension=normalized_extension,
+                    original_filename=original_filename,
+                    retriever_name=retriever_name,
+                    retriever_namespace=retriever_namespace,
+                    embedding_model_name=embedding_model_name,
+                    embedding_model_namespace=embedding_model_namespace,
+                    splitter_config_dict=splitter_config,
+                    trigger_summary=trigger_summary,
+                )
+
+                logger.info(
+                    f"[Orchestrator] Conversion task enqueued: "
+                    f"document_id={document.id}, file_ext={normalized_extension}, "
+                    f"index_generation={generation}, celery_task_id={async_result.id}"
+                )
+            else:
+                # Direct indexing (no conversion)
+                async_result = index_document_task.delay(
+                    knowledge_base_id=str(knowledge_base.id),
+                    attachment_id=document.attachment_id,
+                    retriever_name=retriever_name,
+                    retriever_namespace=retriever_namespace,
+                    embedding_model_name=embedding_model_name,
+                    embedding_model_namespace=embedding_model_namespace,
+                    user_id=index_owner_user_id,
+                    user_name=user.user_name,
+                    document_id=document.id,
+                    index_generation=generation,
+                    splitter_config_dict=splitter_config,
+                    trigger_summary=trigger_summary,
+                )
         except Exception as exc:
             mark_document_index_enqueue_failed(
                 db=db,

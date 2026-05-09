@@ -330,6 +330,38 @@ class Settings(BaseSettings):
     KNOWLEDGE_INDEX_STALE_QUEUED_SECONDS: int = 600
     KNOWLEDGE_INDEX_STALE_INDEXING_SECONDS: int = 2700
 
+    # --- Document Conversion Configuration ---
+    # Master switch: when False, all files indexed directly (original behavior)
+    KNOWLEDGE_CONVERSION_ENABLED: bool = False
+    # Comma-separated file extensions requiring conversion (e.g., "pdf,pptx,docx")
+    KNOWLEDGE_CONVERSION_FILE_TYPES: str = ""
+    # Celery queue name for conversion tasks
+    KNOWLEDGE_CONVERSION_QUEUE: str = "knowledge_conversion"
+    # Stale detection for CONVERTING status (seconds, default 30 min)
+    KNOWLEDGE_INDEX_STALE_CONVERTING_SECONDS: int = 1800
+    # Conversion distributed lock
+    KNOWLEDGE_CONVERSION_LOCK_TIMEOUT_SECONDS: int = 2000
+    KNOWLEDGE_CONVERSION_LOCK_EXTEND_INTERVAL_SECONDS: int = 60
+    KNOWLEDGE_CONVERSION_LOCK_MAX_RETRIES: int = 2
+    KNOWLEDGE_CONVERSION_LOCK_RETRY_DELAY_SECONDS: int = 30
+    # MinerU API
+    MINERU_API_BASE_URL: str = ""
+    MINERU_BACKEND: str = "pipeline"
+    MINERU_PARSE_METHOD: str = "ocr"
+    MINERU_LANG_LIST: str = "ch"
+    MINERU_FORMULA_ENABLE: bool = True
+    MINERU_TABLE_ENABLE: bool = True
+    MINERU_POLL_INTERVAL_SECONDS: int = 3
+    MINERU_MAX_WAIT_SECONDS: int = 600
+    # S3 storage for converted images
+    WORKER_CONVERSION_S3_ENABLED: bool = False
+    WORKER_CONVERSION_S3_ENDPOINT: str = ""
+    WORKER_CONVERSION_S3_ACCESS_KEY: str = ""
+    WORKER_CONVERSION_S3_SECRET_KEY: str = ""
+    WORKER_CONVERSION_S3_BUCKET_NAME: str = ""
+    WORKER_CONVERSION_S3_REGION_NAME: str = "us-east-1"
+    # --- End Document Conversion Configuration ---
+
     # Circuit breaker configuration
     CIRCUIT_BREAKER_FAIL_MAX: int = 5  # Open circuit after 5 consecutive failures
     CIRCUIT_BREAKER_RESET_TIMEOUT: int = 60  # Try to recover after 60 seconds
@@ -594,6 +626,20 @@ class Settings(BaseSettings):
     # OpenTelemetry configuration is centralized in shared/telemetry/config.py
     # Use: from shared.telemetry.config import get_otel_config
     # All OTEL_* environment variables are read from there
+
+    def needs_conversion(self, file_extension: str) -> bool:
+        """Check if a file extension requires conversion before indexing."""
+        if not self.KNOWLEDGE_CONVERSION_ENABLED:
+            return False
+        if not self.KNOWLEDGE_CONVERSION_FILE_TYPES:
+            return False
+        ext = file_extension.lstrip(".").lower()
+        types = [
+            t.strip().lower()
+            for t in self.KNOWLEDGE_CONVERSION_FILE_TYPES.split(",")
+            if t.strip()
+        ]
+        return ext in types
 
     def get_rag_runtime_mode(self, operation: str) -> str:
         """Resolve the effective RAG runtime mode for an operation."""
