@@ -6,7 +6,7 @@ import json
 from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, EmailStr, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 
 class MCPProviderKeys(BaseModel):
@@ -23,6 +23,13 @@ class MCPProviderKeys(BaseModel):
     mcp_router: Optional[str] = None  # MCP Router API key
 
 
+class QuickAccessPreference(BaseModel):
+    """User quick access team preferences."""
+
+    version: Optional[int] = None
+    teams: List[int] = Field(default_factory=list)
+
+
 class UserPreferences(BaseModel):
     """User preferences model"""
 
@@ -30,6 +37,7 @@ class UserPreferences(BaseModel):
     search_key: Literal["cmd_k", "cmd_f", "disabled"] = "cmd_k"
     memory_enabled: bool = False
     mcp_provider_keys: Optional[MCPProviderKeys] = None
+    quick_access: Optional[QuickAccessPreference] = None
     # Default execution target: 'cloud' for cloud mode, or device_id for a specific device
     default_execution_target: Optional[str] = None
 

@@ -159,4 +159,29 @@ describe('MixedContentView', () => {
     expect(screen.queryByTestId('ask-user-form-block')).not.toBeInTheDocument()
     expect(screen.queryByTestId('tool-block')).not.toBeInTheDocument()
   })
+
+  it('shows the processing indicator when task is running', () => {
+    render(
+      <MixedContentView
+        thinking={null}
+        content="雨后的清晨"
+        taskStatus="RUNNING"
+        theme="light"
+        taskId={2493}
+        subtaskId={2730}
+        currentMessageIndex={0}
+        blocks={[
+          {
+            id: 'text-final',
+            type: 'text',
+            status: 'done',
+            content: '雨后的清晨',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByText('雨后的清晨')).toBeInTheDocument()
+    expect(screen.queryByText('thinking.processing')).toBeInTheDocument()
+  })
 })
