@@ -32,9 +32,7 @@ class KnowledgeFolderService:
     """Service for managing knowledge base folder hierarchy."""
 
     @staticmethod
-    def _check_kb_access(
-        db: Session, knowledge_base_id: int, user_id: int
-    ) -> Kind:
+    def _check_kb_access(db: Session, knowledge_base_id: int, user_id: int) -> Kind:
         """Verify user has access to the knowledge base and return it.
 
         Raises ValueError if access is denied or KB not found.
@@ -184,9 +182,9 @@ class KnowledgeFolderService:
 
         Raises ValueError if folder not found or access denied.
         """
-        folder = db.query(KnowledgeFolder).filter(
-            KnowledgeFolder.id == folder_id
-        ).first()
+        folder = (
+            db.query(KnowledgeFolder).filter(KnowledgeFolder.id == folder_id).first()
+        )
         if not folder:
             raise ValueError("Folder not found")
 
@@ -239,9 +237,7 @@ class KnowledgeFolderService:
                     db, folder.id
                 )
                 if new_parent_id in descendant_ids:
-                    raise ValueError(
-                        "Cannot move a folder into one of its descendants"
-                    )
+                    raise ValueError("Cannot move a folder into one of its descendants")
             folder.parent_id = new_parent_id
 
         db.commit()
@@ -283,9 +279,7 @@ class KnowledgeFolderService:
         folder = KnowledgeFolderService.get_folder(db, folder_id, user_id)
 
         # Collect all descendant folder IDs (including self)
-        descendant_ids = KnowledgeFolderService._collect_descendant_ids(
-            db, folder_id
-        )
+        descendant_ids = KnowledgeFolderService._collect_descendant_ids(db, folder_id)
         descendant_ids.add(folder_id)
 
         # Move documents in the deleted folders back to root level
@@ -359,9 +353,7 @@ class KnowledgeFolderService:
                 .first()
             )
             if not target_folder:
-                raise ValueError(
-                    "Target folder not found in this knowledge base"
-                )
+                raise ValueError("Target folder not found in this knowledge base")
 
         doc.folder_id = folder_id
         db.commit()
@@ -369,9 +361,7 @@ class KnowledgeFolderService:
         return doc
 
     @staticmethod
-    def _collect_descendant_ids(
-        db: Session, folder_id: int
-    ) -> set:
+    def _collect_descendant_ids(db: Session, folder_id: int) -> set:
         """Collect all descendant folder IDs for a given folder.
 
         Uses iterative BFS to avoid recursion limits.

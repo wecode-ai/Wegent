@@ -417,7 +417,9 @@ class KnowledgeFolderCreate(BaseModel):
     """Schema for creating a knowledge folder."""
 
     name: str = Field(..., min_length=1, max_length=255)
-    parent_id: int = Field(default=0, ge=0, description="Parent folder ID (0 = root level)")
+    parent_id: int = Field(
+        default=0, ge=0, description="Parent folder ID (0 = root level)"
+    )
 
 
 class KnowledgeFolderUpdate(BaseModel):
@@ -425,7 +427,9 @@ class KnowledgeFolderUpdate(BaseModel):
 
     name: Optional[str] = Field(None, min_length=1, max_length=255)
     parent_id: Optional[int] = Field(
-        None, ge=0, description="New parent folder ID (0 = root level, None = no change)"
+        None,
+        ge=0,
+        description="New parent folder ID (0 = root level, None = no change)",
     )
 
 
@@ -437,7 +441,9 @@ class KnowledgeFolderResponse(BaseModel):
     parent_id: int = Field(..., description="Parent folder ID (0 = root level)")
     name: str
     children: list["KnowledgeFolderResponse"] = Field(default_factory=list)
-    document_count: int = Field(default=0, description="Number of documents in this folder")
+    document_count: int = Field(
+        default=0, description="Number of documents in this folder"
+    )
     created_at: datetime
     updated_at: datetime
 

@@ -71,8 +71,7 @@ interface FolderTreeProps {
  */
 function convertFolderToNode(
   folder: KnowledgeFolder,
-  docsByFolderId: Map<number, KnowledgeDocument[]>,
-  rootDocs: KnowledgeDocument[]
+  docsByFolderId: Map<number, KnowledgeDocument[]>
 ): FolderNode {
   const folderDocs = docsByFolderId.get(folder.id) || []
 
@@ -82,7 +81,7 @@ function convertFolderToNode(
       displayName: doc.name,
       document: doc,
     })),
-    ...folder.children.map(child => convertFolderToNode(child, docsByFolderId, [])),
+    ...folder.children.map(child => convertFolderToNode(child, docsByFolderId)),
   ]
 
   // Count total documents recursively
@@ -140,7 +139,7 @@ function buildMergedTree(
         document: doc,
       })),
       ...folders.map(folder =>
-        convertFolderToNode(folder, docsByFolderId, [])
+        convertFolderToNode(folder, docsByFolderId)
       ),
     ]
     return tree

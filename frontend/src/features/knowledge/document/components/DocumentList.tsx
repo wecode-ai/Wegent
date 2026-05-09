@@ -41,7 +41,7 @@ import { DeleteFolderDialog } from './DeleteFolderDialog'
 import { useColumnResize } from '../hooks/useColumnResize'
 import { refreshKnowledgeBaseSummary } from '@/apis/knowledge'
 import { toast } from '@/hooks/use-toast'
-import type { KnowledgeBase, KnowledgeDocument, KnowledgeFolder, SplitterConfig } from '@/types/knowledge'
+import type { KnowledgeBase, KnowledgeDocument, SplitterConfig } from '@/types/knowledge'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useUser } from '@/features/common/UserContext'
 import { useSearchParams, useRouter, usePathname } from 'next/navigation'
@@ -143,12 +143,10 @@ export function DocumentList({
   // Folder state
   const {
     folders,
-    loading: foldersLoading,
     fetchFolders,
     createFolder,
     updateFolder,
     deleteFolder,
-    moveDocument,
   } = useFolders({ knowledgeBaseId: knowledgeBase.id })
 
   const [showCreateFolder, setShowCreateFolder] = useState(false)
