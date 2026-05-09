@@ -571,7 +571,20 @@
     "retry_failed": "Failed to retry stage",
     "proceeding_to_stage": "Proceeding to stage: {{stage}}",
     "pipeline_completed": "Pipeline completed",
-    "no_task_id": "No task ID available"
+    "no_task_id": "No task ID available",
+    "next_step": "Next step",
+    "next_step_dialog": {
+      "title": "Continue to next step",
+      "description": "Choose the message and context to carry into the next pipeline stage.",
+      "message_placeholder": "Edit the message for the next stage...",
+      "text_contexts": "Message context",
+      "structured_contexts": "Attached context",
+      "no_text_contexts": "No message context is available.",
+      "no_structured_contexts": "No attachment, knowledge base, or table context is available.",
+      "confirm": "Continue",
+      "confirming": "Continuing...",
+      "missing_task": "Task or team information is unavailable"
+    }
   },
   "generate": {
     "mode_selector": "Generation Type",
