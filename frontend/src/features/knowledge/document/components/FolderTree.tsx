@@ -206,6 +206,14 @@ function buildFallbackTree(documents: KnowledgeDocument[]): TreeNode[] {
   return root
 }
 
+/** Generate a stable key for a tree node based on its type */
+function treeNodeKey(node: TreeNode): string {
+  if (node.type === 'document') {
+    return `doc:${(node as DocumentNode).document.id}`
+  }
+  return `folder:${node.path}`
+}
+
 interface FolderRowProps {
   node: FolderNode
   depth: number
@@ -448,9 +456,7 @@ function FolderTreeNode({
         <div>
           {node.children.map((child, idx) => (
             <FolderTreeNode
-              key={child.type === 'folder' || child.type === 'api-folder'
-                ? `folder:${child.path}`
-                : `doc:${child.document.id}`}
+              key={treeNodeKey(child)}
               node={child}
               depth={depth + 1}
               compact={compact}
