@@ -19,7 +19,6 @@ import {
 } from '@/components/ui/dialog'
 import { Textarea } from '@/components/ui/textarea'
 import { useTranslation } from '@/hooks/useTranslation'
-import { cn } from '@/lib/utils'
 import {
   buildPipelineNextStepDraft,
   buildPipelineNextStepPayload,
@@ -81,7 +80,7 @@ function TextContextRow({
       <Checkbox
         checked={checked}
         onCheckedChange={value => onCheckedChange(value === true)}
-        data-testid={`pipeline-next-step-text-checkbox-${item.kind}`}
+        data-testid={`pipeline-next-step-text-checkbox-${item.id}`}
         aria-label={item.label}
         className="mt-0.5"
       />
@@ -121,7 +120,7 @@ function StructuredContextRow({
   )
 }
 
-export function PipelineNextStepDialog({
+function PipelineNextStepDialog({
   open,
   messages,
   isConfirming,
@@ -174,53 +173,66 @@ export function PipelineNextStepDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="flex max-h-[82vh] flex-col gap-4 overflow-hidden sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>{t('pipelineNextStep.title')}</DialogTitle>
-          <DialogDescription>{t('pipelineNextStep.description')}</DialogDescription>
+          <DialogTitle>{t('pipeline.next_step_dialog.title')}</DialogTitle>
+          <DialogDescription>{t('pipeline.next_step_dialog.description')}</DialogDescription>
         </DialogHeader>
 
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
           <div className="space-y-2">
             <div className="text-sm font-medium text-text-primary">
-              {t('pipelineNextStep.message')}
+              {t('pipeline.next_step_dialog.message_placeholder')}
             </div>
             <Textarea
               value={editedMessage}
               onChange={event => setEditedMessage(event.target.value)}
+              placeholder={t('pipeline.next_step_dialog.message_placeholder')}
               data-testid="pipeline-next-step-message"
               className="min-h-28 resize-none"
             />
           </div>
 
-          <div className={cn('space-y-2', draft.textItems.length === 0 && 'hidden')}>
+          <div className="space-y-2">
             <div className="text-sm font-medium text-text-primary">
-              {t('pipelineNextStep.textContext')}
+              {t('pipeline.next_step_dialog.text_contexts')}
             </div>
-            <div className="space-y-2">
-              {draft.textItems.map(item => (
-                <TextContextRow
-                  key={item.id}
-                  item={item}
-                  checked={selectedTextItemIds.includes(item.id)}
-                  onCheckedChange={checked => setTextItemChecked(item.id, checked)}
-                />
-              ))}
-            </div>
+            {draft.textItems.length === 0 ? (
+              <div className="rounded-md border border-dashed border-border px-3 py-2 text-sm text-text-muted">
+                {t('pipeline.next_step_dialog.no_text_contexts')}
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {draft.textItems.map(item => (
+                  <TextContextRow
+                    key={item.id}
+                    item={item}
+                    checked={selectedTextItemIds.includes(item.id)}
+                    onCheckedChange={checked => setTextItemChecked(item.id, checked)}
+                  />
+                ))}
+              </div>
+            )}
           </div>
 
-          <div className={cn('space-y-2', draft.structuredItems.length === 0 && 'hidden')}>
+          <div className="space-y-2">
             <div className="text-sm font-medium text-text-primary">
-              {t('pipelineNextStep.structuredContext')}
+              {t('pipeline.next_step_dialog.structured_contexts')}
             </div>
-            <div className="space-y-2">
-              {draft.structuredItems.map(item => (
-                <StructuredContextRow
-                  key={item.id}
-                  item={item}
-                  checked={selectedStructuredItemIds.includes(item.id)}
-                  onCheckedChange={checked => setStructuredItemChecked(item.id, checked)}
-                />
-              ))}
-            </div>
+            {draft.structuredItems.length === 0 ? (
+              <div className="rounded-md border border-dashed border-border px-3 py-2 text-sm text-text-muted">
+                {t('pipeline.next_step_dialog.no_structured_contexts')}
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {draft.structuredItems.map(item => (
+                  <StructuredContextRow
+                    key={item.id}
+                    item={item}
+                    checked={selectedStructuredItemIds.includes(item.id)}
+                    onCheckedChange={checked => setStructuredItemChecked(item.id, checked)}
+                  />
+                ))}
+              </div>
+            )}
           </div>
         </div>
 
@@ -241,10 +253,14 @@ export function PipelineNextStepDialog({
             data-testid="pipeline-next-step-confirm-button"
           >
             {isConfirming && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            {t('pipelineNextStep.confirm')}
+            {isConfirming
+              ? t('pipeline.next_step_dialog.confirming')
+              : t('pipeline.next_step_dialog.confirm')}
           </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
   )
 }
+
+export default PipelineNextStepDialog

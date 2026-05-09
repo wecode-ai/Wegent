@@ -6,7 +6,7 @@ import '@testing-library/jest-dom'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
-import { PipelineNextStepDialog } from '@/features/tasks/components/chat/PipelineNextStepDialog'
+import PipelineNextStepDialog from '@/features/tasks/components/chat/PipelineNextStepDialog'
 import type { PipelineNextStepMessage } from '@/features/tasks/components/chat/pipelineNextStep'
 
 jest.mock('@/hooks/useTranslation', () => ({
@@ -57,6 +57,22 @@ describe('PipelineNextStepDialog', () => {
     renderDialog()
 
     expect(screen.getByTestId('pipeline-next-step-message')).toHaveValue('Build this feature')
+    expect(screen.getByText('pipeline.next_step_dialog.title')).toBeInTheDocument()
+    expect(screen.getByText('pipeline.next_step_dialog.description')).toBeInTheDocument()
+    expect(screen.getByTestId('pipeline-next-step-message')).toHaveAttribute(
+      'placeholder',
+      'pipeline.next_step_dialog.message_placeholder'
+    )
+  })
+
+  it('uses unique text checkbox test ids for each text item', () => {
+    renderDialog()
+
+    expect(screen.getByTestId('pipeline-next-step-text-checkbox-user_message:user-1')).toBeChecked()
+    expect(screen.getByTestId('pipeline-next-step-text-checkbox-ai_response:ai-1')).toBeChecked()
+    expect(
+      screen.queryByTestId('pipeline-next-step-text-checkbox-user_message')
+    ).not.toBeInTheDocument()
   })
 
   it('submits selected message and contexts', async () => {
@@ -106,5 +122,14 @@ describe('PipelineNextStepDialog', () => {
         pendingContexts: [],
       })
     )
+  })
+
+  it('renders empty states when text and structured contexts are unavailable', () => {
+    renderDialog({
+      messages: [],
+    })
+
+    expect(screen.getByText('pipeline.next_step_dialog.no_text_contexts')).toBeInTheDocument()
+    expect(screen.getByText('pipeline.next_step_dialog.no_structured_contexts')).toBeInTheDocument()
   })
 })
