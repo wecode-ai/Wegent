@@ -6,6 +6,7 @@
 API integration tests for OpenAPI v1/responses endpoints.
 """
 
+import json
 from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -14,6 +15,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from app.api.endpoints.openapi_responses import _filter_current_assistant_turn
 from app.models.kind import Kind
 from app.models.subtask import SenderType, Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
@@ -392,6 +394,43 @@ class TestOpenAPIResponsesCreate:
         assert data["status"] == "completed"
         assert len(data["output"]) == 1
 
+    def test_filter_current_assistant_turn_only_returns_active_subtask(
+        self,
+        test_subtasks: list,
+    ):
+        current_assistant = next(
+            subtask
+            for subtask in test_subtasks
+            if subtask.role == SubtaskRole.ASSISTANT
+        )
+        previous_assistant = Subtask(
+            user_id=current_assistant.user_id,
+            task_id=current_assistant.task_id,
+            team_id=current_assistant.team_id,
+            title="Previous assistant",
+            bot_ids=current_assistant.bot_ids,
+            role=SubtaskRole.ASSISTANT,
+            executor_namespace="",
+            executor_name="",
+            prompt="Earlier reply",
+            status=SubtaskStatus.COMPLETED,
+            progress=100,
+            message_id=current_assistant.message_id - 1,
+            parent_id=0,
+            error_message="",
+            completed_at=datetime.now(),
+            result={"value": "Earlier reply"},
+            sender_type=SenderType.TEAM,
+            sender_user_id=0,
+        )
+
+        filtered = _filter_current_assistant_turn(
+            [previous_assistant, current_assistant],
+            current_assistant.id,
+        )
+
+        assert filtered == [current_assistant]
+
     @patch("app.api.endpoints.openapi_responses._create_streaming_response_unified")
     def test_create_response_streaming_not_supported_for_executor(
         self,
@@ -425,6 +464,93 @@ class TestOpenAPIResponsesCreate:
 
         assert response.status_code == 400
         assert "Streaming is only supported" in response.json()["detail"]
+
+    @pytest.mark.asyncio
+    async def test_streaming_unsupported_returns_response_failed_event(
+        self,
+        test_db: Session,
+        test_user: User,
+        test_team: Kind,
+    ):
+        """Unsupported shells should fail inside SSE generation, not via HTTP error."""
+        from app.api.endpoints.openapi_responses import (
+            _create_streaming_response_unified,
+        )
+        from app.schemas.openapi_response import ResponseCreateInput
+
+        setup = SimpleNamespace(
+            task=SimpleNamespace(id=101, json={"metadata": {"labels": {}}}),
+            task_id=101,
+            user_subtask=SimpleNamespace(id=321),
+            assistant_subtask=SimpleNamespace(id=654),
+        )
+        execution_request = SimpleNamespace(task_id=101, subtask_id=654)
+
+        with (
+            patch(
+                "app.services.openapi.chat_session.setup_chat_session",
+                return_value=setup,
+            ),
+            patch(
+                "app.services.chat.trigger.unified.build_execution_request",
+                new=AsyncMock(return_value=execution_request),
+            ),
+            patch(
+                "app.services.execution.execution_dispatcher.supports_streaming",
+                return_value=False,
+            ),
+            patch(
+                "app.api.endpoints.openapi_responses.collect_completed_result",
+                new=AsyncMock(return_value={"value": ""}),
+            ) as mock_collect_result,
+            patch(
+                "app.api.endpoints.openapi_responses.persist_completed_result",
+                new=AsyncMock(),
+            ) as mock_persist_result,
+        ):
+            response = await _create_streaming_response_unified(
+                db=test_db,
+                user=test_user,
+                team=test_team,
+                model_info={"namespace": "default", "team_name": "test-team"},
+                request_body=ResponseCreateInput(
+                    model="default#test-team",
+                    input="hello",
+                    stream=True,
+                ),
+                input_text="hello",
+                tool_settings={},
+            )
+            body = []
+            async for chunk in response.body_iterator:
+                body.append(chunk.decode() if isinstance(chunk, bytes) else chunk)
+
+        payload = "".join(body)
+        events = []
+        for chunk in payload.split("\n\n"):
+            chunk = chunk.strip()
+            if not chunk.startswith("data: "):
+                continue
+            events.append(json.loads(chunk.removeprefix("data: ").strip()))
+
+        failed_event = next(
+            event for event in events if event["type"] == "response.failed"
+        )
+        assert failed_event["response"]["status"] == "failed"
+        assert failed_event["response"]["error"]["code"] == "not_implemented"
+        mock_collect_result.assert_awaited_once_with(
+            654,
+            status="FAILED",
+            error_message="Streaming not supported for this shell type",
+            error_code="not_implemented",
+        )
+        mock_persist_result.assert_awaited_once_with(
+            subtask_id=654,
+            task_id=101,
+            status="FAILED",
+            result={"value": ""},
+            error="Streaming not supported for this shell type",
+        )
 
     def test_create_response_with_wegent_tools(
         self, test_client: TestClient, test_api_key
@@ -541,6 +667,90 @@ class TestOpenAPIResponsesCreate:
             "follow-up question"
         )
 
+    @pytest.mark.asyncio
+    async def test_non_streaming_dispatch_failure_persists_failed_status(
+        self,
+        test_db: Session,
+        test_user: User,
+        test_team: Kind,
+    ):
+        """Dispatch failures before terminal events should still persist FAILED."""
+        from fastapi import HTTPException
+
+        from app.api.endpoints.openapi_responses import (
+            _create_non_streaming_response_unified,
+        )
+        from app.schemas.openapi_response import ResponseCreateInput
+
+        setup = SimpleNamespace(
+            task=SimpleNamespace(id=101, json={"metadata": {"labels": {}}}),
+            task_id=101,
+            user_subtask=SimpleNamespace(id=321),
+            assistant_subtask=SimpleNamespace(id=654),
+        )
+        execution_request = SimpleNamespace(task_id=101, subtask_id=654)
+        mock_emitter = MagicMock()
+        mock_emitter.collect = AsyncMock(return_value=("", None))
+
+        with (
+            patch(
+                "app.services.openapi.chat_session.setup_chat_session",
+                return_value=setup,
+            ),
+            patch(
+                "app.services.chat.trigger.unified.build_execution_request",
+                new=AsyncMock(return_value=execution_request),
+            ),
+            patch(
+                "app.services.execution.execution_dispatcher.supports_streaming",
+                return_value=True,
+            ),
+            patch(
+                "app.services.execution.execution_dispatcher.dispatch",
+                new=AsyncMock(side_effect=RuntimeError("dispatcher boom")),
+            ),
+            patch(
+                "app.services.execution.emitters.SSEResultEmitter",
+                return_value=mock_emitter,
+            ),
+            patch(
+                "app.api.endpoints.openapi_responses.collect_completed_result",
+                new=AsyncMock(return_value={"value": ""}),
+            ) as mock_collect_result,
+            patch(
+                "app.api.endpoints.openapi_responses.persist_completed_result",
+                new=AsyncMock(),
+            ) as mock_persist_result,
+        ):
+            with pytest.raises(HTTPException) as exc_info:
+                await _create_non_streaming_response_unified(
+                    db=test_db,
+                    user=test_user,
+                    team=test_team,
+                    model_info={"namespace": "default", "team_name": "test-team"},
+                    request_body=ResponseCreateInput(
+                        model="default#test-team",
+                        input="follow-up question",
+                    ),
+                    input_text="follow-up question",
+                    tool_settings={},
+                )
+
+        assert exc_info.value.status_code == 500
+        mock_collect_result.assert_awaited_once_with(
+            654,
+            status="FAILED",
+            error_message="dispatcher boom",
+            error_code=None,
+        )
+        mock_persist_result.assert_awaited_once_with(
+            subtask_id=654,
+            task_id=101,
+            status="FAILED",
+            result={"value": ""},
+            error="dispatcher boom",
+        )
+
     def test_setup_chat_session_reuses_previous_executor_for_follow_up(
         self,
         test_db: Session,
@@ -554,13 +764,6 @@ class TestOpenAPIResponsesCreate:
         """Follow-up assistant subtask should inherit previous executor metadata."""
         from app.services.openapi.chat_session import setup_chat_session
 
-        mock_execution_request = SimpleNamespace(
-            model_config={},
-            system_prompt="",
-            preload_skills=[],
-            skill_names=[],
-            skill_configs=[],
-        )
         previous_user = Subtask(
             user_id=test_user.id,
             task_id=test_task.id,
@@ -605,19 +808,15 @@ class TestOpenAPIResponsesCreate:
         test_db.add(previous_assistant)
         test_db.commit()
 
-        with patch(
-            "app.services.execution.TaskRequestBuilder.build",
-            return_value=mock_execution_request,
-        ):
-            setup = setup_chat_session(
-                db=test_db,
-                user=test_user,
-                team=test_team,
-                model_info={"namespace": "default", "team_name": "test-team"},
-                input_text="Make it blue",
-                tool_settings={},
-                task_id=test_task.id,
-            )
+        setup = setup_chat_session(
+            db=test_db,
+            user=test_user,
+            team=test_team,
+            model_info={"namespace": "default", "team_name": "test-team"},
+            input_text="Make it blue",
+            tool_settings={},
+            task_id=test_task.id,
+        )
 
         assert setup.assistant_subtask.executor_name == "executor-123"
         assert setup.assistant_subtask.executor_namespace == "default"
@@ -680,7 +879,9 @@ class TestOpenAPIResponsesGet:
         data = response.json()
         assert data["id"] == f"resp_{test_task.id}"
         assert data["status"] == "completed"
-        assert len(data["output"]) == 2  # user + assistant messages
+        assert len(data["output"]) == 1
+        assert data["output"][0]["type"] == "message"
+        assert data["output"][0]["role"] == "assistant"
 
     def test_get_response_user_isolation(
         self,

@@ -163,6 +163,7 @@ class QuickAccessTeam(BaseModel):
 
     id: int
     name: str
+    display_name: Optional[str] = None
     is_system: bool = False  # True if from system recommendations
     recommended_mode: Optional[Literal["chat", "code", "both"]] = "both"
     agent_type: Optional[str] = None
@@ -175,6 +176,7 @@ class QuickAccessResponse(BaseModel):
     """Quick access response with merged system recommendations"""
 
     system_version: int
+    system_team_ids: List[int] = Field(default_factory=list)
     user_version: Optional[int] = None
     show_system_recommended: bool  # True if user_version < system_version
     teams: List[QuickAccessTeam]

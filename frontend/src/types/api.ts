@@ -156,6 +156,7 @@ export interface Shell {
 export interface Team {
   id: number
   name: string
+  displayName?: string | null
   namespace?: string // Namespace for group teams (default: 'default')
   description: string
   bots: TeamBot[]
@@ -639,6 +640,7 @@ export interface SubtaskContextBrief {
 export interface QuickAccessTeam {
   id: number
   name: string
+  display_name?: string | null
   is_system: boolean // True if from system recommendations
   recommended_mode?: 'chat' | 'code' | 'both'
   agent_type?: string
@@ -647,6 +649,7 @@ export interface QuickAccessTeam {
 
 export interface QuickAccessResponse {
   system_version: number
+  system_team_ids: number[]
   user_version: number | null
   show_system_recommended: boolean // True if user_version < system_version
   teams: QuickAccessTeam[]

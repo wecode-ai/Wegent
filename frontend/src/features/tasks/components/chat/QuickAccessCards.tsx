@@ -4,11 +4,11 @@
 
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { SparklesIcon, ChevronDownIcon } from '@heroicons/react/24/outline'
 import { Check, Search } from 'lucide-react'
 import { userApis } from '@/apis/user'
-import { QuickAccessTeam, Team } from '@/types/api'
+import type { QuickAccessResponse, QuickAccessTeam, Team, UserPreferences } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Input } from '@/components/ui/input'
@@ -54,31 +54,48 @@ export function QuickAccessCards({
 }: QuickAccessCardsProps) {
   const { t } = useTranslation(['common', 'wizard'])
   const [quickAccessTeams, setQuickAccessTeams] = useState<QuickAccessTeam[]>([])
+  const [quickAccessResponse, setQuickAccessResponse] = useState<QuickAccessResponse | null>(null)
   const [isQuickAccessLoading, setIsQuickAccessLoading] = useState(true)
   const [clickedTeamId, setClickedTeamId] = useState<number | null>(null)
+  const [draggedTeamId, setDraggedTeamId] = useState<number | null>(null)
+  const [dragOverTeamId, setDragOverTeamId] = useState<number | null>(null)
   const [showWizard, setShowWizard] = useState(false)
   const [morePopoverOpen, setMorePopoverOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
+  const isDragReorderingRef = useRef(false)
   const sharedBadgeStyle = getSharedBadgeStyle()
 
-  type DisplayTeam = Team & { is_system: boolean; recommended_mode?: 'chat' | 'code' | 'both' }
+  type DisplayTeam = Team & {
+    display_name?: string | null
+    is_system: boolean
+    recommended_mode?: 'chat' | 'code' | 'both'
+  }
+
+  const getTeamDisplayName = (team: DisplayTeam) => team.display_name?.trim() || team.name
+
+  const fetchQuickAccess = useCallback(async () => {
+    try {
+      setIsQuickAccessLoading(true)
+      const response = await userApis.getQuickAccess()
+      setQuickAccessResponse(response)
+      setQuickAccessTeams(response.teams)
+    } catch (error) {
+      console.error('Failed to fetch quick access teams:', error)
+      setQuickAccessResponse(null)
+      setQuickAccessTeams([])
+    } finally {
+      setIsQuickAccessLoading(false)
+    }
+  }, [])
 
   useEffect(() => {
-    const fetchQuickAccess = async () => {
-      try {
-        setIsQuickAccessLoading(true)
-        const response = await userApis.getQuickAccess()
-        setQuickAccessTeams(response.teams)
-      } catch (error) {
-        console.error('Failed to fetch quick access teams:', error)
-        setQuickAccessTeams([])
-      } finally {
-        setIsQuickAccessLoading(false)
-      }
-    }
-
     fetchQuickAccess()
-  }, [])
+    window.addEventListener('quick-access-updated', fetchQuickAccess)
+
+    return () => {
+      window.removeEventListener('quick-access-updated', fetchQuickAccess)
+    }
+  }, [fetchQuickAccess])
 
   // Filter teams by bind_mode based on current mode
   const filteredTeams = teams.filter(team => {
@@ -91,23 +108,20 @@ export function QuickAccessCards({
   })
 
   // Get all quick access teams matched with full team data
-  const allDisplayTeams: DisplayTeam[] =
-    quickAccessTeams.length > 0
-      ? quickAccessTeams
-          .map(qa => {
-            const fullTeam = filteredTeams.find(t => t.id === qa.id)
-            if (fullTeam) {
-              return {
-                ...fullTeam,
-                is_system: qa.is_system,
-                recommended_mode: qa.recommended_mode || fullTeam.recommended_mode,
-              } as DisplayTeam
-            }
-            return null
-          })
-          .filter((t): t is DisplayTeam => t !== null)
-      : // Fallback: show first teams from filtered list if no quick access configured
-        filteredTeams.map(t => ({ ...t, is_system: false }) as DisplayTeam)
+  const allDisplayTeams: DisplayTeam[] = quickAccessTeams
+    .map(qa => {
+      const fullTeam = filteredTeams.find(t => t.id === qa.id)
+      if (fullTeam) {
+        return {
+          ...fullTeam,
+          display_name: qa.display_name,
+          is_system: qa.is_system,
+          recommended_mode: qa.recommended_mode || fullTeam.recommended_mode,
+        } as DisplayTeam
+      }
+      return null
+    })
+    .filter((t): t is DisplayTeam => t !== null)
 
   // Filter out default team only (keep selected team visible with selection state)
   const displayTeams = allDisplayTeams.filter(t => {
@@ -120,9 +134,13 @@ export function QuickAccessCards({
   const hasMoreTeams = displayTeams.length > MAX_TEAM_CARDS
 
   // Filter teams by search query for the more popover
-  const filteredTeamsBySearch = displayTeams.filter(team =>
-    team.name.toLowerCase().includes(searchQuery.toLowerCase())
-  )
+  const filteredTeamsBySearch = displayTeams.filter(team => {
+    const normalizedSearch = searchQuery.toLowerCase()
+    return (
+      getTeamDisplayName(team).toLowerCase().includes(normalizedSearch) ||
+      team.name.toLowerCase().includes(normalizedSearch)
+    )
+  })
 
   const handleMorePopoverOpenChange = (newOpen: boolean) => {
     setMorePopoverOpen(newOpen)
@@ -139,6 +157,8 @@ export function QuickAccessCards({
 
   const handleTeamClick = useCallback(
     (team: DisplayTeam) => {
+      if (isDragReorderingRef.current) return
+
       setClickedTeamId(team.id)
 
       setTimeout(() => {
@@ -151,6 +171,103 @@ export function QuickAccessCards({
     },
     [onTeamSelect]
   )
+
+  const persistQuickAccessOrder = useCallback(
+    async (orderedTeams: QuickAccessTeam[], previousTeams: QuickAccessTeam[]) => {
+      try {
+        const currentUser = await userApis.getCurrentUser()
+        const currentPreferences: UserPreferences = {
+          send_key: currentUser.preferences?.send_key || 'enter',
+          ...currentUser.preferences,
+        }
+        const nextQuickAccess = {
+          ...currentPreferences.quick_access,
+          version: quickAccessResponse?.system_version ?? currentPreferences.quick_access?.version,
+          teams: orderedTeams.map(team => team.id),
+        }
+
+        await userApis.updateUser({
+          preferences: {
+            ...currentPreferences,
+            quick_access: nextQuickAccess,
+          },
+        })
+      } catch (error) {
+        console.error('Failed to reorder quick access teams:', error)
+        setQuickAccessTeams(previousTeams)
+        setQuickAccessResponse(previous =>
+          previous
+            ? {
+                ...previous,
+                teams: previousTeams,
+              }
+            : previous
+        )
+      }
+    },
+    [quickAccessResponse?.system_version]
+  )
+
+  const reorderQuickAccessTeams = useCallback(
+    (sourceTeamId: number, targetTeamId: number) => {
+      if (sourceTeamId === targetTeamId) return
+
+      const sourceIndex = quickAccessTeams.findIndex(team => team.id === sourceTeamId)
+      const targetIndex = quickAccessTeams.findIndex(team => team.id === targetTeamId)
+
+      if (sourceIndex === -1 || targetIndex === -1) return
+
+      const previousTeams = [...quickAccessTeams]
+      const reorderedTeams = [...quickAccessTeams]
+      const [movedTeam] = reorderedTeams.splice(sourceIndex, 1)
+      reorderedTeams.splice(targetIndex, 0, movedTeam)
+
+      setQuickAccessTeams(reorderedTeams)
+      setQuickAccessResponse(previous =>
+        previous
+          ? {
+              ...previous,
+              teams: reorderedTeams,
+            }
+          : previous
+      )
+      void persistQuickAccessOrder(reorderedTeams, previousTeams)
+    },
+    [persistQuickAccessOrder, quickAccessTeams]
+  )
+
+  const handleCardDragStart = (event: React.DragEvent<HTMLDivElement>, team: DisplayTeam) => {
+    setDraggedTeamId(team.id)
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('text/plain', String(team.id))
+  }
+
+  const handleCardDragOver = (event: React.DragEvent<HTMLDivElement>, team: DisplayTeam) => {
+    if (!draggedTeamId || draggedTeamId === team.id) return
+
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'move'
+    setDragOverTeamId(team.id)
+  }
+
+  const handleCardDrop = (event: React.DragEvent<HTMLDivElement>, team: DisplayTeam) => {
+    event.preventDefault()
+
+    if (!draggedTeamId) return
+
+    isDragReorderingRef.current = true
+    reorderQuickAccessTeams(draggedTeamId, team.id)
+    setDraggedTeamId(null)
+    setDragOverTeamId(null)
+  }
+
+  const handleCardDragEnd = () => {
+    setDraggedTeamId(null)
+    setDragOverTeamId(null)
+    window.setTimeout(() => {
+      isDragReorderingRef.current = false
+    }, 0)
+  }
 
   const handleWizardSuccess = async (teamId: number, _teamName: string) => {
     setShowWizard(false)
@@ -215,16 +332,23 @@ export function QuickAccessCards({
     const isSelected = selectedTeam?.id === team.id
     const isClicked = clickedTeamId === team.id
     const description = team.description || t('common:teams.no_description')
+    const displayName = getTeamDisplayName(team)
     const isGroupTeam =
       team.namespace && team.namespace !== 'default' && team.namespace !== 'community'
 
     return (
       <div
+        draggable
         onClick={() => !isClicked && handleTeamClick(team)}
+        onDragStart={event => handleCardDragStart(event, team)}
+        onDragOver={event => handleCardDragOver(event, team)}
+        onDragLeave={() => setDragOverTeamId(null)}
+        onDrop={event => handleCardDrop(event, team)}
+        onDragEnd={handleCardDragEnd}
         data-testid={`quick-access-team-${team.name}`}
         className={`
           group relative flex flex-col justify-center
-          cursor-pointer transition-all duration-200
+          cursor-grab active:cursor-grabbing transition-all duration-200
           ${
             isSelected
               ? 'border-l-[3px] border-l-primary border-y border-r border-border bg-primary/5'
@@ -232,6 +356,8 @@ export function QuickAccessCards({
           }
           ${isClicked ? 'clicking-card' : ''}
           ${isClicked ? 'pointer-events-none' : ''}
+          ${draggedTeamId === team.id ? 'opacity-60' : ''}
+          ${dragOverTeamId === team.id ? 'ring-2 ring-primary/40' : ''}
           ${!isSelected ? 'hover:shadow-[0_2px_12px_0_rgba(0,0,0,0.1)]' : ''}
         `}
         style={{
@@ -258,9 +384,9 @@ export function QuickAccessCards({
             className={`block text-[15px] font-semibold leading-5 truncate ${
               isSelected ? 'text-primary' : 'text-text-primary'
             }`}
-            title={team.name}
+            title={displayName}
           >
-            {team.name}
+            {displayName}
           </span>
         </div>
 
@@ -353,6 +479,7 @@ export function QuickAccessCards({
             ) : (
               filteredTeamsBySearch.map(team => {
                 const isSelected = selectedTeam?.id === team.id
+                const displayName = getTeamDisplayName(team)
                 const isSharedTeam = team.share_status === 2 && team.user?.user_name
                 const isGroupTeam =
                   team.namespace && team.namespace !== 'default' && team.namespace !== 'community'
@@ -386,9 +513,9 @@ export function QuickAccessCards({
                       <div className="flex items-center gap-2 min-w-0">
                         <span
                           className="text-sm text-text-primary truncate flex-1 min-w-0"
-                          title={team.name}
+                          title={displayName}
                         >
-                          {team.name}
+                          {displayName}
                         </span>
                         {isGroupTeam && (
                           <Tag

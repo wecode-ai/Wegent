@@ -579,6 +579,8 @@ class OpenAPIStreamingService:
                 }
             )
 
+        except NotImplementedError:
+            raise
         except Exception as e:
             logger.exception(f"Error during streaming response: {e}")
             # Official OpenAI event: response.failed (or error)

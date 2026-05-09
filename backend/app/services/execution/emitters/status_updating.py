@@ -19,6 +19,10 @@ page refresh recovery.
 import logging
 from typing import Any, Dict, Optional
 
+from app.services.chat.trigger.lifecycle import (
+    collect_completed_result,
+    persist_completed_result,
+)
 from shared.models import EventType, ExecutionEvent
 
 from .protocol import ResultEmitter
@@ -103,12 +107,16 @@ class StatusUpdatingEmitter(ResultEmitter):
         if event.type == EventType.TOOL_START.value:
             # When a tool starts, finalize any current text block and add tool block
             display_name = event.data.get("display_name") if event.data else None
+            tool_protocol = event.data.get("tool_protocol") if event.data else None
+            server_label = event.data.get("server_label") if event.data else None
             await session_manager.add_tool_block(
                 subtask_id=self._subtask_id,
                 tool_use_id=event.tool_use_id or "",
                 tool_name=event.tool_name or "",
                 tool_input=event.tool_input,
                 display_name=display_name,
+                tool_protocol=tool_protocol,
+                server_label=server_label,
             )
         elif event.type == EventType.TOOL_RESULT.value:
             # Update tool block status when result arrives
@@ -116,12 +124,16 @@ class StatusUpdatingEmitter(ResultEmitter):
                 tool_status = (
                     "error" if (event.data or {}).get("status") == "failed" else "done"
                 )
+                tool_protocol = event.data.get("tool_protocol") if event.data else None
+                server_label = event.data.get("server_label") if event.data else None
                 await session_manager.update_tool_block_status(
                     subtask_id=self._subtask_id,
                     tool_use_id=event.tool_use_id,
                     status=tool_status,
                     tool_output=event.tool_output,
                     tool_input=event.tool_input,
+                    tool_protocol=tool_protocol,
+                    server_label=server_label,
                 )
         elif event.type == EventType.CHUNK.value:
             # Accumulate content and track text blocks
@@ -259,80 +271,24 @@ class StatusUpdatingEmitter(ResultEmitter):
         Args:
             result: Optional result data from the event
         """
-        from app.core.events import TaskCompletedEvent, get_event_bus
-        from app.db.session import SessionLocal
-        from app.models.subtask import Subtask
-        from app.services.chat.storage import session_manager
-        from app.services.chat.storage.db import db_handler
-
         try:
-            # Get accumulated content and blocks from session_manager
-            accumulated_content = await session_manager.get_accumulated_content(
-                self._subtask_id
-            )
-            blocks = await session_manager.finalize_and_get_blocks(self._subtask_id)
-
-            # Get existing subtask.result from database to preserve silent_exit flag
-            # set by MCP tools (e.g., silent_exit tool)
-            existing_result = {}
-            db = SessionLocal()
-            try:
-                subtask = (
-                    db.query(Subtask).filter(Subtask.id == self._subtask_id).first()
-                )
-                if subtask and subtask.result:
-                    existing_result = subtask.result
-            finally:
-                db.close()
-
-            # Build result dict, merging existing result (preserves silent_exit flag)
-            final_result = result
-            if final_result is None:
-                final_result = {"value": accumulated_content}
-            elif isinstance(final_result, dict) and "value" not in final_result:
-                # If result exists but has no value, add accumulated content
-                final_result = {**final_result, "value": accumulated_content}
-
-            # Merge existing result fields (like silent_exit) into final_result
-            if existing_result and isinstance(final_result, dict):
-                for key, value in existing_result.items():
-                    if key not in final_result:
-                        final_result[key] = value
-                        logger.debug(
-                            f"[StatusUpdatingEmitter] Preserved existing result field "
-                            f"'{key}' for subtask {self._subtask_id}"
-                        )
-
-            # Add collected blocks to result if we have any and result doesn't have blocks
-            # This ensures mixed content (tool-text-tool-text) is preserved for database reload
-            if blocks and isinstance(final_result, dict):
-                existing_blocks = final_result.get("blocks")
-                if not existing_blocks:
-                    final_result["blocks"] = blocks
-                    logger.info(
-                        f"[StatusUpdatingEmitter] Added {len(blocks)} blocks to result "
-                        f"for subtask {self._subtask_id}"
-                    )
-
-            # Update subtask status to COMPLETED with executor info for container reuse
-            # Task status will be determined by collaboration strategy in db_handler
-            await db_handler.update_subtask_status(
+            final_result = await collect_completed_result(
                 self._subtask_id,
-                "COMPLETED",
+                status="COMPLETED",
+                result=result,
+            )
+            await persist_completed_result(
+                subtask_id=self._subtask_id,
+                task_id=self._task_id,
+                status="COMPLETED",
                 result=final_result,
                 executor_name=self._executor_name,
                 executor_namespace=self._executor_namespace,
             )
-
             self._status_updated = True
             logger.info(
                 f"[StatusUpdatingEmitter] Updated subtask {self._subtask_id} "
                 f"and task {self._task_id} status to COMPLETED"
-            )
-
-            # Clean up streaming state (including task-level streaming status)
-            await session_manager.cleanup_streaming_state(
-                self._subtask_id, task_id=self._task_id
             )
 
             # Publish TaskCompletedEvent for unified handling
@@ -357,60 +313,26 @@ class StatusUpdatingEmitter(ResultEmitter):
             error_message: Error message
             error_code: Classified error code (e.g., 'context_length_exceeded')
         """
-        from app.services.chat.storage import session_manager
-        from app.services.chat.storage.db import db_handler
-
         try:
-            # Keep partial streaming output even when execution fails.
-            accumulated_content = await session_manager.get_accumulated_content(
-                self._subtask_id
-            )
-            blocks = await session_manager.finalize_and_get_blocks(self._subtask_id)
-
-            result: Optional[Dict[str, Any]] = None
-            if accumulated_content:
-                result = {"value": accumulated_content}
-
-            if blocks:
-                if result is None:
-                    result = {}
-                result["blocks"] = blocks
-                logger.info(
-                    f"[StatusUpdatingEmitter] Added {len(blocks)} blocks to failed result "
-                    f"for subtask {self._subtask_id}"
-                )
-
-            # Store classified error type and HTTP status code in result for frontend recovery
-            if error_code:
-                if result is None:
-                    result = {}
-                result["error_type"] = error_code
-
-                from shared.utils.error_classifier import extract_http_status_code
-
-                http_code = extract_http_status_code(error_message)
-                if http_code is not None:
-                    result["error_code"] = http_code
-
-            # Update subtask status to FAILED with executor info for container reuse
-            await db_handler.update_subtask_status(
+            result = await collect_completed_result(
                 self._subtask_id,
-                "FAILED",
+                status="FAILED",
+                error_message=error_message,
+                error_code=error_code,
+            )
+            await persist_completed_result(
+                subtask_id=self._subtask_id,
+                task_id=self._task_id,
+                status="FAILED",
                 result=result,
                 error=error_message,
                 executor_name=self._executor_name,
                 executor_namespace=self._executor_namespace,
             )
-
             self._status_updated = True
             logger.info(
                 f"[StatusUpdatingEmitter] Updated subtask {self._subtask_id} "
                 f"and task {self._task_id} status to FAILED"
-            )
-
-            # Clean up streaming state (including task-level streaming status)
-            await session_manager.cleanup_streaming_state(
-                self._subtask_id, task_id=self._task_id
             )
 
             # Publish TaskCompletedEvent for unified handling
@@ -428,50 +350,23 @@ class StatusUpdatingEmitter(ResultEmitter):
         Also publishes TaskCompletedEvent for unified handling by subscription
         task completion handler and other event subscribers.
         """
-        from app.services.chat.storage import session_manager
-        from app.services.chat.storage.db import db_handler
-
         try:
-            # Get accumulated content and blocks from session_manager
-            accumulated_content = await session_manager.get_accumulated_content(
-                self._subtask_id
-            )
-            blocks = await session_manager.finalize_and_get_blocks(self._subtask_id)
-
-            # Build result with accumulated content
-            result: Optional[Dict[str, Any]] = (
-                {"value": accumulated_content} if accumulated_content else None
-            )
-
-            # Add collected blocks to result if we have any
-            # This ensures mixed content (tool-text-tool-text) is preserved for database reload
-            if blocks:
-                if result is None:
-                    result = {}
-                result["blocks"] = blocks
-                logger.info(
-                    f"[StatusUpdatingEmitter] Added {len(blocks)} blocks to cancelled result "
-                    f"for subtask {self._subtask_id}"
-                )
-
-            # Update subtask status to CANCELLED with executor info for container reuse
-            await db_handler.update_subtask_status(
+            result = await collect_completed_result(
                 self._subtask_id,
-                "CANCELLED",
+                status="CANCELLED",
+            )
+            await persist_completed_result(
+                subtask_id=self._subtask_id,
+                task_id=self._task_id,
+                status="CANCELLED",
                 result=result,
                 executor_name=self._executor_name,
                 executor_namespace=self._executor_namespace,
             )
-
             self._status_updated = True
             logger.info(
                 f"[StatusUpdatingEmitter] Updated subtask {self._subtask_id} "
                 f"and task {self._task_id} status to CANCELLED"
-            )
-
-            # Clean up streaming state (including task-level streaming status)
-            await session_manager.cleanup_streaming_state(
-                self._subtask_id, task_id=self._task_id
             )
 
             # Publish TaskCompletedEvent for unified handling

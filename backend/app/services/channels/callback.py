@@ -271,6 +271,12 @@ class BaseChannelCallbackService(ABC, Generic[T]):
                     f"[{self._channel_type.value}Callback] Failed to close emitter "
                     f"for task {task_id}"
                 )
+        # Safety cleanup: delete shared streaming content key
+        streaming_content_key = f"channel:streaming_content:{task_id}"
+        try:
+            await cache_manager.delete(streaming_content_key)
+        except Exception:
+            pass
         self._remove_lock_for_task(task_id)
         # Clean up offset tracking
         self._last_emitted_offsets.pop(task_id, None)
