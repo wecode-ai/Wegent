@@ -62,8 +62,14 @@ export interface KnowledgeSidebarProps {
   onSelectAll: () => void
   /** Select "Groups" to show all groups list */
   onSelectGroups: () => void
+  /** Select "DingTalk" docs */
+  onSelectDingtalk: () => void
   /** Callback to collapse the sidebar */
   onCollapse?: () => void
+  /** DingTalk synced doc count */
+  dingtalkDocCount: number
+  /** Whether DingTalk MCP is configured */
+  isDingtalkConfigured: boolean
 }
 
 export function KnowledgeSidebar({
@@ -83,7 +89,10 @@ export function KnowledgeSidebar({
   onSelectGroup,
   onSelectAll,
   onSelectGroups,
+  onSelectDingtalk,
   onCollapse,
+  dingtalkDocCount,
+  isDingtalkConfigured,
 }: KnowledgeSidebarProps) {
   const { t } = useTranslation('knowledge')
   const [isSearchOpen, setIsSearchOpen] = useState(false)
@@ -182,19 +191,23 @@ export function KnowledgeSidebar({
           onSelect={onSelectKb}
           onClear={onClearRecent}
         />
-        {/* Navigation section (Personal + Organization + Groups) */}
+        {/* Navigation section (Personal + Organization + DingTalk + Groups) */}
         <NavigationSection
           groups={groups}
           isLoading={isGroupsLoading}
           selectedGroupId={selectedGroupId}
           isAllSelected={viewMode === 'all'}
           isGroupsSelected={viewMode === 'groups'}
+          isDingtalkSelected={viewMode === 'dingtalk'}
           isExpanded={sectionStates.groups}
           onToggle={() => toggleSection('groups')}
           onSelectAll={onSelectAll}
           onSelectGroup={onSelectGroup}
           onSelectGroups={onSelectGroups}
+          onSelectDingtalk={onSelectDingtalk}
           totalKbCount={groups.reduce((sum, g) => sum + g.kbCount, 0)}
+          dingtalkDocCount={dingtalkDocCount}
+          isDingtalkConfigured={isDingtalkConfigured}
         />
       </div>
 

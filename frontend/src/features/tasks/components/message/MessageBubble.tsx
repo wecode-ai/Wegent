@@ -46,6 +46,7 @@ import CollapsibleMessage from './CollapsibleMessage'
 import { processCitePatterns } from '../../utils/processCitePatterns'
 import RegenerateModelPopover from './RegenerateModelPopover'
 import VideoConfigBadge from './VideoConfigBadge'
+import { getMessageBubbleClassNames } from './messageBubbleStyles'
 import type {
   ClarificationData,
   FinalPromptData,
@@ -528,10 +529,8 @@ const MessageBubble = memo(
     // Default to true for user messages if isCurrentUserMessage is not provided
     const shouldAlignRight = isUserTypeMessage && (isCurrentUserMessage ?? true)
 
-    const bubbleBaseClasses = `relative w-full p-5 text-text-primary ${isUserTypeMessage ? 'overflow-visible' : 'pb-10'}`
-    const bubbleTypeClasses = isUserTypeMessage
-      ? 'group rounded-2xl border border-border bg-surface shadow-sm'
-      : ''
+    const { baseClasses: bubbleBaseClasses, typeClasses: bubbleTypeClasses } =
+      getMessageBubbleClassNames(isUserTypeMessage)
 
     const formatTimestamp = (timestamp: number | undefined) => {
       return formatDateTime(timestamp)

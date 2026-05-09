@@ -37,6 +37,8 @@ class DingTalkCallbackInfo(BaseCallbackInfo):
     webhook_url: Optional[str] = None  # Optional webhook URL for sending messages
     # Serialized incoming_message data for reply
     incoming_message_data: Optional[Dict[str, Any]] = None
+    # AI Card instance ID for cross-worker emitter reconstruction
+    card_instance_id: Optional[str] = None
 
     def __init__(
         self,
@@ -44,6 +46,7 @@ class DingTalkCallbackInfo(BaseCallbackInfo):
         conversation_id: str,
         webhook_url: Optional[str] = None,
         incoming_message_data: Optional[Dict[str, Any]] = None,
+        card_instance_id: Optional[str] = None,
     ):
         """Initialize DingTalkCallbackInfo.
 
@@ -52,6 +55,7 @@ class DingTalkCallbackInfo(BaseCallbackInfo):
             conversation_id: DingTalk conversation ID
             webhook_url: Optional webhook URL for sending messages
             incoming_message_data: Serialized incoming_message data for reply
+            card_instance_id: AI Card instance ID for cross-worker reconstruction
         """
         super().__init__(
             channel_type=ChannelType.DINGTALK,
@@ -60,6 +64,7 @@ class DingTalkCallbackInfo(BaseCallbackInfo):
         )
         self.webhook_url = webhook_url
         self.incoming_message_data = incoming_message_data
+        self.card_instance_id = card_instance_id
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for Redis storage."""
@@ -68,6 +73,7 @@ class DingTalkCallbackInfo(BaseCallbackInfo):
             {
                 "webhook_url": self.webhook_url,
                 "incoming_message_data": self.incoming_message_data,
+                "card_instance_id": self.card_instance_id,
             }
         )
         return data
@@ -80,6 +86,7 @@ class DingTalkCallbackInfo(BaseCallbackInfo):
             conversation_id=data.get("conversation_id", ""),
             webhook_url=data.get("webhook_url"),
             incoming_message_data=data.get("incoming_message_data"),
+            card_instance_id=data.get("card_instance_id"),
         )
 
 
@@ -206,6 +213,10 @@ class DingTalkCallbackService(BaseChannelCallbackService[DingTalkCallbackInfo]):
     ) -> Optional["ResultEmitter"]:
         """Create a streaming emitter for DingTalk.
 
+        If callback_info contains a card_instance_id from a previously started
+        AI Card, reconstructs the emitter to continue streaming to the same card
+        (cross-worker scenario).
+
         Args:
             task_id: Task ID
             subtask_id: Subtask ID
@@ -246,12 +257,20 @@ class DingTalkCallbackService(BaseChannelCallbackService[DingTalkCallbackInfo]):
                 callback_info.incoming_message_data
             )
 
-            # Create new emitter
+            # Create emitter, reconnecting to existing card if possible
             from app.services.channels.dingtalk.emitter import StreamingResponseEmitter
+
+            existing_card_id = callback_info.card_instance_id
+            if existing_card_id:
+                logger.info(
+                    f"[DingTalkCallback] Reconstructing emitter for existing card "
+                    f"{existing_card_id} on task {task_id}"
+                )
 
             emitter = StreamingResponseEmitter(
                 dingtalk_client=channel._client,
                 incoming_message=incoming_message,
+                existing_card_instance_id=existing_card_id,
             )
 
             return emitter

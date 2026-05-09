@@ -10,6 +10,7 @@ from app.api.endpoints import (
     auth,
     deep_research,
     devices,
+    dingtalk_docs,
     groups,
     health,
     knowledge,
@@ -169,6 +170,9 @@ api_router.include_router(
 # Unified share endpoints (Team, Task, KnowledgeBase)
 api_router.include_router(share.router, prefix="/share", tags=["share"])
 api_router.include_router(tables.router, prefix="/tables", tags=["tables"])
+api_router.include_router(
+    dingtalk_docs.router, prefix="/dingtalk-docs", tags=["dingtalk-docs"]
+)
 
 # Work queue endpoints (message forwarding and inbox)
 api_router.include_router(

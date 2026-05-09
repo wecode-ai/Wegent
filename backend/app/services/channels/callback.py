@@ -16,15 +16,17 @@ its own callback logic while sharing common infrastructure.
 import asyncio
 import json
 import logging
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Dict, Generic, Optional, TypeVar
+from typing import TYPE_CHECKING, Any, Dict, Generic, Iterator, Optional, Tuple, TypeVar
 
 from app.core.cache import cache_manager
 
 if TYPE_CHECKING:
     from app.services.execution.emitters import ResultEmitter
+    from shared.models import ExecutionEvent
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +110,10 @@ class BaseChannelCallbackService(ABC, Generic[T]):
         self._locks_lock = asyncio.Lock()
         # Track last emitted content offset for each task to calculate delta
         self._last_emitted_offsets: Dict[int, int] = {}
+        # Track emitter creation time for TTL cleanup
+        self._emitter_created_at: Dict[int, float] = {}
+        # Emitter TTL in seconds (30 minutes)
+        self._emitter_ttl = 30 * 60
 
     @property
     def channel_type(self) -> ChannelType:
@@ -185,7 +191,7 @@ class BaseChannelCallbackService(ABC, Generic[T]):
         """Get existing emitter or create a new one for streaming.
 
         Uses per-task locking to prevent concurrent creation of multiple emitters
-        for the same task.
+        for the same task. Automatically cleans up expired emitters before lookup.
 
         Args:
             task_id: Task ID
@@ -194,6 +200,9 @@ class BaseChannelCallbackService(ABC, Generic[T]):
         Returns:
             ResultEmitter or None if callback info not found
         """
+        # Clean up expired emitters to prevent memory leaks
+        await self._cleanup_expired_emitters()
+
         # Quick check without lock - if emitter exists, return it
         if task_id in self._active_emitters:
             logger.debug(
@@ -233,8 +242,9 @@ class BaseChannelCallbackService(ABC, Generic[T]):
                     subtask_id=subtask_id,
                 )
 
-                # Cache the emitter
+                # Cache the emitter and track creation time
                 self._active_emitters[task_id] = emitter
+                self._emitter_created_at[task_id] = time.time()
                 logger.info(
                     f"[{self._channel_type.value}Callback] Created streaming emitter for task {task_id}"
                 )
@@ -247,13 +257,116 @@ class BaseChannelCallbackService(ABC, Generic[T]):
                 )
                 return None
 
-    def _remove_emitter(self, task_id: int) -> None:
-        """Remove emitter, lock, and offset tracking from cache."""
-        if task_id in self._active_emitters:
-            del self._active_emitters[task_id]
+    async def _remove_emitter(self, task_id: int) -> None:
+        """Remove emitter, lock, and offset tracking from cache.
+
+        Closes the emitter if it has a close() method to release resources.
+        """
+        emitter = self._active_emitters.pop(task_id, None)
+        if emitter and hasattr(emitter, "close"):
+            try:
+                await emitter.close()
+            except Exception:
+                logger.exception(
+                    f"[{self._channel_type.value}Callback] Failed to close emitter "
+                    f"for task {task_id}"
+                )
         self._remove_lock_for_task(task_id)
         # Clean up offset tracking
         self._last_emitted_offsets.pop(task_id, None)
+        self._emitter_created_at.pop(task_id, None)
+
+    async def _cleanup_expired_emitters(self) -> None:
+        """Remove emitters that have exceeded the TTL to prevent memory leaks."""
+        now = time.time()
+        expired = [
+            task_id
+            for task_id, created_at in self._emitter_created_at.items()
+            if now - created_at > self._emitter_ttl
+        ]
+        for task_id in expired:
+            logger.warning(
+                f"[{self._channel_type.value}Callback] Emitter for task {task_id} "
+                f"expired after {self._emitter_ttl}s, cleaning up"
+            )
+            await self._remove_emitter(task_id)
+
+    async def register_emitter(self, task_id: int, emitter: "ResultEmitter") -> None:
+        """Register an externally created emitter for a task.
+
+        This allows channel handlers to reuse an existing streaming emitter
+        (e.g., an AI Card already started for an acknowledgment message)
+        instead of creating a new one when callback events arrive.
+
+        If an emitter already exists for the task, it is closed before replacing.
+
+        Args:
+            task_id: Task ID
+            emitter: ResultEmitter instance to register
+        """
+        if task_id in self._active_emitters:
+            old_emitter = self._active_emitters[task_id]
+            if old_emitter is not emitter and hasattr(old_emitter, "close"):
+                try:
+                    await old_emitter.close()
+                except Exception:
+                    logger.exception(
+                        f"[{self._channel_type.value}Callback] Failed to close old emitter "
+                        f"for task {task_id}"
+                    )
+        self._active_emitters[task_id] = emitter
+        self._emitter_created_at[task_id] = time.time()
+        logger.info(
+            f"[{self._channel_type.value}Callback] Registered external emitter for task {task_id}"
+        )
+
+    async def emit_event(
+        self, task_id: int, subtask_id: int, event: "ExecutionEvent"
+    ) -> bool:
+        """Emit a single execution event to the channel.
+
+        Forwards non-terminal events (START, CHUNK, THINKING, etc.) to the
+        channel's streaming emitter. Terminal events (DONE, ERROR, CANCELLED)
+        are skipped and should be handled by send_task_result() via
+        TaskCompletedEvent to ensure proper cleanup.
+
+        Args:
+            task_id: Task ID
+            subtask_id: Subtask ID
+            event: Execution event to emit
+
+        Returns:
+            True if the event was forwarded, False otherwise
+        """
+        from shared.models import EventType
+
+        # Skip terminal events - let TaskCompletedEvent handle them for cleanup
+        if event.type in (
+            EventType.DONE.value,
+            EventType.ERROR.value,
+            EventType.CANCEL.value,
+            EventType.CANCELLED.value,
+        ):
+            return False
+
+        # Fast path: skip if no callback info exists for this task
+        if not await self.has_callback_info(task_id):
+            return False
+
+        try:
+            emitter = await self._get_or_create_emitter(task_id, subtask_id)
+            if not emitter:
+                return False
+
+            await emitter.emit(event)
+            return True
+
+        except Exception:
+            logger.exception(
+                f"[{self._channel_type.value}Callback] Failed to emit event "
+                f"{event.type} for task {task_id}"
+            )
+            return False
 
     async def send_progress(
         self,
@@ -385,6 +498,19 @@ class BaseChannelCallbackService(ABC, Generic[T]):
                 )
         return None
 
+    async def has_callback_info(self, task_id: int) -> bool:
+        """Check if callback info exists for a task without full deserialization.
+
+        Args:
+            task_id: Task ID
+
+        Returns:
+            True if callback info exists, False otherwise
+        """
+        key = f"{self.redis_key_prefix}{task_id}"
+        data = await cache_manager.get(key)
+        return data is not None
+
     async def delete_callback_info(self, task_id: int) -> None:
         """Delete callback info for a task.
 
@@ -440,9 +566,15 @@ class BaseChannelCallbackService(ABC, Generic[T]):
                         error=error_message or "Task failed",
                     )
                 else:
+                    # Pass result content to emitter so it can use the actual
+                    # AI response instead of stale accumulated content.
+                    # This is essential for device mode where executor events
+                    # arrive via device WebSocket rather than /callback.
+                    result = {"value": content} if content else None
                     await emitter.emit_done(
                         task_id=task_id,
                         subtask_id=subtask_id,
+                        result=result,
                     )
                 logger.info(
                     f"[{self._channel_type.value}Callback] Finished streaming for task {task_id}"
@@ -492,7 +624,7 @@ class BaseChannelCallbackService(ABC, Generic[T]):
                 )
 
             # Clean up
-            self._remove_emitter(task_id)
+            await self._remove_emitter(task_id)
             await self.delete_callback_info(task_id)
             return True
 
@@ -501,7 +633,7 @@ class BaseChannelCallbackService(ABC, Generic[T]):
                 f"[{self._channel_type.value}Callback] Failed to send result for task {task_id}: {e}"
             )
             # Clean up on error
-            self._remove_emitter(task_id)
+            await self._remove_emitter(task_id)
             return False
 
 
@@ -555,6 +687,16 @@ class ChannelCallbackRegistry:
             The callback service or None if not registered
         """
         return self._services.get(channel_type)
+
+    def iter_services(
+        self,
+    ) -> Iterator[Tuple[ChannelType, BaseChannelCallbackService]]:
+        """Iterate over all registered callback services.
+
+        Yields:
+            Tuples of (channel_type, service)
+        """
+        yield from self._services.items()
 
     def get_service_by_name(
         self, channel_type_name: str
