@@ -6,6 +6,7 @@
 API integration tests for OpenAPI v1/responses endpoints.
 """
 
+import json
 from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -464,6 +465,93 @@ class TestOpenAPIResponsesCreate:
         assert response.status_code == 400
         assert "Streaming is only supported" in response.json()["detail"]
 
+    @pytest.mark.asyncio
+    async def test_streaming_unsupported_returns_response_failed_event(
+        self,
+        test_db: Session,
+        test_user: User,
+        test_team: Kind,
+    ):
+        """Unsupported shells should fail inside SSE generation, not via HTTP error."""
+        from app.api.endpoints.openapi_responses import (
+            _create_streaming_response_unified,
+        )
+        from app.schemas.openapi_response import ResponseCreateInput
+
+        setup = SimpleNamespace(
+            task=SimpleNamespace(id=101, json={"metadata": {"labels": {}}}),
+            task_id=101,
+            user_subtask=SimpleNamespace(id=321),
+            assistant_subtask=SimpleNamespace(id=654),
+        )
+        execution_request = SimpleNamespace(task_id=101, subtask_id=654)
+
+        with (
+            patch(
+                "app.services.openapi.chat_session.setup_chat_session",
+                return_value=setup,
+            ),
+            patch(
+                "app.services.chat.trigger.unified.build_execution_request",
+                new=AsyncMock(return_value=execution_request),
+            ),
+            patch(
+                "app.services.execution.execution_dispatcher.supports_streaming",
+                return_value=False,
+            ),
+            patch(
+                "app.api.endpoints.openapi_responses.collect_completed_result",
+                new=AsyncMock(return_value={"value": ""}),
+            ) as mock_collect_result,
+            patch(
+                "app.api.endpoints.openapi_responses.persist_completed_result",
+                new=AsyncMock(),
+            ) as mock_persist_result,
+        ):
+            response = await _create_streaming_response_unified(
+                db=test_db,
+                user=test_user,
+                team=test_team,
+                model_info={"namespace": "default", "team_name": "test-team"},
+                request_body=ResponseCreateInput(
+                    model="default#test-team",
+                    input="hello",
+                    stream=True,
+                ),
+                input_text="hello",
+                tool_settings={},
+            )
+            body = []
+            async for chunk in response.body_iterator:
+                body.append(chunk.decode() if isinstance(chunk, bytes) else chunk)
+
+        payload = "".join(body)
+        events = []
+        for chunk in payload.split("\n\n"):
+            chunk = chunk.strip()
+            if not chunk.startswith("data: "):
+                continue
+            events.append(json.loads(chunk.removeprefix("data: ").strip()))
+
+        failed_event = next(
+            event for event in events if event["type"] == "response.failed"
+        )
+        assert failed_event["response"]["status"] == "failed"
+        assert failed_event["response"]["error"]["code"] == "not_implemented"
+        mock_collect_result.assert_awaited_once_with(
+            654,
+            status="FAILED",
+            error_message="Streaming not supported for this shell type",
+            error_code="not_implemented",
+        )
+        mock_persist_result.assert_awaited_once_with(
+            subtask_id=654,
+            task_id=101,
+            status="FAILED",
+            result={"value": ""},
+            error="Streaming not supported for this shell type",
+        )
+
     def test_create_response_with_wegent_tools(
         self, test_client: TestClient, test_api_key
     ):
@@ -577,6 +665,90 @@ class TestOpenAPIResponsesCreate:
         assert mock_build_execution_request.await_args.kwargs["user_subtask_id"] == 321
         assert mock_build_execution_request.await_args.kwargs["message"] == (
             "follow-up question"
+        )
+
+    @pytest.mark.asyncio
+    async def test_non_streaming_dispatch_failure_persists_failed_status(
+        self,
+        test_db: Session,
+        test_user: User,
+        test_team: Kind,
+    ):
+        """Dispatch failures before terminal events should still persist FAILED."""
+        from fastapi import HTTPException
+
+        from app.api.endpoints.openapi_responses import (
+            _create_non_streaming_response_unified,
+        )
+        from app.schemas.openapi_response import ResponseCreateInput
+
+        setup = SimpleNamespace(
+            task=SimpleNamespace(id=101, json={"metadata": {"labels": {}}}),
+            task_id=101,
+            user_subtask=SimpleNamespace(id=321),
+            assistant_subtask=SimpleNamespace(id=654),
+        )
+        execution_request = SimpleNamespace(task_id=101, subtask_id=654)
+        mock_emitter = MagicMock()
+        mock_emitter.collect = AsyncMock(return_value=("", None))
+
+        with (
+            patch(
+                "app.services.openapi.chat_session.setup_chat_session",
+                return_value=setup,
+            ),
+            patch(
+                "app.services.chat.trigger.unified.build_execution_request",
+                new=AsyncMock(return_value=execution_request),
+            ),
+            patch(
+                "app.services.execution.execution_dispatcher.supports_streaming",
+                return_value=True,
+            ),
+            patch(
+                "app.services.execution.execution_dispatcher.dispatch",
+                new=AsyncMock(side_effect=RuntimeError("dispatcher boom")),
+            ),
+            patch(
+                "app.services.execution.emitters.SSEResultEmitter",
+                return_value=mock_emitter,
+            ),
+            patch(
+                "app.api.endpoints.openapi_responses.collect_completed_result",
+                new=AsyncMock(return_value={"value": ""}),
+            ) as mock_collect_result,
+            patch(
+                "app.api.endpoints.openapi_responses.persist_completed_result",
+                new=AsyncMock(),
+            ) as mock_persist_result,
+        ):
+            with pytest.raises(HTTPException) as exc_info:
+                await _create_non_streaming_response_unified(
+                    db=test_db,
+                    user=test_user,
+                    team=test_team,
+                    model_info={"namespace": "default", "team_name": "test-team"},
+                    request_body=ResponseCreateInput(
+                        model="default#test-team",
+                        input="follow-up question",
+                    ),
+                    input_text="follow-up question",
+                    tool_settings={},
+                )
+
+        assert exc_info.value.status_code == 500
+        mock_collect_result.assert_awaited_once_with(
+            654,
+            status="FAILED",
+            error_message="dispatcher boom",
+            error_code=None,
+        )
+        mock_persist_result.assert_awaited_once_with(
+            subtask_id=654,
+            task_id=101,
+            status="FAILED",
+            result={"value": ""},
+            error="dispatcher boom",
         )
 
     def test_setup_chat_session_reuses_previous_executor_for_follow_up(

@@ -59,6 +59,10 @@ router = APIRouter()
 limiter = get_limiter()
 
 
+class _DispatchWithoutTerminalError(RuntimeError):
+    """Raised when dispatch fails before any terminal event is emitted."""
+
+
 def _task_to_response_object(
     task_dict: Dict[str, Any],
     model_string: str,
@@ -102,6 +106,29 @@ def _filter_current_assistant_turn(
     assistant_subtask_id: int,
 ) -> list[Subtask]:
     return [subtask for subtask in subtasks if subtask.id == assistant_subtask_id]
+
+
+async def _persist_terminal_failure(
+    *,
+    subtask_id: int,
+    task_id: int,
+    error_message: str,
+    error_code: Optional[str] = None,
+) -> None:
+    """Persist a terminal FAILED result when execution aborts before emitting one."""
+    result = await collect_completed_result(
+        subtask_id,
+        status="FAILED",
+        error_message=error_message,
+        error_code=error_code,
+    )
+    await persist_completed_result(
+        subtask_id=subtask_id,
+        task_id=task_id,
+        status="FAILED",
+        result=result,
+        error=error_message,
+    )
 
 
 @router.post("")
@@ -390,24 +417,6 @@ async def _create_non_streaming_response_unified(
             f"to subtask {setup.user_subtask.id}"
         )
 
-    async def _persist_terminal_failure(
-        error_message: str,
-        error_code: Optional[str] = None,
-    ) -> None:
-        result = await collect_completed_result(
-            assistant_subtask_id,
-            status="FAILED",
-            error_message=error_message,
-            error_code=error_code,
-        )
-        await persist_completed_result(
-            subtask_id=assistant_subtask_id,
-            task_id=task_kind_id,
-            status="FAILED",
-            result=result,
-            error=error_message,
-        )
-
     # Convert reasoning config from Pydantic model to dict
     reasoning_config = None
     if request_body.reasoning:
@@ -431,7 +440,11 @@ async def _create_non_streaming_response_unified(
         )
     except Exception as e:
         logger.error(f"Failed to build execution request: {e}")
-        await _persist_terminal_failure(str(e))
+        await _persist_terminal_failure(
+            subtask_id=assistant_subtask_id,
+            task_id=task_kind_id,
+            error_message=str(e),
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to build execution request: {str(e)}",
@@ -464,7 +477,7 @@ async def _create_non_streaming_response_unified(
         if final_event and final_event.type == EventType.ERROR.value:
             raise RuntimeError(final_event.error or "Unknown error")
         if dispatch_error is not None and final_event is None:
-            raise dispatch_error
+            raise _DispatchWithoutTerminalError(str(dispatch_error)) from dispatch_error
 
         return accumulated_content, final_event
 
@@ -522,6 +535,13 @@ async def _create_non_streaming_response_unified(
                     f"[BACKGROUND] Task completed: task_id={task_kind_id}, "
                     f"subtask_id={assistant_subtask_id}, content_len={len(accumulated_content)}"
                 )
+            except _DispatchWithoutTerminalError as e:
+                await _persist_terminal_failure(
+                    subtask_id=assistant_subtask_id,
+                    task_id=task_kind_id,
+                    error_message=str(e),
+                )
+                logger.exception(f"[BACKGROUND] Error in background task: {e}")
             except Exception as e:
                 logger.exception(f"[BACKGROUND] Error in background task: {e}")
 
@@ -552,6 +572,17 @@ async def _create_non_streaming_response_unified(
     try:
         accumulated_content, _ = await _execute_and_collect()
         logger.info(f"[OPENAPI] Sync completed for subtask {assistant_subtask_id}")
+    except _DispatchWithoutTerminalError as e:
+        await _persist_terminal_failure(
+            subtask_id=assistant_subtask_id,
+            task_id=task_kind_id,
+            error_message=str(e),
+        )
+        logger.exception(f"Error in sync chat response: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"LLM request failed: {str(e)}",
+        )
     except Exception as e:
         logger.exception(f"Error in sync chat response: {e}")
         raise HTTPException(
@@ -645,24 +676,6 @@ async def _create_streaming_response_unified(
             f"to subtask {setup.user_subtask.id}"
         )
 
-    async def _persist_terminal_failure(
-        error_message: str,
-        error_code: Optional[str] = None,
-    ) -> None:
-        result = await collect_completed_result(
-            assistant_subtask_id,
-            status="FAILED",
-            error_message=error_message,
-            error_code=error_code,
-        )
-        await persist_completed_result(
-            subtask_id=assistant_subtask_id,
-            task_id=task_kind_id,
-            status="FAILED",
-            result=result,
-            error=error_message,
-        )
-
     # Convert reasoning config from Pydantic model to dict
     reasoning_config = None
     if request_body.reasoning:
@@ -686,7 +699,11 @@ async def _create_streaming_response_unified(
         )
     except Exception as e:
         logger.error(f"Failed to build execution request: {e}")
-        await _persist_terminal_failure(str(e))
+        await _persist_terminal_failure(
+            subtask_id=assistant_subtask_id,
+            task_id=task_kind_id,
+            error_message=str(e),
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to build execution request: {str(e)}",
@@ -698,14 +715,6 @@ async def _create_streaming_response_unified(
         except Exception:
             pass
         db.close()
-
-    if not execution_dispatcher.supports_streaming(execution_request):
-        error_message = "Streaming not supported for this shell type"
-        await _persist_terminal_failure(
-            error_message,
-            error_code="not_implemented",
-        )
-        raise NotImplementedError(error_message)
 
     async def raw_chat_stream():
         """Generate raw text and reasoning chunks from ExecutionDispatcher."""
@@ -739,6 +748,16 @@ async def _create_streaming_response_unified(
             return "function_call"
 
         try:
+            if not execution_dispatcher.supports_streaming(execution_request):
+                error_message = "Streaming not supported for this shell type"
+                await _persist_terminal_failure(
+                    subtask_id=assistant_subtask_id,
+                    task_id=task_kind_id,
+                    error_message=error_message,
+                    error_code="not_implemented",
+                )
+                raise NotImplementedError(error_message)
+
             cancel_event = await session_manager.register_stream(assistant_subtask_id)
 
             # Create SSEResultEmitter for streaming
