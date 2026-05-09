@@ -1,6 +1,7 @@
 import {
   buildPipelineNextStepDraft,
   buildPipelineNextStepPayload,
+  type BuildPipelineNextStepPayloadInput,
   type PipelineNextStepMessage,
 } from '@/features/tasks/components/chat/pipelineNextStep'
 
@@ -33,7 +34,10 @@ const userMessage = (
   ...overrides,
 })
 
-const aiMessage = (content: string): PipelineNextStepMessage => ({
+const aiMessage = (
+  content: string,
+  overrides: Partial<PipelineNextStepMessage> = {}
+): PipelineNextStepMessage => ({
   id: 'ai-1',
   type: 'ai',
   status: 'completed',
@@ -48,7 +52,12 @@ const aiMessage = (content: string): PipelineNextStepMessage => ({
       source_config: { url: 'https://example.com/table' },
     },
   ],
+  ...overrides,
 })
+
+const payloadInput = (
+  input: BuildPipelineNextStepPayloadInput
+): BuildPipelineNextStepPayloadInput => input
 
 describe('pipeline next-step helpers', () => {
   it('uses final_prompt as the default message when available', () => {
@@ -133,14 +142,81 @@ describe('pipeline next-step helpers', () => {
     ).toEqual(['attachment:10', 'table:30'])
   })
 
+  it('uses timestamp as a tie-breaker for user and AI messages with the same messageId', () => {
+    const draft = buildPipelineNextStepDraft([
+      aiMessage('Plain AI summary', {
+        messageId: 100,
+        timestamp: 2,
+      }),
+      userMessage({
+        messageId: 100,
+        timestamp: 1,
+      }),
+    ])
+
+    expect(draft.textItems.find(item => item.kind === 'user_message')).toMatchObject({
+      content: 'Original request',
+      selectedByDefault: true,
+    })
+    expect(
+      draft.structuredItems.map(item => `${item.context.context_type}:${item.context.id}`)
+    ).toEqual(['attachment:10', 'knowledge_base:20', 'table:30'])
+  })
+
+  it('returns a disabled draft when no usable AI message exists', () => {
+    const draft = buildPipelineNextStepDraft([
+      userMessage(),
+      aiMessage('', {
+        id: 'empty-ai',
+        content: '   ',
+      }),
+    ])
+
+    expect(draft.defaultMessage).toBe('')
+    expect(draft.defaultSource).toBe('none')
+    expect(draft.canSubmit).toBe(false)
+    expect(draft.textItems).toEqual([])
+    expect(draft.structuredItems).toEqual([])
+  })
+
+  it('ignores non-completed AI messages in favor of the last completed AI message', () => {
+    const draft = buildPipelineNextStepDraft([
+      userMessage(),
+      aiMessage('Completed answer', {
+        id: 'completed-ai',
+        timestamp: 2,
+      }),
+      aiMessage('Pending answer', {
+        id: 'pending-ai',
+        status: 'pending',
+        timestamp: 3,
+      }),
+      aiMessage('Streaming answer', {
+        id: 'streaming-ai',
+        status: 'streaming',
+        timestamp: 4,
+      }),
+      aiMessage('Error answer', {
+        id: 'error-ai',
+        status: 'error',
+        timestamp: 5,
+      }),
+    ])
+
+    expect(draft.defaultMessage).toBe('Completed answer')
+    expect(draft.defaultSource).toBe('last_ai_response')
+  })
+
   it('builds backend payload from selected text and structured contexts', () => {
     const draft = buildPipelineNextStepDraft([userMessage(), aiMessage('Plain AI summary')])
-    const payload = buildPipelineNextStepPayload({
-      draft,
-      editedMessage: 'Edited handoff',
-      selectedTextItemIds: draft.textItems.map(item => item.id),
-      selectedStructuredItemIds: draft.structuredItems.map(item => item.id),
-    })
+    const payload = buildPipelineNextStepPayload(
+      payloadInput({
+        draft,
+        editedMessage: 'Edited handoff',
+        selectedTextItemIds: draft.textItems.map(item => item.id),
+        selectedStructuredItemIds: draft.structuredItems.map(item => item.id),
+      })
+    )
 
     expect(payload.message).toContain('Edited handoff')
     expect(payload.message).toContain('Original request')
@@ -164,5 +240,20 @@ describe('pipeline next-step helpers', () => {
       },
     ])
     expect(payload.pendingContexts).toHaveLength(3)
+  })
+
+  it('does not append selected AI text that is already included in the main message', () => {
+    const draft = buildPipelineNextStepDraft([userMessage(), aiMessage('Plain AI summary')])
+    const aiTextItem = draft.textItems.find(item => item.kind === 'ai_response')
+    const payload = buildPipelineNextStepPayload(
+      payloadInput({
+        draft,
+        editedMessage: 'Plain AI summary',
+        selectedTextItemIds: aiTextItem ? [aiTextItem.id] : [],
+        selectedStructuredItemIds: [],
+      })
+    )
+
+    expect(payload.message).toBe('Plain AI summary')
   })
 })

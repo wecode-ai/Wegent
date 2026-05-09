@@ -52,7 +52,7 @@ export interface PipelineNextStepPayload {
   pendingContexts: SubtaskContextBrief[]
 }
 
-interface BuildPipelineNextStepPayloadInput {
+export interface BuildPipelineNextStepPayloadInput {
   draft: PipelineNextStepDraft
   editedMessage: string
   selectedTextItemIds: string[]
@@ -68,8 +68,15 @@ const SUPPORTED_CONTEXT_TYPES = new Set<SubtaskContextBrief['context_type']>([
 function sortMessages(messages: PipelineNextStepMessage[]): PipelineNextStepMessage[] {
   return [...messages].sort((left, right) => {
     if (left.messageId !== undefined && right.messageId !== undefined) {
-      return left.messageId - right.messageId
+      if (left.messageId !== right.messageId) {
+        return left.messageId - right.messageId
+      }
+
+      return left.timestamp - right.timestamp
     }
+
+    if (left.messageId !== undefined) return -1
+    if (right.messageId !== undefined) return 1
 
     return left.timestamp - right.timestamp
   })
