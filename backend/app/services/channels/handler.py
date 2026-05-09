@@ -1987,6 +1987,18 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
         if streaming_emitter:
             response_emitter = streaming_emitter
+            # Start the card immediately to get card_instance_id before registration,
+            # matching Device/Cloud mode behavior. This ensures the card_instance_id
+            # is available in Redis for cross-pod emitter reconstruction.
+            await streaming_emitter.emit_start(
+                task_id=task_id,
+                subtask_id=trigger_data["assistant_subtask"].id,
+            )
+            # Enable Redis-backed content sharing for multi-pod consistency
+            if hasattr(streaming_emitter, "set_shared_content_key"):
+                streaming_emitter.set_shared_content_key(
+                    f"channel:streaming_content:{task_id}"
+                )
         else:
             response_emitter = SyncResponseEmitter()
 
@@ -2197,6 +2209,11 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 ),
                 offset=0,
             )
+            # Enable Redis-backed content sharing for multi-pod consistency
+            if hasattr(streaming_emitter, "set_shared_content_key"):
+                streaming_emitter.set_shared_content_key(
+                    f"channel:streaming_content:{result.task.id}"
+                )
 
         # Build message for device: vision content if images present
         if message_context.images:
@@ -2349,6 +2366,11 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 ),
                 offset=0,
             )
+            # Enable Redis-backed content sharing for multi-pod consistency
+            if hasattr(streaming_emitter, "set_shared_content_key"):
+                streaming_emitter.set_shared_content_key(
+                    f"channel:streaming_content:{result.task.id}"
+                )
             # Register emitter so callback events reuse the same AI Card
             await self._register_streaming_emitter(
                 task_id=result.task.id,
