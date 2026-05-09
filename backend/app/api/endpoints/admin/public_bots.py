@@ -312,7 +312,7 @@ def _create_public_ghost(
     system_prompt: str,
     mcp_servers: dict,
     skills: list,
-    default_knowledge_base_refs: list = None,
+    default_knowledge_base_refs: Optional[list[dict]] = None,
 ) -> Kind:
     """Create a public Ghost for the bot."""
     ghost_name = f"{bot_name}-ghost"
