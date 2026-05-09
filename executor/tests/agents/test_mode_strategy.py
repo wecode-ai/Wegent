@@ -85,21 +85,7 @@ class TestLocalModeStrategy:
                 "ANTHROPIC_BASE_URL": "https://api.anthropic.com",
                 "ANTHROPIC_MODEL": "claude-3-5-sonnet-20241022",
             },
-            "hooks": {
-                "Stop": [
-                    {
-                        "matcher": "",
-                        "hooks": [
-                            {
-                                "type": "command",
-                                "command": "node /app/hooks/action.js",
-                            }
-                        ],
-                    }
-                ]
-            },
-            "statusLine": {"type": "command", "command": "echo Wegent"},
-            "includeCoAuthoredBy": True,
+            "model": "claude-3-5-sonnet-20241022",
         }
 
     @pytest.fixture
@@ -120,12 +106,15 @@ class TestLocalModeStrategy:
             expected = os.path.join(temp_workspace, "12345", ".claude")
             assert config_dir == expected
 
-    def test_save_config_files_writes_sanitized_settings_json(
+    def test_save_config_files_does_not_write_settings_json(
         self, strategy, temp_workspace, agent_config, claude_json_config
     ):
-        """Test that settings.json is created with non-sensitive settings only."""
-        with patch(
-            "executor.config.config.get_workspace_root", return_value=temp_workspace
+        """Test that settings.json is NOT created (security)."""
+        with (
+            patch(
+                "executor.config.config.get_workspace_root", return_value=temp_workspace
+            ),
+            patch.dict(os.environ, {"WEGENT_FILE_EDIT_HOOK_COMMAND": ""}, clear=False),
         ):
             config_dir, _ = strategy.save_config_files(
                 task_id=12345,
@@ -134,45 +123,47 @@ class TestLocalModeStrategy:
             )
 
             settings_path = os.path.join(config_dir, "settings.json")
-            assert os.path.exists(settings_path), "settings.json should exist"
+            assert not os.path.exists(settings_path), "settings.json should NOT exist"
 
+    def test_save_config_files_writes_file_edit_hook_settings_when_configured(
+        self, strategy, temp_workspace, agent_config, claude_json_config
+    ):
+        """Test WEGENT_FILE_EDIT_HOOK_COMMAND creates a hook-only settings file."""
+        hook_command = (
+            "curl -sS -X POST http://127.0.0.1:3456/api/file-edit-log "
+            '-H "Content-Type: application/json" --data-binary @-'
+        )
+
+        with (
+            patch(
+                "executor.config.config.get_workspace_root", return_value=temp_workspace
+            ),
+            patch.dict(
+                os.environ,
+                {"WEGENT_FILE_EDIT_HOOK_COMMAND": hook_command},
+                clear=False,
+            ),
+        ):
+            config_dir, _ = strategy.save_config_files(
+                task_id=12345,
+                agent_config=agent_config,
+                claude_json_config=claude_json_config,
+            )
+
+            settings_path = os.path.join(config_dir, "settings.json")
             with open(settings_path) as f:
                 saved_config = json.load(f)
 
             assert saved_config == {
-                "hooks": agent_config["hooks"],
-                "statusLine": agent_config["statusLine"],
-                "includeCoAuthoredBy": True,
+                "hooks": {
+                    "PostToolUse": [
+                        {
+                            "matcher": "Write|Edit",
+                            "hooks": [{"type": "command", "command": hook_command}],
+                        }
+                    ]
+                }
             }
-            assert "env" not in saved_config
-            assert "ANTHROPIC_AUTH_TOKEN" not in json.dumps(saved_config)
-
-    def test_save_config_files_removes_nested_sensitive_settings(
-        self, strategy, temp_workspace, agent_config, claude_json_config
-    ):
-        """Test that sensitive nested settings keys are removed before writing."""
-        agent_config["statusLine"]["api_key"] = "sk-secret"
-        agent_config["hooks"]["Stop"][0]["hooks"][0]["auth_token"] = "secret-token"
-
-        with patch(
-            "executor.config.config.get_workspace_root", return_value=temp_workspace
-        ):
-            config_dir, _ = strategy.save_config_files(
-                task_id=12345,
-                agent_config=agent_config,
-                claude_json_config=claude_json_config,
-            )
-
-            settings_path = os.path.join(config_dir, "settings.json")
-            with open(settings_path) as f:
-                saved_config = json.load(f)
-
-            settings_json = json.dumps(saved_config)
-            assert "api_key" not in settings_json
-            assert "auth_token" not in settings_json
-            assert "sk-secret" not in settings_json
-            assert "secret-token" not in settings_json
-            assert saved_config["statusLine"]["command"] == "echo Wegent"
 
     def test_save_config_files_writes_claude_json(
         self, strategy, temp_workspace, agent_config, claude_json_config
@@ -230,7 +221,7 @@ class TestLocalModeStrategy:
     def test_save_config_files_file_permissions(
         self, strategy, temp_workspace, agent_config, claude_json_config
     ):
-        """Test that Local mode config files have 0600 permissions."""
+        """Test that claude.json has 0600 permissions."""
         with patch(
             "executor.config.config.get_workspace_root", return_value=temp_workspace
         ):
@@ -243,10 +234,6 @@ class TestLocalModeStrategy:
             claude_json_path = os.path.join(config_dir, "claude.json")
             file_mode = stat.S_IMODE(os.stat(claude_json_path).st_mode)
             assert file_mode == 0o600, f"Expected 0600, got {oct(file_mode)}"
-
-            settings_path = os.path.join(config_dir, "settings.json")
-            settings_mode = stat.S_IMODE(os.stat(settings_path).st_mode)
-            assert settings_mode == 0o600, f"Expected 0600, got {oct(settings_mode)}"
 
     def test_configure_client_options_merges_env(self, strategy):
         """Test that env config is merged into options."""

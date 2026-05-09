@@ -227,14 +227,6 @@ def create_claude_model_config(
         != "false",
     }
 
-    # Carry forward non-env settings (hooks, statusLine, etc.) from agent_config
-    for key, value in agent_config.items():
-        if (
-            key not in ("env", "includeCoAuthoredBy")
-            and key not in final_claude_code_config
-        ):
-            final_claude_code_config[key] = value
-
     return final_claude_code_config
 
 

@@ -33,67 +33,12 @@ from shared.logger import setup_logger
 
 logger = setup_logger("local_mode_strategy")
 
-EXACT_SENSITIVE_SETTINGS_KEYS = {
-    "env",
-    "api_key",
-    "apikey",
-    "auth",
-    "auth_token",
-    "authtoken",
-    "authorization",
-    "password",
-    "secret",
-    "token",
-}
-
-SENSITIVE_SETTINGS_SUFFIXES = (
-    "_api_key",
-    "_apikey",
-    "_auth_token",
-    "_authtoken",
-    "_password",
-    "_secret",
-    "_token",
-)
-
-
-def _is_sensitive_settings_key(key: str) -> bool:
-    """Return True when a settings key should never be written to disk."""
-    normalized = key.replace("-", "_").lower()
-    return normalized in EXACT_SENSITIVE_SETTINGS_KEYS or normalized.endswith(
-        SENSITIVE_SETTINGS_SUFFIXES
-    )
-
-
-def _sanitize_settings_value(value: Any) -> Any:
-    """Remove sensitive keys from a Claude settings value recursively."""
-    if isinstance(value, dict):
-        sanitized = {}
-        for key, child_value in value.items():
-            if _is_sensitive_settings_key(str(key)):
-                continue
-            sanitized[key] = _sanitize_settings_value(child_value)
-        return sanitized
-    if isinstance(value, list):
-        return [_sanitize_settings_value(item) for item in value]
-    return value
-
-
-def _extract_local_settings_config(agent_config: Dict[str, Any]) -> Dict[str, Any]:
-    """Extract non-sensitive Claude Code settings safe for Local mode disk writes."""
-    settings_config = {}
-    for key, value in agent_config.items():
-        if _is_sensitive_settings_key(str(key)):
-            continue
-        settings_config[key] = _sanitize_settings_value(value)
-    return settings_config
-
 
 class LocalModeStrategy(ExecutionModeStrategy):
     """Strategy for local (non-Docker) execution mode.
 
     Security-focused implementation that:
-    - Writes only sanitized settings.json values (never env/API keys)
+    - Does NOT write agent settings.json (contains sensitive API keys)
     - Passes sensitive config via environment variables
     - Uses task-specific config directories
     - Applies restrictive file permissions
@@ -123,10 +68,9 @@ class LocalModeStrategy(ExecutionModeStrategy):
     ) -> Tuple[str, Dict[str, Any]]:
         """Save only non-sensitive configuration files.
 
-        SECURITY: Does not write env config to settings.json because it contains
+        SECURITY: Does NOT write agent settings.json because it contains
         sensitive data (ANTHROPIC_AUTH_TOKEN, etc.). Instead, sensitive
-        configuration is returned to be passed via environment variables, while
-        non-sensitive Claude settings are written to task-local settings.json.
+        configuration is returned to be passed via environment variables.
 
         Args:
             task_id: The task ID
@@ -135,7 +79,7 @@ class LocalModeStrategy(ExecutionModeStrategy):
 
         Returns:
             Tuple of (config_dir, env_config):
-            - config_dir: Path where claude.json/settings.json were saved
+            - config_dir: Path where claude.json was saved
             - env_config: Sensitive config to pass via env vars
         """
         config_dir = self.get_config_directory(task_id)
@@ -151,20 +95,19 @@ class LocalModeStrategy(ExecutionModeStrategy):
             json.dump(claude_json_config, f, indent=2)
         permissions_manager.set_owner_only(claude_json_path, is_directory=False)
 
-        settings_config = _extract_local_settings_config(agent_config)
-
         # Inject PostToolUse hook if WEGENT_FILE_EDIT_HOOK_COMMAND is configured
         hook_command = os.environ.get("WEGENT_FILE_EDIT_HOOK_COMMAND", "")
         if hook_command:
-            hooks = settings_config.setdefault("hooks", {})
-            hooks["PostToolUse"] = [
-                {
-                    "matcher": "Write|Edit",
-                    "hooks": [{"type": "command", "command": hook_command}],
+            settings_config = {
+                "hooks": {
+                    "PostToolUse": [
+                        {
+                            "matcher": "Write|Edit",
+                            "hooks": [{"type": "command", "command": hook_command}],
+                        }
+                    ]
                 }
-            ]
-
-        if settings_config:
+            }
             settings_path = os.path.join(config_dir, "settings.json")
             with open(settings_path, "w") as f:
                 json.dump(settings_config, f, indent=2)
