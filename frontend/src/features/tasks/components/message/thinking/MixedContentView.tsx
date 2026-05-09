@@ -306,23 +306,26 @@ const MixedContentView = memo(function MixedContentView({
                   input: block.tool_input,
                 },
               },
-              toolResult: block.tool_output
-                ? {
-                    title: `Result from ${normalizedToolName}`,
-                    next_action: 'continue',
-                    tool_use_id: block.tool_use_id,
-                    details: {
-                      type: 'tool_result',
-                      tool_name: normalizedToolName,
-                      status: block.status === 'error' ? 'failed' : 'completed',
-                      content:
-                        typeof block.tool_output === 'string'
-                          ? block.tool_output
-                          : JSON.stringify(block.tool_output),
-                      output: block.tool_output,
-                    },
-                  }
-                : undefined,
+              toolResult:
+                block.tool_output != null || block.status === 'error'
+                  ? {
+                      title: `Result from ${normalizedToolName}`,
+                      next_action: 'continue',
+                      tool_use_id: block.tool_use_id,
+                      details: {
+                        type: 'tool_result',
+                        tool_name: normalizedToolName,
+                        status: block.status === 'error' ? 'failed' : 'completed',
+                        is_error: block.status === 'error',
+                        content: block.tool_output
+                          ? typeof block.tool_output === 'string'
+                            ? block.tool_output
+                            : JSON.stringify(block.tool_output)
+                          : undefined,
+                        output: block.tool_output,
+                      },
+                    }
+                  : undefined,
             }
             return {
               type: 'tool' as const,

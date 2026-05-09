@@ -461,7 +461,7 @@ class OpenAPIStreamingService:
                         if chunk.data.get("status") == "failed" and chunk.data.get(
                             "error"
                         ):
-                            terminal_payload["error"] = chunk.data["error"]
+                            terminal_payload["failure_reason"] = chunk.data["error"]
                         yield _format_sse_event(terminal_payload)
                         sequence_number += 1
                         yield _format_sse_event(

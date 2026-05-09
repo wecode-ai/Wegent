@@ -936,7 +936,7 @@ class ResponsesAPIEventBuilder:
             "output_index": self._tool_output_index,
         }
         if error:
-            data["error"] = error
+            data["failure_reason"] = error
         return data
 
     def mcp_call_done(

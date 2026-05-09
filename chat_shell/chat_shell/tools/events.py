@@ -87,12 +87,23 @@ def create_tool_event_handler(
     return handle_tool_event
 
 
+def _log_task_error(task: "asyncio.Task") -> None:
+    """Log exceptions from fire-and-forget tasks."""
+    if not task.cancelled() and task.exception() is not None:
+        logger.exception(
+            "[TOOL_EVENT] Async event task failed: %s",
+            task.exception(),
+            exc_info=task.exception(),
+        )
+
+
 def _run_async(coro):
     """Run async coroutine from sync context."""
     try:
         loop = asyncio.get_running_loop()
         # We're in an async context, create a task
-        loop.create_task(coro)
+        task = loop.create_task(coro)
+        task.add_done_callback(_log_task_error)
     except RuntimeError:
         # No running event loop, run directly
         asyncio.run(coro)
