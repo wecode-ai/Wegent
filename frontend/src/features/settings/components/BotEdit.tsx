@@ -696,6 +696,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
           mcp_servers: botData.mcp_servers,
           skills: botData.skills,
           namespace: 'default',
+          default_knowledge_base_refs: botData.default_knowledge_base_refs,
         }
 
         if (editingBotId && editingBotId > 0) {
@@ -848,6 +849,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
           mcp_servers: parsedMcpConfig ?? {},
           skills: selectedSkills.length > 0 ? selectedSkills : [],
           namespace: 'default',
+          default_knowledge_base_refs: defaultKnowledgeBaseRefs,
         }
 
         if (editingBotId && editingBotId > 0) {
@@ -1443,27 +1445,25 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                 </div>
               )}
 
-              {scope !== 'public' && (
-                <div className="flex flex-col">
-                  <div className="flex items-center justify-between mb-1">
-                    <div className="flex items-center">
-                      <label className="block text-base font-medium text-text-primary">
-                        {t('common:bot.default_knowledge_bases')}
-                      </label>
-                      <span className="text-xs text-text-muted ml-2">
-                        {t('common:bot.default_knowledge_bases_optional')}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="bg-base rounded-md p-2 min-h-[80px]">
-                    <KnowledgeBaseMultiSelector
-                      value={defaultKnowledgeBaseRefs}
-                      onChange={setDefaultKnowledgeBaseRefs}
-                      disabled={readOnly}
-                    />
+              <div className="flex flex-col">
+                <div className="flex items-center justify-between mb-1">
+                  <div className="flex items-center">
+                    <label className="block text-base font-medium text-text-primary">
+                      {t('common:bot.default_knowledge_bases')}
+                    </label>
+                    <span className="text-xs text-text-muted ml-2">
+                      {t('common:bot.default_knowledge_bases_optional')}
+                    </span>
                   </div>
                 </div>
-              )}
+                <div className="bg-base rounded-md p-2 min-h-[80px]">
+                  <KnowledgeBaseMultiSelector
+                    value={defaultKnowledgeBaseRefs}
+                    onChange={setDefaultKnowledgeBaseRefs}
+                    disabled={readOnly}
+                  />
+                </div>
+              </div>
 
               {/* MCP Config */}
               <McpConfigSection
