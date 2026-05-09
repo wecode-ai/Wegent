@@ -15,6 +15,8 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
+from app.core.cache import cache_manager
+
 # Re-export SyncResponseEmitter from generic module for backward compatibility
 from app.services.channels.emitter import SyncResponseEmitter
 from app.services.execution.emitters import ResultEmitter
@@ -72,6 +74,7 @@ class StreamingResponseEmitter(ResultEmitter):
         self._last_update_time = 0.0
         self._pending_content = ""
         self._finished = False
+        self._shared_content_key: Optional[str] = None
 
         if existing_card_instance_id:
             # Reconnect to an existing AI Card (cross-worker scenario)
@@ -116,6 +119,61 @@ class StreamingResponseEmitter(ResultEmitter):
         """Get the card instance ID if the card has been started."""
         return self._card.card_instance_id if self._card else None
 
+    def set_shared_content_key(self, key: str) -> None:
+        """Enable Redis-backed shared content accumulation for multi-pod streaming.
+
+        When set, content is accumulated in Redis using APPEND so all pods
+        sharing the same card write to a single content buffer.
+        """
+        self._shared_content_key = key
+
+    async def _redis_append(self, content: str) -> None:
+        """Append content to shared Redis key without reading back."""
+        from app.services.channels.callback import CHANNEL_TASK_CALLBACK_TTL
+
+        redis_client = await cache_manager._get_client()
+        try:
+            await redis_client.append(self._shared_content_key, content.encode("utf-8"))
+            await redis_client.expire(
+                self._shared_content_key, CHANNEL_TASK_CALLBACK_TTL
+            )
+        finally:
+            await redis_client.aclose()
+
+    async def _redis_append_and_get(self, content: str) -> str:
+        """Append content to shared Redis key and return full accumulated content."""
+        from app.services.channels.callback import CHANNEL_TASK_CALLBACK_TTL
+
+        redis_client = await cache_manager._get_client()
+        try:
+            await redis_client.append(self._shared_content_key, content.encode("utf-8"))
+            await redis_client.expire(
+                self._shared_content_key, CHANNEL_TASK_CALLBACK_TTL
+            )
+            raw = await redis_client.get(self._shared_content_key)
+            return raw.decode("utf-8") if raw else ""
+        finally:
+            await redis_client.aclose()
+
+    async def _redis_get_full_content(self) -> str:
+        """Get full accumulated content from Redis."""
+        redis_client = await cache_manager._get_client()
+        try:
+            raw = await redis_client.get(self._shared_content_key)
+            return raw.decode("utf-8") if raw else ""
+        finally:
+            await redis_client.aclose()
+
+    async def _redis_cleanup(self) -> None:
+        """Delete the shared content key from Redis."""
+        try:
+            await cache_manager.delete(self._shared_content_key)
+        except Exception as e:
+            logger.warning(
+                f"[StreamingEmitter] Failed to cleanup Redis key "
+                f"{self._shared_content_key}: {e}"
+            )
+
     async def _send_streaming_update(self, content: str, force: bool = False) -> None:
         """Send a streaming update to the AI card.
 
@@ -129,33 +187,55 @@ class StreamingResponseEmitter(ResultEmitter):
         current_time = time.time()
         time_since_last = current_time - self._last_update_time
 
-        # Accumulate content
-        self._pending_content += content
+        if self._shared_content_key:
+            # Multi-pod mode: persist to Redis IMMEDIATELY to preserve ordering
+            # (the /callback endpoint returns 200 only after this completes,
+            # so the executor won't send the next chunk until this APPEND is done)
+            await self._redis_append(content)
 
-        # Check if we should send an update
-        if not force and time_since_last < self.MIN_UPDATE_INTERVAL:
-            return
+            # Throttle only the display (ai_streaming call)
+            if not force and time_since_last < self.MIN_UPDATE_INTERVAL:
+                return
 
-        # Send the update
-        if self._pending_content:
             try:
-                # Accumulate to full content
-                self._full_content += self._pending_content
+                full_content = await self._redis_get_full_content()
+                self._full_content = full_content
 
                 logger.debug(
                     f"[StreamingEmitter] Sending streaming update, "
                     f"content_len={len(self._full_content)}"
                 )
 
-                # Use official SDK streaming method
                 self._card.ai_streaming(self._full_content, append=False)
-
-                self._pending_content = ""
                 self._last_update_time = current_time
             except Exception as e:
                 logger.exception(
                     f"[StreamingEmitter] Failed to send streaming update: {e}"
                 )
+        else:
+            # Single-pod mode: accumulate locally with throttling
+            self._pending_content += content
+
+            if not force and time_since_last < self.MIN_UPDATE_INTERVAL:
+                return
+
+            if self._pending_content:
+                try:
+                    self._full_content += self._pending_content
+
+                    logger.debug(
+                        f"[StreamingEmitter] Sending streaming update, "
+                        f"content_len={len(self._full_content)}"
+                    )
+
+                    self._card.ai_streaming(self._full_content, append=False)
+
+                    self._pending_content = ""
+                    self._last_update_time = current_time
+                except Exception as e:
+                    logger.exception(
+                        f"[StreamingEmitter] Failed to send streaming update: {e}"
+                    )
 
     async def emit(self, event: ExecutionEvent) -> None:
         """Emit a single event.
@@ -233,11 +313,16 @@ class StreamingResponseEmitter(ResultEmitter):
             logger.warning("[StreamingEmitter] emit_done called but already finished")
             return
 
+        # Get full content - from Redis if in shared mode
+        if self._shared_content_key:
+            final_content = await self._redis_get_full_content()
+        else:
+            final_content = self._full_content
+
         # Use result content if provided and longer than accumulated content.
         # This is critical for device mode where executor events arrive via
         # device WebSocket rather than /callback, so the emitter's internal
         # _full_content only contains the initial acknowledgment message.
-        final_content = self._full_content
         if result and isinstance(result, dict):
             result_value = result.get("value", "")
             if result_value and len(result_value) > len(final_content):
@@ -278,6 +363,9 @@ class StreamingResponseEmitter(ResultEmitter):
 
         except Exception as e:
             logger.exception(f"[StreamingEmitter] Failed to finish AI card: {e}")
+        finally:
+            if self._shared_content_key:
+                await self._redis_cleanup()
 
     async def emit_error(
         self,
@@ -308,6 +396,9 @@ class StreamingResponseEmitter(ResultEmitter):
             logger.exception(
                 f"[StreamingEmitter] Failed to mark AI card as failed: {e}"
             )
+        finally:
+            if self._shared_content_key:
+                await self._redis_cleanup()
 
     async def emit_cancelled(
         self,
@@ -326,6 +417,10 @@ class StreamingResponseEmitter(ResultEmitter):
             if not await self._ensure_card_started():
                 return
 
+            # Get full content from Redis if in shared mode
+            if self._shared_content_key:
+                self._full_content = await self._redis_get_full_content()
+
             # Add cancellation note to content
             self._full_content += "\n\n⚠️ 任务已取消"
 
@@ -339,7 +434,11 @@ class StreamingResponseEmitter(ResultEmitter):
             logger.exception(
                 f"[StreamingEmitter] Failed to mark AI card as cancelled: {e}"
             )
+        finally:
+            if self._shared_content_key:
+                await self._redis_cleanup()
 
     async def close(self) -> None:
         """Close the emitter and release resources."""
-        pass
+        if self._shared_content_key and not self._finished:
+            await self._redis_cleanup()

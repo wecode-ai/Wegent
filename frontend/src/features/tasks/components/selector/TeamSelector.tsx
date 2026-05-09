@@ -28,6 +28,7 @@ import { getSharedTagStyle as getSharedBadgeStyle } from '@/utils/styles'
 import { TeamIconDisplay } from '@/features/settings/components/teams/TeamIconDisplay'
 import { cn } from '@/lib/utils'
 import MobileTeamSelector from './MobileTeamSelector'
+import SystemTeamTag from './SystemTeamTag'
 import { getLastTeamIdByMode, saveLastTeamByMode } from '@/utils/userPreferences'
 
 interface TeamSelectorProps {
@@ -45,6 +46,8 @@ interface TeamSelectorProps {
   // Optional: whether to open the dropdown by default
   defaultOpen?: boolean
 }
+
+const getTeamDisplayName = (team: Team) => team.displayName?.trim() || team.name
 
 export default function TeamSelector({
   selectedTeam,
@@ -193,12 +196,14 @@ export default function TeamSelector({
   // Convert filtered teams to SearchableSelectItem format
   const selectItems: SearchableSelectItem[] = useMemo(() => {
     return filteredTeams.map(team => {
+      const displayName = getTeamDisplayName(team)
+      const isSystemTeam = team.user_id === 0
       const isSharedTeam = team.share_status === 2 && team.user?.user_name
       const isGroupTeam = team.namespace && team.namespace !== 'default'
       return {
         value: team.id.toString(),
-        label: team.name,
-        searchText: team.name,
+        label: displayName,
+        searchText: `${displayName} ${team.name}`,
         content: (
           <div className="flex items-center gap-2 min-w-0" data-testid={`team-option-${team.name}`}>
             <TeamIconDisplay
@@ -208,10 +213,11 @@ export default function TeamSelector({
             />
             <span
               className="font-medium text-xs text-text-secondary truncate flex-1 min-w-0"
-              title={team.name}
+              title={displayName}
             >
-              {team.name}
+              {displayName}
             </span>
+            {isSystemTeam && <SystemTeamTag />}
             {isGroupTeam && (
               <Tag className="ml-2 text-xs !m-0 flex-shrink-0" variant="info">
                 {team.namespace}
@@ -268,6 +274,7 @@ export default function TeamSelector({
   const renderTriggerValue = (item: SearchableSelectItem | undefined) => {
     if (!item) return null
     const team = filteredTeams.find(t => t.id.toString() === item.value)
+    const isSystemTeam = team?.user_id === 0
     const isSharedTeam = team?.share_status === 2 && team?.user?.user_name
     const isGroupTeam = team?.namespace && team.namespace !== 'default'
     return (
@@ -275,6 +282,7 @@ export default function TeamSelector({
         <span className="truncate max-w-full flex-1 min-w-0" title={item.label}>
           {item.label}
         </span>
+        {isSystemTeam && <SystemTeamTag className="ml-2" />}
         {isGroupTeam && (
           <Tag className="text-xs !m-0 flex-shrink-0 ml-2" variant="info">
             {team.namespace}

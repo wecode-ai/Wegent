@@ -223,6 +223,55 @@ class OutputMessage(BaseModel):
     content: List[OutputTextContent]
 
 
+class FunctionCallOutputItem(BaseModel):
+    """Function call output item."""
+
+    type: Literal["function_call"] = "function_call"
+    id: str
+    call_id: str
+    name: str
+    arguments: str
+
+
+class MCPCallOutputItem(BaseModel):
+    """MCP call output item."""
+
+    type: Literal["mcp_call"] = "mcp_call"
+    id: str
+    name: str
+    server_label: str
+    arguments: str
+    status: str
+
+
+class ShellCallAction(BaseModel):
+    """Shell call action payload."""
+
+    commands: List[str] = Field(default_factory=list)
+    timeout_ms: Optional[int] = None
+    max_output_length: Optional[int] = None
+
+
+class ShellCallOutputItem(BaseModel):
+    """Shell call output item."""
+
+    type: Literal["shell_call"] = "shell_call"
+    id: str
+    call_id: str
+    status: str
+    action: ShellCallAction
+    name: str
+    input: Dict[str, Any] = Field(default_factory=dict)
+
+
+ResponseOutputItem = Union[
+    OutputMessage,
+    FunctionCallOutputItem,
+    MCPCallOutputItem,
+    ShellCallOutputItem,
+]
+
+
 class ResponseError(BaseModel):
     """Error information when response fails."""
 
@@ -241,7 +290,7 @@ class ResponseObject(BaseModel):
     ]
     error: Optional[ResponseError] = None
     model: str  # The model string from request
-    output: List[OutputMessage] = Field(default_factory=list)
+    output: List[ResponseOutputItem] = Field(default_factory=list)
     previous_response_id: Optional[str] = None
 
 

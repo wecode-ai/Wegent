@@ -14,6 +14,7 @@ import { Drawer, DrawerContent, DrawerTrigger } from '@/components/ui/drawer'
 import { TeamIconDisplay } from '@/features/settings/components/teams/TeamIconDisplay'
 import { Tag } from '@/components/ui/tag'
 import type { Team } from '@/types/api'
+import SystemTeamTag from './SystemTeamTag'
 
 interface MobileTeamSelectorProps {
   selectedTeam: Team | null
@@ -26,6 +27,8 @@ interface MobileTeamSelectorProps {
   // Optional: hide team icon in trigger button
   hideTriggerIcon?: boolean
 }
+
+const getTeamDisplayName = (team: Team) => team.displayName?.trim() || team.name
 
 /**
  * Mobile Team Selector - iOS Style
@@ -60,6 +63,7 @@ export default function MobileTeamSelector({
     const search = searchValue.toLowerCase()
     return (
       team.name.toLowerCase().includes(search) ||
+      getTeamDisplayName(team).toLowerCase().includes(search) ||
       team.namespace?.toLowerCase().includes(search) ||
       team.user?.user_name?.toLowerCase().includes(search)
     )
@@ -71,6 +75,7 @@ export default function MobileTeamSelector({
   }
 
   const isDisabled = disabled || isLoading || teams.length === 0
+  const selectedTeamDisplayName = selectedTeam ? getTeamDisplayName(selectedTeam) : ''
 
   if (!selectedTeam || teams.length === 0) return null
 
@@ -98,7 +103,7 @@ export default function MobileTeamSelector({
             />
           )}
           <span className="truncate text-xs min-w-0">
-            {triggerText || selectedTeam?.name || t('common:teams.select_team')}
+            {triggerText || selectedTeamDisplayName || t('common:teams.select_team')}
           </span>
           {triggerText && <ChevronDown className="w-2.5 h-2.5 text-text-muted flex-shrink-0" />}
         </button>
@@ -148,7 +153,9 @@ export default function MobileTeamSelector({
             <div className="rounded-xl bg-white dark:bg-[#2c2c2e] overflow-hidden">
               {/* Team items */}
               {searchFilteredTeams.map((team, index) => {
+                const displayName = getTeamDisplayName(team)
                 const isSelected = selectedTeam?.id === team.id
+                const isSystemTeam = team.user_id === 0
                 const isSharedTeam = team.share_status === 2 && team.user?.user_name
                 const isGroupTeam = team.namespace && team.namespace !== 'default'
                 const isLast = index === searchFilteredTeams.length - 1
@@ -173,8 +180,9 @@ export default function MobileTeamSelector({
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
                           <span className="text-[15px] text-text-primary truncate">
-                            {team.name}
+                            {displayName}
                           </span>
+                          {isSystemTeam && <SystemTeamTag className="text-[11px] py-0 px-1.5" />}
                           {isGroupTeam && (
                             <Tag
                               className="text-[11px] !m-0 flex-shrink-0 py-0 px-1.5"
