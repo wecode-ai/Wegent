@@ -189,7 +189,19 @@
       "selectGroup": "Select Group"
     },
     "folder": {
-      "docCount": "{{count}} docs"
+      "docCount": "{{count}} docs",
+      "create": "Create Folder",
+      "createTitle": "New Folder",
+      "createPlaceholder": "Enter folder name",
+      "delete": "Delete Folder",
+      "deleteTitle": "Delete Folder",
+      "deleteConfirm": "Are you sure you want to delete \"{{name}}\" and all its subfolders? Documents will be moved to root level.",
+      "rename": "Rename Folder",
+      "renameTitle": "Rename Folder",
+      "renamePlaceholder": "Enter new folder name",
+      "moveDocument": "Move to Folder",
+      "selectFolder": "Select target folder",
+      "rootLevel": "Root Level"
     },
     "document": {
       "title": "Documents",

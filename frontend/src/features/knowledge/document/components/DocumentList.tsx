@@ -22,6 +22,7 @@ import {
   CheckSquare,
   Square,
   AlertTriangle,
+  FolderPlus,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
@@ -33,11 +34,14 @@ import { DeleteDocumentDialog } from './DeleteDocumentDialog'
 import { EditDocumentDialog } from './EditDocumentDialog'
 import { RetrievalTestDialog } from './RetrievalTestDialog'
 import { useDocuments } from '../hooks/useDocuments'
+import { useFolders } from '../hooks/useFolders'
 import { FolderTree } from './FolderTree'
+import { CreateFolderDialog } from './CreateFolderDialog'
+import { DeleteFolderDialog } from './DeleteFolderDialog'
 import { useColumnResize } from '../hooks/useColumnResize'
 import { refreshKnowledgeBaseSummary } from '@/apis/knowledge'
 import { toast } from '@/hooks/use-toast'
-import type { KnowledgeBase, KnowledgeDocument, SplitterConfig } from '@/types/knowledge'
+import type { KnowledgeBase, KnowledgeDocument, KnowledgeFolder, SplitterConfig } from '@/types/knowledge'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useUser } from '@/features/common/UserContext'
 import { useSearchParams, useRouter, usePathname } from 'next/navigation'
@@ -135,6 +139,29 @@ export function DocumentList({
   const { documents, loading, error, create, remove, refresh, batchDelete } = useDocuments({
     knowledgeBaseId: knowledgeBase.id,
   })
+
+  // Folder state
+  const {
+    folders,
+    loading: foldersLoading,
+    fetchFolders,
+    createFolder,
+    updateFolder,
+    deleteFolder,
+    moveDocument,
+  } = useFolders({ knowledgeBaseId: knowledgeBase.id })
+
+  const [showCreateFolder, setShowCreateFolder] = useState(false)
+  const [createFolderParentId, setCreateFolderParentId] = useState(0)
+  const [renamingFolder, setRenamingFolder] = useState<{ id: number; name: string } | null>(null)
+  const [deletingFolder, setDeletingFolder] = useState<{ id: number; name: string } | null>(null)
+
+  // Load folders when knowledge base changes
+  useEffect(() => {
+    if (knowledgeBase.id) {
+      fetchFolders()
+    }
+  }, [knowledgeBase.id, fetchFolders])
 
   // Only show error on page for initial load failures (when documents list is empty)
   // Operation errors are shown via toast notifications
@@ -505,6 +532,40 @@ export function DocumentList({
 
   const longSummary = knowledgeBase.summary?.long_summary
 
+  // Folder CRUD handlers
+  const handleCreateFolder = async (parentId: number) => {
+    setCreateFolderParentId(parentId)
+    setShowCreateFolder(true)
+  }
+
+  const handleCreateFolderSubmit = async (name: string) => {
+    await createFolder({ name, parent_id: createFolderParentId })
+    setShowCreateFolder(false)
+    refresh()
+  }
+
+  const handleRenameFolder = (folderId: number, currentName: string) => {
+    setRenamingFolder({ id: folderId, name: currentName })
+  }
+
+  const handleRenameFolderSubmit = async (name: string) => {
+    if (!renamingFolder) return
+    await updateFolder(renamingFolder.id, { name })
+    setRenamingFolder(null)
+    refresh()
+  }
+
+  const handleDeleteFolderClick = (folderId: number, folderName: string) => {
+    setDeletingFolder({ id: folderId, name: folderName })
+  }
+
+  const handleDeleteFolderConfirm = async () => {
+    if (!deletingFolder) return
+    await deleteFolder(deletingFolder.id)
+    setDeletingFolder(null)
+    refresh()
+  }
+
   // Knowledge base type info
   const isNotebook = (knowledgeBase.kb_type || 'notebook') === 'notebook'
   // Check if RAG is configured (has retriever and embedding model)
@@ -686,6 +747,14 @@ export function DocumentList({
           </Tooltip>
         </TooltipProvider>
 
+        {/* Create folder button */}
+        {canUpload && (
+          <Button variant="outline" size="sm" onClick={() => handleCreateFolder(0)}>
+            <FolderPlus className="w-4 h-4 mr-1" />
+            {t('document.folder.create')}
+          </Button>
+        )}
+
         {/* Upload button */}
         {canUpload && (
           <Button variant="primary" size="sm" onClick={() => setShowUpload(true)}>
@@ -753,6 +822,7 @@ export function DocumentList({
                 </div>
               )}
               <FolderTree
+                folders={folders}
                 documents={filteredAndSortedDocuments}
                 compact={true}
                 onViewDetail={setViewingDoc}
@@ -767,6 +837,10 @@ export function DocumentList({
                 selectedIds={selectedIds}
                 onSelect={handleSelectDoc}
                 ragConfigured={ragConfigured}
+                onCreateFolder={canUpload ? handleCreateFolder : undefined}
+                onRenameFolder={canUpload ? handleRenameFolder : undefined}
+                onDeleteFolder={canUpload ? handleDeleteFolderClick : undefined}
+                canManageFolders={canUpload}
               />
             </div>
           ) : (
@@ -846,6 +920,7 @@ export function DocumentList({
               </div>
               {/* Document rows with folder tree - no extra border */}
               <FolderTree
+                folders={folders}
                 documents={filteredAndSortedDocuments}
                 compact={false}
                 withBorder={false}
@@ -862,6 +937,10 @@ export function DocumentList({
                 onSelect={handleSelectDoc}
                 ragConfigured={ragConfigured}
                 nameColumnWidth={nameColumnWidth ?? undefined}
+                onCreateFolder={canUpload ? handleCreateFolder : undefined}
+                onRenameFolder={canUpload ? handleRenameFolder : undefined}
+                onDeleteFolder={canUpload ? handleDeleteFolderClick : undefined}
+                canManageFolders={canUpload}
               />
             </div>
           )}
@@ -936,6 +1015,27 @@ export function DocumentList({
         open={showRetrievalTest}
         onOpenChange={setShowRetrievalTest}
         knowledgeBase={knowledgeBase}
+      />
+
+      {/* Folder dialogs */}
+      <CreateFolderDialog
+        open={showCreateFolder}
+        onOpenChange={setShowCreateFolder}
+        onSubmit={handleCreateFolderSubmit}
+      />
+
+      <CreateFolderDialog
+        open={!!renamingFolder}
+        onOpenChange={open => !open && setRenamingFolder(null)}
+        onSubmit={handleRenameFolderSubmit}
+        initialName={renamingFolder?.name}
+      />
+
+      <DeleteFolderDialog
+        open={!!deletingFolder}
+        onOpenChange={open => !open && setDeletingFolder(null)}
+        folderName={deletingFolder?.name || ''}
+        onConfirm={handleDeleteFolderConfirm}
       />
     </div>
   )

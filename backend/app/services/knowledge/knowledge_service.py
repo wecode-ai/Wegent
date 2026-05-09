@@ -19,6 +19,7 @@ from app.models.kind import Kind
 from app.models.knowledge import (
     DocumentStatus,
     KnowledgeDocument,
+    KnowledgeFolder,
 )
 from app.models.namespace import Namespace
 from app.models.user import User
@@ -1052,6 +1053,7 @@ class KnowledgeService:
             file_extension=data.file_extension,
             file_size=data.file_size,
             user_id=user_id,
+            folder_id=data.folder_id,
             splitter_config=(
                 data.splitter_config.model_dump(exclude_none=True)
                 if data.splitter_config
@@ -1110,6 +1112,7 @@ class KnowledgeService:
         db: Session,
         knowledge_base_id: int,
         user_id: int,
+        folder_id: int | None = None,
     ) -> list[KnowledgeDocument]:
         """
         List documents in a knowledge base.
@@ -1118,6 +1121,7 @@ class KnowledgeService:
             db: Database session
             knowledge_base_id: Knowledge base ID
             user_id: Requesting user ID
+            folder_id: Optional folder ID to filter by (None = all documents)
 
         Returns:
             List of documents
@@ -1129,14 +1133,14 @@ class KnowledgeService:
         if not kb or not has_access:
             return []
 
-        return (
-            db.query(KnowledgeDocument)
-            .filter(
-                KnowledgeDocument.kind_id == knowledge_base_id,
-            )
-            .order_by(KnowledgeDocument.created_at.desc())
-            .all()
+        query = db.query(KnowledgeDocument).filter(
+            KnowledgeDocument.kind_id == knowledge_base_id,
         )
+
+        if folder_id is not None:
+            query = query.filter(KnowledgeDocument.folder_id == folder_id)
+
+        return query.order_by(KnowledgeDocument.created_at.desc()).all()
 
     @staticmethod
     def _assert_can_manage_document(

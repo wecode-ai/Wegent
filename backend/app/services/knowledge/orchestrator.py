@@ -626,6 +626,7 @@ class KnowledgeOrchestrator:
         db: Session,
         user: User,
         knowledge_base_id: int,
+        folder_id: int | None = None,
     ) -> KnowledgeDocumentListResponse:
         """
         List documents in a knowledge base.
@@ -634,6 +635,7 @@ class KnowledgeOrchestrator:
             db: Database session
             user: Current user
             knowledge_base_id: Knowledge base ID
+            folder_id: Optional folder ID to filter by
 
         Returns:
             KnowledgeDocumentListResponse with document list.
@@ -656,6 +658,7 @@ class KnowledgeOrchestrator:
             db=db,
             knowledge_base_id=knowledge_base_id,
             user_id=user.id,
+            folder_id=folder_id,
         )
 
         # Batch query user names for created_by field
