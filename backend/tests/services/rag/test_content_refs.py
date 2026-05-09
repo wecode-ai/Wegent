@@ -57,3 +57,58 @@ def test_build_content_ref_for_attachment_prefers_presigned_url(test_db) -> None
 
     assert content_ref.kind == "presigned_url"
     assert content_ref.url == "https://storage.example.com/presigned/object"
+
+
+def test_build_content_ref_for_attachment_passes_is_encrypted_false(test_db) -> None:
+    """Test that is_encrypted=False is passed when attachment is not encrypted."""
+    context = _create_attachment_context(test_db, attachment_id=103)
+    context.type_data["is_encrypted"] = False
+
+    with patch(
+        "app.services.rag.content_refs.context_service.get_attachment_url",
+        return_value="https://storage.example.com/presigned/object",
+    ):
+        content_ref = build_content_ref_for_attachment(
+            db=test_db,
+            attachment_id=context.id,
+        )
+
+    assert content_ref.kind == "presigned_url"
+    assert content_ref.is_encrypted is False
+
+
+def test_build_content_ref_for_attachment_passes_is_encrypted_true(test_db) -> None:
+    """Test that is_encrypted=True is passed when attachment is encrypted."""
+    context = _create_attachment_context(test_db, attachment_id=104)
+    context.type_data["is_encrypted"] = True
+
+    with patch(
+        "app.services.rag.content_refs.context_service.get_attachment_url",
+        return_value="https://storage.example.com/presigned/object",
+    ):
+        content_ref = build_content_ref_for_attachment(
+            db=test_db,
+            attachment_id=context.id,
+        )
+
+    assert content_ref.kind == "presigned_url"
+    assert content_ref.is_encrypted is True
+
+
+def test_build_content_ref_for_attachment_defaults_is_encrypted_false(test_db) -> None:
+    """Test that is_encrypted defaults to False when type_data has no is_encrypted."""
+    context = _create_attachment_context(test_db, attachment_id=105)
+    # Remove is_encrypted from type_data if present
+    context.type_data.pop("is_encrypted", None)
+
+    with patch(
+        "app.services.rag.content_refs.context_service.get_attachment_url",
+        return_value="https://storage.example.com/presigned/object",
+    ):
+        content_ref = build_content_ref_for_attachment(
+            db=test_db,
+            attachment_id=context.id,
+        )
+
+    assert content_ref.kind == "presigned_url"
+    assert content_ref.is_encrypted is False

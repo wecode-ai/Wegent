@@ -390,7 +390,8 @@ export function MobileChatInputControls({
           </div>
         )}
 
-        {!isVoiceMode && <div className="flex-shrink-0">{renderSendButton()}</div>}
+        {/* Send button: always visible regardless of voice mode */}
+        <div className="flex-shrink-0">{renderSendButton()}</div>
       </div>
     </div>
   )

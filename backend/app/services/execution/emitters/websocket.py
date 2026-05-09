@@ -259,7 +259,7 @@ class WebSocketResultEmitter(BaseResultEmitter):
         """
         # Determine status using unified BlockStatus enum
         status = BlockStatus.DONE
-        if event.data and event.data.get("status") == "error":
+        if event.data and event.data.get("status") in ("error", "failed"):
             status = BlockStatus.ERROR
 
         await ws_emitter.emit_block_updated(

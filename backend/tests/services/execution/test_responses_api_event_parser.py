@@ -239,7 +239,7 @@ class TestResponsesAPIEventParserToolIds:
             subtask_id=2,
             message_id=3,
             event_type=ResponsesAPIStreamEvents.MCP_CALL_FAILED.value,
-            data={"item_id": "mcp_456", "error": "timeout"},
+            data={"item_id": "mcp_456", "failure_reason": "timeout"},
         )
 
         assert failed is not None
@@ -560,3 +560,101 @@ class TestResponsesAPIEventParserToolIds:
         )
 
         assert parser._tool_contexts == {}
+
+
+class TestMcpCallFailedEventParsing:
+    """Regression tests for MCP tool failure event parsing.
+
+    Root cause: response.mcp_call.failed used "error" as top-level key, which
+    triggered OpenAI SDK's error detection in _streaming.py, causing the entire
+    SSE stream to terminate with "An error occurred during streaming" instead of
+    letting the LLM handle the failure gracefully.
+
+    Fix: renamed "error" to "failure_reason" in mcp_call_failed() so the SDK
+    no longer misidentifies it as a fatal streaming error.
+    """
+
+    def _setup_mcp_in_progress(
+        self, parser: ResponsesAPIEventParser, item_id: str
+    ) -> None:
+        """Register MCP call context via OUTPUT_ITEM_ADDED."""
+        parser.parse(
+            task_id=1,
+            subtask_id=2,
+            message_id=3,
+            event_type=ResponsesAPIStreamEvents.OUTPUT_ITEM_ADDED.value,
+            data={
+                "item": {
+                    "type": "mcp_call",
+                    "id": item_id,
+                    "name": "get_namespaces",
+                    "server_label": "kubernetes",
+                    "arguments": "{}",
+                }
+            },
+        )
+
+    def test_mcp_call_failed_produces_tool_result_with_failed_status(self):
+        """response.mcp_call.failed → TOOL_RESULT event with status=failed."""
+        from shared.models import EventType
+
+        parser = ResponsesAPIEventParser()
+        self._setup_mcp_in_progress(parser, "call_abc")
+
+        result = parser.parse(
+            task_id=1,
+            subtask_id=2,
+            message_id=3,
+            event_type=ResponsesAPIStreamEvents.MCP_CALL_FAILED.value,
+            data={
+                "item_id": "call_abc",
+                "failure_reason": "MCP tool 'get_namespaces' failed: Output validation error: 'context' is a required property",
+            },
+        )
+
+        assert result is not None
+        assert result.type == EventType.TOOL_RESULT
+        assert result.data["status"] == "failed"
+        assert result.data["tool_protocol"] == "mcp_call"
+        assert "get_namespaces" in result.data.get("error", "")
+
+    def test_mcp_call_failed_without_failure_reason(self):
+        """response.mcp_call.failed with no failure_reason still produces TOOL_RESULT."""
+        from shared.models import EventType
+
+        parser = ResponsesAPIEventParser()
+        self._setup_mcp_in_progress(parser, "call_xyz")
+
+        result = parser.parse(
+            task_id=1,
+            subtask_id=2,
+            message_id=3,
+            event_type=ResponsesAPIStreamEvents.MCP_CALL_FAILED.value,
+            data={"item_id": "call_xyz"},
+        )
+
+        assert result is not None
+        assert result.type == EventType.TOOL_RESULT
+        assert result.data["status"] == "failed"
+        assert result.data.get("error") is None
+
+    def test_mcp_call_failed_does_not_have_error_key_in_raw_event(self):
+        """mcp_call_failed builder must NOT use 'error' as top-level key.
+
+        The OpenAI SDK _streaming.py checks data.get('error') to detect fatal
+        streaming errors. A plain string value triggers the fallback message
+        'An error occurred during streaming' and raises APIError, killing the stream.
+        """
+        from shared.models.responses_api import ResponsesAPIEventBuilder
+
+        builder = ResponsesAPIEventBuilder(subtask_id=1, response_id="resp_1")
+        event = builder.mcp_call_failed(
+            item_id="call_1",
+            error="MCP tool 'get_namespaces' failed: Output validation error: 'context' is a required property",
+        )
+
+        assert "error" not in event, (
+            "mcp_call_failed must not use 'error' as top-level key — "
+            "it triggers OpenAI SDK fatal error detection in _streaming.py"
+        )
+        assert event.get("failure_reason") is not None

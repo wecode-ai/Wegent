@@ -23,6 +23,7 @@ from shared.models import (
     ContentRef,
     PresignedUrlContentRef,
 )
+from shared.utils.crypto import decrypt_attachment
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +89,7 @@ class ContentFetcher:
         self,
         content_ref: PresignedUrlContentRef,
     ) -> tuple[bytes, str, str]:
-        """Fetch content directly from a presigned URL.
+        """Fetch content directly from a presigned URL with decryption support.
 
         Args:
             content_ref: Presigned URL content reference.
@@ -109,7 +110,24 @@ class ContentFetcher:
                 # Extract filename and extension from URL if possible
                 source_file, file_extension = self._extract_filename_from_url(url)
 
-                return response.content, source_file, file_extension
+                binary_data = response.content
+
+                # Decrypt if attachment is encrypted
+                if content_ref.is_encrypted:
+                    try:
+                        binary_data = decrypt_attachment(binary_data)
+                        logger.info(
+                            "Successfully decrypted attachment from presigned URL"
+                        )
+                    except Exception as e:
+                        logger.error(f"Failed to decrypt attachment: {e}")
+                        raise ContentFetchError(
+                            f"Failed to decrypt attachment: {e}",
+                            retryable=False,
+                            details={"url": url[:100]},
+                        ) from e
+
+                return binary_data, source_file, file_extension
 
         except httpx.HTTPStatusError as exc:
             logger.error(f"HTTP error fetching from presigned URL: {exc}")

@@ -515,12 +515,12 @@ wegent-knowledge:
       when: never
     - if: '$CI_COMMIT_BRANCH == "main"'
       changes:
-        - knowledge/**/*
+        - knowledge_runtime/**/*
         - wecode/docker/knowledge/**/*
         - shared/**/*
         - knowledge_engine/**/*
     - changes:
-        - knowledge/**/*
+        - knowledge_runtime/**/*
         - wecode/docker/knowledge/**/*
         - shared/**/*
         - knowledge_engine/**/*
@@ -543,7 +543,7 @@ trigger_update_knowledge_web:
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
       changes:
-        - knowledge/**/*
+        - knowledge_runtime/**/*
         - wecode/docker/knowledge/**/*
         - shared/**/*
         - knowledge_engine/**/*
@@ -567,5 +567,5 @@ trigger_update_simulation_knowledge_web:
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME == "develop" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main"'
       changes:
-        - knowledge/**/*
+        - knowledge_runtime/**/*
         - wecode/docker/knowledge/**/*

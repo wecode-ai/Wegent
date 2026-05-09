@@ -370,7 +370,10 @@ class TestResponsesAPIEmitter:
             "response.mcp_call.failed",
             "response.output_item.done",
         ]
-        assert events[1][1]["error"] == "MCP tool 'search_docs' timed out after 180.0s"
+        assert (
+            events[1][1]["failure_reason"]
+            == "MCP tool 'search_docs' timed out after 180.0s"
+        )
         assert events[2][1]["item"]["status"] == "failed"
 
     @pytest.mark.asyncio

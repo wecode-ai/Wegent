@@ -181,3 +181,111 @@ class TestContentFetcher:
         )
         assert filename == "report.docx"
         assert ext == ".docx"
+
+    @pytest.mark.asyncio
+    async def test_fetch_from_presigned_url_encrypted_success(
+        self, content_fetcher
+    ) -> None:
+        """Test successful fetch and decryption from presigned URL."""
+        from shared.utils.crypto import encrypt_attachment
+
+        original_content = b"test content to encrypt"
+        encrypted_content = encrypt_attachment(original_content)
+
+        content_ref = PresignedUrlContentRef(
+            kind="presigned_url",
+            url="https://storage.example.com/bucket/file.pdf?signature=xxx",
+            is_encrypted=True,
+        )
+
+        mock_response = MagicMock()
+        mock_response.content = encrypted_content
+        mock_response.raise_for_status = MagicMock()
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_client.return_value.__aenter__.return_value.get = AsyncMock(
+                return_value=mock_response
+            )
+
+            binary_data, source_file, file_extension = await content_fetcher.fetch(
+                content_ref
+            )
+
+        assert binary_data == original_content
+        assert source_file == "file.pdf"
+        assert file_extension == ".pdf"
+
+    @pytest.mark.asyncio
+    async def test_fetch_from_presigned_url_encrypted_decryption_failure(
+        self, content_fetcher
+    ) -> None:
+        """Test that decryption failure raises ContentFetchError."""
+        content_ref = PresignedUrlContentRef(
+            kind="presigned_url",
+            url="https://storage.example.com/bucket/file.pdf",
+            is_encrypted=True,
+        )
+
+        # Invalid encrypted data (not properly encrypted)
+        mock_response = MagicMock()
+        mock_response.content = b"invalid encrypted content that will fail decryption"
+        mock_response.raise_for_status = MagicMock()
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_client.return_value.__aenter__.return_value.get = AsyncMock(
+                return_value=mock_response
+            )
+
+            with pytest.raises(ContentFetchError) as exc_info:
+                await content_fetcher.fetch(content_ref)
+
+        assert "Failed to decrypt attachment" in str(exc_info.value)
+        assert not exc_info.value.retryable
+
+    @pytest.mark.asyncio
+    async def test_fetch_from_presigned_url_not_encrypted(
+        self, content_fetcher
+    ) -> None:
+        """Test that non-encrypted content is returned as-is."""
+        content_ref = PresignedUrlContentRef(
+            kind="presigned_url",
+            url="https://storage.example.com/bucket/file.pdf",
+            is_encrypted=False,
+        )
+
+        mock_response = MagicMock()
+        mock_response.content = b"plain text content"
+        mock_response.raise_for_status = MagicMock()
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_client.return_value.__aenter__.return_value.get = AsyncMock(
+                return_value=mock_response
+            )
+
+            binary_data, _, _ = await content_fetcher.fetch(content_ref)
+
+        assert binary_data == b"plain text content"
+
+    @pytest.mark.asyncio
+    async def test_fetch_from_presigned_url_default_is_encrypted_false(
+        self, content_fetcher
+    ) -> None:
+        """Test that is_encrypted defaults to False."""
+        content_ref = PresignedUrlContentRef(
+            kind="presigned_url",
+            url="https://storage.example.com/bucket/file.pdf",
+        )
+
+        mock_response = MagicMock()
+        mock_response.content = b"content without encryption flag"
+        mock_response.raise_for_status = MagicMock()
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_client.return_value.__aenter__.return_value.get = AsyncMock(
+                return_value=mock_response
+            )
+
+            binary_data, _, _ = await content_fetcher.fetch(content_ref)
+
+        # Should return content as-is (no decryption attempted)
+        assert binary_data == b"content without encryption flag"

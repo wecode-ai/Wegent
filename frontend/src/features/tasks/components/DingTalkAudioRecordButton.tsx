@@ -496,40 +496,12 @@ export default function DingTalkAudioRecordButton({
       `}</style>
 
       <div
-        className={['relative flex w-full items-center gap-2 overflow-visible py-2', className]
+        className={['relative flex w-full items-center gap-2 overflow-visible', className]
           .filter(Boolean)
           .join(' ')}
         data-testid="dingtalk-audio-controls"
       >
-        <button
-          type="button"
-          disabled={disabled}
-          onClick={handleModeToggle}
-          className={[
-            'flex h-10 w-10 min-w-[40px] items-center justify-center rounded-full border-2 bg-white transition-all select-none',
-            disabled
-              ? 'border-border text-text-muted cursor-not-allowed opacity-50'
-              : 'border-black text-black cursor-pointer hover:bg-gray-50 active:scale-95',
-          ].join(' ')}
-          title={
-            isVoiceMode
-              ? t('dingtalk_audio.switch_to_text', { defaultValue: '切换到文字输入' })
-              : t('dingtalk_audio.switch_to_voice', { defaultValue: '切换到语音输入' })
-          }
-          aria-label={
-            isVoiceMode
-              ? t('dingtalk_audio.switch_to_text', { defaultValue: '切换到文字输入' })
-              : t('dingtalk_audio.switch_to_voice', { defaultValue: '切换到语音输入' })
-          }
-          data-testid="dingtalk-audio-mode-toggle-button"
-        >
-          {isVoiceMode ? (
-            <Keyboard className="h-4 w-4" strokeWidth={2.3} />
-          ) : (
-            <Volume2 className="h-4 w-4" strokeWidth={2.3} />
-          )}
-        </button>
-
+        {/* In voice mode: record button on the left (flex-1), toggle button on the right (fixed size) */}
         {isVoiceMode && (
           <div className="flex min-w-0 flex-1 flex-col items-center gap-1">
             {/*
@@ -553,7 +525,7 @@ export default function DingTalkAudioRecordButton({
               onMouseDown={handlePressStart}
               onMouseMove={handlePressMove}
               className={[
-                'relative flex h-14 w-full min-w-0 touch-none items-center justify-center rounded-full px-3 transition-all select-none overflow-hidden',
+                'relative flex h-9 w-full min-w-0 touch-none items-center justify-center rounded-full px-3 transition-all select-none overflow-hidden',
                 isButtonDisabled
                   ? 'bg-surface text-text-muted cursor-not-allowed opacity-50'
                   : 'bg-surface text-text-primary active:scale-[0.98]',
@@ -568,13 +540,13 @@ export default function DingTalkAudioRecordButton({
             >
               {/* Idle content: shown by default, hidden during recording via DOM */}
               <span ref={recordButtonContentRef} className="flex items-center gap-2">
-                <Mic className="h-5 w-5 text-text-secondary" />
-                <span>{t('dingtalk_audio.hold_to_speak', { defaultValue: '按住说话' })}</span>
+                <Mic className="h-4 w-4 text-text-secondary" />
+                <span className="text-sm">{t('dingtalk_audio.hold_to_speak', { defaultValue: '按住说话' })}</span>
               </span>
               {/* Waveform: hidden by default, shown during recording via DOM */}
               <div
                 ref={recordButtonWaveformRef}
-                className="flex h-11 w-full items-center justify-center gap-1 overflow-hidden px-3"
+                className="flex h-9 w-full items-center justify-center gap-1 overflow-hidden px-3"
                 style={{ display: 'none' }}
                 aria-hidden="true"
               >
@@ -611,6 +583,36 @@ export default function DingTalkAudioRecordButton({
             />
           </div>
         )}
+
+        {/* Mode toggle button: always visible, same size as send button (h-9 w-9) */}
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={handleModeToggle}
+          className={[
+            'flex h-9 w-9 min-w-[36px] flex-shrink-0 items-center justify-center rounded-full border-2 bg-white transition-all select-none',
+            disabled
+              ? 'border-border text-text-muted cursor-not-allowed opacity-50'
+              : 'border-black text-black cursor-pointer hover:bg-gray-50 active:scale-95',
+          ].join(' ')}
+          title={
+            isVoiceMode
+              ? t('dingtalk_audio.switch_to_text', { defaultValue: '切换到文字输入' })
+              : t('dingtalk_audio.switch_to_voice', { defaultValue: '切换到语音输入' })
+          }
+          aria-label={
+            isVoiceMode
+              ? t('dingtalk_audio.switch_to_text', { defaultValue: '切换到文字输入' })
+              : t('dingtalk_audio.switch_to_voice', { defaultValue: '切换到语音输入' })
+          }
+          data-testid="dingtalk-audio-mode-toggle-button"
+        >
+          {isVoiceMode ? (
+            <Keyboard className="h-4 w-4" strokeWidth={2.3} />
+          ) : (
+            <Volume2 className="h-4 w-4" strokeWidth={2.3} />
+          )}
+        </button>
       </div>
     </>
   )
