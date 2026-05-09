@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import {
   ChevronRight,
   ChevronDown,
@@ -538,10 +538,12 @@ export function FolderTree({
     return paths
   }, [tree])
 
-  // Default: all folders expanded
-  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(
-    () => new Set(allFolderPaths)
-  )
+  // Default: all folders expanded; sync when asynchronously loaded folders change
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set())
+
+  useEffect(() => {
+    setExpandedFolders(new Set(allFolderPaths))
+  }, [allFolderPaths])
 
   const handleToggleFolder = (path: string) => {
     setExpandedFolders(prev => {

@@ -201,7 +201,14 @@
       "renamePlaceholder": "输入新文件夹名称",
       "moveDocument": "移动到文件夹",
       "selectFolder": "选择目标文件夹",
-      "rootLevel": "根目录"
+      "rootLevel": "根目录",
+      "createdToast": "文件夹 \"{{name}}\" 已创建",
+      "updatedToast": "文件夹 \"{{name}}\" 已更新",
+      "deletedToast": "文件夹已删除，{{count}} 个文档已移至根目录",
+      "createFailed": "创建文件夹失败",
+      "updateFailed": "更新文件夹失败",
+      "deleteFailed": "删除文件夹失败",
+      "moveDocumentFailed": "移动文档失败"
     },
     "document": {
       "title": "文档",

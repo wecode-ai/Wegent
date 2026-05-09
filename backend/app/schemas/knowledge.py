@@ -421,6 +421,14 @@ class KnowledgeFolderCreate(BaseModel):
         default=0, ge=0, description="Parent folder ID (0 = root level)"
     )
 
+    @field_validator("name")
+    @classmethod
+    def validate_name_not_whitespace(cls, v: str) -> str:
+        """Reject names that are empty or consist only of whitespace."""
+        if not v.strip():
+            raise ValueError("Folder name must not be empty or whitespace-only")
+        return v.strip()
+
 
 class KnowledgeFolderUpdate(BaseModel):
     """Schema for updating a knowledge folder."""
@@ -431,6 +439,14 @@ class KnowledgeFolderUpdate(BaseModel):
         ge=0,
         description="New parent folder ID (0 = root level, None = no change)",
     )
+
+    @field_validator("name")
+    @classmethod
+    def validate_name_not_whitespace(cls, v: Optional[str]) -> Optional[str]:
+        """Reject names that are empty or consist only of whitespace."""
+        if v is not None and not v.strip():
+            raise ValueError("Folder name must not be empty or whitespace-only")
+        return v.strip() if v is not None else v
 
 
 class KnowledgeFolderResponse(BaseModel):

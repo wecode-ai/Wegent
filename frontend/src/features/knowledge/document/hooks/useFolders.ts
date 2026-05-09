@@ -20,6 +20,7 @@ import type {
   KnowledgeFolderUpdate,
 } from '@/types/knowledge'
 import { toast } from '@/hooks/use-toast'
+import { useTranslation } from '@/hooks/useTranslation'
 
 interface UseFoldersOptions {
   knowledgeBaseId: number | null
@@ -27,6 +28,7 @@ interface UseFoldersOptions {
 
 export function useFolders(options: UseFoldersOptions) {
   const { knowledgeBaseId } = options
+  const { t } = useTranslation('knowledge')
 
   const [folders, setFolders] = useState<KnowledgeFolder[]>([])
   const [loading, setLoading] = useState(false)
@@ -56,10 +58,10 @@ export function useFolders(options: UseFoldersOptions) {
       try {
         const folder = await createFolder(knowledgeBaseId, data)
         await fetchFolders()
-        toast({ description: `Folder "${folder.name}" created` })
+        toast({ description: t('document.folder.createdToast', { name: folder.name }) })
         return folder
       } catch (err) {
-        const msg = err instanceof Error ? err.message : 'Failed to create folder'
+        const msg = err instanceof Error ? err.message : t('document.folder.createFailed')
         toast({ description: msg, variant: 'destructive' })
         return null
       }
@@ -73,10 +75,10 @@ export function useFolders(options: UseFoldersOptions) {
       try {
         const folder = await updateFolder(knowledgeBaseId, folderId, data)
         await fetchFolders()
-        toast({ description: `Folder "${folder.name}" updated` })
+        toast({ description: t('document.folder.updatedToast', { name: folder.name }) })
         return folder
       } catch (err) {
-        const msg = err instanceof Error ? err.message : 'Failed to update folder'
+        const msg = err instanceof Error ? err.message : t('document.folder.updateFailed')
         toast({ description: msg, variant: 'destructive' })
         return null
       }
@@ -91,11 +93,11 @@ export function useFolders(options: UseFoldersOptions) {
         const result = await deleteFolder(knowledgeBaseId, folderId)
         await fetchFolders()
         toast({
-          description: `Folder deleted, ${result.moved_document_count} document(s) moved to root`,
+          description: t('document.folder.deletedToast', { count: result.moved_document_count }),
         })
         return true
       } catch (err) {
-        const msg = err instanceof Error ? err.message : 'Failed to delete folder'
+        const msg = err instanceof Error ? err.message : t('document.folder.deleteFailed')
         toast({ description: msg, variant: 'destructive' })
         return false
       }
@@ -109,7 +111,7 @@ export function useFolders(options: UseFoldersOptions) {
         await moveDocument(documentId, folderId)
         return true
       } catch (err) {
-        const msg = err instanceof Error ? err.message : 'Failed to move document'
+        const msg = err instanceof Error ? err.message : t('document.folder.moveDocumentFailed')
         toast({ description: msg, variant: 'destructive' })
         return false
       }

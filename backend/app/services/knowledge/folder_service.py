@@ -33,7 +33,7 @@ class KnowledgeFolderService:
 
     @staticmethod
     def _check_kb_access(db: Session, knowledge_base_id: int, user_id: int) -> Kind:
-        """Verify user has access to the knowledge base and return it.
+        """Verify user has read access to the knowledge base.
 
         Raises ValueError if access is denied or KB not found.
         """
@@ -42,6 +42,21 @@ class KnowledgeFolderService:
         )
         if not kb or not has_access:
             raise ValueError("Knowledge base not found or access denied")
+        return kb
+
+    @staticmethod
+    def _check_kb_write_access(
+        db: Session, knowledge_base_id: int, user_id: int
+    ) -> Kind:
+        """Verify user has write access to the knowledge base.
+
+        Raises ValueError if access is denied or KB not found.
+        """
+        kb = KnowledgeFolderService._check_kb_access(db, knowledge_base_id, user_id)
+        if not KnowledgeService.can_manage_knowledge_base_documents(
+            db, knowledge_base_id, user_id
+        ):
+            raise ValueError("You do not have permission to modify this knowledge base")
         return kb
 
     @staticmethod
@@ -65,7 +80,7 @@ class KnowledgeFolderService:
         Raises:
             ValueError: If parent folder doesn't exist or access is denied
         """
-        KnowledgeFolderService._check_kb_access(db, knowledge_base_id, user_id)
+        KnowledgeFolderService._check_kb_write_access(db, knowledge_base_id, user_id)
 
         # Validate parent exists and belongs to the same KB
         if data.parent_id > 0:
@@ -234,7 +249,7 @@ class KnowledgeFolderService:
                     )
                 # Collect all descendant IDs to prevent circular moves
                 descendant_ids = KnowledgeFolderService._collect_descendant_ids(
-                    db, folder.id
+                    db, folder.id, folder.kind_id
                 )
                 if new_parent_id in descendant_ids:
                     raise ValueError("Cannot move a folder into one of its descendants")
@@ -279,7 +294,9 @@ class KnowledgeFolderService:
         folder = KnowledgeFolderService.get_folder(db, folder_id, user_id)
 
         # Collect all descendant folder IDs (including self)
-        descendant_ids = KnowledgeFolderService._collect_descendant_ids(db, folder_id)
+        descendant_ids = KnowledgeFolderService._collect_descendant_ids(
+            db, folder_id, folder.kind_id
+        )
         descendant_ids.add(folder_id)
 
         # Move documents in the deleted folders back to root level
@@ -361,10 +378,11 @@ class KnowledgeFolderService:
         return doc
 
     @staticmethod
-    def _collect_descendant_ids(db: Session, folder_id: int) -> set:
+    def _collect_descendant_ids(db: Session, folder_id: int, kind_id: int) -> set:
         """Collect all descendant folder IDs for a given folder.
 
-        Uses iterative BFS to avoid recursion limits.
+        Uses iterative BFS scoped to a single knowledge base to avoid
+        recursion limits and cross-KB traversal.
         """
         descendant_ids: set = set()
         queue = [folder_id]
@@ -373,7 +391,10 @@ class KnowledgeFolderService:
             current = queue.pop(0)
             children = (
                 db.query(KnowledgeFolder.id)
-                .filter(KnowledgeFolder.parent_id == current)
+                .filter(
+                    KnowledgeFolder.parent_id == current,
+                    KnowledgeFolder.kind_id == kind_id,
+                )
                 .all()
             )
             for (child_id,) in children:

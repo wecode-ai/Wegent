@@ -201,7 +201,14 @@
       "renamePlaceholder": "Enter new folder name",
       "moveDocument": "Move to Folder",
       "selectFolder": "Select target folder",
-      "rootLevel": "Root Level"
+      "rootLevel": "Root Level",
+      "createdToast": "Folder \"{{name}}\" created",
+      "updatedToast": "Folder \"{{name}}\" updated",
+      "deletedToast": "Folder deleted, {{count}} document(s) moved to root",
+      "createFailed": "Failed to create folder",
+      "updateFailed": "Failed to update folder",
+      "deleteFailed": "Failed to delete folder",
+      "moveDocumentFailed": "Failed to move document"
     },
     "document": {
       "title": "Documents",

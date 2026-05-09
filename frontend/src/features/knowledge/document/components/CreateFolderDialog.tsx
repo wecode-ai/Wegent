@@ -83,16 +83,18 @@ export function CreateFolderDialog({
             }}
             autoFocus
             maxLength={255}
+            data-testid="folder-name-input"
           />
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={handleClose} disabled={isSubmitting}>
+          <Button variant="outline" onClick={handleClose} disabled={isSubmitting} data-testid="folder-dialog-cancel">
             {t('common:actions.cancel')}
           </Button>
           <Button
             variant="primary"
             onClick={handleSubmit}
             disabled={!name.trim() || isSubmitting}
+            data-testid="folder-dialog-submit"
           >
             {actionLabel}
           </Button>
