@@ -112,12 +112,15 @@ export interface SkillMetadata {
 
 export interface SkillSpec {
   description: string
+  displayName?: string
   prompt?: string
   version?: string
   author?: string
   tags?: string[]
   /** List of shell types this skill is compatible with (e.g., 'ClaudeCode', 'Agno', 'Dify', 'Chat') */
   bindShells?: string[]
+  /** Whether this skill is visible in user-facing skill lists */
+  visible?: boolean
 }
 
 export interface SkillStatus {

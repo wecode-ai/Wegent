@@ -730,6 +730,11 @@ class SkillSpec(BaseModel):
         "and their tools will be available to the AI. "
         "Format follows the standard MCP server configuration schema.",
     )
+    visible: Optional[bool] = Field(
+        True,
+        description="Whether this skill is visible in user-facing skill lists. "
+        "Hidden skills can still be used by agents that already have them bound.",
+    )
     source: Optional[SkillSource] = Field(
         None,
         description="Source information for the skill. "

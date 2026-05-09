@@ -228,7 +228,11 @@ export const ToolBlock = memo(function ToolBlock({
     <div className="mb-1">
       {/* Compact inline block - pill style with border and rounded corners */}
       <div
-        className={`inline-flex items-center gap-1.5 pl-1.5 pr-2.5 py-1 bg-[#f7f7f8] dark:bg-[#2a2a2a] border border-[#e5e5e5] dark:border-[#3a3a3a] rounded-xl ${
+        className={`inline-flex items-center gap-1.5 pl-1.5 pr-2.5 py-1 border rounded-xl ${
+          hasError
+            ? 'bg-red-50 dark:bg-red-950/30 border-red-200 dark:border-red-800'
+            : 'bg-[#f7f7f8] dark:bg-[#2a2a2a] border-[#e5e5e5] dark:border-[#3a3a3a]'
+        } ${
           canExpand
             ? 'cursor-pointer hover:bg-[#f0f0f0] dark:hover:bg-[#333] hover:border-[#ddd] dark:hover:border-[#444]'
             : 'cursor-default'
@@ -239,6 +243,8 @@ export const ToolBlock = memo(function ToolBlock({
         <div className="flex items-center justify-center w-4 h-4 bg-white dark:bg-[#3a3a3a] border border-[#e8e8e8] dark:border-[#444] rounded-md flex-shrink-0">
           {isRunning ? (
             <Loader2 className="w-2.5 h-2.5 text-[#888] dark:text-[#999] animate-spin" />
+          ) : hasError ? (
+            <AlertCircle className="w-2.5 h-2.5 text-red-500" />
           ) : (
             <ToolIcon className="w-2.5 h-2.5 text-[#888] dark:text-[#999]" />
           )}

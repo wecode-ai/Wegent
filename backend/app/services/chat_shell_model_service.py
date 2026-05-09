@@ -7,7 +7,8 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from contextlib import asynccontextmanager
+from typing import Any, AsyncIterator
 
 from openai import AsyncOpenAI
 
@@ -179,7 +180,12 @@ async def create_response(
     tools: list[dict[str, Any]] | None = None,
     stream: bool = False,
 ) -> Any:
-    """Call chat_shell /v1/responses in stateless mode."""
+    """Call chat_shell /v1/responses in stateless mode (non-streaming).
+
+    For streaming, use :func:`create_streaming_response` instead which
+    returns an async context manager that ensures the underlying httpx
+    connection is properly closed.
+    """
     client = _build_client()
     return await client.responses.create(
         model=model,
@@ -192,6 +198,37 @@ async def create_response(
             "model_config": model_config or {},
         },
     )
+
+
+@asynccontextmanager
+async def create_streaming_response(
+    *,
+    model: str,
+    input_messages: list[dict[str, Any]],
+    instructions: str | None = None,
+    model_config: dict[str, Any] | None = None,
+    metadata: dict[str, Any] | None = None,
+    tools: list[dict[str, Any]] | None = None,
+) -> AsyncIterator[Any]:
+    """Call chat_shell /v1/responses in streaming mode.
+
+    Returns an async context manager that ensures the underlying httpx
+    connection is properly closed when the caller is done iterating,
+    preventing orphan CancelScope corruption in anyio.
+    """
+    client = _build_client()
+    async with await client.responses.create(
+        model=model,
+        input=input_messages,
+        instructions=instructions,
+        tools=tools if tools else None,
+        stream=True,
+        extra_body={
+            "metadata": _merge_metadata(metadata),
+            "model_config": model_config or {},
+        },
+    ) as stream:
+        yield stream
 
 
 async def complete_text(

@@ -30,6 +30,24 @@ from app.services.base import BaseService
 from shared.utils.crypto import encrypt_sensitive_data, is_data_encrypted
 
 
+def _apply_skill_id_mapping(
+    refs: Dict[str, Any], mapping: Dict[int, int]
+) -> Dict[str, Any]:
+    """Update skill_id values in skill_refs dict using the provided mapping."""
+    updated = {}
+    for skill_name, ref_meta in refs.items():
+        if isinstance(ref_meta, dict):
+            old_id = ref_meta.get("skill_id")
+            ref_dict = dict(ref_meta)
+        else:
+            old_id = getattr(ref_meta, "skill_id", None)
+            ref_dict = ref_meta.model_dump()
+        if old_id is not None and old_id in mapping:
+            ref_dict["skill_id"] = mapping[old_id]
+        updated[skill_name] = ref_dict
+    return updated
+
+
 class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
     """
     Bot service class using kinds table
@@ -1991,6 +2009,123 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             resolved.update(fallback_refs)
 
         return resolved
+
+    def find_available_bot_name(
+        self,
+        db: Session,
+        *,
+        base_name: str,
+        user_id: int,
+        namespace: str = "default",
+    ) -> str:
+        """Find an available bot name by appending (2), (3), etc. if needed."""
+        is_group_namespace = namespace != "default"
+        candidate = base_name
+        counter = 2
+        while True:
+            query = db.query(Kind).filter(
+                Kind.kind == "Bot",
+                Kind.name == candidate,
+                Kind.namespace == namespace,
+                Kind.is_active == True,
+            )
+            # For personal namespace, scope uniqueness check to the user
+            # For group namespaces, uniqueness is across all users in the namespace
+            if not is_group_namespace:
+                query = query.filter(Kind.user_id == user_id)
+            existing = query.first()
+            if not existing:
+                return candidate
+            candidate = f"{base_name} ({counter})"
+            counter += 1
+
+    def clone_bot(
+        self,
+        db: Session,
+        *,
+        bot_id: int,
+        user_id: int,
+        new_name: str,
+        namespace: str = "default",
+        skill_id_mapping: Optional[Dict[int, int]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Clone an existing bot with a new name.
+        Copies all config fields; ghost/shell/model refs are preserved by value.
+
+        Args:
+            skill_id_mapping: Optional mapping from old skill IDs to new skill IDs.
+                When provided, skill_refs and preload_skill_refs are updated to use
+                the new IDs. Useful when cloning a bot to a different namespace where
+                skills have been copied under new IDs.
+        """
+        from app.schemas.bot import BotCreate
+        from app.schemas.kind import KnowledgeBaseDefaultRef, SkillRefMeta
+
+        original = (
+            db.query(Kind)
+            .filter(
+                Kind.id == bot_id,
+                Kind.kind == "Bot",
+                Kind.is_active == True,
+            )
+            .first()
+        )
+        if not original:
+            raise HTTPException(status_code=404, detail="Bot not found for cloning")
+
+        # Get full bot dict (decrypted agent_config, resolved shell_name, etc.)
+        ghost, shell, model = self._get_bot_components(db, original, original.user_id)
+        bot_dict = self._convert_to_bot_dict(original, ghost, shell, model)
+
+        # Build knowledge base refs
+        kb_refs = None
+        if bot_dict.get("default_knowledge_base_refs"):
+            kb_refs = [
+                KnowledgeBaseDefaultRef(**ref)
+                for ref in bot_dict["default_knowledge_base_refs"]
+            ]
+
+        # Apply skill_id_mapping to skill_refs and preload_skill_refs if provided
+        skill_refs_raw = bot_dict.get("skill_refs") or {}
+        preload_skill_refs_raw = bot_dict.get("preload_skill_refs") or {}
+
+        if skill_id_mapping:
+            skill_refs_raw = _apply_skill_id_mapping(skill_refs_raw, skill_id_mapping)
+            preload_skill_refs_raw = _apply_skill_id_mapping(
+                preload_skill_refs_raw, skill_id_mapping
+            )
+
+        # Build SkillRefMeta objects
+        skill_refs_meta = None
+        if skill_refs_raw:
+            skill_refs_meta = {
+                k: SkillRefMeta(**v) if isinstance(v, dict) else v
+                for k, v in skill_refs_raw.items()
+            }
+
+        preload_skill_refs_meta = None
+        if preload_skill_refs_raw:
+            preload_skill_refs_meta = {
+                k: SkillRefMeta(**v) if isinstance(v, dict) else v
+                for k, v in preload_skill_refs_raw.items()
+            }
+
+        bot_create = BotCreate(
+            name=new_name,
+            shell_name=bot_dict["shell_name"],
+            agent_config=bot_dict.get("agent_config") or {},
+            system_prompt=bot_dict.get("system_prompt"),
+            mcp_servers=bot_dict.get("mcp_servers"),
+            default_knowledge_base_refs=kb_refs,
+            skills=bot_dict.get("skills"),
+            skill_refs=skill_refs_meta,
+            preload_skills=bot_dict.get("preload_skills"),
+            preload_skill_refs=preload_skill_refs_meta,
+            namespace=namespace,
+        )
+
+        return self.create_with_user(db=db, obj_in=bot_create, user_id=user_id)
 
 
 bot_kinds_service = BotKindsService(Kind)

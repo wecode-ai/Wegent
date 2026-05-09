@@ -10,6 +10,7 @@ from .file_reader import FileListSkill, FileReaderSkill
 from .knowledge_base import KnowledgeBaseTool
 from .knowledge_listing import KbHeadTool, KbLsTool, KBToolCallCounter
 from .load_skill import LoadSkillTool
+from .sandbox_image_viewer import SandboxImageViewerTool
 from .silent_exit import SilentExitException
 from .web_search import WebSearchTool
 
@@ -24,6 +25,7 @@ __all__ = [
     "FileListSkill",
     "SubmitEvaluationResultTool",
     "LoadSkillTool",
+    "SandboxImageViewerTool",
     "SilentExitException",  # Keep exception for backward compatibility
 ]
 

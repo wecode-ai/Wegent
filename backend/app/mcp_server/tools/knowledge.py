@@ -504,7 +504,7 @@ def read_document_content(
 
 @mcp_tool(
     name="wegent_kb_update_document_content",
-    description="Update document content for text documents and editable plain-text files such as txt, md, and markdown.",
+    description="Update document content for text documents and editable plain-text files such as code files, configs, and markup documents.",
     server="knowledge",
     param_descriptions={
         "document_id": "Document ID to update",
@@ -521,9 +521,10 @@ def update_document_content(
     """
     Update document content.
 
-    Supports text documents and editable plain-text file documents such as
-    txt, md, and markdown. Binary file documents are not editable through
-    this tool. Re-indexing is scheduled via Celery if trigger_reindex=True.
+    Supports text documents and editable plain-text file documents including
+    code files (py, js, ts, java, go, etc.), configs (yaml, json, env), and
+    markup documents (md, html, xml, etc.). Binary files are not editable.
+    Re-indexing is scheduled via Celery if trigger_reindex=True.
 
     Args:
         token_info: Task token information containing user context

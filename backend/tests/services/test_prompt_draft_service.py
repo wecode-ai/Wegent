@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+from contextlib import asynccontextmanager
 from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -661,10 +662,14 @@ async def test_stream_prompt_generation_logs_do_not_include_model_secrets():
     async def _mock_stream():
         yield SimpleNamespace(type="response.output_text.delta", delta="你是")
 
+    @asynccontextmanager
+    async def _mock_streaming_response(**kwargs):
+        yield _mock_stream()
+
     with (
         patch(
-            "app.services.prompt_draft_service.chat_shell_model_service.create_response",
-            new=AsyncMock(return_value=_mock_stream()),
+            "app.services.prompt_draft_service.chat_shell_model_service.create_streaming_response",
+            new=_mock_streaming_response,
         ),
         patch("app.services.prompt_draft_service.logger.info") as mock_logger_info,
     ):
@@ -718,6 +723,11 @@ async def test_generate_prompt_draft_stream_raises_when_chat_shell_generation_fa
     _add_user_subtask(test_db, test_user, task, "帮我创建一个流程图")
     _add_assistant_subtask(test_db, test_user, task, "先告诉我主题和主要步骤。")
 
+    @asynccontextmanager
+    async def _mock_streaming_response_that_raises(**kwargs):
+        raise RuntimeError("stream boom")
+        yield  # never reached
+
     with (
         patch(
             "app.services.prompt_draft_service._resolve_model_config",
@@ -731,8 +741,8 @@ async def test_generate_prompt_draft_stream_raises_when_chat_shell_generation_fa
             ),
         ),
         patch(
-            "app.services.prompt_draft_service.chat_shell_model_service.create_response",
-            new=AsyncMock(side_effect=RuntimeError("stream boom")),
+            "app.services.prompt_draft_service.chat_shell_model_service.create_streaming_response",
+            new=_mock_streaming_response_that_raises,
         ),
     ):
         with pytest.raises(PromptDraftGenerationFailedError):

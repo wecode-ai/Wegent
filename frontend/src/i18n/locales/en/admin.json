@@ -200,7 +200,8 @@
     "success": {
       "uploaded": "Public skill uploaded successfully",
       "updated": "Public skill updated successfully",
-      "deleted": "Public skill deleted successfully"
+      "deleted": "Public skill deleted successfully",
+      "metadata_updated": "Metadata updated successfully"
     },
     "errors": {
       "load_failed": "Failed to load public skills",
@@ -208,7 +209,29 @@
       "update_failed": "Failed to update public skill",
       "delete_failed": "Failed to delete public skill",
       "download_failed": "Failed to download public skill",
-      "view_content_failed": "Failed to get skill content"
+      "view_content_failed": "Failed to get skill content",
+      "metadata_update_failed": "Failed to update metadata"
+    },
+    "hidden": "Hidden",
+    "edit_metadata": "Edit Metadata",
+    "edit_metadata_title": "Edit Skill Metadata",
+    "edit_metadata_description": "Edit metadata for \"{{name}}\"",
+    "fields": {
+      "description": "Description",
+      "version": "Version",
+      "author": "Author",
+      "tags": "Tags",
+      "visible": "Visible"
+    },
+    "placeholders": {
+      "description": "Enter skill description",
+      "version": "Enter version number",
+      "author": "Enter author name",
+      "tags": "tag1, tag2, tag3"
+    },
+    "hints": {
+      "tags": "Separate multiple tags with commas",
+      "visible": "When disabled, this skill will not appear in user skill lists, but agents already bound to it can still use it"
     }
   },
   "public_retrievers": {

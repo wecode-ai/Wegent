@@ -113,10 +113,13 @@ class StatusUpdatingEmitter(ResultEmitter):
         elif event.type == EventType.TOOL_RESULT.value:
             # Update tool block status when result arrives
             if event.tool_use_id:
+                tool_status = (
+                    "error" if (event.data or {}).get("status") == "failed" else "done"
+                )
                 await session_manager.update_tool_block_status(
                     subtask_id=self._subtask_id,
                     tool_use_id=event.tool_use_id,
-                    status="done",
+                    status=tool_status,
                     tool_output=event.tool_output,
                     tool_input=event.tool_input,
                 )

@@ -5,10 +5,10 @@
 'use client'
 
 import React from 'react'
-import { X, Database, Table2, MessageSquare } from 'lucide-react'
+import { X, Database, Table2, MessageSquare, FileText } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { ContextItem, QueueMessageContext } from '@/types/context'
+import type { ContextItem, QueueMessageContext, DingTalkDocContext } from '@/types/context'
 import { formatDocumentCount } from '@/lib/i18n-helpers'
 
 interface ContextBadgeProps {
@@ -29,6 +29,8 @@ const getContextIcon = (type: ContextItem['type']) => {
       return Table2
     case 'queue_message':
       return MessageSquare
+    case 'dingtalk_doc':
+      return FileText
     // Future context types will be added here
     // case 'person': return User;
     // case 'bot': return Bot;
@@ -55,20 +57,34 @@ export default function ContextBadge({
         return 'border-blue-500 bg-blue-500/10 text-blue-600'
       case 'queue_message':
         return 'border-orange-500 bg-orange-500/10 text-orange-600'
+      case 'dingtalk_doc':
+        return 'border-orange-400 bg-orange-400/10 text-orange-600'
       default:
         return 'border-primary bg-primary/10 text-primary'
     }
   }
 
-  // Handle badge click - open table URL in new window (only if not disabled)
+  // Handle badge click - open URL in new window for clickable types (only if not disabled)
   const handleBadgeClick = (e: React.MouseEvent) => {
     if (!disableUrlClick && context.type === 'table' && context.source_config?.url) {
       e.stopPropagation()
       window.open(context.source_config.url, '_blank', 'noopener,noreferrer')
     }
+    if (
+      !disableUrlClick &&
+      context.type === 'dingtalk_doc' &&
+      (context as DingTalkDocContext).doc_url
+    ) {
+      e.stopPropagation()
+      window.open((context as DingTalkDocContext).doc_url, '_blank', 'noopener,noreferrer')
+    }
   }
 
-  const isClickable = !disableUrlClick && context.type === 'table' && context.source_config?.url
+  const isClickable =
+    (!disableUrlClick && context.type === 'table' && context.source_config?.url) ||
+    (!disableUrlClick &&
+      context.type === 'dingtalk_doc' &&
+      !!(context as DingTalkDocContext).doc_url)
 
   // Get remove button color based on context type
   const getRemoveButtonColor = () => {
@@ -77,6 +93,8 @@ export default function ContextBadge({
         return 'text-blue-600 hover:text-blue-600 hover:bg-blue-500/20'
       case 'queue_message':
         return 'text-orange-600 hover:text-orange-600 hover:bg-orange-500/20'
+      case 'dingtalk_doc':
+        return 'text-orange-600 hover:text-orange-600 hover:bg-orange-400/20'
       default:
         return 'text-primary hover:text-primary hover:bg-primary/20'
     }
@@ -112,6 +130,9 @@ export default function ContextBadge({
             {t('inbox:message.from', { name: (context as QueueMessageContext).senderName })} ·{' '}
             {(context as QueueMessageContext).messageCount} {t('inbox:message.messages_count')}
           </span>
+        )}
+        {context.type === 'dingtalk_doc' && (
+          <span className="text-xs opacity-70 truncate">{t('chat:dingtalkDocs.docBadgeHint')}</span>
         )}
       </div>
       <Button

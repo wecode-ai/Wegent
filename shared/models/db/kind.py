@@ -6,7 +6,7 @@
 Kubernetes-style CRD models for cloud-native agent management.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import JSON, Boolean, Column, DateTime, Index, Integer, String
 
@@ -25,8 +25,14 @@ class Kind(Base):
     namespace = Column(String(100), nullable=False, default="default")
     json = Column(JSON, nullable=False)
     is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.now)
-    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+    created_at = Column(
+        DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None)
+    )
+    updated_at = Column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
+        onupdate=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
+    )
 
     __table_args__ = (
         # Composite index for user's own resources query:

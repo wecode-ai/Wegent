@@ -17,10 +17,8 @@ For SSE mode (Chat shell), uses OpenAI AsyncClient to consume the
 OpenAI Responses API compatible endpoint.
 """
 
-import asyncio
 import json
 import logging
-from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, List, Optional
 
 if TYPE_CHECKING:
@@ -41,7 +39,6 @@ from shared.models.responses_api import ResponsesAPIStreamEvents
 from shared.utils.http_client import traced_async_client
 
 from .emitters import (
-    CompositeResultEmitter,
     ResultEmitter,
     ResultEmitterFactory,
     StatusUpdatingEmitter,
@@ -73,6 +70,39 @@ def _require_non_empty_tool_use_id(tool_use_id: Any, *, context: str) -> str:
         raise InvalidToolCallEventError(f"{context}: missing non-empty tool_use_id")
 
     return value
+
+
+def _extract_shell_call_input(item: dict[str, Any]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    shell_input = item.get("input")
+    if isinstance(shell_input, dict):
+        result.update(shell_input)
+
+    action = item.get("action", {})
+    if not isinstance(action, dict):
+        return result
+
+    commands = action.get("commands") or []
+    if "command" not in result and isinstance(commands, list):
+        command = next(
+            (value for value in commands if isinstance(value, str) and value.strip()),
+            None,
+        )
+        if command:
+            result["command"] = command
+    if "timeout_seconds" not in result:
+        timeout_ms = action.get("timeout_ms")
+        if isinstance(timeout_ms, int) and timeout_ms > 0:
+            result["timeout_seconds"] = max(1, (timeout_ms + 999) // 1000)
+    return result
+
+
+def _build_shell_call_context(item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "protocol": "shell_call",
+        "name": item.get("name", ""),
+        "arguments": _extract_shell_call_input(item),
+    }
 
 
 def extract_completed_result(response_data: dict) -> dict:
@@ -111,8 +141,22 @@ class ResponsesAPIEventParser:
     It converts OpenAI Responses API events to internal ExecutionEvent format.
     """
 
+    def __init__(self) -> None:
+        self._tool_contexts: dict[str, dict[str, Any]] = {}
+
     @staticmethod
+    def _tool_key(task_id: int, subtask_id: int, tool_use_id: str) -> str:
+        """Build a stable context key scoped to the request lifecycle."""
+        return f"{task_id}:{subtask_id}:{tool_use_id}"
+
+    def _clear_task_contexts(self, task_id: int, subtask_id: int) -> None:
+        prefix = f"{task_id}:{subtask_id}:"
+        stale_keys = [key for key in self._tool_contexts if key.startswith(prefix)]
+        for key in stale_keys:
+            self._tool_contexts.pop(key, None)
+
     def parse(
+        self,
         task_id: int,
         subtask_id: int,
         message_id: Optional[int],
@@ -152,6 +196,7 @@ class ResponsesAPIEventParser:
         elif event_type == ResponsesAPIStreamEvents.RESPONSE_COMPLETED.value:
             # response.completed -> DONE
             response_data = data.get("response", {})
+            self._clear_task_contexts(task_id, subtask_id)
             return ExecutionEvent(
                 type=EventType.DONE,
                 task_id=task_id,
@@ -163,6 +208,7 @@ class ResponsesAPIEventParser:
 
         elif event_type == ResponsesAPIStreamEvents.ERROR.value:
             # error -> ERROR
+            self._clear_task_contexts(task_id, subtask_id)
             return ExecutionEvent(
                 type=EventType.ERROR,
                 task_id=task_id,
@@ -174,6 +220,7 @@ class ResponsesAPIEventParser:
 
         elif event_type == ResponsesAPIStreamEvents.RESPONSE_INCOMPLETE.value:
             # response.incomplete -> CANCELLED
+            self._clear_task_contexts(task_id, subtask_id)
             return ExecutionEvent(
                 type=EventType.CANCELLED,
                 task_id=task_id,
@@ -194,6 +241,14 @@ class ResponsesAPIEventParser:
                 data.get("call_id") or data.get("item_id"),
                 context="function_call_arguments.done",
             )
+            tool_key = self._tool_key(task_id, subtask_id, tool_use_id)
+            tool_context = self._tool_contexts.pop(tool_key, None)
+            if tool_context is None:
+                logger.warning(
+                    "[ResponsesAPIEventParser] Missing function_call context for %s",
+                    tool_key,
+                )
+                return None
             # Parse arguments from the event data to get tool_input
             arguments_str = data.get("arguments", "")
             tool_input = None
@@ -206,10 +261,14 @@ class ResponsesAPIEventParser:
                 type=EventType.TOOL_RESULT,
                 task_id=task_id,
                 subtask_id=subtask_id,
+                tool_name=tool_context.get("name"),
                 tool_use_id=tool_use_id,
-                tool_input=tool_input,
+                tool_input=tool_input or tool_context.get("arguments"),
                 tool_output=data.get("output"),
-                data={"blocks": data.get("blocks", [])},
+                data={
+                    "blocks": data.get("blocks", []),
+                    "tool_protocol": "function_call",
+                },
                 message_id=message_id,
             )
 
@@ -245,6 +304,12 @@ class ResponsesAPIEventParser:
                         arguments = json.loads(arguments_str)
                     except (json.JSONDecodeError, TypeError):
                         pass
+                tool_key = self._tool_key(task_id, subtask_id, call_id)
+                self._tool_contexts[tool_key] = {
+                    "protocol": "function_call",
+                    "name": name,
+                    "arguments": arguments,
+                }
 
                 return ExecutionEvent(
                     type=EventType.TOOL_START,
@@ -256,19 +321,175 @@ class ResponsesAPIEventParser:
                     data={
                         "blocks": data.get("blocks", []),
                         "display_name": data.get("display_name"),
+                        "tool_protocol": "function_call",
+                    },
+                    message_id=message_id,
+                )
+            if item.get("type") == "mcp_call":
+                item_id = _require_non_empty_tool_use_id(
+                    item.get("id"),
+                    context="response.output_item.added(mcp_call)",
+                )
+                server_label = item.get("server_label", "")
+                name = item.get("name", "")
+                tool_key = self._tool_key(task_id, subtask_id, item_id)
+                self._tool_contexts[tool_key] = {
+                    "protocol": "mcp_call",
+                    "name": name,
+                    "server_label": server_label,
+                }
+                return ExecutionEvent(
+                    type=EventType.TOOL_START,
+                    task_id=task_id,
+                    subtask_id=subtask_id,
+                    tool_use_id=item_id,
+                    tool_name=name,
+                    data={
+                        "tool_protocol": "mcp_call",
+                        "server_label": server_label,
+                    },
+                    message_id=message_id,
+                )
+            if item.get("type") == "shell_call":
+                call_id = _require_non_empty_tool_use_id(
+                    item.get("call_id") or item.get("id"),
+                    context="response.output_item.added(shell_call)",
+                )
+                tool_context = _build_shell_call_context(item)
+                tool_key = self._tool_key(task_id, subtask_id, call_id)
+                self._tool_contexts[tool_key] = tool_context
+                return ExecutionEvent(
+                    type=EventType.TOOL_START,
+                    task_id=task_id,
+                    subtask_id=subtask_id,
+                    tool_use_id=call_id,
+                    tool_name=tool_context["name"],
+                    tool_input=tool_context["arguments"],
+                    data={
+                        "blocks": data.get("blocks", []),
+                        "display_name": data.get("display_name"),
+                        "tool_protocol": "shell_call",
                     },
                     message_id=message_id,
                 )
             # Other item types (message) are lifecycle events, skip
             return None
 
+        elif event_type == ResponsesAPIStreamEvents.MCP_CALL_ARGUMENTS_DONE.value:
+            item_id = _require_non_empty_tool_use_id(
+                data.get("item_id"),
+                context="response.mcp_call_arguments.done",
+            )
+            tool_key = self._tool_key(task_id, subtask_id, item_id)
+            tool_context = self._tool_contexts.get(tool_key)
+            if tool_context is None:
+                logger.warning(
+                    "[ResponsesAPIEventParser] Missing mcp_call context for %s during arguments.done",
+                    tool_key,
+                )
+                return None
+            arguments_str = data.get("arguments", "")
+            tool_input = None
+            if arguments_str:
+                try:
+                    tool_input = json.loads(arguments_str)
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            tool_context["arguments"] = tool_input
+            return ExecutionEvent(
+                type=EventType.TOOL,
+                task_id=task_id,
+                subtask_id=subtask_id,
+                tool_use_id=item_id,
+                tool_input=tool_input,
+                data={
+                    "tool_protocol": "mcp_call",
+                    "phase": "arguments_done",
+                },
+                message_id=message_id,
+            )
+
+        elif event_type == ResponsesAPIStreamEvents.MCP_CALL_IN_PROGRESS.value:
+            return None
+
+        elif event_type in (
+            ResponsesAPIStreamEvents.MCP_CALL_COMPLETED.value,
+            ResponsesAPIStreamEvents.MCP_CALL_FAILED.value,
+        ):
+            item_id = _require_non_empty_tool_use_id(
+                data.get("item_id"),
+                context=event_type,
+            )
+            tool_key = self._tool_key(task_id, subtask_id, item_id)
+            tool_context = self._tool_contexts.pop(tool_key, None)
+            if tool_context is None:
+                logger.warning(
+                    "[ResponsesAPIEventParser] Missing mcp_call completion context for %s",
+                    tool_key,
+                )
+                return None
+            failure_reason = data.get("failure_reason")
+            return ExecutionEvent(
+                type=EventType.TOOL_RESULT,
+                task_id=task_id,
+                subtask_id=subtask_id,
+                tool_name=tool_context.get("name"),
+                tool_use_id=item_id,
+                tool_input=tool_context.get("arguments"),
+                tool_output=failure_reason,
+                data={
+                    "tool_protocol": "mcp_call",
+                    "server_label": tool_context.get("server_label", ""),
+                    "status": (
+                        "failed"
+                        if event_type == ResponsesAPIStreamEvents.MCP_CALL_FAILED.value
+                        else "completed"
+                    ),
+                    "error": failure_reason,
+                },
+                message_id=message_id,
+            )
+
+        elif event_type == ResponsesAPIStreamEvents.OUTPUT_ITEM_DONE.value:
+            item = data.get("item", {})
+            if item.get("type") != "shell_call":
+                return None
+            call_id = _require_non_empty_tool_use_id(
+                item.get("call_id") or item.get("id"),
+                context="response.output_item.done(shell_call)",
+            )
+            tool_key = self._tool_key(task_id, subtask_id, call_id)
+            tool_context = self._tool_contexts.pop(tool_key, None)
+            if tool_context is None:
+                logger.warning(
+                    "[ResponsesAPIEventParser] Missing shell_call completion context for %s",
+                    tool_key,
+                )
+                return None
+            tool_input = _extract_shell_call_input(item) or tool_context.get(
+                "arguments"
+            )
+            return ExecutionEvent(
+                type=EventType.TOOL_RESULT,
+                task_id=task_id,
+                subtask_id=subtask_id,
+                tool_name=tool_context.get("name"),
+                tool_use_id=call_id,
+                tool_input=tool_input,
+                data={
+                    "tool_protocol": "shell_call",
+                    "status": item.get("status", "completed"),
+                },
+                message_id=message_id,
+            )
+
         elif event_type in (
             ResponsesAPIStreamEvents.RESPONSE_CREATED.value,
             ResponsesAPIStreamEvents.RESPONSE_IN_PROGRESS.value,
-            ResponsesAPIStreamEvents.OUTPUT_ITEM_DONE.value,
             ResponsesAPIStreamEvents.CONTENT_PART_ADDED.value,
             ResponsesAPIStreamEvents.CONTENT_PART_DONE.value,
             ResponsesAPIStreamEvents.OUTPUT_TEXT_DONE.value,
+            ResponsesAPIStreamEvents.MCP_CALL_ARGUMENTS_DELTA.value,
         ):
             # These are lifecycle events, skip them
             return None
@@ -748,7 +969,16 @@ class ExecutionDispatcher:
             f"[ExecutionDispatcher] About to call client.responses.create: "
             f"task_id={request.task_id}, subtask_id={request.subtask_id}"
         )
-        stream = await client.responses.create(
+        # Use async with to ensure stream is properly closed on exit.
+        # Without this, breaking out of the stream loop leaves the underlying
+        # httpx Response open. When GC eventually collects it, httpcore's
+        # AsyncShieldCancellation enters an anyio CancelScope at an unexpected
+        # time, corrupting the scope stack of whichever asyncio Task happens
+        # to be running. If that task belongs to an MCP session manager, the
+        # corrupted scope stack causes a RuntimeError ("Attempted to exit a
+        # cancel scope that isn't the current task's current cancel scope")
+        # that cascades through all nested MCP session managers.
+        async with await client.responses.create(
             model=openai_request.get("model", ""),
             input=openai_request.get("input", ""),
             instructions=openai_request.get("instructions"),
@@ -758,129 +988,134 @@ class ExecutionDispatcher:
                 "metadata": openai_request.get("metadata", {}),
                 "model_config": openai_request.get("model_config", {}),
             },
-        )
-        logger.info(
-            f"[ExecutionDispatcher] Stream created, starting to iterate events: "
-            f"task_id={request.task_id}, subtask_id={request.subtask_id}"
-        )
+        ) as stream:
+            logger.info(
+                f"[ExecutionDispatcher] Stream created, starting to iterate events: "
+                f"task_id={request.task_id}, subtask_id={request.subtask_id}"
+            )
 
-        event_count = 0
-        last_cancel_check = 0
-        cancelled = False
-        terminal_event_type = ""
+            event_count = 0
+            last_cancel_check = 0
+            cancelled = False
+            terminal_event_type = ""
 
-        try:
-            # Process streaming events
-            async for event in stream:
-                event_count += 1
+            try:
+                # Process streaming events
+                async for event in stream:
+                    event_count += 1
 
-                # Check for cancellation every 10 events (to avoid too frequent Redis calls)
-                if event_count - last_cancel_check >= 10:
-                    last_cancel_check = event_count
-                    if await session_manager.is_cancelled(request.subtask_id):
+                    # Check for cancellation every 10 events (to avoid too frequent Redis calls)
+                    if event_count - last_cancel_check >= 10:
+                        last_cancel_check = event_count
+                        if await session_manager.is_cancelled(request.subtask_id):
+                            logger.info(
+                                f"[ExecutionDispatcher] Cancellation detected via Redis, "
+                                f"breaking stream loop: task_id={request.task_id}, "
+                                f"subtask_id={request.subtask_id}"
+                            )
+                            cancelled = True
+                            break
+
+                    # Also check local event (fast path, no Redis call)
+                    if cancel_event.is_set():
                         logger.info(
-                            f"[ExecutionDispatcher] Cancellation detected via Redis, "
+                            f"[ExecutionDispatcher] Cancellation detected via local event, "
                             f"breaking stream loop: task_id={request.task_id}, "
                             f"subtask_id={request.subtask_id}"
                         )
                         cancelled = True
                         break
 
-                # Also check local event (fast path, no Redis call)
-                if cancel_event.is_set():
-                    logger.info(
-                        f"[ExecutionDispatcher] Cancellation detected via local event, "
-                        f"breaking stream loop: task_id={request.task_id}, "
-                        f"subtask_id={request.subtask_id}"
+                    # Get event type from the event object
+                    event_type = getattr(event, "type", None)
+                    if not event_type:
+                        continue
+
+                    # Log every event for debugging
+                    if event_count <= 5 or event_type in (
+                        "response.completed",
+                        "error",
+                    ):
+                        logger.info(
+                            f"[ExecutionDispatcher] SSE event #{event_count}: type={event_type}, "
+                            f"task_id={request.task_id}, subtask_id={request.subtask_id}"
+                        )
+
+                    # Convert event to dict for parsing
+                    event_data = (
+                        event.model_dump()
+                        if hasattr(event, "model_dump")
+                        else vars(event)
                     )
-                    cancelled = True
-                    break
 
-                # Get event type from the event object
-                event_type = getattr(event, "type", None)
-                if not event_type:
-                    continue
-
-                # Log every event for debugging
-                if event_count <= 5 or event_type in ("response.completed", "error"):
-                    logger.info(
-                        f"[ExecutionDispatcher] SSE event #{event_count}: type={event_type}, "
-                        f"task_id={request.task_id}, subtask_id={request.subtask_id}"
-                    )
-
-                # Convert event to dict for parsing
-                event_data = (
-                    event.model_dump() if hasattr(event, "model_dump") else vars(event)
-                )
-
-                # Parse event using shared parser
-                parsed_event = self.event_parser.parse(
-                    task_id=request.task_id,
-                    subtask_id=request.subtask_id,
-                    message_id=request.message_id,
-                    event_type=event_type,
-                    data=event_data,
-                )
-
-                if parsed_event:
-                    logger.info(
-                        "[ExecutionDispatcher] Parsed SSE event -> internal event: "
-                        "task_id=%d, subtask_id=%d, request_id=%s, sse_event=%s, internal_event=%s",
-                        request.task_id,
-                        request.subtask_id,
-                        request_id,
-                        event_type,
-                        parsed_event.type,
-                    )
-                    await emitter.emit(parsed_event)
-
-                # Break out of loop on terminal events
-                # OpenAI SDK's stream iterator doesn't auto-exit after response.completed,
-                # so we need to manually break to avoid hanging
-                if event_type in (
-                    ResponsesAPIStreamEvents.RESPONSE_COMPLETED.value,
-                    ResponsesAPIStreamEvents.ERROR.value,
-                    ResponsesAPIStreamEvents.RESPONSE_INCOMPLETE.value,
-                ):
-                    terminal_event_type = event_type
-                    logger.info(
-                        f"[ExecutionDispatcher] Terminal event received, breaking stream loop: "
-                        f"task_id={request.task_id}, subtask_id={request.subtask_id}, "
-                        f"event_type={event_type}, request_id={request_id}"
-                    )
-                    break
-
-            # If cancelled, emit CANCELLED event
-            if cancelled:
-                await emitter.emit(
-                    ExecutionEvent(
-                        type=EventType.CANCELLED,
+                    # Parse event using shared parser
+                    parsed_event = self.event_parser.parse(
                         task_id=request.task_id,
                         subtask_id=request.subtask_id,
                         message_id=request.message_id,
+                        event_type=event_type,
+                        data=event_data,
                     )
-                )
 
-            if not cancelled and not terminal_event_type:
-                logger.warning(
-                    "[ExecutionDispatcher] SSE stream ended without terminal event: "
-                    "task_id=%d, subtask_id=%d, request_id=%s, total_events=%d",
-                    request.task_id,
-                    request.subtask_id,
-                    request_id,
-                    event_count,
-                )
+                    if parsed_event:
+                        logger.info(
+                            "[ExecutionDispatcher] Parsed SSE event -> internal event: "
+                            "task_id=%d, subtask_id=%d, request_id=%s, sse_event=%s, internal_event=%s",
+                            request.task_id,
+                            request.subtask_id,
+                            request_id,
+                            event_type,
+                            parsed_event.type,
+                        )
+                        await emitter.emit(parsed_event)
 
-            # Log when stream iteration completes
-            logger.info(
-                f"[ExecutionDispatcher] SSE stream completed: "
-                f"task_id={request.task_id}, subtask_id={request.subtask_id}, "
-                f"total_events={event_count}, cancelled={cancelled}, "
-                f"terminal_event_type={terminal_event_type or 'none'}, request_id={request_id}"
-            )
-        finally:
-            # Unregister stream to clean up
-            await session_manager.unregister_stream(request.subtask_id)
+                    # Break out of loop on terminal events
+                    # OpenAI SDK's stream iterator doesn't auto-exit after response.completed,
+                    # so we need to manually break to avoid hanging
+                    if event_type in (
+                        ResponsesAPIStreamEvents.RESPONSE_COMPLETED.value,
+                        ResponsesAPIStreamEvents.ERROR.value,
+                        ResponsesAPIStreamEvents.RESPONSE_INCOMPLETE.value,
+                    ):
+                        terminal_event_type = event_type
+                        logger.info(
+                            f"[ExecutionDispatcher] Terminal event received, breaking stream loop: "
+                            f"task_id={request.task_id}, subtask_id={request.subtask_id}, "
+                            f"event_type={event_type}, request_id={request_id}"
+                        )
+                        break
+
+                # If cancelled, emit CANCELLED event
+                if cancelled:
+                    await emitter.emit(
+                        ExecutionEvent(
+                            type=EventType.CANCELLED,
+                            task_id=request.task_id,
+                            subtask_id=request.subtask_id,
+                            message_id=request.message_id,
+                        )
+                    )
+
+                if not cancelled and not terminal_event_type:
+                    logger.warning(
+                        "[ExecutionDispatcher] SSE stream ended without terminal event: "
+                        "task_id=%d, subtask_id=%d, request_id=%s, total_events=%d",
+                        request.task_id,
+                        request.subtask_id,
+                        request_id,
+                        event_count,
+                    )
+
+                # Log when stream iteration completes
+                logger.info(
+                    f"[ExecutionDispatcher] SSE stream completed: "
+                    f"task_id={request.task_id}, subtask_id={request.subtask_id}, "
+                    f"total_events={event_count}, cancelled={cancelled}, "
+                    f"terminal_event_type={terminal_event_type or 'none'}, request_id={request_id}"
+                )
+            finally:
+                # Unregister stream to clean up
+                await session_manager.unregister_stream(request.subtask_id)
 
     async def _dispatch_image_generation(
         self,
