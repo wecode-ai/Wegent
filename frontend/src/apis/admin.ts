@@ -268,6 +268,7 @@ export interface AdminPublicBot {
   skills: string[] | null
   // Expanded Model fields for UI convenience
   agent_config: Record<string, unknown> | null
+  default_knowledge_base_refs: { id: number; name: string }[] | null
 }
 
 export interface AdminPublicBotListResponse {

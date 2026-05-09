@@ -25,6 +25,7 @@ interface KnowledgeBaseMultiSelectorProps {
   value: KnowledgeBaseDefaultRef[]
   onChange: (value: KnowledgeBaseDefaultRef[]) => void
   disabled?: boolean
+  allowedSources?: KnowledgeBaseOptionSource[]
 }
 
 interface GroupedKnowledgeBaseOption {
@@ -278,6 +279,7 @@ export function KnowledgeBaseMultiSelector({
   value,
   onChange,
   disabled = false,
+  allowedSources,
 }: KnowledgeBaseMultiSelectorProps) {
   const { t } = useTranslation()
   const { options, loading, error } = useKnowledgeBaseOptions()
@@ -293,8 +295,18 @@ export function KnowledgeBaseMultiSelector({
     }
   }, [open])
 
+  const filteredOptions = useMemo(() => {
+    if (!allowedSources || allowedSources.length === 0) {
+      return options
+    }
+    return options.filter(option => allowedSources.includes(option.source))
+  }, [options, allowedSources])
+
   const selectedIds = useMemo(() => new Set(value.map(item => item.id)), [value])
-  const optionsById = useMemo(() => new Map(options.map(option => [option.id, option])), [options])
+  const optionsById = useMemo(
+    () => new Map(filteredOptions.map(option => [option.id, option])),
+    [filteredOptions]
+  )
 
   const selectedItems = useMemo(
     () => value.map(item => optionsById.get(item.id) ?? buildFallbackOption(item)),
@@ -304,10 +316,12 @@ export function KnowledgeBaseMultiSelector({
   const groupedAvailableItems = useMemo(
     () =>
       groupAvailableKnowledgeBases(
-        options.filter(option => !selectedIds.has(option.id) && matchesSearch(option, search)),
+        filteredOptions.filter(
+          option => !selectedIds.has(option.id) && matchesSearch(option, search)
+        ),
         t
       ),
-    [options, search, selectedIds, t]
+    [filteredOptions, search, selectedIds, t]
   )
 
   const handleSelect = (option: KnowledgeBaseOption) => {

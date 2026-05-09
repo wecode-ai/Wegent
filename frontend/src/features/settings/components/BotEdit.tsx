@@ -1461,6 +1461,11 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                     value={defaultKnowledgeBaseRefs}
                     onChange={setDefaultKnowledgeBaseRefs}
                     disabled={readOnly}
+                    allowedSources={
+                      scope === 'public'
+                        ? ['organization']
+                        : ['personal', 'group', 'organization']
+                    }
                   />
                 </div>
               </div>
