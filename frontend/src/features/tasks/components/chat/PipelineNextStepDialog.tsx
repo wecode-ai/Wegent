@@ -68,10 +68,12 @@ function toggleSelected(current: string[], id: string, checked: boolean) {
 
 function TextContextRow({
   item,
+  label,
   checked,
   onCheckedChange,
 }: {
   item: PipelineNextStepTextItem
+  label: string
   checked: boolean
   onCheckedChange: (checked: boolean) => void
 }) {
@@ -81,13 +83,13 @@ function TextContextRow({
         checked={checked}
         onCheckedChange={value => onCheckedChange(value === true)}
         data-testid={`pipeline-next-step-text-checkbox-${item.id}`}
-        aria-label={item.label}
+        aria-label={label}
         className="mt-0.5"
       />
       <span className="min-w-0 flex-1">
         <span className="flex items-center gap-2 text-sm font-medium text-text-primary">
           <MessageSquare className="h-4 w-4 text-text-muted" />
-          {item.label}
+          {label}
         </span>
         <span className="mt-1 block line-clamp-2 text-xs leading-5 text-text-muted">
           {getPreview(item.content)}
@@ -205,6 +207,7 @@ function PipelineNextStepDialog({
                   <TextContextRow
                     key={item.id}
                     item={item}
+                    label={t(`pipeline.next_step_dialog.text_items.${item.kind}`)}
                     checked={selectedTextItemIds.includes(item.id)}
                     onCheckedChange={checked => setTextItemChecked(item.id, checked)}
                   />

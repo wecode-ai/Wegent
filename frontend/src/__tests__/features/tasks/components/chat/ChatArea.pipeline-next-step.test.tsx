@@ -305,10 +305,11 @@ function setCompletedPipelineMessages() {
             status: 'ready',
           },
           {
-            id: 20,
+            id: 200,
             context_type: 'knowledge_base',
             name: 'Product KB',
             status: 'ready',
+            knowledge_id: 20,
             document_count: 3,
           },
         ],
@@ -371,7 +372,11 @@ describe('ChatArea pipeline next-step dialog', () => {
       immediateTaskId: 42,
       pendingContexts: [
         expect.objectContaining({ id: 10, context_type: 'attachment' }),
-        expect.objectContaining({ id: 20, context_type: 'knowledge_base' }),
+        expect.objectContaining({
+          id: 200,
+          context_type: 'knowledge_base',
+          knowledge_id: 20,
+        }),
       ],
     })
     expect(mockToast).toHaveBeenCalledWith({ title: 'pipeline.stage_confirmed' })

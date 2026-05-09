@@ -20,10 +20,8 @@ export interface PipelineNextStepMessage {
 export interface PipelineNextStepTextItem {
   id: string
   kind: 'user_message' | 'ai_response' | 'history_message'
-  label: string
   content: string
   selectedByDefault: boolean
-  includedInMainMessage: boolean
 }
 
 export interface PipelineNextStepStructuredItem {
@@ -59,12 +57,6 @@ export interface BuildPipelineNextStepPayloadInput {
   selectedStructuredItemIds: string[]
 }
 
-const SUPPORTED_CONTEXT_TYPES = new Set<SubtaskContextBrief['context_type']>([
-  'attachment',
-  'knowledge_base',
-  'table',
-])
-
 function sortMessages(messages: PipelineNextStepMessage[]): PipelineNextStepMessage[] {
   return [...messages].sort((left, right) => {
     if (left.messageId !== undefined && right.messageId !== undefined) {
@@ -88,6 +80,22 @@ function hasCompletedContent(message: PipelineNextStepMessage): boolean {
 
 function buildTextItemId(message: PipelineNextStepMessage, kind: PipelineNextStepTextItem['kind']) {
   return `${kind}:${message.id}`
+}
+
+function getStructuredItemId(context: SubtaskContextBrief): string | null {
+  if (context.context_type === 'attachment') {
+    return `attachment:${context.id}`
+  }
+
+  if (context.context_type === 'knowledge_base' && context.knowledge_id) {
+    return `knowledge_base:${context.knowledge_id}`
+  }
+
+  if (context.context_type === 'table' && context.document_id) {
+    return `table:${context.document_id}`
+  }
+
+  return null
 }
 
 function findSelectedAiMessage(
@@ -139,9 +147,9 @@ function collectStructuredItems(
 
   for (const message of messages) {
     for (const context of message?.contexts ?? []) {
-      if (!SUPPORTED_CONTEXT_TYPES.has(context.context_type)) continue
+      const key = getStructuredItemId(context)
+      if (!key) continue
 
-      const key = `${context.context_type}:${context.id}`
       if (seen.has(key)) continue
 
       seen.add(key)
@@ -159,8 +167,7 @@ function collectStructuredItems(
 function buildTextItems(
   messages: PipelineNextStepMessage[],
   selectedAiMessage: PipelineNextStepMessage,
-  precedingUserMessage: PipelineNextStepMessage | undefined,
-  defaultMessage: string
+  precedingUserMessage: PipelineNextStepMessage | undefined
 ): PipelineNextStepTextItem[] {
   const items: PipelineNextStepTextItem[] = []
   const currentPairIds = new Set([selectedAiMessage.id])
@@ -170,21 +177,10 @@ function buildTextItems(
     items.push({
       id: buildTextItemId(precedingUserMessage, 'user_message'),
       kind: 'user_message',
-      label: 'User message',
       content: precedingUserMessage.content.trim(),
       selectedByDefault: true,
-      includedInMainMessage: false,
     })
   }
-
-  items.push({
-    id: buildTextItemId(selectedAiMessage, 'ai_response'),
-    kind: 'ai_response',
-    label: 'AI response',
-    content: defaultMessage,
-    selectedByDefault: true,
-    includedInMainMessage: true,
-  })
 
   for (const message of messages) {
     if (currentPairIds.has(message.id) || !hasCompletedContent(message)) continue
@@ -192,10 +188,8 @@ function buildTextItems(
     items.push({
       id: buildTextItemId(message, 'history_message'),
       kind: 'history_message',
-      label: 'History message',
       content: message.content.trim(),
       selectedByDefault: false,
-      includedInMainMessage: false,
     })
   }
 
@@ -225,21 +219,13 @@ export function buildPipelineNextStepDraft(
     defaultMessage: defaultResult.message,
     defaultSource: defaultResult.source,
     canSubmit: defaultResult.message.length > 0,
-    textItems: buildTextItems(
-      sortedMessages,
-      selectedAiMessage,
-      precedingUserMessage,
-      defaultResult.message
-    ),
+    textItems: buildTextItems(sortedMessages, selectedAiMessage, precedingUserMessage),
     structuredItems: collectStructuredItems([precedingUserMessage, selectedAiMessage]),
   }
 }
 
 function appendSelectedText(message: string, selectedItems: PipelineNextStepTextItem[]): string {
-  const extraText = selectedItems
-    .filter(item => !item.includedInMainMessage)
-    .map(item => item.content.trim())
-    .filter(Boolean)
+  const extraText = selectedItems.map(item => item.content.trim()).filter(Boolean)
 
   if (extraText.length === 0) {
     return message.trim()
@@ -252,10 +238,14 @@ function toBackendContext(
   context: SubtaskContextBrief
 ): PipelineNextStepBackendContext | undefined {
   if (context.context_type === 'knowledge_base') {
+    if (!context.knowledge_id) {
+      return undefined
+    }
+
     return {
       type: 'knowledge_base',
       data: {
-        knowledge_id: context.id,
+        knowledge_id: context.knowledge_id,
         name: context.name,
         document_count: context.document_count,
       },
@@ -263,10 +253,14 @@ function toBackendContext(
   }
 
   if (context.context_type === 'table') {
+    if (!context.document_id) {
+      return undefined
+    }
+
     return {
       type: 'table',
       data: {
-        document_id: context.id,
+        document_id: context.document_id,
         name: context.name,
         source_config: context.source_config,
       },

@@ -24,10 +24,11 @@ const userMessage = (
       mime_type: 'text/markdown',
     },
     {
-      id: 20,
+      id: 200,
       context_type: 'knowledge_base',
       name: 'Product KB',
       status: 'ready',
+      knowledge_id: 20,
       document_count: 3,
     },
   ],
@@ -45,10 +46,11 @@ const aiMessage = (
   timestamp: 2,
   contexts: [
     {
-      id: 30,
+      id: 300,
       context_type: 'table',
       name: 'Roadmap',
       status: 'ready',
+      document_id: 30,
       source_config: { url: 'https://example.com/table' },
     },
   ],
@@ -76,15 +78,10 @@ describe('pipeline next-step helpers', () => {
 
     expect(draft.defaultMessage).toBe('Plain AI summary')
     expect(draft.defaultSource).toBe('last_ai_response')
-    expect(draft.textItems.find(item => item.kind === 'ai_response')).toMatchObject({
-      kind: 'ai_response',
-      label: 'AI response',
-      selectedByDefault: true,
-      includedInMainMessage: true,
-    })
+    expect(draft.textItems.some(item => item.kind === 'ai_response')).toBe(false)
   })
 
-  it('returns the planned public text item shape with labels', () => {
+  it('returns selectable text context items without duplicating the main message', () => {
     const draft = buildPipelineNextStepDraft([
       userMessage({
         id: 'history-user',
@@ -96,22 +93,11 @@ describe('pipeline next-step helpers', () => {
       aiMessage('Plain AI summary'),
     ])
 
-    expect(draft.textItems.map(item => item.kind)).toEqual([
-      'user_message',
-      'ai_response',
-      'history_message',
-    ])
-    expect(draft.textItems.map(item => item.label)).toEqual([
-      'User message',
-      'AI response',
-      'History message',
-    ])
+    expect(draft.textItems.map(item => item.kind)).toEqual(['user_message', 'history_message'])
     expect(Object.keys(draft.textItems[0]).sort()).toEqual([
       'content',
       'id',
-      'includedInMainMessage',
       'kind',
-      'label',
       'selectedByDefault',
     ])
   })
@@ -137,9 +123,10 @@ describe('pipeline next-step helpers', () => {
       aiMessage('Plain AI summary'),
     ])
 
-    expect(
-      draft.structuredItems.map(item => `${item.context.context_type}:${item.context.id}`)
-    ).toEqual(['attachment:10', 'table:30'])
+    expect(draft.structuredItems.map(item => `${item.context.context_type}:${item.id}`)).toEqual([
+      'attachment:attachment:10',
+      'table:table:30',
+    ])
   })
 
   it('uses timestamp as a tie-breaker for user and AI messages with the same messageId', () => {
@@ -158,9 +145,11 @@ describe('pipeline next-step helpers', () => {
       content: 'Original request',
       selectedByDefault: true,
     })
-    expect(
-      draft.structuredItems.map(item => `${item.context.context_type}:${item.context.id}`)
-    ).toEqual(['attachment:10', 'knowledge_base:20', 'table:30'])
+    expect(draft.structuredItems.map(item => `${item.context.context_type}:${item.id}`)).toEqual([
+      'attachment:attachment:10',
+      'knowledge_base:knowledge_base:20',
+      'table:table:30',
+    ])
   })
 
   it('returns a disabled draft when no usable AI message exists', () => {
@@ -242,18 +231,27 @@ describe('pipeline next-step helpers', () => {
     expect(payload.pendingContexts).toHaveLength(3)
   })
 
-  it('does not append selected AI text that is already included in the main message', () => {
-    const draft = buildPipelineNextStepDraft([userMessage(), aiMessage('Plain AI summary')])
-    const aiTextItem = draft.textItems.find(item => item.kind === 'ai_response')
-    const payload = buildPipelineNextStepPayload(
-      payloadInput({
-        draft,
-        editedMessage: 'Plain AI summary',
-        selectedTextItemIds: aiTextItem ? [aiTextItem.id] : [],
-        selectedStructuredItemIds: [],
-      })
-    )
+  it('does not expose knowledge base or table contexts without domain IDs', () => {
+    const draft = buildPipelineNextStepDraft([
+      userMessage({
+        contexts: [
+          {
+            id: 200,
+            context_type: 'knowledge_base',
+            name: 'Legacy KB context',
+            status: 'ready',
+          },
+          {
+            id: 300,
+            context_type: 'table',
+            name: 'Legacy table context',
+            status: 'ready',
+          },
+        ],
+      }),
+      aiMessage('Plain AI summary', { contexts: [] }),
+    ])
 
-    expect(payload.message).toBe('Plain AI summary')
+    expect(draft.structuredItems).toEqual([])
   })
 })

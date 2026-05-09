@@ -561,7 +561,12 @@
       "no_structured_contexts": "暂无附件、知识库或表格上下文。",
       "confirm": "继续",
       "confirming": "继续中...",
-      "missing_task": "缺少任务或团队信息"
+      "missing_task": "缺少任务或团队信息",
+      "text_items": {
+        "user_message": "用户消息",
+        "ai_response": "AI 回复",
+        "history_message": "历史消息"
+      }
     }
   },
   "generate": {

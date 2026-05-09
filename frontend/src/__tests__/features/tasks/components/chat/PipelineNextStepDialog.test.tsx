@@ -69,7 +69,12 @@ describe('PipelineNextStepDialog', () => {
     renderDialog()
 
     expect(screen.getByTestId('pipeline-next-step-text-checkbox-user_message:user-1')).toBeChecked()
-    expect(screen.getByTestId('pipeline-next-step-text-checkbox-ai_response:ai-1')).toBeChecked()
+    expect(
+      screen.queryByTestId('pipeline-next-step-text-checkbox-ai_response:ai-1')
+    ).not.toBeInTheDocument()
+    expect(
+      screen.getByText('pipeline.next_step_dialog.text_items.user_message')
+    ).toBeInTheDocument()
     expect(
       screen.queryByTestId('pipeline-next-step-text-checkbox-user_message')
     ).not.toBeInTheDocument()

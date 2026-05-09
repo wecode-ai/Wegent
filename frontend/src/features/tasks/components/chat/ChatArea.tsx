@@ -821,18 +821,20 @@ function ChatAreaContent({
       let contextItem: ContextItem | null = null
 
       if (context.context_type === 'knowledge_base') {
+        if (!context.knowledge_id) return
         contextItem = {
-          id: context.id,
+          id: context.knowledge_id,
           name: context.name,
           type: 'knowledge_base',
           document_count: context.document_count ?? undefined,
         }
       } else if (context.context_type === 'table') {
+        if (!context.document_id) return
         contextItem = {
-          id: context.id,
+          id: `table-${context.document_id}`,
           name: context.name,
           type: 'table',
-          document_id: 0, // Not available in SubtaskContextBrief, backend will resolve it
+          document_id: context.document_id,
           source_config: context.source_config ?? undefined,
         }
       }
@@ -1037,18 +1039,20 @@ function ChatAreaContent({
       const restoredContextItems: ContextItem[] = []
       for (const ctx of rawContexts) {
         if (ctx.context_type === 'knowledge_base') {
+          if (!ctx.knowledge_id) continue
           restoredContextItems.push({
-            id: ctx.id,
+            id: ctx.knowledge_id,
             name: ctx.name,
             type: 'knowledge_base',
             document_count: ctx.document_count ?? undefined,
           })
         } else if (ctx.context_type === 'table') {
+          if (!ctx.document_id) continue
           restoredContextItems.push({
-            id: ctx.id,
+            id: `table-${ctx.document_id}`,
             name: ctx.name,
             type: 'table',
-            document_id: 0,
+            document_id: ctx.document_id,
             source_config: ctx.source_config ?? undefined,
           })
         }

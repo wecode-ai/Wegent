@@ -583,7 +583,12 @@
       "no_structured_contexts": "No attachment, knowledge base, or table context is available.",
       "confirm": "Continue",
       "confirming": "Continuing...",
-      "missing_task": "Task or team information is unavailable"
+      "missing_task": "Task or team information is unavailable",
+      "text_items": {
+        "user_message": "User message",
+        "ai_response": "AI response",
+        "history_message": "History message"
+      }
     }
   },
   "generate": {
