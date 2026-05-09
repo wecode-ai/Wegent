@@ -5,10 +5,11 @@
 'use client'
 
 import { memo, useEffect, useState, useMemo } from 'react'
-import { CheckCircle2, Circle, Loader2, Clock, XCircle, PlayCircle } from 'lucide-react'
+import { ArrowRight, CheckCircle2, Circle, Loader2, Clock, XCircle, PlayCircle } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { taskApis, PipelineStageInfo } from '@/apis/tasks'
 import { cn } from '@/lib/utils'
+import { Button } from '@/components/ui/button'
 
 interface PipelineStageIndicatorProps {
   taskId: number | null
@@ -16,6 +17,8 @@ interface PipelineStageIndicatorProps {
   collaborationModel?: string
   /** Callback when stage info changes - allows parent to access pipeline state */
   onStageInfoChange?: (stageInfo: PipelineStageInfo | null) => void
+  canContinueToNextStage?: boolean
+  onNextStepClick?: (stageInfo: PipelineStageInfo) => void
 }
 
 /**
@@ -41,6 +44,8 @@ const PipelineStageIndicator = memo(function PipelineStageIndicator({
   taskStatus,
   collaborationModel,
   onStageInfoChange,
+  canContinueToNextStage,
+  onNextStepClick,
 }: PipelineStageIndicatorProps) {
   const { t } = useTranslation('chat')
   const [stageInfo, setStageInfo] = useState<PipelineStageInfo | null>(null)
@@ -98,6 +103,9 @@ const PipelineStageIndicator = memo(function PipelineStageIndicator({
   if (!stageInfo || stageInfo.total_stages <= 1) {
     return null
   }
+
+  const shouldShowNextStepButton =
+    stageInfo.is_pending_confirmation && stageInfo.current_stage < stageInfo.total_stages - 1
 
   const getStageIcon = (stage: DisplayStage, isCurrentStage: boolean) => {
     // Start node always shows as completed (green checkmark)
@@ -198,6 +206,20 @@ const PipelineStageIndicator = memo(function PipelineStageIndicator({
         <span className="text-xs font-medium text-text-secondary">
           {t('pipeline.progress_label')} ({stageInfo.current_stage + 1}/{stageInfo.total_stages})
         </span>
+        {shouldShowNextStepButton && (
+          <Button
+            type="button"
+            variant="primary"
+            size="sm"
+            className="h-7 px-2 text-xs"
+            disabled={canContinueToNextStage === false}
+            onClick={() => onNextStepClick?.(stageInfo)}
+            data-testid="pipeline-next-step-button"
+          >
+            {t('pipeline.next_step')}
+            <ArrowRight className="h-3.5 w-3.5" />
+          </Button>
+        )}
       </div>
 
       {/* Stage Progress Bar - includes Start node + all bot stages */}
