@@ -67,7 +67,44 @@ describe('pipeline next-step helpers', () => {
 
     expect(draft.defaultMessage).toBe('Plain AI summary')
     expect(draft.defaultSource).toBe('last_ai_response')
-    expect(draft.textItems.find(item => item.kind === 'ai_response')?.selectedByDefault).toBe(true)
+    expect(draft.textItems.find(item => item.kind === 'ai_response')).toMatchObject({
+      kind: 'ai_response',
+      label: 'AI response',
+      selectedByDefault: true,
+      includedInMainMessage: true,
+    })
+  })
+
+  it('returns the planned public text item shape with labels', () => {
+    const draft = buildPipelineNextStepDraft([
+      userMessage({
+        id: 'history-user',
+        content: 'Earlier request',
+        timestamp: 1,
+        contexts: [],
+      }),
+      userMessage({ timestamp: 2 }),
+      aiMessage('Plain AI summary'),
+    ])
+
+    expect(draft.textItems.map(item => item.kind)).toEqual([
+      'user_message',
+      'ai_response',
+      'history_message',
+    ])
+    expect(draft.textItems.map(item => item.label)).toEqual([
+      'User message',
+      'AI response',
+      'History message',
+    ])
+    expect(Object.keys(draft.textItems[0]).sort()).toEqual([
+      'content',
+      'id',
+      'includedInMainMessage',
+      'kind',
+      'label',
+      'selectedByDefault',
+    ])
   })
 
   it('deduplicates structured contexts from the current user and AI pair', () => {

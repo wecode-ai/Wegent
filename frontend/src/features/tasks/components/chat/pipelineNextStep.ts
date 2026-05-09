@@ -19,11 +19,11 @@ export interface PipelineNextStepMessage {
 
 export interface PipelineNextStepTextItem {
   id: string
-  kind: 'user_request' | 'ai_response' | 'history'
+  kind: 'user_message' | 'ai_response' | 'history_message'
+  label: string
   content: string
   selectedByDefault: boolean
   includedInMainMessage: boolean
-  message: PipelineNextStepMessage
 }
 
 export interface PipelineNextStepStructuredItem {
@@ -161,34 +161,34 @@ function buildTextItems(
   if (precedingUserMessage) {
     currentPairIds.add(precedingUserMessage.id)
     items.push({
-      id: buildTextItemId(precedingUserMessage, 'user_request'),
-      kind: 'user_request',
+      id: buildTextItemId(precedingUserMessage, 'user_message'),
+      kind: 'user_message',
+      label: 'User message',
       content: precedingUserMessage.content.trim(),
       selectedByDefault: true,
       includedInMainMessage: false,
-      message: precedingUserMessage,
     })
   }
 
   items.push({
     id: buildTextItemId(selectedAiMessage, 'ai_response'),
     kind: 'ai_response',
+    label: 'AI response',
     content: defaultMessage,
     selectedByDefault: true,
     includedInMainMessage: true,
-    message: selectedAiMessage,
   })
 
   for (const message of messages) {
     if (currentPairIds.has(message.id) || !hasCompletedContent(message)) continue
 
     items.push({
-      id: buildTextItemId(message, 'history'),
-      kind: 'history',
+      id: buildTextItemId(message, 'history_message'),
+      kind: 'history_message',
+      label: 'History message',
       content: message.content.trim(),
       selectedByDefault: false,
       includedInMainMessage: false,
-      message,
     })
   }
 
