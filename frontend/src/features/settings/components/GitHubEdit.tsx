@@ -80,7 +80,8 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
   const [type, setType] = useState<GitInfo['type']>('github')
   const [authType, setAuthType] = useState<'digest' | 'basic'>('digest')
   const [tokenSaving, setTokenSaving] = useState(false)
-  const isGitlabLike = type === 'gitlab' || type === 'gitee'
+  const isGitlab = type === 'gitlab'
+  const isGitee = type === 'gitee'
   const isGitea = type === 'gitea'
   const isGerrit = type === 'gerrit'
 
@@ -224,13 +225,29 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
               <input
                 type="radio"
                 value="gitlab"
-                checked={type === 'gitlab'}
+                checked={isGitlab}
                 onChange={() => {
                   setType('gitlab')
                   setDomain('')
                 }}
               />
               {t('common:github.platform_gitlab')}
+            </label>
+            <label
+              className="flex items-center gap-1 text-sm text-text-primary"
+              title={t('common:github.platform_gitee') || 'Gitee'}
+            >
+              <input
+                type="radio"
+                value="gitee"
+                checked={isGitee}
+                onChange={() => {
+                  setType('gitee')
+                  setDomain('gitee.com')
+                }}
+                data-testid="gitee-platform-radio"
+              />
+              {t('common:github.platform_gitee') || 'Gitee'}
             </label>
             <label
               className="flex items-center gap-1 text-sm text-text-primary"
@@ -279,9 +296,11 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
                 ? 'e.g. github.com or github.enterprise.com'
                 : isGerrit
                   ? 'e.g. http://gerrit.company.com or gerrit.company.com'
-                  : isGitea
-                    ? 'e.g. gitea.com or gitea.company.com'
-                    : 'e.g. http://gitlab.example.com or gitlab.example.com'
+                  : isGitee
+                    ? 'e.g. gitee.com'
+                    : isGitea
+                      ? 'e.g. gitea.com or gitea.company.com'
+                      : 'e.g. http://gitlab.example.com or gitlab.example.com'
             }
             className="w-full px-3 py-2 bg-base border border-border rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent"
           />
@@ -351,9 +370,11 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
                 : isGerrit
                   ? t('common:github.token.placeholder_gerrit') ||
                     'HTTP password from Gerrit Settings'
-                  : isGitea
-                    ? t('common:github.token.placeholder_gitea') || 'Gitea personal access token'
-                    : t('common:github.token.placeholder_gitlab')
+                  : isGitee
+                    ? t('common:github.token.placeholder_gitee') || 'gitee-personal-access-token'
+                    : isGitea
+                      ? t('common:github.token.placeholder_gitea') || 'Gitea personal access token'
+                      : t('common:github.token.placeholder_gitlab')
             }
             className="w-full px-3 py-2 bg-base border border-border rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent"
           />
@@ -364,11 +385,13 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
             <strong>
               {type === 'github'
                 ? t('common:github.howto.github.title')
-                : isGitea
-                  ? t('common:github.howto.gitea.title') || 'How to get your Gitea token:'
-                  : isGerrit
-                    ? t('common:github.howto.gerrit.title') || 'How to get Gerrit HTTP password:'
-                    : t('common:github.howto.gitlab.title')}
+                : isGitee
+                  ? t('common:github.howto.gitee.title') || 'How to get your Gitee token:'
+                  : isGitea
+                    ? t('common:github.howto.gitea.title') || 'How to get your Gitea token:'
+                    : isGerrit
+                      ? t('common:github.howto.gerrit.title') || 'How to get Gerrit HTTP password:'
+                      : t('common:github.howto.gitlab.title')}
             </strong>
           </p>
           {type === 'github' ? (
@@ -389,6 +412,28 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
                 {t('common:github.howto.github.step2')}
               </p>
               <p className="text-xs text-text-muted">{t('common:github.howto.github.step3')}</p>
+            </>
+          ) : isGitee ? (
+            <>
+              <p className="text-xs text-text-muted mb-2 flex items-center gap-1">
+                {t('common:github.howto.step1_visit')}
+                <a
+                  href="https://gitee.com/profile/personal_access_tokens"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-primary hover:text-primary/80 underline truncate max-w-[220px] inline-block align-bottom"
+                  title="https://gitee.com/profile/personal_access_tokens"
+                >
+                  https://gitee.com/profile/personal_access_tokens
+                </a>
+              </p>
+              <p className="text-xs text-text-muted mb-2">
+                {t('common:github.howto.gitee.step2') || '2. Create a new token'}
+              </p>
+              <p className="text-xs text-text-muted">
+                {t('common:github.howto.gitee.step3') ||
+                  '3. Select appropriate scopes and copy the generated token'}
+              </p>
             </>
           ) : isGitea ? (
             <>
@@ -445,20 +490,18 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
                 {t('common:github.howto.step1_visit')}
                 <a
                   href={
-                    isGitlabLike && domain
-                      ? `https://${domain}/-/profile/personal_access_tokens`
-                      : '#'
+                    isGitlab && domain ? `https://${domain}/-/profile/personal_access_tokens` : '#'
                   }
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-primary hover:text-primary/80 underline truncate max-w-[220px] inline-block align-bottom"
                   title={
-                    isGitlabLike && domain
+                    isGitlab && domain
                       ? `https://${domain}/-/profile/personal_access_tokens`
                       : 'your-gitlab-domain/-/profile/personal_access_tokens'
                   }
                 >
-                  {isGitlabLike && domain
+                  {isGitlab && domain
                     ? `https://${domain}/-/profile/personal_access_tokens`
                     : 'your-gitlab-domain/-/profile/personal_access_tokens'}
                 </a>

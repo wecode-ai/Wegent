@@ -797,6 +797,7 @@
     "platform": "Platform",
     "platform_github": "GitHub",
     "platform_gitlab": "GitLab",
+    "platform_gitee": "Gitee",
     "platform_gitea": "Gitea",
     "platform_gerrit": "Gerrit",
     "domain": "Platform Domain",
@@ -805,6 +806,7 @@
       "title": "Personal Access Token",
       "title_gerrit": "HTTP password",
       "placeholder_github": "ghp_xxxxxxxxxxxxxxxxxxxx",
+      "placeholder_gitee": "gitee-personal-access-token",
       "placeholder_gitea": "gitea-personal-access-token",
       "placeholder_gitlab": "glpat-xxxxxxxxxxxxxxxxxxxx",
       "placeholder_gerrit": "HTTP password from Gerrit Settings"
@@ -814,6 +816,11 @@
       "github": {
         "title": "How to get your GitHub token:",
         "step2": "2. Click \"Generate new token (classic)\"",
+        "step3": "3. Select appropriate scopes and copy the generated token"
+      },
+      "gitee": {
+        "title": "How to get your Gitee token:",
+        "step2": "2. Create a new token",
         "step3": "3. Select appropriate scopes and copy the generated token"
       },
       "gitea": {

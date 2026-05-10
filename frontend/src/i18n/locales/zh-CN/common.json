@@ -797,6 +797,7 @@
     "platform": "平台",
     "platform_github": "GitHub",
     "platform_gitlab": "GitLab",
+    "platform_gitee": "Gitee",
     "platform_gitea": "Gitea",
     "platform_gerrit": "Gerrit",
     "domain": "平台域名",
@@ -805,6 +806,7 @@
       "title": "个人访问令牌",
       "title_gerrit": "HTTP password",
       "placeholder_github": "ghp_xxxxxxxxxxxxxxxxxxxx",
+      "placeholder_gitee": "gitee 个人访问令牌",
       "placeholder_gitea": "gitea 个人访问令牌",
       "placeholder_gitlab": "glpat-xxxxxxxxxxxxxxxxxxxx",
       "placeholder_gerrit": "从 Gerrit 设置中获取的 HTTP password"
@@ -814,6 +816,11 @@
       "github": {
         "title": "如何获取 GitHub 令牌：",
         "step2": "2. 点击 \"Generate new token (classic)\"",
+        "step3": "3. 选择合适的权限范围并复制生成的令牌"
+      },
+      "gitee": {
+        "title": "如何获取 Gitee 令牌：",
+        "step2": "2. 创建新的令牌",
         "step3": "3. 选择合适的权限范围并复制生成的令牌"
       },
       "gitea": {
