@@ -239,17 +239,17 @@ Thanks to the following developers for their contributions and efforts to make t
         </a>
     </td>
     <td align="center">
-        <a href="https://github.com/feifei325">
-            <img src="https://avatars.githubusercontent.com/u/46489071?v=4" width="80;" alt="feifei325"/>
-            <br />
-            <sub><b>Feifei</b></sub>
-        </a>
-    </td>
-    <td align="center">
         <a href="https://github.com/Micro66">
             <img src="https://avatars.githubusercontent.com/u/27556103?v=4" width="80;" alt="Micro66"/>
             <br />
             <sub><b>MicroLee</b></sub>
+        </a>
+    </td>
+    <td align="center">
+        <a href="https://github.com/feifei325">
+            <img src="https://avatars.githubusercontent.com/u/46489071?v=4" width="80;" alt="feifei325"/>
+            <br />
+            <sub><b>Feifei</b></sub>
         </a>
     </td>
     <td align="center">
@@ -374,6 +374,13 @@ Thanks to the following developers for their contributions and efforts to make t
         </a>
     </td>
     <td align="center">
+        <a href="https://github.com/RockysGit">
+            <img src="https://avatars.githubusercontent.com/u/61232321?v=4" width="80;" alt="RockysGit"/>
+            <br />
+            <sub><b>RockysGit</b></sub>
+        </a>
+    </td>
+    <td align="center">
         <a href="https://github.com/flyhope">
             <img src="https://avatars.githubusercontent.com/u/5442948?v=4" width="80;" alt="flyhope"/>
             <br />
@@ -393,15 +400,15 @@ Thanks to the following developers for their contributions and efforts to make t
             <br />
             <sub><b>Code-wangdi</b></sub>
         </a>
-    </td>
+    </td></tr>
+<tr>
     <td align="center">
         <a href="https://github.com/haosenwang1018">
             <img src="https://avatars.githubusercontent.com/u/167664334?v=4" width="80;" alt="haosenwang1018"/>
             <br />
             <sub><b>Sense_wang</b></sub>
         </a>
-    </td></tr>
-<tr>
+    </td>
     <td align="center">
         <a href="https://github.com/LiDaiyan">
             <img src="https://avatars.githubusercontent.com/u/36092701?v=4" width="80;" alt="LiDaiyan"/>
@@ -438,13 +445,6 @@ Thanks to the following developers for their contributions and efforts to make t
         </a>
     </td>
     <td align="center">
-        <a href="https://github.com/RockysGit">
-            <img src="https://avatars.githubusercontent.com/u/61232321?v=4" width="80;" alt="RockysGit"/>
-            <br />
-            <sub><b>RockysGit</b></sub>
-        </a>
-    </td>
-    <td align="center">
         <a href="https://github.com/Ged0">
             <img src="https://avatars.githubusercontent.com/u/4569451?v=4" width="80;" alt="Ged0"/>
             <br />
@@ -459,6 +459,13 @@ Thanks to the following developers for their contributions and efforts to make t
         </a>
     </td></tr>
 <tr>
+    <td align="center">
+        <a href="https://github.com/ch15084">
+            <img src="https://avatars.githubusercontent.com/u/2509224?v=4" width="80;" alt="ch15084"/>
+            <br />
+            <sub><b>ch15084</b></sub>
+        </a>
+    </td>
     <td align="center">
         <a href="https://github.com/graindt">
             <img src="https://avatars.githubusercontent.com/u/3962041?v=4" width="80;" alt="graindt"/>
