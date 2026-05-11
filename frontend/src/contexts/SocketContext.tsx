@@ -191,8 +191,6 @@ export function SocketProvider({ children }: { children: ReactNode }) {
   const joinedTasksRef = useRef<Set<number>>(new Set())
   // Use ref for socket to avoid dependency issues in connect callback
   const socketRef = useRef<Socket | null>(null)
-  // Track reconnection attempts for rejoining tasks
-  const hasReconnectedRef = useRef<boolean>(false)
   // Store reconnect callbacks - single source of truth for reconnection events
   const reconnectCallbacksRef = useRef<Set<ReconnectCallback>>(new Set())
 
@@ -233,20 +231,6 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       setIsConnected(true)
       setConnectionError(null)
       setReconnectAttempts(0)
-
-      // If we were previously connected and this is a reconnect, rejoin tasks
-      // This handles both manual reconnects and transport upgrade scenarios
-      if (socketRef.current && joinedTasksRef.current.size > 0) {
-        const tasksToRejoin = Array.from(joinedTasksRef.current)
-
-        tasksToRejoin.forEach(taskId => {
-          newSocket.emit('task:join', { task_id: taskId }, (response: { error?: string }) => {
-            if (response?.error) {
-              console.error(`[Socket.IO] Failed to rejoin task ${taskId}:`, response.error)
-            }
-          })
-        })
-      }
     })
 
     newSocket.on('disconnect', (_: string) => {
@@ -262,18 +246,6 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       setIsConnected(true)
       setConnectionError(null)
       setReconnectAttempts(0)
-      hasReconnectedRef.current = true
-
-      // Rejoin all previously joined task rooms
-      const tasksToRejoin = Array.from(joinedTasksRef.current)
-
-      tasksToRejoin.forEach(taskId => {
-        newSocket.emit('task:join', { task_id: taskId }, (response: { error?: string }) => {
-          if (response?.error) {
-            console.error(`[Socket.IO] Failed to rejoin task ${taskId}:`, response.error)
-          }
-        })
-      })
 
       // Trigger recovery for all active tasks via TaskStateManager
       // This handles message state recovery after WebSocket reconnection
@@ -387,7 +359,6 @@ export function SocketProvider({ children }: { children: ReactNode }) {
   /**
    * Join a task room
    * Prevents duplicate joins by checking if already joined
-   * If reconnected, always rejoin to ensure backend state is synced
    * @param taskId - The task ID to join
    * @param options - Join options
    * @param options.forceRefresh - If true, always emit task:join to get streaming status
@@ -419,21 +390,14 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         return { error: 'Not connected' }
       }
 
-      // Check if already joined this task room to prevent duplicate joins
-      // Exception 1: If we just reconnected, always rejoin to sync backend state
-      // Exception 2: If forceRefresh is true, always request to get streaming status
-      // Exception 3: If afterMessageId is provided, this is an incremental sync request
+      // Check if already joined this task room to prevent duplicate joins.
+      // State-machine recovery passes forceRefresh/afterMessageId, so it never uses
+      // this dedupe path for refresh or reconnect recovery.
       const alreadyJoined = joinedTasksRef.current.has(taskId)
-      const shouldSkip =
-        alreadyJoined && !hasReconnectedRef.current && !forceRefresh && afterMessageId === undefined
+      const shouldSkip = alreadyJoined && !forceRefresh && afterMessageId === undefined
 
       if (shouldSkip) {
         return {}
-      }
-
-      // Clear reconnected flag after first join
-      if (hasReconnectedRef.current) {
-        hasReconnectedRef.current = false
       }
 
       // Add to set IMMEDIATELY to prevent concurrent duplicate joins
