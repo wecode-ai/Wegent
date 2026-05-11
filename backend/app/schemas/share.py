@@ -482,14 +482,6 @@ class KBShareInfoResponse(BaseModel):
     )
 
 
-class TransferOwnershipRequest(BaseModel):
-    """Request body for transferring knowledge base ownership."""
-
-    new_owner_user_id: int = Field(
-        ..., description="User ID of the new owner", gt=0
-    )
-
-
 class PublicKnowledgeBaseResponse(BaseModel):
     """Public knowledge base info for anonymous access via share token."""
 

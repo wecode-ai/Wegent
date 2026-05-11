@@ -40,7 +40,7 @@ from app.schemas.share import (
     ShareLinkCreate,
     ShareLinkResponse,
     ShareLinkUpdate,
-    TransferOwnershipRequest,
+
 )
 from app.services.share import (
     knowledge_share_service,
@@ -580,34 +580,6 @@ def get_kb_share_info(
         )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
-
-
-@router.post(
-    "/KnowledgeBase/{resource_id}/transfer-ownership",
-    summary="Transfer KnowledgeBase ownership",
-)
-def transfer_kb_ownership(
-    resource_id: int,
-    body: TransferOwnershipRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
-) -> Dict[str, str]:
-    """
-    Transfer knowledge base ownership to another user.
-
-    Only the current owner can transfer ownership.
-    Previous owner becomes a Maintainer after transfer.
-
-    - **resource_id**: Knowledge base ID
-    - **body**: New owner user ID
-    """
-    knowledge_share_service.transfer_ownership(
-        db=db,
-        knowledge_base_id=resource_id,
-        current_user_id=current_user.id,
-        new_owner_user_id=body.new_owner_user_id,
-    )
-    return {"message": "Ownership transferred successfully"}
 
 
 @router.get(
