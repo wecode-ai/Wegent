@@ -151,7 +151,7 @@ class ResourceMemberCreate(BaseModel):
     )
     entity_type: Optional[str] = Field(
         default=None,
-        description="Entity type: 'user' (default), 'org_department'. "
+        description="Entity type: 'user' (default), 'namespace'. "
         "When set to non-user type, user_id can be 0.",
     )
     entity_id: Optional[str] = Field(

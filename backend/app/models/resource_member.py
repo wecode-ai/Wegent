@@ -81,14 +81,14 @@ class ResourceMember(Base):
     )
 
     # Entity info (polymorphic member identification)
-    # entity_type: "user" (default), "org_department"
+    # entity_type: "user" (default), "namespace"
     # entity_id: user_id (for "user") or external identifier (e.g., department UUID)
     entity_type = Column(
         String(20),
         nullable=False,
         default="user",
         server_default="user",
-        comment="Entity type: user, org_department",
+        comment="Entity type: user, namespace",
     )
     entity_id = Column(
         String(100),

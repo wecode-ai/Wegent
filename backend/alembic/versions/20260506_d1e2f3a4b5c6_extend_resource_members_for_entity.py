@@ -12,6 +12,7 @@ Add entity_type, entity_id columns to resource_members table.
 Change unique constraint from (resource_type, resource_id, user_id)
 to (resource_type, resource_id, entity_type, entity_id).
 Drop user_id column, all entity identification now uses entity_type + entity_id.
+entity_id is backfilled from user_id then set to NOT NULL.
 """
 
 import sqlalchemy as sa
@@ -38,7 +39,7 @@ def upgrade() -> None:
                 sa.String(20),
                 nullable=False,
                 server_default="user",
-                comment="Entity type: user, org_department",
+                comment="Entity type: user, namespace",
             ),
         )
 
@@ -72,6 +73,22 @@ def upgrade() -> None:
             WHERE entity_id IS NULL
         """
         )
+
+    # Step 3.5: Make entity_id NOT NULL after backfill
+    if dialect == "mysql":
+        op.alter_column(
+            "resource_members",
+            "entity_id",
+            existing_type=sa.String(100),
+            nullable=False,
+        )
+    elif dialect == "sqlite":
+        with op.batch_alter_table("resource_members") as batch_op:
+            batch_op.alter_column(
+                "entity_id",
+                existing_type=sa.String(100),
+                nullable=False,
+            )
 
     # Step 4: Make user_id nullable
     if dialect == "mysql":

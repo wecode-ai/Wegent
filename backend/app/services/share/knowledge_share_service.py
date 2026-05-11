@@ -198,7 +198,7 @@ class KnowledgeShareService(UnifiedShareService):
 
         logger.warning(f"[_get_resource] User has NO explicit shared access")
 
-        # Check entity-type memberships (e.g., org_department)
+        # Check entity-type memberships (e.g., namespace)
         entity_member = (
             db.query(ResourceMember)
             .filter(
@@ -404,7 +404,7 @@ class KnowledgeShareService(UnifiedShareService):
                 role = role_mapping.get(group_role, ResourceRole.Reporter.value)
                 return True, role, False
 
-        # Check entity-type memberships (e.g., org_department)
+        # Check entity-type memberships (e.g., namespace)
         # Non-user entity permissions are resolved via registered IExternalEntityResolvers
         entity_members = (
             db.query(ResourceMember)

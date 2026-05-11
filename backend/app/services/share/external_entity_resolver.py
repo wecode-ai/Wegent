@@ -6,7 +6,7 @@
 External entity resolver interface for resource permissions.
 
 Defines the IExternalEntityResolver interface that handles entity_type
-bindings not natively supported by the core system (e.g., 'org_department').
+bindings not natively supported by the core system (e.g., 'namespace').
 Implementations are registered via register_entity_resolver().
 
 The open-source core ships with no implementations. Internal deployments
@@ -31,7 +31,7 @@ def register_entity_resolver(
     """Register an external entity resolver for a specific entity type.
 
     Args:
-        entity_type: The entity type to handle (e.g., 'org_department')
+        entity_type: The entity type to handle (e.g., 'namespace')
         resolver_cls: The resolver class implementing IExternalEntityResolver
     """
     _external_entity_resolvers[entity_type] = resolver_cls
@@ -73,7 +73,7 @@ class IExternalEntityResolver(ABC):
     it encounters resource_member records with matching entity types.
 
     Typical flow:
-    1. Permission check finds ResourceMember with entity_type='org_department'
+    1. Permission check finds ResourceMember with entity_type='namespace'
     2. Core calls resolver.match_entity_bindings() to check user membership
     3. If matched, the binding's role is applied
     """
@@ -92,7 +92,7 @@ class IExternalEntityResolver(ABC):
         Args:
             db: Database session
             user_id: User ID to check
-            entity_type: Type of entity (e.g., 'org_department')
+            entity_type: Type of entity (e.g., 'namespace')
             entity_ids: List of entity IDs to check against
             user_context: Optional user profile data to avoid re-fetching
 
