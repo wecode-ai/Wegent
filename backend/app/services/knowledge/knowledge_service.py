@@ -398,6 +398,8 @@ class KnowledgeService:
             )
 
             # KBs authorized to this group via entity permissions
+            from app.models.resource_member import MemberStatus, ResourceMember
+            from app.models.share_link import ResourceType
             group_ns = db.query(Namespace).filter(
                 Namespace.name == group_name, Namespace.is_active == True
             ).first()
