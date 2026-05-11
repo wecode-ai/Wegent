@@ -94,10 +94,30 @@ def upgrade() -> None:
     # Step 6: Drop old unique constraint and create new one
     if dialect == "mysql":
         # MySQL specific: drop old FK constraint first if exists
-        op.execute(
-            "ALTER TABLE resource_members DROP FOREIGN KEY IF EXISTS resource_members_ibfk_1"
-        )
-        op.drop_constraint("uq_resource_members", "resource_members", type_="unique")
+        # Dynamically find FK constraint name from MySQL
+        fk_result = conn.execute(
+            sa.text(
+                "SELECT CONSTRAINT_NAME FROM information_schema.TABLE_CONSTRAINTS "
+                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'resource_members' "
+                "AND CONSTRAINT_TYPE = 'FOREIGN KEY'"
+            )
+        ).fetchone()
+        if fk_result:
+            op.execute(
+                f"ALTER TABLE resource_members DROP FOREIGN KEY {fk_result[0]}"
+            )
+
+        # Dynamically find the actual unique constraint/index name from MySQL
+        old_uc_name_result = conn.execute(
+            sa.text(
+                "SELECT CONSTRAINT_NAME FROM information_schema.TABLE_CONSTRAINTS "
+                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'resource_members' "
+                "AND CONSTRAINT_TYPE = 'UNIQUE'"
+            )
+        ).fetchone()
+        old_uc_name = old_uc_name_result[0] if old_uc_name_result else "uq_resource_members"
+
+        op.drop_constraint(old_uc_name, "resource_members", type_="unique")
         op.create_unique_constraint(
             "uq_resource_members_entity",
             "resource_members",
@@ -119,6 +139,18 @@ def downgrade() -> None:
 
     # Drop new unique constraint, restore old one
     if dialect == "mysql":
+        # Dynamically find FK constraint name from MySQL before recreating
+        fk_result = conn.execute(
+            sa.text(
+                "SELECT CONSTRAINT_NAME FROM information_schema.TABLE_CONSTRAINTS "
+                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'resource_members' "
+                "AND CONSTRAINT_TYPE = 'FOREIGN KEY'"
+            )
+        ).fetchone()
+        if fk_result:
+            op.execute(
+                f"ALTER TABLE resource_members DROP FOREIGN KEY {fk_result[0]}"
+            )
         op.drop_constraint(
             "uq_resource_members_entity", "resource_members", type_="unique"
         )
