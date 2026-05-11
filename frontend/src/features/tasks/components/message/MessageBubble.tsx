@@ -35,6 +35,7 @@ import ThinkingDisplay from './thinking/ThinkingDisplay'
 import ClarificationForm from '../clarification/ClarificationForm'
 import { AskUserForm } from '../clarification'
 import FinalPromptMessage from './FinalPromptMessage'
+import { parseMarkdownFinalPrompt } from './finalPromptParser'
 import ClarificationAnswerSummary from '../clarification/ClarificationAnswerSummary'
 import ContextBadgeList from './ContextBadgeList'
 import StreamingWaitIndicator from './StreamingWaitIndicator'
@@ -47,12 +48,7 @@ import { processCitePatterns } from '../../utils/processCitePatterns'
 import RegenerateModelPopover from './RegenerateModelPopover'
 import VideoConfigBadge from './VideoConfigBadge'
 import { getMessageBubbleClassNames } from './messageBubbleStyles'
-import type {
-  ClarificationData,
-  FinalPromptData,
-  ClarificationAnswer,
-  AskUserFormData,
-} from '@/types/api'
+import type { ClarificationData, ClarificationAnswer, AskUserFormData } from '@/types/api'
 import type { SourceReference, GeminiAnnotation } from '@/types/socket'
 import type { Model } from '../../hooks/useModelSelection'
 import type { UnifiedModel } from '@/apis/models'
@@ -1283,65 +1279,6 @@ const MessageBubble = memo(
       }
     }
 
-    // Helper function to parse Markdown final prompt
-    // Supports flexible formats: with/without code blocks, emoji variations, different header levels
-    // Extracts content between the header and the last ``` (or end of content if no valid closing ```)
-    const parseMarkdownFinalPrompt = (content: string): FinalPromptData | null => {
-      // Flexible header detection for final prompt
-      // Matches: ## ✅ 最终需求提示词, ## Final Requirement Prompt, ### 最终提示词, # final prompt, etc.
-      const finalPromptHeaderRegex =
-        /#{1,6}\s*(?:✅\s*)?(?:最终(?:需求)?提示词|final\s*(?:requirement\s*)?prompt)/im
-      const headerMatch = content.match(finalPromptHeaderRegex)
-      if (!headerMatch) {
-        return null
-      }
-
-      // Find the position of the header and extract everything from the header line onwards
-      const headerIndex = headerMatch.index!
-      const contentFromHeader = content.substring(headerIndex)
-
-      // Find the end of the header line
-      const headerLineEndIndex = contentFromHeader.indexOf('\n')
-      if (headerLineEndIndex === -1) {
-        // Header is the only line, no content after it
-        return null
-      }
-
-      // Get content after the header line
-      const afterHeader = contentFromHeader.substring(headerLineEndIndex + 1)
-
-      // Find the last ``` in the content
-      const lastCodeBlockMarkerIndex = afterHeader.lastIndexOf('\n```')
-
-      let promptContent: string
-
-      if (lastCodeBlockMarkerIndex !== -1) {
-        // Check if the last ``` is within 2 lines of the actual end
-        const contentAfterMarker = afterHeader.substring(lastCodeBlockMarkerIndex + 4) // +4 for '\n```'
-        const linesAfterMarker = contentAfterMarker.split('\n').filter(line => line.trim() !== '')
-
-        if (linesAfterMarker.length <= 2) {
-          // Valid closing ```, extract content before it
-          promptContent = afterHeader.substring(0, lastCodeBlockMarkerIndex).trim()
-        } else {
-          // The ``` is too far from the end, model probably didn't output proper closing
-          // Take everything to the end
-          promptContent = afterHeader.trim()
-        }
-      } else {
-        // No closing ``` found, take everything to the end
-        promptContent = afterHeader.trim()
-      }
-
-      if (!promptContent) {
-        return null
-      }
-
-      return {
-        type: 'final_prompt',
-        final_prompt: promptContent,
-      }
-    }
     const renderAiMessage = (message: Message, messageIndex: number) => {
       const content = message.content ?? ''
 

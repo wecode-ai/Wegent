@@ -100,8 +100,10 @@ class SubtaskContextBrief(BaseModel):
     file_size: Optional[int] = None
     mime_type: Optional[str] = None
     # Knowledge base fields (from type_data)
+    knowledge_id: Optional[int] = None
     document_count: Optional[int] = None
     # Table fields (from type_data) - nested structure to match frontend expectation
+    document_id: Optional[int] = None
     source_config: Optional[Dict[str, Any]] = None
 
     model_config = ConfigDict(from_attributes=True)
@@ -113,6 +115,8 @@ class SubtaskContextBrief(BaseModel):
 
         # Build source_config for table contexts
         source_config = None
+        knowledge_id = None
+        document_id = None
         document_count = type_data.get("document_count")
 
         # Handle context type as string or enum
@@ -123,9 +127,12 @@ class SubtaskContextBrief(BaseModel):
             context_type_str = str(context_type)
 
         if context_type_str == ContextType.TABLE.value:
+            document_id = type_data.get("document_id")
             url = type_data.get("url")
             if url:
                 source_config = {"url": url}
+        elif context_type_str == ContextType.KNOWLEDGE_BASE.value:
+            knowledge_id = type_data.get("knowledge_id")
         elif context_type_str == ContextType.SELECTED_DOCUMENTS.value:
             # For selected_documents, count the document_ids
             document_ids = type_data.get("document_ids", [])
@@ -139,7 +146,9 @@ class SubtaskContextBrief(BaseModel):
             file_extension=type_data.get("file_extension"),
             file_size=type_data.get("file_size"),
             mime_type=type_data.get("mime_type"),
+            knowledge_id=knowledge_id,
             document_count=document_count,
+            document_id=document_id,
             source_config=source_config,
         )
 

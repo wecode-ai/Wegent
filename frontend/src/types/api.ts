@@ -629,8 +629,10 @@ export interface SubtaskContextBrief {
   file_size?: number | null
   mime_type?: string | null
   // Knowledge base fields (from type_data)
+  knowledge_id?: number | null
   document_count?: number | null
   // Table fields (from type_data)
+  document_id?: number | null
   source_config?: {
     url?: string
   } | null
