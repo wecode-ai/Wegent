@@ -50,6 +50,7 @@ interface FolderTreeProps {
   onDelete?: (doc: KnowledgeDocument) => void
   onRefresh?: (doc: KnowledgeDocument) => void
   onReindex?: (doc: KnowledgeDocument) => void
+  onMove?: (doc: KnowledgeDocument) => void
   refreshingDocId?: number | null
   reindexingDocId?: number | null
   canManage?: (doc: KnowledgeDocument) => boolean
@@ -86,8 +87,7 @@ function convertFolderToNode(
 
   // Count total documents recursively
   const totalDocs =
-    folderDocs.length +
-    folder.children.reduce((sum, c) => sum + c.document_count, 0)
+    folderDocs.length + folder.children.reduce((sum, c) => sum + c.document_count, 0)
 
   return {
     type: 'api-folder',
@@ -110,10 +110,7 @@ function convertFolderToNode(
  * When no API folders exist, falls back to building a virtual tree
  * from document name paths (backward compatible '/' splitting).
  */
-function buildMergedTree(
-  folders: KnowledgeFolder[],
-  documents: KnowledgeDocument[]
-): TreeNode[] {
+function buildMergedTree(folders: KnowledgeFolder[], documents: KnowledgeDocument[]): TreeNode[] {
   // Group documents: root (folder_id=0) vs folder-specific
   const rootDocs: KnowledgeDocument[] = []
   const docsByFolderId = new Map<number, KnowledgeDocument[]>()
@@ -138,9 +135,7 @@ function buildMergedTree(
         displayName: doc.name,
         document: doc,
       })),
-      ...folders.map(folder =>
-        convertFolderToNode(folder, docsByFolderId)
-      ),
+      ...folders.map(folder => convertFolderToNode(folder, docsByFolderId)),
     ]
     return tree
   }
@@ -157,10 +152,7 @@ function buildFallbackTree(documents: KnowledgeDocument[]): TreeNode[] {
   const root: TreeNode[] = []
   const folderMap = new Map<string, FolderNode>()
 
-  const getOrCreateFolder = (
-    segments: string[],
-    parentChildren: TreeNode[]
-  ): FolderNode => {
+  const getOrCreateFolder = (segments: string[], parentChildren: TreeNode[]): FolderNode => {
     const path = segments.join('/')
     if (folderMap.has(path)) {
       return folderMap.get(path)!
@@ -241,43 +233,44 @@ function FolderRow({
   const indent = depth * (compact ? 12 : 16)
   const isApiFolder = node.isApiFolder
 
-  const folderActions = isApiFolder && canManageFolders ? (
-    <span
-      className="flex items-center gap-0.5 ml-auto flex-shrink-0"
-      onClick={e => e.stopPropagation()}
-    >
-      {onCreateFolder && (
-        <button
-          className="p-0.5 rounded hover:bg-border transition-colors"
-          title={t('document.folder.create')}
-          onClick={() => onCreateFolder(node.id)}
-          data-testid={`create-subfolder-${node.id}`}
-        >
-          <FolderPlus className="w-3 h-3 text-text-muted" />
-        </button>
-      )}
-      {onRenameFolder && (
-        <button
-          className="p-0.5 rounded hover:bg-border transition-colors"
-          title={t('document.folder.rename')}
-          onClick={() => onRenameFolder(node.id, node.name)}
-          data-testid={`rename-folder-${node.id}`}
-        >
-          <Pencil className="w-3 h-3 text-text-muted" />
-        </button>
-      )}
-      {onDeleteFolder && (
-        <button
-          className="p-0.5 rounded hover:bg-border transition-colors"
-          title={t('document.folder.delete')}
-          onClick={() => onDeleteFolder(node.id, node.name)}
-          data-testid={`delete-folder-${node.id}`}
-        >
-          <Trash2 className="w-3 h-3 text-text-muted" />
-        </button>
-      )}
-    </span>
-  ) : null
+  const folderActions =
+    isApiFolder && canManageFolders ? (
+      <span
+        className="flex items-center gap-0.5 ml-auto flex-shrink-0"
+        onClick={e => e.stopPropagation()}
+      >
+        {onCreateFolder && (
+          <button
+            className="p-0.5 rounded hover:bg-border transition-colors"
+            title={t('document.folder.create')}
+            onClick={() => onCreateFolder(node.id)}
+            data-testid={`create-subfolder-${node.id}`}
+          >
+            <FolderPlus className="w-3 h-3 text-text-muted" />
+          </button>
+        )}
+        {onRenameFolder && (
+          <button
+            className="p-0.5 rounded hover:bg-border transition-colors"
+            title={t('document.folder.rename')}
+            onClick={() => onRenameFolder(node.id, node.name)}
+            data-testid={`rename-folder-${node.id}`}
+          >
+            <Pencil className="w-3 h-3 text-text-muted" />
+          </button>
+        )}
+        {onDeleteFolder && (
+          <button
+            className="p-0.5 rounded hover:bg-border transition-colors"
+            title={t('document.folder.delete')}
+            onClick={() => onDeleteFolder(node.id, node.name)}
+            data-testid={`delete-folder-${node.id}`}
+          >
+            <Trash2 className="w-3 h-3 text-text-muted" />
+          </button>
+        )}
+      </span>
+    ) : null
 
   if (compact) {
     return (
@@ -348,6 +341,7 @@ interface FolderTreeNodeProps {
   onDelete?: (doc: KnowledgeDocument) => void
   onRefresh?: (doc: KnowledgeDocument) => void
   onReindex?: (doc: KnowledgeDocument) => void
+  onMove?: (doc: KnowledgeDocument) => void
   isRefreshing?: (docId: number) => boolean
   isReindexing?: (docId: number) => boolean
   canManage?: (doc: KnowledgeDocument) => boolean
@@ -374,6 +368,7 @@ function FolderTreeNode({
   onDelete,
   onRefresh,
   onReindex,
+  onMove,
   isRefreshing,
   isReindexing,
   canManage,
@@ -398,6 +393,7 @@ function FolderTreeNode({
             onDelete={onDelete ? () => onDelete(doc) : undefined}
             onRefresh={onRefresh ? () => onRefresh(doc) : undefined}
             onReindex={onReindex ? () => onReindex(doc) : undefined}
+            onMove={onMove ? () => onMove(doc) : undefined}
             isRefreshing={isRefreshing?.(doc.id) ?? false}
             isReindexing={isReindexing?.(doc.id) ?? false}
             canManage={canManage?.(doc) ?? true}
@@ -422,6 +418,7 @@ function FolderTreeNode({
           onDelete={onDelete ? () => onDelete(doc) : undefined}
           onRefresh={onRefresh ? () => onRefresh(doc) : undefined}
           onReindex={onReindex ? () => onReindex(doc) : undefined}
+          onMove={onMove ? () => onMove(doc) : undefined}
           isRefreshing={isRefreshing?.(doc.id) ?? false}
           isReindexing={isReindexing?.(doc.id) ?? false}
           canManage={canManage?.(doc) ?? true}
@@ -471,6 +468,7 @@ function FolderTreeNode({
               onDelete={onDelete}
               onRefresh={onRefresh}
               onReindex={onReindex}
+              onMove={onMove}
               isRefreshing={isRefreshing}
               isReindexing={isReindexing}
               canManage={canManage}
@@ -505,6 +503,7 @@ export function FolderTree({
   onDelete,
   onRefresh,
   onReindex,
+  onMove,
   refreshingDocId,
   reindexingDocId,
   canManage,
@@ -518,10 +517,7 @@ export function FolderTree({
   onDeleteFolder,
   canManageFolders = false,
 }: FolderTreeProps) {
-  const tree = useMemo(
-    () => buildMergedTree(folders, documents),
-    [folders, documents]
-  )
+  const tree = useMemo(() => buildMergedTree(folders, documents), [folders, documents])
 
   // Collect all folder paths for default-expand
   const allFolderPaths = useMemo(() => {
@@ -577,6 +573,7 @@ export function FolderTree({
             onDelete={onDelete}
             onRefresh={onRefresh}
             onReindex={onReindex}
+            onMove={onMove}
             isRefreshing={id => refreshingDocId === id}
             isReindexing={id => reindexingDocId === id}
             canManage={canManage}
@@ -609,6 +606,7 @@ export function FolderTree({
       onDelete={onDelete}
       onRefresh={onRefresh}
       onReindex={onReindex}
+      onMove={onMove}
       isRefreshing={id => refreshingDocId === id}
       isReindexing={id => reindexingDocId === id}
       canManage={canManage}

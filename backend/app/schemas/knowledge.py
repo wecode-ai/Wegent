@@ -867,6 +867,7 @@ class KnowledgeDocumentCreateV1(BaseModel):
         description="Attachment context ID (required for source_type='attachment')",
     )
     # common optional
+    folder_id: int = Field(0, ge=0, description="Target folder ID (0 = root level)")
     splitter_config: Optional[SplitterConfig] = Field(
         None,
         description="Custom text splitter configuration",

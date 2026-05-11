@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useState, useMemo, useEffect, useRef, Suspense } from 'react'
+import { useState, useMemo, useEffect, useRef, useCallback, Suspense } from 'react'
 import {
   ArrowLeft,
   Upload,
@@ -38,10 +38,16 @@ import { useFolders } from '../hooks/useFolders'
 import { FolderTree } from './FolderTree'
 import { CreateFolderDialog } from './CreateFolderDialog'
 import { DeleteFolderDialog } from './DeleteFolderDialog'
+import { MoveDocumentDialog } from './MoveDocumentDialog'
 import { useColumnResize } from '../hooks/useColumnResize'
 import { refreshKnowledgeBaseSummary } from '@/apis/knowledge'
 import { toast } from '@/hooks/use-toast'
-import type { KnowledgeBase, KnowledgeDocument, SplitterConfig } from '@/types/knowledge'
+import type {
+  KnowledgeBase,
+  KnowledgeDocument,
+  KnowledgeFolder,
+  SplitterConfig,
+} from '@/types/knowledge'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useUser } from '@/features/common/UserContext'
 import { useSearchParams, useRouter, usePathname } from 'next/navigation'
@@ -120,6 +126,19 @@ interface DocumentListProps {
 type SortField = 'name' | 'size' | 'date' | 'updatedAt'
 type SortOrder = 'asc' | 'desc'
 
+/** Flatten folder tree into a flat list for select dropdowns */
+function flattenFoldersForSelect(
+  folders: KnowledgeFolder[],
+  depth: number = 0
+): Array<{ id: number; name: string; depth: number }> {
+  let result: Array<{ id: number; name: string; depth: number }> = []
+  for (const folder of folders) {
+    result.push({ id: folder.id, name: folder.name, depth })
+    result = result.concat(flattenFoldersForSelect(folder.children, depth + 1))
+  }
+  return result
+}
+
 export function DocumentList({
   knowledgeBase,
   onBack,
@@ -141,13 +160,8 @@ export function DocumentList({
   })
 
   // Folder state
-  const {
-    folders,
-    fetchFolders,
-    createFolder,
-    updateFolder,
-    deleteFolder,
-  } = useFolders({ knowledgeBaseId: knowledgeBase.id })
+  const { folders, fetchFolders, createFolder, updateFolder, deleteFolder, moveDocument } =
+    useFolders({ knowledgeBaseId: knowledgeBase.id })
 
   const [showCreateFolder, setShowCreateFolder] = useState(false)
   const [createFolderParentId, setCreateFolderParentId] = useState(0)
@@ -158,8 +172,12 @@ export function DocumentList({
   useEffect(() => {
     if (knowledgeBase.id) {
       fetchFolders()
+      setSelectedUploadFolderId(0)
     }
   }, [knowledgeBase.id, fetchFolders])
+
+  // Flatten folder tree for select dropdowns
+  const folderOptions = useMemo(() => flattenFoldersForSelect(folders), [folders])
 
   // Only show error on page for initial load failures (when documents list is empty)
   // Operation errors are shown via toast notifications
@@ -186,6 +204,11 @@ export function DocumentList({
   const [reindexingDocId, setReindexingDocId] = useState<number | null>(null)
   // Track if summary is being retried
   const [isSummaryRetrying, setIsSummaryRetrying] = useState(false)
+  // Track selected upload folder
+  const [selectedUploadFolderId, setSelectedUploadFolderId] = useState(0)
+  // Track document being moved
+  const [movingDoc, setMovingDoc] = useState<KnowledgeDocument | null>(null)
+  const [isMovingDoc, setIsMovingDoc] = useState(false)
 
   // Resizable name column width (normal table mode only)
   const {
@@ -343,6 +366,7 @@ export function DocumentList({
           file_size: file.size,
           splitter_config: splitterConfig,
           source_type: 'file',
+          folder_id: selectedUploadFolderId || 0,
         })
         // Collect newly created document ID
         if (created?.id) {
@@ -372,6 +396,7 @@ export function DocumentList({
       file_size: 0,
       source_type: 'table',
       source_config: data.source_config,
+      folder_id: selectedUploadFolderId || 0,
     })
     setShowUpload(false)
   }
@@ -381,7 +406,7 @@ export function DocumentList({
     const { createWebDocument } = await import('@/apis/knowledge')
 
     // Call backend API to scrape and create document
-    const result = await createWebDocument(url, knowledgeBase.id, name)
+    const result = await createWebDocument(url, knowledgeBase.id, name, selectedUploadFolderId || 0)
 
     if (!result.success) {
       throw new Error(result.error_message || 'Failed to create web document')
@@ -563,6 +588,29 @@ export function DocumentList({
     setDeletingFolder(null)
     refresh()
   }
+
+  // Document move handlers
+  const handleMoveDocument = useCallback((doc: KnowledgeDocument) => {
+    setMovingDoc(doc)
+  }, [])
+
+  const handleMoveConfirm = useCallback(
+    async (targetFolderId: number) => {
+      if (!movingDoc) return
+      setIsMovingDoc(true)
+      try {
+        const success = await moveDocument(movingDoc.id, targetFolderId)
+        if (success) {
+          setMovingDoc(null)
+          refresh()
+          fetchFolders()
+        }
+      } finally {
+        setIsMovingDoc(false)
+      }
+    },
+    [movingDoc, moveDocument, refresh, fetchFolders]
+  )
 
   // Knowledge base type info
   const isNotebook = (knowledgeBase.kb_type || 'notebook') === 'notebook'
@@ -774,7 +822,7 @@ export function DocumentList({
             {t('common:actions.retry')}
           </Button>
         </div>
-      ) : filteredAndSortedDocuments.length > 0 ? (
+      ) : filteredAndSortedDocuments.length > 0 || folders.length > 0 ? (
         <>
           {/* Batch action bar - shown when items are selected (not in notebook mode where selection is for context injection) */}
           {canManageAllDocuments && selectedIds.size > 0 && !onSelectionChange && (
@@ -828,6 +876,7 @@ export function DocumentList({
                 onDelete={setDeletingDoc}
                 onRefresh={handleRefreshWebDocument}
                 onReindex={handleReindexDocument}
+                onMove={handleMoveDocument}
                 refreshingDocId={refreshingDocId}
                 reindexingDocId={reindexingDocId}
                 canManage={canManageDocument}
@@ -927,6 +976,7 @@ export function DocumentList({
                 onDelete={setDeletingDoc}
                 onRefresh={handleRefreshWebDocument}
                 onReindex={handleReindexDocument}
+                onMove={handleMoveDocument}
                 refreshingDocId={refreshingDocId}
                 reindexingDocId={reindexingDocId}
                 canManage={canManageDocument}
@@ -989,6 +1039,9 @@ export function DocumentList({
         onWebAdd={handleWebAdd}
         kbType={knowledgeBase.kb_type}
         currentDocumentCount={documents.length}
+        folderId={selectedUploadFolderId}
+        folderOptions={folderOptions}
+        onFolderChange={setSelectedUploadFolderId}
       />
 
       <EditDocumentDialog
@@ -1034,6 +1087,16 @@ export function DocumentList({
         onOpenChange={open => !open && setDeletingFolder(null)}
         folderName={deletingFolder?.name || ''}
         onConfirm={handleDeleteFolderConfirm}
+      />
+
+      <MoveDocumentDialog
+        open={!!movingDoc}
+        onOpenChange={open => !open && setMovingDoc(null)}
+        documentName={movingDoc?.name || ''}
+        folders={folderOptions}
+        currentFolderId={movingDoc?.folder_id ?? 0}
+        onConfirm={handleMoveConfirm}
+        isSubmitting={isMovingDoc}
       />
     </div>
   )

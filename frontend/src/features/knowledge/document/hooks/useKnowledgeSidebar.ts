@@ -416,21 +416,27 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
   const selectKb = useCallback(
     (kb: KnowledgeBase) => {
       setSelectedKbId(kb.id)
-      setSelectedKb(kb)
       setSelectedGroupId(null)
       setViewMode('kb')
       addRecentAccess(kb)
 
       // For notebook type, fetch full KB data to get guided_questions
+      // before setting selectedKb - avoids a double render with incomplete data
       if (kb.kb_type === 'notebook') {
         getKnowledgeBase(kb.id)
           .then(fullKb => {
             // Only update if still selected (avoid race condition)
-            setSelectedKb(prev => (prev?.id === kb.id ? fullKb : prev))
+            setSelectedKb(prev => {
+              // First time setting or same KB
+              if (!prev || prev.id === kb.id) return fullKb
+              return prev
+            })
           })
           .catch(error => {
             console.error('Failed to fetch full knowledge base data:', error)
           })
+      } else {
+        setSelectedKb(kb)
       }
     },
     [addRecentAccess]

@@ -259,12 +259,14 @@ export interface WebDocumentRefreshResponse {
 export async function createWebDocument(
   url: string,
   knowledgeBaseId: number,
-  name?: string
+  name?: string,
+  folderId?: number
 ): Promise<WebDocumentCreateResponse> {
   return apiClient.post<WebDocumentCreateResponse>('/web-scraper/create-document', {
     url,
     knowledge_base_id: knowledgeBaseId,
     name,
+    folder_id: folderId || 0,
   })
 }
 
@@ -396,10 +398,7 @@ export async function createFolder(
   knowledgeBaseId: number,
   data: KnowledgeFolderCreate
 ): Promise<KnowledgeFolder> {
-  return apiClient.post<KnowledgeFolder>(
-    `/knowledge-bases/${knowledgeBaseId}/folders`,
-    data
-  )
+  return apiClient.post<KnowledgeFolder>(`/knowledge-bases/${knowledgeBaseId}/folders`, data)
 }
 
 /**

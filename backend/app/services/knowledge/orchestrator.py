@@ -1798,6 +1798,7 @@ class KnowledgeOrchestrator:
         url: str,
         knowledge_base_id: int,
         name: Optional[str] = None,
+        folder_id: int = 0,
         trigger_indexing: bool = True,
         trigger_summary: bool = True,
     ) -> Dict[str, Any]:
@@ -1893,6 +1894,7 @@ class KnowledgeOrchestrator:
                 name=doc_name,
                 file_extension="md",
                 file_size=content_size,
+                folder_id=folder_id,
                 source_type=DocumentSourceType.WEB,
                 source_config={
                     "url": result.url,

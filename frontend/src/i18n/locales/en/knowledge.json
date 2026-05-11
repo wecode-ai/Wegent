@@ -208,7 +208,9 @@
       "createFailed": "Failed to create folder",
       "updateFailed": "Failed to update folder",
       "deleteFailed": "Failed to delete folder",
-      "moveDocumentFailed": "Failed to move document"
+      "moveDocumentFailed": "Failed to move document",
+      "moveDocumentHint": "Move \"{{name}}\" to:",
+      "current": "current"
     },
     "document": {
       "title": "Documents",
