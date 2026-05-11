@@ -209,7 +209,7 @@ class ResourceMemberResponse(BaseModel):
     resource_type: str
     resource_id: int
     user_id: int
-    user_name: Optional[str] = None  # Populated from user lookup
+    display_name: Optional[str] = None  # Unified display name for all member types
     user_email: Optional[str] = None  # Populated from user lookup
     role: str = Field(description="Member role: Owner, Maintainer, Developer, Reporter")
     status: str

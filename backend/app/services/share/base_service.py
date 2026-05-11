@@ -1302,25 +1302,53 @@ class UnifiedShareService(ABC):
 
         return True
 
+    def _get_entity_display_name(
+        self, db: Session, entity_type: str, entity_id: str
+    ) -> Optional[str]:
+        """
+        Resolve display name for entity-type members.
+
+        Built-in support for 'namespace' (group) entities.
+        Subclasses can override to support additional entity types.
+
+        Args:
+            db: Database session
+            entity_type: Entity type (e.g., 'namespace')
+            entity_id: Entity identifier
+
+        Returns:
+            Display name string or None if not resolvable
+        """
+        if entity_type == 'namespace':
+            try:
+                namespace = db.query(Namespace).filter(
+                    Namespace.id == int(entity_id)
+                ).first()
+                if namespace:
+                    return namespace.display_name or namespace.name
+            except (ValueError, TypeError):
+                pass
+        return None
+
     def _member_to_response(
         self, member: ResourceMember, user_map: Dict[int, User], db: Session = None
     ) -> ResourceMemberResponse:
         """Convert ResourceMember model to response schema."""
         # Get user name and email from map
         user = user_map.get(member.user_id)
-        user_name = user.user_name if user else None
         user_email = user.email if user else None
 
-        # For namespace-type members, populate display_name from Namespace table
-        if member.entity_type == 'namespace' and member.entity_id and db and not user_name:
-            try:
-                namespace = db.query(Namespace).filter(
-                    Namespace.id == int(member.entity_id)
-                ).first()
-                if namespace:
-                    user_name = namespace.display_name or namespace.name
-            except (ValueError, TypeError):
-                pass
+        # Determine unified display_name based on member type
+        display_name = None
+        if member.entity_type and member.entity_type != 'user':
+            # Entity-type member (namespace, etc.) — resolve via extensible method
+            if member.entity_id and db:
+                display_name = self._get_entity_display_name(
+                    db, member.entity_type, member.entity_id
+                )
+        elif user:
+            # User-type member — use user name
+            display_name = user.user_name
 
         # Get invited by user name
         invited_by_user = user_map.get(member.invited_by_user_id)
@@ -1342,7 +1370,7 @@ class UnifiedShareService(ABC):
             resource_type=member.resource_type,
             resource_id=member.resource_id,
             user_id=member.user_id,
-            user_name=user_name,
+            display_name=display_name,
             user_email=user_email,
             role=effective_role,
             status=member.status,

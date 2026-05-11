@@ -602,7 +602,7 @@ export interface BatchPermissionAddResponse {
 export interface PermissionUserInfo {
   id: number
   user_id: number
-  username: string
+  display_name: string
   email?: string
   role: MemberRole
   requested_at: string

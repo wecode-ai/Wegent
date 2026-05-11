@@ -629,7 +629,7 @@ function PermissionGroup({
             className="group flex items-center justify-between p-2 rounded-lg hover:bg-muted transition-colors"
           >
             <div className="flex-1 min-w-0">
-              <div className="font-medium text-sm truncate">{user.username}</div>
+              <div className="font-medium text-sm truncate">{user.display_name}</div>
               {user.email && (
                 <div className="text-xs text-text-muted truncate">
                   {user.email}

@@ -29,7 +29,7 @@ interface ResourceMemberResponse {
   resource_type: string
   resource_id: number
   user_id: number
-  user_name: string | null
+  display_name: string | null
   user_email: string | null
   role: string
   status: string
@@ -126,12 +126,12 @@ export const knowledgePermissionApi = {
       (acc, m) => {
         const role = (m.role as MemberRole) || 'Reporter'
         if (!acc[role]) acc[role] = []
-        // For entity-type members, backend now populates user_name with display name
+        // For entity-type members, backend populates display_name via _get_entity_display_name
         const isEntity = m.entity_type && m.entity_type !== 'user'
         const member = {
           id: m.id,
           user_id: m.user_id,
-          username: m.user_name || (isEntity ? (m.entity_id || '') : ''),
+          display_name: m.display_name || (isEntity ? (m.entity_id || '') : ''),
           email: isEntity ? '' : (m.user_email || ''),
           role: role,
           requested_at: m.requested_at,
