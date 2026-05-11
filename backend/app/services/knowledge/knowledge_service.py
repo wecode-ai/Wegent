@@ -1970,9 +1970,12 @@ class KnowledgeService:
                         break
 
         # Separate entity-authorized KBs:
+        # - Only process personal KBs (namespace='default') — group KBs that were
+        #   entity-authorized to other groups should stay in their native groups
         # - Author's own KBs: stay in personal_created (already there)
         # - Other users' KBs: go to shared_with_me with source_group
         entity_shared_to_me_kbs: list[Kind] = []
+        entity_personal_kb_ids: set[int] = set()
         if entity_members_kb_ids:
             entity_kbs = (
                 db.query(Kind)
@@ -1984,6 +1987,11 @@ class KnowledgeService:
                 .all()
             )
             for ekb in entity_kbs:
+                # Only process personal KBs (namespace='default')
+                # Group KBs that are entity-authorized to other groups stay in their native groups
+                if ekb.namespace != "default":
+                    continue
+                entity_personal_kb_ids.add(ekb.id)
                 if ekb.user_id == user_id:
                     # Author's own KB, keep in personal_created (already there)
                     pass
@@ -1993,8 +2001,8 @@ class KnowledgeService:
 
         # Merge group_kb_map (native group KBs + user-level shared group KBs)
         group_kbs = list(group_kb_map.values())
-        # Remove entity-authorized KBs from group_kbs (they should not appear in group section)
-        group_kbs = [kb for kb in group_kbs if kb.id not in entity_members_kb_ids]
+        # Remove entity-authorized personal KBs from group_kbs (they should not appear in group section)
+        group_kbs = [kb for kb in group_kbs if kb.id not in entity_personal_kb_ids]
 
         # 5. Get organization knowledge bases (single query)
         org_kbs = (
@@ -2113,7 +2121,11 @@ class KnowledgeService:
             for kb in personal_shared
         ]
         # Add entity-authorized shared KBs with source group info
+        # Dedup against user-level shared KBs (a KB could be shared both ways)
+        seen_shared_ids = {kb.id for kb in shared_with_me}
         for ekb in entity_shared_to_me_kbs:
+            if ekb.id in seen_shared_ids:
+                continue
             source_group_name = entity_member_group_map.get(ekb.id)
             source_group_display = (
                 namespace_display_names.get(source_group_name, source_group_name)

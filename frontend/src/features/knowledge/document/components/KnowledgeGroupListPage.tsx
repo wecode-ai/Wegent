@@ -276,6 +276,14 @@ export function KnowledgeGroupListPage({
       })
     }
 
+    // Dedup by ID as a safety measure against duplicate data
+    const seen = new Set<number>()
+    result = result.filter(kb => {
+      if (seen.has(kb.id)) return false
+      seen.add(kb.id)
+      return true
+    })
+
     return sortKbs(result)
   }, [dataSource, isAllMode, filterGroupId, getKbGroupInfo, sortKbs])
 
