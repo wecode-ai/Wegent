@@ -11,7 +11,8 @@ Create Date: 2026-05-06
 Add entity_type, entity_id columns to resource_members table.
 Change unique constraint from (resource_type, resource_id, user_id)
 to (resource_type, resource_id, entity_type, entity_id).
-Drop user_id column, all entity identification now uses entity_type + entity_id.
+Keep user_id column for backward compatibility (nullable, auto-synced from entity_id
+for entity_type='user' via SQLAlchemy events).
 entity_id is backfilled from user_id then set to NOT NULL.
 """
 
@@ -90,10 +91,11 @@ def upgrade() -> None:
                 nullable=False,
             )
 
-    # Step 4: Make user_id nullable
+    # Step 4: Make user_id nullable (kept for backward compatibility)
+    # user_id is auto-synced from entity_id for entity_type='user' via SQLAlchemy events
     if dialect == "mysql":
         op.execute(
-            "ALTER TABLE resource_members MODIFY user_id INT NULL COMMENT 'Member user ID (nullable for non-user entity types)'"
+            "ALTER TABLE resource_members MODIFY user_id INT NULL COMMENT 'Member user ID (kept for backward compatibility, use entity_type+entity_id for new code)'"
         )
 
     # Step 5: Drop old unique constraint and create new one
@@ -108,9 +110,7 @@ def upgrade() -> None:
             )
         ).fetchone()
         if fk_result:
-            op.execute(
-                f"ALTER TABLE resource_members DROP FOREIGN KEY {fk_result[0]}"
-            )
+            op.execute(f"ALTER TABLE resource_members DROP FOREIGN KEY {fk_result[0]}")
 
         # Dynamically find the actual unique constraint/index name from MySQL
         old_uc_name_result = conn.execute(
@@ -120,7 +120,9 @@ def upgrade() -> None:
                 "AND CONSTRAINT_TYPE = 'UNIQUE'"
             )
         ).fetchone()
-        old_uc_name = old_uc_name_result[0] if old_uc_name_result else "uq_resource_members"
+        old_uc_name = (
+            old_uc_name_result[0] if old_uc_name_result else "uq_resource_members"
+        )
 
         op.drop_constraint(old_uc_name, "resource_members", type_="unique")
         op.create_unique_constraint(
@@ -137,30 +139,10 @@ def upgrade() -> None:
                 ["resource_type", "resource_id", "entity_type", "entity_id"],
             )
 
-    # Step 6: Drop user_id column (FK already dropped in step 5)
-    if "user_id" in columns:
-        if dialect == "mysql":
-            op.drop_column("resource_members", "user_id")
-        else:
-            with op.batch_alter_table("resource_members") as batch_op:
-                batch_op.drop_column("user_id")
-
 
 def downgrade() -> None:
     conn = op.get_bind()
     dialect = conn.dialect.name
-
-    # Restore user_id column
-    if dialect == "mysql":
-        op.add_column(
-            "resource_members",
-            sa.Column(
-                "user_id",
-                sa.Integer,
-                nullable=True,
-                comment="Member user ID",
-            ),
-        )
 
     # Drop new unique constraint, restore old one
     if dialect == "mysql":
@@ -173,9 +155,7 @@ def downgrade() -> None:
             )
         ).fetchone()
         if fk_result:
-            op.execute(
-                f"ALTER TABLE resource_members DROP FOREIGN KEY {fk_result[0]}"
-            )
+            op.execute(f"ALTER TABLE resource_members DROP FOREIGN KEY {fk_result[0]}")
         op.drop_constraint(
             "uq_resource_members_entity", "resource_members", type_="unique"
         )

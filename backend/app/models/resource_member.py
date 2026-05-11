@@ -30,7 +30,6 @@ from app.db.base import Base
 from app.models.share_link import ResourceType
 from app.schemas.base_role import BaseRole
 
-
 # Define epoch time for default datetime values
 EPOCH_TIME = datetime(1970, 1, 1, 0, 0, 0)
 
@@ -96,19 +95,14 @@ class ResourceMember(Base):
         comment="Entity identifier: user_id for 'user', external ID for others",
     )
 
-    @property
-    def user_id(self) -> int:
-        """Get user ID for entity-type members.
-
-        For entity_type='user', returns the entity_id as int.
-        For other entity types, returns 0.
-        """
-        if self.entity_type and self.entity_type == "user" and self.entity_id:
-            try:
-                return int(self.entity_id)
-            except (ValueError, TypeError):
-                return 0
-        return 0
+    # Backward compatibility: kept as nullable column for old SQL queries
+    # For entity_type='user', auto-synced from entity_id via SQLAlchemy events
+    # For other entity types, remains NULL
+    user_id = Column(
+        Integer,
+        nullable=True,
+        comment="Member user ID (kept for backward compatibility, use entity_type+entity_id for new code)",
+    )
 
     # Role-based permission
     role = Column(
@@ -250,3 +244,32 @@ class ResourceMember(Base):
             role: The role to set (Owner, Maintainer, Developer, Reporter)
         """
         self.role = role
+
+
+# SQLAlchemy event listeners to keep user_id in sync with entity_id for user-type members
+from sqlalchemy import event
+
+
+def _sync_user_id_from_entity(target: ResourceMember) -> None:
+    """Sync user_id column from entity_id when entity_type is 'user'."""
+    if target.entity_type and target.entity_type == "user" and target.entity_id:
+        try:
+            target.user_id = int(target.entity_id)
+        except (ValueError, TypeError):
+            target.user_id = None
+    else:
+        target.user_id = None
+
+
+@event.listens_for(ResourceMember, "before_insert")
+def _resource_member_before_insert(
+    _mapper, _connection, target: ResourceMember
+) -> None:
+    _sync_user_id_from_entity(target)
+
+
+@event.listens_for(ResourceMember, "before_update")
+def _resource_member_before_update(
+    _mapper, _connection, target: ResourceMember
+) -> None:
+    _sync_user_id_from_entity(target)
