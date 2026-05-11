@@ -538,17 +538,40 @@ def mark_document_conversion_started(
 @trace_sync(
     span_name="knowledge.mark_document_conversion_succeeded",
     tracer_name="knowledge.state_machine",
-    extract_attributes=lambda db, document_id, generation: {
+    extract_attributes=lambda db, document_id, generation, converted_extension=None, converted_name=None, converted_file_size=None: {
         "knowledge.document_id": document_id,
         "knowledge.index_generation": generation,
+        "knowledge.converted_extension": converted_extension or "",
     },
 )
 def mark_document_conversion_succeeded(
     db: Session,
     document_id: int,
     generation: int,
+    *,
+    converted_extension: Optional[str] = None,
+    converted_name: Optional[str] = None,
+    converted_file_size: Optional[int] = None,
 ) -> bool:
-    """Transition CONVERTING -> QUEUED after successful conversion."""
+    """Transition CONVERTING -> QUEUED after successful conversion.
+
+    When conversion metadata is provided, also updates the document's
+    file_extension, name, and file_size to reflect the converted format.
+    This ensures subsequent re-index or stale-recovery routes the document
+    directly to index_document_task instead of convert_document_task.
+    """
+    update_payload = {
+        KnowledgeDocument.index_status: DocumentIndexStatus.QUEUED,
+        KnowledgeDocument.updated_at: _utcnow(),
+    }
+
+    if converted_extension is not None:
+        update_payload[KnowledgeDocument.file_extension] = converted_extension
+    if converted_name is not None:
+        update_payload[KnowledgeDocument.name] = converted_name
+    if converted_file_size is not None:
+        update_payload[KnowledgeDocument.file_size] = converted_file_size
+
     updated = (
         db.query(KnowledgeDocument)
         .filter(
@@ -556,13 +579,7 @@ def mark_document_conversion_succeeded(
             KnowledgeDocument.index_generation == generation,
             KnowledgeDocument.index_status == DocumentIndexStatus.CONVERTING,
         )
-        .update(
-            {
-                KnowledgeDocument.index_status: DocumentIndexStatus.QUEUED,
-                KnowledgeDocument.updated_at: _utcnow(),
-            },
-            synchronize_session=False,
-        )
+        .update(update_payload, synchronize_session=False)
     )
     db.commit()
 

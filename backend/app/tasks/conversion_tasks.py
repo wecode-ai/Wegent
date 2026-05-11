@@ -218,8 +218,21 @@ def convert_document_task(
                 f"images={len(result.uploaded_images)}"
             )
 
-            # Overwrite attachment with Markdown
-            md_filename = f"{original_filename}.md"
+            # State: CONVERTING -> QUEUED (check staleness BEFORE overwriting attachment)
+            md_filename = f"{filename_without_ext}.md"
+            with SessionLocal() as db:
+                succeeded = mark_document_conversion_succeeded(
+                    db=db,
+                    document_id=document_id,
+                    generation=index_generation,
+                    converted_extension="md",
+                    converted_name=md_filename,
+                    converted_file_size=len(result.markdown_bytes),
+                )
+            if not succeeded:
+                return {"status": "skipped", "reason": "stale_conversion"}
+
+            # Overwrite attachment with Markdown (only after staleness check passes)
             with SessionLocal() as db:
                 context_service.overwrite_attachment(
                     db=db,
@@ -228,14 +241,6 @@ def convert_document_task(
                     filename=md_filename,
                     binary_data=result.markdown_bytes,
                 )
-
-            # State: CONVERTING -> QUEUED
-            with SessionLocal() as db:
-                succeeded = mark_document_conversion_succeeded(
-                    db=db, document_id=document_id, generation=index_generation
-                )
-            if not succeeded:
-                return {"status": "skipped", "reason": "stale_conversion"}
 
             # Dispatch indexing task
             from app.tasks.knowledge_tasks import index_document_task
