@@ -160,10 +160,11 @@ function ChatAreaContent({
   const { quote, clearQuote, formatQuoteForMessage } = useQuote()
 
   // Task context
-  const { selectedTaskDetail, setSelectedTask, accessDenied } = useTaskContext()
+  const { selectedTask, selectedTaskDetail, setSelectedTask, accessDenied } = useTaskContext()
+  const effectiveTaskId = selectedTask?.id ?? selectedTaskDetail?.id
 
   // Use useTaskStateMachine hook for reactive state updates (SINGLE SOURCE OF TRUTH per AGENTS.md)
-  const { state: taskState } = useTaskStateMachine(selectedTaskDetail?.id)
+  const { state: taskState } = useTaskStateMachine(effectiveTaskId)
 
   // Video model selection state - only enabled for video mode
   // Uses unified useModelSelection hook with modelCategoryType='video'
@@ -318,11 +319,11 @@ function ChatAreaContent({
   // Determine if there are messages to display (computed early for hooks)
   // Uses state machine messages as the single source of truth, not selectedTaskDetail.subtasks
   const hasMessagesForHooks = useMemo(() => {
-    const hasSelectedTask = selectedTaskDetail && selectedTaskDetail.id
+    const hasSelectedTask = Boolean(effectiveTaskId)
     // Check messages from state machine (single source of truth)
     const hasContextMessages = taskState?.messages && taskState.messages.size > 0
     return Boolean(hasSelectedTask || hasContextMessages)
-  }, [selectedTaskDetail, taskState?.messages])
+  }, [effectiveTaskId, taskState?.messages])
 
   // Get taskId from URL for team sync logic
   const searchParams = useSearchParams()
@@ -576,9 +577,9 @@ function ChatAreaContent({
   // Determine if there are messages to display (full computation)
   // Note: Now using taskState.messages from state machine instead of selectedTaskDetail.subtasks
   const hasMessages = useMemo(() => {
-    const hasSelectedTask = selectedTaskDetail && selectedTaskDetail.id
+    const hasSelectedTask = Boolean(effectiveTaskId)
     const hasNewTaskStream =
-      !selectedTaskDetail?.id && streamHandlers.pendingTaskId && streamHandlers.isStreaming
+      !effectiveTaskId && streamHandlers.pendingTaskId && streamHandlers.isStreaming
     const hasLocalPending = streamHandlers.localPendingMessage !== null
     // Use taskState from state machine (single source of truth)
     const hasUnifiedMessages = taskState?.messages && taskState.messages.size > 0
@@ -609,7 +610,7 @@ function ChatAreaContent({
       hasUnifiedMessages
     )
   }, [
-    selectedTaskDetail,
+    effectiveTaskId,
     streamHandlers.hasPendingUserMessage,
     streamHandlers.isStreaming,
     streamHandlers.pendingTaskId,
