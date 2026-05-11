@@ -15,6 +15,9 @@ from typing import List, Optional
 from sqlalchemy.orm import Session
 
 from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
+from app.services.knowledge.task_knowledge_base_service import (
+    task_knowledge_base_service,
+)
 from app.services.openapi.kb_resolver import (
     KnowledgeBaseNameResolver,
     ResolvedKnowledgeBase,
@@ -48,6 +51,8 @@ class KnowledgeBaseContextCreator:
         self,
         subtask_id: int,
         kb_names: List[dict],
+        task=None,
+        user_name: Optional[str] = None,
     ) -> List[SubtaskContext]:
         """
         Create SubtaskContext records for knowledge bases.
@@ -59,6 +64,8 @@ class KnowledgeBaseContextCreator:
         Args:
             subtask_id: ID of the subtask to attach contexts to
             kb_names: List of dicts with 'namespace' and 'name' keys
+            task: Optional task to sync selected KBs into task-level refs
+            user_name: Optional user name used as boundBy during task-level sync
 
         Returns:
             List of created SubtaskContext records
@@ -97,6 +104,9 @@ class KnowledgeBaseContextCreator:
                 subtask_id,
                 [ctx.id for ctx in contexts],
             )
+
+            if task is not None and user_name:
+                self._sync_contexts_to_task(task, contexts, user_name)
 
         return contexts
 
@@ -138,3 +148,30 @@ class KnowledgeBaseContextCreator:
         )
 
         return context
+
+    def _sync_contexts_to_task(
+        self,
+        task,
+        contexts: List[SubtaskContext],
+        user_name: str,
+    ) -> None:
+        """Best-effort sync of selected KB contexts to task-level knowledgeBaseRefs."""
+        for context in contexts:
+            knowledge_id = (
+                context.type_data.get("knowledge_id") if context.type_data else None
+            )
+            if not knowledge_id:
+                continue
+            synced = task_knowledge_base_service.sync_subtask_kb_to_task(
+                db=self.db,
+                task=task,
+                knowledge_id=knowledge_id,
+                user_id=self.user_id,
+                user_name=user_name,
+            )
+            if synced:
+                logger.info(
+                    "[KBContextCreator] Synced KB %s to task %s from subtask-level selection",
+                    knowledge_id,
+                    task.id,
+                )

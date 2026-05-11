@@ -70,6 +70,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
 
   // Form state
   const [name, setName] = useState('')
+  const [displayName, setDisplayName] = useState('')
   const [description, setDescription] = useState('')
   const [mode, setMode] = useState<TeamMode>('solo')
   const [bindMode, setBindMode] = useState<TaskType[]>(['chat', 'code'])
@@ -161,6 +162,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
 
     if (formTeam) {
       setName(formTeam.name)
+      setDisplayName(formTeam.displayName || '')
       setDescription(formTeam.description || '')
       setIcon(formTeam.icon || null)
       const m = (formTeam.workflow?.mode as TeamMode) || 'pipeline'
@@ -196,6 +198,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       setRequiresWorkspace(formTeam.requires_workspace ?? true)
     } else {
       setName('')
+      setDisplayName('')
       setDescription('')
       setIcon(null)
       setMode('solo')
@@ -374,6 +377,9 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       return
     }
 
+    const trimmedDisplayName = displayName.trim()
+    const displayNamePayload = trimmedDisplayName || (formTeam?.displayName ? null : undefined)
+
     // For solo mode, save bot first via BotEdit ref
     if (mode === 'solo') {
       if (botEditRef.current) {
@@ -407,6 +413,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
           if (editingTeam && editingTeamId && editingTeamId > 0) {
             const updated = await updateTeam(editingTeamId, {
               name: name.trim(),
+              displayName: displayNamePayload,
               description: description.trim() || undefined,
               workflow,
               bind_mode: bindMode,
@@ -419,6 +426,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
           } else {
             const created = await createTeam({
               name: name.trim(),
+              displayName: displayNamePayload,
               description: description.trim() || undefined,
               workflow,
               bind_mode: bindMode,
@@ -493,6 +501,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       if (editingTeam && editingTeamId && editingTeamId > 0) {
         const updated = await updateTeam(editingTeamId, {
           name: name.trim(),
+          displayName: displayNamePayload,
           description: description.trim() || undefined,
           workflow,
           bind_mode: bindMode,
@@ -505,6 +514,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       } else {
         const created = await createTeam({
           name: name.trim(),
+          displayName: displayNamePayload,
           description: description.trim() || undefined,
           workflow,
           bind_mode: bindMode,
@@ -550,6 +560,8 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
             <TeamBasicInfoForm
               name={name}
               setName={setName}
+              displayName={displayName}
+              setDisplayName={setDisplayName}
               description={description}
               setDescription={setDescription}
               bindMode={bindMode}

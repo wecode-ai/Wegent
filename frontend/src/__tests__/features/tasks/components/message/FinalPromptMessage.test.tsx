@@ -8,6 +8,14 @@ import FinalPromptMessage from '@/features/tasks/components/message/FinalPromptM
 
 const mockPush = jest.fn()
 const mockToast = jest.fn()
+const mockTranslations: Record<string, Record<string, string>> = {
+  chat: {
+    'pipeline.confirm_stage': 'Confirm',
+    'pipeline.confirmation_hint':
+      "Review and edit the prompt if needed, then click 'Continue to Next Stage' to proceed.",
+    'pipeline.edit_prompt': 'Edit Prompt',
+  },
+}
 
 jest.mock('next/navigation', () => ({
   useRouter: () => ({
@@ -23,7 +31,14 @@ jest.mock('@/hooks/use-toast', () => ({
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
-    t: (key: string) => key,
+    t: (key: string) => {
+      if (key.includes(':')) {
+        const [namespace, namespacedKey] = key.split(':')
+        return mockTranslations[namespace]?.[namespacedKey] ?? key
+      }
+
+      return key
+    },
   }),
 }))
 
@@ -69,5 +84,27 @@ describe('FinalPromptMessage', () => {
     await user.click(screen.getByTestId('final-prompt-forward-button'))
 
     expect(onForwardClick).toHaveBeenCalledWith(7)
+  })
+
+  it('renders pipeline confirmation actions with translated labels', () => {
+    render(
+      <FinalPromptMessage
+        data={{
+          type: 'final_prompt',
+          final_prompt: 'Implement the feature',
+        }}
+        taskId={42}
+        selectedTeam={{ id: 7 } as React.ComponentProps<typeof FinalPromptMessage>['selectedTeam']}
+        isPendingConfirmation
+      />
+    )
+
+    expect(screen.getByText('Edit Prompt')).toBeInTheDocument()
+    expect(screen.getByText('Confirm')).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        "Review and edit the prompt if needed, then click 'Continue to Next Stage' to proceed."
+      )
+    ).toBeInTheDocument()
   })
 })

@@ -39,6 +39,7 @@ class PresignedUrlContentRef(KnowledgeRuntimeProtocolModel):
     kind: Literal["presigned_url"]
     url: str
     expires_at: datetime | None = None
+    is_encrypted: bool = False
 
 
 ContentRef = Annotated[

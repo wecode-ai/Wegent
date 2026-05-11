@@ -544,13 +544,16 @@ async def _create_subscription_task(
         )
 
         if bound_task:
-            # Check if bound task is still RUNNING, cancel it before reuse
+            # Check if bound task is still RUNNING or PENDING, cancel it before reuse
             from app.schemas.kind import Task
 
             bound_task_crd = Task.model_validate(bound_task.json)
-            if bound_task_crd.status and bound_task_crd.status.status == "RUNNING":
+            bound_task_status = (
+                bound_task_crd.status.status if bound_task_crd.status else None
+            )
+            if bound_task_status in ("RUNNING", "PENDING"):
                 logger.warning(
-                    f"[subscription_tasks] Bound task {ctx.bound_task_id} is still RUNNING, "
+                    f"[subscription_tasks] Bound task {ctx.bound_task_id} is still {bound_task_status}, "
                     f"cancelling it before reuse for subscription {ctx.subscription.id}"
                 )
                 # Cancel the running task using the same method as subscription cancel

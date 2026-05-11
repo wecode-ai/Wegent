@@ -461,7 +461,7 @@ class OpenAPIStreamingService:
                         if chunk.data.get("status") == "failed" and chunk.data.get(
                             "error"
                         ):
-                            terminal_payload["error"] = chunk.data["error"]
+                            terminal_payload["failure_reason"] = chunk.data["error"]
                         yield _format_sse_event(terminal_payload)
                         sequence_number += 1
                         yield _format_sse_event(
@@ -579,6 +579,8 @@ class OpenAPIStreamingService:
                 }
             )
 
+        except NotImplementedError:
+            raise
         except Exception as e:
             logger.exception(f"Error during streaming response: {e}")
             # Official OpenAI event: response.failed (or error)

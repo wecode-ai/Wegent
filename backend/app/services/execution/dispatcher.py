@@ -428,6 +428,7 @@ class ResponsesAPIEventParser:
                     tool_key,
                 )
                 return None
+            failure_reason = data.get("failure_reason")
             return ExecutionEvent(
                 type=EventType.TOOL_RESULT,
                 task_id=task_id,
@@ -435,6 +436,7 @@ class ResponsesAPIEventParser:
                 tool_name=tool_context.get("name"),
                 tool_use_id=item_id,
                 tool_input=tool_context.get("arguments"),
+                tool_output=failure_reason,
                 data={
                     "tool_protocol": "mcp_call",
                     "server_label": tool_context.get("server_label", ""),
@@ -443,7 +445,7 @@ class ResponsesAPIEventParser:
                         if event_type == ResponsesAPIStreamEvents.MCP_CALL_FAILED.value
                         else "completed"
                     ),
-                    "error": data.get("error"),
+                    "error": failure_reason,
                 },
                 message_id=message_id,
             )
