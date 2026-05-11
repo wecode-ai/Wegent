@@ -571,7 +571,25 @@
     "retry_failed": "Failed to retry stage",
     "proceeding_to_stage": "Proceeding to stage: {{stage}}",
     "pipeline_completed": "Pipeline completed",
-    "no_task_id": "No task ID available"
+    "no_task_id": "No task ID available",
+    "next_step": "Next step",
+    "next_step_dialog": {
+      "title": "Continue to next step",
+      "description": "The previous AI reply is carried by default. Add instructions or choose extra context if needed.",
+      "message_placeholder": "Add an optional instruction for the next stage...",
+      "text_contexts": "Message context",
+      "structured_contexts": "Attached context",
+      "no_text_contexts": "No message context is available.",
+      "no_structured_contexts": "No attachment, knowledge base, or table context is available.",
+      "confirm": "Continue",
+      "confirming": "Continuing...",
+      "missing_task": "Task or team information is unavailable",
+      "text_items": {
+        "user_message": "User message",
+        "ai_response": "AI response",
+        "history_message": "History message"
+      }
+    }
   },
   "generate": {
     "mode_selector": "Generation Type",

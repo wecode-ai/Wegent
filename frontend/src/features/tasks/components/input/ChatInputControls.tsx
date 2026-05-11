@@ -384,7 +384,14 @@ export function ChatInputControls({
         selectedSkillNames={selectedSkillNames}
         onToggleSkill={onToggleSkill}
         hideSelectors={hideSelectors}
-        onVoiceTextResult={setTaskInputMessage}
+        onVoiceTextResult={
+          setTaskInputMessage
+            ? (text: string) =>
+                setTaskInputMessage(
+                  taskInputMessage ? `${taskInputMessage}${text}` : text
+                )
+            : undefined
+        }
       />
     )
   }

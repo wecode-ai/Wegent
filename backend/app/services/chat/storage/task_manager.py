@@ -79,6 +79,12 @@ class TaskCreationParams:
     skip_status_check: bool = False
     # Device ID for local device execution (saved at task creation to avoid race condition)
     device_id: Optional[str] = None
+    # Task source label (e.g. chat_shell, responses_api)
+    source: str = "chat_shell"
+    # Whether the task originates from API-compatible surfaces
+    is_api_call: bool = False
+    # Optional API key name for tracing/audit
+    api_key_name: Optional[str] = None
     # Video generation parameters (user-selected at generation time)
     # Used to save video_config to user subtask.result for display
     generate_params: Optional[Dict[str, Any]] = None
@@ -320,7 +326,8 @@ def create_new_task(
                 "type": "online",
                 "taskType": task_type,
                 "autoDeleteExecutor": "false",
-                "source": "chat_shell",
+                "source": params.source,
+                **({"is_api_call": "true"} if params.is_api_call else {}),
                 **({"modelId": params.model_id} if params.model_id else {}),
                 **(
                     {"forceOverrideBotModel": "true"}
@@ -331,6 +338,9 @@ def create_new_task(
                     {"forceOverrideBotModelType": params.force_override_bot_model_type}
                     if params.force_override_bot_model_type
                     else {}
+                ),
+                **(
+                    {"api_key_name": params.api_key_name} if params.api_key_name else {}
                 ),
                 **build_task_skill_labels(params.additional_skills),
             },
@@ -679,6 +689,7 @@ async def create_task_and_subtasks(
         is_task_group_chat,
         notify_group_members_task_updated,
     )
+    from app.services.chat.trigger.lifecycle import prepare_execution_session
 
     # Get bot IDs: use pipeline_bot_ids if provided (for pipeline stage confirmation),
     # otherwise get all bot IDs from team members
@@ -687,48 +698,6 @@ async def create_task_and_subtasks(
         logger.info(f"[create_task_and_subtasks] Using pipeline_bot_ids: {bot_ids}")
     else:
         bot_ids = get_bot_ids_from_team(db, team)
-
-    task = None
-    # Track the user_id to use for subtasks (owner's ID for group chats)
-    subtask_user_id = user.id
-
-    if task_id:
-        # Get existing task with access check
-        task, subtask_user_id = get_task_with_access_check(db, task_id, user.id)
-        if task:
-            if not params.skip_status_check:
-                check_task_status(db, task)
-            if should_trigger_ai:
-                mark_task_pending(task)
-            # Update modelId in existing task if provided
-            if params.model_id:
-                from sqlalchemy.orm.attributes import flag_modified
-
-                task_crd = Task.model_validate(task.json)
-                if not task_crd.metadata.labels:
-                    task_crd.metadata.labels = {}
-                task_crd.metadata.labels["modelId"] = params.model_id
-                if params.force_override_bot_model:
-                    task_crd.metadata.labels["forceOverrideBotModel"] = "true"
-                task.json = task_crd.model_dump(mode="json")
-                flag_modified(task, "json")
-                logger.info(
-                    f"[create_task_and_subtasks] Updated modelId to {params.model_id} for existing task {task_id}"
-                )
-        else:
-            # Task not found, treat as new conversation
-            logger.info(
-                f"[create_task_and_subtasks] Task {task_id} not found, creating new task"
-            )
-
-    if not task:
-        # Create new task
-        task = create_new_task(db, user, team, params)
-        task_id = task.id
-    # Get existing subtasks to determine message_id
-    existing_subtasks = get_existing_subtasks(db, task_id, subtask_user_id)
-
-    next_message_id, parent_id = get_next_message_id(db, task_id, subtask_user_id)
 
     # Build video_config for video generation tasks
     # This stores the user-selected generation params in the user subtask for display
@@ -744,32 +713,22 @@ async def create_task_and_subtasks(
             f"[create_task_and_subtasks] Building video_config for task {task_id}: {video_config}"
         )
 
-    # Create USER subtask (always created)
-    user_subtask = create_user_subtask(
+    session = prepare_execution_session(
         db=db,
-        subtask_user_id=subtask_user_id,
-        sender_user_id=user.id,
+        user=user,
+        team=team,
+        input_text=message,
+        task_params=params,
         task_id=task_id,
-        team_id=team.id,
-        bot_ids=bot_ids,
-        message=message,
-        next_message_id=next_message_id,
-        parent_id=parent_id,
+        should_trigger_ai=should_trigger_ai,
+        bot_ids_override=bot_ids,
         video_config=video_config,
     )
-
-    # Create ASSISTANT subtask only if AI should be triggered
-    assistant_subtask = None
-    if should_trigger_ai:
-        assistant_subtask = create_assistant_subtask(
-            db=db,
-            subtask_user_id=subtask_user_id,
-            task_id=task_id,
-            team_id=team.id,
-            bot_ids=bot_ids,
-            next_message_id=next_message_id + 1,
-            parent_id=next_message_id,
-        )
+    task = session.task
+    task_id = session.task_id
+    user_subtask = session.user_subtask
+    assistant_subtask = session.assistant_subtask
+    existing_subtasks = session.existing_subtasks
 
     # Update task.updated_at for group chat messages (even without AI trigger)
     if is_task_group_chat(task, params.is_group_chat):
@@ -790,7 +749,6 @@ async def create_task_and_subtasks(
 
     db.commit()
     db.refresh(task)
-    db.refresh(user_subtask)
     if assistant_subtask:
         db.refresh(assistant_subtask)
 

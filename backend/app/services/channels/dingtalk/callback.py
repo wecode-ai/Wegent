@@ -273,6 +273,9 @@ class DingTalkCallbackService(BaseChannelCallbackService[DingTalkCallbackInfo]):
                 existing_card_instance_id=existing_card_id,
             )
 
+            # Enable Redis-backed content sharing for multi-pod consistency
+            emitter.set_shared_content_key(f"channel:streaming_content:{task_id}")
+
             return emitter
 
         except Exception as e:

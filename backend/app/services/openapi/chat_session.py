@@ -8,20 +8,17 @@ Contains ChatSessionSetup and related functions.
 """
 
 import logging
-from datetime import datetime
 from typing import Any, Dict, List, NamedTuple, Optional
 
-from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
-from app.models.subtask import SenderType, Subtask, SubtaskRole, SubtaskStatus
+from app.models.subtask import Subtask
 from app.models.task import TaskResource
 from app.models.user import User
-from app.schemas.kind import Task, Team
-from app.services.adapters.task_kinds import task_kinds_service
-from app.services.chat.storage.task_manager import create_assistant_subtask
-from app.services.readers.kinds import KindType, kindReader
+from app.schemas.kind import Task
+from app.services.chat.storage.task_manager import TaskCreationParams
+from app.services.chat.trigger.lifecycle import prepare_execution_session
 
 logger = logging.getLogger(__name__)
 
@@ -34,15 +31,8 @@ class ChatSessionSetup(NamedTuple):
     user_subtask: Subtask  # User message subtask (for history exclusion)
     assistant_subtask: Subtask
     existing_subtasks: List[Subtask]
-    model_config: Any
-    system_prompt: str
     bot_name: str  # First bot's name for MCP loading
     bot_namespace: str  # First bot's namespace for MCP loading
-    preload_skills: List[str]  # Preload skills from ExecutionRequest
-    skill_names: List[str]  # Available skill names from ExecutionRequest
-    skill_configs: List[
-        Dict[str, Any]
-    ]  # Full skill configurations from ExecutionRequest
 
 
 def setup_chat_session(
@@ -71,268 +61,30 @@ def setup_chat_session(
     Returns:
         ChatSessionSetup with task, subtasks, and config
     """
-    # Get bot IDs from team members first (needed for subtask creation)
-    team_crd = Team.model_validate(team.json)
-    if not team_crd.spec.members:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Team has no members configured",
-        )
-
-    bot_ids = []
-    first_bot_name = ""
-    first_bot_namespace = "default"
-    for member in team_crd.spec.members:
-        member_bot = kindReader.get_by_name_and_namespace(
-            db,
-            team.user_id,
-            KindType.BOT,
-            member.botRef.namespace,
-            member.botRef.name,
-        )
-        if member_bot:
-            bot_ids.append(member_bot.id)
-            # Capture first bot info for MCP loading
-            if not first_bot_name:
-                first_bot_name = member.botRef.name
-                first_bot_namespace = member.botRef.namespace
-
-    if not bot_ids:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No valid bots found in team",
-        )
-
-    # Create or get task
-    task = None
-    if task_id:
-        task = (
-            db.query(TaskResource)
-            .filter(
-                TaskResource.id == task_id,
-                TaskResource.kind == "Task",
-                TaskResource.is_active == TaskResource.STATE_ACTIVE,
-            )
-            .first()
-        )
-        if not task:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Task {task_id} not found",
-            )
-
-    if not task:
-        new_task_id = task_kinds_service.create_task_id(db, user.id)
-
-        if not task_kinds_service.validate_task_id(db, new_task_id):
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to create task ID",
-            )
-
-        # Extract workspace data from tool_settings (from wegent_code_bot tool)
-        workspace_data = tool_settings.get("workspace")
-
-        # Build repository spec from workspace data
-        repository_spec = {}
-        if workspace_data:
-            if workspace_data.get("git_url"):
-                repository_spec["gitUrl"] = workspace_data["git_url"]
-            if workspace_data.get("branch"):
-                repository_spec["branchName"] = workspace_data["branch"]
-            if workspace_data.get("git_repo"):
-                repository_spec["gitRepo"] = workspace_data["git_repo"]
-            if workspace_data.get("git_domain"):
-                repository_spec["gitDomain"] = workspace_data["git_domain"]
-
-        # Create workspace
-        workspace_name = f"workspace-{new_task_id}"
-        workspace_json = {
-            "kind": "Workspace",
-            "spec": {"repository": repository_spec},
-            "status": {"state": "Available"},
-            "metadata": {"name": workspace_name, "namespace": "default"},
-            "apiVersion": "agent.wecode.io/v1",
-        }
-
-        workspace = TaskResource(
-            user_id=user.id,
-            kind="Workspace",
-            name=workspace_name,
-            namespace="default",
-            json=workspace_json,
-            is_active=True,
-        )
-        db.add(workspace)
-
-        # Determine task type based on git_url presence (code if git_url, otherwise chat)
-        task_type = (
-            "code" if workspace_data and workspace_data.get("git_url") else "chat"
-        )
-
-        # Create task
-        title = input_text[:50] + "..." if len(input_text) > 50 else input_text
-        task_json = {
-            "kind": "Task",
-            "spec": {
-                "title": title,
-                "prompt": input_text,
-                "teamRef": {
-                    "name": team.name,
-                    "namespace": team.namespace,
-                    "user_id": team.user_id,
-                },
-                "workspaceRef": {"name": workspace_name, "namespace": "default"},
-                "is_group_chat": False,
-            },
-            "status": {
-                "state": "Available",
-                "status": "PENDING",
-                "progress": 0,
-                "result": None,
-                "errorMessage": "",
-                "createdAt": datetime.now().isoformat(),
-                "updatedAt": datetime.now().isoformat(),
-                "completedAt": None,
-            },
-            "metadata": {
-                "name": f"task-{new_task_id}",
-                "namespace": "default",
-                "labels": {
-                    "type": "online",
-                    "taskType": task_type,
-                    "autoDeleteExecutor": "false",
-                    "source": "chat_shell",
-                    "is_api_call": "true",
-                    **(
-                        {"modelId": model_info.get("model_id")}
-                        if model_info.get("model_id")
-                        else {}
-                    ),
-                    **(
-                        {"forceOverrideBotModel": "true"}
-                        if model_info.get("model_id")
-                        else {}
-                    ),
-                    **({"api_key_name": api_key_name} if api_key_name else {}),
-                },
-            },
-            "apiVersion": "agent.wecode.io/v1",
-        }
-
-        # Check if a Placeholder record exists for this task_id
-        # If so, update it instead of inserting to avoid PRIMARY KEY conflict
-        existing_placeholder = (
-            db.query(TaskResource)
-            .filter(
-                TaskResource.id == new_task_id,
-                TaskResource.kind == "Placeholder",
-            )
-            .first()
-        )
-
-        if existing_placeholder:
-            # Update the existing Placeholder record to become a Task
-            existing_placeholder.user_id = user.id
-            existing_placeholder.kind = "Task"
-            existing_placeholder.name = f"task-{new_task_id}"
-            existing_placeholder.namespace = "default"
-            existing_placeholder.json = task_json
-            existing_placeholder.is_active = True
-            task = existing_placeholder
-        else:
-            task = TaskResource(
-                id=new_task_id,
-                user_id=user.id,
-                kind="Task",
-                name=f"task-{new_task_id}",
-                namespace="default",
-                json=task_json,
-                is_active=True,
-            )
-            db.add(task)
-        task_id = new_task_id
-
-    # Get existing subtasks
-    existing_subtasks = (
-        db.query(Subtask)
-        .filter(Subtask.task_id == task_id, Subtask.user_id == user.id)
-        .order_by(Subtask.message_id.desc())
-        .all()
+    workspace_data = tool_settings.get("workspace") or {}
+    task_params = TaskCreationParams(
+        message=input_text,
+        model_id=model_info.get("model_id"),
+        force_override_bot_model=model_info.get("model_id") is not None,
+        git_url=workspace_data.get("git_url"),
+        git_repo=workspace_data.get("git_repo"),
+        git_domain=workspace_data.get("git_domain"),
+        branch_name=workspace_data.get("branch"),
+        task_type="code" if workspace_data.get("git_url") else "chat",
+        source="chat_shell",
+        is_api_call=True,
+        api_key_name=api_key_name,
     )
 
-    next_message_id = 1
-    parent_id = 0
-    if existing_subtasks:
-        next_message_id = existing_subtasks[0].message_id + 1
-        parent_id = existing_subtasks[0].message_id
-
-    # Create USER subtask
-    user_subtask = Subtask(
-        user_id=user.id,
-        task_id=task_id,
-        team_id=team.id,
-        title="User message",
-        bot_ids=bot_ids,
-        role=SubtaskRole.USER,
-        executor_namespace="",
-        executor_name="",
-        prompt=input_text,
-        status=SubtaskStatus.COMPLETED,
-        progress=100,
-        message_id=next_message_id,
-        parent_id=parent_id,
-        error_message="",
-        completed_at=datetime.now(),
-        result=None,
-        sender_type=SenderType.USER,
-        sender_user_id=user.id,
-    )
-    db.add(user_subtask)
-
-    # Reuse the shared assistant-subtask creation path so follow-up requests
-    # inherit executor/session metadata consistently with WebSocket chat.
-    assistant_subtask = create_assistant_subtask(
+    session = prepare_execution_session(
         db=db,
-        subtask_user_id=user.id,
+        user=user,
+        team=team,
+        input_text=input_text,
+        task_params=task_params,
         task_id=task_id,
-        team_id=team.id,
-        bot_ids=bot_ids,
-        next_message_id=next_message_id + 1,
-        parent_id=next_message_id,
+        should_trigger_ai=True,
     )
-
-    db.commit()
-    db.refresh(task)
-    db.refresh(user_subtask)
-    db.refresh(assistant_subtask)
-
-    # Build configuration using unified TaskRequestBuilder
-    from app.services.execution import TaskRequestBuilder
-
-    builder = TaskRequestBuilder(db)
-    enable_deep_thinking = tool_settings.get("enable_deep_thinking", False)
-    preload_skills = tool_settings.get("preload_skills", [])
-
-    try:
-        execution_request = builder.build(
-            subtask=assistant_subtask,
-            task=task,
-            user=user,
-            team=team,
-            message=input_text,
-            override_model_name=model_info.get("model_id"),
-            force_override=model_info.get("model_id") is not None,
-            enable_clarification=False,
-            enable_deep_thinking=enable_deep_thinking,
-            preload_skills=preload_skills,
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-
-    # Extract config from ExecutionRequest
-    model_config = execution_request.model_config
-    system_prompt = execution_request.system_prompt
 
     # Store user message in long-term memory (fire-and-forget)
     # Only store if enable_chat_bot=True (wegent_chat_bot tool is enabled)
@@ -346,7 +98,7 @@ def setup_chat_session(
 
         memory_manager = get_memory_manager()
         if memory_manager.is_enabled:
-            task_crd = Task.model_validate(task.json)
+            task_crd = Task.model_validate(session.task.json)
             workspace_id = (
                 f"{task_crd.spec.workspaceRef.namespace}/{task_crd.spec.workspaceRef.name}"
                 if task_crd.spec.workspaceRef
@@ -357,7 +109,7 @@ def setup_chat_session(
             # Build context messages using shared utility
             context_messages = build_context_messages(
                 db=db,
-                existing_subtasks=existing_subtasks,
+                existing_subtasks=session.existing_subtasks,
                 current_message=input_text,
                 current_user=user,
                 is_group_chat=is_group_chat,
@@ -373,8 +125,8 @@ def setup_chat_session(
                         logger.error(
                             "[setup_chat_session] Memory storage task failed for user %d, task %d, subtask %d: %s",
                             user.id,
-                            task_id,
-                            user_subtask.id,
+                            session.task_id,
+                            session.user_subtask.id,
                             exc,
                             exc_info=exc,
                         )
@@ -382,8 +134,8 @@ def setup_chat_session(
                     logger.info(
                         "[setup_chat_session] Memory storage task cancelled for user %d, task %d, subtask %d",
                         user.id,
-                        task_id,
-                        user_subtask.id,
+                        session.task_id,
+                        session.user_subtask.id,
                     )
 
             # Use get_running_loop with proper error handling
@@ -393,11 +145,15 @@ def setup_chat_session(
                     memory_manager.save_user_message_async(
                         user_id=str(user.id),
                         team_id=str(team.id),
-                        task_id=str(task_id),
-                        subtask_id=str(user_subtask.id),
+                        task_id=str(session.task_id),
+                        subtask_id=str(session.user_subtask.id),
                         messages=context_messages,
                         workspace_id=workspace_id,
-                        project_id=str(task.project_id) if task.project_id else None,
+                        project_id=(
+                            str(session.task.project_id)
+                            if session.task.project_id
+                            else None
+                        ),
                         is_group_chat=is_group_chat,
                     )
                 )
@@ -405,8 +161,8 @@ def setup_chat_session(
                 logger.info(
                     "[setup_chat_session] Started background task to store memory for user %d, task %d, subtask %d (enable_chat_bot=True)",
                     user.id,
-                    task_id,
-                    user_subtask.id,
+                    session.task_id,
+                    session.user_subtask.id,
                 )
             except RuntimeError:
                 # No event loop is running - this is unexpected in FastAPI context
@@ -415,32 +171,11 @@ def setup_chat_session(
                 )
 
     return ChatSessionSetup(
-        task=task,
-        task_id=task_id,
-        user_subtask=user_subtask,
-        assistant_subtask=assistant_subtask,
-        existing_subtasks=existing_subtasks,
-        model_config=model_config,
-        system_prompt=system_prompt,
-        bot_name=first_bot_name,
-        bot_namespace=first_bot_namespace,
-        preload_skills=execution_request.preload_skills,
-        skill_names=execution_request.skill_names,
-        skill_configs=execution_request.skill_configs,
+        task=session.task,
+        task_id=session.task_id,
+        user_subtask=session.user_subtask,
+        assistant_subtask=session.assistant_subtask,
+        existing_subtasks=session.existing_subtasks,
+        bot_name=session.bot_name,
+        bot_namespace=session.bot_namespace,
     )
-
-
-def build_chat_history(existing_subtasks: List[Subtask]) -> List[Dict[str, str]]:
-    """Build chat history from existing subtasks."""
-    history = []
-    sorted_subtasks = sorted(existing_subtasks, key=lambda s: s.message_id)
-    for st in sorted_subtasks:
-        if st.status == SubtaskStatus.COMPLETED:
-            if st.role == SubtaskRole.USER and st.prompt:
-                history.append({"role": "user", "content": st.prompt})
-            elif st.role == SubtaskRole.ASSISTANT and st.result:
-                if isinstance(st.result, dict):
-                    content = st.result.get("value", "")
-                    if content:
-                        history.append({"role": "assistant", "content": content})
-    return history

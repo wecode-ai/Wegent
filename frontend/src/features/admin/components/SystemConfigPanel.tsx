@@ -4,7 +4,7 @@
 
 'use client'
 
-import React, { useEffect, useState, useCallback } from 'react'
+import React, { useEffect, useState, useCallback, useMemo } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
@@ -13,6 +13,7 @@ import { PlusIcon, TrashIcon, PencilIcon } from '@heroicons/react/24/outline'
 import { Loader2 } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
+import { Transfer, type TransferItem } from '@/components/ui/transfer'
 import {
   Dialog,
   DialogContent,
@@ -33,6 +34,7 @@ import {
 } from '@/components/ui/alert-dialog'
 import {
   adminApis,
+  AdminPublicTeam,
   ChatSloganItem,
   ChatTipItem,
   ChatSloganTipsResponse,
@@ -63,6 +65,10 @@ const SystemConfigPanel: React.FC = () => {
   const [slogans, setSlogans] = useState<ChatSloganItem[]>([])
   const [tips, setTips] = useState<ChatTipItem[]>([])
   const [version, setVersion] = useState(0)
+  const [quickAccessVersion, setQuickAccessVersion] = useState(0)
+  const [publicTeams, setPublicTeams] = useState<AdminPublicTeam[]>([])
+  const [quickAccessTeamIds, setQuickAccessTeamIds] = useState<string[]>([])
+  const [savedQuickAccessTeamIds, setSavedQuickAccessTeamIds] = useState<string[]>([])
 
   // Slogan dialog states
   const [isSloganDialogOpen, setIsSloganDialogOpen] = useState(false)
@@ -86,14 +92,47 @@ const SystemConfigPanel: React.FC = () => {
     mode: 'both',
   })
 
+  const getTeamDisplayName = useCallback((team: AdminPublicTeam): string => {
+    return team.display_name || team.name
+  }, [])
+
+  const quickAccessTeamItems = useMemo<TransferItem[]>(
+    () =>
+      publicTeams.map(team => ({
+        key: String(team.id),
+        title: getTeamDisplayName(team),
+        description:
+          team.description || `${t('admin:system_config.quick_access_name')}: ${team.name}`,
+      })),
+    [getTeamDisplayName, publicTeams, t]
+  )
+
+  const hasQuickAccessChanged = useCallback(() => {
+    return quickAccessTeamIds.join(',') !== savedQuickAccessTeamIds.join(',')
+  }, [quickAccessTeamIds, savedQuickAccessTeamIds])
+
   // Fetch config
   const fetchConfig = useCallback(async () => {
     setLoading(true)
     try {
-      const response: ChatSloganTipsResponse = await adminApis.getSloganTipsConfig()
+      const [response, quickAccessResponse, publicTeamsResponse]: [
+        ChatSloganTipsResponse,
+        { version: number; teams: number[] },
+        { total: number; items: AdminPublicTeam[] },
+      ] = await Promise.all([
+        adminApis.getSloganTipsConfig(),
+        adminApis.getQuickAccessConfig(),
+        adminApis.getPublicTeams(1, 1000),
+      ])
       setSlogans(response.slogans)
       setTips(response.tips)
       setVersion(response.version)
+      setQuickAccessVersion(quickAccessResponse.version)
+      setPublicTeams(publicTeamsResponse.items)
+
+      const configuredTeamIds = quickAccessResponse.teams.map(String)
+      setQuickAccessTeamIds(configuredTeamIds)
+      setSavedQuickAccessTeamIds(configuredTeamIds)
     } catch (error) {
       console.error('Failed to fetch slogan tips config:', error)
       toast({
@@ -113,11 +152,20 @@ const SystemConfigPanel: React.FC = () => {
   const handleSave = async () => {
     setSaving(true)
     try {
-      const response = await adminApis.updateSloganTipsConfig({
-        slogans,
-        tips,
-      })
+      const [response, quickAccessResponse] = await Promise.all([
+        adminApis.updateSloganTipsConfig({
+          slogans,
+          tips,
+        }),
+        hasQuickAccessChanged()
+          ? adminApis.updateQuickAccessConfig(quickAccessTeamIds.map(Number))
+          : Promise.resolve(null),
+      ])
       setVersion(response.version)
+      if (quickAccessResponse) {
+        setQuickAccessVersion(quickAccessResponse.version)
+        setSavedQuickAccessTeamIds(quickAccessResponse.teams.map(String))
+      }
       toast({
         title: t('admin:system_config.success.updated'),
       })
@@ -409,6 +457,19 @@ const SystemConfigPanel: React.FC = () => {
     </AlertDialog>
   )
 
+  const renderQuickAccessItem = (item: TransferItem) => (
+    <div className="flex flex-col min-w-0">
+      <span className="text-sm text-text-primary truncate" title={item.title}>
+        {item.title}
+      </span>
+      {item.description && (
+        <span className="text-xs text-text-muted truncate" title={item.description}>
+          {item.description}
+        </span>
+      )}
+    </div>
+  )
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -461,6 +522,44 @@ const SystemConfigPanel: React.FC = () => {
           handleDeleteTipClick as (item: ChatSloganItem | ChatTipItem, index: number) => void,
           t('admin:system_config.no_tips')
         )}
+      </Card>
+
+      {/* Quick Access Configuration */}
+      <Card className="p-6" data-testid="quick-access-config-section">
+        <div className="flex items-start justify-between gap-4 mb-4">
+          <div>
+            <h3 className="text-md font-medium text-text-primary">
+              {t('admin:system_config.quick_access_title')}
+            </h3>
+            <p className="text-sm text-text-muted mt-1">
+              {t('admin:system_config.quick_access_description')}
+            </p>
+          </div>
+          <span className="text-xs text-text-muted flex-shrink-0">
+            {t('admin:system_config.quick_access_version')}: {quickAccessVersion}
+          </span>
+        </div>
+        <Transfer
+          dataSource={quickAccessTeamItems}
+          targetKeys={quickAccessTeamIds}
+          onChange={targetKeys => setQuickAccessTeamIds(targetKeys)}
+          onOrderChange={setQuickAccessTeamIds}
+          render={renderQuickAccessItem}
+          showSearch
+          sortable
+          titles={[
+            t('admin:system_config.quick_access_available'),
+            t('admin:system_config.quick_access_selected'),
+          ]}
+          listStyle={{ height: 280 }}
+          filterOption={(inputValue, item) => {
+            const normalizedInput = inputValue.toLowerCase()
+            return (
+              item.title.toLowerCase().includes(normalizedInput) ||
+              (item.description || '').toLowerCase().includes(normalizedInput)
+            )
+          }}
+        />
       </Card>
 
       {/* Version Info */}

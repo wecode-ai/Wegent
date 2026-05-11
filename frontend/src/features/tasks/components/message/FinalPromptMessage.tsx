@@ -146,7 +146,7 @@ export default function FinalPromptMessage({
     if (!taskId || !selectedTeam) {
       toast({
         variant: 'destructive',
-        title: t('pipeline.no_task_id'),
+        title: t('chat:pipeline.no_task_id'),
       })
       return
     }
@@ -155,7 +155,7 @@ export default function FinalPromptMessage({
     if (!sendMessage) {
       toast({
         variant: 'destructive',
-        title: t('pipeline.confirm_failed'),
+        title: t('chat:pipeline.confirm_failed'),
       })
       return
     }
@@ -187,7 +187,7 @@ export default function FinalPromptMessage({
       setHasConfirmed(true)
 
       toast({
-        title: t('pipeline.stage_confirmed'),
+        title: t('chat:pipeline.stage_confirmed'),
       })
 
       onStageConfirmed?.()
@@ -195,7 +195,7 @@ export default function FinalPromptMessage({
       console.error('Failed to confirm stage:', error)
       toast({
         variant: 'destructive',
-        title: t('pipeline.confirm_failed'),
+        title: t('chat:pipeline.confirm_failed'),
       })
     } finally {
       setIsConfirming(false)
@@ -235,7 +235,7 @@ export default function FinalPromptMessage({
             className="text-blue-400 hover:text-blue-300"
           >
             <Edit3 className="w-4 h-4 mr-1" />
-            {t('pipeline.edit_prompt')}
+            {t('chat:pipeline.edit_prompt')}
           </Button>
         )}
       </div>
@@ -248,16 +248,16 @@ export default function FinalPromptMessage({
               value={editedPrompt}
               onChange={e => setEditedPrompt(e.target.value)}
               className="min-h-[200px] bg-transparent border-none resize-y text-sm"
-              placeholder={t('pipeline.edit_prompt_placeholder')}
+              placeholder={t('chat:pipeline.edit_prompt_placeholder')}
             />
             <div className="flex justify-end gap-2">
               <Button variant="ghost" size="sm" onClick={handleCancelEdit}>
                 <X className="w-4 h-4 mr-1" />
-                {t('common:cancel')}
+                {t('common:actions.cancel')}
               </Button>
               <Button variant="secondary" size="sm" onClick={handleSaveEdit}>
                 <Save className="w-4 h-4 mr-1" />
-                {t('pipeline.save_changes')}
+                {t('chat:pipeline.save_changes')}
               </Button>
             </div>
           </div>
@@ -310,7 +310,7 @@ export default function FinalPromptMessage({
             ) : (
               <Check className="w-4 h-4 mr-2" />
             )}
-            {hasConfirmed ? t('pipeline.stage_confirming') : t('pipeline.confirm_stage')}
+            {hasConfirmed ? t('chat:pipeline.stage_confirming') : t('chat:pipeline.confirm_stage')}
           </Button>
         ) : (
           <Button variant="secondary" onClick={handleCreateTask} disabled={isMessageStreaming}>
@@ -327,7 +327,7 @@ export default function FinalPromptMessage({
       {/* Hint */}
       <div className="text-xs text-text-tertiary italic">
         {showPipelineActions
-          ? t('pipeline.confirmation_hint')
+          ? t('chat:pipeline.confirmation_hint')
           : t('clarification.final_prompt_hint')}
       </div>
     </div>

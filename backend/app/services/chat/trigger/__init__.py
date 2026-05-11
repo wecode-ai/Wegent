@@ -25,11 +25,19 @@ from .group_chat import (
     notify_group_members_task_updated,
     should_trigger_ai_response,
 )
+from .lifecycle import (
+    collect_completed_result,
+    persist_completed_result,
+    prepare_execution_session,
+)
 from .unified import trigger_ai_response_unified
 
 __all__ = [
     # Core
     "trigger_ai_response_unified",
+    "prepare_execution_session",
+    "collect_completed_result",
+    "persist_completed_result",
     # Group chat
     "should_trigger_ai_response",
     "notify_group_members_task_updated",

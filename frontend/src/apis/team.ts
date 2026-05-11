@@ -9,6 +9,7 @@ import type { CheckRunningTasksResponse } from './common'
 // Team Request/Response Types
 export interface CreateTeamRequest {
   name: string
+  displayName?: string | null
   description?: string
   bots?: TeamBot[]
   workflow?: Record<string, unknown>

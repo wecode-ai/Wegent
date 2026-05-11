@@ -86,6 +86,7 @@ class TestSaveClaudeConfigFiles:
             patch(
                 "executor.config.config.get_workspace_root", return_value=temp_workspace
             ),
+            patch.dict(os.environ, {"WEGENT_FILE_EDIT_HOOK_COMMAND": ""}, clear=False),
         ):
             agent = self._create_agent(task_data)
             agent._save_claude_config_files(agent_config_with_sensitive_data)

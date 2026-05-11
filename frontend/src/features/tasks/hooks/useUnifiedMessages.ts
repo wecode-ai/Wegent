@@ -26,6 +26,7 @@ import { useMemo, useEffect } from 'react'
 import { useTaskStateMachine } from './useTaskStateMachine'
 import { useUser } from '@/features/common/UserContext'
 import { useTaskContext } from '../contexts/taskContext'
+import { useSocket } from '@/contexts/SocketContext'
 import type { Team, Attachment, SubtaskContextBrief } from '@/types/api'
 import type { SourceReference } from '@/types/socket'
 import type { MessageBlock } from '../components/message/thinking/types'
@@ -197,6 +198,7 @@ export function useUnifiedMessages({
 }: UseUnifiedMessagesOptions): UseUnifiedMessagesResult {
   const { selectedTaskDetail } = useTaskContext()
   const { user } = useUser()
+  const { isConnected } = useSocket()
 
   const taskId = selectedTaskDetail?.id
 
@@ -224,18 +226,20 @@ export function useUnifiedMessages({
     isInitialized,
   } = useTaskStateMachine(effectiveTaskId, syncOptions)
 
-  // Trigger recovery when task changes
-  // Subtasks are now fetched from joinTask response, not passed as parameter
+  // Trigger recovery when the task and socket are both ready.
+  // recover() is not a connection probe: it intentionally no-ops while disconnected.
+  // On page refresh, task detail can load before Socket.IO connects, so wait for
+  // the connected state before asking the state machine to join and sync messages.
   // IMPORTANT: Do NOT recover if already streaming - this would interrupt the stream
   useEffect(() => {
-    if (!effectiveTaskId || !isInitialized) return
+    if (!effectiveTaskId || !isInitialized || !isConnected) return
 
     // Only recover for positive task IDs (real tasks, not pending)
     // Skip recovery if already streaming to avoid interrupting active streams
     if (effectiveTaskId > 0 && !isStreaming) {
       recover()
     }
-  }, [effectiveTaskId, isInitialized, recover, isStreaming])
+  }, [effectiveTaskId, isInitialized, isConnected, recover, isStreaming])
 
   // Build unified message list from state machine messages
   const result = useMemo<UseUnifiedMessagesResult>(() => {

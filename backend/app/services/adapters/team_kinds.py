@@ -188,12 +188,17 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         if requires_workspace is not None:
             spec["requiresWorkspace"] = requires_workspace
 
+        metadata = {"name": obj_in.name, "namespace": namespace}
+        display_name = getattr(obj_in, "displayName", None)
+        if display_name is not None:
+            metadata["displayName"] = display_name
+
         # Create Team JSON
         team_json = {
             "kind": "Team",
             "spec": spec,
             "status": {"state": "Available"},
-            "metadata": {"name": obj_in.name, "namespace": namespace},
+            "metadata": metadata,
             "apiVersion": "agent.wecode.io/v1",
         }
 
@@ -858,6 +863,9 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 db, old_name, team.namespace, new_name, team.namespace, user_id
             )
 
+        if "displayName" in update_data:
+            team_crd.metadata.displayName = update_data["displayName"]
+
         if "bots" in update_data:
             # Validate bots
             self._validate_bots(db, update_data["bots"], user_id)
@@ -1375,6 +1383,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             "id": team.id,
             "user_id": team.user_id,
             "name": team.name,
+            "displayName": team_crd.metadata.displayName,
             "namespace": team.namespace,  # Add namespace field
             "description": description,
             "bots": bots,
@@ -1567,6 +1576,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             "id": team.id,
             "user_id": team.user_id,
             "name": team.name,
+            "displayName": team_crd.metadata.displayName,
             "namespace": team.namespace,
             "description": description,
             "bots": bots,

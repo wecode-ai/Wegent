@@ -38,7 +38,7 @@ class LocalModeStrategy(ExecutionModeStrategy):
     """Strategy for local (non-Docker) execution mode.
 
     Security-focused implementation that:
-    - Does NOT write settings.json (contains sensitive API keys)
+    - Does NOT write agent settings.json (contains sensitive API keys)
     - Passes sensitive config via environment variables
     - Uses task-specific config directories
     - Applies restrictive file permissions
@@ -68,7 +68,7 @@ class LocalModeStrategy(ExecutionModeStrategy):
     ) -> Tuple[str, Dict[str, Any]]:
         """Save only non-sensitive configuration files.
 
-        SECURITY: Does NOT write settings.json because it contains
+        SECURITY: Does NOT write agent settings.json because it contains
         sensitive data (ANTHROPIC_AUTH_TOKEN, etc.). Instead, sensitive
         configuration is returned to be passed via environment variables.
 
@@ -94,6 +94,24 @@ class LocalModeStrategy(ExecutionModeStrategy):
         with open(claude_json_path, "w") as f:
             json.dump(claude_json_config, f, indent=2)
         permissions_manager.set_owner_only(claude_json_path, is_directory=False)
+
+        # Inject PostToolUse hook if WEGENT_FILE_EDIT_HOOK_COMMAND is configured
+        hook_command = os.environ.get("WEGENT_FILE_EDIT_HOOK_COMMAND", "")
+        if hook_command:
+            settings_config = {
+                "hooks": {
+                    "PostToolUse": [
+                        {
+                            "matcher": "Write|Edit",
+                            "hooks": [{"type": "command", "command": hook_command}],
+                        }
+                    ]
+                }
+            }
+            settings_path = os.path.join(config_dir, "settings.json")
+            with open(settings_path, "w") as f:
+                json.dump(settings_config, f, indent=2)
+            permissions_manager.set_owner_only(settings_path, is_directory=False)
 
         # Return env config to be passed via environment variables
         env_config = agent_config.get("env", {})

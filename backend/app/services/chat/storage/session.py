@@ -682,6 +682,8 @@ class SessionManager:
         tool_name: str,
         tool_input: Optional[Dict[str, Any]] = None,
         display_name: Optional[str] = None,
+        tool_protocol: Optional[str] = None,
+        server_label: Optional[str] = None,
     ) -> None:
         """Add a tool block for a subtask.
 
@@ -694,6 +696,8 @@ class SessionManager:
             tool_name: Tool name
             tool_input: Tool input parameters
             display_name: Optional display name for the tool
+            tool_protocol: Optional Responses protocol type
+            server_label: Optional MCP server label
         """
         try:
             # Finalize current text block before adding tool block
@@ -705,6 +709,8 @@ class SessionManager:
                 tool_name=tool_name,
                 tool_input=tool_input,
                 display_name=display_name,
+                tool_protocol=tool_protocol,
+                server_label=server_label,
             )
 
             # Use RPUSH to append block to list (O(1) operation)
@@ -732,6 +738,8 @@ class SessionManager:
         status: Optional[str] = None,
         tool_output: Optional[str] = None,
         tool_input: Optional[Dict[str, Any]] = None,
+        tool_protocol: Optional[str] = None,
+        server_label: Optional[str] = None,
     ) -> None:
         """Update tool block status, output, and/or input.
 
@@ -745,6 +753,8 @@ class SessionManager:
             status: New status (optional, e.g. "done", "error")
             tool_output: Optional tool output to set
             tool_input: Optional tool input/arguments to update (used by interactive_form_question MCP tool)
+            tool_protocol: Optional Responses protocol type
+            server_label: Optional MCP server label
         """
         try:
             # Get existing blocks to find the tool block
@@ -766,6 +776,10 @@ class SessionManager:
                     existing_block["tool_output"] = tool_output
                 if tool_input is not None:
                     existing_block["tool_input"] = tool_input
+                if tool_protocol is not None:
+                    existing_block["tool_protocol"] = tool_protocol
+                if server_label is not None:
+                    existing_block["server_label"] = server_label
                 await self.add_block(subtask_id, existing_block)
                 logger.debug(
                     f"[SessionManager] Updated tool block for subtask {subtask_id}: "

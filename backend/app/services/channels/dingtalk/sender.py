@@ -361,6 +361,11 @@ class DingTalkRobotSender:
             logger.error(
                 f"[DingTalkSender] HTTP error creating AI card: {error_code} - {error_msg}"
             )
+            logger.error(
+                f"[DingTalkSender] Response status: {e.response.status_code}, "
+                f"headers: {dict(e.response.headers)}, "
+                f"body: {e.response.text}"
+            )
 
             return {
                 "success": False,

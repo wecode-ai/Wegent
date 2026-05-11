@@ -374,7 +374,12 @@ async def build_execution_request(
                 str(user_subtask_id),
             )
             await _create_kb_contexts_from_api_request(
-                db, user.id, processed_subtask_id, knowledge_base_names
+                db,
+                user.id,
+                processed_subtask_id,
+                knowledge_base_names,
+                task=task,
+                user_name=user.user_name,
             )
 
         # Process contexts (attachments, knowledge bases, etc.)
@@ -483,6 +488,8 @@ async def _create_kb_contexts_from_api_request(
     user_id: int,
     user_subtask_id: int,
     knowledge_base_names: List[Dict[str, str]],
+    task=None,
+    user_name: Optional[str] = None,
 ) -> None:
     """Create SubtaskContext records for knowledge bases from API request.
 
@@ -495,12 +502,19 @@ async def _create_kb_contexts_from_api_request(
         user_id: User ID for permission checking
         user_subtask_id: User subtask ID to attach contexts to
         knowledge_base_names: List of dicts with 'namespace' and 'name' keys
+        task: Optional task for syncing selected KBs to task-level refs
+        user_name: Optional user name used as boundBy during task-level sync
     """
     from app.services.openapi.kb_context import KnowledgeBaseContextCreator
 
     try:
         creator = KnowledgeBaseContextCreator(db, user_id)
-        contexts = creator.create_contexts(user_subtask_id, knowledge_base_names)
+        contexts = creator.create_contexts(
+            user_subtask_id,
+            knowledge_base_names,
+            task=task,
+            user_name=user_name,
+        )
         logger.info(
             "[build_execution_request] Created %d KB contexts from API request "
             "for subtask %d",

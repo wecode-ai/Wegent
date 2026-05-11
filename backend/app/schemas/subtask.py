@@ -106,8 +106,10 @@ class SubtaskContextBrief(BaseModel):
     file_size: Optional[int] = None
     mime_type: Optional[str] = None
     # Knowledge base fields (from type_data)
+    knowledge_id: Optional[int] = None
     document_count: Optional[int] = None
     # Table fields (from type_data) - nested structure to match frontend expectation
+    document_id: Optional[int] = None
     source_config: Optional[dict[str, Any]] = None
 
     class Config:
@@ -133,8 +135,14 @@ class SubtaskContextBrief(BaseModel):
             ),
         }
 
+        context_type = (
+            context.context_type
+            if isinstance(context.context_type, str)
+            else context.context_type.value
+        )
+
         # Add type-specific fields
-        if context.context_type == "attachment":
+        if context_type == "attachment":
             base_data.update(
                 {
                     "file_extension": type_data.get("file_extension"),
@@ -142,13 +150,15 @@ class SubtaskContextBrief(BaseModel):
                     "mime_type": type_data.get("mime_type"),
                 }
             )
-        elif context.context_type == "knowledge_base":
+        elif context_type == "knowledge_base":
             base_data.update(
                 {
+                    "knowledge_id": type_data.get("knowledge_id"),
                     "document_count": type_data.get("document_count"),
                 }
             )
-        elif context.context_type == "table":
+        elif context_type == "table":
+            base_data["document_id"] = type_data.get("document_id")
             # Build source_config for table contexts
             url = type_data.get("url")
             if url:

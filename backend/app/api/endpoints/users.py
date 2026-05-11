@@ -326,7 +326,7 @@ async def get_user_quick_access(
 ):
     """
     Get user's quick access teams merged with system recommendations.
-    Returns teams based on version comparison logic.
+    User favorites are returned before system recommendations.
     """
     # Get system config
     system_config = (
@@ -353,7 +353,7 @@ async def get_user_quick_access(
     user_version = quick_access_config.get("version")
     user_team_ids = quick_access_config.get("teams", [])
 
-    # Determine if we should show system recommended
+    # Keep version comparison for clients that need migration state.
     show_system_recommended = user_version is None or user_version < system_version
 
     # Build teams list
@@ -369,43 +369,38 @@ async def get_user_quick_access(
 
         # Extract recommended_mode from spec if available
         spec = team_data.get("spec", {})
+        metadata = team_data.get("metadata", {})
         recommended_mode = spec.get("recommended_mode", "both")
+        name = metadata.get("name", f"Team {team_id}")
 
         return QuickAccessTeam(
             id=team_data.get("id", team_id),
-            name=team_data.get("metadata", {}).get("name", f"Team {team_id}"),
+            name=name,
+            display_name=metadata.get("displayName"),
             is_system=is_system,
             recommended_mode=recommended_mode,
             agent_type=team_data.get("agent_type"),
         )
 
-    if show_system_recommended:
-        # Add system teams first
-        for team_id in system_team_ids:
-            if team_id not in seen_team_ids:
-                team_info = get_team_info(team_id, is_system=True)
-                if team_info:
-                    result_teams.append(team_info)
-                    seen_team_ids.add(team_id)
+    # Respect the saved quick access order, then append unsorted system teams.
+    system_team_id_set = set(system_team_ids)
+    for team_id in user_team_ids:
+        if team_id not in seen_team_ids:
+            team_info = get_team_info(team_id, is_system=team_id in system_team_id_set)
+            if team_info:
+                result_teams.append(team_info)
+                seen_team_ids.add(team_id)
 
-        # Add user teams (excluding duplicates)
-        for team_id in user_team_ids:
-            if team_id not in seen_team_ids:
-                team_info = get_team_info(team_id, is_system=False)
-                if team_info:
-                    result_teams.append(team_info)
-                    seen_team_ids.add(team_id)
-    else:
-        # Only show user teams
-        for team_id in user_team_ids:
-            if team_id not in seen_team_ids:
-                team_info = get_team_info(team_id, is_system=False)
-                if team_info:
-                    result_teams.append(team_info)
-                    seen_team_ids.add(team_id)
+    for team_id in system_team_ids:
+        if team_id not in seen_team_ids:
+            team_info = get_team_info(team_id, is_system=True)
+            if team_info:
+                result_teams.append(team_info)
+                seen_team_ids.add(team_id)
 
     return QuickAccessResponse(
         system_version=system_version,
+        system_team_ids=system_team_ids,
         user_version=user_version,
         show_system_recommended=show_system_recommended,
         teams=result_teams,

@@ -135,6 +135,48 @@ class TestKnowledgeBaseContextCreator:
         assert mock_context_class.call_count == 2
         mock_db.add_all.assert_called_once()
 
+    @patch(
+        "app.services.openapi.kb_context.task_knowledge_base_service.sync_subtask_kb_to_task"
+    )
+    def test_create_contexts_syncs_selected_kbs_to_task(
+        self,
+        mock_sync,
+        creator,
+        mock_resolver,
+        mock_db,
+        mock_context_class,
+    ):
+        """Selected KBs from responses should be promoted to task-level refs."""
+        resolved_kb = ResolvedKnowledgeBase(
+            kb_id=123, namespace="default", name="my_kb", display_name="My KB"
+        )
+        mock_resolution_result = MagicMock()
+        mock_resolution_result.resolved = [resolved_kb]
+        mock_resolution_result.not_found = []
+        mock_resolution_result.no_access = []
+        mock_resolver.resolve.return_value = mock_resolution_result
+
+        mock_context = MagicMock()
+        mock_context.type_data = {"knowledge_id": 123}
+        mock_context_class.return_value = mock_context
+        mock_task = MagicMock()
+        mock_task.id = 456
+
+        creator.create_contexts(
+            subtask_id=789,
+            kb_names=[{"namespace": "default", "name": "my_kb"}],
+            task=mock_task,
+            user_name="alice",
+        )
+
+        mock_sync.assert_called_once_with(
+            db=mock_db,
+            task=mock_task,
+            knowledge_id=123,
+            user_id=1,
+            user_name="alice",
+        )
+
     def test_create_kb_context_private_method(self, creator, mock_context_class):
         """Test the _create_kb_context private method."""
         # Arrange

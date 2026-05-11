@@ -17,6 +17,8 @@ import type { TaskType } from '@/types/api'
 interface TeamBasicInfoFormProps {
   name: string
   setName: (name: string) => void
+  displayName: string
+  setDisplayName: (displayName: string) => void
   description: string
   setDescription: (description: string) => void
   bindMode: TaskType[]
@@ -30,6 +32,8 @@ interface TeamBasicInfoFormProps {
 export default function TeamBasicInfoForm({
   name,
   setName,
+  displayName,
+  setDisplayName,
   description,
   setDescription,
   bindMode,
@@ -46,7 +50,7 @@ export default function TeamBasicInfoForm({
 
   return (
     <div className="space-y-4">
-      {/* Team Name with Icon and Bind Mode - Grid layout */}
+      {/* Team Name and Display Name - Grid layout */}
       <div className="grid grid-cols-2 gap-4">
         <div className="space-y-2">
           <Label htmlFor="teamName" className="text-sm font-medium">
@@ -64,25 +68,40 @@ export default function TeamBasicInfoForm({
           </div>
         </div>
 
-        {/* Bind Mode */}
         <div className="space-y-2">
-          <Label className="text-sm font-medium">{t('common:team.bind_mode')}</Label>
-          <div className="flex gap-2 flex-wrap">
-            {(['chat', 'code', 'task', 'video', 'image'] as const).map(opt => {
-              const isSelected = bindMode.includes(opt)
-              return (
-                <button
-                  key={opt}
-                  type="button"
-                  onClick={() => {
-                    if (isSelected) {
-                      // Allow deselecting even if it's the last one (can be empty)
-                      setBindMode(bindMode.filter(m => m !== opt))
-                    } else {
-                      setBindMode([...bindMode, opt])
-                    }
-                  }}
-                  className={`
+          <Label htmlFor="teamDisplayName" className="text-sm font-medium">
+            {t('common:team.display_name')}
+          </Label>
+          <Input
+            id="teamDisplayName"
+            value={displayName}
+            onChange={e => setDisplayName(e.target.value)}
+            placeholder={t('common:team.display_name_placeholder')}
+            className="bg-base"
+            data-testid="team-display-name-input"
+          />
+        </div>
+      </div>
+
+      {/* Bind Mode */}
+      <div className="space-y-2">
+        <Label className="text-sm font-medium">{t('common:team.bind_mode')}</Label>
+        <div className="flex gap-2 flex-wrap">
+          {(['chat', 'code', 'task', 'video', 'image'] as const).map(opt => {
+            const isSelected = bindMode.includes(opt)
+            return (
+              <button
+                key={opt}
+                type="button"
+                onClick={() => {
+                  if (isSelected) {
+                    // Allow deselecting even if it's the last one (can be empty)
+                    setBindMode(bindMode.filter(m => m !== opt))
+                  } else {
+                    setBindMode([...bindMode, opt])
+                  }
+                }}
+                className={`
                     px-3 py-1.5 text-sm font-medium rounded-md border transition-colors
                     ${
                       isSelected
@@ -90,12 +109,12 @@ export default function TeamBasicInfoForm({
                         : 'border-border hover:bg-accent hover:text-accent-foreground'
                     }
                   `}
-                >
-                  {t(`team.bind_mode_${opt}`)}
-                </button>
-              )
-            })}
-          </div>
+                data-testid={`team-bind-mode-${opt}-button`}
+              >
+                {t(`team.bind_mode_${opt}`)}
+              </button>
+            )
+          })}
         </div>
       </div>
 

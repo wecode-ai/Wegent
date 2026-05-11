@@ -238,3 +238,70 @@ class SkillValidator:
         )
         body = frontmatter_pattern.sub("", content).strip()
         return body
+
+    @staticmethod
+    def sanitize_zip(file_content: bytes) -> bytes:
+        """Rebuild ZIP with mcpServers stripped from SKILL.md frontmatter.
+
+        Returns original bytes unchanged if ZIP has no SKILL.md or no mcpServers.
+        """
+        if not zipfile.is_zipfile(io.BytesIO(file_content)):
+            return file_content
+
+        frontmatter_pattern = re.compile(
+            r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL | re.MULTILINE
+        )
+
+        with zipfile.ZipFile(io.BytesIO(file_content), "r") as zin:
+            # Find SKILL.md path
+            skill_md_path = None
+            skill_md_content = None
+            for info in zin.filelist:
+                if info.filename.endswith("/"):
+                    continue
+                parts = info.filename.split("/")
+                if len(parts) == 2 and parts[1] == "SKILL.md":
+                    skill_md_path = info.filename
+                    with zin.open(info) as f:
+                        skill_md_content = f.read().decode("utf-8", errors="ignore")
+                    break
+
+            if not skill_md_content or not skill_md_path:
+                return file_content
+
+            match = frontmatter_pattern.search(skill_md_content)
+            if not match:
+                return file_content
+
+            try:
+                metadata = yaml.safe_load(match.group(1))
+            except yaml.YAMLError:
+                return file_content
+
+            if not isinstance(metadata, dict) or "mcpServers" not in metadata:
+                return file_content
+
+            # Strip mcpServers and rebuild SKILL.md
+            metadata.pop("mcpServers")
+            new_yaml = yaml.safe_dump(
+                metadata,
+                allow_unicode=True,
+                sort_keys=False,
+                default_flow_style=False,
+            ).rstrip("\n")
+            body = frontmatter_pattern.sub("", skill_md_content).strip()
+            new_skill_md = f"---\n{new_yaml}\n---\n\n{body}\n"
+
+            # Rebuild ZIP replacing SKILL.md entry
+            buf = io.BytesIO()
+            with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zout:
+                for info in zin.filelist:
+                    if info.filename.endswith("/"):
+                        continue
+                    if info.filename == skill_md_path:
+                        zout.writestr(info, new_skill_md)
+                    else:
+                        with zin.open(info) as f:
+                            zout.writestr(info, f.read())
+
+            return buf.getvalue()

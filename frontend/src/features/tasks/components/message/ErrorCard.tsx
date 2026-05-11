@@ -136,7 +136,7 @@ export function ErrorCard({
     setIsInteracted(getStoredInteractionState())
   }, [getStoredInteractionState])
 
-  const [detailsExpanded, setDetailsExpanded] = useState(false)
+  const [detailsExpanded, setDetailsExpanded] = useState(parsedError.type === 'generic_error')
   const [copySuccess, setCopySuccess] = useState(false)
 
   const friendlyMessage = useMemo(

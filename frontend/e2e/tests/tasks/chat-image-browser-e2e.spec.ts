@@ -263,6 +263,18 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
   }
 
   /**
+   * Helper function to skip onboarding tour before navigation.
+   * This prevents the driver.js overlay from blocking team/model selector interactions.
+   */
+  async function skipOnboardingTour(page: Page): Promise<void> {
+    await page.addInitScript(() => {
+      localStorage.setItem('user_onboarding_completed', 'true')
+      localStorage.removeItem('onboarding_in_progress')
+      localStorage.removeItem('onboarding_current_step')
+    })
+  }
+
+  /**
    * Helper function to select the test team in the UI
    * Updated to work with the new QuickAccessCards pagination design (removed "More" button)
    * Note: TeamSelectorButton only renders when selectedTeam exists and teams.length > 0
@@ -590,6 +602,7 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
 
     // Step 1: Navigate to chat page
     console.log('Navigating to chat page...')
+    await skipOnboardingTour(page)
     await page.goto('/chat')
     await page.waitForLoadState('domcontentloaded')
     await page.waitForTimeout(3000)
@@ -748,6 +761,7 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
     }
 
     // Navigate to chat page
+    await skipOnboardingTour(page)
     await page.goto('/chat')
     await page.waitForLoadState('domcontentloaded')
     await page.waitForTimeout(3000)

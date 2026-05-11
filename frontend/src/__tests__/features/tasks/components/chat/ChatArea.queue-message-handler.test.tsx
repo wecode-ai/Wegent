@@ -1,7 +1,30 @@
 import '@testing-library/jest-dom'
 import { render, screen } from '@testing-library/react'
+import type { TaskDetail } from '@/types/api'
 
 import { ChatArea } from '@/features/tasks/components/chat'
+
+const defaultStreamHandlers = {
+  pendingTaskId: null,
+  isStreaming: false,
+  isAwaitingResponseStart: false,
+  isSubtaskStreaming: false,
+  isStopping: false,
+  hasPendingUserMessage: false,
+  localPendingMessage: null,
+  handleSendMessage: jest.fn(),
+  handleSendMessageWithModel: jest.fn(),
+  handleRetry: jest.fn(),
+  handleCancelTask: jest.fn(),
+  stopStream: jest.fn(),
+  resetStreamingState: jest.fn(),
+  handleNewMessages: jest.fn(),
+  handleStreamComplete: jest.fn(),
+  isCancelling: false,
+}
+
+let streamHandlersMock = { ...defaultStreamHandlers }
+let selectedTaskDetailMock: TaskDetail | null = null
 
 jest.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(),
@@ -69,29 +92,12 @@ jest.mock('@/features/tasks/components/chat/useChatAreaState', () => ({
 }))
 
 jest.mock('@/features/tasks/components/chat/useChatStreamHandlers', () => ({
-  useChatStreamHandlers: () => ({
-    pendingTaskId: null,
-    isStreaming: false,
-    isAwaitingResponseStart: false,
-    isSubtaskStreaming: false,
-    isStopping: false,
-    hasPendingUserMessage: false,
-    localPendingMessage: null,
-    handleSendMessage: jest.fn(),
-    handleSendMessageWithModel: jest.fn(),
-    handleRetry: jest.fn(),
-    handleCancelTask: jest.fn(),
-    stopStream: jest.fn(),
-    resetStreamingState: jest.fn(),
-    handleNewMessages: jest.fn(),
-    handleStreamComplete: jest.fn(),
-    isCancelling: false,
-  }),
+  useChatStreamHandlers: () => streamHandlersMock,
 }))
 
 jest.mock('@/features/tasks/contexts/taskContext', () => ({
   useTaskContext: () => ({
-    selectedTaskDetail: null,
+    selectedTaskDetail: selectedTaskDetailMock,
     setSelectedTask: jest.fn(),
     accessDenied: false,
   }),
@@ -205,6 +211,11 @@ jest.mock('@/features/tasks/components/selector/ModelSelector', () => ({
 }))
 
 describe('ChatArea queue message handler mounting', () => {
+  beforeEach(() => {
+    streamHandlersMock = { ...defaultStreamHandlers }
+    selectedTaskDetailMock = null
+  })
+
   it('mounts QueueMessageHandler for chat mode', () => {
     render(<ChatArea teams={[]} isTeamsLoading={false} taskType="chat" showRepositorySelector />)
     expect(screen.getByTestId('queue-message-handler')).toBeInTheDocument()

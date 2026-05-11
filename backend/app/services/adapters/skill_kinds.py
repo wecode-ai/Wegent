@@ -285,8 +285,11 @@ class SkillKindsService:
                 detail=f"Skill name '{name}' already exists in namespace '{namespace}'",
             )
 
-        # Validate ZIP package and extract metadata
+        # Validate original ZIP first to capture full metadata (including mcpServers)
         metadata = SkillValidator.validate_zip(file_content, file_name)
+
+        # Sanitize ZIP binary: strip mcpServers from SKILL.md before storage
+        file_content = SkillValidator.sanitize_zip(file_content)
 
         # Build skill JSON
         skill_json = {
@@ -668,8 +671,11 @@ class SkillKindsService:
         if not skill_kind:
             raise HTTPException(status_code=404, detail="Skill not found")
 
-        # Validate new ZIP package
+        # Validate original ZIP first to capture full metadata (including mcpServers)
         metadata = SkillValidator.validate_zip(file_content, file_name)
+
+        # Sanitize ZIP binary: strip mcpServers from SKILL.md before storage
+        file_content = SkillValidator.sanitize_zip(file_content)
 
         # Update skill_kind JSON
         skill_json = skill_kind.json

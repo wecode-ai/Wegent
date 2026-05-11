@@ -19,6 +19,8 @@ interface SelectedTeamBadgeProps {
   onEdit?: () => void
 }
 
+const getTeamDisplayName = (team: Team) => team.displayName?.trim() || team.name
+
 /**
  * Badge component to display the currently selected team
  * Shown at the top-left inside the chat input area
@@ -32,6 +34,7 @@ export function SelectedTeamBadge({
   onEdit,
 }: SelectedTeamBadgeProps) {
   const isEditable = !!onEdit
+  const displayName = getTeamDisplayName(team)
 
   const badgeContent = (
     <div
@@ -58,7 +61,9 @@ export function SelectedTeamBadge({
       {isEditable ? (
         <span className="relative font-medium truncate max-w-[120px]">
           {/* Default text */}
-          <span className="group-hover:opacity-0 transition-opacity duration-200">{team.name}</span>
+          <span className="group-hover:opacity-0 transition-opacity duration-200">
+            {displayName}
+          </span>
           {/* Edit button overlay - shows on hover */}
           <span className="absolute inset-0 -mx-1 -my-0.5 flex items-center justify-center gap-1 rounded opacity-0 group-hover:opacity-100 transition-all duration-200 text-primary">
             <PencilIcon className="w-3 h-3" />
@@ -66,7 +71,7 @@ export function SelectedTeamBadge({
           </span>
         </span>
       ) : (
-        <span className="font-medium truncate max-w-[120px]">{team.name}</span>
+        <span className="font-medium truncate max-w-[120px]">{displayName}</span>
       )}
       {showClearButton && onClear && (
         <button
@@ -90,7 +95,7 @@ export function SelectedTeamBadge({
   }
 
   // Tooltip content: prioritize description (if not empty), fallback to name
-  const tooltipText = team.description?.trim() || team.name
+  const tooltipText = team.description?.trim() || displayName
 
   return (
     <TooltipProvider>

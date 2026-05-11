@@ -49,6 +49,8 @@ class ToolBlock:
         tool_use_id: Tool use ID from the LLM
         tool_name: Name of the tool (e.g., "Bash", "Read", "Write")
         tool_input: Input parameters for the tool
+        tool_protocol: Optional Responses API protocol type
+        server_label: Optional MCP server label
         status: Current status (pending, done, error)
         timestamp: Unix timestamp in milliseconds
         display_name: Optional human-readable display name
@@ -59,6 +61,8 @@ class ToolBlock:
     tool_use_id: str
     tool_name: str
     tool_input: Dict[str, Any] = field(default_factory=dict)
+    tool_protocol: Optional[str] = None
+    server_label: Optional[str] = None
     status: str = BlockStatus.PENDING.value
     timestamp: int = 0
     display_name: Optional[str] = None
@@ -76,6 +80,10 @@ class ToolBlock:
             "status": self.status,
             "timestamp": self.timestamp,
         }
+        if self.tool_protocol:
+            result["tool_protocol"] = self.tool_protocol
+        if self.server_label:
+            result["server_label"] = self.server_label
         if self.display_name:
             result["display_name"] = self.display_name
         if self.tool_output:
@@ -90,6 +98,8 @@ class ToolBlock:
             tool_use_id=data.get("tool_use_id", ""),
             tool_name=data.get("tool_name", ""),
             tool_input=data.get("tool_input", {}),
+            tool_protocol=data.get("tool_protocol"),
+            server_label=data.get("server_label"),
             status=data.get("status", BlockStatus.PENDING.value),
             timestamp=data.get("timestamp", 0),
             display_name=data.get("display_name"),
@@ -188,6 +198,8 @@ def create_tool_block(
     tool_name: str,
     tool_input: Optional[Dict[str, Any]] = None,
     display_name: Optional[str] = None,
+    tool_protocol: Optional[str] = None,
+    server_label: Optional[str] = None,
     timestamp: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Create a tool block dictionary.
@@ -200,6 +212,8 @@ def create_tool_block(
         tool_name: Tool name
         tool_input: Tool input parameters
         display_name: Optional display name
+        tool_protocol: Optional protocol type
+        server_label: Optional MCP server label
         timestamp: Optional timestamp (defaults to current time)
 
     Returns:
@@ -221,6 +235,10 @@ def create_tool_block(
     }
     if display_name:
         result["display_name"] = display_name
+    if tool_protocol:
+        result["tool_protocol"] = tool_protocol
+    if server_label:
+        result["server_label"] = server_label
     return result
 
 

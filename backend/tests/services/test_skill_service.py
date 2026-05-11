@@ -276,3 +276,44 @@ Support for 中文、日本語、한국어
         assert result["description"] == "技能描述 (Chinese characters)"
         assert result["author"] == "作者"
         assert result["tags"] == ["测试", "调试"]
+
+    def test_sanitize_zip_removes_mcp_servers_from_binary(self):
+        """Sanitized ZIP binary should not contain mcpServers in SKILL.md."""
+        skill_md_content = """---
+description: "Skill with MCP servers"
+version: "1.0.0"
+mcpServers:
+  myServer:
+    type: "streamable-http"
+    url: "http://mcp.example.com/server"
+---
+
+# Body content
+
+"""
+        zip_content = self.create_test_zip({"SKILL.md": skill_md_content}, "test.zip")
+
+        sanitized = SkillValidator.sanitize_zip(zip_content)
+
+        # Verify ZIP is still valid and SKILL.md no longer contains mcpServers
+        with zipfile.ZipFile(io.BytesIO(sanitized), "r") as zf:
+            with zf.open("test/SKILL.md") as f:
+                new_content = f.read().decode("utf-8")
+        assert "mcpServers" not in new_content
+        assert "description" in new_content
+
+    def test_sanitize_zip_no_mcp_servers_unchanged(self):
+        """ZIP without mcpServers should pass through sanitize_zip unchanged."""
+        skill_md_content = """---
+description: "Clean skill"
+version: "1.0.0"
+---
+
+# Body
+
+"""
+        zip_content = self.create_test_zip({"SKILL.md": skill_md_content}, "test.zip")
+
+        sanitized = SkillValidator.sanitize_zip(zip_content)
+
+        assert sanitized == zip_content

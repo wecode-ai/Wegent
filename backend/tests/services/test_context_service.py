@@ -14,6 +14,60 @@ from unittest.mock import Mock, patch
 import pytest
 
 
+class TestSubtaskContextBrief:
+    """Test context brief serialization."""
+
+    def test_subtask_brief_includes_knowledge_base_domain_id(self) -> None:
+        """Knowledge base context briefs expose the underlying knowledge ID."""
+        from app.models.subtask_context import (
+            ContextStatus,
+            ContextType,
+            SubtaskContext,
+        )
+        from app.schemas.subtask import SubtaskContextBrief
+
+        context = SubtaskContext(
+            subtask_id=100,
+            user_id=1,
+            context_type=ContextType.KNOWLEDGE_BASE.value,
+            name="Product KB",
+            status=ContextStatus.READY.value,
+            type_data={"knowledge_id": 123, "document_count": 5},
+        )
+        context.id = 999
+
+        brief = SubtaskContextBrief.from_model(context)
+
+        assert brief.id == 999
+        assert brief.knowledge_id == 123
+        assert brief.document_count == 5
+
+    def test_subtask_brief_includes_table_document_id(self) -> None:
+        """Table context briefs expose the underlying document ID."""
+        from app.models.subtask_context import (
+            ContextStatus,
+            ContextType,
+            SubtaskContext,
+        )
+        from app.schemas.subtask import SubtaskContextBrief
+
+        context = SubtaskContext(
+            subtask_id=100,
+            user_id=1,
+            context_type=ContextType.TABLE.value,
+            name="Roadmap",
+            status=ContextStatus.READY.value,
+            type_data={"document_id": 456, "url": "https://example.com/table"},
+        )
+        context.id = 888
+
+        brief = SubtaskContextBrief.from_model(context)
+
+        assert brief.id == 888
+        assert brief.document_id == 456
+        assert brief.source_config == {"url": "https://example.com/table"}
+
+
 class TestContextServiceKnowledgeBaseRetrieval:
     """Test knowledge base retrieval result functionality"""
 

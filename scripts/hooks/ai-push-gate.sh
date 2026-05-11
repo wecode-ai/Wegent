@@ -12,6 +12,7 @@
 # Usage:
 #   git push                    (runs all checks)
 #   AI_VERIFIED=1 git push      (confirm docs checked and no updates needed)
+#   AI_PUSH_FULL_TESTS=1 git push  (also run full Python pytest suites)
 # =============================================================================
 
 # Don't exit on error - we want to run all checks and report at the end
@@ -30,6 +31,115 @@ CYAN='\033[0;36m'
 BOLD='\033[1m'
 NC='\033[0m' # No Color
 
+# Git passes the remote name and URL to pre-push hooks. Husky forwards them from
+# frontend/.husky/pre-push so new-branch diffs can use the correct default branch.
+REMOTE_NAME="${1:-}"
+
+should_run_full_python_tests() {
+    [ "${AI_PUSH_FULL_TESTS:-0}" = "1" ]
+}
+
+resolve_default_base() {
+    local remote_name="${1:-}"
+    local candidate=""
+
+    if [ -n "$remote_name" ]; then
+        candidate=$(git symbolic-ref --quiet --short "refs/remotes/$remote_name/HEAD" 2>/dev/null || true)
+        if [ -n "$candidate" ]; then
+            echo "$candidate"
+            return 0
+        fi
+
+        for branch in main master; do
+            if git rev-parse --verify --quiet "$remote_name/$branch" >/dev/null; then
+                echo "$remote_name/$branch"
+                return 0
+            fi
+        done
+    fi
+
+    candidate=$(git rev-parse --abbrev-ref "@{upstream}" 2>/dev/null || true)
+    if [ -n "$candidate" ]; then
+        echo "$candidate"
+        return 0
+    fi
+
+    for candidate in github/main origin/main gitee/main main master; do
+        if git rev-parse --verify --quiet "$candidate" >/dev/null; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+maybe_run_full_python_tests() {
+    local module_name="$1"
+    local test_cmd="$2"
+    local log_file="$3"
+    local failed_check_name="$4"
+
+    if ! should_run_full_python_tests; then
+        echo -e "   ${YELLOW}↪ Pytest: SKIPPED in pre-push (set AI_PUSH_FULL_TESTS=1 to run full suite)${NC}"
+        return 0
+    fi
+
+    echo -e "   Running pytest..."
+    eval "$test_cmd" > "$log_file" 2>&1
+    PYTEST_EXIT=$?
+    if [ $PYTEST_EXIT -eq 0 ]; then
+        echo -e "   ${GREEN}✅ Pytest: PASSED${NC}"
+    else
+        echo -e "   ${RED}❌ Pytest: FAILED${NC}"
+        CHECK_FAILED=1
+        FAILED_CHECKS+=("$failed_check_name")
+        FAILED_LOGS+=("$log_file")
+    fi
+}
+
+run_changed_python_syntax_check() {
+    local module_name="$1"
+    local module_dir="$2"
+    local file_pattern="$3"
+    local log_file="$4"
+    local uv_args="${5:-}"
+    local syntax_files
+    local syntax_error=0
+
+    syntax_files=$(echo "$CHANGED_FILES" | grep -E "$file_pattern" || true)
+    if [ -z "$syntax_files" ]; then
+        echo -e "   ${YELLOW}↪ Syntax Check: SKIPPED (no changed Python files)${NC}"
+        return 0
+    fi
+
+    echo -e "   Running Python syntax check..."
+    > "$log_file"
+
+    while IFS= read -r pyfile; do
+        [ -z "$pyfile" ] && continue
+        if [ -f "$PROJECT_ROOT/$pyfile" ]; then
+            (
+                cd "$module_dir" || exit 1
+                uv run $uv_args python -m py_compile "$PROJECT_ROOT/$pyfile"
+            ) 2>> "$log_file"
+            if [ $? -ne 0 ]; then
+                echo -e "   ${RED}   Syntax error in: $pyfile${NC}"
+                syntax_error=1
+            fi
+        fi
+    done <<< "$syntax_files"
+
+    if [ $syntax_error -eq 0 ]; then
+        echo -e "   ${GREEN}✅ Syntax Check: PASSED${NC}"
+    else
+        echo -e "   ${RED}❌ Syntax Check: FAILED${NC}"
+        CHECK_FAILED=1
+        FAILED_CHECKS+=("$module_name Syntax")
+        FAILED_LOGS+=("$log_file")
+    fi
+}
+
 # Get the commits being pushed
 # When run by pre-commit, stdin may not be available, so we detect changes differently
 get_changed_files() {
@@ -42,7 +152,11 @@ get_changed_files() {
             if [ -n "$local_sha" ] && [ "$local_sha" != "0000000000000000000000000000000000000000" ]; then
                 if [ "$remote_sha" = "0000000000000000000000000000000000000000" ]; then
                     # New branch, compare with default branch
-                    files=$(git diff --name-only "origin/main...$local_sha" 2>/dev/null || true)
+                    local default_base
+                    default_base=$(resolve_default_base "$REMOTE_NAME" || true)
+                    if [ -n "$default_base" ]; then
+                        files=$(git diff --name-only "$default_base...$local_sha" 2>/dev/null || true)
+                    fi
                 else
                     # Existing branch, compare with remote
                     files=$(git diff --name-only "$remote_sha...$local_sha" 2>/dev/null || true)
@@ -56,8 +170,11 @@ get_changed_files() {
     fi
 
     # Fallback: Compare current branch with its upstream or origin/main
-    local upstream=$(git rev-parse --abbrev-ref "@{upstream}" 2>/dev/null || echo "origin/main")
-    files=$(git diff --name-only "$upstream"...HEAD 2>/dev/null || true)
+    local base_ref
+    base_ref=$(resolve_default_base "$REMOTE_NAME" || true)
+    if [ -n "$base_ref" ]; then
+        files=$(git diff --name-only "$base_ref"...HEAD 2>/dev/null || true)
+    fi
 
     if [ -n "$files" ]; then
         echo "$files"
@@ -234,8 +351,8 @@ if [ "$FRONTEND_COUNT" -gt 0 ] 2>/dev/null; then
         # TypeScript check above already validates type correctness.
         # Full build verification should be done in CI pipeline.
         
-        cd ..
     fi
+    cd ..
     echo ""
 fi
 
@@ -260,29 +377,11 @@ if [ "$BACKEND_COUNT" -gt 0 ] 2>/dev/null; then
             WARNINGS+=("Backend: isort not found, import sort checks skipped")
         fi
         
-        # pytest
-        if ! command -v pytest &> /dev/null; then
-            echo -e "   ${YELLOW}⚠️ SKIP: pytest not found${NC}"
-            WARNINGS+=("Backend: pytest not found, tests skipped")
-        else
-            echo -e "   Running pytest..."
-            if [ -d "tests" ]; then
-                # Limit parallel workers to 4 to reduce memory usage
-                pytest tests/ --tb=short -q > "$TEMP_DIR/backend_pytest.log" 2>&1
-                PYTEST_EXIT=$?
-                if [ $PYTEST_EXIT -eq 0 ]; then
-                    echo -e "   ${GREEN}✅ Pytest: PASSED${NC}"
-                else
-                    echo -e "   ${RED}❌ Pytest: FAILED${NC}"
-                    CHECK_FAILED=1
-                    FAILED_CHECKS+=("Backend Pytest")
-                    FAILED_LOGS+=("$TEMP_DIR/backend_pytest.log")
-                fi
-            else
-                echo -e "   ${YELLOW}⚠️ SKIP: tests directory not found${NC}"
-                WARNINGS+=("Backend: tests directory not found")
-            fi
-        fi
+        maybe_run_full_python_tests \
+            "Backend" \
+            "pytest tests/ --tb=short -q" \
+            "$TEMP_DIR/backend_pytest.log" \
+            "Backend Pytest"
         
         # Python syntax check
         # Python syntax check
@@ -341,29 +440,11 @@ if [ "$BACKEND_COUNT" -gt 0 ] 2>/dev/null; then
             fi
         fi
         
-        # pytest
-        if ! command -v pytest &> /dev/null; then
-            echo -e "   ${YELLOW}⚠️ SKIP: pytest not found${NC}"
-            echo -e "   ${YELLOW}   Run 'pip install pytest' to install dependencies${NC}"
-            WARNINGS+=("Backend: pytest not found, tests skipped")
-        else
-            echo -e "   Running pytest..."
-            if [ -d "tests" ]; then
-                uv run pytest tests/ --tb=short -q > "$TEMP_DIR/backend_pytest.log" 2>&1
-                PYTEST_EXIT=$?
-                if [ $PYTEST_EXIT -eq 0 ]; then
-                    echo -e "   ${GREEN}✅ Pytest: PASSED${NC}"
-                else
-                    echo -e "   ${RED}❌ Pytest: FAILED${NC}"
-                    CHECK_FAILED=1
-                    FAILED_CHECKS+=("Backend Pytest")
-                    FAILED_LOGS+=("$TEMP_DIR/backend_pytest.log")
-                fi
-            else
-                echo -e "   ${YELLOW}⚠️ SKIP: tests directory not found${NC}"
-                WARNINGS+=("Backend: tests directory not found")
-            fi
-        fi
+        maybe_run_full_python_tests \
+            "Backend" \
+            "uv run pytest tests/ --tb=short -q" \
+            "$TEMP_DIR/backend_pytest.log" \
+            "Backend Pytest"
         # Python syntax check (output to temp file)
         echo -e "   Running Python syntax check..."
         SYNTAX_ERROR=0
@@ -438,17 +519,17 @@ if [ "$KNOWLEDGE_ENGINE_COUNT" -gt 0 ] 2>/dev/null; then
             echo -e "   ${YELLOW}⚠️ SKIP: tests directory not found${NC}"
             WARNINGS+=("Knowledge Engine: tests directory not found")
         else
-            echo -e "   Running pytest..."
-            uv run --group dev pytest tests/ --tb=short -q > "$TEMP_DIR/knowledge_engine_pytest.log" 2>&1
-            PYTEST_EXIT=$?
-            if [ $PYTEST_EXIT -eq 0 ]; then
-                echo -e "   ${GREEN}✅ Pytest: PASSED${NC}"
-            else
-                echo -e "   ${RED}❌ Pytest: FAILED${NC}"
-                CHECK_FAILED=1
-                FAILED_CHECKS+=("Knowledge Engine Pytest")
-                FAILED_LOGS+=("$TEMP_DIR/knowledge_engine_pytest.log")
-            fi
+            maybe_run_full_python_tests \
+                "Knowledge Engine" \
+                "uv run --group dev pytest tests/ --tb=short -q" \
+                "$TEMP_DIR/knowledge_engine_pytest.log" \
+                "Knowledge Engine Pytest"
+            run_changed_python_syntax_check \
+                "Knowledge Engine" \
+                "$PROJECT_ROOT/knowledge_engine" \
+                "^knowledge_engine/.*\\.py$" \
+                "$TEMP_DIR/knowledge_engine_syntax.log" \
+                "--group dev"
         fi
 
         cd ..
@@ -472,17 +553,17 @@ if [ "$KNOWLEDGE_RUNTIME_COUNT" -gt 0 ] 2>/dev/null; then
             echo -e "   ${YELLOW}⚠️ SKIP: tests directory not found${NC}"
             WARNINGS+=("Knowledge Runtime: tests directory not found")
         else
-            echo -e "   Running pytest..."
-            uv run --group dev pytest tests/ --tb=short -q > "$TEMP_DIR/knowledge_runtime_pytest.log" 2>&1
-            PYTEST_EXIT=$?
-            if [ $PYTEST_EXIT -eq 0 ]; then
-                echo -e "   ${GREEN}✅ Pytest: PASSED${NC}"
-            else
-                echo -e "   ${RED}❌ Pytest: FAILED${NC}"
-                CHECK_FAILED=1
-                FAILED_CHECKS+=("Knowledge Runtime Pytest")
-                FAILED_LOGS+=("$TEMP_DIR/knowledge_runtime_pytest.log")
-            fi
+            maybe_run_full_python_tests \
+                "Knowledge Runtime" \
+                "uv run --group dev pytest tests/ --tb=short -q" \
+                "$TEMP_DIR/knowledge_runtime_pytest.log" \
+                "Knowledge Runtime Pytest"
+            run_changed_python_syntax_check \
+                "Knowledge Runtime" \
+                "$PROJECT_ROOT/knowledge_runtime" \
+                "^knowledge_runtime/.*\\.py$" \
+                "$TEMP_DIR/knowledge_runtime_syntax.log" \
+                "--group dev"
         fi
 
         cd ..
@@ -498,24 +579,22 @@ if [ "$EXECUTOR_COUNT" -gt 0 ] 2>/dev/null; then
     
     cd executor
     
-    if ! command -v pytest &> /dev/null; then
-        echo -e "   ${YELLOW}⚠️ SKIP: pytest not found${NC}"
-        echo -e "   ${YELLOW}   Run 'pip install pytest' to install dependencies${NC}"
-        WARNINGS+=("Executor: pytest not found, tests skipped")
+    if ! command -v uv &> /dev/null; then
+        echo -e "   ${YELLOW}⚠️ SKIP: uv not found${NC}"
+        echo -e "   ${YELLOW}   Install uv to run Python pre-push checks${NC}"
+        WARNINGS+=("Executor: uv not found, Python checks skipped")
     else
-        echo -e "   Running pytest..."
         if [ -d "tests" ]; then
-            # Limit parallel workers to 4 to reduce memory usage
-            uv run pytest tests/ --tb=short -q  > "$TEMP_DIR/executor_pytest.log" 2>&1
-            PYTEST_EXIT=$?
-            if [ $PYTEST_EXIT -eq 0 ]; then
-                echo -e "   ${GREEN}✅ Pytest: PASSED${NC}"
-            else
-                echo -e "   ${RED}❌ Pytest: FAILED${NC}"
-                CHECK_FAILED=1
-                FAILED_CHECKS+=("Executor Pytest")
-                FAILED_LOGS+=("$TEMP_DIR/executor_pytest.log")
-            fi
+            maybe_run_full_python_tests \
+                "Executor" \
+                "uv run pytest tests/ --tb=short -q" \
+                "$TEMP_DIR/executor_pytest.log" \
+                "Executor Pytest"
+            run_changed_python_syntax_check \
+                "Executor" \
+                "$PROJECT_ROOT/executor" \
+                "^executor/.*\\.py$" \
+                "$TEMP_DIR/executor_syntax.log"
         else
             echo -e "   ${YELLOW}⚠️ SKIP: tests directory not found${NC}"
             WARNINGS+=("Executor: tests directory not found")
@@ -533,27 +612,22 @@ if [ "$EXECUTOR_MGR_COUNT" -gt 0 ] 2>/dev/null; then
     echo -e "${BLUE}🔍 Executor Manager Checks:${NC}"
     
     cd executor_manager
-    if ! command -v pytest &> /dev/null; then
-        echo -e "   ${YELLOW}⚠️ SKIP: pytest not found${NC}"
-        echo -e "   ${YELLOW}   Run 'pip install pytest' to install dependencies${NC}"
-        WARNINGS+=("Executor Manager: pytest not found, tests skipped")
+    if ! command -v uv &> /dev/null; then
+        echo -e "   ${YELLOW}⚠️ SKIP: uv not found${NC}"
+        echo -e "   ${YELLOW}   Install uv to run Python pre-push checks${NC}"
+        WARNINGS+=("Executor Manager: uv not found, Python checks skipped")
     else
-        echo -e "   Running pytest..."
         if [ -d "tests" ]; then
-            # Limit parallel workers to 4 to reduce memory usage
-            uv run pytest tests/ --tb=short -q  > "$TEMP_DIR/exec_mgr_pytest.log" 2>&1
-            PYTEST_EXIT=$?
-            # Check if tests passed (look for "passed" in output and no "failed")
-            if grep -q "passed" "$TEMP_DIR/exec_mgr_pytest.log" && ! grep -q "[0-9]* failed" "$TEMP_DIR/exec_mgr_pytest.log"; then
-                echo -e "   ${GREEN}✅ Pytest: PASSED${NC}"
-            elif [ $PYTEST_EXIT -eq 0 ]; then
-                echo -e "   ${GREEN}✅ Pytest: PASSED${NC}"
-            else
-                echo -e "   ${RED}❌ Pytest: FAILED${NC}"
-                CHECK_FAILED=1
-                FAILED_CHECKS+=("Executor Manager Pytest")
-                FAILED_LOGS+=("$TEMP_DIR/exec_mgr_pytest.log")
-            fi
+            maybe_run_full_python_tests \
+                "Executor Manager" \
+                "uv run pytest tests/ --tb=short -q" \
+                "$TEMP_DIR/exec_mgr_pytest.log" \
+                "Executor Manager Pytest"
+            run_changed_python_syntax_check \
+                "Executor Manager" \
+                "$PROJECT_ROOT/executor_manager" \
+                "^executor_manager/.*\\.py$" \
+                "$TEMP_DIR/exec_mgr_syntax.log"
         else
             echo -e "   ${YELLOW}⚠️ SKIP: tests directory not found${NC}"
             WARNINGS+=("Executor Manager: tests directory not found")

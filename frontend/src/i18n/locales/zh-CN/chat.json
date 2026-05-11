@@ -549,7 +549,25 @@
     "retry_failed": "重试阶段失败",
     "proceeding_to_stage": "正在进入阶段: {{stage}}",
     "pipeline_completed": "流水线已完成",
-    "no_task_id": "没有可用的任务 ID"
+    "no_task_id": "没有可用的任务 ID",
+    "next_step": "下一步",
+    "next_step_dialog": {
+      "title": "继续到下一步",
+      "description": "默认携带上一步 AI 的最后一次回复，也可以补充说明或选择额外上下文。",
+      "message_placeholder": "给下一阶段的补充说明（可选）...",
+      "text_contexts": "消息上下文",
+      "structured_contexts": "附加上下文",
+      "no_text_contexts": "暂无可用的消息上下文。",
+      "no_structured_contexts": "暂无附件、知识库或表格上下文。",
+      "confirm": "继续",
+      "confirming": "继续中...",
+      "missing_task": "缺少任务或团队信息",
+      "text_items": {
+        "user_message": "用户消息",
+        "ai_response": "AI 回复",
+        "history_message": "历史消息"
+      }
+    }
   },
   "generate": {
     "mode_selector": "生成类型",
