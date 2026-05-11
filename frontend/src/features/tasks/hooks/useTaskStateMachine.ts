@@ -35,9 +35,16 @@ export function useTaskStateMachine(
   syncOptions?: SyncOptions
 ): UseTaskStateMachineResult {
   const [state, setState] = useState<TaskStateData | null>(null)
+  const [isInitialized, setIsInitialized] = useState(() => taskStateManager.isInitialized())
 
-  // Check if manager is initialized
-  const isInitialized = taskStateManager.isInitialized()
+  useEffect(() => {
+    const syncInitializationState = () => {
+      setIsInitialized(taskStateManager.isInitialized())
+    }
+
+    syncInitializationState()
+    return taskStateManager.subscribeInitialization(syncInitializationState)
+  }, [])
 
   // Subscribe to state changes
   // Subscribe to state changes

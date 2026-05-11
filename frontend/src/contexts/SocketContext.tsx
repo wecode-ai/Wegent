@@ -462,9 +462,21 @@ export function SocketProvider({ children }: { children: ReactNode }) {
             subtasks?: Array<Record<string, unknown>>
             error?: string
           }) => {
+            const subtasksCount = Array.isArray(response.subtasks) ? response.subtasks.length : null
+            const firstSubtask = Array.isArray(response.subtasks) ? response.subtasks[0] : undefined
+            const lastSubtask =
+              Array.isArray(response.subtasks) && response.subtasks.length > 0
+                ? response.subtasks[response.subtasks.length - 1]
+                : undefined
+
             if (response.streaming) {
               console.info('[StreamingJoinDebug] task:join ack', {
                 taskId,
+                forceRefresh,
+                afterMessageId,
+                subtasksCount,
+                firstMessageId: firstSubtask?.message_id,
+                lastMessageId: lastSubtask?.message_id,
                 subtaskId: response.streaming.subtask_id,
                 startedAt: response.streaming.started_at,
                 lastActivityAt: response.streaming.last_activity_at,
@@ -473,6 +485,11 @@ export function SocketProvider({ children }: { children: ReactNode }) {
             } else {
               console.info('[StreamingJoinDebug] task:join ack (no streaming)', {
                 taskId,
+                forceRefresh,
+                afterMessageId,
+                subtasksCount,
+                firstMessageId: firstSubtask?.message_id,
+                lastMessageId: lastSubtask?.message_id,
                 hasError: Boolean(response.error),
               })
             }

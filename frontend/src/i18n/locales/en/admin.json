@@ -318,6 +318,12 @@
     "tip_en_placeholder": "Enter English tip text",
     "delete_tip_title": "Delete Tip",
     "delete_tip_message": "Are you sure you want to delete this tip? This action cannot be undone.",
+    "quick_access_title": "Homepage Recommended Agents",
+    "quick_access_description": "Select the built-in agents shown in the homepage QuickCard. The right-side order is the display order.",
+    "quick_access_available": "Available Agents",
+    "quick_access_selected": "Homepage Agents",
+    "quick_access_name": "Name",
+    "quick_access_version": "Homepage Agents Version",
     "version": "Version",
     "success": {
       "updated": "Configuration updated successfully"
