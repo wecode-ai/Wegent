@@ -53,7 +53,7 @@ export function AddNamespaceDialog({
   }
 
   const [groups, setGroups] = useState<Group[]>([])
-  const [selectedGroup, setSelectedGroup] = useState<Group | null>(null)
+  const [selectedGroups, setSelectedGroups] = useState<Group[]>([])
   const [role, setRole] = useState<MemberRole>('Reporter')
   const [loading, setLoading] = useState(false)
   const [searching, setSearching] = useState(false)
@@ -117,30 +117,36 @@ export function AddNamespaceDialog({
     return (a.display_name || a.name).localeCompare(b.display_name || b.name)
   })
 
-  const handleSelectGroup = (group: Group) => {
-    setSelectedGroup(group)
+  const isGroupSelected = (group: Group) => selectedGroups.some(g => g.id === group.id)
+
+  const handleToggleGroup = (group: Group) => {
+    setSelectedGroups(prev =>
+      prev.some(g => g.id === group.id)
+        ? prev.filter(g => g.id !== group.id)
+        : [...prev, group]
+    )
     setSearchQuery('')
-    setShowDropdown(false)
     setError(null)
   }
 
-  const handleRemoveGroup = () => {
-    setSelectedGroup(null)
-    setSearchQuery('')
+  const handleRemoveGroup = (groupId: number) => {
+    setSelectedGroups(prev => prev.filter(g => g.id !== groupId))
   }
 
   const handleSubmit = async (e?: FormEvent) => {
     e?.preventDefault()
     setError(null)
 
-    if (!selectedGroup) {
+    if (selectedGroups.length === 0) {
       setError(t('common:required') || '请选择群组')
       return
     }
 
     setLoading(true)
     try {
-      await knowledgePermissionApi.addNamespacePermission(kbId, selectedGroup.id, role)
+      for (const group of selectedGroups) {
+        await knowledgePermissionApi.addNamespacePermission(kbId, group.id, role)
+      }
       resetForm()
       onSuccess?.()
       onOpenChange(false)
@@ -153,7 +159,7 @@ export function AddNamespaceDialog({
   }
 
   const resetForm = () => {
-    setSelectedGroup(null)
+    setSelectedGroups([])
     setRole('Reporter')
     setSearchQuery('')
     setShowDropdown(false)
@@ -217,44 +223,59 @@ export function AddNamespaceDialog({
                         : loc('document.permission.noGroups', '暂无可用群组')}
                     </div>
                   ) : (
-                    filteredGroups.map(group => (
-                      <button
-                        key={group.id}
-                        type="button"
-                        onClick={() => handleSelectGroup(group)}
-                        className="w-full flex items-center justify-between gap-3 p-3 hover:bg-surface cursor-pointer text-left"
-                      >
-                        <span className="font-medium text-sm text-text-primary truncate">
-                          {group.display_name || group.name}
-                        </span>
-                        {group.my_role && (
-                          <span className="flex-shrink-0 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] leading-tight font-medium bg-primary/10 text-primary border border-primary/20">
-                            {t(`document.permission.role.${group.my_role}`)}
+                    filteredGroups.map(group => {
+                      const selected = isGroupSelected(group)
+                      return (
+                        <button
+                          key={group.id}
+                          type="button"
+                          onClick={() => handleToggleGroup(group)}
+                          className={`w-full flex items-center justify-between gap-3 p-3 hover:bg-surface cursor-pointer text-left ${
+                            selected ? 'bg-primary/5' : ''
+                          }`}
+                        >
+                          <span className="font-medium text-sm text-text-primary truncate flex items-center gap-2">
+                            {selected && (
+                              <svg className="w-3.5 h-3.5 text-primary flex-shrink-0" fill="currentColor" viewBox="0 0 16 16">
+                                <path d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"/>
+                              </svg>
+                            )}
+                            {group.display_name || group.name}
                           </span>
-                        )}
-                      </button>
-                    ))
+                          {group.my_role && (
+                            <span className="flex-shrink-0 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] leading-tight font-medium bg-primary/10 text-primary border border-primary/20">
+                              {t(`document.permission.role.${group.my_role}`)}
+                            </span>
+                          )}
+                        </button>
+                      )
+                    })
                   )}
                 </div>
               )}
             </div>
-            {/* Selected group chip */}
-            {selectedGroup && (
+            {/* Selected group chips */}
+            {selectedGroups.length > 0 && (
               <div className="flex flex-wrap gap-2">
-                <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-muted/70 border border-border text-sm">
-                  <span className="truncate max-w-[120px]">
-                    {selectedGroup.display_name || selectedGroup.name}
-                  </span>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="h-4 w-4 text-text-muted hover:text-error flex-shrink-0 p-0"
-                    onClick={handleRemoveGroup}
+                {selectedGroups.map(group => (
+                  <div
+                    key={group.id}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-muted/70 border border-border text-sm"
                   >
-                    <XCircle className="w-3 h-3" />
-                  </Button>
-                </div>
+                    <span className="truncate max-w-[120px]">
+                      {group.display_name || group.name}
+                    </span>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-4 w-4 text-text-muted hover:text-error flex-shrink-0 p-0"
+                      onClick={() => handleRemoveGroup(group.id)}
+                    >
+                      <XCircle className="w-3 h-3" />
+                    </Button>
+                  </div>
+                ))}
               </div>
             )}
           </div>
@@ -322,7 +343,7 @@ export function AddNamespaceDialog({
             <Button
               type="submit"
               variant="primary"
-              disabled={loading || !selectedGroup}
+              disabled={loading || selectedGroups.length === 0}
             >
               {loading ? <Spinner className="w-4 h-4" /> : loc('document.permission.add', '添加')}
             </Button>
