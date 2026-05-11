@@ -24,6 +24,7 @@ class TaskStateManagerImpl {
   private machines: Map<number, TaskStateMachine> = new Map()
   private deps: TaskStateMachineDeps | null = null
   private globalListeners: Set<(taskId: number, state: TaskStateData) => void> = new Set()
+  private initializationListeners: Set<() => void> = new Set()
 
   /**
    * Initialize the manager with dependencies from SocketContext
@@ -31,6 +32,7 @@ class TaskStateManagerImpl {
    */
   initialize(deps: TaskStateMachineDeps): void {
     this.deps = deps
+    this.notifyInitializationListeners()
   }
 
   /**
@@ -38,6 +40,20 @@ class TaskStateManagerImpl {
    */
   isInitialized(): boolean {
     return this.deps !== null
+  }
+
+  /**
+   * Subscribe to initialization changes.
+   *
+   * Hooks may render before ChatStreamProvider initializes the manager. This
+   * lets them re-render once dependencies are available instead of getting
+   * stuck with an uninitialized snapshot.
+   */
+  subscribeInitialization(listener: () => void): () => void {
+    this.initializationListeners.add(listener)
+    return () => {
+      this.initializationListeners.delete(listener)
+    }
   }
 
   /**
@@ -205,6 +221,16 @@ class TaskStateManagerImpl {
         listener(taskId, state)
       } catch (err) {
         console.error('[TaskStateManager] Error in global listener:', err)
+      }
+    })
+  }
+
+  private notifyInitializationListeners(): void {
+    this.initializationListeners.forEach(listener => {
+      try {
+        listener()
+      } catch (err) {
+        console.error('[TaskStateManager] Error in initialization listener:', err)
       }
     })
   }

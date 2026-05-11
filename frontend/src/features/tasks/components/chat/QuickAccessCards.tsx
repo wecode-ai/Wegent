@@ -15,6 +15,7 @@ import { Input } from '@/components/ui/input'
 import { Tag } from '@/components/ui/tag'
 import { getSharedTagStyle as getSharedBadgeStyle } from '@/utils/styles'
 import TeamCreationWizard from '@/features/settings/components/wizard/TeamCreationWizard'
+import { TEAM_SELECTOR_POPOVER_CLASS_NAME } from '../selector/team-selector-popover'
 
 // Container dimensions
 const CONTAINER_WIDTH = 880
@@ -448,11 +449,7 @@ export function QuickAccessCards({
           </div>
         </PopoverTrigger>
 
-        <PopoverContent
-          align="start"
-          side="top"
-          className="w-[280px] p-2 max-h-[320px] overflow-hidden flex flex-col"
-        >
+        <PopoverContent align="start" side="top" className={TEAM_SELECTOR_POPOVER_CLASS_NAME}>
           <div className="px-2 pb-2 text-sm font-medium text-text-primary">
             {t('common:teams.select_team')}
           </div>
