@@ -182,6 +182,26 @@ export const knowledgePermissionApi = {
   },
 
   /**
+   * Add permission for a namespace (group-level permission)
+   */
+  addNamespacePermission: async (
+    kbId: number,
+    namespaceId: number,
+    role: string
+  ): Promise<PermissionResponse> => {
+    const response = await client.post<PermissionResponse>(
+      `/share/KnowledgeBase/${kbId}/members`,
+      {
+        user_id: 0,
+        role,
+        entity_type: 'namespace',
+        entity_id: String(namespaceId),
+      }
+    )
+    return response
+  },
+
+  /**
    * Batch add permissions for multiple users in a single request
    */
   batchAddPermission: async (

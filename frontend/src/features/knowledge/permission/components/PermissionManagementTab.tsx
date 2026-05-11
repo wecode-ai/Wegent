@@ -19,6 +19,7 @@ import {
 import { useTranslation } from '@/hooks/useTranslation'
 import { useKnowledgePermissions } from '../hooks/useKnowledgePermissions'
 import { AddUserDialog } from './add-user-dialog'
+import { AddNamespaceDialog } from './add-namespace-dialog'
 import type { MemberRole, PendingPermissionInfo, PermissionUserInfo } from '@/types/knowledge'
 import { ASSIGNABLE_ROLES } from '@/types/base-role'
 
@@ -39,6 +40,7 @@ interface PermissionManagementTabProps {
 export function PermissionManagementTab({ kbId, extensionTabs }: PermissionManagementTabProps) {
   const { t } = useTranslation('knowledge')
   const [showAddUser, setShowAddUser] = useState(false)
+  const [showAddNamespace, setShowAddNamespace] = useState(false)
   const [editingId, setEditingId] = useState<number | null>(null)
   const [editingRole, setEditingRole] = useState<MemberRole>('Reporter')
   // Track selected approval roles for pending requests
@@ -132,12 +134,44 @@ export function PermissionManagementTab({ kbId, extensionTabs }: PermissionManag
   }
 
   const pendingCount = permissions?.pending.length || 0
+
+  // Separate namespace members from user members
+  const allApproved = permissions?.approved
+  const allUserMembers: PermissionUserInfo[] = allApproved
+    ? Object.values(allApproved).flat().filter(m => !m.entity_type || m.entity_type === 'user')
+    : []
+  const namespaceMembers: PermissionUserInfo[] = allApproved
+    ? Object.values(allApproved).flat().filter(m => m.entity_type === 'namespace')
+    : []
+
+  // Filter namespace members out of role groups for user display
+  const filterNamespaceOut = (users: PermissionUserInfo[]) =>
+    users.filter(u => !u.entity_type || u.entity_type === 'user')
+  const userRoleGroups = allApproved
+    ? {
+        Owner: filterNamespaceOut(allApproved.Owner),
+        Maintainer: filterNamespaceOut(allApproved.Maintainer),
+        Developer: filterNamespaceOut(allApproved.Developer),
+        Reporter: filterNamespaceOut(allApproved.Reporter),
+        RestrictedAnalyst: filterNamespaceOut(allApproved.RestrictedAnalyst),
+      }
+    : null
+
   const approvedCount =
-    (permissions?.approved.Owner?.length || 0) +
-    (permissions?.approved.Maintainer?.length || 0) +
-    (permissions?.approved.Developer?.length || 0) +
-    (permissions?.approved.Reporter?.length || 0) +
-    (permissions?.approved.RestrictedAnalyst?.length || 0)
+    (userRoleGroups?.Owner?.length || 0) +
+    (userRoleGroups?.Maintainer?.length || 0) +
+    (userRoleGroups?.Developer?.length || 0) +
+    (userRoleGroups?.Reporter?.length || 0) +
+    (userRoleGroups?.RestrictedAnalyst?.length || 0)
+
+  const handleDeleteNamespace = async (permissionId: number) => {
+    if (!confirm(t('document.permission.confirmRemove'))) return
+    try {
+      await deletePermission(permissionId)
+    } catch (_err) {
+      // Error is handled by the hook
+    }
+  }
 
   return (
     <div className="space-y-6 p-4">
@@ -259,11 +293,11 @@ export function PermissionManagementTab({ kbId, extensionTabs }: PermissionManag
           </p>
         ) : (
           <div className="space-y-4">
-            {/* Owner permissions */}
-            {(permissions?.approved.Owner?.length || 0) > 0 && (
+            {/* Owner permissions (users only) */}
+            {(userRoleGroups?.Owner?.length || 0) > 0 && (
               <PermissionGroup
                 title={t('document.permission.role.Owner')}
-                users={permissions!.approved.Owner}
+                users={userRoleGroups!.Owner}
                 editingId={editingId}
                 editingRole={editingRole}
                 setEditingRole={setEditingRole}
@@ -275,11 +309,11 @@ export function PermissionManagementTab({ kbId, extensionTabs }: PermissionManag
                 t={t}
               />
             )}
-            {/* Maintainer permissions */}
-            {(permissions?.approved.Maintainer?.length || 0) > 0 && (
+            {/* Maintainer permissions (users only) */}
+            {(userRoleGroups?.Maintainer?.length || 0) > 0 && (
               <PermissionGroup
                 title={t('document.permission.role.Maintainer')}
-                users={permissions!.approved.Maintainer}
+                users={userRoleGroups!.Maintainer}
                 editingId={editingId}
                 editingRole={editingRole}
                 setEditingRole={setEditingRole}
@@ -291,11 +325,11 @@ export function PermissionManagementTab({ kbId, extensionTabs }: PermissionManag
                 t={t}
               />
             )}
-            {/* Developer permissions */}
-            {(permissions?.approved.Developer?.length || 0) > 0 && (
+            {/* Developer permissions (users only) */}
+            {(userRoleGroups?.Developer?.length || 0) > 0 && (
               <PermissionGroup
                 title={t('document.permission.role.Developer')}
-                users={permissions!.approved.Developer}
+                users={userRoleGroups!.Developer}
                 editingId={editingId}
                 editingRole={editingRole}
                 setEditingRole={setEditingRole}
@@ -307,11 +341,11 @@ export function PermissionManagementTab({ kbId, extensionTabs }: PermissionManag
                 t={t}
               />
             )}
-            {/* Reporter permissions */}
-            {(permissions?.approved.Reporter?.length || 0) > 0 && (
+            {/* Reporter permissions (users only) */}
+            {(userRoleGroups?.Reporter?.length || 0) > 0 && (
               <PermissionGroup
                 title={t('document.permission.role.Reporter')}
-                users={permissions!.approved.Reporter}
+                users={userRoleGroups!.Reporter}
                 editingId={editingId}
                 editingRole={editingRole}
                 setEditingRole={setEditingRole}
@@ -323,11 +357,11 @@ export function PermissionManagementTab({ kbId, extensionTabs }: PermissionManag
                 t={t}
               />
             )}
-            {/* RestrictedAnalyst permissions */}
-            {(permissions?.approved.RestrictedAnalyst?.length || 0) > 0 && (
+            {/* RestrictedAnalyst permissions (users only) */}
+            {(userRoleGroups?.RestrictedAnalyst?.length || 0) > 0 && (
               <PermissionGroup
                 title={t('document.permission.role.RestrictedAnalyst')}
-                users={permissions!.approved.RestrictedAnalyst}
+                users={userRoleGroups!.RestrictedAnalyst}
                 editingId={editingId}
                 editingRole={editingRole}
                 setEditingRole={setEditingRole}
@@ -343,10 +377,75 @@ export function PermissionManagementTab({ kbId, extensionTabs }: PermissionManag
         )}
       </Card>
 
+      {/* Namespace Permissions Section */}
+      <Card padding="default" className="space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2 text-sm font-medium">
+            <Users className="w-4 h-4 text-primary" />
+            {t('document.permission.namespacePermissions') || '群组权限'}
+            {namespaceMembers.length > 0 && (
+              <span className="bg-primary/10 text-primary px-2 py-0.5 rounded-full text-xs">
+                {namespaceMembers.length}
+              </span>
+            )}
+          </div>
+          <Button variant="outline" size="sm" onClick={() => setShowAddNamespace(true)}>
+            <UserPlus className="w-4 h-4 mr-2" />
+            {t('document.permission.addNamespace') || '添加群组'}
+          </Button>
+        </div>
+
+        {namespaceMembers.length === 0 ? (
+          <p className="text-sm text-text-muted py-4 text-center">
+            {t('document.permission.noNamespacePermissions') || '暂无群组权限'}
+          </p>
+        ) : (
+          <div className="space-y-1">
+            {namespaceMembers.map(nm => (
+              <div
+                key={nm.id}
+                className="group flex items-center justify-between p-2 rounded-lg hover:bg-muted transition-colors"
+              >
+                <div className="flex-1 min-w-0">
+                  <div className="font-medium text-sm truncate flex items-center gap-2">
+                    {nm.username || nm.entity_id || ''}
+                    <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-surface text-text-muted border-border border">
+                      群组
+                    </span>
+                  </div>
+                  <div className="text-xs text-text-muted truncate">
+                    {t(`document.permission.role.${nm.role}`)}
+                  </div>
+                </div>
+                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7 text-error hover:text-error"
+                    onClick={() => handleDeleteNamespace(nm.id)}
+                    title={t('document.permission.remove')}
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+
       {/* Add User Dialog */}
       <AddUserDialog
         open={showAddUser}
         onOpenChange={setShowAddUser}
+        kbId={kbId}
+        onSuccess={fetchPermissions}
+      />
+
+      {/* Add Namespace Dialog */}
+      <AddNamespaceDialog
+        open={showAddNamespace}
+        onOpenChange={setShowAddNamespace}
         kbId={kbId}
         onSuccess={fetchPermissions}
       />
@@ -411,7 +510,7 @@ function PermissionGroup({
                 {user.username}
                 {user.entity_type && user.entity_type !== 'user' && (
                   <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-surface text-text-muted border-border border">
-                    {user.entity_type === 'org_department' ? '部门' : user.entity_type}
+                    {user.entity_type === 'namespace' ? '群组' : user.entity_type}
                   </span>
                 )}
               </div>

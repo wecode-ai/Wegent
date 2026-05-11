@@ -599,7 +599,7 @@ export interface PermissionUserInfo {
   requested_at: string
   reviewed_at?: string
   reviewed_by?: number
-  /** Entity type: 'user' (default), 'org_department' */
+  /** Entity type: 'user' (default), 'namespace' */
   entity_type?: string
   /** Entity identifier */
   entity_id?: string
