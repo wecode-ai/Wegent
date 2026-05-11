@@ -28,6 +28,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { getSharedTagStyle as getSharedBadgeStyle } from '@/utils/styles'
 import type { Team, TaskDetail, TaskType } from '@/types/api'
 import TeamCreationWizard from '@/features/settings/components/wizard/TeamCreationWizard'
+import { TEAM_SELECTOR_POPOVER_CLASS_NAME } from './team-selector-popover'
 
 interface TeamSelectorButtonProps {
   selectedTeam: Team | null
@@ -134,11 +135,7 @@ export default function TeamSelectorButton({
           </TooltipContent>
         </Tooltip>
 
-        <PopoverContent
-          align="start"
-          side="top"
-          className="w-[280px] p-2 max-h-[320px] overflow-hidden flex flex-col"
-        >
+        <PopoverContent align="start" side="top" className={TEAM_SELECTOR_POPOVER_CLASS_NAME}>
           <div className="px-2 pb-2 text-sm font-medium text-text-primary">
             {t('common:teams.select_team')}
           </div>
