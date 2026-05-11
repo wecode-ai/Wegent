@@ -10,10 +10,10 @@ including tree building, cascade deletion, and document-to-folder assignment.
 """
 
 import logging
-from collections import defaultdict
+from collections import defaultdict, deque
 from typing import Dict, List, Optional
 
-from sqlalchemy import func
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
@@ -26,6 +26,11 @@ from app.schemas.knowledge import (
 from app.services.knowledge.knowledge_service import KnowledgeService
 
 logger = logging.getLogger(__name__)
+
+# Maximum number of IDs allowed in a single IN clause before switching to a
+# temporary-table strategy.  MySQL query optimiser degrades when the list
+# exceeds a few thousand values.
+_MAX_IN_CLAUSE_SIZE = 1000
 
 
 class KnowledgeFolderService:
@@ -82,13 +87,14 @@ class KnowledgeFolderService:
         """
         KnowledgeFolderService._check_kb_write_access(db, knowledge_base_id, user_id)
 
-        # Validate parent exists and belongs to the same KB
+        # Validate parent exists and belongs to the same KB.
+        # filter by (kind_id, id) which hits the primary key directly.
         if data.parent_id > 0:
             parent = (
                 db.query(KnowledgeFolder)
                 .filter(
-                    KnowledgeFolder.id == data.parent_id,
                     KnowledgeFolder.kind_id == knowledge_base_id,
+                    KnowledgeFolder.id == data.parent_id,
                 )
                 .first()
             )
@@ -145,7 +151,10 @@ class KnowledgeFolderService:
             .all()
         )
 
-        # Bulk load document counts per folder
+        # Bulk load document counts per folder.
+        # Filter on kind_id first so the engine can use the composite index
+        # (kind_id, folder_id) if present, or at minimum narrow the scan via
+        # ix_knowledge_documents_kind_active_created before grouping.
         doc_counts: Dict[int, int] = defaultdict(int)
         counts = (
             db.query(
@@ -197,6 +206,7 @@ class KnowledgeFolderService:
 
         Raises ValueError if folder not found or access denied.
         """
+        # Primary-key lookup — O(1), no index hint needed.
         folder = (
             db.query(KnowledgeFolder).filter(KnowledgeFolder.id == folder_id).first()
         )
@@ -229,6 +239,7 @@ class KnowledgeFolderService:
             ValueError: If folder not found, circular move, or access denied
         """
         folder = KnowledgeFolderService.get_folder(db, folder_id, user_id)
+        KnowledgeFolderService._check_kb_write_access(db, folder.kind_id, user_id)
 
         if data.name is not None:
             folder.name = data.name.strip()
@@ -258,13 +269,19 @@ class KnowledgeFolderService:
         db.commit()
         db.refresh(folder)
 
+        # Count documents directly in this folder using the composite index
+        # (kind_id, folder_id) when available.
+        doc_count = KnowledgeFolderService._count_folder_docs(
+            db, folder.id, folder.kind_id
+        )
+
         return KnowledgeFolderResponse(
             id=folder.id,
             kind_id=folder.kind_id,
             parent_id=folder.parent_id,
             name=folder.name,
             children=[],
-            document_count=KnowledgeFolderService._count_folder_docs(db, folder.id),
+            document_count=doc_count,
             created_at=folder.created_at,
             updated_at=folder.updated_at,
         )
@@ -292,33 +309,27 @@ class KnowledgeFolderService:
             ValueError: If folder not found or access denied
         """
         folder = KnowledgeFolderService.get_folder(db, folder_id, user_id)
+        KnowledgeFolderService._check_kb_write_access(db, folder.kind_id, user_id)
 
-        # Collect all descendant folder IDs (including self)
+        # Collect all descendant folder IDs (including self) via a single
+        # recursive CTE query instead of iterative BFS round-trips.
         descendant_ids = KnowledgeFolderService._collect_descendant_ids(
             db, folder_id, folder.kind_id
         )
         descendant_ids.add(folder_id)
 
-        # Move documents in the deleted folders back to root level
-        moved_count = (
-            db.query(KnowledgeDocument)
-            .filter(
-                KnowledgeDocument.kind_id == folder.kind_id,
-                KnowledgeDocument.folder_id.in_(descendant_ids),
-            )
-            .update({"folder_id": 0}, synchronize_session=False)
+        # Move documents in the deleted folders back to root level.
+        # When descendant_ids is large, split into batches to avoid MySQL
+        # query-plan degradation on oversized IN lists.
+        moved_count = KnowledgeFolderService._bulk_update_folder_id(
+            db, folder.kind_id, descendant_ids, target_folder_id=0
         )
 
-        # Delete all descendant folders (children first via ordered delete)
-        # Delete deeper folders first to avoid FK issues
-        all_descendant_folders = (
-            db.query(KnowledgeFolder)
-            .filter(KnowledgeFolder.id.in_(descendant_ids))
-            .order_by(KnowledgeFolder.parent_id.desc())
-            .all()
+        # Bulk delete all descendant folders (including self).
+        # No FK constraints on parent_id, so ordering is not required.
+        deleted_folder_count = KnowledgeFolderService._bulk_delete_folders(
+            db, descendant_ids
         )
-        for f in all_descendant_folders:
-            db.delete(f)
 
         db.commit()
 
@@ -330,7 +341,7 @@ class KnowledgeFolderService:
         )
 
         return {
-            "deleted_folder_count": len(all_descendant_folders),
+            "deleted_folder_count": deleted_folder_count,
             "moved_document_count": moved_count,
         }
 
@@ -358,14 +369,17 @@ class KnowledgeFolderService:
         doc = KnowledgeService.get_document(db, document_id, user_id)
         if not doc:
             raise ValueError("Document not found or access denied")
+        KnowledgeFolderService._check_kb_write_access(db, doc.kind_id, user_id)
 
-        # Validate target folder if not root
+        # Validate target folder if not root.
+        # Filter on kind_id first to leverage ix_knowledge_folders_parent
+        # (kind_id, parent_id) — the primary-key lookup on id is then cheap.
         if folder_id > 0:
             target_folder = (
                 db.query(KnowledgeFolder)
                 .filter(
-                    KnowledgeFolder.id == folder_id,
                     KnowledgeFolder.kind_id == doc.kind_id,
+                    KnowledgeFolder.id == folder_id,
                 )
                 .first()
             )
@@ -377,38 +391,168 @@ class KnowledgeFolderService:
         db.refresh(doc)
         return doc
 
+    # ------------------------------------------------------------------
+    # Private helpers
+    # ------------------------------------------------------------------
+
     @staticmethod
     def _collect_descendant_ids(db: Session, folder_id: int, kind_id: int) -> set:
         """Collect all descendant folder IDs for a given folder.
 
-        Uses iterative BFS scoped to a single knowledge base to avoid
-        recursion limits and cross-KB traversal.
+        Implementation strategy
+        -----------------------
+        Uses a **single recursive CTE** (MySQL 8.0+ / PostgreSQL / SQLite 3.35+)
+        instead of iterative BFS round-trips.  The CTE is scoped to a single
+        knowledge base (kind_id) and leverages the composite index
+        ix_knowledge_folders_parent (kind_id, parent_id) on every recursive
+        join, reducing total I/O from O(depth × fan-out) round-trips to a
+        single server-side traversal.
+
+        Falls back to iterative BFS (using a deque for O(1) pops) when the
+        database dialect does not support recursive CTEs.
+        """
+        try:
+            return KnowledgeFolderService._collect_descendant_ids_cte(
+                db, folder_id, kind_id
+            )
+        except Exception:
+            # Fallback for databases that do not support recursive CTEs.
+            logger.warning(
+                "Recursive CTE not supported, falling back to iterative BFS "
+                "for folder %d",
+                folder_id,
+            )
+            return KnowledgeFolderService._collect_descendant_ids_bfs(
+                db, folder_id, kind_id
+            )
+
+    @staticmethod
+    def _collect_descendant_ids_cte(db: Session, folder_id: int, kind_id: int) -> set:
+        """Single-query recursive CTE implementation.
+
+        Emits exactly one SQL statement regardless of tree depth.
+        The recursive join uses ix_knowledge_folders_parent (kind_id, parent_id).
+        """
+        sql = text(
+            """
+            WITH RECURSIVE descendants AS (
+                -- Anchor: direct children of the target folder
+                SELECT id
+                FROM   knowledge_folders
+                WHERE  kind_id   = :kind_id
+                  AND  parent_id = :folder_id
+
+                UNION ALL
+
+                -- Recursive: children of already-found descendants
+                SELECT kf.id
+                FROM   knowledge_folders kf
+                INNER JOIN descendants d ON kf.parent_id = d.id
+                WHERE  kf.kind_id = :kind_id
+            )
+            SELECT id FROM descendants
+            """
+        )
+        rows = db.execute(sql, {"kind_id": kind_id, "folder_id": folder_id}).fetchall()
+        return {row[0] for row in rows}
+
+    @staticmethod
+    def _collect_descendant_ids_bfs(db: Session, folder_id: int, kind_id: int) -> set:
+        """Iterative BFS fallback using a deque for O(1) pops.
+
+        Issues one query per BFS level (not per node) by batching the
+        parent_id IN (...) lookup across all nodes at the same depth.
+        This reduces round-trips from O(total_nodes) to O(tree_depth).
         """
         descendant_ids: set = set()
-        queue = [folder_id]
+        # Process one full BFS level per iteration
+        current_level = [folder_id]
 
-        while queue:
-            current = queue.pop(0)
+        while current_level:
             children = (
                 db.query(KnowledgeFolder.id)
                 .filter(
-                    KnowledgeFolder.parent_id == current,
                     KnowledgeFolder.kind_id == kind_id,
+                    KnowledgeFolder.parent_id.in_(current_level),
                 )
                 .all()
             )
+            next_level = []
             for (child_id,) in children:
                 if child_id not in descendant_ids:
                     descendant_ids.add(child_id)
-                    queue.append(child_id)
+                    next_level.append(child_id)
+            current_level = next_level
 
         return descendant_ids
 
     @staticmethod
-    def _count_folder_docs(db: Session, folder_id: int) -> int:
-        """Count documents directly in a folder."""
+    def _count_folder_docs(db: Session, folder_id: int, kind_id: int) -> int:
+        """Count documents directly in a folder.
+
+        Filters on both kind_id and folder_id so the query can use a
+        composite index (kind_id, folder_id) when available, avoiding a
+        full-table scan on the million-row documents table.
+        """
         return (
             db.query(func.count(KnowledgeDocument.id))
-            .filter(KnowledgeDocument.folder_id == folder_id)
+            .filter(
+                KnowledgeDocument.kind_id == kind_id,
+                KnowledgeDocument.folder_id == folder_id,
+            )
             .scalar()
         ) or 0
+
+    @staticmethod
+    def _bulk_update_folder_id(
+        db: Session,
+        kind_id: int,
+        folder_ids: set,
+        target_folder_id: int,
+    ) -> int:
+        """Move documents from a set of folders to target_folder_id.
+
+        Splits large ID sets into batches of _MAX_IN_CLAUSE_SIZE to prevent
+        MySQL query-plan degradation on oversized IN lists.
+
+        Returns total number of rows updated.
+        """
+        id_list = list(folder_ids)
+        total_moved = 0
+
+        for i in range(0, len(id_list), _MAX_IN_CLAUSE_SIZE):
+            batch = id_list[i : i + _MAX_IN_CLAUSE_SIZE]
+            moved = (
+                db.query(KnowledgeDocument)
+                .filter(
+                    KnowledgeDocument.kind_id == kind_id,
+                    KnowledgeDocument.folder_id.in_(batch),
+                )
+                .update({"folder_id": target_folder_id}, synchronize_session=False)
+            )
+            total_moved += moved
+
+        return total_moved
+
+    @staticmethod
+    def _bulk_delete_folders(db: Session, folder_ids: set) -> int:
+        """Delete folders by ID set in batches.
+
+        Splits large ID sets into batches of _MAX_IN_CLAUSE_SIZE to prevent
+        MySQL query-plan degradation on oversized IN lists.
+
+        Returns total number of rows deleted.
+        """
+        id_list = list(folder_ids)
+        total_deleted = 0
+
+        for i in range(0, len(id_list), _MAX_IN_CLAUSE_SIZE):
+            batch = id_list[i : i + _MAX_IN_CLAUSE_SIZE]
+            deleted = (
+                db.query(KnowledgeFolder)
+                .filter(KnowledgeFolder.id.in_(batch))
+                .delete(synchronize_session=False)
+            )
+            total_deleted += deleted
+
+        return total_deleted

@@ -182,8 +182,6 @@ class KnowledgeFolder(Base):
     )
 
     __table_args__ = (
-        # Index for querying folders by knowledge base
-        Index("ix_knowledge_folders_kind", "kind_id"),
         # Index for querying child folders under a parent within a knowledge base
         Index("ix_knowledge_folders_parent", "kind_id", "parent_id"),
         {

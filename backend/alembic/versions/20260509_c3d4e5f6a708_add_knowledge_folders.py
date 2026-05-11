@@ -29,20 +29,20 @@ def upgrade() -> None:
         "knowledge_folders",
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
         sa.Column("kind_id", sa.Integer(), nullable=False),
-        sa.Column("parent_id", sa.Integer(), nullable=False, server_default=sa.text("0")),
+        sa.Column(
+            "parent_id", sa.Integer(), nullable=False, server_default=sa.text("0")
+        ),
         sa.Column("name", sa.String(255), nullable=False),
-        sa.Column("created_at", sa.DateTime(), nullable=False, server_default=sa.func.now()),
-        sa.Column("updated_at", sa.DateTime(), nullable=False, server_default=sa.func.now()),
+        sa.Column(
+            "created_at", sa.DateTime(), nullable=False, server_default=sa.func.now()
+        ),
+        sa.Column(
+            "updated_at", sa.DateTime(), nullable=False, server_default=sa.func.now()
+        ),
         sa.PrimaryKeyConstraint("id"),
         mysql_charset="utf8mb4",
         mysql_engine="InnoDB",
         comment="Knowledge base folder hierarchy for multi-level document organization",
-    )
-    op.create_index(
-        "ix_knowledge_folders_kind",
-        "knowledge_folders",
-        ["kind_id"],
-        unique=False,
     )
     op.create_index(
         "ix_knowledge_folders_parent",
@@ -73,5 +73,4 @@ def downgrade() -> None:
     op.drop_index("ix_knowledge_documents_folder", table_name="knowledge_documents")
     op.drop_column("knowledge_documents", "folder_id")
     op.drop_index("ix_knowledge_folders_parent", table_name="knowledge_folders")
-    op.drop_index("ix_knowledge_folders_kind", table_name="knowledge_folders")
     op.drop_table("knowledge_folders")

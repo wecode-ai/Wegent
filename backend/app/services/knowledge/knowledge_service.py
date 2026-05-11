@@ -675,6 +675,12 @@ class KnowledgeService:
                 "Please delete all documents first."
             )
 
+        # Delete all folders belonging to this knowledge base to prevent orphaned records.
+        # Folders have no FK constraint on kind_id, so they must be cleaned up explicitly.
+        db.query(KnowledgeFolder).filter(
+            KnowledgeFolder.kind_id == knowledge_base_id
+        ).delete(synchronize_session=False)
+
         # Delete all members for this KB
         knowledge_share_service.delete_members_for_kb(db, knowledge_base_id)
 

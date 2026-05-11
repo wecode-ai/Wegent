@@ -46,6 +46,7 @@ export function CreateFolderDialog({
   }, [open, initialName])
 
   const handleSubmit = () => {
+    if (isSubmitting) return
     const trimmed = name.trim()
     if (!trimmed) return
     onSubmit(trimmed)
@@ -56,15 +57,11 @@ export function CreateFolderDialog({
     onOpenChange(false)
   }
 
-  const title = isRename
-    ? t('document.folder.renameTitle')
-    : t('document.folder.createTitle')
+  const title = isRename ? t('document.folder.renameTitle') : t('document.folder.createTitle')
   const placeholder = isRename
     ? t('document.folder.renamePlaceholder')
     : t('document.folder.createPlaceholder')
-  const actionLabel = isRename
-    ? t('common:actions.save')
-    : t('common:actions.create')
+  const actionLabel = isRename ? t('common:actions.save') : t('common:actions.create')
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
@@ -86,7 +83,12 @@ export function CreateFolderDialog({
           />
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={handleClose} disabled={isSubmitting} data-testid="folder-dialog-cancel">
+          <Button
+            variant="outline"
+            onClick={handleClose}
+            disabled={isSubmitting}
+            data-testid="folder-dialog-cancel"
+          >
             {t('common:actions.cancel')}
           </Button>
           <Button
