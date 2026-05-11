@@ -228,7 +228,8 @@ def create_group_member(
     member = ResourceMember(
         resource_type=NAMESPACE_RESOURCE_TYPE,
         resource_id=namespace_id,
-        user_id=user_id,
+        entity_type='user',
+        entity_id=str(user_id),
         role=role,
         status=MemberStatus.APPROVED.value,
         invited_by_user_id=invited_by_user_id,

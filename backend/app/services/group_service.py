@@ -145,7 +145,8 @@ def create_group(
     owner_member = ResourceMember(
         resource_type=NAMESPACE_RESOURCE_TYPE,
         resource_id=new_group.id,
-        user_id=owner_user_id,
+        entity_type='user',
+        entity_id=str(owner_user_id),
         role=GroupRole.Owner.value,
         status=MemberStatus.APPROVED.value,
         invited_by_user_id=owner_user_id,  # Self-invited
@@ -987,7 +988,8 @@ def invite_all_users(
             new_member = ResourceMember(
                 resource_type=NAMESPACE_RESOURCE_TYPE,
                 resource_id=group.id,
-                user_id=user.id,
+                entity_type='user',
+                entity_id=str(user.id),
                 role=GroupRole.Reporter.value,
                 status=MemberStatus.APPROVED.value,
                 invited_by_user_id=invited_by_user_id,
