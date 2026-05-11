@@ -1,5 +1,6 @@
 {
   "title": "Chat",
+  "scroll_to_bottom": "Scroll to bottom",
   "placeholder": {
     "input": "Type your message here...",
     "empty": "No messages yet. Start a conversation!"
