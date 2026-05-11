@@ -458,7 +458,11 @@
       "namespaceMembers": "群组权限",
       "addNamespace": "添加群组",
       "noNamespacePermissions": "暂无群组权限",
-      "namespace": "群组"
+      "namespace": "群组",
+      "source": {
+        "shareLink": "链接",
+        "entityPermission": "群组"
+      }
     },
     "advancedSettings": {
       "title": "高级设置",

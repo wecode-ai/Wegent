@@ -458,7 +458,11 @@
       "namespaceMembers": "Group Permissions",
       "addNamespace": "Add group",
       "noNamespacePermissions": "No group permissions yet",
-      "namespace": "Group"
+      "namespace": "Group",
+      "source": {
+        "shareLink": "Link",
+        "entityPermission": "Group"
+      }
     },
     "advancedSettings": {
       "title": "Advanced Settings",
