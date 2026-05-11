@@ -281,6 +281,7 @@
     "copy_skills_skip": "仅复制智能体",
     "copy_skills_count": "{{count}} 个 Skill",
     "more": "更多",
+    "reorder_quick_access": "拖拽调整 QuickCard 顺序",
     "more_teams": "查看更多智能体",
     "more_actions": "更多操作",
     "no_teams": "没有可用的智能体",

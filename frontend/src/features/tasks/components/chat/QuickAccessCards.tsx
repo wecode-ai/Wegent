@@ -6,7 +6,7 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { SparklesIcon, ChevronDownIcon } from '@heroicons/react/24/outline'
-import { Check, Search } from 'lucide-react'
+import { Check, GripVertical, Search } from 'lucide-react'
 import { userApis } from '@/apis/user'
 import type { QuickAccessResponse, QuickAccessTeam, Team, UserPreferences } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -237,13 +237,19 @@ export function QuickAccessCards({
     [persistQuickAccessOrder, quickAccessTeams]
   )
 
-  const handleCardDragStart = (event: React.DragEvent<HTMLDivElement>, team: DisplayTeam) => {
+  const handleQuickAccessDragStart = (
+    event: React.DragEvent<HTMLElement>,
+    team: DisplayTeam
+  ) => {
     setDraggedTeamId(team.id)
     event.dataTransfer.effectAllowed = 'move'
     event.dataTransfer.setData('text/plain', String(team.id))
   }
 
-  const handleCardDragOver = (event: React.DragEvent<HTMLDivElement>, team: DisplayTeam) => {
+  const handleQuickAccessDragOver = (
+    event: React.DragEvent<HTMLElement>,
+    team: DisplayTeam
+  ) => {
     if (!draggedTeamId || draggedTeamId === team.id) return
 
     event.preventDefault()
@@ -251,7 +257,7 @@ export function QuickAccessCards({
     setDragOverTeamId(team.id)
   }
 
-  const handleCardDrop = (event: React.DragEvent<HTMLDivElement>, team: DisplayTeam) => {
+  const handleQuickAccessDrop = (event: React.DragEvent<HTMLElement>, team: DisplayTeam) => {
     event.preventDefault()
 
     if (!draggedTeamId) return
@@ -262,7 +268,7 @@ export function QuickAccessCards({
     setDragOverTeamId(null)
   }
 
-  const handleCardDragEnd = () => {
+  const handleQuickAccessDragEnd = () => {
     setDraggedTeamId(null)
     setDragOverTeamId(null)
     window.setTimeout(() => {
@@ -341,11 +347,11 @@ export function QuickAccessCards({
       <div
         draggable
         onClick={() => !isClicked && handleTeamClick(team)}
-        onDragStart={event => handleCardDragStart(event, team)}
-        onDragOver={event => handleCardDragOver(event, team)}
+        onDragStart={event => handleQuickAccessDragStart(event, team)}
+        onDragOver={event => handleQuickAccessDragOver(event, team)}
         onDragLeave={() => setDragOverTeamId(null)}
-        onDrop={event => handleCardDrop(event, team)}
-        onDragEnd={handleCardDragEnd}
+        onDrop={event => handleQuickAccessDrop(event, team)}
+        onDragEnd={handleQuickAccessDragEnd}
         data-testid={`quick-access-team-${team.name}`}
         className={`
           group relative flex flex-col justify-center
@@ -484,10 +490,14 @@ export function QuickAccessCards({
                 return (
                   <div
                     key={team.id}
+                    data-testid={`quick-access-more-team-${team.name}`}
                     className={`flex items-center gap-2 px-2 py-2 rounded-md cursor-pointer transition-colors ${
                       isSelected ? 'bg-primary/10' : 'hover:bg-hover'
-                    }`}
+                    } ${dragOverTeamId === team.id ? 'ring-2 ring-primary/40' : ''}`}
                     onClick={() => handleSelectTeamFromMore(team)}
+                    onDragOver={event => handleQuickAccessDragOver(event, team)}
+                    onDragLeave={() => setDragOverTeamId(null)}
+                    onDrop={event => handleQuickAccessDrop(event, team)}
                     role="button"
                     tabIndex={0}
                     onKeyDown={e => {
@@ -497,6 +507,22 @@ export function QuickAccessCards({
                       }
                     }}
                   >
+                    <button
+                      type="button"
+                      draggable={quickAccessTeams.length > 1}
+                      data-testid={`quick-access-sort-handle-${team.id}`}
+                      aria-label={t('common:teams.reorder_quick_access')}
+                      title={t('common:teams.reorder_quick_access')}
+                      onClick={event => event.stopPropagation()}
+                      onDragStart={event => {
+                        event.stopPropagation()
+                        handleQuickAccessDragStart(event, team)
+                      }}
+                      onDragEnd={handleQuickAccessDragEnd}
+                      className="h-7 w-7 flex-shrink-0 rounded-md inline-flex items-center justify-center cursor-grab active:cursor-grabbing text-text-muted hover:bg-hover hover:text-primary transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                    >
+                      <GripVertical className="h-4 w-4" aria-hidden="true" />
+                    </button>
                     <div
                       className={`w-4 h-4 rounded border flex items-center justify-center flex-shrink-0 ${
                         isSelected

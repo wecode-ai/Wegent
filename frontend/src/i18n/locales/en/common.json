@@ -281,6 +281,7 @@
     "copy_skills_skip": "Agent Only",
     "copy_skills_count": "{{count}} skill(s)",
     "more": "More",
+    "reorder_quick_access": "Drag to reorder QuickCards",
     "more_teams": "View more teams",
     "more_actions": "More Actions",
     "no_teams": "No teams available",
