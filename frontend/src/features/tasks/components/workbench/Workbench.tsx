@@ -123,6 +123,8 @@ interface WorkbenchProps {
     | null
 }
 
+type WorkbenchDisplayStatus = 'running' | 'completed' | 'failed' | 'pending_confirmation'
+
 function classNames(...classes: string[]) {
   return classes.filter(Boolean).join(' ')
 }
@@ -233,6 +235,27 @@ export default function Workbench({
   // If loading has finished without workbench data, still show the task status instead of a spinner.
   const displayData = cachedWorkbenchData
 
+  const getDisplayStatus = (): WorkbenchDisplayStatus | null => {
+    switch (taskStatus) {
+      case 'COMPLETED':
+        return 'completed'
+      case 'FAILED':
+      case 'CANCELLED':
+      case 'DELETE':
+        return 'failed'
+      case 'PENDING_CONFIRMATION':
+        return 'pending_confirmation'
+      case 'PENDING':
+      case 'RUNNING':
+      case 'CANCELLING':
+        return 'running'
+      default:
+        return displayData?.status || null
+    }
+  }
+
+  const displayStatus = getDisplayStatus()
+
   const shouldShowLoading = isLoading && !displayData && !hasBlocks
 
   // Loading state rotation (4 seconds)
@@ -313,7 +336,8 @@ export default function Workbench({
   // Only load once per task - prevent infinite retry on error
   useEffect(() => {
     if (
-      cachedWorkbenchData?.status === 'completed' &&
+      cachedWorkbenchData &&
+      displayStatus === 'completed' &&
       cachedWorkbenchData.git_info.source_branch &&
       cachedWorkbenchData.git_info.target_branch &&
       !diffData &&
@@ -324,7 +348,7 @@ export default function Workbench({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    cachedWorkbenchData?.status,
+    displayStatus,
     cachedWorkbenchData?.git_info.source_branch,
     cachedWorkbenchData?.git_info.target_branch,
     diffData,
@@ -335,7 +359,7 @@ export default function Workbench({
   // Check if we should show diff data
   const shouldShowDiffData = () => {
     return (
-      displayData?.status === 'completed' &&
+      displayStatus === 'completed' &&
       diffData &&
       !isDiffLoading &&
       !diffLoadError &&
@@ -376,22 +400,26 @@ export default function Workbench({
   ]
 
   const getStatusColor = () => {
-    switch (displayData?.status) {
+    switch (displayStatus) {
       case 'completed':
         return 'text-green-600'
       case 'failed':
         return 'text-red-600'
+      case 'pending_confirmation':
+        return 'text-yellow-600'
       default:
         return 'text-yellow-600'
     }
   }
 
   const getStatusText = () => {
-    switch (displayData?.status) {
+    switch (displayStatus) {
       case 'completed':
         return t('tasks:workbench.status.completed')
       case 'failed':
         return t('tasks:workbench.status.failed')
+      case 'pending_confirmation':
+        return t('tasks:workbench.status.pending_confirmation')
       default:
         return t('tasks:workbench.status.running')
     }
@@ -416,11 +444,16 @@ export default function Workbench({
       case 'PENDING':
       case 'RUNNING':
       case 'CANCELLING':
-      case 'PENDING_CONFIRMATION':
         return {
           color: 'text-yellow-600',
           icon: 'running' as const,
           text: t('tasks:workbench.status.running'),
+        }
+      case 'PENDING_CONFIRMATION':
+        return {
+          color: 'text-yellow-600',
+          icon: 'success' as const,
+          text: t('tasks:workbench.status.pending_confirmation'),
         }
       default:
         return null
@@ -496,10 +529,10 @@ export default function Workbench({
 
   // Auto-collapse timeline when task is completed
   useEffect(() => {
-    if (displayData?.status === 'completed' && timelineItems.length > 0) {
+    if (displayStatus === 'completed' && timelineItems.length > 0) {
       setIsTimelineExpanded(false)
     }
-  }, [displayData?.status, timelineItems.length])
+  }, [displayStatus, timelineItems.length])
 
   // Auto-switch to preview tab when app data first becomes available
   useEffect(() => {
@@ -675,8 +708,12 @@ export default function Workbench({
                             'inline-flex items-center gap-2 rounded-full px-3 py-1 text-sm font-medium bg-muted'
                           )}
                         >
-                          {displayData?.status === 'running' ? (
+                          {displayStatus === 'running' ? (
                             <div className="animate-spin rounded-full h-4 w-4 border-[2px] border-current border-t-transparent"></div>
+                          ) : displayStatus === 'failed' ? (
+                            <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 16 16">
+                              <path d="M8 16A8 8 0 1 1 8 0a8 8 0 0 1 0 16zM5.354 4.646a.5.5 0 1 0-.708.708L7.293 8l-2.647 2.646a.5.5 0 0 0 .708.708L8 8.707l2.646 2.647a.5.5 0 0 0 .708-.708L8.707 8l2.647-2.646a.5.5 0 0 0-.708-.708L8 7.293 5.354 4.646z" />
+                            </svg>
                           ) : (
                             <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 16 16">
                               <path d="M8 16A8 8 0 1 1 8 0a8 8 0 0 1 0 16zm3.78-9.72a.75.75 0 0 0-1.06-1.06L6.75 9.19 5.28 7.72a.75.75 0 0 0-1.06 1.06l2 2a.75.75 0 0 0 1.06 0l4.5-4.5z" />
@@ -753,7 +790,7 @@ export default function Workbench({
                                 {displayData.git_info.target_branch}
                               </span>
                             </>
-                          ) : displayData?.status === 'running' ? (
+                          ) : displayStatus === 'running' ? (
                             <>
                               <ChevronRightIcon className="w-4 h-4 text-text-muted" />
                               <div className="flex items-center gap-1.5">
