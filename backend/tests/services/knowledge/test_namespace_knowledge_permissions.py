@@ -251,6 +251,32 @@ def test_grouped_organization_kbs_resolve_role_per_namespace(
 
 
 @pytest.mark.unit
+def test_grouped_organization_kbs_do_not_also_appear_in_groups(
+    test_db: Session,
+) -> None:
+    owner = _create_user(test_db, "org-groups-owner")
+    member = _create_user(test_db, "org-groups-member")
+    namespace = _create_namespace(
+        test_db, owner, "org-groups-space", level="organization"
+    )
+    _add_member(test_db, namespace, owner, GroupRole.Owner, owner.id)
+    _add_member(test_db, namespace, member, GroupRole.Developer, owner.id)
+
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(name="org-groups-kb", namespace=namespace.name),
+    )
+
+    grouped = KnowledgeService.get_all_knowledge_bases_grouped(test_db, member.id)
+
+    assert knowledge_base_id in {kb.id for kb in grouped.organization.knowledge_bases}
+    assert knowledge_base_id not in {
+        kb.id for group in grouped.groups for kb in group.knowledge_bases
+    }
+
+
+@pytest.mark.unit
 def test_personal_grouped_excludes_shared_organization_kb(test_db: Session) -> None:
     owner = _create_user(test_db, "personal-org-owner")
     recipient = _create_user(test_db, "personal-org-recipient")

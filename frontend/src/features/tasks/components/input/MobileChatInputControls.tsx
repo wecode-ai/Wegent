@@ -4,10 +4,11 @@
 
 'use client'
 
-import React, { useState, useEffect } from 'react'
-import { CircleStop, Settings2 } from 'lucide-react'
+import React, { useMemo, useState, useEffect } from 'react'
+import { CircleStop, Plus } from 'lucide-react'
 import MobileModelSelector from '../selector/MobileModelSelector'
 import type { Model } from '../selector/ModelSelector'
+import MobileTeamSelector from '../selector/MobileTeamSelector'
 import MobileRepositorySelector from '../selector/MobileRepositorySelector'
 import MobileBranchSelector from '../selector/MobileBranchSelector'
 import MobileClarificationToggle from '../clarification/MobileClarificationToggle'
@@ -19,12 +20,6 @@ import SendButton from './SendButton'
 import LoadingDots from '../message/LoadingDots'
 import { ActionButton } from '@/components/ui/action-button'
 import { Button } from '@/components/ui/button'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuTrigger,
-  DropdownMenuSeparator,
-} from '@/components/ui/dropdown'
 import type {
   Team,
   GitRepoInfo,
@@ -47,6 +42,8 @@ export interface MobileChatInputControlsProps {
   taskType?: TaskType
   // Team and Model
   selectedTeam: Team | null
+  teams?: Team[]
+  onTeamChange?: (team: Team) => void
   selectedModel: Model | null
   setSelectedModel: (model: Model | null) => void
   forceOverride: boolean
@@ -129,6 +126,8 @@ export interface MobileChatInputControlsProps {
 export function MobileChatInputControls({
   taskType,
   selectedTeam,
+  teams = [],
+  onTeamChange,
   selectedModel,
   setSelectedModel,
   forceOverride,
@@ -178,6 +177,33 @@ export function MobileChatInputControls({
   const [dingTalkAudioSupported, setDingTalkAudioSupported] = useState(false)
   const [isVoiceMode, setIsVoiceMode] = useState(false)
   const showChatContexts = canUseChatContexts(taskType, selectedTeam)
+  const showAttachmentAction = supportsAttachments(selectedTeam)
+  const showSkillAction = availableSkills.length > 0 && Boolean(onToggleSkill)
+  const currentMode = taskType ?? 'chat'
+  const filteredTeams = useMemo(() => {
+    return teams
+      .filter(team => !(Array.isArray(team.bind_mode) && team.bind_mode.length === 0))
+      .filter(team => !team.bind_mode || team.bind_mode.includes(currentMode))
+  }, [teams, currentMode])
+  const selectedTeamForDisplay = useMemo(() => {
+    if (!selectedTeam) return null
+    return filteredTeams.find(team => team.id === selectedTeam.id) ?? selectedTeam
+  }, [filteredTeams, selectedTeam])
+  const canSwitchTeam =
+    Boolean(selectedTeamForDisplay) &&
+    filteredTeams.length > 0 &&
+    Boolean(onTeamChange) &&
+    !hasMessages &&
+    taskType !== 'image' &&
+    taskType !== 'video'
+  const showClarificationAction = isChatShell(selectedTeam)
+  const showCorrectionAction = isChatShell(selectedTeam) && Boolean(onCorrectionModeToggle)
+  const showRepositoryAction =
+    showRepositorySelector &&
+    teamRequiresWorkspace(selectedTeam) &&
+    effectiveRequiresWorkspace !== false
+  const showBranchAction = showRepositoryAction && Boolean(selectedRepo)
+  const hasSecondaryActions = showAttachmentAction || showChatContexts || showSkillAction
 
   // Check DingTalk audio API support on mount
   useEffect(() => {
@@ -257,54 +283,66 @@ export function MobileChatInputControls({
   const showVoiceButton = dingTalkAudioSupported && onVoiceTextResult
 
   return (
-    <div className={`flex items-center px-3 gap-2 ${shouldHideChatInput ? 'py-3' : 'pb-2 pt-1'}`}>
+    <div
+      className={`flex items-center justify-between px-3 gap-2 ${shouldHideChatInput ? 'py-3' : 'pb-2 pt-1'}`}
+    >
+      {/* Left: secondary actions menu - hidden when hideSelectors is true */}
       {!isVoiceMode && (
         <div
-          className={`flex items-center gap-1 min-w-0 flex-1 overflow-x-auto scrollbar-none ${hideSelectors ? 'opacity-50 pointer-events-none' : ''}`}
+          className={`relative flex items-center gap-1 flex-shrink-0 ${hideSelectors ? 'opacity-50 pointer-events-none' : ''}`}
           data-tour="input-controls"
         >
-          {/* Attachment */}
-          {supportsAttachments(selectedTeam) && (
-            <AttachmentButton onFileSelect={onFileSelect} disabled={isLoading || isStreaming} />
-          )}
-          {/* Context (Knowledge base) */}
-          {showChatContexts && (
-            <ChatContextInput
-              selectedContexts={selectedContexts}
-              onContextsChange={setSelectedContexts}
-              excludeKnowledgeBaseId={knowledgeBaseId}
-            />
-          )}
+          {/* Secondary actions menu */}
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            aria-expanded={moreMenuOpen}
+            aria-label="More actions"
+            title="More actions"
+            onClick={() => setMoreMenuOpen(open => !open)}
+            className="h-8 w-8 p-0 rounded-full border border-border bg-base text-text-muted hover:text-text-primary hover:bg-hover"
+          >
+            <Plus className="h-4 w-4" />
+          </Button>
 
-          {/* Skill Selector - show when skills are available */}
-          {/* Skill selection is read-only after task creation (hasMessages) */}
-          {availableSkills.length > 0 && onToggleSkill && (
-            <SkillSelectorPopover
-              skills={availableSkills}
-              teamSkillNames={teamSkillNames}
-              preloadedSkillNames={preloadedSkillNames}
-              selectedSkillNames={selectedSkillNames}
-              onToggleSkill={onToggleSkill}
-              isChatShell={isChatShell(selectedTeam)}
-              disabled={isLoading || isStreaming}
-              readOnly={hasMessages}
-            />
-          )}
+          {moreMenuOpen && (
+            <div className="absolute bottom-full left-0 z-50 mb-2 w-56 rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-md">
+              {hasSecondaryActions && (
+                <div className="flex flex-col">
+                  {showAttachmentAction && (
+                    <AttachmentButton
+                      onFileSelect={onFileSelect}
+                      disabled={isLoading || isStreaming}
+                      triggerVariant="menu-item"
+                    />
+                  )}
+                  {showChatContexts && (
+                    <ChatContextInput
+                      selectedContexts={selectedContexts}
+                      onContextsChange={setSelectedContexts}
+                      excludeKnowledgeBaseId={knowledgeBaseId}
+                      triggerVariant="menu-item"
+                    />
+                  )}
+                  {showSkillAction && onToggleSkill && (
+                    <SkillSelectorPopover
+                      skills={availableSkills}
+                      teamSkillNames={teamSkillNames}
+                      preloadedSkillNames={preloadedSkillNames}
+                      selectedSkillNames={selectedSkillNames}
+                      onToggleSkill={onToggleSkill}
+                      isChatShell={isChatShell(selectedTeam)}
+                      disabled={isLoading || isStreaming}
+                      readOnly={hasMessages}
+                      triggerVariant="menu-item"
+                    />
+                  )}
+                </div>
+              )}
 
-          {/* Settings dropdown */}
-          <DropdownMenu open={moreMenuOpen} onOpenChange={setMoreMenuOpen}>
-            <DropdownMenuTrigger asChild>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-8 w-8 p-0 rounded-full text-text-muted hover:text-text-primary"
-              >
-                <Settings2 className="h-4 w-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" side="top" className="w-64 mb-2">
               {/* Clarification Toggle - full row clickable */}
-              {isChatShell(selectedTeam) && (
+              {showClarificationAction && (
                 <MobileClarificationToggle
                   enabled={enableClarification}
                   onToggle={setEnableClarification}
@@ -313,7 +351,7 @@ export function MobileChatInputControls({
               )}
 
               {/* Correction Mode Toggle - full row clickable */}
-              {isChatShell(selectedTeam) && onCorrectionModeToggle && (
+              {showCorrectionAction && onCorrectionModeToggle && (
                 <MobileCorrectionModeToggle
                   enabled={enableCorrectionMode}
                   onToggle={onCorrectionModeToggle}
@@ -324,43 +362,48 @@ export function MobileChatInputControls({
               )}
 
               {/* Repository Selector - full row clickable, only show if team requires workspace */}
-              {showRepositorySelector &&
-                teamRequiresWorkspace(selectedTeam) &&
-                effectiveRequiresWorkspace !== false && (
-                  <>
-                    {/* Only show separator if there's content above (chat shell features) */}
-                    {isChatShell(selectedTeam) && <DropdownMenuSeparator />}
-                    <MobileRepositorySelector
-                      selectedRepo={selectedRepo}
-                      handleRepoChange={setSelectedRepo}
-                      disabled={hasMessages}
-                      selectedTaskDetail={selectedTaskDetail}
-                    />
-                  </>
-                )}
+              {showRepositoryAction && (
+                <MobileRepositorySelector
+                  selectedRepo={selectedRepo}
+                  handleRepoChange={setSelectedRepo}
+                  disabled={hasMessages}
+                  selectedTaskDetail={selectedTaskDetail}
+                />
+              )}
 
               {/* Branch Selector - full row clickable, only show if team requires workspace */}
-              {showRepositorySelector &&
-                teamRequiresWorkspace(selectedTeam) &&
-                effectiveRequiresWorkspace !== false &&
-                selectedRepo && (
-                  <MobileBranchSelector
-                    selectedRepo={selectedRepo}
-                    selectedBranch={selectedBranch}
-                    handleBranchChange={setSelectedBranch}
-                    disabled={hasMessages}
-                    taskDetail={selectedTaskDetail}
-                  />
-                )}
-            </DropdownMenuContent>
-          </DropdownMenu>
+              {showBranchAction && selectedRepo && (
+                <MobileBranchSelector
+                  selectedRepo={selectedRepo}
+                  selectedBranch={selectedBranch}
+                  handleBranchChange={setSelectedBranch}
+                  disabled={hasMessages}
+                  taskDetail={selectedTaskDetail}
+                />
+              )}
+            </div>
+          )}
         </div>
       )}
 
       {/* Right: Model selector, Voice button, Send button */}
       <div
-        className={`flex min-w-0 items-center gap-2 ${isVoiceMode ? 'w-full flex-1' : 'ml-auto flex-shrink-0'}`}
+        className={`flex items-center gap-2 min-w-0 overflow-hidden ${isVoiceMode ? 'w-full flex-1' : 'ml-auto flex-shrink-0'}`}
       >
+        {!isVoiceMode && canSwitchTeam && selectedTeamForDisplay && onTeamChange && (
+          <div
+            className={`min-w-0 overflow-hidden ${hideSelectors ? 'opacity-50 pointer-events-none' : ''}`}
+          >
+            <MobileTeamSelector
+              selectedTeam={selectedTeamForDisplay}
+              teams={filteredTeams}
+              onTeamSelect={onTeamChange}
+              disabled={isLoading || isStreaming}
+              isLoading={isLoading}
+              hideTriggerIcon={false}
+            />
+          </div>
+        )}
         {!isVoiceMode && selectedTeam && (
           <div
             className={`min-w-0 max-w-[112px] overflow-hidden ${shouldHideSideControls ? 'opacity-50 pointer-events-none' : ''}`}

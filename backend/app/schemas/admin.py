@@ -391,6 +391,9 @@ class PublicBotCreate(BaseModel):
     )
     skills: Optional[List[str]] = Field(None, description="Skills list for Ghost")
     agent_config: Optional[dict] = Field(None, description="Agent config for Model")
+    default_knowledge_base_refs: Optional[List[dict]] = Field(
+        None, description="Default knowledge base refs for Ghost"
+    )
 
     class Config:
         populate_by_name = True
@@ -413,6 +416,9 @@ class PublicBotUpdate(BaseModel):
     )
     skills: Optional[List[str]] = Field(None, description="Skills list for Ghost")
     agent_config: Optional[dict] = Field(None, description="Agent config for Model")
+    default_knowledge_base_refs: Optional[List[dict]] = Field(
+        None, description="Default knowledge base refs for Ghost"
+    )
 
     class Config:
         populate_by_name = True
@@ -437,6 +443,7 @@ class PublicBotResponse(BaseModel):
     system_prompt: Optional[str] = None
     mcp_servers: Optional[dict] = None
     skills: Optional[List[str]] = None
+    default_knowledge_base_refs: Optional[List[dict]] = None
     # Expanded Model fields for UI convenience
     agent_config: Optional[dict] = None
 
