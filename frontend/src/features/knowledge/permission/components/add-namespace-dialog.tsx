@@ -169,78 +169,75 @@ export function AddNamespaceDialog({
             <label className="text-sm font-medium">
               {loc('document.permission.selectGroup', '选择群组')}
             </label>
-            {selectedGroup ? (
-              <div className="flex items-center justify-between p-2 rounded-lg bg-muted/50 border border-border">
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium truncate">
-                    {selectedGroup.display_name || selectedGroup.name}
-                  </div>
-                  <div className="text-xs text-text-muted">
-                    {t('document.permission.groupMembers') || '群组成员'}: {selectedGroup.member_count || '?'}
-                  </div>
-                </div>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7 flex-shrink-0 text-text-muted hover:text-error"
-                  onClick={handleRemoveGroup}
-                >
-                  <XCircle className="w-4 h-4" />
-                </Button>
-              </div>
-            ) : fetchingGroups ? (
-              <div className="flex items-center justify-center py-4">
-                <Spinner />
-              </div>
-            ) : (
+            <div className="relative">
               <div className="relative">
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-text-muted" />
-                  <Input
-                    ref={inputRef}
-                    value={searchQuery}
-                    onChange={e => {
-                      setSearchQuery(e.target.value)
-                      setShowDropdown(true)
-                    }}
-                    onFocus={() => {
-                      if (!fetchingGroups && groups.length === 0) fetchGroups()
-                      setShowDropdown(true)
-                    }}
-                    placeholder={loc('document.permission.searchGroupPlaceholder', '搜索群组...')}
-                    className="pl-9"
-                    data-testid="add-namespace-group-search"
-                  />
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-text-muted" />
+                <Input
+                  ref={inputRef}
+                  value={searchQuery}
+                  onChange={e => {
+                    setSearchQuery(e.target.value)
+                    setShowDropdown(true)
+                  }}
+                  onFocus={() => {
+                    if (!fetchingGroups && groups.length === 0) fetchGroups()
+                    setShowDropdown(true)
+                  }}
+                  placeholder={loc('document.permission.searchGroupPlaceholder', '搜索群组...')}
+                  className="pl-9"
+                  data-testid="add-namespace-group-search"
+                />
+              </div>
+              {showDropdown && (
+                <div
+                  ref={dropdownRef}
+                  className="absolute z-50 w-full mt-1 bg-base border border-border rounded-md shadow-lg max-h-48 overflow-y-auto"
+                  data-testid="add-namespace-group-dropdown"
+                >
+                  {fetchingGroups ? (
+                    <div className="flex items-center justify-center p-3">
+                      <Spinner className="w-4 h-4" />
+                    </div>
+                  ) : filteredGroups.length === 0 ? (
+                    <div className="p-3 text-sm text-text-muted text-center">
+                      {searchQuery.trim()
+                        ? (t('common:userSearch.noResults') || '未找到结果')
+                        : loc('document.permission.noGroups', '暂无可用群组')}
+                    </div>
+                  ) : (
+                    filteredGroups.map(group => (
+                      <button
+                        key={group.id}
+                        type="button"
+                        onClick={() => handleSelectGroup(group)}
+                        className="w-full flex items-center gap-3 p-3 hover:bg-surface cursor-pointer text-left"
+                      >
+                        <span className="font-medium text-sm text-text-primary">
+                          {group.display_name || group.name}
+                        </span>
+                      </button>
+                    ))
+                  )}
                 </div>
-                {showDropdown && (
-                  <div
-                    ref={dropdownRef}
-                    className="absolute z-50 w-full mt-1 bg-base border border-border rounded-md shadow-lg max-h-48 overflow-y-auto"
-                    data-testid="add-namespace-group-dropdown"
+              )}
+            </div>
+            {/* Selected group chip */}
+            {selectedGroup && (
+              <div className="flex flex-wrap gap-2">
+                <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-muted/70 border border-border text-sm">
+                  <span className="truncate max-w-[120px]">
+                    {selectedGroup.display_name || selectedGroup.name}
+                  </span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-4 w-4 text-text-muted hover:text-error flex-shrink-0 p-0"
+                    onClick={handleRemoveGroup}
                   >
-                    {filteredGroups.length === 0 ? (
-                      <div className="p-3 text-sm text-text-muted text-center">
-                        {searchQuery.trim()
-                          ? (t('common:userSearch.noResults') || '未找到结果')
-                          : loc('document.permission.noGroups', '暂无可用群组')}
-                      </div>
-                    ) : (
-                      filteredGroups.map(group => (
-                        <button
-                          key={group.id}
-                          type="button"
-                          onClick={() => handleSelectGroup(group)}
-                          className="w-full flex items-center gap-3 p-3 hover:bg-surface cursor-pointer text-left"
-                        >
-                          <span className="font-medium text-sm text-text-primary">
-                            {group.display_name || group.name}
-                          </span>
-                        </button>
-                      ))
-                    )}
-                  </div>
-                )}
+                    <XCircle className="w-3 h-3" />
+                  </Button>
+                </div>
               </div>
             )}
           </div>
