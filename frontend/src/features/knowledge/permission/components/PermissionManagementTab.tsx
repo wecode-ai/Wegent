@@ -24,9 +24,19 @@ import { ASSIGNABLE_ROLES } from '@/types/base-role'
 
 interface PermissionManagementTabProps {
   kbId: number
+  /**
+   * Extension tabs rendered below the standard permission UI.
+   * Used by internal deployments to add entity-type permission panels
+   * (e.g., department-level permissions).
+   */
+  extensionTabs?: Array<{
+    label: string
+    icon?: React.ReactNode
+    render: (props: { kbId: number }) => React.ReactNode
+  }>
 }
 
-export function PermissionManagementTab({ kbId }: PermissionManagementTabProps) {
+export function PermissionManagementTab({ kbId, extensionTabs }: PermissionManagementTabProps) {
   const { t } = useTranslation('knowledge')
   const [showAddUser, setShowAddUser] = useState(false)
   const [editingId, setEditingId] = useState<number | null>(null)
@@ -340,6 +350,21 @@ export function PermissionManagementTab({ kbId }: PermissionManagementTabProps) 
         kbId={kbId}
         onSuccess={fetchPermissions}
       />
+
+      {/* Extension Tabs (for internal deployment add-ons like department permissions) */}
+      {extensionTabs && extensionTabs.length > 0 && (
+        <div className="space-y-4">
+          {extensionTabs.map((tab, index) => (
+            <Card key={index} padding="default" className="space-y-4">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                {tab.icon && <span className="w-4 h-4">{tab.icon}</span>}
+                {tab.label}
+              </div>
+              {tab.render({ kbId })}
+            </Card>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -382,9 +407,16 @@ function PermissionGroup({
             className="group flex items-center justify-between p-2 rounded-lg hover:bg-muted transition-colors"
           >
             <div className="flex-1 min-w-0">
-              <div className="font-medium text-sm truncate">{user.username}</div>
+              <div className="font-medium text-sm truncate flex items-center gap-2">
+                {user.username}
+                {user.entity_type && user.entity_type !== 'user' && (
+                  <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-surface text-text-muted border-border border">
+                    {user.entity_type === 'org_department' ? '部门' : user.entity_type}
+                  </span>
+                )}
+              </div>
               <div className="text-xs text-text-muted truncate">
-                {user.email || t('document.permission.noEmail')}
+                {user.email || (user.entity_type && user.entity_type !== 'user' ? user.entity_id || '' : t('document.permission.noEmail'))}
               </div>
             </div>
             {editingId === user.id ? (

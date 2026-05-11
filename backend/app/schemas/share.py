@@ -137,12 +137,30 @@ class ShareLinkInDB(BaseModel):
 
 
 class ResourceMemberCreate(BaseModel):
-    """Request body for adding a member directly."""
+    """Request body for adding a member directly.
 
-    user_id: int = Field(description="User ID to add as member")
+    Supports both user and entity-type members:
+    - For user members: provide user_id, entity_type defaults to 'user'
+    - For entity members: provide entity_type, entity_id, entity_name (user_id=0)
+    """
+
+    user_id: int = Field(default=0, description="User ID to add as member (0 for entity members)")
     role: MemberRole = Field(
         default=MemberRole.Reporter,
         description="Member role (Owner not allowed)",
+    )
+    entity_type: Optional[str] = Field(
+        default=None,
+        description="Entity type: 'user' (default), 'org_department'. "
+        "When set to non-user type, user_id can be 0.",
+    )
+    entity_id: Optional[str] = Field(
+        default=None,
+        description="Entity identifier (required when entity_type is set and not 'user')",
+    )
+    entity_name: Optional[str] = Field(
+        default=None,
+        description="Entity display name (for non-user entities)",
     )
 
     @field_validator("role")
@@ -151,6 +169,14 @@ class ResourceMemberCreate(BaseModel):
         """Validate that Owner role cannot be assigned via API."""
         if v == MemberRole.Owner:
             raise ValueError("Owner role cannot be assigned via API")
+        return v
+
+    @field_validator("entity_type")
+    @classmethod
+    def validate_entity_type(cls, v: Optional[str]) -> Optional[str]:
+        """Normalize entity_type to lowercase."""
+        if v is not None:
+            return v.lower()
         return v
 
 
@@ -191,6 +217,9 @@ class ResourceMemberResponse(BaseModel):
     user_email: Optional[str] = None  # Populated from user lookup
     role: str = Field(description="Member role: Owner, Maintainer, Developer, Reporter")
     status: str
+    entity_type: Optional[str] = None
+    entity_id: Optional[str] = None
+    entity_name: Optional[str] = None
     invited_by_user_id: int
     invited_by_user_name: Optional[str] = None  # Populated from user lookup
     reviewed_by_user_id: Optional[int] = None
@@ -207,6 +236,8 @@ class FailedMemberResponse(BaseModel):
 
     user_id: int
     error: str
+    entity_type: Optional[str] = None
+    entity_id: Optional[str] = None
 
 
 class BatchResourceMemberResponse(BaseModel):
@@ -232,6 +263,9 @@ class ResourceMemberInDB(BaseModel):
     user_id: int
     role: str = Field(description="Member role: Owner, Maintainer, Developer, Reporter")
     status: str
+    entity_type: Optional[str] = None
+    entity_id: Optional[str] = None
+    entity_name: Optional[str] = None
     invited_by_user_id: int
     share_link_id: Optional[int] = None
     reviewed_by_user_id: Optional[int] = None

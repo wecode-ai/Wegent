@@ -643,6 +643,8 @@ class Settings(BaseSettings):
     AUTH_MODE: str = ""
     DINGTALK_FALLBACK_URL: str = ""
     ERP_API_KEY: str = ""
+    ERP_API_BASE_URL: str = ""
+    ERP_API_TIMEOUT: int = 30
 
     # Aidesk authentication configuration
     # Shared secret key for signature verification (must match 口袋 App)

@@ -351,6 +351,9 @@ def add_member(
         current_user_id=current_user.id,
         target_user_id=body.user_id,
         role=body.role,
+        entity_type=body.entity_type,
+        entity_id=body.entity_id,
+        entity_name=body.entity_name,
     )
 
 

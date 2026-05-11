@@ -599,6 +599,12 @@ export interface PermissionUserInfo {
   requested_at: string
   reviewed_at?: string
   reviewed_by?: number
+  /** Entity type: 'user' (default), 'org_department' */
+  entity_type?: string
+  /** Entity identifier */
+  entity_id?: string
+  /** Entity display name (for non-user entities like departments) */
+  entity_name?: string
 }
 
 export interface PendingPermissionInfo {

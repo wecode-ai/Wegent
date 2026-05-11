@@ -85,13 +85,35 @@ class ResourceMember(Base):
         comment="Resource ID",
     )
 
-    # Member info
+    # Entity info (polymorphic member identification)
+    # entity_type: "user" (default), "org_department"
+    # entity_id: user_id (for "user") or external identifier (e.g., department UUID)
+    # entity_name: display name for non-user entities
+    entity_type = Column(
+        String(20),
+        nullable=False,
+        default="user",
+        server_default="user",
+        comment="Entity type: user, org_department",
+    )
+    entity_id = Column(
+        String(100),
+        nullable=True,
+        comment="Entity identifier: user_id for 'user', external ID for others",
+    )
+    entity_name = Column(
+        String(255),
+        nullable=True,
+        comment="Entity display name (for non-user entities)",
+    )
+
+    # Member user ID (nullable for non-user entity types)
     user_id = Column(
         Integer,
         ForeignKey("users.id"),
-        nullable=False,
+        nullable=True,
         index=True,
-        comment="Member user ID",
+        comment="Member user ID (nullable for non-user entity types)",
     )
 
     # Relationship to User
@@ -173,7 +195,11 @@ class ResourceMember(Base):
 
     __table_args__ = (
         UniqueConstraint(
-            "resource_type", "resource_id", "user_id", name="uq_resource_members"
+            "resource_type",
+            "resource_id",
+            "entity_type",
+            "entity_id",
+            name="uq_resource_members_entity",
         ),
         Index("idx_resource_members_resource", "resource_type", "resource_id"),
         Index("idx_resource_members_status", "status"),
@@ -193,6 +219,12 @@ class ResourceMember(Base):
     )
 
     def __repr__(self) -> str:
+        if self.entity_type and self.entity_type != "user":
+            return (
+                f"<ResourceMember(id={self.id}, resource_type={self.resource_type}, "
+                f"resource_id={self.resource_id}, entity_type={self.entity_type}, "
+                f"entity_id={self.entity_id}, status={self.status})>"
+            )
         return (
             f"<ResourceMember(id={self.id}, resource_type={self.resource_type}, "
             f"resource_id={self.resource_id}, user_id={self.user_id}, "

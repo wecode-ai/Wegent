@@ -196,6 +196,39 @@ class KnowledgeShareService(UnifiedShareService):
 
         logger.warning(f"[_get_resource] User has NO explicit shared access")
 
+        # Check entity-type memberships (e.g., org_department)
+        entity_member = (
+            db.query(ResourceMember)
+            .filter(
+                ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
+                ResourceMember.resource_id == resource_id,
+                ResourceMember.entity_type.notin_(["user", None]),
+                ResourceMember.entity_type != "",
+                ResourceMember.entity_id.isnot(None),
+                ResourceMember.status == MemberStatus.APPROVED.value,
+            )
+            .first()
+        )
+        if entity_member:
+            from app.services.share.external_entity_resolver import (
+                get_entity_resolver,
+            )
+
+            resolver = get_entity_resolver(entity_member.entity_type)
+            if resolver:
+                matched_role = resolver.match_entity_bindings(
+                    db,
+                    user_id,
+                    entity_member.entity_type,
+                    [entity_member.entity_id],
+                )
+                if matched_role:
+                    logger.info(
+                        f"[_get_resource] User {user_id} matched entity "
+                        f"type='{entity_member.entity_type}' via resolver"
+                    )
+                    return kb
+
         # For organization knowledge bases, all authenticated users have access
         if is_organization_namespace(db, kb.namespace):
             logger.info(
@@ -367,6 +400,51 @@ class KnowledgeShareService(UnifiedShareService):
                 }
                 role = role_mapping.get(group_role, ResourceRole.Reporter.value)
                 return True, role, False
+
+        # Check entity-type memberships (e.g., org_department)
+        # Non-user entity permissions are resolved via registered IExternalEntityResolvers
+        entity_members = (
+            db.query(ResourceMember)
+            .filter(
+                ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
+                ResourceMember.resource_id == knowledge_base_id,
+                ResourceMember.entity_type.notin_(["user", None]),
+                ResourceMember.entity_type != "",
+                ResourceMember.entity_id.isnot(None),
+                ResourceMember.status == MemberStatus.APPROVED.value,
+            )
+            .all()
+        )
+
+        if entity_members:
+            from app.services.share.external_entity_resolver import (
+                get_entity_resolver,
+            )
+
+            # Group bindings by entity_type
+            entity_groups: dict[str, list[str]] = {}
+            entity_role_map: dict[str, str] = {}
+            for em in entity_members:
+                et = em.entity_type
+                eid = em.entity_id
+                if et and eid:
+                    entity_groups.setdefault(et, []).append(eid)
+                    # Store the role for this entity binding
+                    entity_role_map[f"{et}:{eid}"] = em.get_effective_role()
+
+            for entity_type_str, entity_ids in entity_groups.items():
+                resolver = get_entity_resolver(entity_type_str)
+                if resolver:
+                    matched_role = resolver.match_entity_bindings(
+                        db, user_id, entity_type_str, entity_ids
+                    )
+                    if matched_role:
+                        logger.info(
+                            f"[get_user_kb_permission] User {user_id} matched "
+                            f"entity_type='{entity_type_str}' via resolver, "
+                            f"role={matched_role}"
+                        )
+                        return True, matched_role, False
 
         # For personal knowledge bases (namespace == "default"), check if bound to group chat
         if kb.namespace == "default":

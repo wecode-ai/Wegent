@@ -765,13 +765,18 @@ class UnifiedShareService(ABC):
             .all()
         )
 
-        # Deduplicate members by user_id (keep the first one found for each user)
+        # Deduplicate members by user_id (for user-type) or (entity_type, entity_id)
         # This handles legacy data where the same user may have multiple records
-        # with different resource_type formats (e.g., "KNOWLEDGE_BASE" vs "KnowledgeBase")
         seen_user_ids = set()
+        seen_entities = set()
         members = []
         for member in all_members:
-            if member.user_id not in seen_user_ids:
+            if member.entity_type and member.entity_type != "user" and member.entity_id:
+                entity_key = (member.entity_type, member.entity_id)
+                if entity_key not in seen_entities:
+                    seen_entities.add(entity_key)
+                    members.append(member)
+            elif member.user_id not in seen_user_ids:
                 seen_user_ids.add(member.user_id)
                 members.append(member)
 
@@ -812,6 +817,9 @@ class UnifiedShareService(ABC):
         current_user_id: int,
         target_user_id: int,
         role: SchemaMemberRole,
+        entity_type: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_name: Optional[str] = None,
     ) -> ResourceMemberResponse:
         """Directly add a member to a resource."""
         # Validate resource and ownership/manage permission
@@ -828,27 +836,34 @@ class UnifiedShareService(ABC):
             raise HTTPException(status_code=403, detail="No permission to add members")
 
         # Cannot add self
-        if target_user_id == current_user_id:
+        if target_user_id == current_user_id and not entity_type:
             raise HTTPException(status_code=400, detail="Cannot add yourself")
 
-        # Check target user exists
-        target_user = (
-            db.query(User)
-            .filter(User.id == target_user_id, User.is_active.is_(True))
-            .first()
-        )
-        if not target_user:
-            raise HTTPException(status_code=404, detail="Target user not found")
+        # Determine effective entity type
+        eff_entity_type = entity_type if entity_type else "user"
+        eff_entity_id = entity_id if entity_id else str(target_user_id)
+
+        # Check target user exists (only for user-type members)
+        if eff_entity_type == "user":
+            target_user = (
+                db.query(User)
+                .filter(User.id == target_user_id, User.is_active.is_(True))
+                .first()
+            )
+            if not target_user:
+                raise HTTPException(status_code=404, detail="Target user not found")
+        else:
+            target_user = None
 
         # LOGGING: Log user information to verify email is available in User model
-        logger.info(
-            f"[add_member] Target user found: user_id={target_user_id}, "
-            f"user_name={target_user.user_name}, email={target_user.email}"
-        )
+        if target_user:
+            logger.info(
+                f"[add_member] Target user found: user_id={target_user_id}, "
+                f"user_name={target_user.user_name}, email={target_user.email}"
+            )
 
-        # Check for existing member
+        # Check for existing member by entity
         # Note: Database may store resource_type in different formats (e.g., "KNOWLEDGE_BASE" vs "KnowledgeBase")
-        # We need to check both formats to handle legacy data and prevent duplicate records
         resource_type_variants = [self.resource_type.value]
         if self.resource_type.value == "KnowledgeBase":
             resource_type_variants.append("KNOWLEDGE_BASE")
@@ -858,7 +873,8 @@ class UnifiedShareService(ABC):
             .filter(
                 ResourceMember.resource_type.in_(resource_type_variants),
                 ResourceMember.resource_id == resource_id,
-                ResourceMember.user_id == target_user_id,
+                ResourceMember.entity_type == eff_entity_type,
+                ResourceMember.entity_id == eff_entity_id,
             )
             .first()
         )
@@ -949,6 +965,9 @@ class UnifiedShareService(ABC):
                 resource_type=self.resource_type.value,
                 resource_id=resource_id,
                 user_id=target_user_id,
+                entity_type=eff_entity_type,
+                entity_id=eff_entity_id,
+                entity_name=entity_name,
                 status=MemberStatus.APPROVED.value,
                 invited_by_user_id=current_user_id,
                 share_link_id=share_link.id,
@@ -1314,6 +1333,9 @@ class UnifiedShareService(ABC):
             user_email=user_email,
             role=effective_role,
             status=member.status,
+            entity_type=member.entity_type,
+            entity_id=member.entity_id,
+            entity_name=member.entity_name,
             invited_by_user_id=member.invited_by_user_id,
             invited_by_user_name=invited_by_user_name,
             reviewed_by_user_id=member.reviewed_by_user_id,
