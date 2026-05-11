@@ -118,6 +118,7 @@
     "status": {
       "completed": "Completed",
       "failed": "Failed",
+      "pending_confirmation": "Awaiting confirmation",
       "running": "Running"
     },
     "summary": "Summary",
