@@ -26,6 +26,7 @@ interface KnowledgeBaseMultiSelectorProps {
   onChange: (value: KnowledgeBaseDefaultRef[]) => void
   disabled?: boolean
   allowedSources?: KnowledgeBaseOptionSource[]
+  allowedGroupNamespaces?: string[]
 }
 
 interface GroupedKnowledgeBaseOption {
@@ -84,7 +85,7 @@ function getSourceLabel(source: KnowledgeBaseOptionSource, t: TFunction) {
     case 'group':
       return t('common:bot.default_knowledge_bases_source_group', '群组')
     case 'organization':
-      return t('common:bot.default_knowledge_bases_source_organization', '组织')
+      return t('common:bot.default_knowledge_bases_source_organization', '公司')
   }
 }
 
@@ -95,7 +96,7 @@ function getGroupTitle(source: KnowledgeBaseOptionSource, t: TFunction) {
     case 'group':
       return t('common:bot.default_knowledge_bases_group_group', '群组知识库')
     case 'organization':
-      return t('common:bot.default_knowledge_bases_group_organization', '组织知识库')
+      return t('common:bot.default_knowledge_bases_group_organization', '公司知识库')
   }
 }
 
@@ -280,6 +281,7 @@ export function KnowledgeBaseMultiSelector({
   onChange,
   disabled = false,
   allowedSources,
+  allowedGroupNamespaces,
 }: KnowledgeBaseMultiSelectorProps) {
   const { t } = useTranslation()
   const { options, loading, error } = useKnowledgeBaseOptions()
@@ -296,11 +298,23 @@ export function KnowledgeBaseMultiSelector({
   }, [open])
 
   const filteredOptions = useMemo(() => {
-    if (!allowedSources || allowedSources.length === 0) {
-      return options
-    }
-    return options.filter(option => allowedSources.includes(option.source))
-  }, [options, allowedSources])
+    return options.filter(option => {
+      if (allowedSources && allowedSources.length > 0 && !allowedSources.includes(option.source)) {
+        return false
+      }
+
+      if (
+        option.source === 'group' &&
+        allowedGroupNamespaces &&
+        allowedGroupNamespaces.length > 0 &&
+        !allowedGroupNamespaces.includes(option.namespace)
+      ) {
+        return false
+      }
+
+      return true
+    })
+  }, [options, allowedSources, allowedGroupNamespaces])
 
   const selectedIds = useMemo(() => new Set(value.map(item => item.id)), [value])
   const optionsById = useMemo(

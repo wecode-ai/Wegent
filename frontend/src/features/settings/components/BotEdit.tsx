@@ -1465,7 +1465,14 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                       allowedSources={
                         scope === 'public'
                           ? ['organization']
-                          : ['personal', 'group', 'organization']
+                          : scope === 'group'
+                            ? groupName
+                              ? ['group', 'organization']
+                              : ['organization']
+                            : ['personal', 'group', 'organization']
+                      }
+                      allowedGroupNamespaces={
+                        scope === 'group' && groupName ? [groupName] : undefined
                       }
                     />
                   </div>

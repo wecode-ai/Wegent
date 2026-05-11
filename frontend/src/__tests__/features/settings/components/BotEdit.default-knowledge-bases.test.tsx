@@ -199,7 +199,7 @@ const mockedGetPublicModels = publicResourceApis.getPublicModels as jest.Mock
 
 function renderBotEdit(
   botOverrides: Partial<Bot> = {},
-  props: { scope?: 'personal' | 'group' | 'all' | 'public' } = {}
+  props: { scope?: 'personal' | 'group' | 'all' | 'public'; groupName?: string } = {}
 ) {
   const bot = {
     id: 7,
@@ -234,6 +234,7 @@ function renderBotEdit(
       onClose={onClose}
       toast={toast}
       scope={props.scope || 'personal'}
+      groupName={props.groupName}
     />
   )
 
@@ -317,6 +318,27 @@ describe('BotEdit default knowledge bases', () => {
               user_id: 8,
               group_id: 'platform',
               group_name: 'Platform',
+              group_type: 'group',
+            },
+          ],
+        },
+        {
+          group_name: 'growth',
+          group_display_name: 'Growth',
+          kb_count: 1,
+          knowledge_bases: [
+            {
+              id: 505,
+              name: 'Growth Playbooks',
+              description: 'Growth experiments',
+              kb_type: 'notebook',
+              namespace: 'growth',
+              document_count: 5,
+              updated_at: '2026-04-02T13:30:00Z',
+              created_at: '2026-04-01T00:00:00Z',
+              user_id: 10,
+              group_id: 'growth',
+              group_name: 'Growth',
               group_type: 'group',
             },
           ],
@@ -455,6 +477,25 @@ describe('BotEdit default knowledge bases', () => {
     expect(screen.getByText('Company-wide security guidance')).toBeInTheDocument()
   })
 
+  test('shows only current group and organization knowledge bases for group bots', async () => {
+    renderBotEdit(
+      {
+        namespace: 'platform',
+        default_knowledge_base_refs: [],
+      },
+      { scope: 'group', groupName: 'platform' }
+    )
+
+    fireEvent.click(await screen.findByTestId('default-knowledge-base-trigger'))
+
+    expect(screen.queryByTestId('default-knowledge-base-group-personal')).not.toBeInTheDocument()
+    expect(screen.getByTestId('default-knowledge-base-group-group')).toBeInTheDocument()
+    expect(screen.getByTestId('default-knowledge-base-group-organization')).toBeInTheDocument()
+    expect(screen.getByText('Ops guides')).toBeInTheDocument()
+    expect(screen.getByText('Company-wide security guidance')).toBeInTheDocument()
+    expect(screen.queryByText('Growth experiments')).not.toBeInTheDocument()
+  })
+
   test('renders popover-based selector with grouped metadata', async () => {
     renderBotEdit()
 
@@ -466,13 +507,13 @@ describe('BotEdit default knowledge bases', () => {
     expect(screen.getByTestId('default-knowledge-base-search-input')).toBeInTheDocument()
 
     expect(screen.getByTestId('default-knowledge-base-group-personal')).toBeInTheDocument()
-    expect(screen.getByTestId('default-knowledge-base-group-group')).toBeInTheDocument()
+    expect(screen.getAllByTestId('default-knowledge-base-group-group')).toHaveLength(2)
     expect(screen.getByTestId('default-knowledge-base-group-organization')).toBeInTheDocument()
 
     expect(screen.getByText('Ops guides')).toBeInTheDocument()
     expect(screen.getByText('Company-wide security guidance')).toBeInTheDocument()
     expect(screen.getByText('Shared support answers')).toBeInTheDocument()
-    expect(screen.getByText('Group')).toBeInTheDocument()
+    expect(screen.getAllByText('Group').length).toBeGreaterThan(0)
     expect(screen.getByText('Organization')).toBeInTheDocument()
     expect(screen.getByText('Shared')).toBeInTheDocument()
     expect(screen.getByText('Platform')).toBeInTheDocument()
