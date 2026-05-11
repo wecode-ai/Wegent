@@ -122,9 +122,14 @@ def _process_images(
         if "/" in img_path:
             basename = os.path.basename(img_path)
             for zip_path in z.namelist():
-                if zip_path.endswith(img_path) or zip_path.endswith(basename):
-                    if zip_path not in candidates:
-                        candidates.append(zip_path)
+                # Match at path boundaries only to avoid false positives
+                # e.g., "my-fig1.png" should NOT match query for "fig1.png"
+                path_matches = zip_path == img_path or zip_path.endswith(f"/{img_path}")
+                basename_matches = os.path.basename(
+                    zip_path
+                ) == basename or zip_path.endswith(f"/{basename}")
+                if (path_matches or basename_matches) and zip_path not in candidates:
+                    candidates.append(zip_path)
 
         seen = set()
         for c in candidates:

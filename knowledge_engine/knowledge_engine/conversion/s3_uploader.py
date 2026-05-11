@@ -94,6 +94,13 @@ class S3Uploader:
 
             # URL-encode path segments for Chinese character support
             endpoint = self._config.endpoint.rstrip("/")
+            if not endpoint:
+                logger.warning(
+                    f"[S3] Skipping URL generation for {object_name}: "
+                    "endpoint is empty, cannot build valid public URL"
+                )
+                return None
+
             path_parts = object_name.split("/")
             encoded_parts = [quote(part, safe="") for part in path_parts]
             encoded_path = "/".join(encoded_parts)
