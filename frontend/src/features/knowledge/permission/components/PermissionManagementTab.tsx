@@ -20,7 +20,7 @@ import {
 import { useTranslation } from '@/hooks/useTranslation'
 import { useKnowledgePermissions } from '../hooks/useKnowledgePermissions'
 import { AddUserDialog } from './add-user-dialog'
-import { knowledgePermissionApi } from '@/apis/knowledge-permission'
+import { AddNamespaceDialog } from './add-namespace-dialog'
 import { listGroups } from '@/apis/groups'
 import { ASSIGNABLE_ROLES } from '@/types/base-role'
 import type { MemberRole, PendingPermissionInfo, PermissionUserInfo } from '@/types/knowledge'
@@ -42,20 +42,20 @@ interface PermissionManagementTabProps {
 
 export function PermissionManagementTab({ kbId, extensionTabs }: PermissionManagementTabProps) {
   const { t } = useTranslation('knowledge')
+
+  // Safe translation helper that falls back when key is not found
+  const loc = (key: string, fallback: string) => {
+    const v = t(key)
+    return v && v !== key ? v : fallback
+  }
+
   const [showAddUser, setShowAddUser] = useState(false)
+  const [showAddNamespace, setShowAddNamespace] = useState(false)
   const [editingId, setEditingId] = useState<number | null>(null)
   const [editingRole, setEditingRole] = useState<MemberRole>('Reporter')
   const [activeTab, setActiveTab] = useState<string>('user')
   // Track selected approval roles for pending requests
   const [approvalRoles, setApprovalRoles] = useState<Record<number, MemberRole>>({})
-  // Group tab state
-  const [groups, setGroups] = useState<Group[]>([])
-  const [fetchingGroups, setFetchingGroups] = useState(false)
-  const [groupSearch, setGroupSearch] = useState('')
-  const [showGroupDropdown, setShowGroupDropdown] = useState(false)
-  const [addGroupRole, setAddGroupRole] = useState<MemberRole>('Reporter')
-  const groupInputRef = useRef<HTMLInputElement>(null)
-  const groupDropdownRef = useRef<HTMLDivElement>(null)
 
   const {
     permissions,
@@ -87,34 +87,6 @@ export function PermissionManagementTab({ kbId, extensionTabs }: PermissionManag
       })
     }
   }, [permissions?.pending])
-
-  // Close group dropdown on outside click
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (
-        groupDropdownRef.current &&
-        !groupDropdownRef.current.contains(event.target as Node) &&
-        groupInputRef.current &&
-        !groupInputRef.current.contains(event.target as Node)
-      ) {
-        setShowGroupDropdown(false)
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [])
-
-  const fetchGroups = async () => {
-    setFetchingGroups(true)
-    try {
-      const result = await listGroups({ limit: 200 })
-      setGroups(result.items || [])
-    } catch (_err) {
-      // silently fail
-    } finally {
-      setFetchingGroups(false)
-    }
-  }
 
   const handleApprovalRoleChange = (permissionId: number, role: MemberRole) => {
     setApprovalRoles(prev => ({ ...prev, [permissionId]: role }))
@@ -164,27 +136,6 @@ export function PermissionManagementTab({ kbId, extensionTabs }: PermissionManag
     setEditingId(null)
   }
 
-  // Group tab handlers
-  const handleAddGroup = async (groupId: number) => {
-    try {
-      await knowledgePermissionApi.addNamespacePermission(kbId, groupId, addGroupRole)
-      setGroupSearch('')
-      setShowGroupDropdown(false)
-      await fetchPermissions()
-    } catch (_err) {
-      // Error is handled by the hook
-    }
-  }
-
-  const handleDeleteNamespace = async (permissionId: number) => {
-    if (!confirm(t('document.permission.confirmRemove'))) return
-    try {
-      await deletePermission(permissionId)
-    } catch (_err) {
-      // Error is handled by the hook
-    }
-  }
-
   if (loading && !permissions) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -224,14 +175,14 @@ export function PermissionManagementTab({ kbId, extensionTabs }: PermissionManag
     (userRoleGroups?.Reporter?.length || 0) +
     (userRoleGroups?.RestrictedAnalyst?.length || 0)
 
-  const filteredGroups = groupSearch.trim()
-    ? groups.filter(
-        g =>
-          (g.display_name || g.name)
-            .toLowerCase()
-            .includes(groupSearch.trim().toLowerCase())
-      )
-    : groups
+  const handleDeleteNamespace = async (permissionId: number) => {
+    if (!confirm(t('document.permission.confirmRemove'))) return
+    try {
+      await deletePermission(permissionId)
+    } catch (_err) {
+      // Error is handled by the hook
+    }
+  }
 
   return (
     <div className="space-y-4 p-4">
@@ -267,7 +218,7 @@ export function PermissionManagementTab({ kbId, extensionTabs }: PermissionManag
             }`}
             data-testid="perm-tab-user"
           >
-            {t('document.permission.individual') || '个人'}
+            {loc('document.permission.individual', '个人')}
             {approvedCount > 0 && (
               <span className="bg-primary/10 text-primary px-1.5 py-0.5 rounded-full text-xs">
                 {approvedCount}
@@ -284,7 +235,7 @@ export function PermissionManagementTab({ kbId, extensionTabs }: PermissionManag
             }`}
             data-testid="perm-tab-namespace"
           >
-            {t('document.permission.namespace') || '群组'}
+            {loc('document.permission.namespace', '群组')}
             {namespaceMembers.length > 0 && (
               <span className="bg-primary/10 text-primary px-1.5 py-0.5 rounded-full text-xs">
                 {namespaceMembers.length}
@@ -315,6 +266,21 @@ export function PermissionManagementTab({ kbId, extensionTabs }: PermissionManag
         {/* ===== 个人 Tab ===== */}
         {activeTab === 'user' && (
           <div className="space-y-4">
+            {/* Tab header with add button */}
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-medium">
+                {t('document.permission.approvedUsers') || '已授权用户'}
+              </h3>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowAddUser(true)}
+              >
+                <UserPlus className="w-4 h-4 mr-2" />
+                {t('document.permission.addUser')}
+              </Button>
+            </div>
+
             {/* Pending Requests */}
             <div className="space-y-3">
               <div className="flex items-center gap-2 text-sm font-medium">
@@ -479,99 +445,31 @@ export function PermissionManagementTab({ kbId, extensionTabs }: PermissionManag
                 </div>
               )}
             </div>
-
-            {/* Add User Button */}
-            <div className="flex justify-start">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setShowAddUser(true)}
-              >
-                <UserPlus className="w-4 h-4 mr-2" />
-                {t('document.permission.addUser')}
-              </Button>
-            </div>
           </div>
         )}
 
         {/* ===== 群组 Tab ===== */}
         {activeTab === 'namespace' && (
           <div className="space-y-4">
-            {/* Add Group - Search + Role + Add */}
-            <div className="flex items-start gap-2">
-              <div className="flex-1 relative">
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-text-muted" />
-                  <Input
-                    ref={groupInputRef}
-                    value={groupSearch}
-                    onChange={e => {
-                      setGroupSearch(e.target.value)
-                      if (!fetchingGroups) fetchGroups()
-                      setShowGroupDropdown(true)
-                    }}
-                    onFocus={() => {
-                      if (!fetchingGroups && groups.length === 0) fetchGroups()
-                      setShowGroupDropdown(true)
-                    }}
-                    placeholder={t('document.permission.searchGroupPlaceholder') || '搜索群组...'}
-                    className="pl-9"
-                  />
-                </div>
-                {showGroupDropdown && (
-                  <div
-                    ref={groupDropdownRef}
-                    className="absolute z-50 w-full mt-1 bg-base border border-border rounded-md shadow-lg max-h-48 overflow-y-auto"
-                  >
-                    {fetchingGroups ? (
-                      <div className="flex items-center justify-center p-3">
-                        <Spinner className="w-4 h-4" />
-                      </div>
-                    ) : filteredGroups.length === 0 ? (
-                      <div className="p-3 text-sm text-text-muted text-center">
-                        {groupSearch.trim()
-                          ? (t('common:userSearch.noResults') || '未找到结果')
-                          : (t('document.permission.noGroups') || '暂无群组')}
-                      </div>
-                    ) : (
-                      filteredGroups.map(group => (
-                        <button
-                          key={group.id}
-                          type="button"
-                          onClick={() => {
-                            handleAddGroup(group.id as number)
-                          }}
-                          className="w-full flex items-center gap-3 p-3 hover:bg-surface cursor-pointer text-left"
-                        >
-                          <span className="font-medium text-sm text-text-primary">
-                            {group.display_name || group.name}
-                          </span>
-                        </button>
-                      ))
-                    )}
-                  </div>
-                )}
-              </div>
-              <div className="flex-shrink-0">
-                <Select value={addGroupRole} onValueChange={v => setAddGroupRole(v as MemberRole)}>
-                  <SelectTrigger className="w-28 h-11 min-w-[44px]">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {ASSIGNABLE_ROLES.map(role => (
-                      <SelectItem key={role} value={role}>
-                        {t(`document.permission.role.${role}`)}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+            {/* Tab header with add button */}
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-medium">
+                {loc('document.permission.namespaceMembers', '已授权群组')}
+              </h3>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowAddNamespace(true)}
+              >
+                <UserPlus className="w-4 h-4 mr-2" />
+                {loc('document.permission.addNamespace', '添加群组')}
+              </Button>
             </div>
 
-            {/* Added Groups List */}
+            {/* Authorized Groups List */}
             {namespaceMembers.length === 0 ? (
               <p className="text-sm text-text-muted py-4 text-center">
-                {t('document.permission.noNamespacePermissions') || '暂无群组权限'}
+                {loc('document.permission.noNamespacePermissions', '暂无群组权限')}
               </p>
             ) : (
               <div className="space-y-1">
@@ -584,7 +482,7 @@ export function PermissionManagementTab({ kbId, extensionTabs }: PermissionManag
                       <div className="font-medium text-sm truncate flex items-center gap-2">
                         {nm.username || nm.entity_id || ''}
                         <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-surface text-text-muted border-border border">
-                          {t('document.permission.namespace') || '群组'}
+                          {loc('document.permission.namespace', '群组')}
                         </span>
                       </div>
                       <div className="text-xs text-text-muted truncate">
@@ -624,6 +522,14 @@ export function PermissionManagementTab({ kbId, extensionTabs }: PermissionManag
       <AddUserDialog
         open={showAddUser}
         onOpenChange={setShowAddUser}
+        kbId={kbId}
+        onSuccess={fetchPermissions}
+      />
+
+      {/* Add Namespace Dialog */}
+      <AddNamespaceDialog
+        open={showAddNamespace}
+        onOpenChange={setShowAddNamespace}
         kbId={kbId}
         onSuccess={fetchPermissions}
       />

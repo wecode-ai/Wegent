@@ -49,24 +49,17 @@ export function KnowledgeBaseAuthSection({
 }: KnowledgeBaseAuthSectionProps) {
   const { t } = useTranslation('knowledge')
   const [open, setOpen] = useState(false)
+  const [userRole, setUserRole] = useState<MemberRole>('Reporter' as MemberRole)
+  const [groupRole, setGroupRole] = useState<MemberRole>('Reporter' as MemberRole)
+
+  // Safe translation helper that falls back when key is not found
+  const loc = (key: string, fallback: string) => {
+    const v = t(key)
+    return v && v !== key ? v : fallback
+  }
 
   const userEntries = value.filter(e => e.entityType === 'user')
   const namespaceEntries = value.filter(e => e.entityType === 'namespace')
-
-  const addUserEntry = (user: SearchUser, role: MemberRole) => {
-    const exists = userEntries.some(e => e.entityId === String(user.id))
-    if (exists) return
-    onChange([
-      ...value,
-      {
-        id: `user-${user.id}`,
-        label: user.user_name,
-        entityType: 'user',
-        entityId: String(user.id),
-        role,
-      },
-    ])
-  }
 
   const removeEntry = (id: string) => {
     onChange(value.filter(e => e.id !== id))
@@ -89,7 +82,7 @@ export function KnowledgeBaseAuthSection({
           data-testid="auth-section-trigger"
         >
           {open ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-          {t('document.permission.authorization') || '授权'}
+          {loc('document.permission.authorization', '授权')}
           {totalCount > 0 && (
             <span className="bg-primary/10 text-primary px-2 py-0.5 rounded-full text-xs">
               {totalCount}
@@ -101,20 +94,9 @@ export function KnowledgeBaseAuthSection({
         {/* User Section */}
         <div className="space-y-2">
           <Label className="text-xs font-medium">
-            {t('document.permission.individual') || '个人'}
+            {loc('document.permission.individual', '个人')}
           </Label>
-          <UserSearchSelect
-            selectedUsers={[]}
-            onSelectedUsersChange={(users) => {
-              if (users.length > 0) {
-                const user = users[users.length - 1]
-                addUserEntry({ id: user.id, user_name: user.user_name }, 'Reporter' as MemberRole)
-              }
-            }}
-            placeholder={t('document.permission.searchUserPlaceholder') || '搜索用户...'}
-            multiple={false}
-            hideSelectedUsers
-          />
+          {/* Selected user entries - shown ABOVE the search box */}
           {userEntries.length > 0 && (
             <div className="space-y-1 max-h-32 overflow-y-auto">
               {userEntries.map(entry => (
@@ -153,20 +135,55 @@ export function KnowledgeBaseAuthSection({
               ))}
             </div>
           )}
+          {/* Search box + Role selector inline */}
+          <div className="flex items-center gap-2">
+            <div className="flex-1">
+              <UserSearchSelect
+                selectedUsers={[]}
+                onSelectedUsersChange={(users) => {
+                  if (users.length > 0) {
+                    const user = users[users.length - 1]
+                    const exists = userEntries.some(e => e.entityId === String(user.id))
+                    if (!exists) {
+                      onChange([
+                        ...value,
+                        {
+                          id: `user-${user.id}`,
+                          label: user.user_name,
+                          entityType: 'user',
+                          entityId: String(user.id),
+                          role: userRole,
+                        },
+                      ])
+                    }
+                  }
+                }}
+                placeholder={loc('document.permission.searchUserPlaceholder', '搜索用户...')}
+                multiple={false}
+                hideSelectedUsers
+              />
+            </div>
+            <Select value={userRole} onValueChange={v => setUserRole(v as MemberRole)}>
+              <SelectTrigger className="w-28 h-10 min-w-[44px] flex-shrink-0">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {ASSIGNABLE_ROLES.map(role => (
+                  <SelectItem key={role} value={role}>
+                    {t(`document.permission.role.${role}`)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         </div>
 
         {/* Group Section */}
         <div className="space-y-2">
           <Label className="text-xs font-medium">
-            {t('document.permission.namespace') || '群组'}
+            {loc('document.permission.namespace', '群组')}
           </Label>
-          <GroupSearchSelect
-            onSelect={(entry) => {
-              const exists = namespaceEntries.some(e => e.entityId === entry.entityId)
-              if (exists) return
-              onChange([...value, entry])
-            }}
-          />
+          {/* Selected group entries - shown ABOVE the search box */}
           {namespaceEntries.length > 0 && (
             <div className="space-y-1 max-h-32 overflow-y-auto">
               {namespaceEntries.map(entry => (
@@ -205,19 +222,50 @@ export function KnowledgeBaseAuthSection({
               ))}
             </div>
           )}
+          {/* Search box + Role selector inline */}
+          <div className="flex items-center gap-2">
+            <div className="flex-1">
+              <GroupSearchInput
+                role={groupRole}
+                onSelect={(entry) => {
+                  const exists = namespaceEntries.some(e => e.entityId === entry.entityId)
+                  if (exists) return
+                  onChange([...value, entry])
+                }}
+              />
+            </div>
+            <Select value={groupRole} onValueChange={v => setGroupRole(v as MemberRole)}>
+              <SelectTrigger className="w-28 h-10 min-w-[44px] flex-shrink-0">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {ASSIGNABLE_ROLES.map(role => (
+                  <SelectItem key={role} value={role}>
+                    {t(`document.permission.role.${role}`)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         </div>
       </CollapsibleContent>
     </Collapsible>
   )
 }
 
-// Group search select component
-interface GroupSearchSelectProps {
+// Group search input component
+interface GroupSearchInputProps {
   onSelect: (entry: AuthEntry) => void
+  role: MemberRole
 }
 
-function GroupSearchSelect({ onSelect }: GroupSearchSelectProps) {
+function GroupSearchInput({ onSelect, role }: GroupSearchInputProps) {
   const { t } = useTranslation('knowledge')
+
+  const loc = (key: string, fallback: string) => {
+    const v = t(key)
+    return v && v !== key ? v : fallback
+  }
   const [groups, setGroups] = useState<Group[]>([])
   const [fetching, setFetching] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
@@ -271,7 +319,7 @@ function GroupSearchSelect({ onSelect }: GroupSearchSelectProps) {
       label: group.display_name || group.name,
       entityType: 'namespace',
       entityId: String(group.id),
-      role: 'Reporter' as MemberRole,
+      role,
     })
     setSearchQuery('')
     setShowDropdown(false)
@@ -288,8 +336,11 @@ function GroupSearchSelect({ onSelect }: GroupSearchSelectProps) {
             setSearchQuery(e.target.value)
             setShowDropdown(true)
           }}
-          onFocus={() => setShowDropdown(true)}
-          placeholder={t('document.permission.searchGroupPlaceholder') || '搜索群组...'}
+          onFocus={() => {
+            if (!fetching && groups.length === 0) fetchGroups()
+            setShowDropdown(true)
+          }}
+          placeholder={loc('document.permission.searchGroupPlaceholder', '搜索群组...')}
           className="pl-9"
         />
       </div>
@@ -305,8 +356,8 @@ function GroupSearchSelect({ onSelect }: GroupSearchSelectProps) {
           ) : filteredGroups.length === 0 ? (
             <div className="p-3 text-sm text-text-muted text-center">
               {searchQuery.trim()
-                ? t('common:userSearch.noResults')
-                : (t('document.permission.noGroups') || '暂无群组')}
+                ? t('common:userSearch.noResults') || '未找到结果'
+                : loc('document.permission.noGroups', '暂无可用群组')}
             </div>
           ) : (
             filteredGroups.map(group => (
