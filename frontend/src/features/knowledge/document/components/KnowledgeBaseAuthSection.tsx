@@ -4,8 +4,8 @@
 
 'use client'
 
-import { useState, useEffect } from 'react'
-import { Shield, User, Users, ChevronDown, ChevronRight, X } from 'lucide-react'
+import { useState, useEffect, useRef } from 'react'
+import { Search, X, ChevronDown, ChevronRight } from 'lucide-react'
 import {
   Collapsible,
   CollapsibleTrigger,
@@ -13,6 +13,7 @@ import {
 } from '@/components/ui/collapsible'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
+import { Input } from '@/components/ui/input'
 import {
   Select,
   SelectContent,
@@ -25,7 +26,7 @@ import { UserSearchSelect } from '@/components/common/UserSearchSelect'
 import { listGroups } from '@/apis/groups'
 import { useTranslation } from '@/hooks/useTranslation'
 import { ASSIGNABLE_ROLES } from '@/types/base-role'
-import type { MemberRole, InitialMember } from '@/types/knowledge'
+import type { MemberRole } from '@/types/knowledge'
 import type { SearchUser } from '@/types/api'
 import type { Group } from '@/types/group'
 
@@ -48,7 +49,6 @@ export function KnowledgeBaseAuthSection({
 }: KnowledgeBaseAuthSectionProps) {
   const { t } = useTranslation('knowledge')
   const [open, setOpen] = useState(false)
-  const [activeTab, setActiveTab] = useState<'user' | 'namespace'>('user')
 
   const userEntries = value.filter(e => e.entityType === 'user')
   const namespaceEntries = value.filter(e => e.entityType === 'namespace')
@@ -72,6 +72,14 @@ export function KnowledgeBaseAuthSection({
     onChange(value.filter(e => e.id !== id))
   }
 
+  const updateEntryRole = (id: string, role: MemberRole) => {
+    onChange(
+      value.map(e => (e.id === id ? { ...e, role } : e))
+    )
+  }
+
+  const totalCount = userEntries.length + namespaceEntries.length
+
   return (
     <Collapsible open={open} onOpenChange={setOpen} className="border-t border-border pt-4">
       <CollapsibleTrigger asChild>
@@ -81,147 +89,165 @@ export function KnowledgeBaseAuthSection({
           data-testid="auth-section-trigger"
         >
           {open ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-          <Shield className="w-4 h-4" />
           {t('document.permission.authorization') || '授权'}
-          {(userEntries.length + namespaceEntries.length) > 0 && (
+          {totalCount > 0 && (
             <span className="bg-primary/10 text-primary px-2 py-0.5 rounded-full text-xs">
-              {userEntries.length + namespaceEntries.length}
+              {totalCount}
             </span>
           )}
         </button>
       </CollapsibleTrigger>
-      <CollapsibleContent className="mt-3 space-y-3">
-        {/* Tabs */}
-        <div className="flex border-b border-border">
-          <button
-            type="button"
-            onClick={() => setActiveTab('user')}
-            className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-b-2 transition-colors ${
-              activeTab === 'user'
-                ? 'border-primary text-primary'
-                : 'border-transparent text-text-muted hover:text-text-primary'
-            }`}
-            data-testid="auth-tab-user"
-          >
-            <User className="w-3.5 h-3.5" />
+      <CollapsibleContent className="mt-3 space-y-4">
+        {/* User Section */}
+        <div className="space-y-2">
+          <Label className="text-xs font-medium">
             {t('document.permission.individual') || '个人'}
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('namespace')}
-            className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-b-2 transition-colors ${
-              activeTab === 'namespace'
-                ? 'border-primary text-primary'
-                : 'border-transparent text-text-muted hover:text-text-primary'
-            }`}
-            data-testid="auth-tab-namespace"
-          >
-            <Users className="w-3.5 h-3.5" />
-            {t('document.permission.namespace') || '群组'}
-          </button>
-        </div>
-
-        {/* User tab content */}
-        {activeTab === 'user' && (
-          <UserAuthPanel
-            existingEntries={userEntries}
-            onAdd={addUserEntry}
-            onRemove={removeEntry}
-          />
-        )}
-
-        {/* Namespace tab content */}
-        {activeTab === 'namespace' && (
-          <NamespaceAuthPanel
-            existingEntries={namespaceEntries}
-            onAdd={(entry) => {
-              const exists = namespaceEntries.some(e => e.entityId === entry.entityId)
-              if (exists) return
-              onChange([...value, entry])
-            }}
-            onRemove={removeEntry}
-          />
-        )}
-      </CollapsibleContent>
-    </Collapsible>
-  )
-}
-
-// User panel component
-interface UserAuthPanelProps {
-  existingEntries: AuthEntry[]
-  onAdd: (user: SearchUser, role: MemberRole) => void
-  onRemove: (id: string) => void
-}
-
-function UserAuthPanel({ existingEntries, onAdd, onRemove }: UserAuthPanelProps) {
-  const { t } = useTranslation('knowledge')
-
-  return (
-    <div className="space-y-3">
-      <div className="flex items-start gap-3">
-        <div className="flex-1 space-y-2">
-          <Label className="text-xs">
-            {t('document.permission.userName') || '用户'}
           </Label>
           <UserSearchSelect
             selectedUsers={[]}
             onSelectedUsersChange={(users) => {
               if (users.length > 0) {
                 const user = users[users.length - 1]
-                onAdd({ id: user.id, user_name: user.user_name }, 'Reporter' as MemberRole)
+                addUserEntry({ id: user.id, user_name: user.user_name }, 'Reporter' as MemberRole)
               }
             }}
             placeholder={t('document.permission.searchUserPlaceholder') || '搜索用户...'}
             multiple={false}
+            hideSelectedUsers
           />
-        </div>
-      </div>
-
-      {existingEntries.length > 0 && (
-        <div className="space-y-1 max-h-32 overflow-y-auto">
-          {existingEntries.map(entry => (
-            <div key={entry.id} className="flex items-center justify-between p-2 rounded-lg bg-muted/50">
-              <span className="text-sm truncate flex-1">{entry.label}</span>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="h-6 w-6 text-text-muted hover:text-error flex-shrink-0 ml-2"
-                onClick={() => onRemove(entry.id)}
-              >
-                <X className="w-3 h-3" />
-              </Button>
+          {userEntries.length > 0 && (
+            <div className="space-y-1 max-h-32 overflow-y-auto">
+              {userEntries.map(entry => (
+                <div
+                  key={entry.id}
+                  className="flex items-center justify-between p-2 rounded-lg bg-muted/50"
+                >
+                  <span className="text-sm truncate flex-1">{entry.label}</span>
+                  <div className="flex items-center gap-2">
+                    <Select
+                      value={entry.role}
+                      onValueChange={v => updateEntryRole(entry.id, v as MemberRole)}
+                    >
+                      <SelectTrigger className="w-24 h-8 text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {ASSIGNABLE_ROLES.map(role => (
+                          <SelectItem key={role} value={role} className="text-xs">
+                            {t(`document.permission.role.${role}`)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6 text-text-muted hover:text-error flex-shrink-0"
+                      onClick={() => removeEntry(entry.id)}
+                    >
+                      <X className="w-3 h-3" />
+                    </Button>
+                  </div>
+                </div>
+              ))}
             </div>
-          ))}
+          )}
         </div>
-      )}
-    </div>
+
+        {/* Group Section */}
+        <div className="space-y-2">
+          <Label className="text-xs font-medium">
+            {t('document.permission.namespace') || '群组'}
+          </Label>
+          <GroupSearchSelect
+            onSelect={(entry) => {
+              const exists = namespaceEntries.some(e => e.entityId === entry.entityId)
+              if (exists) return
+              onChange([...value, entry])
+            }}
+          />
+          {namespaceEntries.length > 0 && (
+            <div className="space-y-1 max-h-32 overflow-y-auto">
+              {namespaceEntries.map(entry => (
+                <div
+                  key={entry.id}
+                  className="flex items-center justify-between p-2 rounded-lg bg-muted/50"
+                >
+                  <span className="text-sm truncate flex-1">{entry.label}</span>
+                  <div className="flex items-center gap-2">
+                    <Select
+                      value={entry.role}
+                      onValueChange={v => updateEntryRole(entry.id, v as MemberRole)}
+                    >
+                      <SelectTrigger className="w-24 h-8 text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {ASSIGNABLE_ROLES.map(role => (
+                          <SelectItem key={role} value={role} className="text-xs">
+                            {t(`document.permission.role.${role}`)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6 text-text-muted hover:text-error flex-shrink-0"
+                      onClick={() => removeEntry(entry.id)}
+                    >
+                      <X className="w-3 h-3" />
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
   )
 }
 
-// Namespace panel component
-interface NamespaceAuthPanelProps {
-  existingEntries: AuthEntry[]
-  onAdd: (entry: AuthEntry) => void
-  onRemove: (id: string) => void
+// Group search select component
+interface GroupSearchSelectProps {
+  onSelect: (entry: AuthEntry) => void
 }
 
-function NamespaceAuthPanel({ existingEntries, onAdd, onRemove }: NamespaceAuthPanelProps) {
+function GroupSearchSelect({ onSelect }: GroupSearchSelectProps) {
   const { t } = useTranslation('knowledge')
   const [groups, setGroups] = useState<Group[]>([])
   const [fetching, setFetching] = useState(false)
-  const [selectedGroupId, setSelectedGroupId] = useState<string>('')
-  const [selectedRole, setSelectedRole] = useState<MemberRole>('Reporter' as MemberRole)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [showDropdown, setShowDropdown] = useState(false)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const dropdownRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     fetchGroups()
   }, [])
 
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        dropdownRef.current &&
+        !dropdownRef.current.contains(event.target as Node) &&
+        inputRef.current &&
+        !inputRef.current.contains(event.target as Node)
+      ) {
+        setShowDropdown(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
   const fetchGroups = async () => {
     setFetching(true)
     try {
-      const result = await listGroups({ limit: 100 })
+      const result = await listGroups({ limit: 200 })
       setGroups(result.items || [])
     } catch (_err) {
       // silently fail
@@ -230,97 +256,72 @@ function NamespaceAuthPanel({ existingEntries, onAdd, onRemove }: NamespaceAuthP
     }
   }
 
-  const handleAdd = () => {
-    if (!selectedGroupId) return
-    const group = groups.find(g => String(g.id) === selectedGroupId)
-    if (!group) return
-    onAdd({
+  const filteredGroups = searchQuery.trim()
+    ? groups.filter(
+        g =>
+          (g.display_name || g.name)
+            .toLowerCase()
+            .includes(searchQuery.trim().toLowerCase())
+      )
+    : groups
+
+  const handleSelect = (group: Group) => {
+    onSelect({
       id: `namespace-${group.id}`,
       label: group.display_name || group.name,
       entityType: 'namespace',
       entityId: String(group.id),
-      role: selectedRole,
+      role: 'Reporter' as MemberRole,
     })
-    setSelectedGroupId('')
+    setSearchQuery('')
+    setShowDropdown(false)
   }
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-start gap-2">
-        <div className="flex-1 space-y-2">
-          <Label className="text-xs">
-            {t('document.permission.selectGroup') || '选择群组'}
-          </Label>
+    <div className="relative">
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-text-muted" />
+        <Input
+          ref={inputRef}
+          value={searchQuery}
+          onChange={e => {
+            setSearchQuery(e.target.value)
+            setShowDropdown(true)
+          }}
+          onFocus={() => setShowDropdown(true)}
+          placeholder={t('document.permission.searchGroupPlaceholder') || '搜索群组...'}
+          className="pl-9"
+        />
+      </div>
+      {showDropdown && (
+        <div
+          ref={dropdownRef}
+          className="absolute z-50 w-full mt-1 bg-base border border-border rounded-md shadow-lg max-h-48 overflow-y-auto"
+        >
           {fetching ? (
-            <div className="flex items-center py-2">
+            <div className="flex items-center justify-center p-3">
               <Spinner className="w-4 h-4" />
             </div>
-          ) : (
-            <Select value={selectedGroupId} onValueChange={setSelectedGroupId}>
-              <SelectTrigger className="w-full h-10 min-w-[44px]">
-                <SelectValue placeholder={t('document.permission.selectGroupPlaceholder') || '请选择群组'} />
-              </SelectTrigger>
-              <SelectContent>
-                {groups.map(group => (
-                  <SelectItem key={group.id} value={String(group.id)}>
-                    {group.display_name || group.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
-        </div>
-        <div className="space-y-2">
-          <Label className="text-xs">
-            {t('document.permission.role.label') || '角色'}
-          </Label>
-          <Select value={selectedRole} onValueChange={v => setSelectedRole(v as MemberRole)}>
-            <SelectTrigger className="w-28 h-10 min-w-[44px]">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {ASSIGNABLE_ROLES.map(role => (
-                <SelectItem key={role} value={role}>
-                  {t(`document.permission.role.${role}`)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="mt-6 h-10"
-          disabled={!selectedGroupId}
-          onClick={handleAdd}
-          data-testid="auth-add-namespace"
-        >
-          {t('document.permission.add') || '添加'}
-        </Button>
-      </div>
-
-      {existingEntries.length > 0 && (
-        <div className="space-y-1 max-h-32 overflow-y-auto">
-          {existingEntries.map(entry => (
-            <div key={entry.id} className="flex items-center justify-between p-2 rounded-lg bg-muted/50">
-              <div className="flex items-center gap-2 min-w-0">
-                <span className="text-sm truncate">{entry.label}</span>
-                <span className="text-xs text-text-muted flex-shrink-0">
-                  {t(`document.permission.role.${entry.role}`)}
-                </span>
-              </div>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="h-6 w-6 text-text-muted hover:text-error flex-shrink-0 ml-2"
-                onClick={() => onRemove(entry.id)}
-              >
-                <X className="w-3 h-3" />
-              </Button>
+          ) : filteredGroups.length === 0 ? (
+            <div className="p-3 text-sm text-text-muted text-center">
+              {searchQuery.trim()
+                ? t('common:userSearch.noResults')
+                : (t('document.permission.noGroups') || '暂无群组')}
             </div>
-          ))}
+          ) : (
+            filteredGroups.map(group => (
+              <button
+                key={group.id}
+                type="button"
+                onClick={() => handleSelect(group)}
+                className="w-full flex items-center gap-3 p-3 hover:bg-surface cursor-pointer text-left"
+              >
+                <span className="font-medium text-sm text-text-primary">
+                  {group.display_name || group.name}
+                </span>
+              </button>
+            ))
+          )}
         </div>
       )}
     </div>

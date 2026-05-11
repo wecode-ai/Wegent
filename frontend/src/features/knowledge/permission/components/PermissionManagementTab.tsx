@@ -4,11 +4,12 @@
 
 'use client'
 
-import { useEffect, useState } from 'react'
-import { Check, X, UserPlus, Pencil, Trash2, Users, Clock, Shield } from 'lucide-react'
+import { useEffect, useState, useRef } from 'react'
+import { Check, X, UserPlus, Pencil, Trash2, Clock, Shield, Search } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Spinner } from '@/components/ui/spinner'
+import { Input } from '@/components/ui/input'
 import {
   Select,
   SelectContent,
@@ -19,9 +20,11 @@ import {
 import { useTranslation } from '@/hooks/useTranslation'
 import { useKnowledgePermissions } from '../hooks/useKnowledgePermissions'
 import { AddUserDialog } from './add-user-dialog'
-import { AddNamespaceDialog } from './add-namespace-dialog'
-import type { MemberRole, PendingPermissionInfo, PermissionUserInfo } from '@/types/knowledge'
+import { knowledgePermissionApi } from '@/apis/knowledge-permission'
+import { listGroups } from '@/apis/groups'
 import { ASSIGNABLE_ROLES } from '@/types/base-role'
+import type { MemberRole, PendingPermissionInfo, PermissionUserInfo } from '@/types/knowledge'
+import type { Group } from '@/types/group'
 
 interface PermissionManagementTabProps {
   kbId: number
@@ -40,12 +43,19 @@ interface PermissionManagementTabProps {
 export function PermissionManagementTab({ kbId, extensionTabs }: PermissionManagementTabProps) {
   const { t } = useTranslation('knowledge')
   const [showAddUser, setShowAddUser] = useState(false)
-  const [showAddNamespace, setShowAddNamespace] = useState(false)
   const [editingId, setEditingId] = useState<number | null>(null)
   const [editingRole, setEditingRole] = useState<MemberRole>('Reporter')
   const [activeTab, setActiveTab] = useState<string>('user')
   // Track selected approval roles for pending requests
   const [approvalRoles, setApprovalRoles] = useState<Record<number, MemberRole>>({})
+  // Group tab state
+  const [groups, setGroups] = useState<Group[]>([])
+  const [fetchingGroups, setFetchingGroups] = useState(false)
+  const [groupSearch, setGroupSearch] = useState('')
+  const [showGroupDropdown, setShowGroupDropdown] = useState(false)
+  const [addGroupRole, setAddGroupRole] = useState<MemberRole>('Reporter')
+  const groupInputRef = useRef<HTMLInputElement>(null)
+  const groupDropdownRef = useRef<HTMLDivElement>(null)
 
   const {
     permissions,
@@ -77,6 +87,34 @@ export function PermissionManagementTab({ kbId, extensionTabs }: PermissionManag
       })
     }
   }, [permissions?.pending])
+
+  // Close group dropdown on outside click
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        groupDropdownRef.current &&
+        !groupDropdownRef.current.contains(event.target as Node) &&
+        groupInputRef.current &&
+        !groupInputRef.current.contains(event.target as Node)
+      ) {
+        setShowGroupDropdown(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
+  const fetchGroups = async () => {
+    setFetchingGroups(true)
+    try {
+      const result = await listGroups({ limit: 200 })
+      setGroups(result.items || [])
+    } catch (_err) {
+      // silently fail
+    } finally {
+      setFetchingGroups(false)
+    }
+  }
 
   const handleApprovalRoleChange = (permissionId: number, role: MemberRole) => {
     setApprovalRoles(prev => ({ ...prev, [permissionId]: role }))
@@ -126,6 +164,27 @@ export function PermissionManagementTab({ kbId, extensionTabs }: PermissionManag
     setEditingId(null)
   }
 
+  // Group tab handlers
+  const handleAddGroup = async (groupId: number) => {
+    try {
+      await knowledgePermissionApi.addNamespacePermission(kbId, groupId, addGroupRole)
+      setGroupSearch('')
+      setShowGroupDropdown(false)
+      await fetchPermissions()
+    } catch (_err) {
+      // Error is handled by the hook
+    }
+  }
+
+  const handleDeleteNamespace = async (permissionId: number) => {
+    if (!confirm(t('document.permission.confirmRemove'))) return
+    try {
+      await deletePermission(permissionId)
+    } catch (_err) {
+      // Error is handled by the hook
+    }
+  }
+
   if (loading && !permissions) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -165,41 +224,23 @@ export function PermissionManagementTab({ kbId, extensionTabs }: PermissionManag
     (userRoleGroups?.Reporter?.length || 0) +
     (userRoleGroups?.RestrictedAnalyst?.length || 0)
 
-  const handleDeleteNamespace = async (permissionId: number) => {
-    if (!confirm(t('document.permission.confirmRemove'))) return
-    try {
-      await deletePermission(permissionId)
-    } catch (_err) {
-      // Error is handled by the hook
-    }
-  }
+  const filteredGroups = groupSearch.trim()
+    ? groups.filter(
+        g =>
+          (g.display_name || g.name)
+            .toLowerCase()
+            .includes(groupSearch.trim().toLowerCase())
+      )
+    : groups
 
   return (
-    <div className="space-y-6 p-4">
-      {/* Header with Add button */}
+    <div className="space-y-4 p-4">
+      {/* Header */}
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold flex items-center gap-2">
           <Shield className="w-5 h-5" />
           {t('document.permission.management')}
         </h2>
-        {(activeTab === 'user' || activeTab === 'namespace') && (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              if (activeTab === 'user') {
-                setShowAddUser(true)
-              } else {
-                setShowAddNamespace(true)
-              }
-            }}
-          >
-            <UserPlus className="w-4 h-4 mr-2" />
-            {activeTab === 'user'
-              ? t('document.permission.addUser')
-              : (t('document.permission.addNamespace') || '添加群组')}
-          </Button>
-        )}
       </div>
 
       {/* Error Message */}
@@ -212,85 +253,7 @@ export function PermissionManagementTab({ kbId, extensionTabs }: PermissionManag
         </div>
       )}
 
-      {/* Pending Requests Section */}
-      <Card padding="default" className="space-y-4">
-        <div className="flex items-center gap-2 text-sm font-medium">
-          <Clock className="w-4 h-4 text-warning" />
-          {t('document.permission.pendingRequests')}
-          {pendingCount > 0 && (
-            <span className="bg-warning/10 text-warning px-2 py-0.5 rounded-full text-xs">
-              {pendingCount}
-            </span>
-          )}
-        </div>
-
-        {pendingCount === 0 ? (
-          <p className="text-sm text-text-muted py-4 text-center">
-            {t('document.permission.noPendingRequests')}
-          </p>
-        ) : (
-          <div className="space-y-2">
-            {permissions?.pending.map(permission => (
-              <div
-                key={permission.id}
-                className="flex items-center justify-between p-3 bg-muted rounded-lg"
-              >
-                <div className="flex-1">
-                  <div className="font-medium text-sm">{permission.username}</div>
-                  <div className="text-xs text-text-muted">
-                    {permission.email || t('document.permission.noEmail')}
-                  </div>
-                  <div className="text-xs text-text-muted mt-1">
-                    {t('document.permission.requesting')}:{' '}
-                    {permission.role
-                      ? t(`document.permission.role.${permission.role}`)
-                      : t('document.permission.role.Reporter')}
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Select
-                    value={approvalRoles[permission.id] || permission.role || 'Reporter'}
-                    onValueChange={value =>
-                      handleApprovalRoleChange(permission.id, value as MemberRole)
-                    }
-                  >
-                    <SelectTrigger className="w-28 h-11 min-w-[44px]">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {ASSIGNABLE_ROLES.map(role => (
-                        <SelectItem key={role} value={role}>
-                          {t(`document.permission.role.${role}`)}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8 text-success hover:text-success hover:bg-success/10"
-                    onClick={() => handleApprove(permission)}
-                    disabled={loading}
-                  >
-                    <Check className="w-4 h-4" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8 text-error hover:text-error hover:bg-error/10"
-                    onClick={() => handleReject(permission)}
-                    disabled={loading}
-                  >
-                    <X className="w-4 h-4" />
-                  </Button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </Card>
-
-      {/* Tabs + Members Section */}
+      {/* Tabs + Content */}
       <Card padding="default" className="space-y-4">
         {/* Tabs */}
         <div className="flex border-b border-border">
@@ -349,103 +312,263 @@ export function PermissionManagementTab({ kbId, extensionTabs }: PermissionManag
           })}
         </div>
 
-        {/* User Tab Content */}
+        {/* ===== 个人 Tab ===== */}
         {activeTab === 'user' && (
-          <div>
-            {approvedCount === 0 ? (
-              <p className="text-sm text-text-muted py-4 text-center">
-                {t('document.permission.noApprovedUsers')}
-              </p>
-            ) : (
-              <div className="space-y-4">
-                {/* Owner permissions (users only) */}
-                {(userRoleGroups?.Owner?.length || 0) > 0 && (
-                  <PermissionGroup
-                    title={t('document.permission.role.Owner')}
-                    users={userRoleGroups!.Owner}
-                    editingId={editingId}
-                    editingRole={editingRole}
-                    setEditingRole={setEditingRole}
-                    onStartEditing={startEditing}
-                    onCancelEditing={cancelEditing}
-                    onUpdateRole={handleUpdateRole}
-                    onDelete={handleDelete}
-                    loading={loading}
-                    t={t}
-                  />
-                )}
-                {/* Maintainer permissions (users only) */}
-                {(userRoleGroups?.Maintainer?.length || 0) > 0 && (
-                  <PermissionGroup
-                    title={t('document.permission.role.Maintainer')}
-                    users={userRoleGroups!.Maintainer}
-                    editingId={editingId}
-                    editingRole={editingRole}
-                    setEditingRole={setEditingRole}
-                    onStartEditing={startEditing}
-                    onCancelEditing={cancelEditing}
-                    onUpdateRole={handleUpdateRole}
-                    onDelete={handleDelete}
-                    loading={loading}
-                    t={t}
-                  />
-                )}
-                {/* Developer permissions (users only) */}
-                {(userRoleGroups?.Developer?.length || 0) > 0 && (
-                  <PermissionGroup
-                    title={t('document.permission.role.Developer')}
-                    users={userRoleGroups!.Developer}
-                    editingId={editingId}
-                    editingRole={editingRole}
-                    setEditingRole={setEditingRole}
-                    onStartEditing={startEditing}
-                    onCancelEditing={cancelEditing}
-                    onUpdateRole={handleUpdateRole}
-                    onDelete={handleDelete}
-                    loading={loading}
-                    t={t}
-                  />
-                )}
-                {/* Reporter permissions (users only) */}
-                {(userRoleGroups?.Reporter?.length || 0) > 0 && (
-                  <PermissionGroup
-                    title={t('document.permission.role.Reporter')}
-                    users={userRoleGroups!.Reporter}
-                    editingId={editingId}
-                    editingRole={editingRole}
-                    setEditingRole={setEditingRole}
-                    onStartEditing={startEditing}
-                    onCancelEditing={cancelEditing}
-                    onUpdateRole={handleUpdateRole}
-                    onDelete={handleDelete}
-                    loading={loading}
-                    t={t}
-                  />
-                )}
-                {/* RestrictedAnalyst permissions (users only) */}
-                {(userRoleGroups?.RestrictedAnalyst?.length || 0) > 0 && (
-                  <PermissionGroup
-                    title={t('document.permission.role.RestrictedAnalyst')}
-                    users={userRoleGroups!.RestrictedAnalyst}
-                    editingId={editingId}
-                    editingRole={editingRole}
-                    setEditingRole={setEditingRole}
-                    onStartEditing={startEditing}
-                    onCancelEditing={cancelEditing}
-                    onUpdateRole={handleUpdateRole}
-                    onDelete={handleDelete}
-                    loading={loading}
-                    t={t}
-                  />
+          <div className="space-y-4">
+            {/* Pending Requests */}
+            <div className="space-y-3">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <Clock className="w-4 h-4 text-warning" />
+                {t('document.permission.pendingRequests')}
+                {pendingCount > 0 && (
+                  <span className="bg-warning/10 text-warning px-2 py-0.5 rounded-full text-xs">
+                    {pendingCount}
+                  </span>
                 )}
               </div>
-            )}
+
+              {pendingCount === 0 ? (
+                <p className="text-sm text-text-muted py-2 text-center">
+                  {t('document.permission.noPendingRequests')}
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {permissions?.pending.map(permission => (
+                    <div
+                      key={permission.id}
+                      className="flex items-center justify-between p-3 bg-muted rounded-lg"
+                    >
+                      <div className="flex-1">
+                        <div className="font-medium text-sm">{permission.username}</div>
+                        <div className="text-xs text-text-muted">
+                          {permission.email || t('document.permission.noEmail')}
+                        </div>
+                        <div className="text-xs text-text-muted mt-1">
+                          {t('document.permission.requesting')}:{' '}
+                          {permission.role
+                            ? t(`document.permission.role.${permission.role}`)
+                            : t('document.permission.role.Reporter')}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Select
+                          value={approvalRoles[permission.id] || permission.role || 'Reporter'}
+                          onValueChange={value =>
+                            handleApprovalRoleChange(permission.id, value as MemberRole)
+                          }
+                        >
+                          <SelectTrigger className="w-28 h-11 min-w-[44px]">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {ASSIGNABLE_ROLES.map(role => (
+                              <SelectItem key={role} value={role}>
+                                {t(`document.permission.role.${role}`)}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-success hover:text-success hover:bg-success/10"
+                          onClick={() => handleApprove(permission)}
+                          disabled={loading}
+                        >
+                          <Check className="w-4 h-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-error hover:text-error hover:bg-error/10"
+                          onClick={() => handleReject(permission)}
+                          disabled={loading}
+                        >
+                          <X className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Approved Users by Role */}
+            <div>
+              {approvedCount === 0 ? (
+                <p className="text-sm text-text-muted py-4 text-center">
+                  {t('document.permission.noApprovedUsers')}
+                </p>
+              ) : (
+                <div className="space-y-4">
+                  {(userRoleGroups?.Owner?.length || 0) > 0 && (
+                    <PermissionGroup
+                      title={t('document.permission.role.Owner')}
+                      users={userRoleGroups!.Owner}
+                      editingId={editingId}
+                      editingRole={editingRole}
+                      setEditingRole={setEditingRole}
+                      onStartEditing={startEditing}
+                      onCancelEditing={cancelEditing}
+                      onUpdateRole={handleUpdateRole}
+                      onDelete={handleDelete}
+                      loading={loading}
+                      t={t}
+                    />
+                  )}
+                  {(userRoleGroups?.Maintainer?.length || 0) > 0 && (
+                    <PermissionGroup
+                      title={t('document.permission.role.Maintainer')}
+                      users={userRoleGroups!.Maintainer}
+                      editingId={editingId}
+                      editingRole={editingRole}
+                      setEditingRole={setEditingRole}
+                      onStartEditing={startEditing}
+                      onCancelEditing={cancelEditing}
+                      onUpdateRole={handleUpdateRole}
+                      onDelete={handleDelete}
+                      loading={loading}
+                      t={t}
+                    />
+                  )}
+                  {(userRoleGroups?.Developer?.length || 0) > 0 && (
+                    <PermissionGroup
+                      title={t('document.permission.role.Developer')}
+                      users={userRoleGroups!.Developer}
+                      editingId={editingId}
+                      editingRole={editingRole}
+                      setEditingRole={setEditingRole}
+                      onStartEditing={startEditing}
+                      onCancelEditing={cancelEditing}
+                      onUpdateRole={handleUpdateRole}
+                      onDelete={handleDelete}
+                      loading={loading}
+                      t={t}
+                    />
+                  )}
+                  {(userRoleGroups?.Reporter?.length || 0) > 0 && (
+                    <PermissionGroup
+                      title={t('document.permission.role.Reporter')}
+                      users={userRoleGroups!.Reporter}
+                      editingId={editingId}
+                      editingRole={editingRole}
+                      setEditingRole={setEditingRole}
+                      onStartEditing={startEditing}
+                      onCancelEditing={cancelEditing}
+                      onUpdateRole={handleUpdateRole}
+                      onDelete={handleDelete}
+                      loading={loading}
+                      t={t}
+                    />
+                  )}
+                  {(userRoleGroups?.RestrictedAnalyst?.length || 0) > 0 && (
+                    <PermissionGroup
+                      title={t('document.permission.role.RestrictedAnalyst')}
+                      users={userRoleGroups!.RestrictedAnalyst}
+                      editingId={editingId}
+                      editingRole={editingRole}
+                      setEditingRole={setEditingRole}
+                      onStartEditing={startEditing}
+                      onCancelEditing={cancelEditing}
+                      onUpdateRole={handleUpdateRole}
+                      onDelete={handleDelete}
+                      loading={loading}
+                      t={t}
+                    />
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Add User Button */}
+            <div className="flex justify-start">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowAddUser(true)}
+              >
+                <UserPlus className="w-4 h-4 mr-2" />
+                {t('document.permission.addUser')}
+              </Button>
+            </div>
           </div>
         )}
 
-        {/* Namespace Tab Content */}
+        {/* ===== 群组 Tab ===== */}
         {activeTab === 'namespace' && (
-          <div>
+          <div className="space-y-4">
+            {/* Add Group - Search + Role + Add */}
+            <div className="flex items-start gap-2">
+              <div className="flex-1 relative">
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-text-muted" />
+                  <Input
+                    ref={groupInputRef}
+                    value={groupSearch}
+                    onChange={e => {
+                      setGroupSearch(e.target.value)
+                      if (!fetchingGroups) fetchGroups()
+                      setShowGroupDropdown(true)
+                    }}
+                    onFocus={() => {
+                      if (!fetchingGroups && groups.length === 0) fetchGroups()
+                      setShowGroupDropdown(true)
+                    }}
+                    placeholder={t('document.permission.searchGroupPlaceholder') || '搜索群组...'}
+                    className="pl-9"
+                  />
+                </div>
+                {showGroupDropdown && (
+                  <div
+                    ref={groupDropdownRef}
+                    className="absolute z-50 w-full mt-1 bg-base border border-border rounded-md shadow-lg max-h-48 overflow-y-auto"
+                  >
+                    {fetchingGroups ? (
+                      <div className="flex items-center justify-center p-3">
+                        <Spinner className="w-4 h-4" />
+                      </div>
+                    ) : filteredGroups.length === 0 ? (
+                      <div className="p-3 text-sm text-text-muted text-center">
+                        {groupSearch.trim()
+                          ? (t('common:userSearch.noResults') || '未找到结果')
+                          : (t('document.permission.noGroups') || '暂无群组')}
+                      </div>
+                    ) : (
+                      filteredGroups.map(group => (
+                        <button
+                          key={group.id}
+                          type="button"
+                          onClick={() => {
+                            handleAddGroup(group.id as number)
+                          }}
+                          className="w-full flex items-center gap-3 p-3 hover:bg-surface cursor-pointer text-left"
+                        >
+                          <span className="font-medium text-sm text-text-primary">
+                            {group.display_name || group.name}
+                          </span>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                )}
+              </div>
+              <div className="flex-shrink-0">
+                <Select value={addGroupRole} onValueChange={v => setAddGroupRole(v as MemberRole)}>
+                  <SelectTrigger className="w-28 h-11 min-w-[44px]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {ASSIGNABLE_ROLES.map(role => (
+                      <SelectItem key={role} value={role}>
+                        {t(`document.permission.role.${role}`)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            {/* Added Groups List */}
             {namespaceMembers.length === 0 ? (
               <p className="text-sm text-text-muted py-4 text-center">
                 {t('document.permission.noNamespacePermissions') || '暂无群组权限'}
@@ -486,7 +609,7 @@ export function PermissionManagementTab({ kbId, extensionTabs }: PermissionManag
           </div>
         )}
 
-        {/* Extension Tab Content */}
+        {/* ===== Extension Tab Content ===== */}
         {extensionTabs?.map((tab, index) => {
           const tabValue = `ext-${index}`
           return activeTab === tabValue ? (
@@ -504,15 +627,6 @@ export function PermissionManagementTab({ kbId, extensionTabs }: PermissionManag
         kbId={kbId}
         onSuccess={fetchPermissions}
       />
-
-      {/* Add Namespace Dialog */}
-      <AddNamespaceDialog
-        open={showAddNamespace}
-        onOpenChange={setShowAddNamespace}
-        kbId={kbId}
-        onSuccess={fetchPermissions}
-      />
-
     </div>
   )
 }

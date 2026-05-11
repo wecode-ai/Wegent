@@ -453,6 +453,8 @@
       "individual": "个人",
       "selectGroup": "选择群组",
       "selectGroupPlaceholder": "请选择群组",
+      "searchGroupPlaceholder": "搜索群组...",
+      "noGroups": "暂无可用群组",
       "namespaceMembers": "群组权限",
       "addNamespace": "添加群组",
       "noNamespacePermissions": "暂无群组权限",

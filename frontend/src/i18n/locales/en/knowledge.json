@@ -453,6 +453,8 @@
       "individual": "Individual",
       "selectGroup": "Select group",
       "selectGroupPlaceholder": "Please select a group",
+      "searchGroupPlaceholder": "Search groups...",
+      "noGroups": "No groups available",
       "namespaceMembers": "Group Permissions",
       "addNamespace": "Add group",
       "noNamespacePermissions": "No group permissions yet",

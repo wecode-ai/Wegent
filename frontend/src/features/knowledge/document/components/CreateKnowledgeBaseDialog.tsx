@@ -401,12 +401,12 @@ export function CreateKnowledgeBaseDialog({
             showGuidedQuestions={isNotebook}
             guidedQuestions={guidedQuestions}
             onGuidedQuestionsChange={setGuidedQuestions}
-          />
-
-          {/* Authorization Section */}
-          <KnowledgeBaseAuthSection
-            value={authEntries}
-            onChange={setAuthEntries}
+            beforeSummarySection={
+              <KnowledgeBaseAuthSection
+                value={authEntries}
+                onChange={setAuthEntries}
+              />
+            }
           />
 
           {error && <p className="text-sm text-error">{error}</p>}
