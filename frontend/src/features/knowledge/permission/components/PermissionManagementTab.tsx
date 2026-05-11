@@ -5,7 +5,7 @@
 'use client'
 
 import { useEffect, useState, useRef } from 'react'
-import { Check, X, UserPlus, Pencil, Trash2, Clock, Shield, ShieldCheck, Code, Eye, UserMinus, Crown } from 'lucide-react'
+import { Check, X, UserPlus, Pencil, Trash2, Users, Clock, Shield } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Spinner } from '@/components/ui/spinner'
@@ -269,7 +269,7 @@ export function PermissionManagementTab({ kbId, extensionTabs }: PermissionManag
             {/* Tab header with add button */}
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-medium flex items-center gap-2">
-                <ShieldCheck className="w-4 h-4 text-primary" />
+                <Users className="w-4 h-4 text-primary" />
                 {loc('document.permission.approvedUsers', '已授权用户')}
               </h3>
               <Button
@@ -371,7 +371,6 @@ export function PermissionManagementTab({ kbId, extensionTabs }: PermissionManag
                   {(userRoleGroups?.Owner?.length || 0) > 0 && (
                     <PermissionGroup
                       title={t('document.permission.role.Owner')}
-                      icon={<Crown className="w-4 h-4 text-warning" />}
                       users={userRoleGroups!.Owner}
                       editingId={editingId}
                       editingRole={editingRole}
@@ -387,7 +386,6 @@ export function PermissionManagementTab({ kbId, extensionTabs }: PermissionManag
                   {(userRoleGroups?.Maintainer?.length || 0) > 0 && (
                     <PermissionGroup
                       title={t('document.permission.role.Maintainer')}
-                      icon={<Shield className="w-4 h-4 text-blue-500" />}
                       users={userRoleGroups!.Maintainer}
                       editingId={editingId}
                       editingRole={editingRole}
@@ -403,7 +401,6 @@ export function PermissionManagementTab({ kbId, extensionTabs }: PermissionManag
                   {(userRoleGroups?.Developer?.length || 0) > 0 && (
                     <PermissionGroup
                       title={t('document.permission.role.Developer')}
-                      icon={<Code className="w-4 h-4 text-green-600" />}
                       users={userRoleGroups!.Developer}
                       editingId={editingId}
                       editingRole={editingRole}
@@ -419,7 +416,6 @@ export function PermissionManagementTab({ kbId, extensionTabs }: PermissionManag
                   {(userRoleGroups?.Reporter?.length || 0) > 0 && (
                     <PermissionGroup
                       title={t('document.permission.role.Reporter')}
-                      icon={<Eye className="w-4 h-4 text-text-secondary" />}
                       users={userRoleGroups!.Reporter}
                       editingId={editingId}
                       editingRole={editingRole}
@@ -435,7 +431,6 @@ export function PermissionManagementTab({ kbId, extensionTabs }: PermissionManag
                   {(userRoleGroups?.RestrictedAnalyst?.length || 0) > 0 && (
                     <PermissionGroup
                       title={t('document.permission.role.RestrictedAnalyst')}
-                      icon={<UserMinus className="w-4 h-4 text-text-muted" />}
                       users={userRoleGroups!.RestrictedAnalyst}
                       editingId={editingId}
                       editingRole={editingRole}
@@ -546,7 +541,6 @@ export function PermissionManagementTab({ kbId, extensionTabs }: PermissionManag
 // Permission Group Component
 interface PermissionGroupProps {
   title: string
-  icon?: React.ReactNode
   users: PermissionUserInfo[]
   editingId: number | null
   editingRole: MemberRole
@@ -561,7 +555,6 @@ interface PermissionGroupProps {
 
 function PermissionGroup({
   title,
-  icon,
   users,
   editingId,
   editingRole,
@@ -574,29 +567,18 @@ function PermissionGroup({
   t,
 }: PermissionGroupProps) {
   return (
-    <div className="bg-surface rounded-lg p-3 border border-border">
-      <div className="flex items-center gap-1.5 mb-3">
-        {icon}
-        <span className="text-xs font-semibold text-text-primary uppercase tracking-wide">{title}</span>
-        <span className="text-xs text-text-muted ml-1">({users.length})</span>
-      </div>
+    <div>
+      <div className="text-xs font-medium text-text-muted mb-2">{title}</div>
       <div className="space-y-1">
         {users.map(user => (
           <div
             key={user.id}
-            className="group flex items-center justify-between p-2 rounded-lg hover:bg-muted transition-colors bg-base"
+            className="group flex items-center justify-between p-2 rounded-lg hover:bg-muted transition-colors"
           >
             <div className="flex-1 min-w-0">
-              <div className="font-medium text-sm truncate flex items-center gap-2">
-                {user.username}
-                {user.entity_type && user.entity_type !== 'user' && (
-                  <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-surface text-text-muted border-border border">
-                    {user.entity_type === 'namespace' ? '群组' : user.entity_type}
-                  </span>
-                )}
-              </div>
+              <div className="font-medium text-sm truncate">{user.username}</div>
               <div className="text-xs text-text-muted truncate">
-                {user.email || (user.entity_type && user.entity_type !== 'user' ? user.entity_id || '' : t('document.permission.noEmail'))}
+                {user.email || t('document.permission.noEmail')}
               </div>
             </div>
             {editingId === user.id ? (
