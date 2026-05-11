@@ -19,7 +19,6 @@ import {
   SelectContent,
   SelectItem,
   SelectTrigger,
-  SelectValue,
 } from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
 import { UserSearchSelect } from '@/components/common/UserSearchSelect'
@@ -142,7 +141,7 @@ export function KnowledgeBaseAuthSection({
             </div>
             <Select value={userRole} onValueChange={v => setUserRole(v as MemberRole)}>
               <SelectTrigger className="w-28 h-10 min-w-[44px] flex-shrink-0">
-                <SelectValue />
+                <span className="truncate">{t(`document.permission.role.${userRole}`)}</span>
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="Maintainer">
@@ -225,7 +224,7 @@ export function KnowledgeBaseAuthSection({
             </div>
             <Select value={groupRole} onValueChange={v => setGroupRole(v as MemberRole)}>
               <SelectTrigger className="w-28 h-10 min-w-[44px] flex-shrink-0">
-                <SelectValue />
+                <span className="truncate">{t(`document.permission.role.${groupRole}`)}</span>
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="Maintainer">

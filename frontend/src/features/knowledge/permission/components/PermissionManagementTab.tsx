@@ -266,24 +266,16 @@ export function PermissionManagementTab({ kbId, extensionTabs }: PermissionManag
         {/* ===== 个人 Tab ===== */}
         {activeTab === 'user' && (
           <div className="space-y-4">
-            {/* Tab header with add button */}
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-medium flex items-center gap-2">
-                <Users className="w-4 h-4 text-primary" />
-                {loc('document.permission.approvedUsers', '已授权用户')}
-              </h3>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setShowAddUser(true)}
-              >
+            {/* Add user button */}
+            <div className="flex items-center justify-end">
+              <Button variant="outline" size="sm" onClick={() => setShowAddUser(true)}>
                 <UserPlus className="w-4 h-4 mr-2" />
                 {loc('document.permission.addUser', '添加用户')}
               </Button>
             </div>
 
-            {/* Pending Requests */}
-            <div className="space-y-3">
+            {/* Pending Requests Section */}
+            <Card padding="default" className="space-y-4">
               <div className="flex items-center gap-2 text-sm font-medium">
                 <Clock className="w-4 h-4 text-warning" />
                 {t('document.permission.pendingRequests')}
@@ -295,7 +287,7 @@ export function PermissionManagementTab({ kbId, extensionTabs }: PermissionManag
               </div>
 
               {pendingCount === 0 ? (
-                <p className="text-sm text-text-muted py-2 text-center">
+                <p className="text-sm text-text-muted py-4 text-center">
                   {t('document.permission.noPendingRequests')}
                 </p>
               ) : (
@@ -358,16 +350,26 @@ export function PermissionManagementTab({ kbId, extensionTabs }: PermissionManag
                   ))}
                 </div>
               )}
-            </div>
+            </Card>
 
-            {/* Approved Users by Role */}
-            <div>
+            {/* Approved Users Section */}
+            <Card padding="default" className="space-y-4">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <Users className="w-4 h-4 text-primary" />
+                {t('document.permission.approvedUsers')}
+                {approvedCount > 0 && (
+                  <span className="bg-primary/10 text-primary px-2 py-0.5 rounded-full text-xs">
+                    {approvedCount}
+                  </span>
+                )}
+              </div>
+
               {approvedCount === 0 ? (
                 <p className="text-sm text-text-muted py-4 text-center">
                   {t('document.permission.noApprovedUsers')}
                 </p>
               ) : (
-                <div className="space-y-3">
+                <div className="space-y-4">
                   {(userRoleGroups?.Owner?.length || 0) > 0 && (
                     <PermissionGroup
                       title={t('document.permission.role.Owner')}
@@ -445,7 +447,7 @@ export function PermissionManagementTab({ kbId, extensionTabs }: PermissionManag
                   )}
                 </div>
               )}
-            </div>
+            </Card>
           </div>
         )}
 
