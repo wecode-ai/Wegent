@@ -146,12 +146,19 @@ export function PermissionManagementTab({ kbId, extensionTabs }: PermissionManag
 
   // Separate namespace members from user members
   const allApproved = permissions?.approved
-  const allUserMembers: PermissionUserInfo[] = allApproved
-    ? Object.values(allApproved).flat().filter(m => !m.entity_type || m.entity_type === 'user')
-    : []
-  const namespaceMembers: PermissionUserInfo[] = allApproved
-    ? Object.values(allApproved).flat().filter(m => m.entity_type === 'namespace')
-    : []
+
+  // Filter namespace members into role groups for group display — must be before namespaceGroupCount
+  const filterNamespaceIn = (users: PermissionUserInfo[]) =>
+    users.filter(u => u.entity_type === 'namespace')
+  const namespaceRoleGroups = allApproved
+    ? {
+        Owner: filterNamespaceIn(allApproved.Owner),
+        Maintainer: filterNamespaceIn(allApproved.Maintainer),
+        Developer: filterNamespaceIn(allApproved.Developer),
+        Reporter: filterNamespaceIn(allApproved.Reporter),
+        RestrictedAnalyst: filterNamespaceIn(allApproved.RestrictedAnalyst),
+      }
+    : null
 
   const namespaceGroupCount = namespaceRoleGroups
     ? Object.values(namespaceRoleGroups).reduce((sum, arr) => sum + arr.length, 0)
@@ -167,19 +174,6 @@ export function PermissionManagementTab({ kbId, extensionTabs }: PermissionManag
         Developer: filterNamespaceOut(allApproved.Developer),
         Reporter: filterNamespaceOut(allApproved.Reporter),
         RestrictedAnalyst: filterNamespaceOut(allApproved.RestrictedAnalyst),
-      }
-    : null
-
-  // Filter namespace members into role groups for group display
-  const filterNamespaceIn = (users: PermissionUserInfo[]) =>
-    users.filter(u => u.entity_type === 'namespace')
-  const namespaceRoleGroups = allApproved
-    ? {
-        Owner: filterNamespaceIn(allApproved.Owner),
-        Maintainer: filterNamespaceIn(allApproved.Maintainer),
-        Developer: filterNamespaceIn(allApproved.Developer),
-        Reporter: filterNamespaceIn(allApproved.Reporter),
-        RestrictedAnalyst: filterNamespaceIn(allApproved.RestrictedAnalyst),
       }
     : null
 
