@@ -15,41 +15,45 @@ import { shellApis } from '@/apis/shells'
 import { fetchPublicSkillsList, fetchUnifiedSkillsList } from '@/apis/skills'
 import type { Bot } from '@/types/api'
 
+const mockTranslate = (key: string, options?: { count?: number }) => {
+  const translations: Record<string, string> = {
+    'bot.default_knowledge_bases_search_placeholder': 'Search knowledge bases',
+    'bot.default_knowledge_bases_used_for_new_chats':
+      'Used to initialize knowledge bases for new chats.',
+    'bot.default_knowledge_bases_append_hint':
+      'Manual chat-time selection appends additional knowledge bases later.',
+    'bot.default_knowledge_bases_selected_section': 'Selected default knowledge bases',
+    'bot.default_knowledge_bases_available_section': 'Available knowledge bases',
+    'bot.default_knowledge_bases_empty_selection': 'No default knowledge bases selected',
+    'bot.default_knowledge_bases_no_options': 'No available knowledge bases',
+    'bot.default_knowledge_bases_no_match': 'No matching knowledge bases',
+    'bot.default_knowledge_bases_loading': 'Loading knowledge bases...',
+    'bot.default_knowledge_bases_load_failed': 'Failed to load knowledge bases',
+    'bot.default_knowledge_bases_updated_at': 'Updated',
+    'bot.default_knowledge_bases_selected_badge': 'Selected',
+    'bot.default_knowledge_bases_selected_count': `${options?.count ?? 0} selected`,
+    'bot.default_knowledge_bases_group_personal': 'Personal knowledge bases',
+    'bot.default_knowledge_bases_group_group': 'Group knowledge bases',
+    'bot.default_knowledge_bases_group_organization': 'Organization knowledge bases',
+    'bot.default_knowledge_bases_source_personal': 'Personal',
+    'bot.default_knowledge_bases_source_group': 'Group',
+    'bot.default_knowledge_bases_source_organization': 'Organization',
+    'bot.default_knowledge_bases_source_shared': 'Shared',
+    'knowledge:document_count': `${options?.count ?? 0} document`,
+    'knowledge:documents_count': `${options?.count ?? 0} documents`,
+  }
+
+  const normalizedKey = key.startsWith('common:') ? key.replace(/^common:/, '') : key
+
+  return translations[key] ?? translations[normalizedKey] ?? key
+}
+
+const mockI18n = { language: 'en' }
+
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
-    t: (key: string, options?: { count?: number }) => {
-      const translations: Record<string, string> = {
-        'bot.default_knowledge_bases_search_placeholder': 'Search knowledge bases',
-        'bot.default_knowledge_bases_used_for_new_chats':
-          'Used to initialize knowledge bases for new chats.',
-        'bot.default_knowledge_bases_append_hint':
-          'Manual chat-time selection appends additional knowledge bases later.',
-        'bot.default_knowledge_bases_selected_section': 'Selected default knowledge bases',
-        'bot.default_knowledge_bases_available_section': 'Available knowledge bases',
-        'bot.default_knowledge_bases_empty_selection': 'No default knowledge bases selected',
-        'bot.default_knowledge_bases_no_options': 'No available knowledge bases',
-        'bot.default_knowledge_bases_no_match': 'No matching knowledge bases',
-        'bot.default_knowledge_bases_loading': 'Loading knowledge bases...',
-        'bot.default_knowledge_bases_load_failed': 'Failed to load knowledge bases',
-        'bot.default_knowledge_bases_updated_at': 'Updated',
-        'bot.default_knowledge_bases_selected_badge': 'Selected',
-        'bot.default_knowledge_bases_selected_count': `${options?.count ?? 0} selected`,
-        'bot.default_knowledge_bases_group_personal': 'Personal knowledge bases',
-        'bot.default_knowledge_bases_group_group': 'Group knowledge bases',
-        'bot.default_knowledge_bases_group_organization': 'Organization knowledge bases',
-        'bot.default_knowledge_bases_source_personal': 'Personal',
-        'bot.default_knowledge_bases_source_group': 'Group',
-        'bot.default_knowledge_bases_source_organization': 'Organization',
-        'bot.default_knowledge_bases_source_shared': 'Shared',
-        'knowledge:document_count': `${options?.count ?? 0} document`,
-        'knowledge:documents_count': `${options?.count ?? 0} documents`,
-      }
-
-      const normalizedKey = key.startsWith('common:') ? key.replace(/^common:/, '') : key
-
-      return translations[key] ?? translations[normalizedKey] ?? key
-    },
-    i18n: { language: 'en' },
+    t: mockTranslate,
+    i18n: mockI18n,
   }),
 }))
 
@@ -252,6 +256,7 @@ describe('BotEdit default knowledge bases', () => {
     })
     mockedGetPublicShells.mockResolvedValue([
       { name: 'ClaudeCode', type: 'public', shellType: 'ClaudeCode' },
+      { name: 'Dify', type: 'public', shellType: 'Dify' },
     ])
     mockedGetUnifiedModels.mockResolvedValue({
       data: [{ name: 'gpt-4.1', type: 'public', namespace: 'default' }],
@@ -421,6 +426,32 @@ describe('BotEdit default knowledge bases', () => {
 
     expect(await screen.findByTestId('rich-skill-selector')).toBeInTheDocument()
     expect(screen.getByText('隐藏公共技能')).toBeInTheDocument()
+  })
+
+  test('hides knowledge base selector for public Dify bots', async () => {
+    renderBotEdit(
+      {
+        shell_name: 'Dify',
+        shell_type: 'Dify',
+        agent_config: {},
+      },
+      { scope: 'public' }
+    )
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('default-knowledge-base-trigger')).not.toBeInTheDocument()
+    })
+  })
+
+  test('shows only organization knowledge bases for public non-Dify bots', async () => {
+    renderBotEdit({}, { scope: 'public' })
+
+    fireEvent.click(await screen.findByTestId('default-knowledge-base-trigger'))
+
+    expect(screen.getByTestId('default-knowledge-base-group-organization')).toBeInTheDocument()
+    expect(screen.queryByTestId('default-knowledge-base-group-personal')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('default-knowledge-base-group-group')).not.toBeInTheDocument()
+    expect(screen.getByText('Company-wide security guidance')).toBeInTheDocument()
   })
 
   test('renders popover-based selector with grouped metadata', async () => {

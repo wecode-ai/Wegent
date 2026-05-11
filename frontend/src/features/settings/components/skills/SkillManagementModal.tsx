@@ -76,11 +76,7 @@ export default function SkillManagementModal({
   )
   const [referencedGhosts, setReferencedGhosts] = useState<ReferencedGhost[]>([])
 
-  // Determine the namespace for uploading skills
-  const uploadNamespace = scope === 'group' && groupName ? groupName : 'default'
-  console.log(
-    `[SkillManagementModal] scope=${scope}, groupName=${groupName}, uploadNamespace=${uploadNamespace}`
-  )
+  const uploadNamespace = scope === 'group' && groupName ? groupName : undefined
 
   const loadSkills = useCallback(async () => {
     setIsLoading(true)
@@ -461,6 +457,7 @@ export default function SkillManagementModal({
           onClose={handleModalClose}
           skill={editingSkill}
           namespace={uploadNamespace}
+          isPublic={scope === 'public'}
         />
       )}
 

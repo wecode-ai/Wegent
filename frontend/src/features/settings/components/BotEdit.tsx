@@ -1445,30 +1445,32 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                 </div>
               )}
 
-              <div className="flex flex-col">
-                <div className="flex items-center justify-between mb-1">
-                  <div className="flex items-center">
-                    <label className="block text-base font-medium text-text-primary">
-                      {t('common:bot.default_knowledge_bases')}
-                    </label>
-                    <span className="text-xs text-text-muted ml-2">
-                      {t('common:bot.default_knowledge_bases_optional')}
-                    </span>
+              {!isDifyAgent && (
+                <div className="flex flex-col">
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="flex items-center">
+                      <label className="block text-base font-medium text-text-primary">
+                        {t('common:bot.default_knowledge_bases')}
+                      </label>
+                      <span className="text-xs text-text-muted ml-2">
+                        {t('common:bot.default_knowledge_bases_optional')}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="bg-base rounded-md p-2 min-h-[80px]">
+                    <KnowledgeBaseMultiSelector
+                      value={defaultKnowledgeBaseRefs}
+                      onChange={setDefaultKnowledgeBaseRefs}
+                      disabled={readOnly}
+                      allowedSources={
+                        scope === 'public'
+                          ? ['organization']
+                          : ['personal', 'group', 'organization']
+                      }
+                    />
                   </div>
                 </div>
-                <div className="bg-base rounded-md p-2 min-h-[80px]">
-                  <KnowledgeBaseMultiSelector
-                    value={defaultKnowledgeBaseRefs}
-                    onChange={setDefaultKnowledgeBaseRefs}
-                    disabled={readOnly}
-                    allowedSources={
-                      scope === 'public'
-                        ? ['organization']
-                        : ['personal', 'group', 'organization']
-                    }
-                  />
-                </div>
-              </div>
+              )}
 
               {/* MCP Config */}
               <McpConfigSection
