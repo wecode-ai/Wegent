@@ -1970,10 +1970,10 @@ class KnowledgeService:
                         break
 
         # Separate entity-authorized KBs:
-        # - Only process personal KBs (namespace='default') — group KBs that were
-        #   entity-authorized to other groups should stay in their native groups
-        # - Author's own KBs: stay in personal_created (already there)
-        # - Other users' KBs: go to shared_with_me with source_group
+        # - Personal KBs (namespace='default'): non-author users see them in shared_with_me
+        # - Group KBs (namespace='group'): only users who are NOT members of the source
+        #   group get them in shared_with_me (members already see them as native group KBs)
+        # - Author's own KBs: stay where they already are (personal_created or native group)
         entity_shared_to_me_kbs: list[Kind] = []
         entity_personal_kb_ids: set[int] = set()
         if entity_members_kb_ids:
@@ -1987,17 +1987,21 @@ class KnowledgeService:
                 .all()
             )
             for ekb in entity_kbs:
-                # Only process personal KBs (namespace='default')
-                # Group KBs that are entity-authorized to other groups stay in their native groups
-                if ekb.namespace != "default":
-                    continue
-                entity_personal_kb_ids.add(ekb.id)
+                # Track personal KBs for filtering from group_kbs
+                if ekb.namespace == "default":
+                    entity_personal_kb_ids.add(ekb.id)
+
+                # Skip author's own KBs — they already see them in personal_created or native group
                 if ekb.user_id == user_id:
-                    # Author's own KB, keep in personal_created (already there)
-                    pass
-                else:
-                    # Shared to a group the user belongs to → shared_with_me
-                    entity_shared_to_me_kbs.append(ekb)
+                    continue
+
+                # For group KBs (namespace != 'default'), skip if user already has access
+                # via group membership (they see it as a native group KB)
+                if ekb.namespace != "default" and ekb.namespace in accessible_groups:
+                    continue
+
+                # Shared to a group the user belongs to → shared_with_me
+                entity_shared_to_me_kbs.append(ekb)
 
         # Merge group_kb_map (native group KBs + user-level shared group KBs)
         group_kbs = list(group_kb_map.values())
