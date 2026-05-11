@@ -93,6 +93,10 @@ export interface KnowledgeGroupListPageProps {
   personalCreatedByMe?: KnowledgeBaseWithGroupInfo[]
   /** Knowledge bases shared with current user (for personal mode) */
   personalSharedWithMe?: KnowledgeBaseWithGroupInfo[]
+  /** Native group knowledge bases (for group section mode) */
+  groupNativeKbs?: KnowledgeBaseWithGroupInfo[]
+  /** Shared-into-group knowledge bases (for group section mode) */
+  groupSharedKbs?: KnowledgeBaseWithGroupInfo[]
   /** Migrate a knowledge base to group */
   onMigrateKb?: (kb: KbDataItem) => void
   /** Check if user can migrate a KB (only for personal KBs created by user) */
@@ -184,9 +188,12 @@ export function KnowledgeGroupListPage({
   isPersonalMode = false,
   personalCreatedByMe = [],
   personalSharedWithMe = [],
+  groupNativeKbs = [],
+  groupSharedKbs = [],
   onMigrateKb,
   canMigrate,
 }: KnowledgeGroupListPageProps) {
+  const isGroupSectionMode = groupNativeKbs.length > 0 || groupSharedKbs.length > 0
   const { t } = useTranslation('knowledge')
   const [sortBy, setSortBy] = useState<SortBy>('default')
   const [sortOrder, setSortOrder] = useState<SortOrder>('asc')
@@ -296,6 +303,8 @@ export function KnowledgeGroupListPage({
     () => sortKbs(personalSharedWithMe),
     [personalSharedWithMe, sortKbs]
   )
+  const sortedNative = useMemo(() => sortKbs(groupNativeKbs), [groupNativeKbs, sortKbs])
+  const sortedShared = useMemo(() => sortKbs(groupSharedKbs), [groupSharedKbs, sortKbs])
 
   const handleToggleFavorite = useCallback(
     (e: React.MouseEvent, kb: KbDataItem) => {
@@ -472,6 +481,66 @@ export function KnowledgeGroupListPage({
     )
   }
 
+  // Render group section mode with native and shared sub-sections
+  const renderGroupSectionContent = () => {
+    const hasNative = sortedNative.length > 0
+    const hasShared = sortedShared.length > 0
+
+    if (!hasNative && !hasShared) {
+      return (
+        <div className="flex flex-col items-center justify-center py-12 text-center">
+          <FolderOpen className="w-12 h-12 text-text-muted mb-4" />
+          <h3 className="text-lg font-medium text-text-primary mb-2">
+            {t('document.knowledgeBase.empty', '暂无知识库')}
+          </h3>
+          <p className="text-sm text-text-muted mb-4">
+            {t('document.knowledgeBase.createDesc', '点击上方按钮创建第一个知识库')}
+          </p>
+        </div>
+      )
+    }
+
+    return (
+      <div className="space-y-6">
+        {/* Native group KBs section */}
+        <div>
+          <h3 className="px-6 py-3 text-sm font-medium text-text-secondary bg-surface-hover border-b border-border">
+            {t('document.groupSections.native', '创建')}
+            <span className="ml-2 text-text-muted">({sortedNative.length})</span>
+          </h3>
+          {hasNative ? (
+            <table className="w-full table-fixed min-w-0">
+              {renderTableHeader(false, false)}
+              {renderTableRows(sortedNative, false, false)}
+            </table>
+          ) : (
+            <div className="px-6 py-8 text-center text-text-muted">
+              <p>{t('document.groupSections.noNative', '暂无群组知识库')}</p>
+            </div>
+          )}
+        </div>
+
+        {/* Shared-into-group KBs section */}
+        <div>
+          <h3 className="px-6 py-3 text-sm font-medium text-text-secondary bg-surface-hover border-b border-border">
+            {t('document.groupSections.shared', '分享')}
+            <span className="ml-2 text-text-muted">({sortedShared.length})</span>
+          </h3>
+          {hasShared ? (
+            <table className="w-full table-fixed min-w-0">
+              {renderTableHeader(false, true)}
+              {renderTableRows(sortedShared, false, true)}
+            </table>
+          ) : (
+            <div className="px-6 py-8 text-center text-text-muted">
+              <p>{t('document.groupSections.noShared', '暂无分享的知识库')}</p>
+            </div>
+          )}
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div
       className="flex flex-col h-full overflow-hidden pl-4"
@@ -516,6 +585,9 @@ export function KnowledgeGroupListPage({
         ) : isPersonalMode ? (
           // Personal mode: show separate sections for created and shared
           renderPersonalModeContent()
+        ) : isGroupSectionMode ? (
+          // Group section mode: show native and shared sub-sections
+          renderGroupSectionContent()
         ) : filteredKbs.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-12 text-center">
             <FolderOpen className="w-12 h-12 text-text-muted mb-4" />

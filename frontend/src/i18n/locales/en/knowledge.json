@@ -44,6 +44,12 @@
       "createdDesc": "Click the button above to create your first knowledge base",
       "sharedDesc": "Knowledge bases shared by other users will appear here"
     },
+    "groupSections": {
+      "native": "Created",
+      "shared": "Shared",
+      "noNative": "No group knowledge bases yet",
+      "noShared": "No shared knowledge bases yet"
+    },
     "tree": {
       "title": "Knowledge Base",
       "myKnowledge": "My Knowledge",

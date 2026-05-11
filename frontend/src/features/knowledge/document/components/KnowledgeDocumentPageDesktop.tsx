@@ -967,6 +967,12 @@ export function KnowledgeDocumentPageDesktop({
         }
       })
 
+      // Split group KBs into native and shared for team groups (sectioned view)
+      const groupNativeKbs =
+        selectedGroup.type === 'group' ? groupKbsWithInfo.filter(kb => !kb.shared_from) : []
+      const groupSharedKbs =
+        selectedGroup.type === 'group' ? groupKbsWithInfo.filter(kb => kb.shared_from) : []
+
       return (
         <KnowledgeGroupListPage
           groupId={selectedGroup.id}
@@ -995,6 +1001,8 @@ export function KnowledgeDocumentPageDesktop({
           isPersonalMode={isPersonalMode}
           personalCreatedByMe={isPersonalMode ? sidebar.personalCreatedByMe : undefined}
           personalSharedWithMe={isPersonalMode ? sidebar.personalSharedWithMe : undefined}
+          groupNativeKbs={groupNativeKbs}
+          groupSharedKbs={groupSharedKbs}
           getKbGroupInfo={sidebar.getKbGroupInfo}
           onMigrateKb={kb => {
             const fullKb =

@@ -44,6 +44,12 @@
       "createdDesc": "点击上方按钮创建您的第一个知识库",
       "sharedDesc": "当其他用户分享知识库给您时，将显示在这里"
     },
+    "groupSections": {
+      "native": "创建",
+      "shared": "分享",
+      "noNative": "暂无群组知识库",
+      "noShared": "暂无分享的知识库"
+    },
     "tree": {
       "title": "知识库",
       "myKnowledge": "我的知识",
