@@ -4,8 +4,8 @@
 
 'use client'
 
-import { useEffect, useState, FormEvent } from 'react'
-import { Users, XCircle } from 'lucide-react'
+import { useEffect, useState, useRef, FormEvent } from 'react'
+import { Users, XCircle, Search } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
@@ -15,6 +15,7 @@ import {
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
+import { Input } from '@/components/ui/input'
 import {
   Select,
   SelectContent,
@@ -43,12 +44,22 @@ export function AddNamespaceDialog({
   onSuccess,
 }: AddNamespaceDialogProps) {
   const { t } = useTranslation('knowledge')
+
+  const loc = (key: string, fallback: string) => {
+    const v = t(key)
+    return v && v !== key ? v : fallback
+  }
+
   const [groups, setGroups] = useState<Group[]>([])
-  const [selectedGroupId, setSelectedGroupId] = useState<number | null>(null)
+  const [selectedGroup, setSelectedGroup] = useState<Group | null>(null)
   const [role, setRole] = useState<MemberRole>('Reporter')
   const [loading, setLoading] = useState(false)
   const [fetchingGroups, setFetchingGroups] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [showDropdown, setShowDropdown] = useState(false)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const dropdownRef = useRef<HTMLDivElement>(null)
 
   // Fetch groups when dialog opens
   useEffect(() => {
@@ -56,6 +67,21 @@ export function AddNamespaceDialog({
       fetchGroups()
     }
   }, [open])
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        dropdownRef.current &&
+        !dropdownRef.current.contains(event.target as Node) &&
+        inputRef.current &&
+        !inputRef.current.contains(event.target as Node)
+      ) {
+        setShowDropdown(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
 
   const fetchGroups = async () => {
     setFetchingGroups(true)
@@ -70,18 +96,39 @@ export function AddNamespaceDialog({
     }
   }
 
+  const filteredGroups = searchQuery.trim()
+    ? groups.filter(
+        g =>
+          (g.display_name || g.name)
+            .toLowerCase()
+            .includes(searchQuery.trim().toLowerCase())
+      )
+    : groups
+
+  const handleSelectGroup = (group: Group) => {
+    setSelectedGroup(group)
+    setSearchQuery('')
+    setShowDropdown(false)
+    setError(null)
+  }
+
+  const handleRemoveGroup = () => {
+    setSelectedGroup(null)
+    setSearchQuery('')
+  }
+
   const handleSubmit = async (e?: FormEvent) => {
     e?.preventDefault()
     setError(null)
 
-    if (!selectedGroupId) {
+    if (!selectedGroup) {
       setError(t('common:required') || '请选择群组')
       return
     }
 
     setLoading(true)
     try {
-      await knowledgePermissionApi.addNamespacePermission(kbId, selectedGroupId, role)
+      await knowledgePermissionApi.addNamespacePermission(kbId, selectedGroup.id, role)
       resetForm()
       onSuccess?.()
       onOpenChange(false)
@@ -94,8 +141,10 @@ export function AddNamespaceDialog({
   }
 
   const resetForm = () => {
-    setSelectedGroupId(null)
+    setSelectedGroup(null)
     setRole('Reporter')
+    setSearchQuery('')
+    setShowDropdown(false)
     setError(null)
   }
 
@@ -104,70 +153,142 @@ export function AddNamespaceDialog({
     onOpenChange(false)
   }
 
-  const selectedGroup = groups.find(g => g.id === selectedGroupId)
-
   return (
     <Dialog open={open} onOpenChange={handleClose}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Users className="w-5 h-5" />
-            {t('document.permission.addNamespace') || '添加群组权限'}
+            {loc('document.permission.addNamespace', '添加群组权限')}
           </DialogTitle>
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          {/* Group selector */}
+          {/* Group search selector */}
           <div className="space-y-2">
             <label className="text-sm font-medium">
-              {t('document.permission.selectGroup') || '选择群组'}
+              {loc('document.permission.selectGroup', '选择群组')}
             </label>
-            {fetchingGroups ? (
+            {selectedGroup ? (
+              <div className="flex items-center justify-between p-2 rounded-lg bg-muted/50 border border-border">
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-medium truncate">
+                    {selectedGroup.display_name || selectedGroup.name}
+                  </div>
+                  <div className="text-xs text-text-muted">
+                    {t('document.permission.groupMembers') || '群组成员'}: {selectedGroup.member_count || '?'}
+                  </div>
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 flex-shrink-0 text-text-muted hover:text-error"
+                  onClick={handleRemoveGroup}
+                >
+                  <XCircle className="w-4 h-4" />
+                </Button>
+              </div>
+            ) : fetchingGroups ? (
               <div className="flex items-center justify-center py-4">
                 <Spinner />
               </div>
             ) : (
-              <Select
-                value={selectedGroupId ? String(selectedGroupId) : ''}
-                onValueChange={value => setSelectedGroupId(Number(value))}
-              >
-                <SelectTrigger className="w-full h-11 min-w-[44px]">
-                  <SelectValue
-                    placeholder={t('document.permission.selectGroupPlaceholder') || '请选择群组'}
+              <div className="relative">
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-text-muted" />
+                  <Input
+                    ref={inputRef}
+                    value={searchQuery}
+                    onChange={e => {
+                      setSearchQuery(e.target.value)
+                      setShowDropdown(true)
+                    }}
+                    onFocus={() => {
+                      if (!fetching && groups.length === 0) fetchGroups()
+                      setShowDropdown(true)
+                    }}
+                    placeholder={loc('document.permission.searchGroupPlaceholder', '搜索群组...')}
+                    className="pl-9"
+                    data-testid="add-namespace-group-search"
                   />
-                </SelectTrigger>
-                <SelectContent>
-                  {groups.map(group => (
-                    <SelectItem key={group.id} value={String(group.id)}>
-                      {group.display_name || group.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            )}
-            {selectedGroup && (
-              <p className="text-xs text-text-muted">
-                {t('document.permission.groupMembers') || '群组成员'}:
-                {' '}{selectedGroup.member_count || '?'}
-              </p>
+                </div>
+                {showDropdown && (
+                  <div
+                    ref={dropdownRef}
+                    className="absolute z-50 w-full mt-1 bg-base border border-border rounded-md shadow-lg max-h-48 overflow-y-auto"
+                    data-testid="add-namespace-group-dropdown"
+                  >
+                    {filteredGroups.length === 0 ? (
+                      <div className="p-3 text-sm text-text-muted text-center">
+                        {searchQuery.trim()
+                          ? (t('common:userSearch.noResults') || '未找到结果')
+                          : loc('document.permission.noGroups', '暂无可用群组')}
+                      </div>
+                    ) : (
+                      filteredGroups.map(group => (
+                        <button
+                          key={group.id}
+                          type="button"
+                          onClick={() => handleSelectGroup(group)}
+                          className="w-full flex items-center gap-3 p-3 hover:bg-surface cursor-pointer text-left"
+                        >
+                          <span className="font-medium text-sm text-text-primary">
+                            {group.display_name || group.name}
+                          </span>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                )}
+              </div>
             )}
           </div>
 
           {/* Role selector */}
           <div className="space-y-2">
             <label className="text-sm font-medium">
-              {t('document.permission.role') || '角色'}
+              {loc('document.permission.role.label', '角色')}
             </label>
             <Select value={role} onValueChange={v => setRole(v as MemberRole)}>
               <SelectTrigger className="w-full h-11 min-w-[44px]">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {ASSIGNABLE_ROLES.map(r => (
-                  <SelectItem key={r} value={r}>
-                    {t(`document.permission.role.${r}`)}
-                  </SelectItem>
-                ))}
+                <SelectItem value="Maintainer">
+                  <div>
+                    <div className="font-medium">{t('document.permission.role.Maintainer')}</div>
+                    <div className="text-xs text-text-muted">
+                      {t('document.permission.role.MaintainerDescription')}
+                    </div>
+                  </div>
+                </SelectItem>
+                <SelectItem value="Developer">
+                  <div>
+                    <div className="font-medium">{t('document.permission.role.Developer')}</div>
+                    <div className="text-xs text-text-muted">
+                      {t('document.permission.role.DeveloperDescription')}
+                    </div>
+                  </div>
+                </SelectItem>
+                <SelectItem value="Reporter">
+                  <div>
+                    <div className="font-medium">{t('document.permission.role.Reporter')}</div>
+                    <div className="text-xs text-text-muted">
+                      {t('document.permission.role.ReporterDescription')}
+                    </div>
+                  </div>
+                </SelectItem>
+                <SelectItem value="RestrictedAnalyst">
+                  <div>
+                    <div className="font-medium">
+                      {t('document.permission.role.RestrictedAnalyst')}
+                    </div>
+                    <div className="text-xs text-text-muted">
+                      {t('document.permission.role.RestrictedAnalystDescription')}
+                    </div>
+                  </div>
+                </SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -187,9 +308,9 @@ export function AddNamespaceDialog({
             <Button
               type="submit"
               variant="primary"
-              disabled={loading || !selectedGroupId}
+              disabled={loading || !selectedGroup}
             >
-              {loading ? <Spinner className="w-4 h-4" /> : (t('document.permission.add') || '添加')}
+              {loading ? <Spinner className="w-4 h-4" /> : loc('document.permission.add', '添加')}
             </Button>
           </DialogFooter>
         </form>

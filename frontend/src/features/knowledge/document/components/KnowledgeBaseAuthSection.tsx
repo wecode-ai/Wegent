@@ -65,12 +65,6 @@ export function KnowledgeBaseAuthSection({
     onChange(value.filter(e => e.id !== id))
   }
 
-  const updateEntryRole = (id: string, role: MemberRole) => {
-    onChange(
-      value.map(e => (e.id === id ? { ...e, role } : e))
-    )
-  }
-
   const totalCount = userEntries.length + namespaceEntries.length
 
   return (
@@ -96,41 +90,24 @@ export function KnowledgeBaseAuthSection({
           <Label className="text-xs font-medium">
             {loc('document.permission.individual', '个人')}
           </Label>
-          {/* Selected user entries - shown ABOVE the search box */}
+          {/* Selected user entries - shown ABOVE the search box as inline chips */}
           {userEntries.length > 0 && (
-            <div className="space-y-1 max-h-32 overflow-y-auto">
+            <div className="flex flex-wrap gap-2">
               {userEntries.map(entry => (
                 <div
                   key={entry.id}
-                  className="flex items-center justify-between p-2 rounded-lg bg-muted/50"
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-muted/70 border border-border text-sm"
                 >
-                  <span className="text-sm truncate flex-1">{entry.label}</span>
-                  <div className="flex items-center gap-2">
-                    <Select
-                      value={entry.role}
-                      onValueChange={v => updateEntryRole(entry.id, v as MemberRole)}
-                    >
-                      <SelectTrigger className="w-24 h-8 text-xs">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {ASSIGNABLE_ROLES.map(role => (
-                          <SelectItem key={role} value={role} className="text-xs">
-                            {t(`document.permission.role.${role}`)}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="h-6 w-6 text-text-muted hover:text-error flex-shrink-0"
-                      onClick={() => removeEntry(entry.id)}
-                    >
-                      <X className="w-3 h-3" />
-                    </Button>
-                  </div>
+                  <span className="truncate max-w-[120px]">{entry.label}</span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-4 w-4 text-text-muted hover:text-error flex-shrink-0 p-0"
+                    onClick={() => removeEntry(entry.id)}
+                  >
+                    <X className="w-3 h-3" />
+                  </Button>
                 </div>
               ))}
             </div>
@@ -168,11 +145,40 @@ export function KnowledgeBaseAuthSection({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {ASSIGNABLE_ROLES.map(role => (
-                  <SelectItem key={role} value={role}>
-                    {t(`document.permission.role.${role}`)}
-                  </SelectItem>
-                ))}
+                <SelectItem value="Maintainer">
+                  <div>
+                    <div className="font-medium">{t('document.permission.role.Maintainer')}</div>
+                    <div className="text-xs text-text-muted">
+                      {t('document.permission.role.MaintainerDescription')}
+                    </div>
+                  </div>
+                </SelectItem>
+                <SelectItem value="Developer">
+                  <div>
+                    <div className="font-medium">{t('document.permission.role.Developer')}</div>
+                    <div className="text-xs text-text-muted">
+                      {t('document.permission.role.DeveloperDescription')}
+                    </div>
+                  </div>
+                </SelectItem>
+                <SelectItem value="Reporter">
+                  <div>
+                    <div className="font-medium">{t('document.permission.role.Reporter')}</div>
+                    <div className="text-xs text-text-muted">
+                      {t('document.permission.role.ReporterDescription')}
+                    </div>
+                  </div>
+                </SelectItem>
+                <SelectItem value="RestrictedAnalyst">
+                  <div>
+                    <div className="font-medium">
+                      {t('document.permission.role.RestrictedAnalyst')}
+                    </div>
+                    <div className="text-xs text-text-muted">
+                      {t('document.permission.role.RestrictedAnalystDescription')}
+                    </div>
+                  </div>
+                </SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -183,41 +189,24 @@ export function KnowledgeBaseAuthSection({
           <Label className="text-xs font-medium">
             {loc('document.permission.namespace', '群组')}
           </Label>
-          {/* Selected group entries - shown ABOVE the search box */}
+          {/* Selected group entries - shown ABOVE the search box as inline chips */}
           {namespaceEntries.length > 0 && (
-            <div className="space-y-1 max-h-32 overflow-y-auto">
+            <div className="flex flex-wrap gap-2">
               {namespaceEntries.map(entry => (
                 <div
                   key={entry.id}
-                  className="flex items-center justify-between p-2 rounded-lg bg-muted/50"
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-muted/70 border border-border text-sm"
                 >
-                  <span className="text-sm truncate flex-1">{entry.label}</span>
-                  <div className="flex items-center gap-2">
-                    <Select
-                      value={entry.role}
-                      onValueChange={v => updateEntryRole(entry.id, v as MemberRole)}
-                    >
-                      <SelectTrigger className="w-24 h-8 text-xs">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {ASSIGNABLE_ROLES.map(role => (
-                          <SelectItem key={role} value={role} className="text-xs">
-                            {t(`document.permission.role.${role}`)}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="h-6 w-6 text-text-muted hover:text-error flex-shrink-0"
-                      onClick={() => removeEntry(entry.id)}
-                    >
-                      <X className="w-3 h-3" />
-                    </Button>
-                  </div>
+                  <span className="truncate max-w-[120px]">{entry.label}</span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-4 w-4 text-text-muted hover:text-error flex-shrink-0 p-0"
+                    onClick={() => removeEntry(entry.id)}
+                  >
+                    <X className="w-3 h-3" />
+                  </Button>
                 </div>
               ))}
             </div>
@@ -239,11 +228,40 @@ export function KnowledgeBaseAuthSection({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {ASSIGNABLE_ROLES.map(role => (
-                  <SelectItem key={role} value={role}>
-                    {t(`document.permission.role.${role}`)}
-                  </SelectItem>
-                ))}
+                <SelectItem value="Maintainer">
+                  <div>
+                    <div className="font-medium">{t('document.permission.role.Maintainer')}</div>
+                    <div className="text-xs text-text-muted">
+                      {t('document.permission.role.MaintainerDescription')}
+                    </div>
+                  </div>
+                </SelectItem>
+                <SelectItem value="Developer">
+                  <div>
+                    <div className="font-medium">{t('document.permission.role.Developer')}</div>
+                    <div className="text-xs text-text-muted">
+                      {t('document.permission.role.DeveloperDescription')}
+                    </div>
+                  </div>
+                </SelectItem>
+                <SelectItem value="Reporter">
+                  <div>
+                    <div className="font-medium">{t('document.permission.role.Reporter')}</div>
+                    <div className="text-xs text-text-muted">
+                      {t('document.permission.role.ReporterDescription')}
+                    </div>
+                  </div>
+                </SelectItem>
+                <SelectItem value="RestrictedAnalyst">
+                  <div>
+                    <div className="font-medium">
+                      {t('document.permission.role.RestrictedAnalyst')}
+                    </div>
+                    <div className="text-xs text-text-muted">
+                      {t('document.permission.role.RestrictedAnalystDescription')}
+                    </div>
+                  </div>
+                </SelectItem>
               </SelectContent>
             </Select>
           </div>
