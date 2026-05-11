@@ -1394,12 +1394,12 @@
     "truncation": {
       "notice": "⚠️ Content too long, auto-truncated ({{original}} chars → {{truncated}} chars)"
     },
-    "supported_types": "PDF, Word, Excel, TXT, Markdown, Images, HTML, Code files",
+    "supported_types": "PDF, Word, Excel, XMind, TXT, Markdown, Images, HTML, Code files",
     "html_preview": "HTML Preview",
     "click_to_preview": "Click to preview",
     "click_to_download": "Click to download",
     "characters": "chars",
-    "upload_tooltip": "Supported file types: Documents (PDF, Word, PPT, Excel), Images, HTML, Markdown, Code files and text files\nHTML and Markdown files will be rendered with preview\nMax file size: {{size}} MB",
+    "upload_tooltip": "Supported file types: Documents (PDF, Word, PPT, Excel, XMind), Images, HTML, Markdown, Code files and text files\nHTML and Markdown files will be rendered with preview\nMax file size: {{size}} MB",
     "share": {
       "link_copied_title": "Share Link Copied",
       "copy_failed_title": "Failed to Copy to Clipboard",
