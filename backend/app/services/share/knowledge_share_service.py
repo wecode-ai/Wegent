@@ -10,20 +10,24 @@ Includes permission check methods previously in KnowledgePermissionService.
 """
 
 import logging
+from datetime import datetime
 from typing import Optional, Tuple
 
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.kind import Kind
+from app.models.namespace import Namespace
 from app.models.resource_member import MemberStatus, ResourceMember, ResourceRole
 from app.models.share_link import ResourceType, ShareLink
 from app.models.user import User
-from app.schemas.base_role import BaseRole, has_permission
+from app.schemas.base_role import BaseRole, get_highest_role, has_permission
 from app.schemas.share import (
     KBShareInfoResponse,
     MyKBPermissionResponse,
+    MyPermissionSourcesResponse,
     PendingRequestInfo,
+    PermissionSourceInfo,
 )
 
 # SchemaMemberRole is an alias to BaseRole for backward compatibility
@@ -857,6 +861,299 @@ class KnowledgeShareService(UnifiedShareService):
         )
 
         return share_link.share_token if share_link else None
+
+    # =========================================================================
+    # Ownership Transfer
+    # =========================================================================
+
+    def transfer_ownership(
+        self,
+        db: Session,
+        knowledge_base_id: int,
+        current_user_id: int,
+        new_owner_user_id: int,
+    ) -> None:
+        """
+        Transfer knowledge base ownership to another user.
+
+        Args:
+            db: Database session
+            knowledge_base_id: Knowledge base ID
+            current_user_id: Current user ID (must be current owner)
+            new_owner_user_id: New owner user ID
+
+        Raises:
+            HTTPException: If validation fails
+        """
+        kb = (
+            db.query(Kind)
+            .filter(
+                Kind.id == knowledge_base_id,
+                Kind.kind == "KnowledgeBase",
+                Kind.is_active,
+            )
+            .first()
+        )
+        if not kb:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=404, detail="Knowledge base not found")
+
+        if kb.user_id != current_user_id:
+            from fastapi import HTTPException
+            raise HTTPException(
+                status_code=403, detail="Only the owner can transfer ownership"
+            )
+
+        # Check new owner exists
+        new_owner = (
+            db.query(User)
+            .filter(User.id == new_owner_user_id, User.is_active.is_(True))
+            .first()
+        )
+        if not new_owner:
+            from fastapi import HTTPException
+            raise HTTPException(
+                status_code=404, detail="New owner user not found"
+            )
+
+        if new_owner_user_id == current_user_id:
+            from fastapi import HTTPException
+            raise HTTPException(
+                status_code=400, detail="Cannot transfer ownership to yourself"
+            )
+
+        # Transfer ownership
+        old_owner_id = kb.user_id
+        kb.user_id = new_owner_user_id
+        kb.updated_at = datetime.utcnow()
+
+        # Add old owner as Maintainer member if not already present
+        existing_member = (
+            db.query(ResourceMember)
+            .filter(
+                ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
+                ResourceMember.resource_id == knowledge_base_id,
+                ResourceMember.entity_type == "user",
+                ResourceMember.entity_id == str(old_owner_id),
+                ResourceMember.status == MemberStatus.APPROVED.value,
+            )
+            .first()
+        )
+        if not existing_member:
+            new_member = ResourceMember(
+                resource_type=ResourceType.KNOWLEDGE_BASE.value,
+                resource_id=knowledge_base_id,
+                entity_type="user",
+                entity_id=str(old_owner_id),
+                role=ResourceRole.Maintainer.value,
+                status=MemberStatus.APPROVED.value,
+                invited_by_user_id=current_user_id,
+                share_link_id=0,
+                reviewed_by_user_id=current_user_id,
+                reviewed_at=datetime.utcnow(),
+                requested_at=datetime.utcnow(),
+            )
+            db.add(new_member)
+
+        db.commit()
+
+    # =========================================================================
+    # Permission Sources
+    # =========================================================================
+
+    def get_my_permission_sources(
+        self,
+        db: Session,
+        resource_id: int,
+        user_id: int,
+    ) -> MyPermissionSourcesResponse:
+        """
+        Get all permission sources for the current user on a knowledge base.
+
+        Checks:
+        1. Creator (kb.user_id == user_id)
+        2. Direct user-type ResourceMember permissions
+        3. Entity-type ResourceMember permissions (via resolvers)
+        4. Group membership (namespace)
+        5. Group chat binding
+
+        Args:
+            db: Database session
+            resource_id: Resource ID
+            user_id: User ID
+
+        Returns:
+            MyPermissionSourcesResponse with all sources
+        """
+        kb = (
+            db.query(Kind)
+            .filter(
+                Kind.id == resource_id,
+                Kind.kind == "KnowledgeBase",
+                Kind.is_active,
+            )
+            .first()
+        )
+        if not kb:
+            return MyPermissionSourcesResponse(
+                has_access=False,
+                is_creator=False,
+                sources=[],
+            )
+
+        sources: list[PermissionSourceInfo] = []
+        roles: list[str] = []
+
+        # 1. Creator
+        is_creator = kb.user_id == user_id
+        if is_creator:
+            creator = db.query(User).filter(User.id == user_id).first()
+            sources.append(
+                PermissionSourceInfo(
+                    source_type="creator",
+                    display_name=creator.user_name if creator else None,
+                    role=BaseRole.Owner.value,
+                    entity_type="user",
+                    entity_id=str(user_id),
+                )
+            )
+            roles.append(BaseRole.Owner.value)
+
+        resource_type_variants = [self.resource_type.value]
+        if self.resource_type.value == "KnowledgeBase":
+            resource_type_variants.append("KNOWLEDGE_BASE")
+
+        approved_status_variants = [
+            MemberStatus.APPROVED.value,
+            MemberStatus.APPROVED.value.upper(),
+        ]
+
+        # 2. Direct user-type ResourceMember permissions
+        user_member = (
+            db.query(ResourceMember)
+            .filter(
+                ResourceMember.resource_type.in_(resource_type_variants),
+                ResourceMember.resource_id == resource_id,
+                ResourceMember.entity_type == "user",
+                ResourceMember.entity_id == str(user_id),
+                ResourceMember.status.in_(approved_status_variants),
+            )
+            .first()
+        )
+        if user_member:
+            effective_role = user_member.get_effective_role()
+            source_type = self._resolve_source_type(user_member)
+            user = db.query(User).filter(User.id == user_id).first()
+            sources.append(
+                PermissionSourceInfo(
+                    source_type=source_type,
+                    display_name=user.user_name if user else None,
+                    role=effective_role,
+                    entity_type="user",
+                    entity_id=str(user_id),
+                )
+            )
+            roles.append(effective_role)
+
+        # 3. Entity-type ResourceMember permissions (via external resolvers)
+        entity_members = (
+            db.query(ResourceMember)
+            .filter(
+                ResourceMember.resource_type.in_(resource_type_variants),
+                ResourceMember.resource_id == resource_id,
+                ResourceMember.entity_type.notin_(["user", None]),
+                ResourceMember.entity_type != "",
+                ResourceMember.entity_id.isnot(None),
+                ResourceMember.status.in_(approved_status_variants),
+            )
+            .all()
+        )
+        if entity_members:
+            from app.services.share.external_entity_resolver import (
+                get_entity_resolver,
+            )
+
+            entity_groups: dict[str, list[str]] = {}
+            entity_role_map: dict[str, str] = {}
+            for em in entity_members:
+                et = em.entity_type
+                eid = em.entity_id
+                if et and eid:
+                    entity_groups.setdefault(et, []).append(eid)
+                    entity_role_map[f"{et}:{eid}"] = em.get_effective_role()
+
+            for entity_type_str, entity_ids in entity_groups.items():
+                resolver = get_entity_resolver(entity_type_str)
+                if resolver:
+                    matched_role = resolver.match_entity_bindings(
+                        db, user_id, entity_type_str, entity_ids
+                    )
+                    if matched_role:
+                        # Find which entity_id matched
+                        for eid in entity_ids:
+                            key = f"{entity_type_str}:{eid}"
+                            role_str = entity_role_map.get(key, matched_role)
+                            display_name = self._get_entity_display_name(
+                                db, entity_type_str, eid
+                            )
+                            sources.append(
+                                PermissionSourceInfo(
+                                    source_type="entity_permission",
+                                    display_name=display_name,
+                                    role=role_str,
+                                    entity_type=entity_type_str,
+                                    entity_id=eid,
+                                )
+                            )
+                            roles.append(role_str)
+
+        # 4. Group membership (namespace)
+        if kb.namespace != "default" and not is_organization_namespace(
+            db, kb.namespace
+        ):
+            from app.services.group_permission import get_effective_role_in_group
+
+            group_role = get_effective_role_in_group(db, user_id, kb.namespace)
+            if group_role is not None:
+                role_mapping = {
+                    BaseRole.Owner: BaseRole.Owner.value,
+                    BaseRole.Maintainer: BaseRole.Maintainer.value,
+                    BaseRole.Developer: BaseRole.Developer.value,
+                    BaseRole.Reporter: BaseRole.Reporter.value,
+                }
+                mapped_role = role_mapping.get(group_role, BaseRole.Reporter.value)
+                group = (
+                    db.query(Namespace)
+                    .filter(Namespace.name == kb.namespace)
+                    .first()
+                )
+                sources.append(
+                    PermissionSourceInfo(
+                        source_type="group_membership",
+                        display_name=(
+                            group.display_name or group.name if group else kb.namespace
+                        ),
+                        role=mapped_role,
+                    )
+                )
+                roles.append(mapped_role)
+
+        # 5. Group chat binding (for personal KBs)
+        if kb.namespace == "default":
+            bound_count = self._is_kb_bound_to_user_group_chat(
+                db, resource_id, user_id
+            )
+            # (This is implicit access via group chat membership;
+            #  we only add it if no other source is found)
+
+        effective_role = get_highest_role(roles) if roles else None
+
+        return MyPermissionSourcesResponse(
+            has_access=len(sources) > 0 or is_creator,
+            effective_role=effective_role,
+            is_creator=is_creator,
+            sources=sources,
+        )
 
     # =========================================================================
     # Cleanup Methods

@@ -612,6 +612,8 @@ export interface PermissionUserInfo {
   entity_type?: string
   /** Entity identifier */
   entity_id?: string
+  /** Permission source: 'direct', 'entity_permission', 'share_link' */
+  source_type?: string
 }
 
 export interface PendingPermissionInfo {

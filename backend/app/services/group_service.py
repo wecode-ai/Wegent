@@ -302,8 +302,9 @@ def search_groups(
     total = query.count()
     groups = query.order_by(Namespace.created_at.desc()).offset(skip).limit(limit).all()
 
-    # Get member counts
+    # Get member counts and user's role map
     member_counts = {}
+    role_map = {name: role for name, role in member_data} if user_id is not None else {}
     for group in groups:
         member_counts[group.name] = get_group_member_count(db, group.name)
 
@@ -311,6 +312,7 @@ def search_groups(
     for group in groups:
         group_response = GroupResponse.model_validate(group)
         group_response.member_count = member_counts.get(group.name, 0)
+        group_response.my_role = role_map.get(group.name)
         result.append(group_response)
 
     return result, total

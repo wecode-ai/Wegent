@@ -24,6 +24,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { UserSearchSelect } from '@/components/common/UserSearchSelect'
 import { searchGroups } from '@/apis/groups'
 import { useTranslation } from '@/hooks/useTranslation'
+import { useUser } from '@/features/common/UserContext'
 import { ASSIGNABLE_ROLES } from '@/types/base-role'
 import type { MemberRole } from '@/types/knowledge'
 import type { SearchUser } from '@/types/api'
@@ -278,6 +279,7 @@ interface GroupSearchInputProps {
 
 function GroupSearchInput({ onSelect, role }: GroupSearchInputProps) {
   const { t } = useTranslation('knowledge')
+  const { user: currentUser } = useUser()
 
   const loc = (key: string, fallback: string) => {
     const v = t(key)
@@ -330,7 +332,14 @@ function GroupSearchInput({ onSelect, role }: GroupSearchInputProps) {
     }
   }
 
-  const filteredGroups = groups
+  // Sort groups: owned by current user first, then by display_name
+  const filteredGroups = [...groups].sort((a, b) => {
+    const aOwned = currentUser ? a.owner_user_id === currentUser.id : false
+    const bOwned = currentUser ? b.owner_user_id === currentUser.id : false
+    if (aOwned && !bOwned) return -1
+    if (!aOwned && bOwned) return 1
+    return (a.display_name || a.name).localeCompare(b.display_name || b.name)
+  })
 
   const handleSelect = (group: Group) => {
     onSelect({
@@ -384,11 +393,16 @@ function GroupSearchInput({ onSelect, role }: GroupSearchInputProps) {
                 key={group.id}
                 type="button"
                 onClick={() => handleSelect(group)}
-                className="w-full flex items-center gap-3 p-3 hover:bg-surface cursor-pointer text-left"
+                className="w-full flex items-center justify-between gap-3 p-3 hover:bg-surface cursor-pointer text-left"
               >
-                <span className="font-medium text-sm text-text-primary">
+                <span className="font-medium text-sm text-text-primary truncate">
                   {group.display_name || group.name}
                 </span>
+                {group.my_role && (
+                  <span className="flex-shrink-0 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] leading-tight font-medium bg-primary/10 text-primary border border-primary/20">
+                    {t(`document.permission.role.${group.my_role}`)}
+                  </span>
+                )}
               </button>
             ))
           )}

@@ -35,6 +35,7 @@ interface ResourceMemberResponse {
   status: string
   entity_type?: string | null
   entity_id?: string | null
+  source_type?: string | null
   invited_by_user_id: number
   invited_by_user_name: string | null
   reviewed_by_user_id: number | null
@@ -139,6 +140,7 @@ export const knowledgePermissionApi = {
           reviewed_by: m.reviewed_by_user_id || undefined,
           entity_type: m.entity_type || undefined,
           entity_id: m.entity_id || undefined,
+          source_type: m.source_type || undefined,
         }
         acc[role].push(member)
         return acc

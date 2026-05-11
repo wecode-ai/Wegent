@@ -215,6 +215,10 @@ class ResourceMemberResponse(BaseModel):
     status: str
     entity_type: Optional[str] = None
     entity_id: Optional[str] = None
+    source_type: str = Field(
+        default="direct",
+        description="Permission source: 'direct', 'entity_permission', 'share_link', 'group_membership'",
+    )
     invited_by_user_id: int
     invited_by_user_name: Optional[str] = None  # Populated from user lookup
     reviewed_by_user_id: Optional[int] = None
@@ -429,6 +433,38 @@ class MyKBPermissionResponse(BaseModel):
     )
 
 
+class PermissionSourceInfo(BaseModel):
+    """Schema describing a single permission source."""
+
+    source_type: str = Field(
+        ...,
+        description="Source type: 'direct', 'entity_permission', 'group_membership', 'share_link', 'creator'",
+    )
+    display_name: Optional[str] = Field(
+        None, description="Display name of the source (e.g., group name)"
+    )
+    role: str = Field(..., description="Role granted by this source")
+    entity_type: Optional[str] = Field(
+        None, description="Entity type if source is entity_permission"
+    )
+    entity_id: Optional[str] = Field(
+        None, description="Entity ID if source is entity_permission"
+    )
+
+
+class MyPermissionSourcesResponse(BaseModel):
+    """Schema for current user's permission sources on a knowledge base."""
+
+    has_access: bool = Field(..., description="Whether user has access to the KB")
+    effective_role: Optional[str] = Field(
+        None, description="Highest role across all sources"
+    )
+    is_creator: bool = Field(..., description="Whether user is the KB creator")
+    sources: List[PermissionSourceInfo] = Field(
+        default_factory=list, description="All permission sources"
+    )
+
+
 class KBShareInfoResponse(BaseModel):
     """Schema for knowledge base share info response."""
 
@@ -443,6 +479,14 @@ class KBShareInfoResponse(BaseModel):
     )
     my_permission: MyKBPermissionResponse = Field(
         ..., description="Current user's permission info"
+    )
+
+
+class TransferOwnershipRequest(BaseModel):
+    """Request body for transferring knowledge base ownership."""
+
+    new_owner_user_id: int = Field(
+        ..., description="User ID of the new owner", gt=0
     )
 
 
