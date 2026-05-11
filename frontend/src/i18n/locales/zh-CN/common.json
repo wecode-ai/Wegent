@@ -4,6 +4,8 @@
     "description": "浏览器中的完整 AI 团队。"
   },
   "loading": "加载中...",
+  "noData": "暂无数据",
+  "scroll_to_bottom": "滚动到底部",
   "repos": {
     "repository": "选择仓库",
     "branch": "选择分支",

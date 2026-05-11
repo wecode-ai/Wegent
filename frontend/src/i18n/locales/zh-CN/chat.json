@@ -1,5 +1,6 @@
 {
   "title": "聊天",
+  "scroll_to_bottom": "滚动到底部",
   "placeholder": {
     "input": "在此输入您的消息...",
     "empty": "还没有消息。开始对话吧！"

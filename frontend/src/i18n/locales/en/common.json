@@ -4,6 +4,8 @@
     "description": "A whole dev team of AI agents in your editor."
   },
   "loading": "Loading...",
+  "noData": "No data",
+  "scroll_to_bottom": "Scroll to bottom",
   "repos": {
     "repository": "Select Repository",
     "branch": "Select Branch",
