@@ -134,6 +134,7 @@ export const SUPPORTED_EXTENSIONS = [
   '.xls',
   '.xlsx',
   '.csv',
+  '.xmind',
   '.txt',
   '.md',
   '.html',
@@ -213,6 +214,7 @@ export const SUPPORTED_MIME_TYPES = [
   'application/vnd.ms-excel',
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   'text/csv',
+  'application/vnd.xmind.workbook',
   'text/plain',
   'text/markdown',
   'text/html',
@@ -282,6 +284,7 @@ export function getFileIcon(extension: string): string {
     case '.xls':
     case '.xlsx':
     case '.csv':
+    case '.xmind':
       return '📈'
     case '.txt':
     case '.md':

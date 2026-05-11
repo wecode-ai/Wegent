@@ -113,8 +113,9 @@ const buildProps = (): MobileChatInputControlsProps => ({
   taskType: 'chat',
   selectedTeam,
   selectedModel: {
-    id: 'long-model',
     name: '官网:kimi-k2.5-preview-with-a-very-long-model-name',
+    provider: 'moonshot',
+    modelId: 'kimi-k2.5-preview-with-a-very-long-model-name',
     type: 'user',
   },
   setSelectedModel: jest.fn(),

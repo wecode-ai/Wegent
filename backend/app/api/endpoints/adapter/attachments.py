@@ -342,6 +342,7 @@ async def upload_attachment(
     - Word (.doc, .docx)
     - PowerPoint (.ppt, .pptx)
     - Excel (.xls, .xlsx, .csv)
+    - XMind (.xmind)
     - Plain text (.txt)
     - Markdown (.md)
     - Images (.jpg, .jpeg, .png, .gif, .bmp, .webp)

@@ -15,11 +15,11 @@ from knowledge_engine.ingestion.pipeline import (
     build_ingestion_result,
     prepare_ingestion,
 )
-from knowledge_engine.parsers.xmind import parse_xmind_to_markdown
 from knowledge_engine.storage.base import BaseStorageBackend
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
 from knowledge_engine.text_sanitizer import sanitize_text_for_indexing
 from shared.telemetry.decorators import add_span_event
+from shared.utils.xmind_parser import parse_xmind_to_markdown
 
 logger = logging.getLogger(__name__)
 
