@@ -34,12 +34,14 @@ class S3Uploader:
     """Lazy-initialized S3 client for image upload."""
 
     def __init__(self, config: S3Config):
+        """Initialize S3Uploader with the given configuration."""
         self._config = config
         self._client = None
         self._lock = threading.Lock()
 
     @property
     def enabled(self) -> bool:
+        """Return whether S3 upload is enabled in the configuration."""
         return self._config.enabled
 
     def _get_client(self) -> Any:

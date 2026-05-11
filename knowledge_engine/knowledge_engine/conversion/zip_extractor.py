@@ -159,6 +159,7 @@ def _process_images(
     md_img_pattern = r"!\[([^\]]*)\]\(([^)]+)\)"
 
     def replace_md_ref(match):
+        """Replace Markdown image reference with S3 URL if image is found."""
         alt_text = match.group(1)
         img_path = match.group(2)
         if img_path.startswith(("http://", "https://")):
@@ -177,6 +178,7 @@ def _process_images(
     html_img_pattern = r'<img[^>]+src=["\']([^"\']+)["\'][^>]*>'
 
     def replace_html_ref(match):
+        """Replace HTML img src attribute with S3 URL if image is found."""
         img_path = match.group(1)
         if img_path.startswith(("http://", "https://")):
             return match.group(0)
