@@ -205,7 +205,7 @@ export function AddNamespaceDialog({
                       setShowDropdown(true)
                     }}
                     onFocus={() => {
-                      if (!fetching && groups.length === 0) fetchGroups()
+                      if (!fetchingGroups && groups.length === 0) fetchGroups()
                       setShowDropdown(true)
                     }}
                     placeholder={loc('document.permission.searchGroupPlaceholder', '搜索群组...')}
